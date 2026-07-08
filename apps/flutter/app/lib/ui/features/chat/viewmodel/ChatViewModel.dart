@@ -313,7 +313,7 @@ class ChatViewModel {
     String relativePath,
   ) async {
     final chatId = await _requiredCurrentChatId();
-    final entries = await clients.repositoryWorkspaceService.listWorkspaceFiles(
+    final entries = await clients.servicesWorkspaceService.listWorkspaceFiles(
       chatId: chatId,
       relativePath: relativePath,
     );
@@ -323,14 +323,14 @@ class ChatViewModel {
   Future<List<WorkspaceFileEntry>> listWorkspaceBindingDirectories(
     String path,
   ) async {
-    final entries = await clients.repositoryWorkspaceService
+    final entries = await clients.servicesWorkspaceService
         .listWorkspaceBindingDirectories(path: path);
     return entries.map(WorkspaceFileEntry.fromProxy).toList(growable: false);
   }
 
   Future<String> readWorkspaceTextFile(String relativePath) async {
     final chatId = await _requiredCurrentChatId();
-    return clients.repositoryWorkspaceService.readWorkspaceTextFile(
+    return clients.servicesWorkspaceService.readWorkspaceTextFile(
       chatId: chatId,
       relativePath: relativePath,
     );
@@ -338,7 +338,7 @@ class ChatViewModel {
 
   Future<Uint8List> readWorkspaceFileBytes(String relativePath) async {
     final chatId = await _requiredCurrentChatId();
-    final bytes = await clients.repositoryWorkspaceService
+    final bytes = await clients.servicesWorkspaceService
         .readWorkspaceFileBytes(chatId: chatId, relativePath: relativePath);
     return base64Decode(bytes.base64Content);
   }
@@ -348,7 +348,7 @@ class ChatViewModel {
     Uint8List bytes,
   ) async {
     final chatId = await _requiredCurrentChatId();
-    await clients.repositoryWorkspaceService.writeWorkspaceFileBytes(
+    await clients.servicesWorkspaceService.writeWorkspaceFileBytes(
       chatId: chatId,
       relativePath: relativePath,
       base64Content: base64Encode(bytes),
@@ -357,7 +357,7 @@ class ChatViewModel {
 
   Future<void> openWorkspaceFile(String relativePath) async {
     final chatId = await _requiredCurrentChatId();
-    await clients.repositoryWorkspaceService.openWorkspaceFile(
+    await clients.servicesWorkspaceService.openWorkspaceFile(
       chatId: chatId,
       relativePath: relativePath,
     );

@@ -1,10 +1,13 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
+use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
+/// Runtime plugin contract for registering feature modules.
 pub trait OperitPlugin: Send + Sync {
+    /// Returns the stable plugin id.
     fn id(&self) -> &str;
+    /// Registers plugin-owned runtime components.
     fn register(&self);
 }
 
@@ -15,9 +18,11 @@ static PLUGINS: OnceLock<PluginList> = OnceLock::new();
 static INSTALLED_PLUGIN_IDS: OnceLock<PluginIdSet> = OnceLock::new();
 static BUILTINS_INITIALIZED: OnceLock<Mutex<bool>> = OnceLock::new();
 
+/// Global registry for built-in runtime plugins.
 pub struct PluginRegistry;
 
 impl PluginRegistry {
+    /// Registers or replaces a plugin by id.
     pub fn register(plugin: Arc<dyn OperitPlugin>) {
         let pluginId = plugin.id().to_string();
         let plugins = PLUGINS.get_or_init(|| Mutex::new(Vec::new()));
@@ -32,6 +37,7 @@ impl PluginRegistry {
     }
 
     #[allow(non_snake_case)]
+    /// Registers and installs all built-in plugins exactly once.
     pub fn initializeBuiltins() {
         let initialized = BUILTINS_INITIALIZED.get_or_init(|| Mutex::new(false));
         {
@@ -50,13 +56,11 @@ impl PluginRegistry {
         Self::register(Arc::new(
             crate::plugins::toolpkg::ToolPkgCommonBridgePlugin::ToolPkgCommonBridgePlugin,
         ));
-        Self::register(Arc::new(
-            crate::plugins::workflow::WorkflowLifecyclePlugin::WorkflowLifecyclePlugin,
-        ));
         Self::installAll();
     }
 
     #[allow(non_snake_case)]
+    /// Installs all registered plugins that have not yet been installed.
     pub fn installAll() {
         let plugins = PLUGINS
             .get_or_init(|| Mutex::new(Vec::new()))

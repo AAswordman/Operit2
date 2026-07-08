@@ -28,11 +28,8 @@ use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
     CoreLinkError, CoreRequestId, CoreWatchRequest,
 };
-use operit_runtime::api::chat::enhance::ToolExecutionManager::AITool;
+use operit_host_api::HostManager::HostManager;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
-use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_runtime::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgHostEventRegistration;
 use operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
 use operit_runtime::services::RuntimeHostInteractionService::{
@@ -49,6 +46,9 @@ use operit_runtime::services::RuntimeHostInteractionService::{
     RuntimeHostInteractionTtsSynthesisPayload, RuntimeHostInteractionWebVisitHeader,
     RuntimeHostInteractionWebVisitPayload,
 };
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
+use operit_tools::ToolExecutionManager::AITool;
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_arch = "wasm32")]
@@ -1042,7 +1042,7 @@ impl CoreLinkClient for SharedFlutterCoreClient {
 }
 
 fn install_permission_requester(core: &mut LocalCoreProxy) {
-    let context = core.localApplicationMut().applicationContext.clone();
+    let context = core.localApplicationMut().hostManager.clone();
     let handler = AIToolHandler::getInstance(context);
     handler
         .getToolPermissionSystem()
@@ -1057,7 +1057,7 @@ fn install_permission_requester(core: &mut LocalCoreProxy) {
             let response = response.expect("permission request failed");
             match response.result.as_str() {
                 "allow" => PermissionRequestResult::ALLOW,
-                "always_allow" => PermissionRequestResult::ALWAYS_ALLOW,
+                "allow_session" => PermissionRequestResult::ALLOW_SESSION,
                 "deny" => PermissionRequestResult::DENY,
                 other => panic!("unknown permission response result: {other}"),
             }
@@ -1121,7 +1121,7 @@ fn create_local_core(
     let systemOperationHost: Arc<dyn operit_host_api::SystemOperationHost> =
         Arc::new(NativeSystemOperationHost::new());
     let mut context =
-        OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
+        HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
             Arc::new(NativeFileSystemHost::new()),
             webVisitHost,
             Arc::new(NativeHttpHost::new()),
@@ -1339,7 +1339,7 @@ fn create_local_core(
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(root_dir));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let mut context =
-        OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
+        HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
             Arc::new(NativeFileSystemHost::new()),
             webVisitHost,
             Arc::new(NativeHttpHost::new()),
@@ -1516,7 +1516,7 @@ fn create_local_core(
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new());
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let mut context =
-        OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
+        HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
             Arc::new(NativeFileSystemHost::new()),
             webVisitHost,
             Arc::new(NativeHttpHost::new()),

@@ -1,5 +1,5 @@
 use crate::output::CoreCommandOutput;
-use operit_runtime::util::AppLogger::AppLogger;
+use operit_util::AppLogger::AppLogger;
 
 pub fn run_log_command(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
     if args.is_empty() {

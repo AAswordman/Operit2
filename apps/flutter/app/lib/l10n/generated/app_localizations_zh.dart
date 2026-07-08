@@ -201,7 +201,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get toolApprovalAllowOnce => '允许本次';
 
   @override
-  String get toolApprovalAlwaysAllow => '始终允许';
+  String get toolApprovalAlwaysAllow => '本次会话中始终允许';
 
   @override
   String get createGroupTitle => '新建分组';
@@ -805,14 +805,14 @@ class AppLocalizationsZh extends AppLocalizations {
       '管理角色卡、群组、当前激活角色和角色级模型/记忆/工具绑定。';
 
   @override
-  String get settingsCategoryToolsTitle => '工具与扩展';
+  String get settingsCategoryToolsTitle => '工具与权限';
 
   @override
-  String get settingsCategoryToolsSubtitle => '权限、包、技能、MCP';
+  String get settingsCategoryToolsSubtitle => 'AI 能力、系统授权、扩展';
 
   @override
   String get settingsCategoryToolsDescription =>
-      '控制 Operit 可以调用哪些工具，并管理插件、工具包、技能和 MCP 服务。';
+      '设置 AI 的只读、读写或完整权限，并查看当前设备的系统授权状态。';
 
   @override
   String get settingsCategoryWorkspaceTitle => '工作区与浏览器';
@@ -1648,7 +1648,7 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get settingsToolsPermissionMode => '工具权限模式';
+  String get settingsToolsPermissionMode => 'AI 能力模式';
 
   @override
   String get settingsToolsAsk => '询问';
@@ -1683,20 +1683,19 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get settingsToolsOverrides => '单工具权限记录';
+  String get settingsToolsOverrides => '工具记录';
 
   @override
-  String get settingsToolsToolGroups => '逐工具权限';
+  String get settingsToolsToolGroups => '已注册工具';
 
   @override
-  String get settingsToolsToolGroupsDescription =>
-      '常用情况下保持“询问”即可；明确可信的工具放到允许组，危险或不想让 AI 用的工具放到禁止组。';
+  String get settingsToolsToolGroupsDescription => '当前运行环境注册给 AI 使用的工具。';
 
   @override
-  String get settingsToolsAlwaysAllow => '始终允许';
+  String get settingsToolsAlwaysAllow => '本次会话已允许';
 
   @override
-  String get settingsToolsAlwaysAllowDescription => '这些工具执行时不再询问。';
+  String get settingsToolsAlwaysAllowDescription => '这些工具已在当前会话中批准。';
 
   @override
   String get settingsToolsAlwaysForbid => '始终禁止';

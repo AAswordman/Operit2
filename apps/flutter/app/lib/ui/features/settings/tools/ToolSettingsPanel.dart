@@ -32,21 +32,16 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
   }
 
   Future<_ToolSettingsData> _load() async {
-    final apiPreferences = widget.clients.preferencesApiPreferences;
-    final permissionSystem = widget.clients.permissionsToolPermissionSystem;
-    final toolHandler = widget.clients.permissionsAiToolHandler;
-    await toolHandler.registerDefaultTools();
-    final toolNames =
-        (await toolHandler.getAllToolNames())
-            .where((toolName) => !_hiddenToolNames.contains(toolName))
-            .toList(growable: false)
-          ..sort();
+    final host = await widget.clients.servicesRuntimeHostInfoService
+        .runtimeHostDescriptor();
     return _ToolSettingsData(
-      enableTools: await apiPreferences.enableToolsFlowSnapshot(),
-      permissionLevel: await permissionSystem.getMasterSwitch(),
-      toolNames: toolNames,
-      overrides: await permissionSystem.getToolPermissionOverrides(),
-      mcpStartupTimeoutSeconds: await apiPreferences
+      permissionMode: await widget.clients.permissionsToolPermissionSystem
+          .getAiPermissionMode(),
+      host: host,
+      hostRequirements: await _HostAuthorizationBridge.requirements(
+        host,
+      ),
+      mcpStartupTimeoutSeconds: await widget.clients.preferencesApiPreferences
           .getMcpStartupTimeoutSeconds(),
     );
   }
@@ -58,55 +53,15 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
   }
 
   Future<void> _setPermissionMode(_PermissionMode mode) async {
-    await widget.clients.preferencesApiPreferences.saveEnableTools(
-      isEnabled: mode.enableTools,
-    );
-    await widget.clients.permissionsToolPermissionSystem.saveMasterSwitch(
-      level: mode.level,
+    await widget.clients.permissionsToolPermissionSystem.saveAiPermissionMode(
+      mode: mode.permissionMode,
     );
     _reload();
   }
 
-  Future<void> _clearToolPermission(String toolName) async {
-    await widget.clients.permissionsToolPermissionSystem.clearToolPermission(
-      toolName: toolName,
-    );
-    _reload();
-  }
-
-  Future<void> _saveToolPermission(
-    String toolName,
-    core_proxy.PermissionLevel level,
-  ) async {
-    await widget.clients.permissionsToolPermissionSystem.saveToolPermission(
-      toolName: toolName,
-      level: level,
-    );
-    _reload();
-  }
-
-  Future<void> _openToolSelector(
-    _ToolSettingsData data,
-    core_proxy.PermissionLevel level,
-  ) async {
-    final l10n = AppLocalizations.of(context)!;
-    final toolNames = await _ToolSelectorDialog.show(
-      context: context,
-      title: level == core_proxy.PermissionLevel.allow
-          ? l10n.settingsToolsAddAllowTool
-          : l10n.settingsToolsAddForbidTool,
-      tools: data.toolNames,
-      selectedTools: data.toolsForLevel(level),
-    );
-    if (toolNames == null || toolNames.isEmpty) {
-      return;
-    }
-    for (final toolName in toolNames) {
-      await widget.clients.permissionsToolPermissionSystem.saveToolPermission(
-        toolName: toolName,
-        level: level,
-      );
-    }
+  Future<void> _requestHostAuthorization(_HostRequirement requirement) async {
+    final data = await _future!;
+    await _HostAuthorizationBridge.request(data.host.id, requirement.id);
     _reload();
   }
 
@@ -146,51 +101,34 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
             _SectionCard(
               title: l10n.settingsToolsPermissionMode,
               children: <Widget>[
+                Text(
+                  _modeFor(data.permissionMode).description,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 12),
                 _PermissionModeSelector(
-                  selectedLevel: data.permissionLevel,
-                  enableTools: data.enableTools,
+                  selectedMode: data.permissionMode,
                   onSelected: _setPermissionMode,
                 ),
               ],
             ),
             _SectionCard(
-              title: l10n.settingsToolsToolGroups,
+              title: '系统授权',
               children: <Widget>[
-                Text(
-                  l10n.settingsToolsToolGroupsDescription,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                _ToolPermissionGroup(
-                  title: l10n.settingsToolsAlwaysAllow,
-                  description: l10n.settingsToolsAlwaysAllowDescription,
-                  level: core_proxy.PermissionLevel.allow,
-                  tools: data.toolsForLevel(core_proxy.PermissionLevel.allow),
-                  allToolCount: data.toolNames.length,
-                  onAdd: () =>
-                      _openToolSelector(data, core_proxy.PermissionLevel.allow),
-                  onRemove: _clearToolPermission,
-                ),
-                const SizedBox(height: 10),
-                _ToolPermissionGroup(
-                  title: l10n.settingsToolsAlwaysForbid,
-                  description: l10n.settingsToolsAlwaysForbidDescription,
-                  level: core_proxy.PermissionLevel.forbid,
-                  tools: data.toolsForLevel(core_proxy.PermissionLevel.forbid),
-                  allToolCount: data.toolNames.length,
-                  onAdd: () => _openToolSelector(
-                    data,
-                    core_proxy.PermissionLevel.forbid,
-                  ),
-                  onRemove: _clearToolPermission,
+                _HostAuthorizationList(
+                  requirements: data.hostRequirements,
+                  onRequest: _requestHostAuthorization,
                 ),
               ],
             ),
             _SectionCard(
-              title: l10n.settingsToolsMcpStartupTimeout,
+              title: '高级设置',
+              initiallyExpanded: false,
               children: <Widget>[
+                _PermissionChain(data: data),
+                const Divider(height: 24),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   dense: true,
@@ -207,29 +145,8 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
                     child: Text(l10n.edit),
                   ),
                 ),
-              ],
-            ),
-            _SectionCard(
-              title: l10n.settingsToolsOverrides,
-              initiallyExpanded: false,
-              children: <Widget>[
-                if (data.overrides.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Text(l10n.noPermissionRecords),
-                  ),
-                for (final entry in data.overrides.entries)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    visualDensity: VisualDensity.compact,
-                    title: Text(entry.key),
-                    subtitle: Text(_permissionLevelName(entry.value)),
-                    trailing: TextButton(
-                      onPressed: () => _clearToolPermission(entry.key),
-                      child: Text(l10n.clear),
-                    ),
-                  ),
+                const Divider(height: 24),
+                _AdvancedHostSummary(host: data.host),
               ],
             ),
           ],
@@ -241,75 +158,57 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
 
 class _ToolSettingsData {
   const _ToolSettingsData({
-    required this.enableTools,
-    required this.permissionLevel,
-    required this.toolNames,
-    required this.overrides,
+    required this.permissionMode,
+    required this.host,
+    required this.hostRequirements,
     required this.mcpStartupTimeoutSeconds,
   });
 
-  final bool enableTools;
-  final core_proxy.PermissionLevel permissionLevel;
-  final List<String> toolNames;
-  final Map<String, core_proxy.PermissionLevel> overrides;
+  final core_proxy.AiPermissionMode permissionMode;
+  final core_proxy.RuntimeHostDescriptor host;
+  final List<_HostRequirement> hostRequirements;
   final int mcpStartupTimeoutSeconds;
-
-  List<String> toolsForLevel(core_proxy.PermissionLevel level) {
-    return overrides.entries
-        .where((entry) => entry.value == level)
-        .map((entry) => entry.key)
-        .toList(growable: false)
-      ..sort();
-  }
 }
 
 enum _PermissionMode {
-  allow(core_proxy.PermissionLevel.allow, true),
-  ask(core_proxy.PermissionLevel.ask, true),
-  forbid(core_proxy.PermissionLevel.forbid, false);
+  readOnly(core_proxy.AiPermissionMode.readOnly),
+  workspaceWrite(core_proxy.AiPermissionMode.workspaceWrite),
+  full(core_proxy.AiPermissionMode.full);
 
-  const _PermissionMode(this.level, this.enableTools);
+  const _PermissionMode(this.permissionMode);
 
-  final core_proxy.PermissionLevel level;
-  final bool enableTools;
+  final core_proxy.AiPermissionMode permissionMode;
+
+  String get label {
+    return switch (this) {
+      _PermissionMode.readOnly => '只读',
+      _PermissionMode.workspaceWrite => '读写',
+      _PermissionMode.full => '完整权限',
+    };
+  }
 }
 
 class _PermissionModeSelector extends StatelessWidget {
   const _PermissionModeSelector({
-    required this.selectedLevel,
-    required this.enableTools,
+    required this.selectedMode,
     required this.onSelected,
   });
 
-  final core_proxy.PermissionLevel selectedLevel;
-  final bool enableTools;
+  final core_proxy.AiPermissionMode selectedMode;
   final ValueChanged<_PermissionMode> onSelected;
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final selected = enableTools
-        ? selectedLevel
-        : core_proxy.PermissionLevel.forbid;
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: <Widget>[
-        _ModeChip(
-          label: l10n.allow,
-          selected: selected == core_proxy.PermissionLevel.allow,
-          onTap: () => onSelected(_PermissionMode.allow),
-        ),
-        _ModeChip(
-          label: l10n.settingsToolsAsk,
-          selected: selected == core_proxy.PermissionLevel.ask,
-          onTap: () => onSelected(_PermissionMode.ask),
-        ),
-        _ModeChip(
-          label: l10n.deny,
-          selected: selected == core_proxy.PermissionLevel.forbid,
-          onTap: () => onSelected(_PermissionMode.forbid),
-        ),
+        for (final mode in _PermissionMode.values)
+          _ModeChip(
+            label: mode.label,
+            selected: selectedMode == mode.permissionMode,
+            onTap: () => onSelected(mode),
+          ),
       ],
     );
   }
@@ -336,253 +235,386 @@ class _ModeChip extends StatelessWidget {
   }
 }
 
-class _ToolPermissionGroup extends StatelessWidget {
-  const _ToolPermissionGroup({
-    required this.title,
-    required this.description,
-    required this.level,
-    required this.tools,
-    required this.allToolCount,
-    required this.onAdd,
-    required this.onRemove,
+class _HostAuthorizationList extends StatelessWidget {
+  const _HostAuthorizationList({
+    required this.requirements,
+    required this.onRequest,
   });
 
-  final String title;
-  final String description;
-  final core_proxy.PermissionLevel level;
-  final List<String> tools;
-  final int allToolCount;
-  final VoidCallback onAdd;
-  final ValueChanged<String> onRemove;
+  final List<_HostRequirement> requirements;
+  final ValueChanged<_HostRequirement> onRequest;
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
+    if (requirements.isEmpty) {
+      return const Text('当前设备没有需要用户处理的授权项。');
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        for (final requirement in requirements)
+          _HostAuthorizationTile(
+            requirement: requirement,
+            onRequest: () => onRequest(requirement),
+          ),
+      ],
+    );
+  }
+}
+
+class _HostAuthorizationTile extends StatelessWidget {
+  const _HostAuthorizationTile({
+    required this.requirement,
+    required this.onRequest,
+  });
+
+  final _HostRequirement requirement;
+  final VoidCallback onRequest;
+
+  @override
+  Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final color = level == core_proxy.PermissionLevel.allow
-        ? colorScheme.primary
-        : colorScheme.error;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border.all(color: color.withValues(alpha: 0.28)),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Row(
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: <Widget>[
+          Icon(
+            _statusIcon(requirement.status),
+            color: _statusColor(requirement.status, colorScheme),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Icon(Icons.circle, size: 12, color: color),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        title,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                      const SizedBox(height: 1),
-                      Text(
-                        description,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                          height: 1.25,
-                        ),
-                      ),
-                    ],
+                Text(
+                  requirement.title,
+                  style: textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
-                TextButton.icon(
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                const SizedBox(height: 2),
+                Text(
+                  requirement.description,
+                  style: textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
                   ),
-                  onPressed: allToolCount == 0 ? null : onAdd,
-                  icon: const Icon(Icons.add),
-                  label: Text(l10n.settingsToolsAddTool),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _statusLabel(requirement.status),
+                  style: textTheme.labelMedium?.copyWith(
+                    color: _statusColor(requirement.status, colorScheme),
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            if (tools.isEmpty)
-              Text(
-                l10n.settingsToolsNoToolsInGroup,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              )
-            else
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: <Widget>[
-                  for (final toolName in tools)
-                    _CompactToolChip(
-                      color: color,
-                      toolName: toolName,
-                      onDeleted: () => onRemove(toolName),
-                    ),
-                ],
-              ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 12),
+          FilledButton.tonal(
+            onPressed: requirement.canRequest ? onRequest : null,
+            child: Text(_actionLabel(requirement)),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _CompactToolChip extends StatelessWidget {
-  const _CompactToolChip({
-    required this.color,
-    required this.toolName,
-    required this.onDeleted,
-  });
-
-  final Color color;
-  final String toolName;
-  final VoidCallback onDeleted;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return InputChip(
-      visualDensity: VisualDensity.compact,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      labelPadding: const EdgeInsets.only(left: 6, right: 1),
-      side: BorderSide(color: color.withValues(alpha: 0.28)),
-      backgroundColor: color.withValues(alpha: 0.06),
-      deleteIconColor: theme.colorScheme.onSurfaceVariant,
-      deleteIcon: const Icon(Icons.close, size: 14),
-      label: Text(
-        toolName,
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: theme.colorScheme.onSurface,
-          height: 1.0,
-        ),
-      ),
-      onDeleted: onDeleted,
-    );
-  }
-}
-
-class _ToolSelectorDialog extends StatefulWidget {
-  const _ToolSelectorDialog({
+class _HostRequirement {
+  const _HostRequirement({
+    required this.id,
     required this.title,
-    required this.tools,
-    required this.selectedTools,
+    required this.description,
+    required this.status,
+    required this.action,
   });
 
-  final String title;
-  final List<String> tools;
-  final List<String> selectedTools;
-
-  static Future<List<String>?> show({
-    required BuildContext context,
-    required String title,
-    required List<String> tools,
-    required List<String> selectedTools,
-  }) {
-    return showDialog<List<String>>(
-      context: context,
-      builder: (context) => _ToolSelectorDialog(
-        title: title,
-        tools: tools,
-        selectedTools: selectedTools,
-      ),
+  factory _HostRequirement.fromJson(Map<Object?, Object?> json) {
+    return _HostRequirement(
+      id: json['id'] as String,
+      title: json['title'] as String,
+      description: json['description'] as String,
+      status: json['status'] as String,
+      action: json['action'] as String,
     );
   }
 
-  @override
-  State<_ToolSelectorDialog> createState() => _ToolSelectorDialogState();
+  final String id;
+  final String title;
+  final String description;
+  final String status;
+  final String action;
+
+  bool get canRequest =>
+      status != 'Satisfied' &&
+      (action == 'RuntimePermission' ||
+          action == 'OpenSystemSettings' ||
+          action == 'HostManaged');
+
+  _HostRequirement withStatus(String status) {
+    return _HostRequirement(
+      id: id,
+      title: title,
+      description: description,
+      status: status,
+      action: action,
+    );
+  }
 }
 
-class _ToolSelectorDialogState extends State<_ToolSelectorDialog> {
-  final TextEditingController _searchController = TextEditingController();
-  final Set<String> _pendingTools = <String>{};
+class _PermissionChain extends StatelessWidget {
+  const _PermissionChain({required this.data});
 
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
+  final _ToolSettingsData data;
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final query = _searchController.text.trim().toLowerCase();
-    final selected = widget.selectedTools.toSet();
-    final tools = widget.tools
-        .where((tool) => query.isEmpty || tool.toLowerCase().contains(query))
-        .toList(growable: false);
-    return AlertDialog(
-      title: Text(widget.title),
-      content: SizedBox(
-        width: 520,
-        height: 520,
-        child: Column(
-          children: <Widget>[
-            TextField(
-              controller: _searchController,
-              autofocus: true,
-              decoration: InputDecoration(
-                prefixIcon: const Icon(Icons.search),
-                labelText: l10n.settingsToolsSearchTools,
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: ListView.builder(
-                itemCount: tools.length,
-                itemBuilder: (context, index) {
-                  final toolName = tools[index];
-                  final isSelected = selected.contains(toolName);
-                  final pending = _pendingTools.contains(toolName);
-                  return CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    visualDensity: VisualDensity.compact,
-                    value: isSelected || pending,
-                    title: Text(toolName),
-                    controlAffinity: ListTileControlAffinity.leading,
-                    enabled: !isSelected,
-                    onChanged: isSelected
-                        ? null
-                        : (value) {
-                            setState(() {
-                              if (value == true) {
-                                _pendingTools.add(toolName);
-                              } else {
-                                _pendingTools.remove(toolName);
-                              }
-                            });
-                          },
-                  );
-                },
-              ),
-            ),
-          ],
+    final mode = _modeFor(data.permissionMode);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        _ChainStep(
+          index: '0',
+          title: '应用运行隔离',
+          value: '${data.host.isolation}',
         ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.cancel),
+        _ChainStep(
+          index: '1',
+          title: '系统授权',
+          value: '${data.host.displayName} / ${data.host.platform}',
         ),
-        FilledButton(
-          onPressed: _pendingTools.isEmpty
-              ? null
-              : () => Navigator.of(context).pop(_pendingTools.toList()),
-          child: Text(l10n.ok),
+        _ChainStep(
+          index: '2',
+          title: 'AI 能力限制',
+          value: '${mode.label}：${mode.description}',
+        ),
+        const _ChainStep(
+          index: '3',
+          title: '工具调用确认',
+          value: '按 AI 直接调用的工具执行审批。',
         ),
       ],
     );
   }
+}
+
+class _AdvancedHostSummary extends StatelessWidget {
+  const _AdvancedHostSummary({required this.host});
+
+  final core_proxy.RuntimeHostDescriptor host;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        _InfoRow(label: '当前运行环境', value: host.displayName),
+        _InfoRow(label: '平台', value: '${host.platform}'),
+        _InfoRow(label: '外层隔离', value: '${host.isolation}'),
+        _InfoRow(label: '文件能力', value: host.fileSystemHost ? '已注册' : '未注册'),
+        _InfoRow(label: '终端能力', value: host.terminalHost ? '已注册' : '未注册'),
+        _InfoRow(label: '授权项', value: '${host.onboardingRequirements.length} 项'),
+        _InfoRow(label: '结构化能力', value: '${host.structuredCapabilities.length} 项'),
+      ],
+    );
+  }
+}
+
+class _ChainStep extends StatelessWidget {
+  const _ChainStep({
+    required this.index,
+    required this.title,
+    required this.value,
+  });
+
+  final String index;
+  final String title;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          CircleAvatar(
+            radius: 13,
+            backgroundColor: colorScheme.primaryContainer,
+            child: Text(index, style: textTheme.labelMedium),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  title,
+                  style: textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: <Widget>[
+          SizedBox(
+            width: 96,
+            child: Text(
+              label,
+              style: textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: textTheme.bodyMedium,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HostAuthorizationBridge {
+  static const MethodChannel _channel = MethodChannel('operit/runtime');
+
+  static Future<List<_HostRequirement>> requirements(
+    core_proxy.RuntimeHostDescriptor host,
+  ) async {
+    if (host.onboardingRequirements.isEmpty) {
+      return const <_HostRequirement>[];
+    }
+    final statusById = await _requirementStatus(host.id);
+    return host.onboardingRequirements.map((item) {
+      final requirement = _HostRequirement.fromJson(
+        Map<Object?, Object?>.from(item as Map),
+      );
+      final status = statusById[requirement.id] as String;
+      return requirement.withStatus(status);
+    }).toList(growable: false);
+  }
+
+  static Future<void> request(String hostId, String requirementId) {
+    return _channel.invokeMethod<void>(
+      'hostOnboardingRequestPermission',
+      <String, Object?>{'hostId': hostId, 'requirementId': requirementId},
+    );
+  }
+
+  static Future<Map<String, String>> _requirementStatus(String hostId) async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>(
+      'hostOnboardingPermissionSnapshot',
+      <String, Object?>{'hostId': hostId},
+    );
+    if (result == null) {
+      throw StateError('host onboarding permission snapshot is empty');
+    }
+    return result.map((key, value) {
+      final item = Map<Object?, Object?>.from(value as Map);
+      return MapEntry(key as String, item['status'] as String);
+    });
+  }
+}
+
+String _statusLabel(String status) {
+  return switch (status) {
+    'Satisfied' => '已授予',
+    'Missing' => '未授予',
+    'Unavailable' => '需要由系统处理',
+    _ => status,
+  };
+}
+
+IconData _statusIcon(String status) {
+  return switch (status) {
+    'Satisfied' => Icons.check_circle_rounded,
+    'Missing' => Icons.error_outline_rounded,
+    'Unavailable' => Icons.info_outline_rounded,
+    _ => Icons.help_outline_rounded,
+  };
+}
+
+Color _statusColor(String status, ColorScheme colorScheme) {
+  return switch (status) {
+    'Satisfied' => colorScheme.primary,
+    'Missing' => colorScheme.error,
+    'Unavailable' => colorScheme.tertiary,
+    _ => colorScheme.onSurfaceVariant,
+  };
+}
+
+String _actionLabel(_HostRequirement requirement) {
+  if (requirement.status == 'Satisfied') {
+    return '已授予';
+  }
+  return switch (requirement.action) {
+    'RuntimePermission' => '授予',
+    'OpenSystemSettings' => '打开设置',
+    'HostManaged' => '授予',
+    'None' => '不可操作',
+    _ => '处理',
+  };
+}
+
+class _ModeSummary {
+  const _ModeSummary({
+    required this.label,
+    required this.description,
+  });
+
+  final String label;
+  final String description;
+}
+
+_ModeSummary _modeFor(core_proxy.AiPermissionMode mode) {
+  return switch (mode) {
+    core_proxy.AiPermissionMode.readOnly => const _ModeSummary(
+        label: '只读',
+        description: 'AI 可以读取当前工作区，不能启动写入工具。',
+      ),
+    core_proxy.AiPermissionMode.workspaceWrite => const _ModeSummary(
+        label: '读写',
+        description: 'AI 可以读写当前工作区，应用内沙盒保持开启。',
+      ),
+    core_proxy.AiPermissionMode.full => const _ModeSummary(
+        label: '完整权限',
+        description: 'AI 可以读写当前工作区，并关闭应用内沙盒。',
+      ),
+  };
 }
 
 class _NumberInputDialog extends StatefulWidget {
@@ -711,13 +743,3 @@ class _SectionCard extends StatelessWidget {
     );
   }
 }
-
-String _permissionLevelName(core_proxy.PermissionLevel level) {
-  return level.value;
-}
-
-const Set<String> _hiddenToolNames = <String>{
-  'package_proxy',
-  'proxy',
-  'search',
-};

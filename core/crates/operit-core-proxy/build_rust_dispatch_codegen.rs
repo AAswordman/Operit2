@@ -440,37 +440,37 @@ fn render_object_constructor(object: &SourceObject) -> String {
         }
         ObjectAccess::ContextGetInstanceConstruct => {
             format!(
-                "            let mut object = {}::getInstance(proxy.application.applicationContext.clone());\n",
+                "            let mut object = {}::getInstance(proxy.application.hostManager.clone());\n",
                 object.full_type
             )
         }
         ObjectAccess::ContextRefGetInstanceConstruct => {
             format!(
-                "            let mut object = {}::getInstance(&proxy.application.applicationContext);\n",
+                "            let mut object = {}::getInstance(&proxy.application.hostManager);\n",
                 object.full_type
             )
         }
         ObjectAccess::ResultContextGetInstanceConstruct => {
             format!(
-                "            let mut object = {}::getInstance(proxy.application.applicationContext.clone()).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n",
+                "            let mut object = {}::getInstance(proxy.application.hostManager.clone()).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n",
                 object.full_type
             )
         }
         ObjectAccess::ResultContextRefGetInstanceConstruct => {
             format!(
-                "            let mut object = {}::getInstance(&proxy.application.applicationContext).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n",
+                "            let mut object = {}::getInstance(&proxy.application.hostManager).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n",
                 object.full_type
             )
         }
         ObjectAccess::ContextGetInstanceArcMutexConstruct => {
             format!(
-                "            let object = {}::getInstance(proxy.application.applicationContext.clone());\n",
+                "            let object = {}::getInstance(proxy.application.hostManager.clone());\n",
                 object.full_type
             )
         }
         ObjectAccess::ContextRefGetInstanceArcMutexConstruct => {
             format!(
-                "            let object = {}::getInstance(&proxy.application.applicationContext);\n",
+                "            let object = {}::getInstance(&proxy.application.hostManager);\n",
                 object.full_type
             )
         }
@@ -566,32 +566,32 @@ fn render_object_constructor_for_access(
         }
         ObjectAccess::ContextGetInstanceConstruct => {
             format!(
-                "            let mut {variable_name} = {full_type}::getInstance(proxy.application.applicationContext.clone());\n"
+                "            let mut {variable_name} = {full_type}::getInstance(proxy.application.hostManager.clone());\n"
             )
         }
         ObjectAccess::ContextRefGetInstanceConstruct => {
             format!(
-                "            let mut {variable_name} = {full_type}::getInstance(&proxy.application.applicationContext);\n"
+                "            let mut {variable_name} = {full_type}::getInstance(&proxy.application.hostManager);\n"
             )
         }
         ObjectAccess::ResultContextGetInstanceConstruct => {
             format!(
-                "            let mut {variable_name} = {full_type}::getInstance(proxy.application.applicationContext.clone()).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n"
+                "            let mut {variable_name} = {full_type}::getInstance(proxy.application.hostManager.clone()).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n"
             )
         }
         ObjectAccess::ResultContextRefGetInstanceConstruct => {
             format!(
-                "            let mut {variable_name} = {full_type}::getInstance(&proxy.application.applicationContext).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n"
+                "            let mut {variable_name} = {full_type}::getInstance(&proxy.application.hostManager).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n"
             )
         }
         ObjectAccess::ContextGetInstanceArcMutexConstruct => {
             format!(
-                "            let {variable_name} = {full_type}::getInstance(proxy.application.applicationContext.clone());\n"
+                "            let {variable_name} = {full_type}::getInstance(proxy.application.hostManager.clone());\n"
             )
         }
         ObjectAccess::ContextRefGetInstanceArcMutexConstruct => {
             format!(
-                "            let {variable_name} = {full_type}::getInstance(&proxy.application.applicationContext);\n"
+                "            let {variable_name} = {full_type}::getInstance(&proxy.application.hostManager);\n"
             )
         }
         ObjectAccess::StorePathsConstruct => {

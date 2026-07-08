@@ -8,14 +8,14 @@ use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
     MessageProcessingController, MessageProcessingExecution, MessageProcessingHookParams,
     MessageProcessingPlugin, MessageProcessingPluginRegistry,
 };
-use crate::core::tools::packTool::PackageManager::PackageManager;
-use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_MESSAGE_PROCESSING;
-use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_tools::tools::packTool::PackageManager::PackageManager;
+use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_MESSAGE_PROCESSING;
+use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
     decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgMessageProcessingHookRegistration,
 };
-use crate::util::stream::HotStream::MutableSharedStreamImpl;
-use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
+use operit_util::stream::HotStream::MutableSharedStreamImpl;
+use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static MESSAGE_PROCESSING_HOOKS: OnceLock<Mutex<Vec<ToolPkgMessageProcessingHookRegistration>>> =
     OnceLock::new();

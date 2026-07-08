@@ -1,12 +1,11 @@
 use crate::output::CoreCommandOutput;
-use operit_runtime::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::core::tools::AIToolHandler::{AIToolHandler, ToolRegistrationVisibility};
-use operit_runtime::core::tools::ToolPermissionSystem::{PermissionLevel, ToolPermissionSystem};
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+use operit_host_api::HostManager::HostManager;
+use operit_tools::tools::AIToolHandler::{AIToolHandler, ToolRegistrationVisibility};
 
 pub fn run_tool_command(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -45,7 +44,7 @@ pub fn run_tool_command(
 }
 
 fn list_tools(
-    context: OperitApplicationContext,
+    context: HostManager,
     scope: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -68,7 +67,7 @@ fn list_tools(
 }
 
 fn show_tool(
-    context: OperitApplicationContext,
+    context: HostManager,
     tool_name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -77,19 +76,6 @@ fn show_tool(
     output.push_stdout_line(format!("registered={}", handler.hasToolExecutor(tool_name)));
     let visibility: Option<ToolRegistrationVisibility> = handler.getToolVisibility(tool_name);
     output.push_stdout_line(format!("visibility={}", format_tool_visibility(visibility)));
-
-    let permission_system = ToolPermissionSystem::getInstance();
-    let permission: PermissionLevel = permission_system
-        .getToolPermission(tool_name)
-        .map_err(|error| error.to_string())?;
-    output.push_stdout_line(format!("permission={}", permission.name()));
-    let override_permission: Option<PermissionLevel> = permission_system
-        .getToolPermissionOverride(tool_name)
-        .map_err(|error| error.to_string())?;
-    output.push_stdout_line(format!(
-        "permissionOverride={}",
-        format_permission_override(override_permission)
-    ));
     Ok(())
 }
 
@@ -100,15 +86,8 @@ fn format_tool_visibility(visibility: Option<ToolRegistrationVisibility>) -> Str
     }
 }
 
-fn format_permission_override(permission: Option<PermissionLevel>) -> String {
-    match permission {
-        Some(level) => level.name().to_string(),
-        None => "none".to_string(),
-    }
-}
-
 pub fn exec_tool(
-    context: OperitApplicationContext,
+    context: HostManager,
     tool_name: &str,
     params_json: &str,
     output: &mut CoreCommandOutput,
@@ -158,7 +137,7 @@ fn print_tool_execution_result(
     }
 }
 
-fn tool_handler(context: &OperitApplicationContext) -> AIToolHandler {
+fn tool_handler(context: &HostManager) -> AIToolHandler {
     AIToolHandler::getInstance(context.clone())
 }
 

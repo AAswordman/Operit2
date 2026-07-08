@@ -9,8 +9,10 @@ use grep_regex::RegexMatcherBuilder;
 use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
 use ignore::WalkBuilder;
 use operit_host_api::{
-    FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
-    GrepCodeResult, GrepFileMatch, GrepLineMatch, HostEnvironmentDescriptor, HostError, HostResult,
+    CapabilityOperation, CapabilityScope, FileEntry, FileExistence, FileInfo, FileSystemHost,
+    FindFilesRequest, GrepCodeRequest, GrepCodeResult, GrepFileMatch, GrepLineMatch,
+    HostCapability, HostEnvironmentDescriptor, HostError, HostIsolation, HostPlatform,
+    HostPrivilege, HostResult,
 };
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -476,6 +478,9 @@ fn appleEnvironmentDescriptor() -> HostEnvironmentDescriptor {
     HostEnvironmentDescriptor {
         id: applePlatformName().to_string(),
         displayName: appleDisplayName().to_string(),
+        platform: appleHostPlatform(),
+        privilege: HostPrivilege::Normal,
+        isolation: HostIsolation::OsAppSandbox,
         pathStyleDescriptionEn:
             "Use absolute Apple platform paths such as /Users/Name/Documents or an app sandbox path."
                 .to_string(),
@@ -505,6 +510,43 @@ fn appleEnvironmentDescriptor() -> HostEnvironmentDescriptor {
             "runtime.storage".to_string(),
             "runtime.sqlite".to_string(),
         ],
+        structuredCapabilities: vec![
+            HostCapability {
+                id: "fs.read".to_string(),
+                displayName: "文件读取".to_string(),
+                scope: CapabilityScope::FileSystem,
+                operations: vec![CapabilityOperation::Read],
+            },
+            HostCapability {
+                id: "fs.write".to_string(),
+                displayName: "文件写入".to_string(),
+                scope: CapabilityScope::FileSystem,
+                operations: vec![CapabilityOperation::Write],
+            },
+            HostCapability {
+                id: "runtime.process".to_string(),
+                displayName: "进程执行".to_string(),
+                scope: CapabilityScope::Runtime,
+                operations: vec![CapabilityOperation::Execute],
+            },
+        ],
+        onboardingRequirements: Vec::new(),
+        workspaceRoots: Vec::new(),
+    }
+}
+
+fn appleHostPlatform() -> HostPlatform {
+    #[cfg(target_os = "ios")]
+    {
+        HostPlatform::Ios
+    }
+    #[cfg(target_os = "macos")]
+    {
+        HostPlatform::Macos
+    }
+    #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+    {
+        HostPlatform::Other
     }
 }
 

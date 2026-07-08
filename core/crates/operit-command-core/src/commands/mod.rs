@@ -20,6 +20,7 @@ mod workspace;
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 
+/// Dispatches a top-level core command family into its command module.
 pub fn run_core_command(
     application: &mut OperitApplication,
     args: &[String],
@@ -31,44 +32,32 @@ pub fn run_core_command(
     }
 
     match args[0].as_str() {
-        "tool" => {
-            tool::run_tool_command(application.applicationContext.clone(), &args[1..], output)
-        }
+        "tool" => tool::run_tool_command(application.hostManager.clone(), &args[1..], output),
         "package" => {
-            package::run_package_command(application.applicationContext.clone(), &args[1..], output)
+            package::run_package_command(application.hostManager.clone(), &args[1..], output)
         }
         "plugin" => {
-            plugin::run_plugin_command(application.applicationContext.clone(), &args[1..], output)
+            plugin::run_plugin_command(application.hostManager.clone(), &args[1..], output)
         }
-        "skill" => {
-            skill::run_skill_command(application.applicationContext.clone(), &args[1..], output)
-        }
-        "mcp" => mcp::run_mcp_command(application.applicationContext.clone(), &args[1..], output),
+        "skill" => skill::run_skill_command(application.hostManager.clone(), &args[1..], output),
+        "mcp" => mcp::run_mcp_command(application.hostManager.clone(), &args[1..], output),
         "market" => {
-            market::run_market_command(application.applicationContext.clone(), &args[1..], output)
+            market::run_market_command(application.hostManager.clone(), &args[1..], output)
         }
-        "host" => {
-            host::run_host_command(application.applicationContext.clone(), &args[1..], output)
-        }
+        "host" => host::run_host_command(application.hostManager.clone(), &args[1..], output),
         "log" => log::run_log_command(&args[1..], output),
-        "prefs" => {
-            prefs::run_prefs_command(application.applicationContext.clone(), &args[1..], output)
+        "prefs" => prefs::run_prefs_command(application.hostManager.clone(), &args[1..], output),
+        "approval" => {
+            approval::run_approval_command(application.hostManager.clone(), &args[1..], output)
         }
-        "approval" => approval::run_approval_command(
-            application.applicationContext.clone(),
-            &args[1..],
-            output,
-        ),
-        "tag" => tag::run_tag_command(application.applicationContext.clone(), &args[1..], output),
+        "tag" => tag::run_tag_command(application.hostManager.clone(), &args[1..], output),
         "memory" => {
-            memory::run_memory_command(application.applicationContext.clone(), &args[1..], output)
+            memory::run_memory_command(application.hostManager.clone(), &args[1..], output)
         }
         "character" => people::run_character_command(application, &args[1..], output),
         "group" => people::run_group_command(application, &args[1..], output),
         "active-prompt" => people::run_active_prompt_command(application, &args[1..], output),
-        "model" => {
-            model::run_model_command(application.applicationContext.clone(), &args[1..], output)
-        }
+        "model" => model::run_model_command(application.hostManager.clone(), &args[1..], output),
         "chat" => chat::run_chat_command(application, &args[1..], output),
         "workspace" => workspace::run_workspace_command(application, &args[1..], output),
         "update" => update::run_update_command(&args[1..], output),

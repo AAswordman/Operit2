@@ -28,12 +28,14 @@ pub struct SyncClock {
 }
 
 impl SyncClock {
+    /// Creates an empty vector clock with no device sequence entries.
     pub fn empty() -> Self {
         Self {
             sequences: BTreeMap::new(),
         }
     }
 
+    /// Returns the last known sequence for a device.
     pub fn sequenceFor(&self, deviceId: &str) -> i64 {
         match self.sequences.get(deviceId) {
             Some(sequence) => *sequence,
@@ -41,6 +43,7 @@ impl SyncClock {
         }
     }
 
+    /// Records the last known sequence for a device.
     pub fn setSequence(&mut self, deviceId: impl Into<String>, sequence: i64) {
         self.sequences.insert(deviceId.into(), sequence);
     }
@@ -76,6 +79,7 @@ pub struct SyncOperationStore {
 }
 
 impl SyncOperationStore {
+    /// Creates a sync operation store over an explicit storage host and root path.
     pub fn new(storageHost: Arc<dyn RuntimeStorageHost>, rootPath: impl Into<String>) -> Self {
         Self {
             storageHost,
@@ -83,6 +87,7 @@ impl SyncOperationStore {
         }
     }
 
+    /// Creates the store inside the canonical runtime sync directory.
     pub fn native(paths: RuntimeStorePaths) -> Self {
         Self::new(
             defaultRuntimeStorageHost(),
@@ -90,6 +95,7 @@ impl SyncOperationStore {
         )
     }
 
+    /// Creates the store inside the adjacent sync directory beside runtime data.
     #[allow(non_snake_case)]
     pub fn adjacentTo(paths: RuntimeStorePaths) -> Self {
         Self::new(
@@ -98,6 +104,7 @@ impl SyncOperationStore {
         )
     }
 
+    /// Appends a local operation and advances the local device sequence.
     pub fn appendLocalOperation(
         &self,
         originDeviceId: &str,
@@ -123,6 +130,7 @@ impl SyncOperationStore {
         Ok(op)
     }
 
+    /// Returns the stable local device identifier for this sync store.
     pub fn localDeviceId(&self) -> Result<String, SyncOperationStoreError> {
         let path = self.localDeviceIdPath();
         if self.storageHost.exists(&path)? {
@@ -142,6 +150,7 @@ impl SyncOperationStore {
         Ok(deviceId)
     }
 
+    /// Appends an already materialized sync operation to the operation log.
     pub fn appendOperation(
         &self,
         operation: &SyncOperation,
@@ -175,6 +184,7 @@ impl SyncOperationStore {
         Ok(())
     }
 
+    /// Returns operations whose sequence is newer than the provided clock.
     pub fn operationsSince(
         &self,
         clock: &SyncClock,
@@ -205,14 +215,17 @@ impl SyncOperationStore {
         Ok(out)
     }
 
+    /// Reads the local vector clock from storage.
     pub fn localClock(&self) -> Result<SyncClock, SyncOperationStoreError> {
         self.readJson(&self.clockPath())
     }
 
+    /// Writes the local vector clock to storage.
     pub fn writeLocalClock(&self, clock: &SyncClock) -> Result<(), SyncOperationStoreError> {
         self.writeJson(&self.clockPath(), clock)
     }
 
+    /// Persists a local observation of a sync operation with origin metadata.
     #[allow(non_snake_case)]
     pub fn observeOperation(
         &self,
@@ -329,6 +342,7 @@ fn storageSafeId(value: &str) -> String {
         .collect()
 }
 
+/// Compacts operation streams while preserving delete boundaries and latest entity state.
 #[allow(non_snake_case)]
 pub fn compactSyncOperations(operations: Vec<SyncOperation>) -> Vec<SyncOperation> {
     let mut latestUpserts = BTreeMap::<(String, String, String, String), i64>::new();

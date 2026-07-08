@@ -1,27 +1,27 @@
-use crate::api::chat::EnhancedAIService::EnhancedAIService;
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
-use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use crate::core::chat::AIMessageManager::AIMessageManager;
-use crate::core::files::PathMapper::PathMapper;
-use crate::core::tools::AIToolHandler::AIToolHandler;
-use crate::data::model::ActivePrompt::ActivePrompt;
-use crate::data::model::AttachmentInfo::AttachmentInfo;
-use crate::data::model::ChatDisplayWindowState::ChatDisplayWindowState;
-use crate::data::model::ChatHistory::ChatHistory;
-use crate::data::model::ChatHistoryListItem::ChatHistoryListItem;
-use crate::data::model::ChatMainState::ChatMainState;
-use crate::data::model::ChatMessage::ChatMessage;
-use crate::data::model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
-use crate::data::model::ChatTurnOptions::ChatTurnOptions;
-use crate::data::model::FunctionType::FunctionType;
-use crate::data::model::InputProcessingState::InputProcessingState;
-use crate::data::model::PromptFunctionType::PromptFunctionType;
+use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_model::ActivePrompt::ActivePrompt;
+use operit_model::AttachmentInfo::AttachmentInfo;
+use operit_model::ChatDisplayWindowState::ChatDisplayWindowState;
+use operit_model::ChatHistory::ChatHistory;
+use operit_model::ChatHistoryListItem::ChatHistoryListItem;
+use operit_model::ChatMainState::ChatMainState;
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
+use operit_model::ChatTurnOptions::ChatTurnOptions;
+use operit_model::FunctionType::FunctionType;
+use operit_model::InputProcessingState::InputProcessingState;
+use operit_model::PromptFunctionType::PromptFunctionType;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
-use crate::data::repository::ChatHistoryManager::ChatImportResult;
-use crate::data::skill::SkillRepository::SkillRepository;
+use operit_store::repository::ChatHistoryManager::ChatImportResult;
+use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use crate::services::core::MessageProcessingDelegate::MessageProcessingDelegate;
@@ -30,10 +30,10 @@ use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
     WorkspaceBackupManager, WorkspaceFileChange,
 };
 use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
-use crate::util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
-use crate::util::OCRUtils::{OCRUtils, Quality as OCRQuality};
-use crate::util::OperitPaths;
-use operit_store::PreferencesDataStore::{StateFlow, combine3, combine5};
+use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
+use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};
+use operit_util::OperitPaths;
+use operit_store::PreferencesDataStore::{combine3, combine5, StateFlow};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -169,6 +169,7 @@ pub struct ChatServiceCore {
 }
 
 impl ChatServiceCore {
+    /// Creates a chat service core for the selected chat target mode.
     pub fn new(selectionMode: ChatSelectionMode) -> Self {
         let mut core = Self {
             selectionMode: selectionMode.clone(),
@@ -225,6 +226,7 @@ impl ChatServiceCore {
         }
     }
 
+    /// Sends a user-authored message through the active chat runtime.
     pub async fn sendUserMessage(
         &mut self,
         promptFunctionType: PromptFunctionType,
@@ -264,6 +266,7 @@ impl ChatServiceCore {
         }
     }
 
+    /// Cancels generation for the current chat.
     pub async fn cancelCurrentMessage(&mut self) {
         if let Some(chatId) = self.chatHistoryDelegate.currentChatId.clone() {
             self.messageProcessingDelegate.cancelMessage(chatId).await;
@@ -282,6 +285,7 @@ impl ChatServiceCore {
         MarkdownRenderEventStream::fromContent(content)
     }
 
+    /// Creates a new chat and makes it available through chat history state.
     pub fn createNewChat(
         &mut self,
         characterCardName: Option<String>,
@@ -301,6 +305,7 @@ impl ChatServiceCore {
         self.syncTokenStatisticsForCurrentChat();
     }
 
+    /// Switches the active chat and refreshes its runtime state.
     pub fn switchChat(&mut self, chatId: String) {
         self.chatHistoryDelegate.switchChat(chatId, true);
         self.syncTokenStatisticsForCurrentChat();
@@ -341,6 +346,7 @@ impl ChatServiceCore {
 
     pub fn syncCurrentChatIdToGlobal(&mut self) {}
 
+    /// Deletes a chat history and updates current chat selection.
     pub fn deleteChatHistory(&mut self, chatId: String) {
         self.chatHistoryDelegate.deleteChatHistory(chatId);
     }
@@ -511,7 +517,7 @@ impl ChatServiceCore {
     pub fn getBranches(
         &self,
         parentChatId: String,
-    ) -> Vec<crate::data::model::ChatHistory::ChatHistory> {
+    ) -> Vec<operit_model::ChatHistory::ChatHistory> {
         self.chatHistoryDelegate.getBranches(parentChatId)
     }
 
@@ -541,6 +547,7 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.clearCurrentChat();
     }
 
+    /// Serializes all chat histories into a JSON archive string.
     #[allow(non_snake_case)]
     pub fn exportChatHistoriesToJson(&self) -> Result<String, String> {
         self.chatHistoryDelegate
@@ -549,6 +556,7 @@ impl ChatServiceCore {
             .map_err(|error| error.to_string())
     }
 
+    /// Imports chat histories from a JSON archive string.
     #[allow(non_snake_case)]
     pub fn importChatHistoriesFromJson(
         &mut self,
@@ -574,6 +582,7 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.updateChatTitle(chatId, title);
     }
 
+    /// Binds a chat to an existing workspace path.
     #[allow(non_snake_case)]
     pub fn bindChatToWorkspace(&mut self, chatId: String, workspace: String) -> Result<(), String> {
         let workspace = PathMapper::normalizeWorkspaceBindingPath(&workspace)?;
@@ -651,6 +660,7 @@ impl ChatServiceCore {
         true
     }
 
+    /// Rolls the current chat back to a prior message index.
     #[allow(non_snake_case)]
     pub fn rollbackToMessage(&mut self, index: usize) -> Option<String> {
         let Some(targetMessage) = self.chatHistoryDelegate.chatHistory.get(index).cloned() else {
@@ -1139,14 +1149,14 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.currentChatIdFlow()
     }
 
-    pub fn chatHistories(&self) -> &Vec<crate::data::model::ChatHistory::ChatHistory> {
+    pub fn chatHistories(&self) -> &Vec<operit_model::ChatHistory::ChatHistory> {
         &self.chatHistoryDelegate.chatHistories
     }
 
     #[allow(non_snake_case)]
     pub fn chatHistoriesFlow(
         &self,
-    ) -> StateFlow<Vec<crate::data::model::ChatHistory::ChatHistory>> {
+    ) -> StateFlow<Vec<operit_model::ChatHistory::ChatHistory>> {
         self.chatHistoryDelegate.chatHistoriesFlow()
     }
 

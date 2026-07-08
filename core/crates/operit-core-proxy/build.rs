@@ -24,15 +24,36 @@ use build_scanner::*;
 use build_type_resolver::*;
 use build_utils::*;
 
+/// Scans runtime sources and writes generated proxy and dispatch artifacts.
 fn main() {
     let manifest_dir =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let runtime_src = manifest_dir.join("../operit-runtime/src");
-    let store_src = manifest_dir.join("../operit-store/src");
-    let serializable_type_definitions = collect_serializable_type_definitions(&runtime_src);
-    let mut error_type_definitions =
-        collect_error_type_definitions(&runtime_src, "operit_runtime");
-    error_type_definitions.extend(collect_error_type_definitions(&store_src, "operit_store"));
+    let runtime_root = SourceRoot::new(manifest_dir.join("../operit-runtime/src"), "operit_runtime");
+    let model_root = SourceRoot::new(manifest_dir.join("../operit-model/src"), "operit_model");
+    let store_root = SourceRoot::new(manifest_dir.join("../operit-store/src"), "operit_store");
+    let util_root = SourceRoot::new(manifest_dir.join("../operit-util/src"), "operit_util");
+    let tools_root = SourceRoot::new(manifest_dir.join("../operit-tools/src"), "operit_tools");
+    let providers_root =
+        SourceRoot::new(manifest_dir.join("../operit-providers/src"), "operit_providers");
+    let host_api_root =
+        SourceRoot::new(manifest_dir.join("../operit-host-api/src"), "operit_host_api");
+    let source_roots = vec![
+        runtime_root.clone(),
+        model_root,
+        store_root.clone(),
+        util_root,
+        tools_root.clone(),
+        providers_root.clone(),
+        host_api_root,
+    ];
+    let serializable_type_definitions = collect_serializable_type_definitions(&source_roots);
+    let mut error_type_definitions = HashMap::new();
+    for source_root in &source_roots {
+        error_type_definitions.extend(collect_error_type_definitions(
+            source_root.as_path(),
+            &source_root.crate_name,
+        ));
+    }
     let serializable_types = serializable_type_definitions
         .iter()
         .filter(|(_, ty)| ty.supports_serialize)
@@ -43,9 +64,9 @@ fn main() {
         .filter(|(_, ty)| ty.supports_deserialize)
         .map(|(name, _)| name.clone())
         .collect::<HashSet<_>>();
-    let type_registry = collect_type_registry(&runtime_src);
-    let object_specs = object_specs(&runtime_src);
-    let public_object_types = collect_public_object_types(&runtime_src);
+    let type_registry = collect_type_registry(&source_roots);
+    let object_specs = object_specs(&runtime_root, &store_root, &tools_root, &providers_root);
+    let public_object_types = collect_public_object_types(&source_roots);
     for spec in &object_specs {
         println!("cargo:rerun-if-changed={}", spec.source_path.display());
     }

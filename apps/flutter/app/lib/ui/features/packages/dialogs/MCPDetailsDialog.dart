@@ -265,7 +265,7 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
     });
     try {
       final metadata = _metadata;
-      final generated = await widget.clients.mcpRepository
+      final generated = await widget.clients.permissionsMcpRuntimeMcpRepository
           .generatePluginDescription(
             pluginId: widget.serverId,
             pluginName: metadata.name,
@@ -276,7 +276,7 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
         author: metadata.author,
         version: metadata.version,
       );
-      await widget.clients.mcpLocalServer.addOrUpdatePluginMetadata(
+      await widget.clients.permissionsMcpRuntimeMcpLocalServer.addOrUpdatePluginMetadata(
         pluginId: widget.serverId,
         metadata: updatedMetadata,
       );
@@ -333,7 +333,7 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
     });
     try {
       await killMcpServer(clients: widget.clients, serverId: widget.serverId);
-      await widget.clients.mcpLocalServer.removeMcpServer(
+      await widget.clients.permissionsMcpRuntimeMcpLocalServer.removeMcpServer(
         serverId: widget.serverId,
       );
       await widget.onConfigSaved();
@@ -565,7 +565,7 @@ class _MCPMetadataEditDialogState extends State<_MCPMetadataEditDialog> {
       _error = null;
     });
     try {
-      await widget.clients.mcpLocalServer.addOrUpdatePluginMetadata(
+      await widget.clients.permissionsMcpRuntimeMcpLocalServer.addOrUpdatePluginMetadata(
         pluginId: widget.serverId,
         metadata: core_proxy.PluginMetadata(
           name: _nameController.text.trim(),
@@ -836,7 +836,7 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
         autoApprove: _lineList(_autoApproveController.text),
         env: _remote ? <String, String>{} : env,
       );
-      final saved = await widget.clients.mcpLocalServer.savePluginConfig(
+      final saved = await widget.clients.permissionsMcpRuntimeMcpLocalServer.savePluginConfig(
         pluginId: widget.serverId,
         configJson: jsonEncode(<String, Object?>{
           'mcpServers': <String, Object?>{widget.serverId: server.toJson()},

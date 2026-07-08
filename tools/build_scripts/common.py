@@ -12,6 +12,10 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 FLUTTER_APP_DIR = REPO_ROOT / "apps" / "flutter" / "app"
+WEB_ACCESS_APP_DIR = REPO_ROOT / "apps" / "web_access"
+WEB_ACCESS_SOURCE_DIR = WEB_ACCESS_APP_DIR / "web"
+WEB_ACCESS_BUNDLE_DIR = WEB_ACCESS_APP_DIR / "build" / "bundle"
+WEB_ACCESS_FLUTTER_STAGE_DIR = FLUTTER_APP_DIR / "web"
 RELEASE_DIR = REPO_ROOT / "tools" / "release"
 DIST_DIR = RELEASE_DIR / "dist"
 ANDROID_DIR = FLUTTER_APP_DIR / "android"
@@ -37,6 +41,24 @@ def reset_dir(path: Path) -> None:
     if path.exists():
         shutil.rmtree(path)
     path.mkdir(parents=True, exist_ok=True)
+
+
+# Copies Web Access source assets into Flutter's web staging directory.
+def stage_web_access_source() -> None:
+    if not WEB_ACCESS_SOURCE_DIR.is_dir():
+        raise RuntimeError(f"Web Access source directory not found: {WEB_ACCESS_SOURCE_DIR}")
+    reset_dir(WEB_ACCESS_FLUTTER_STAGE_DIR)
+    shutil.copytree(WEB_ACCESS_SOURCE_DIR, WEB_ACCESS_FLUTTER_STAGE_DIR, dirs_exist_ok=True)
+
+
+# Verifies the shared Web Access bundle has been built.
+def require_web_access_bundle() -> None:
+    index = WEB_ACCESS_BUNDLE_DIR / "index.html"
+    if not index.is_file():
+        raise RuntimeError(
+            "Web Access bundle not found: "
+            f"{WEB_ACCESS_BUNDLE_DIR}. Run tools/build_scripts/build_flutter_web_access.py before building this product."
+        )
 
 
 def copy_required_file(source: Path, destination: Path) -> None:

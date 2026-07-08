@@ -92,10 +92,8 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     return _AgentInputMenuData(
       enableMemoryAutoUpdate: await _clients.preferencesApiPreferences
           .enableMemoryAutoUpdateFlowSnapshot(),
-      enableTools: await _clients.preferencesApiPreferences
-          .enableToolsFlowSnapshot(),
-      permissionLevel: await _clients.permissionsToolPermissionSystem
-          .getMasterSwitch(),
+      permissionMode: await _clients.permissionsToolPermissionSystem
+          .getAiPermissionMode(),
       disableStreamOutput: await _clients.preferencesApiPreferences
           .disableStreamOutputFlowSnapshot(),
       disableUserPreferenceDescription: await _clients.preferencesApiPreferences
@@ -127,11 +125,8 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   }
 
   Future<void> _setPermissionMode(_ToolPermissionMode mode) async {
-    await _clients.preferencesApiPreferences.saveEnableTools(
-      isEnabled: mode.enableTools,
-    );
-    await _clients.permissionsToolPermissionSystem.saveMasterSwitch(
-      level: mode.permissionLevel,
+    await _clients.permissionsToolPermissionSystem.saveAiPermissionMode(
+      mode: mode.permissionMode,
     );
     _reloadSettings();
   }
@@ -301,16 +296,14 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
 class _AgentInputMenuData {
   const _AgentInputMenuData({
     required this.enableMemoryAutoUpdate,
-    required this.enableTools,
-    required this.permissionLevel,
+    required this.permissionMode,
     required this.disableStreamOutput,
     required this.disableUserPreferenceDescription,
     required this.pluginToggles,
   });
 
   final bool enableMemoryAutoUpdate;
-  final bool enableTools;
-  final core_proxy.PermissionLevel permissionLevel;
+  final core_proxy.AiPermissionMode permissionMode;
   final bool disableStreamOutput;
   final bool disableUserPreferenceDescription;
   final List<core_proxy.InputMenuToggleDefinitionSnapshot> pluginToggles;
@@ -325,13 +318,11 @@ class _AgentInputMenuData {
   }
 
   _ToolPermissionMode get toolPermissionMode {
-    if (!enableTools) {
-      return _ToolPermissionMode.forbid;
-    }
-    return switch (permissionLevel) {
-      core_proxy.PermissionLevel.allow => _ToolPermissionMode.allow,
-      core_proxy.PermissionLevel.ask => _ToolPermissionMode.ask,
-      core_proxy.PermissionLevel.forbid => _ToolPermissionMode.forbid,
+    return switch (permissionMode) {
+      core_proxy.AiPermissionMode.readOnly => _ToolPermissionMode.readOnly,
+      core_proxy.AiPermissionMode.workspaceWrite =>
+        _ToolPermissionMode.workspaceWrite,
+      core_proxy.AiPermissionMode.full => _ToolPermissionMode.full,
     };
   }
 
@@ -344,15 +335,14 @@ class _AgentInputMenuData {
 }
 
 enum _ToolPermissionMode {
-  forbid('禁用', false, core_proxy.PermissionLevel.forbid),
-  ask('询问', true, core_proxy.PermissionLevel.ask),
-  allow('允许', true, core_proxy.PermissionLevel.allow);
+  readOnly('只读', core_proxy.AiPermissionMode.readOnly),
+  workspaceWrite('读写', core_proxy.AiPermissionMode.workspaceWrite),
+  full('完整', core_proxy.AiPermissionMode.full);
 
-  const _ToolPermissionMode(this.label, this.enableTools, this.permissionLevel);
+  const _ToolPermissionMode(this.label, this.permissionMode);
 
   final String label;
-  final bool enableTools;
-  final core_proxy.PermissionLevel permissionLevel;
+  final core_proxy.AiPermissionMode permissionMode;
 }
 
 class _MenuSection extends StatelessWidget {

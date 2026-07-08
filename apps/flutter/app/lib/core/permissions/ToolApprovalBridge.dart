@@ -118,6 +118,6 @@ String _resultName(ToolApprovalResult result) {
   return switch (result) {
     ToolApprovalResult.allow => 'allow',
     ToolApprovalResult.deny => 'deny',
-    ToolApprovalResult.alwaysAllow => 'always_allow',
+    ToolApprovalResult.allowSession => 'allow_session',
   };
 }

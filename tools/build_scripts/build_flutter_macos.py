@@ -15,6 +15,7 @@ from common import (
     generate_dart_proxy_artifacts,
     prepare_python_command,
     require_command,
+    require_web_access_bundle,
     run,
 )
 
@@ -46,6 +47,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    require_web_access_bundle()
     os.environ.setdefault("RUSTFLAGS", "-Awarnings")
     typescript_version = os.environ.get("TYPESCRIPT_VERSION", "5.9.3")
 

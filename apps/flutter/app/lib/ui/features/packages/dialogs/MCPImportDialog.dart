@@ -236,7 +236,7 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
     }
     await _run(() async {
       final lifecycles = _serverLifecyclesFromConfig(jsonConfig);
-      final count = await widget.clients.mcpLocalServer.mergeConfigFromJson(
+      final count = await widget.clients.permissionsMcpRuntimeMcpLocalServer.mergeConfigFromJson(
         jsonConfig: jsonConfig,
       );
       await _applyImportedServerLifecycles(lifecycles);
@@ -247,7 +247,7 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
   Future<void> _mergeFormConfig(String jsonConfig) async {
     await _run(() async {
       final lifecycles = _serverLifecyclesFromConfig(jsonConfig);
-      final count = await widget.clients.mcpLocalServer.mergeConfigFromJson(
+      final count = await widget.clients.permissionsMcpRuntimeMcpLocalServer.mergeConfigFromJson(
         jsonConfig: jsonConfig,
       );
       await _applyImportedServerLifecycles(lifecycles);
@@ -276,7 +276,7 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
       final pluginId = _pluginIdController.text.trim();
       final name = _nameController.text.trim();
       if (_mode == _MCPImportMode.zip) {
-        return widget.clients.mcpRepository
+        return widget.clients.permissionsMcpRuntimeMcpRepository
             .installMcpServerFromZipForFlutter(
               pluginId: pluginId,
               zipPath: _zipFile!.path,
@@ -289,7 +289,7 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
               return path;
             });
       }
-      return widget.clients.mcpRepository
+      return widget.clients.permissionsMcpRuntimeMcpRepository
           .installMcpServerWithObjectForFlutter(
             pluginId: pluginId,
             repoUrl: _repoUrlController.text.trim(),

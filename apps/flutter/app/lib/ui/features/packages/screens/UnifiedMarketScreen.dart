@@ -308,8 +308,8 @@ class _MarketListPaneState extends State<_MarketListPane> {
   bool _searchLoading = false;
   int _searchGeneration = 0;
 
-  GeneratedApiMarketStatsApiServiceCoreProxy get _market =>
-      widget.clients.apiMarketStatsApiService;
+  GeneratedProvidersMarketStatsApiServiceCoreProxy get _market =>
+      widget.clients.providersMarketStatsApiService;
 
   @override
   void initState() {
@@ -627,7 +627,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
     if (repoUrl.isEmpty) {
       throw StateError('技能缺少仓库地址');
     }
-    final result = await widget.clients.skillRepository
+    final result = await widget.clients.permissionsSkillRuntimeSkillRepository
         .importSkillFromGitHubRepo(repoUrl: repoUrl);
     if (!mounted) {
       return;
@@ -642,7 +642,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
     if (repoUrl.isEmpty) {
       throw StateError('MCP 缺少仓库地址');
     }
-    final result = await widget.clients.mcpRepository
+    final result = await widget.clients.permissionsMcpRuntimeMcpRepository
         .installMcpServerWithObjectForFlutter(
           pluginId: _safePackageId(item.title),
           repoUrl: repoUrl,
@@ -684,8 +684,8 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
   List<core_proxy.MarketPublisherEntrySummary> _entries = <core_proxy.MarketPublisherEntrySummary>[];
   List<core_proxy.MarketNotification> _notifications = <core_proxy.MarketNotification>[];
 
-  GeneratedApiMarketStatsApiServiceCoreProxy get _market =>
-      widget.clients.apiMarketStatsApiService;
+  GeneratedProvidersMarketStatsApiServiceCoreProxy get _market =>
+      widget.clients.providersMarketStatsApiService;
 
   @override
   void initState() {
@@ -1269,8 +1269,8 @@ class _MarketCategoriesPaneState extends State<_MarketCategoriesPane> {
   String? _errorMessage;
   List<core_proxy.MarketCategoryInfo> _categories = <core_proxy.MarketCategoryInfo>[];
 
-  GeneratedApiMarketStatsApiServiceCoreProxy get _market =>
-      widget.clients.apiMarketStatsApiService;
+  GeneratedProvidersMarketStatsApiServiceCoreProxy get _market =>
+      widget.clients.providersMarketStatsApiService;
 
   @override
   void initState() {
@@ -1670,7 +1670,7 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
                 tokenType: 'bearer',
                 grantedScope: null,
               );
-              final apiUser = await widget.clients.apiMarketStatsApiService
+              final apiUser = await widget.clients.providersMarketStatsApiService
                   .getCurrentGithubUser();
               await _githubAuth.saveAuthInfo(
                 accessToken: token,

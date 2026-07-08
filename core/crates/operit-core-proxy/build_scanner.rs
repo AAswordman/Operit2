@@ -1,73 +1,80 @@
 use super::*;
 
-pub(crate) fn object_specs(runtime_src: &Path) -> Vec<ObjectSpec> {
+pub(crate) fn object_specs(
+    runtime_root: &SourceRoot,
+    store_root: &SourceRoot,
+    tools_root: &SourceRoot,
+    providers_root: &SourceRoot,
+) -> Vec<ObjectSpec> {
     let mut specs = Vec::new();
     specs.push(required_object_spec(
-        runtime_src,
+        runtime_root,
         "application",
         "core/application/OperitApplication.rs",
         "OperitApplication",
         ObjectAccess::Application,
     ));
     specs.push(required_object_spec(
-        runtime_src,
+        runtime_root,
         "chatRuntimeHolder.main",
         "services/ChatServiceCore.rs",
         "ChatServiceCore",
         ObjectAccess::ChatRuntimeMain,
     ));
     specs.extend(discover_constructible_objects(
-        runtime_src,
+        runtime_root,
         "data/preferences",
         "preferences",
     ));
     specs.extend(discover_constructible_objects(
-        runtime_src,
-        "data/api",
-        "api",
+        runtime_root,
+        "services",
+        "services",
     ));
     specs.extend(discover_constructible_objects(
-        runtime_src,
-        "data/skill",
-        "skill",
-    ));
-    specs.extend(discover_constructible_objects(
-        runtime_src,
-        "data/mcp",
-        "mcp",
-    ));
-    specs.extend(discover_constructible_objects(
-        runtime_src,
-        "data/repository",
+        store_root,
+        "repository",
         "repository",
     ));
-    specs.extend(discover_constructible_objects(
-        runtime_src,
-        "services",
-        "services",
-    ));
     specs.extend(discover_constructible_objects_recursive(
-        runtime_src,
-        "core/tools",
+        tools_root,
+        "tools",
         "permissions",
     ));
     specs.extend(discover_constructible_objects_recursive(
-        runtime_src,
+        runtime_root,
         "plugins",
         "plugins",
+    ));
+    specs.extend(discover_constructible_objects_recursive(
+        providers_root,
+        "chat",
+        "providers.chat",
+    ));
+    specs.extend(discover_constructible_objects_recursive(
+        providers_root,
+        "market",
+        "providers.market",
+    ));
+    specs.extend(discover_constructible_objects_recursive(
+        providers_root,
+        "voice",
+        "providers.voice",
     ));
     specs.sort_by(|left, right| left.schema_key.cmp(&right.schema_key));
     specs
 }
 
-pub(crate) fn collect_public_object_types(runtime_src: &Path) -> HashMap<String, PublicObjectType> {
+pub(crate) fn collect_public_object_types(source_roots: &[SourceRoot]) -> HashMap<String, PublicObjectType> {
     let mut out = HashMap::new();
-    collect_public_object_types_from_dir(runtime_src, runtime_src, &mut out);
+    for source_root in source_roots {
+        collect_public_object_types_from_dir(source_root, source_root.as_path(), &mut out);
+    }
     out
 }
 
 fn collect_public_object_types_from_dir(
-    root: &Path,
+    source_root: &SourceRoot,
     dir: &Path,
     out: &mut HashMap<String, PublicObjectType>,
 ) {
@@ -77,7 +84,7 @@ fn collect_public_object_types_from_dir(
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_public_object_types_from_dir(root, &path, out);
+            collect_public_object_types_from_dir(source_root, &path, out);
             continue;
         }
         if path.extension().and_then(|value| value.to_str()) != Some("rs") {
@@ -95,7 +102,12 @@ fn collect_public_object_types_from_dir(
                 continue;
             }
             let type_name = item_struct.ident.to_string();
-            let full_type = full_type_for_source(root, &path, &type_name);
+            let full_type = full_type_for_source_with_crate(
+                source_root.as_path(),
+                &path,
+                &type_name,
+                &source_root.crate_name,
+            );
             out.insert(
                 full_type.clone(),
                 PublicObjectType {
@@ -207,29 +219,34 @@ fn is_factory_path_arg_type(ty: &str) -> bool {
 }
 
 fn required_object_spec(
-    runtime_src: &Path,
+    source_root: &SourceRoot,
     schema_key: &str,
     relative_path: &str,
     type_name: &str,
     access: ObjectAccess,
 ) -> ObjectSpec {
-    let source_path = runtime_src.join(relative_path);
+    let source_path = source_root.as_path().join(relative_path);
     ObjectSpec {
         schema_key: schema_key.to_string(),
         dispatch_name: dispatch_name_from_schema_key(schema_key),
         type_name: type_name.to_string(),
-        full_type: full_type_for_source(runtime_src, &source_path, type_name),
+        full_type: full_type_for_source_with_crate(
+            source_root.as_path(),
+            &source_path,
+            type_name,
+            &source_root.crate_name,
+        ),
         source_path,
         access,
     }
 }
 
 fn discover_constructible_objects(
-    runtime_src: &Path,
+    source_root: &SourceRoot,
     relative_dir: &str,
     schema_prefix: &str,
 ) -> Vec<ObjectSpec> {
-    let dir = runtime_src.join(relative_dir);
+    let dir = source_root.as_path().join(relative_dir);
     let mut specs = Vec::new();
     let Ok(entries) = fs::read_dir(dir) else {
         return specs;
@@ -248,7 +265,12 @@ fn discover_constructible_objects(
         specs.push(ObjectSpec {
             schema_key: schema_key.clone(),
             dispatch_name: dispatch_name_from_schema_key(&schema_key),
-            full_type: full_type_for_source(runtime_src, &path, &type_name),
+            full_type: full_type_for_source_with_crate(
+                source_root.as_path(),
+                &path,
+                &type_name,
+                &source_root.crate_name,
+            ),
             type_name,
             source_path: path,
             access,
@@ -258,14 +280,14 @@ fn discover_constructible_objects(
 }
 
 fn discover_constructible_objects_recursive(
-    runtime_src: &Path,
+    source_root: &SourceRoot,
     relative_dir: &str,
     schema_prefix: &str,
 ) -> Vec<ObjectSpec> {
-    let dir = runtime_src.join(relative_dir);
+    let dir = source_root.as_path().join(relative_dir);
     let mut specs = Vec::new();
     discover_constructible_objects_recursive_inner(
-        runtime_src,
+        source_root,
         &dir,
         &dir,
         schema_prefix,
@@ -275,7 +297,7 @@ fn discover_constructible_objects_recursive(
 }
 
 fn discover_constructible_objects_recursive_inner(
-    runtime_src: &Path,
+    source_root: &SourceRoot,
     root_dir: &Path,
     dir: &Path,
     schema_prefix: &str,
@@ -288,7 +310,7 @@ fn discover_constructible_objects_recursive_inner(
         let path = entry.path();
         if path.is_dir() {
             discover_constructible_objects_recursive_inner(
-                runtime_src,
+                source_root,
                 root_dir,
                 &path,
                 schema_prefix,
@@ -319,7 +341,12 @@ fn discover_constructible_objects_recursive_inner(
         specs.push(ObjectSpec {
             schema_key: schema_key.clone(),
             dispatch_name: dispatch_name_from_schema_key(&schema_key),
-            full_type: full_type_for_source(runtime_src, &path, &type_name),
+            full_type: full_type_for_source_with_crate(
+                source_root.as_path(),
+                &path,
+                &type_name,
+                &source_root.crate_name,
+            ),
             type_name,
             source_path: path,
             access,
@@ -396,7 +423,7 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
                     let Some(arg_type) = first_function_arg_type(function) else {
                         continue;
                     };
-                    if name == "getInstance" && arg_type.contains("OperitApplicationContext") {
+                    if name == "getInstance" && arg_type.contains("HostManager") {
                         let return_type = function_return_type(function);
                         let returns_result_self = return_type.starts_with("Result < Self")
                             || return_type.starts_with("Result<Self");
@@ -545,6 +572,10 @@ fn scan_methods(
     let resolver = TypeResolver::from_file(
         &file,
         module_path,
+        module_path
+            .split("::")
+            .next()
+            .expect("module path must include crate name"),
         serializable_types.clone(),
         deserializable_types.clone(),
         type_registry.clone(),

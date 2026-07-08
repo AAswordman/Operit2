@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 pub mod TimeUtils;
+pub mod HostManager;
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -18,11 +19,13 @@ pub type HostRuntimeEventSink = Arc<dyn Fn(Value) + Send + Sync + 'static>;
 type HostLogSink = Arc<dyn Fn(&str, &str) + Send + Sync + 'static>;
 static HOST_LOG_SINK: OnceLock<RwLock<Option<HostLogSink>>> = OnceLock::new();
 
+/// Installs the process-wide host log sink used for host error reporting.
 pub fn setHostLogSink(sink: HostLogSink) {
     let holder = HOST_LOG_SINK.get_or_init(|| RwLock::new(None));
     *holder.write().expect("host log sink lock poisoned") = Some(sink);
 }
 
+/// Writes a host error message through the installed host log sink.
 pub fn logHostError(tag: &str, message: &str) {
     let sink = HOST_LOG_SINK
         .get_or_init(|| RwLock::new(None))
@@ -33,10 +36,13 @@ pub fn logHostError(tag: &str, message: &str) {
     sink(tag, message);
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HostEnvironmentDescriptor {
     pub id: String,
     pub displayName: String,
+    pub platform: HostPlatform,
+    pub privilege: HostPrivilege,
+    pub isolation: HostIsolation,
     pub pathStyleDescriptionEn: String,
     pub pathStyleDescriptionCn: String,
     pub examplePaths: Vec<String>,
@@ -44,13 +50,20 @@ pub struct HostEnvironmentDescriptor {
     pub environmentParameterDescriptionEn: String,
     pub environmentParameterDescriptionCn: String,
     pub capabilities: Vec<String>,
+    pub structuredCapabilities: Vec<HostCapability>,
+    pub onboardingRequirements: Vec<HostOnboardingRequirement>,
+    pub workspaceRoots: Vec<WorkspaceRootDescriptor>,
 }
 
 impl HostEnvironmentDescriptor {
+    /// Builds the Android host descriptor used by mobile runtime prompts.
     pub fn android() -> Self {
         Self {
             id: "android".to_string(),
             displayName: "Android".to_string(),
+            platform: HostPlatform::Android,
+            privilege: HostPrivilege::Normal,
+            isolation: HostIsolation::OsAppSandbox,
             pathStyleDescriptionEn: "Use Android absolute paths such as /sdcard/Download or an attached repository path.".to_string(),
             pathStyleDescriptionCn: "使用 Android 绝对路径，例如 /sdcard/Download，或使用已附加的仓库路径。".to_string(),
             examplePaths: vec![
@@ -83,13 +96,20 @@ impl HostEnvironmentDescriptor {
                 "runtime.storage".to_string(),
                 "runtime.sqlite".to_string(),
             ],
+            structuredCapabilities: defaultHostCapabilities(),
+            onboardingRequirements: androidOnboardingRequirements(),
+            workspaceRoots: Vec::new(),
         }
     }
 
+    /// Builds the Windows host descriptor used by desktop runtime prompts.
     pub fn windows() -> Self {
         Self {
             id: "windows".to_string(),
             displayName: "Windows".to_string(),
+            platform: HostPlatform::Windows,
+            privilege: HostPrivilege::Normal,
+            isolation: HostIsolation::None,
             pathStyleDescriptionEn:
                 "Use absolute Windows paths such as C:/Users/Name/Documents or D:/Code/project."
                     .to_string(),
@@ -123,13 +143,27 @@ impl HostEnvironmentDescriptor {
                 "system.app.uninstall".to_string(),
                 "system.settings".to_string(),
             ],
+            structuredCapabilities: defaultHostCapabilities(),
+            onboardingRequirements: vec![HostOnboardingRequirement {
+                id: "windows.admin".to_string(),
+                title: "管理员权限".to_string(),
+                description: "显示当前 Host 是否以管理员身份运行；提升权限必须由系统启动边界决定。".to_string(),
+                capabilityIds: vec!["host.privilege".to_string()],
+                status: HostRequirementStatus::Missing,
+                action: HostRequirementAction::HostManaged,
+            }],
+            workspaceRoots: Vec::new(),
         }
     }
 
+    /// Builds the Linux host descriptor used by desktop runtime prompts.
     pub fn linux() -> Self {
         Self {
             id: "linux".to_string(),
             displayName: "Linux".to_string(),
+            platform: HostPlatform::Linux,
+            privilege: HostPrivilege::Normal,
+            isolation: HostIsolation::None,
             pathStyleDescriptionEn:
                 "Use absolute Linux paths such as /home/user/project or /tmp/work.".to_string(),
             pathStyleDescriptionCn: "使用 Linux 绝对路径，例如 /home/user/project 或 /tmp/work。"
@@ -158,13 +192,27 @@ impl HostEnvironmentDescriptor {
                 "system.app.uninstall".to_string(),
                 "system.settings".to_string(),
             ],
+            structuredCapabilities: defaultHostCapabilities(),
+            onboardingRequirements: vec![HostOnboardingRequirement {
+                id: "linux.root".to_string(),
+                title: "root / service account".to_string(),
+                description: "显示当前 Host 的系统账号权限；提权必须由系统或部署器完成。".to_string(),
+                capabilityIds: vec!["host.privilege".to_string()],
+                status: HostRequirementStatus::Missing,
+                action: HostRequirementAction::HostManaged,
+            }],
+            workspaceRoots: Vec::new(),
         }
     }
 
+    /// Builds the browser host descriptor used by WebAssembly runtime prompts.
     pub fn web() -> Self {
         Self {
             id: "web".to_string(),
             displayName: "Web".to_string(),
+            platform: HostPlatform::Web,
+            privilege: HostPrivilege::Normal,
+            isolation: HostIsolation::OsAppSandbox,
             pathStyleDescriptionEn: "Use paths exposed by the browser host bridge.".to_string(),
             pathStyleDescriptionCn: "使用浏览器 host bridge 暴露的路径。".to_string(),
             examplePaths: vec![
@@ -198,6 +246,9 @@ impl HostEnvironmentDescriptor {
                 "system.app.uninstall".to_string(),
                 "system.settings".to_string(),
             ],
+            structuredCapabilities: defaultHostCapabilities(),
+            onboardingRequirements: Vec::new(),
+            workspaceRoots: Vec::new(),
         }
     }
 }
@@ -208,12 +259,179 @@ impl Default for HostEnvironmentDescriptor {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HostPlatform {
+    Android,
+    Windows,
+    Linux,
+    Macos,
+    Ios,
+    Web,
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HostPrivilege {
+    Normal,
+    AndroidShizuku,
+    AndroidRoot,
+    Administrator,
+    Root,
+    ServiceAccount,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HostIsolation {
+    None,
+    OsAppSandbox,
+    Container,
+    VirtualMachine,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CapabilityScope {
+    FileSystem,
+    System,
+    Network,
+    Runtime,
+    Device,
+    Media,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CapabilityOperation {
+    Read,
+    Write,
+    Execute,
+    Connect,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostCapability {
+    pub id: String,
+    pub displayName: String,
+    pub scope: CapabilityScope,
+    pub operations: Vec<CapabilityOperation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostOnboardingRequirement {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub capabilityIds: Vec<String>,
+    pub status: HostRequirementStatus,
+    pub action: HostRequirementAction,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HostRequirementStatus {
+    Satisfied,
+    Missing,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HostRequirementAction {
+    RuntimePermission,
+    OpenSystemSettings,
+    HostManaged,
+    None,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceRootDescriptor {
+    pub id: String,
+    pub displayName: String,
+    pub vfsRoot: String,
+    pub physicalRoot: String,
+}
+
+fn defaultHostCapabilities() -> Vec<HostCapability> {
+    vec![
+        HostCapability {
+            id: "fs.read".to_string(),
+            displayName: "文件读取".to_string(),
+            scope: CapabilityScope::FileSystem,
+            operations: vec![CapabilityOperation::Read],
+        },
+        HostCapability {
+            id: "fs.write".to_string(),
+            displayName: "文件写入".to_string(),
+            scope: CapabilityScope::FileSystem,
+            operations: vec![CapabilityOperation::Write],
+        },
+        HostCapability {
+            id: "runtime.process".to_string(),
+            displayName: "进程执行".to_string(),
+            scope: CapabilityScope::Runtime,
+            operations: vec![CapabilityOperation::Execute],
+        },
+        HostCapability {
+            id: "system.location".to_string(),
+            displayName: "定位".to_string(),
+            scope: CapabilityScope::System,
+            operations: vec![CapabilityOperation::Read],
+        },
+        HostCapability {
+            id: "bluetooth.classic".to_string(),
+            displayName: "经典蓝牙".to_string(),
+            scope: CapabilityScope::Device,
+            operations: vec![CapabilityOperation::Read, CapabilityOperation::Connect],
+        },
+        HostCapability {
+            id: "bluetooth.ble".to_string(),
+            displayName: "低功耗蓝牙".to_string(),
+            scope: CapabilityScope::Device,
+            operations: vec![CapabilityOperation::Read, CapabilityOperation::Connect],
+        },
+    ]
+}
+
+fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
+    vec![
+        HostOnboardingRequirement {
+            id: "android.location".to_string(),
+            title: "附近设备定位".to_string(),
+            description: "Host 需要系统定位授权来完成部分附近设备发现能力。".to_string(),
+            capabilityIds: vec!["system.location".to_string()],
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::RuntimePermission,
+        },
+        HostOnboardingRequirement {
+            id: "android.bluetooth".to_string(),
+            title: "蓝牙连接".to_string(),
+            description: "Host 需要蓝牙扫描与连接授权来发现和连接设备。".to_string(),
+            capabilityIds: vec!["bluetooth.classic".to_string(), "bluetooth.ble".to_string()],
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::RuntimePermission,
+        },
+        HostOnboardingRequirement {
+            id: "android.overlay".to_string(),
+            title: "悬浮入口".to_string(),
+            description: "Host 需要系统悬浮窗授权来在其他应用中显示入口。".to_string(),
+            capabilityIds: vec!["android.overlay".to_string()],
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::OpenSystemSettings,
+        },
+        HostOnboardingRequirement {
+            id: "android.batteryOptimization".to_string(),
+            title: "持续任务".to_string(),
+            description: "Host 需要电池优化例外来保持同步、协作和长任务连续。".to_string(),
+            capabilityIds: vec!["runtime.background".to_string()],
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::OpenSystemSettings,
+        },
+    ]
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostError {
     pub message: String,
 }
 
 impl HostError {
+    /// Creates a host boundary error from a displayable message.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),

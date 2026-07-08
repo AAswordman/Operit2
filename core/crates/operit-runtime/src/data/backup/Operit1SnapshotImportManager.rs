@@ -10,38 +10,38 @@ use lmdb::{Cursor as LmdbCursor, Environment, EnvironmentFlags, Transaction};
 use operit_store::PreferencesDataStore::{
     mutableStateFlow, stringPreferencesKey, MutableStateFlow, PreferencesDataStore, StateFlow,
 };
-use operit_store::RuntimeStorageLayout::DATA_MEMORY_SHARED_DIR_PATH;
+use operit_util::RuntimeStorageLayout::DATA_MEMORY_SHARED_DIR_PATH;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use zip::ZipArchive;
 
-use crate::data::model::ApiKeyInfo::{ApiKeyAvailabilityStatus, ApiKeyInfo};
-use crate::data::model::ChatMessage::ChatMessage;
-use crate::data::model::ChatMessageDisplayMode::ChatMessageDisplayMode;
-use crate::data::model::CharacterCard::{
+use operit_model::ApiKeyInfo::{ApiKeyAvailabilityStatus, ApiKeyInfo};
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
+use operit_model::CharacterCard::{
     CharacterCard, CharacterCardChatModelBindingMode, CharacterCardMemoryBindingMode,
     CharacterCardToolAccessConfig,
 };
-use crate::data::model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
-use crate::data::model::FunctionType::FunctionType;
-use crate::data::model::ModelCatalog::ModelCatalog;
-use crate::data::model::ModelConfigData::{
+use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
+use operit_model::FunctionType::FunctionType;
+use operit_model::ModelCatalog::ModelCatalog;
+use operit_model::ModelConfigData::{
     ApiProviderType, ModelCapabilities, ModelCatalogKey, ModelConfigDefaults, ModelContextSpec,
     ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderProfile,
 };
-use crate::data::model::MemoryExportModel::{
+use operit_model::MemoryExportModel::{
     ImportStrategy, MemoryExportData, SerializableLink, SerializableMemory,
 };
-use crate::data::model::ModelParameter::{CustomParameterData, ModelParameter, ParameterCategory};
-use crate::data::model::OperitChatArchive::{
+use operit_model::ModelParameter::{CustomParameterData, ModelParameter, ParameterCategory};
+use operit_model::OperitChatArchive::{
     OperitArchivedChat, OperitArchivedMessage, OperitChatArchive, ARCHIVE_TYPE,
     CURRENT_FORMAT_VERSION,
 };
-use crate::data::model::PromptTag::{PromptTag, TagType};
-use crate::data::model::StandardModelParameters::StandardModelParameters;
-use crate::data::model::TtsConfig::{
+use operit_model::PromptTag::{PromptTag, TagType};
+use operit_model::StandardModelParameters::StandardModelParameters;
+use operit_model::TtsConfig::{
     TtsConfig, TtsHttpHeader, TtsHttpResponsePipelineStep, TtsProviderType,
 };
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
@@ -50,9 +50,9 @@ use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::data::preferences::SharedMemoryStoreManager::SharedMemoryStoreManager;
 use crate::data::preferences::TtsConfigManager::TtsConfigManager;
-use crate::data::repository::ChatHistoryManager::ChatHistoryManager;
-use crate::data::repository::MemoryRepository::MemoryRepository;
-use crate::util::OperitPaths::{sanitizeMemoryOwnerId, sharedMemoryOwnerKey};
+use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
+use operit_store::repository::MemoryRepository::MemoryRepository;
+use operit_util::OperitPaths::{sanitizeMemoryOwnerId, sharedMemoryOwnerKey};
 
 const FORMAT_VERSION: i32 = 1;
 const ENTRY_MANIFEST: &str = "manifest.json";
@@ -88,6 +88,7 @@ const OPERIT1_OBJECTBOX_KEY_MEMORY_TAG_RELATION: [u8; 4] = [0x20, 0x00, 0x00, 0x
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[allow(non_snake_case)]
+/// Preview of an Operit1 snapshot before import.
 pub struct Operit1SnapshotPreview {
     pub formatVersion: i32,
     pub packageName: String,
@@ -104,6 +105,7 @@ pub struct Operit1SnapshotPreview {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[allow(non_snake_case)]
+/// Summary for a datastore preference file inside an Operit1 snapshot.
 pub struct Operit1DataStoreFilePreview {
     pub fileName: String,
     pub keyCount: i32,
@@ -111,6 +113,7 @@ pub struct Operit1DataStoreFilePreview {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[allow(non_snake_case)]
+/// Counters returned after importing a full Operit1 snapshot.
 pub struct Operit1SnapshotImportResult {
     pub modelConfig: Operit1ModelConfigImportResult,
     pub importedDatastoreFiles: i32,
@@ -127,6 +130,7 @@ pub struct Operit1SnapshotImportResult {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(non_snake_case)]
+/// Progress state published while an Operit1 snapshot import is running.
 pub struct Operit1SnapshotImportProgress {
     pub stage: String,
     pub title: String,
@@ -182,16 +186,19 @@ fn operit1SnapshotImportProgressFlow() -> &'static MutableStateFlow<Operit1Snaps
         .get_or_init(|| mutableStateFlow(Operit1SnapshotImportProgress::idle()))
 }
 
+/// Observes Operit1 snapshot import progress.
 pub fn observeOperit1SnapshotImportProgress() -> StateFlow<Operit1SnapshotImportProgress> {
     operit1SnapshotImportProgressFlow().asStateFlow()
 }
 
+/// Publishes Operit1 snapshot import progress.
 pub fn publishOperit1SnapshotImportProgress(progress: Operit1SnapshotImportProgress) {
     operit1SnapshotImportProgressFlow().set_value(progress);
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[allow(non_snake_case)]
+/// Preview of model configuration data inside an Operit1 snapshot.
 pub struct Operit1ModelConfigSnapshotPreview {
     pub formatVersion: i32,
     pub packageName: String,
@@ -204,6 +211,7 @@ pub struct Operit1ModelConfigSnapshotPreview {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[allow(non_snake_case)]
+/// Preview of one Operit1 model configuration entry.
 pub struct Operit1ModelConfigPreview {
     pub configId: String,
     pub name: String,
@@ -217,6 +225,7 @@ pub struct Operit1ModelConfigPreview {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[allow(non_snake_case)]
+/// Result returned after importing Operit1 model configuration.
 pub struct Operit1ModelConfigImportResult {
     pub providerId: String,
     pub providerTypeId: String,
@@ -228,22 +237,26 @@ pub struct Operit1ModelConfigImportResult {
 }
 
 #[derive(Clone)]
+/// Imports Operit1 backup snapshots into the current runtime storage layout.
 pub struct Operit1SnapshotImportManager {
     rootDir: PathBuf,
 }
 
 impl Operit1SnapshotImportManager {
+    /// Creates an importer rooted at the target runtime data directory.
     pub fn new(rootDir: PathBuf) -> Self {
         Self { rootDir }
     }
 
     #[allow(non_snake_case)]
+    /// Reads an Operit1 snapshot and returns import preview metadata.
     pub fn inspectSnapshot(&self, bytes: Vec<u8>) -> Result<Operit1SnapshotPreview, String> {
         let parsed = ParsedOperit1Snapshot::fromBytes(bytes)?;
         parsed.preview()
     }
 
     #[allow(non_snake_case)]
+    /// Imports a full Operit1 snapshot into runtime storage.
     pub fn importSnapshot(
         &self,
         bytes: Vec<u8>,
@@ -383,6 +396,7 @@ impl Operit1SnapshotImportManager {
     }
 
     #[allow(non_snake_case)]
+    /// Reads only model configuration preview metadata from an Operit1 snapshot.
     pub fn inspectModelConfigSnapshot(
         &self,
         bytes: Vec<u8>,
@@ -392,6 +406,7 @@ impl Operit1SnapshotImportManager {
     }
 
     #[allow(non_snake_case)]
+    /// Imports one selected Operit1 model configuration and model binding.
     pub fn importModelConfigSnapshot(
         &self,
         bytes: Vec<u8>,
@@ -3233,13 +3248,13 @@ fn parseCustomParameterValue(value: &str) -> Result<Value, String> {
 #[allow(non_snake_case)]
 fn parseParameterValueType(
     value: &str,
-) -> Result<crate::data::model::ModelParameter::ParameterValueType, String> {
+) -> Result<operit_model::ModelParameter::ParameterValueType, String> {
     match value {
-        "INT" => Ok(crate::data::model::ModelParameter::ParameterValueType::INT),
-        "FLOAT" => Ok(crate::data::model::ModelParameter::ParameterValueType::FLOAT),
-        "STRING" => Ok(crate::data::model::ModelParameter::ParameterValueType::STRING),
-        "BOOLEAN" => Ok(crate::data::model::ModelParameter::ParameterValueType::BOOLEAN),
-        "OBJECT" => Ok(crate::data::model::ModelParameter::ParameterValueType::OBJECT),
+        "INT" => Ok(operit_model::ModelParameter::ParameterValueType::INT),
+        "FLOAT" => Ok(operit_model::ModelParameter::ParameterValueType::FLOAT),
+        "STRING" => Ok(operit_model::ModelParameter::ParameterValueType::STRING),
+        "BOOLEAN" => Ok(operit_model::ModelParameter::ParameterValueType::BOOLEAN),
+        "OBJECT" => Ok(operit_model::ModelParameter::ParameterValueType::OBJECT),
         other => Err(format!("未知模型参数值类型：{other}")),
     }
 }

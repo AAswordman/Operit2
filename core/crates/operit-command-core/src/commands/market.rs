@@ -8,16 +8,16 @@ use std::time::Duration;
 
 use crate::commands::util::read_content_arg;
 use crate::output::CoreCommandOutput;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::core::tools::packTool::PackageManager::PackageManager;
-use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
-use operit_runtime::data::api::MarketStatsApiService::{
+use operit_host_api::HostManager::HostManager;
+use operit_providers::market::MarketStatsApiService::{
     MarketComment, MarketEntrySummary, MarketListPage, MarketNotification, MarketStatsApiService,
 };
-use operit_runtime::data::mcp::MCPLocalServer::MCPLocalServer;
-use operit_runtime::data::mcp::MCPRepository::MCPRepository;
+use operit_tools::tools::packTool::PackageManager::PackageManager;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::tools::mcp_runtime::MCPLocalServer::MCPLocalServer;
+use operit_tools::tools::mcp_runtime::MCPRepository::MCPRepository;
 use operit_runtime::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
-use operit_runtime::data::skill::SkillRepository::SkillRepository;
+use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -47,11 +47,11 @@ fn market_stdout_line(line: impl AsRef<str>) {
 }
 
 struct MarketCommand {
-    context: OperitApplicationContext,
+    context: HostManager,
 }
 
 impl MarketCommand {
-    fn new(context: OperitApplicationContext) -> Self {
+    fn new(context: HostManager) -> Self {
         Self { context }
     }
 
@@ -100,7 +100,7 @@ impl PackageManagerCommand {
 // ── Entry point ──────────────────────────────────────────────
 
 pub fn run_market_command(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -831,7 +831,7 @@ fn update_entry_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), Str
 }
 
 fn println_publish_response(
-    resp: operit_runtime::data::api::MarketStatsApiService::MarketPublishResponse,
+    resp: operit_providers::market::MarketStatsApiService::MarketPublishResponse,
 ) {
     println!("published ok={} entry={}", resp.ok, resp.entry_id);
     if !resp.version_id.trim().is_empty() {
@@ -840,7 +840,7 @@ fn println_publish_response(
 }
 
 fn println_update_entry_response(
-    resp: operit_runtime::data::api::MarketStatsApiService::MarketEntryUpdateResponse,
+    resp: operit_providers::market::MarketStatsApiService::MarketEntryUpdateResponse,
 ) {
     println!("updated ok={} entry={}", resp.ok, resp.item.id);
     println!("state={}", resp.item.state_code);
@@ -898,7 +898,7 @@ fn install_mcp_from_entry(
         })
         .ok_or_else(|| "mcp entry has no source url".to_string())?;
     let plugin_id = sanitize_id(&entry.title);
-    let metadata = operit_runtime::data::mcp::MCPLocalServer::PluginMetadata {
+    let metadata = operit_tools::tools::mcp_runtime::MCPLocalServer::PluginMetadata {
         name: entry.title.clone(),
         description: entry.description.clone(),
         author: entry
@@ -915,12 +915,12 @@ fn install_mcp_from_entry(
         String::new(),
         |_| {},
     ) {
-        operit_runtime::data::mcp::MCPRepository::InstallResult::Success { pluginPath } => {
+        operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Success { pluginPath } => {
             println!("installed={plugin_id}");
             println!("path={pluginPath}");
             Ok(())
         }
-        operit_runtime::data::mcp::MCPRepository::InstallResult::Error { message } => Err(message),
+        operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Error { message } => Err(message),
     }
 }
 
@@ -1116,9 +1116,7 @@ mod tests {
         HostError, HostResult, HttpHost, HttpRequestData, HttpResponseData, RuntimeStorageEntry,
         RuntimeStorageHost,
     };
-    use operit_runtime::core::application::OperitApplicationContext::{
-        setDefaultHttpHost, OperitApplicationContext,
-    };
+    use operit_host_api::HostManager::{setDefaultHttpHost, HostManager};
     use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
 
     #[derive(Clone, Default)]
@@ -1249,9 +1247,9 @@ mod tests {
         let mut root = std::env::temp_dir();
         root.push(format!("operit_market_test_{}", current_millis()));
         std::fs::create_dir_all(&root).expect("create test runtime root");
-        operit_store::RuntimeStorePaths::setDefaultRuntimeStoreRoot(root);
+        operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRoot(root);
         register_test_storage();
-        let ctx = OperitApplicationContext::new();
+        let ctx = HostManager::new();
         let mut out = CoreCommandOutput::new();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         // Tests that parsing does not panic; network/IO errors are OK at this level.
@@ -1345,10 +1343,10 @@ mod tests {
         let mut root = std::env::temp_dir();
         root.push(format!("operit_market_online_test_{}", current_millis()));
         std::fs::create_dir_all(&root).expect("create test runtime root");
-        operit_store::RuntimeStorePaths::setDefaultRuntimeStoreRoot(root);
+        operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRoot(root);
         register_test_storage();
 
-        let ctx = OperitApplicationContext::new();
+        let ctx = HostManager::new();
         let mut out = CoreCommandOutput::new();
         let args = vec!["rank".to_string(), sort.to_string(), "1".to_string()];
         run_market_command(ctx, &args, &mut out)

@@ -93,7 +93,7 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
       _errorMessage = null;
     });
     try {
-      final manifest = await widget.clients.apiMarketStatsApiService.getManifest();
+      final manifest = await widget.clients.providersMarketStatsApiService.getManifest();
       final loadedSources = await _loadPublishablePackageSources(
         widget.clients,
       );
@@ -778,7 +778,7 @@ Future<_PublishResult> _publishArtifact({
   _validateAppVersionRange(normalizedMinVersion, normalizedMaxVersion);
 
   onProgress('正在读取 GitHub 账号');
-  final currentUser = await clients.apiMarketStatsApiService.getCurrentGithubUser();
+  final currentUser = await clients.providersMarketStatsApiService.getCurrentGithubUser();
   final normalizedRuntimePackageId = _normalizeMarketArtifactId(
     source.packageName,
   );
@@ -1106,7 +1106,7 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
   final releaseTag = payload['releaseTag']?.toString() ?? '';
   final assetName = payload['assetName']?.toString() ?? '';
   final sha256 = payload['sha256']?.toString() ?? '';
-  await clients.apiMarketStatsApiService.publishProof(
+  await clients.providersMarketStatsApiService.publishProof(
     owner: owner,
     repo: repo,
     releaseTag: releaseTag,
@@ -1124,7 +1124,7 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
   final assetUrl = payload['downloadUrl']?.toString() ?? '';
   if (publishContext != null) {
     final canPatchEntry = publishContext.canEditEntry;
-    return clients.apiMarketStatsApiService.publishArtifactVersion(
+    return clients.providersMarketStatsApiService.publishArtifactVersion(
       entryId: publishContext.entryId,
       version: version,
       formatVer: 'forge-v3',
@@ -1147,7 +1147,7 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
       entryAllowPublicUpdates: canPatchEntry ? payload['allowPublicUpdates'] == true : null,
     );
   }
-  return clients.apiMarketStatsApiService.publishArtifact(
+  return clients.providersMarketStatsApiService.publishArtifact(
     type: type,
     title: title,
     description: description,
@@ -1206,7 +1206,7 @@ Future<List<core_proxy.MarketEntrySummary>> _loadPublishedEntriesByType(
   GeneratedCoreProxyClients clients,
   String type,
 ) async {
-  final market = clients.apiMarketStatsApiService;
+  final market = clients.providersMarketStatsApiService;
   final entries = <core_proxy.MarketEntrySummary>[];
   var page = 1;
   while (true) {

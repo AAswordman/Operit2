@@ -9,8 +9,11 @@ struct LocaleFile {
     by_key: BTreeMap<String, String>,
 }
 
+/// Generates TUI localization code and verifies the Web Access bundle input.
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    verify_web_access_bundle_when_embedded(&manifest_dir);
+
     let locale_dir = manifest_dir
         .join("src")
         .join("tui")
@@ -33,6 +36,23 @@ fn main() {
         .expect("write generated TUI i18n source");
 }
 
+/// Verifies the shared Web Access bundle exists before embedding it.
+fn verify_web_access_bundle_when_embedded(manifest_dir: &Path) {
+    if env::var_os("CARGO_FEATURE_EMBEDDED_WEB_ACCESS").is_none() {
+        return;
+    }
+    let bundle_dir = manifest_dir.join("../web_access/build/bundle");
+    println!("cargo:rerun-if-changed={}", bundle_dir.display());
+    let index = bundle_dir.join("index.html");
+    if !index.is_file() {
+        panic!(
+            "Web Access bundle not found: {}. Run tools/build_scripts/build_flutter_web_access.py before building operit-cli.",
+            bundle_dir.display()
+        );
+    }
+}
+
+/// Reads a locale key-value file into ordered and keyed representations.
 fn read_locale_file(path: &Path) -> LocaleFile {
     let content = fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("read locale file {}: {error}", path.display()));
@@ -62,6 +82,7 @@ fn read_locale_file(path: &Path) -> LocaleFile {
     LocaleFile { entries, by_key }
 }
 
+/// Checks that locale files define the same keys and placeholder names.
 fn validate_locale_files(english: &LocaleFile, chinese: &LocaleFile) {
     let english_keys = english.by_key.keys().cloned().collect::<BTreeSet<_>>();
     let chinese_keys = chinese.by_key.keys().cloned().collect::<BTreeSet<_>>();
@@ -103,6 +124,7 @@ fn validate_locale_files(english: &LocaleFile, chinese: &LocaleFile) {
     }
 }
 
+/// Generates the Rust source used by the TUI localization layer.
 fn generate_rust(english: &LocaleFile, chinese: &LocaleFile) -> String {
     let mut output = String::new();
     output.push_str("#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]\n");
@@ -148,7 +170,7 @@ fn generate_rust(english: &LocaleFile, chinese: &LocaleFile) -> String {
 
     output.push_str("impl TuiText {\n");
     for (key, value) in &english.entries {
-        // Hand-written special-case methods in i18n.rs override these
+        // Hand-written special-case methods in i18n.rs override these.
         match key.as_str() {
             "help_lines" | "context_usage_raw" | "context_usage" | "language_status"
             | "language_updated" => continue,
@@ -195,6 +217,7 @@ fn generate_rust(english: &LocaleFile, chinese: &LocaleFile) -> String {
     output
 }
 
+/// Appends locale match arms to generated Rust source.
 fn push_locale_match_arms(output: &mut String, entries: &[(String, String)]) {
     for (key, value) in entries {
         output.push_str("            TuiTextKey::");
@@ -205,6 +228,7 @@ fn push_locale_match_arms(output: &mut String, entries: &[(String, String)]) {
     }
 }
 
+/// Appends a static help-line slice to generated Rust source.
 fn push_help_lines_const(output: &mut String, name: &str, lines: &[String]) {
     output.push_str("pub(super) const ");
     output.push_str(name);
@@ -217,6 +241,7 @@ fn push_help_lines_const(output: &mut String, name: &str, lines: &[String]) {
     output.push_str("];\n\n");
 }
 
+/// Splits a locale help text entry into individual display lines.
 fn help_lines(locale: &LocaleFile) -> Vec<String> {
     locale
         .by_key
@@ -227,6 +252,7 @@ fn help_lines(locale: &LocaleFile) -> Vec<String> {
         .collect()
 }
 
+/// Validates that a locale key follows the generated identifier format.
 fn validate_key(path: &Path, line_number: usize, key: &str) {
     let mut chars = key.chars();
     let Some(first) = chars.next() else {
@@ -248,6 +274,7 @@ fn validate_key(path: &Path, line_number: usize, key: &str) {
     }
 }
 
+/// Decodes escaped locale values from the key-value source format.
 fn decode_value(path: &Path, line_number: usize, value: &str) -> String {
     let mut decoded = String::new();
     let mut chars = value.chars();
@@ -273,6 +300,7 @@ fn decode_value(path: &Path, line_number: usize, value: &str) -> String {
     decoded
 }
 
+/// Extracts placeholder names from a locale value.
 fn placeholders(value: &str) -> Vec<String> {
     let mut names = BTreeSet::new();
     let mut chars = value.chars().peekable();
@@ -302,6 +330,7 @@ fn placeholders(value: &str) -> Vec<String> {
     names.into_iter().collect()
 }
 
+/// Validates one placeholder name found in a locale value.
 fn validate_placeholder_name(value: &str, name: &str) {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
@@ -317,6 +346,7 @@ fn validate_placeholder_name(value: &str, name: &str) {
     }
 }
 
+/// Converts a locale key into a Rust enum variant name.
 fn variant_name(key: &str) -> String {
     let mut variant = String::new();
     for piece in key.split('_') {
@@ -330,6 +360,7 @@ fn variant_name(key: &str) -> String {
     variant
 }
 
+/// Formats a Rust string literal for generated source.
 fn rust_string_literal(value: &str) -> String {
     format!("{value:?}")
 }

@@ -1,10 +1,10 @@
 use crate::commands::util::{parse_i32_arg, parse_on_off_arg};
 use crate::output::CoreCommandOutput;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_host_api::HostManager::HostManager;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 
 pub fn run_prefs_command(
-    _context: OperitApplicationContext,
+    _context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {

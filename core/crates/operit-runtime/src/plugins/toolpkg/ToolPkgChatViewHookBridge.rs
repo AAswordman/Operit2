@@ -3,12 +3,12 @@ use std::sync::{Mutex, OnceLock};
 
 use serde_json::Value;
 
-use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_VIEW;
-use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_VIEW;
+use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
     toolPkgPackageManager, ToolPkgChatViewHookRegistration,
 };
-use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
+use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static CHAT_VIEW_HOOKS: OnceLock<Mutex<Vec<ToolPkgChatViewHookRegistration>>> = OnceLock::new();
 static REPLAYABLE_OPEN_VIEW_PARAMS: OnceLock<Mutex<Vec<ChatViewHookParams>>> = OnceLock::new();

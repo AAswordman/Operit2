@@ -3,21 +3,21 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::output::CoreCommandOutput;
-use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
-use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
+use operit_providers::chat::enhance::ConversationService::ConversationService;
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_runtime::data::model::AttachmentInfo::AttachmentInfo;
-use operit_runtime::data::model::ChatHistory::ChatHistory;
-use operit_runtime::data::model::ChatMessage::ChatMessage;
-use operit_runtime::data::model::ChatTurnOptions::ChatTurnOptions;
-use operit_runtime::data::model::FunctionType::FunctionType;
-use operit_runtime::data::model::InputProcessingState::InputProcessingState;
-use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
+use operit_model::AttachmentInfo::AttachmentInfo;
+use operit_model::ChatHistory::ChatHistory;
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatTurnOptions::ChatTurnOptions;
+use operit_model::FunctionType::FunctionType;
+use operit_model::InputProcessingState::InputProcessingState;
+use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
-use operit_runtime::data::repository::ChatHistoryManager::ChatHistoryManager;
-use operit_runtime::util::stream::Stream::Stream;
+use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
+use operit_util::stream::Stream::Stream;
 
 pub fn run_chat_command(
     application: &mut OperitApplication,

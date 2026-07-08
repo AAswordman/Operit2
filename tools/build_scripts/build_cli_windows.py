@@ -2,18 +2,30 @@
 import argparse
 import sys
 
-from cli_common import build_cli_platform, parse_cli_arch_mode
+from cli_common import build_cli_platform, parse_cli_arch_mode, parse_cli_web_assets
 
 
+# Parses command-line options for the Windows CLI build.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Operit2 CLI for Windows.")
     parser.add_argument("--arches", default="host", choices=["host", "all", "x86_64", "aarch64"])
+    parser.add_argument(
+        "--web-assets",
+        default="embedded",
+        choices=["embedded", "external"],
+        help="embedded includes Web Access assets in the binary; external requires --web-root at runtime",
+    )
     return parser.parse_args()
 
 
+# Builds the Windows CLI package with the selected asset mode.
 def main() -> int:
     args = parse_args()
-    build_cli_platform("windows", parse_cli_arch_mode(args.arches))
+    build_cli_platform(
+        "windows",
+        parse_cli_arch_mode(args.arches),
+        parse_cli_web_assets(args.web_assets),
+    )
     return 0
 
 

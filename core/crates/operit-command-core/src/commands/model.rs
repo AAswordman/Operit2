@@ -2,11 +2,11 @@ use std::cell::Cell;
 
 use crate::commands::util::{parse_bool_arg, parse_f32_arg, parse_i32_arg};
 use crate::output::CoreCommandOutput;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::data::model::FunctionType::FunctionType;
-use operit_runtime::data::model::ModelCatalog::ModelCatalog;
-use operit_runtime::data::model::ModelConfigData::{ModelContextSpec, ModelSummarySettings};
-use operit_runtime::data::model::ModelParameter::ModelParameter;
+use operit_host_api::HostManager::HostManager;
+use operit_model::FunctionType::FunctionType;
+use operit_model::ModelCatalog::ModelCatalog;
+use operit_model::ModelConfigData::{ModelContextSpec, ModelSummarySettings};
+use operit_model::ModelParameter::ModelParameter;
 use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 
@@ -57,7 +57,7 @@ impl ModelCommand {
 }
 
 pub fn run_model_command(
-    _context: OperitApplicationContext,
+    _context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {

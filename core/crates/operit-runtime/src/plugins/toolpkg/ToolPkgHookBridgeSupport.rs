@@ -1,8 +1,8 @@
 use serde_json::Value;
 
 use crate::core::application::OperitApplication::OperitApplication;
-use crate::core::tools::packTool::PackageManager::PackageManager;
-use crate::core::tools::AIToolHandler::AIToolHandler;
+use operit_tools::tools::packTool::PackageManager::PackageManager;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
 
 #[derive(Clone, Debug)]
 pub struct ToolPkgAppLifecycleHookRegistration {
@@ -99,8 +99,8 @@ pub struct ToolPkgHostEventRegistration {
 
 #[allow(non_snake_case)]
 pub fn toolPkgPackageManager() -> PackageManager {
-    let application = OperitApplication::applicationContext();
-    AIToolHandler::getInstance(application)
+    let hostManager = OperitApplication::hostManager();
+    AIToolHandler::getInstance(hostManager)
         .getOrCreatePackageManager()
         .lock()
         .expect("package manager mutex poisoned")
@@ -109,8 +109,8 @@ pub fn toolPkgPackageManager() -> PackageManager {
 
 #[allow(non_snake_case)]
 pub fn toolPkgToolHandler() -> AIToolHandler {
-    let application = OperitApplication::applicationContext();
-    AIToolHandler::getInstance(application)
+    let hostManager = OperitApplication::hostManager();
+    AIToolHandler::getInstance(hostManager)
 }
 
 #[allow(non_snake_case)]

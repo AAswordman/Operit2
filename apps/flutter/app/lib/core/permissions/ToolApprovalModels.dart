@@ -90,7 +90,7 @@ class ToolApprovalParameter {
 enum ToolApprovalResult {
   allow('ALLOW'),
   deny('DENY'),
-  alwaysAllow('ALWAYS_ALLOW');
+  allowSession('ALLOW_SESSION');
 
   const ToolApprovalResult(this.wireName);
 

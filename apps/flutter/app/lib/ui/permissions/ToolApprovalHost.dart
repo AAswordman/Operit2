@@ -195,7 +195,7 @@ class _ToolApprovalModal extends StatelessWidget {
                         const SizedBox(width: 8),
                         FilledButton.icon(
                           onPressed: () =>
-                              onResult(ToolApprovalResult.alwaysAllow),
+                              onResult(ToolApprovalResult.allowSession),
                           icon: const Icon(Icons.done_all),
                           label: Text(l10n.toolApprovalAlwaysAllow),
                         ),

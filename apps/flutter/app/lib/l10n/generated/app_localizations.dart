@@ -461,7 +461,7 @@ abstract class AppLocalizations {
   /// No description provided for @toolApprovalAlwaysAllow.
   ///
   /// In en, this message translates to:
-  /// **'Always allow'**
+  /// **'Always allow in this session'**
   String get toolApprovalAlwaysAllow;
 
   /// No description provided for @createGroupTitle.
@@ -1595,19 +1595,19 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCategoryToolsTitle.
   ///
   /// In en, this message translates to:
-  /// **'Tools & Extensions'**
+  /// **'Tools & Permissions'**
   String get settingsCategoryToolsTitle;
 
   /// No description provided for @settingsCategoryToolsSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Permissions, packages, skills, MCP'**
+  /// **'AI capability, system authorization, extensions'**
   String get settingsCategoryToolsSubtitle;
 
   /// No description provided for @settingsCategoryToolsDescription.
   ///
   /// In en, this message translates to:
-  /// **'Control which tools Operit can call, and manage plugins, tool packages, skills, and MCP servers.'**
+  /// **'Set AI read-only, read-write, or full access, and review the current device system authorization status.'**
   String get settingsCategoryToolsDescription;
 
   /// No description provided for @settingsCategoryWorkspaceTitle.
@@ -3160,7 +3160,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsToolsPermissionMode.
   ///
   /// In en, this message translates to:
-  /// **'Tool permission mode'**
+  /// **'AI capability mode'**
   String get settingsToolsPermissionMode;
 
   /// No description provided for @settingsToolsAsk.
@@ -3226,31 +3226,31 @@ abstract class AppLocalizations {
   /// No description provided for @settingsToolsOverrides.
   ///
   /// In en, this message translates to:
-  /// **'Per-tool permission records'**
+  /// **'Tool records'**
   String get settingsToolsOverrides;
 
   /// No description provided for @settingsToolsToolGroups.
   ///
   /// In en, this message translates to:
-  /// **'Per-tool permissions'**
+  /// **'Registered tools'**
   String get settingsToolsToolGroups;
 
   /// No description provided for @settingsToolsToolGroupsDescription.
   ///
   /// In en, this message translates to:
-  /// **'Keep Ask for normal use. Put trusted tools in Always allow, and risky or unwanted tools in Always forbid.'**
+  /// **'Tools registered by the current runtime for AI use.'**
   String get settingsToolsToolGroupsDescription;
 
   /// No description provided for @settingsToolsAlwaysAllow.
   ///
   /// In en, this message translates to:
-  /// **'Always allow'**
+  /// **'Allowed in this session'**
   String get settingsToolsAlwaysAllow;
 
   /// No description provided for @settingsToolsAlwaysAllowDescription.
   ///
   /// In en, this message translates to:
-  /// **'These tools run without asking again.'**
+  /// **'These tools were approved for the current session.'**
   String get settingsToolsAlwaysAllowDescription;
 
   /// No description provided for @settingsToolsAlwaysForbid.

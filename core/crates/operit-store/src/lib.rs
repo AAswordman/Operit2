@@ -6,8 +6,6 @@ pub mod PreferencesDataStore;
 pub mod PreferencesEncryption;
 #[path = "RuntimeStorageHost.rs"]
 pub mod RuntimeStorageHost;
-#[path = "RuntimeStorageLayout.rs"]
-pub mod RuntimeStorageLayout;
 #[path = "RuntimeStorePaths.rs"]
 pub mod RuntimeStorePaths;
 #[path = "SqliteStore.rs"]
@@ -18,7 +16,10 @@ pub mod SyncOperationStore;
 pub use ObjectBoxStore::*;
 pub use PreferencesDataStore::*;
 pub use RuntimeStorageHost::*;
-pub use RuntimeStorageLayout::*;
 pub use RuntimeStorePaths::*;
 pub use SqliteStore::*;
 pub use SyncOperationStore::*;
+pub mod dao;
+pub mod db;
+pub mod repository;
+pub mod sync;

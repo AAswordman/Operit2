@@ -7,12 +7,12 @@ use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::AITool;
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::core::files::PathMapper::PathMapper;
-use crate::core::files::VisualFileSystem::VisualFileSystem;
-use crate::core::tools::AIToolHook::AIToolHook;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::AITool;
+use operit_host_api::HostManager::HostManager;
+use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_tools::tools::AIToolHook::AIToolHook;
 use crate::ui::features::chat::webview::workspace::process::GitIgnoreFilter::GitIgnoreFilter;
 
 const BACKUP_DIR_NAME: &str = ".backup";
@@ -61,7 +61,7 @@ pub enum ChangeType {
 
 #[derive(Clone)]
 pub struct WorkspaceBackupManager {
-    context: OperitApplicationContext,
+    context: HostManager,
 }
 
 struct HookSessionInit {
@@ -90,12 +90,12 @@ pub struct WorkspaceToolHookSession {
 }
 
 impl WorkspaceBackupManager {
-    pub fn new(context: OperitApplicationContext) -> Self {
+    pub fn new(context: HostManager) -> Self {
         Self { context }
     }
 
     #[allow(non_snake_case)]
-    pub fn getInstance(context: OperitApplicationContext) -> Self {
+    pub fn getInstance(context: HostManager) -> Self {
         Self::new(context)
     }
 

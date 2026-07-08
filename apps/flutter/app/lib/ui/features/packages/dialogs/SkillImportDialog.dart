@@ -269,15 +269,15 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
     try {
       final result = await switch (_mode) {
         _SkillImportMode.github =>
-          widget.clients.skillRepository.importSkillFromGitHubRepo(
+          widget.clients.permissionsSkillRuntimeSkillRepository.importSkillFromGitHubRepo(
             repoUrl: _repoUrlController.text.trim(),
           ),
         _SkillImportMode.zip =>
-          widget.clients.skillRepository.importSkillFromZip(
+          widget.clients.permissionsSkillRuntimeSkillRepository.importSkillFromZip(
             zipFile: _zipFile!.path,
           ),
         _SkillImportMode.direct =>
-          widget.clients.skillRepository.importSkillFromDirectInput(
+          widget.clients.permissionsSkillRuntimeSkillRepository.importSkillFromDirectInput(
             skillId: _skillIdController.text.trim(),
             description: _descriptionController.text.trim(),
             content: _contentController.text.trim(),

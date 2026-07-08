@@ -125,10 +125,8 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
         );
       }
       _scriptScreenPath = screenPath;
-      final jsEngine = _packageManager.getToolPkgExecutionEngine(
+      final raw = await _packageManager.executeToolPkgComposeDslScript(
         contextKey: executionContextKey,
-      );
-      final raw = await jsEngine.executeComposeDslScript(
         script: script,
         runtimeOptions: _runtimeOptions(
           uiModuleId: uiModuleId,
@@ -196,10 +194,8 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     );
     Object? latestActionResult;
     try {
-      final jsEngine = _packageManager.getToolPkgExecutionEngine(
+      final events = await _packageManager.dispatchToolPkgComposeDslActionEvents(
         contextKey: executionContextKey,
-      );
-      await for (final event in jsEngine.dispatchComposeDslActionAsyncChanges(
         actionId: actionId,
         payload: payload,
         runtimeOptions: _runtimeOptions(
@@ -208,15 +204,10 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
           executionContextKey: executionContextKey,
         ),
         envOverrides: const <String, String>{},
-      )) {
+      );
+      for (final event in events) {
         if (!mounted) {
           return latestActionResult;
-        }
-        if (event == null) {
-          continue;
-        }
-        if (event is! String) {
-          throw StateError('compose_dsl action event must be a string');
         }
         final parsedEvent = await AppWorkers.run(
           () => _ParsedComposeDslActionEvent.parse(event),

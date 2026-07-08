@@ -3,7 +3,16 @@ import argparse
 import sys
 from pathlib import Path
 
-from common import DIST_DIR, FLUTTER_APP_DIR, compress_tar_gz, flutter_command, flutter_pub_get, host_arch, run
+from common import (
+    DIST_DIR,
+    FLUTTER_APP_DIR,
+    compress_tar_gz,
+    flutter_command,
+    flutter_pub_get,
+    host_arch,
+    require_web_access_bundle,
+    run,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -17,6 +26,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    require_web_access_bundle()
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
     run(
         [

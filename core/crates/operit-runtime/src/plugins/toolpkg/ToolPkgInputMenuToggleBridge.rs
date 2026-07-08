@@ -7,13 +7,13 @@ use serde_json::Value;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
 
-use crate::core::tools::packTool::PackageManager::PackageManager;
-use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_INPUT_MENU_TOGGLE;
-use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_tools::tools::packTool::PackageManager::PackageManager;
+use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_INPUT_MENU_TOGGLE;
+use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
     decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgInputMenuToggleHookRegistration,
 };
-use crate::util::AppLogger::AppLogger;
+use operit_util::AppLogger::AppLogger;
 
 static INPUT_MENU_HOOKS: OnceLock<Mutex<Vec<ToolPkgInputMenuToggleHookRegistration>>> =
     OnceLock::new();

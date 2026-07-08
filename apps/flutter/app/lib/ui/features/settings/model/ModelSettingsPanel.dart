@@ -2445,7 +2445,7 @@ class _DeleteProviderConfirmDialog extends StatelessWidget {
 class _ConnectionTestItemTile extends StatelessWidget {
   const _ConnectionTestItemTile({required this.item});
 
-  final core_proxy.CoreApiChatLlmproviderModelConfigConnectionTesterModelConnectionTestItem
+  final core_proxy.CoreOperitProvidersChatLlmproviderModelConfigConnectionTesterModelConnectionTestItem
   item;
 
   @override

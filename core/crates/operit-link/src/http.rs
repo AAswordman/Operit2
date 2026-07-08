@@ -122,6 +122,7 @@ pub enum CoreLinkWsResponse {
 }
 
 impl CoreLinkHttpDispatcher {
+    /// Creates an HTTP/WebSocket dispatcher around a core link client.
     pub fn new(core: impl CoreLinkClient + Send + 'static) -> Self {
         Self {
             state: Arc::new(CoreLinkHttpState {
@@ -131,6 +132,7 @@ impl CoreLinkHttpDispatcher {
         }
     }
 
+    /// Handles a serialized call request body and returns a JSON response.
     pub async fn call(&self, body: Bytes) -> Response {
         let envelope = match serde_json::from_slice::<LinkCallEnvelope>(&body) {
             Ok(value) => value,
@@ -140,6 +142,7 @@ impl CoreLinkHttpDispatcher {
         JsonResponse(core.call(envelope.request).await).into_response()
     }
 
+    /// Handles a serialized watch snapshot request body.
     #[allow(non_snake_case)]
     pub async fn watchSnapshot(&self, body: Bytes) -> Response {
         let envelope = match serde_json::from_slice::<LinkWatchEnvelope>(&body) {
@@ -153,6 +156,7 @@ impl CoreLinkHttpDispatcher {
         }
     }
 
+    /// Drains queued events for an opened watch channel.
     #[allow(non_snake_case)]
     pub async fn watchChannelEvents(&self, body: Bytes) -> Response {
         let envelope = match serde_json::from_slice::<LinkWatchChannelEnvelope>(&body) {
@@ -162,6 +166,7 @@ impl CoreLinkHttpDispatcher {
         self.openWatchChannelEvents(envelope.channelId).await
     }
 
+    /// Opens a watch stream and stores it under a channel identifier.
     #[allow(non_snake_case)]
     pub async fn watchChannelOpen(&self, body: Bytes) -> Response {
         let envelope = match serde_json::from_slice::<LinkWatchChannelOpenEnvelope>(&body) {
@@ -181,6 +186,7 @@ impl CoreLinkHttpDispatcher {
         }
     }
 
+    /// Closes a previously opened watch channel.
     #[allow(non_snake_case)]
     pub async fn watchChannelClose(&self, body: Bytes) -> Response {
         let envelope = match serde_json::from_slice::<LinkWatchChannelCloseEnvelope>(&body) {
@@ -192,6 +198,7 @@ impl CoreLinkHttpDispatcher {
         JsonResponse(serde_json::json!({})).into_response()
     }
 
+    /// Upgrades an HTTP request into a WebSocket core link session.
     pub async fn ws(&self, upgrade: WebSocketUpgrade) -> Response {
         let dispatcher = self.clone();
         upgrade

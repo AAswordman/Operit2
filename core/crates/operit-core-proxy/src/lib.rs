@@ -6,13 +6,13 @@ use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
     CoreLinkError, CoreObjectPath, CoreRequestId, CoreWatchRequest,
 };
-use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_runtime::util::stream::RevisableTextStream::{
+use operit_util::stream::RevisableTextStream::{
     RevisableTextStream, TextStreamEventCarrier, TextStreamEventType,
 };
-use operit_runtime::util::stream::Stream::Stream;
-use operit_runtime::util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
+use operit_util::stream::Stream::Stream;
+use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
@@ -23,10 +23,12 @@ pub struct LocalCoreProxy {
 }
 
 impl LocalCoreProxy {
+    /// Creates a local link client backed by an in-process application.
     pub fn new(application: OperitApplication) -> Self {
         Self { application }
     }
 
+    /// Returns mutable access to the hosted local application.
     #[allow(non_snake_case)]
     pub fn localApplicationMut(&mut self) -> &mut OperitApplication {
         &mut self.application
@@ -63,6 +65,7 @@ impl LocalCoreProxy {
         generated_dispatch_core_proxy_call(self, request).await
     }
 
+    /// Executes a watch snapshot through the generated synchronous dispatcher.
     #[allow(non_snake_case)]
     pub fn watchSnapshotSync(
         &mut self,
@@ -71,6 +74,7 @@ impl LocalCoreProxy {
         self.dispatchWatchSnapshot(request)
     }
 
+    /// Opens a watch stream through the generated synchronous dispatcher.
     #[allow(non_snake_case)]
     pub fn watchSync(
         &mut self,

@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::util::{parse_bool_arg, read_content_arg};
 use crate::output::CoreCommandOutput;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::data::skill::SkillRepository::SkillRepository;
+use operit_host_api::HostManager::HostManager;
+use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 
 pub fn run_skill_command(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -112,7 +112,7 @@ pub fn run_skill_command(
 }
 
 fn list_more_skills(
-    context: OperitApplicationContext,
+    context: HostManager,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let repository = skill_repository(&context);
@@ -123,7 +123,7 @@ fn list_more_skills(
 }
 
 fn load_more_skill(
-    context: OperitApplicationContext,
+    context: HostManager,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -134,7 +134,7 @@ fn load_more_skill(
 }
 
 fn list_skills(
-    context: OperitApplicationContext,
+    context: HostManager,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let repository = skill_repository(&context);
@@ -156,7 +156,7 @@ fn list_skills(
 }
 
 fn show_skill(
-    context: OperitApplicationContext,
+    context: HostManager,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -177,7 +177,7 @@ fn show_skill(
     Ok(())
 }
 
-fn skill_repository(context: &OperitApplicationContext) -> SkillRepository {
+fn skill_repository(context: &HostManager) -> SkillRepository {
     SkillRepository::getInstance(context)
 }
 

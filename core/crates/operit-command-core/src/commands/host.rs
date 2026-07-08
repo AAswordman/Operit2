@@ -1,9 +1,9 @@
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_host_api::HostManager::HostManager;
 
 pub fn run_host_command(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {

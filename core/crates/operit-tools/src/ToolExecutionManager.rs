@@ -1,0 +1,787 @@
+use std::cell::RefCell;
+use std::collections::BTreeSet;
+
+use serde::{Deserialize, Serialize};
+
+use operit_tools::ConversationMarkupManager::{ConversationMarkupManager, ToolResult};
+use operit_tools::tools::climode::CliToolModeSupport::{
+    CliToolModeSupport, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
+};
+use operit_tools::tools::packTool::PackageManager::PackageManager;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::tools::ToolResultDataClasses::stringResultData;
+use crate::runtime_support::{toolRuntimeSupport, ResolvedCharacterCardToolAccess};
+use operit_util::AppLogger::AppLogger;
+use operit_util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
+
+const TAG: &str = "ToolExecutionManager";
+const PACKAGE_PROXY_TOOL_NAME: &str = "package_proxy";
+const CLI_PROXY_TOOL_NAME: &str = PROXY_TOOL_NAME;
+const CLI_SEARCH_TOOL_NAME: &str = SEARCH_TOOL_NAME;
+const PACKAGE_CALLER_NAME_PARAM: &str = "__operit_package_caller_name";
+const PACKAGE_CHAT_ID_PARAM: &str = "__operit_package_chat_id";
+const PACKAGE_CALLER_CARD_ID_PARAM: &str = "__operit_package_caller_card_id";
+
+thread_local! {
+    static TOOL_RUNTIME_CONTEXT: RefCell<Option<ToolRuntimeContext>> = RefCell::new(None);
+}
+
+/// Selects the tool surface available to a model response.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolExposureMode {
+    /// Native tool-call markup with the full registered tool catalog.
+    FULL,
+    /// Command-line proxy mode with a restricted public tool surface.
+    CLI,
+}
+
+/// Context made available while a batch of tool invocations is executing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolRuntimeContext {
+    pub callerChatId: Option<String>,
+    pub callerCardId: Option<String>,
+    pub workspacePath: Option<String>,
+    pub toolExposureMode: ToolExposureMode,
+}
+
+/// Name-value parameter parsed from a model tool invocation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolParameter {
+    pub name: String,
+    pub value: String,
+}
+
+/// Parsed model request for one AI tool invocation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AITool {
+    pub name: String,
+    pub parameters: Vec<ToolParameter>,
+}
+
+/// Parsed tool invocation plus its source text location in the assistant response.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolInvocation {
+    pub tool: AITool,
+    pub rawText: String,
+    pub responseLocation: (usize, usize),
+}
+
+/// Resolved executable tool target and the name shown in tool results.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ResolvedToolTarget {
+    tool: AITool,
+    displayName: String,
+}
+
+/// Parses model tool calls, checks permissions, and executes tools through handlers.
+pub struct ToolExecutionManager;
+
+impl ToolExecutionManager {
+    /// Returns the runtime context for the currently executing tool batch.
+    pub fn currentToolRuntimeContext() -> Option<ToolRuntimeContext> {
+        TOOL_RUNTIME_CONTEXT.with(|value| value.borrow().clone())
+    }
+
+    /// Extracts XML-like tool invocations from an assistant response.
+    pub fn extractToolInvocations(response: &str) -> Vec<ToolInvocation> {
+        let mut invocations = Vec::new();
+        for tool_match in ChatMarkupRegex::tool_call_matches(response) {
+            let mut parameters = Vec::new();
+            for (start, end) in tag_ranges(&tool_match.body, "param") {
+                let raw = &tool_match.body[start..end];
+                let paramName = attr_value(raw, "name").unwrap_or_default();
+                let paramValue = raw
+                    .split_once('>')
+                    .and_then(|(_, tail)| tail.rsplit_once("</").map(|(body, _)| body))
+                    .map(Self::unescapeXml)
+                    .unwrap_or_default();
+                parameters.push(ToolParameter {
+                    name: paramName,
+                    value: paramValue,
+                });
+            }
+            invocations.push(ToolInvocation {
+                tool: AITool {
+                    name: tool_match.name,
+                    parameters,
+                },
+                rawText: response[tool_match.start..tool_match.end].to_string(),
+                responseLocation: (tool_match.start, tool_match.end),
+            });
+        }
+        let toolNames = invocations
+            .iter()
+            .map(|invocation| invocation.tool.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        AppLogger::d(
+            TAG,
+            &format!(
+                "tool.parse.complete responseChars={} toolCount={} tools=[{}]",
+                response.len(),
+                invocations.len(),
+                toolNames
+            ),
+        );
+        invocations
+    }
+
+    /// Validates and invokes one tool using the supplied executor.
+    pub fn executeToolSafely(
+        invocation: &ToolInvocation,
+        executor: &mut dyn ToolExecutor,
+    ) -> Vec<ToolResult> {
+        let validationResult = executor.validateParameters(&invocation.tool);
+        if !validationResult.valid {
+            return vec![ToolResult {
+                toolName: invocation.tool.name.clone(),
+                success: false,
+                result: stringResultData(""),
+                error: Some(format!(
+                    "Invalid parameters: {}",
+                    validationResult.errorMessage
+                )),
+            }];
+        }
+        executor.invokeAndStream(&invocation.tool)
+    }
+
+    /// Checks role-card gates for a parsed tool invocation.
+    pub fn checkRoleCardToolAccess(
+        toolHandler: &AIToolHandler,
+        invocation: &ToolInvocation,
+        toolExposureMode: ToolExposureMode,
+        roleCardToolAccess: Option<&ResolvedCharacterCardToolAccess>,
+    ) -> (bool, Option<ToolResult>) {
+        let resolvedTarget = Self::resolveToolTarget(&invocation.tool);
+        let checkedTool = if toolExposureMode == ToolExposureMode::CLI
+            && invocation.tool.name == CLI_PROXY_TOOL_NAME
+        {
+            invocation.tool.clone()
+        } else {
+            resolvedTarget.tool.clone()
+        };
+
+        if toolExposureMode == ToolExposureMode::CLI
+            && (invocation.tool.name == CLI_SEARCH_TOOL_NAME
+                || invocation.tool.name == CLI_PROXY_TOOL_NAME)
+        {
+            toolHandler.notifyToolPermissionChecked(&checkedTool, true, Some("CLI public tool"));
+            return (true, None);
+        }
+
+        if let Some(access) = roleCardToolAccess {
+            if access.customEnabled && !Self::isInvocationAllowedForRoleCard(invocation, access) {
+                return (
+                    false,
+                    Some(ToolResult {
+                        toolName: resolvedTarget.displayName,
+                        success: false,
+                        result: stringResultData(""),
+                        error: Some("Character card tool access denied.".to_string()),
+                    }),
+                );
+            }
+        }
+
+        toolHandler.notifyToolPermissionChecked(
+            &checkedTool,
+            true,
+            Some("Role-card tool access allowed."),
+        );
+        (true, None)
+    }
+
+    /// Executes a batch of parsed tool invocations and returns emitted markup plus results.
+    pub fn executeInvocations(
+        invocations: &[ToolInvocation],
+        toolHandler: &mut AIToolHandler,
+        packageManager: &PackageManager,
+        callerName: Option<String>,
+        callerChatId: Option<String>,
+        callerCardId: Option<String>,
+        workspacePath: Option<String>,
+        toolExposureMode: ToolExposureMode,
+    ) -> (Vec<String>, Vec<ToolResult>) {
+        let mut emitted = Vec::new();
+        let mut results = Vec::new();
+        let requestedToolNames = invocations
+            .iter()
+            .map(|invocation| invocation.tool.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        AppLogger::d(
+            TAG,
+            &format!(
+                "tool.execution.batch_start requestedCount={} tools=[{}] callerNameSet={} callerChatIdSet={} callerCardIdSet={} exposure={:?}",
+                invocations.len(),
+                requestedToolNames,
+                callerName.is_some(),
+                callerChatId.is_some(),
+                callerCardId.is_some(),
+                toolExposureMode
+            ),
+        );
+        toolHandler.registerDefaultTools();
+        let roleCardToolAccess = toolRuntimeSupport().resolveCharacterCardToolAccess(
+            callerCardId.as_deref(),
+            packageManager,
+            None,
+        );
+        let previousRuntimeContext = Self::currentToolRuntimeContext();
+        TOOL_RUNTIME_CONTEXT.with(|value| {
+            *value.borrow_mut() = Some(ToolRuntimeContext {
+                callerChatId: callerChatId.clone(),
+                callerCardId: callerCardId.clone(),
+                workspacePath: workspacePath.clone(),
+                toolExposureMode: toolExposureMode.clone(),
+            });
+        });
+        let jsPackageNames = packageManager
+            .getAvailablePackages()
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let injectedInvocations = invocations
+            .iter()
+            .map(|invocation| {
+                Self::injectPackageCallContext(
+                    invocation,
+                    &jsPackageNames,
+                    callerName.as_deref(),
+                    callerChatId.as_deref(),
+                    callerCardId.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        for invocation in injectedInvocations {
+            let displayToolName = Self::resolveDisplayToolName(&invocation.tool);
+            AppLogger::d(
+                TAG,
+                &format!(
+                    "tool.execution.start tool={} params={} rawChars={}",
+                    displayToolName,
+                    invocation.tool.parameters.len(),
+                    invocation.rawText.len()
+                ),
+            );
+            if let Some(deniedResult) =
+                Self::buildToolExposureDeniedResult(&invocation, toolExposureMode.clone())
+            {
+                toolHandler.notifyToolExecutionResult(&invocation.tool, &deniedResult);
+                emitted.push(ensureEndsWithNewline(
+                    &ConversationMarkupManager::formatToolResultForMessage(&deniedResult),
+                ));
+                results.push(deniedResult);
+                AppLogger::w(
+                    TAG,
+                    &format!(
+                        "tool.execution.denied tool={} reason=exposure",
+                        displayToolName
+                    ),
+                );
+                continue;
+            }
+
+            if roleCardToolAccess.customEnabled
+                && !Self::isInvocationAllowedForRoleCard(&invocation, &roleCardToolAccess)
+            {
+                let deniedResult = ToolResult {
+                    toolName: Self::resolveToolTarget(&invocation.tool).displayName,
+                    success: false,
+                    result: stringResultData(""),
+                    error: Some("Character card tool access denied.".to_string()),
+                };
+                toolHandler.notifyToolExecutionResult(&invocation.tool, &deniedResult);
+                emitted.push(ensureEndsWithNewline(
+                    &ConversationMarkupManager::formatToolResultForMessage(&deniedResult),
+                ));
+                results.push(deniedResult);
+                AppLogger::w(
+                    TAG,
+                    &format!(
+                        "tool.execution.denied tool={} reason=role_card",
+                        displayToolName
+                    ),
+                );
+                continue;
+            }
+
+            toolHandler.notifyToolCallRequested(&invocation.tool);
+            let (hasPermission, errorResult) = Self::checkRoleCardToolAccess(
+                toolHandler,
+                &invocation,
+                toolExposureMode.clone(),
+                Some(&roleCardToolAccess),
+            );
+            if !hasPermission {
+                if let Some(deniedResult) = errorResult {
+                    emitted.push(ensureEndsWithNewline(
+                        &ConversationMarkupManager::formatToolResultForMessage(&deniedResult),
+                    ));
+                    results.push(deniedResult);
+                }
+                AppLogger::w(
+                    TAG,
+                    &format!(
+                        "tool.execution.denied tool={} reason=permission",
+                        displayToolName
+                    ),
+                );
+                continue;
+            }
+
+            if !toolHandler.getToolExecutorOrActivate(&invocation.tool.name) {
+                let errorMessage = Self::buildToolNotAvailableErrorMessage(&invocation.tool.name);
+                let content = ConversationMarkupManager::createToolNotAvailableError(
+                    &invocation.tool.name,
+                    Some(&errorMessage),
+                );
+                let deniedResult = ToolResult {
+                    toolName: displayToolName.clone(),
+                    success: false,
+                    result: stringResultData(""),
+                    error: Some(errorMessage),
+                };
+                toolHandler.notifyToolExecutionResult(&invocation.tool, &deniedResult);
+                emitted.push(ensureEndsWithNewline(&content));
+                results.push(deniedResult);
+                AppLogger::w(
+                    TAG,
+                    &format!(
+                        "tool.execution.denied tool={} reason=unavailable",
+                        displayToolName
+                    ),
+                );
+                continue;
+            }
+            toolHandler.notifyToolExecutionStarted(&invocation.tool);
+            let Some(collected) =
+                toolHandler.executeToolSafelyWithResolvedExecutor(&invocation.tool)
+            else {
+                toolHandler.notifyToolExecutionFinished(&invocation.tool);
+                AppLogger::w(
+                    TAG,
+                    &format!("tool.execution.no_executor_result tool={}", displayToolName),
+                );
+                continue;
+            };
+            AppLogger::d(
+                TAG,
+                &format!(
+                    "tool.execution.raw_results tool={} rawResultCount={}",
+                    displayToolName,
+                    collected.len()
+                ),
+            );
+            for result in &collected {
+                toolHandler.notifyToolExecutionResult(&invocation.tool, result);
+                emitted.push(ensureEndsWithNewline(
+                    &ConversationMarkupManager::formatToolResultForMessage(result),
+                ));
+            }
+            if collected.is_empty() {
+                let emptyResult = ToolResult {
+                    toolName: displayToolName.clone(),
+                    success: false,
+                    result: stringResultData(""),
+                    error: Some("The tool execution returned no results.".to_string()),
+                };
+                toolHandler.notifyToolExecutionResult(&invocation.tool, &emptyResult);
+                results.push(emptyResult);
+                AppLogger::w(
+                    TAG,
+                    &format!("tool.execution.empty_result tool={}", displayToolName),
+                );
+            } else {
+                let last = collected.last().expect("collected not empty");
+                let combinedResultString = collected
+                    .iter()
+                    .map(|item| {
+                        if item.success {
+                            item.result.toString().trim().to_string()
+                        } else {
+                            format!(
+                                "Step error: {}",
+                                item.error
+                                    .clone()
+                                    .unwrap_or_else(|| "Unknown error".to_string())
+                            )
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .trim()
+                    .to_string();
+                let finalResult = ToolResult {
+                    toolName: displayToolName.clone(),
+                    success: last.success,
+                    result: stringResultData(combinedResultString),
+                    error: last.error.clone(),
+                };
+                toolHandler.notifyToolExecutionResult(&invocation.tool, &finalResult);
+                AppLogger::d(
+                    TAG,
+                    &format!(
+                        "tool.execution.complete tool={} success={} rawResultCount={} combinedChars={}",
+                        displayToolName,
+                        finalResult.success,
+                        collected.len(),
+                        finalResult.result.toString().len()
+                    ),
+                );
+                results.push(finalResult);
+            }
+            toolHandler.notifyToolExecutionFinished(&invocation.tool);
+        }
+
+        TOOL_RUNTIME_CONTEXT.with(|value| {
+            *value.borrow_mut() = previousRuntimeContext;
+        });
+        let emittedChars = emitted.iter().map(|content| content.len()).sum::<usize>();
+        AppLogger::d(
+            TAG,
+            &format!(
+                "tool.execution.batch_complete requestedCount={} emittedMessages={} emittedChars={} resultCount={}",
+                invocations.len(),
+                emitted.len(),
+                emittedChars,
+                results.len()
+            ),
+        );
+        (emitted, results)
+    }
+
+    fn ensureEndsWithNewline(content: &str) -> String {
+        ensureEndsWithNewline(content)
+    }
+
+    fn resolveToolTarget(tool: &AITool) -> ResolvedToolTarget {
+        if tool.name != PACKAGE_PROXY_TOOL_NAME && tool.name != CLI_PROXY_TOOL_NAME {
+            return ResolvedToolTarget {
+                tool: tool.clone(),
+                displayName: tool.name.clone(),
+            };
+        }
+
+        let targetToolName = tool
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "tool_name")
+            .map(|parameter| parameter.value.trim().to_string())
+            .unwrap_or_default();
+        if targetToolName.is_empty() {
+            return ResolvedToolTarget {
+                tool: tool.clone(),
+                displayName: tool.name.clone(),
+            };
+        }
+
+        let forwardedParameters = Self::resolveProxyParameters(tool);
+        ResolvedToolTarget {
+            tool: AITool {
+                name: targetToolName.clone(),
+                parameters: forwardedParameters,
+            },
+            displayName: targetToolName,
+        }
+    }
+
+    fn resolveDisplayToolName(tool: &AITool) -> String {
+        Self::resolveToolTarget(tool).displayName
+    }
+
+    fn isJsPackageTool(toolName: &str, jsPackageNames: &BTreeSet<String>) -> bool {
+        let parts = toolName.splitn(2, ':').collect::<Vec<_>>();
+        parts.len() == 2 && jsPackageNames.contains(parts[0])
+    }
+
+    fn addPackageContextParamIfMissing(
+        params: &mut Vec<ToolParameter>,
+        name: &str,
+        value: Option<&str>,
+    ) {
+        let Some(value) = value else {
+            return;
+        };
+        if value.trim().is_empty() || params.iter().any(|parameter| parameter.name == name) {
+            return;
+        }
+        params.push(ToolParameter {
+            name: name.to_string(),
+            value: value.to_string(),
+        });
+    }
+
+    fn injectPackageCallContext(
+        invocation: &ToolInvocation,
+        jsPackageNames: &BTreeSet<String>,
+        callerName: Option<&str>,
+        callerChatId: Option<&str>,
+        callerCardId: Option<&str>,
+    ) -> ToolInvocation {
+        let resolvedTargetTool = Self::resolveToolTarget(&invocation.tool).tool;
+        if !Self::isJsPackageTool(&resolvedTargetTool.name, jsPackageNames) {
+            return invocation.clone();
+        }
+
+        let mut updatedParams = invocation.tool.parameters.clone();
+        Self::addPackageContextParamIfMissing(
+            &mut updatedParams,
+            PACKAGE_CALLER_NAME_PARAM,
+            callerName,
+        );
+        Self::addPackageContextParamIfMissing(
+            &mut updatedParams,
+            PACKAGE_CHAT_ID_PARAM,
+            callerChatId,
+        );
+        Self::addPackageContextParamIfMissing(
+            &mut updatedParams,
+            PACKAGE_CALLER_CARD_ID_PARAM,
+            callerCardId,
+        );
+
+        if updatedParams.len() == invocation.tool.parameters.len() {
+            return invocation.clone();
+        }
+
+        ToolInvocation {
+            tool: AITool {
+                name: invocation.tool.name.clone(),
+                parameters: updatedParams,
+            },
+            rawText: invocation.rawText.clone(),
+            responseLocation: invocation.responseLocation,
+        }
+    }
+
+    fn getParameterValue(tool: &AITool, name: &str) -> Option<String> {
+        tool.parameters
+            .iter()
+            .find(|parameter| parameter.name == name)
+            .map(|parameter| parameter.value.trim().to_string())
+    }
+
+    fn isInvocationAllowedForRoleCard(
+        invocation: &ToolInvocation,
+        roleCardToolAccess: &ResolvedCharacterCardToolAccess,
+    ) -> bool {
+        let toolName = invocation.tool.name.trim();
+        let resolvedTarget = Self::resolveToolTarget(&invocation.tool).tool;
+
+        if toolName == CLI_SEARCH_TOOL_NAME {
+            return true;
+        }
+
+        if toolName == CLI_PROXY_TOOL_NAME {
+            return Self::isResolvedTargetAllowedForRoleCard(&resolvedTarget, roleCardToolAccess);
+        }
+
+        if toolName == "use_package" {
+            if !roleCardToolAccess.isBuiltinToolAllowed("use_package") {
+                return false;
+            }
+            let sourceName =
+                Self::getParameterValue(&invocation.tool, "package_name").unwrap_or_default();
+            return sourceName.is_empty()
+                || roleCardToolAccess.isExternalSourceAllowed(&sourceName);
+        }
+
+        if toolName == PACKAGE_PROXY_TOOL_NAME {
+            if !roleCardToolAccess.isBuiltinToolAllowed("package_proxy") {
+                return false;
+            }
+            let resolvedTargetName = resolvedTarget.name.trim();
+            if resolvedTargetName.is_empty() || !resolvedTargetName.contains(':') {
+                return true;
+            }
+            return Self::isResolvedTargetAllowedForRoleCard(&resolvedTarget, roleCardToolAccess);
+        }
+
+        if toolName.contains(':') {
+            let sourceName = toolName.split(':').next().unwrap_or("").trim();
+            return sourceName.is_empty() || roleCardToolAccess.isExternalSourceAllowed(sourceName);
+        }
+
+        roleCardToolAccess.isBuiltinToolAllowed(toolName)
+    }
+
+    fn isResolvedTargetAllowedForRoleCard(
+        resolvedTarget: &AITool,
+        roleCardToolAccess: &ResolvedCharacterCardToolAccess,
+    ) -> bool {
+        let resolvedTargetName = resolvedTarget.name.trim();
+        if resolvedTargetName.is_empty() {
+            return true;
+        }
+        if resolvedTargetName == "use_package" {
+            let sourceName =
+                Self::getParameterValue(resolvedTarget, "package_name").unwrap_or_default();
+            return sourceName.is_empty()
+                || roleCardToolAccess.isExternalSourceAllowed(&sourceName);
+        }
+        if resolvedTargetName.contains(':') {
+            let sourceName = resolvedTargetName.split(':').next().unwrap_or("").trim();
+            return sourceName.is_empty() || roleCardToolAccess.isExternalSourceAllowed(sourceName);
+        }
+        roleCardToolAccess.isBuiltinToolAllowed(resolvedTargetName)
+    }
+
+    fn resolveProxyParameters(tool: &AITool) -> Vec<ToolParameter> {
+        let paramsRaw = tool
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == "params")
+            .map(|parameter| parameter.value.trim().to_string())
+            .unwrap_or_default();
+        if paramsRaw.is_empty() {
+            return Vec::new();
+        }
+
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&paramsRaw) else {
+            return Vec::new();
+        };
+        let Some(object) = value.as_object() else {
+            return Vec::new();
+        };
+
+        object
+            .iter()
+            .map(|(key, value)| ToolParameter {
+                name: key.clone(),
+                value: match value {
+                    serde_json::Value::Null => "null".to_string(),
+                    serde_json::Value::String(text) => text.clone(),
+                    _ => value.to_string(),
+                },
+            })
+            .collect()
+    }
+
+    fn buildToolExposureDeniedResult(
+        invocation: &ToolInvocation,
+        toolExposureMode: ToolExposureMode,
+    ) -> Option<ToolResult> {
+        let toolName = invocation.tool.name.trim();
+        let denied = match toolExposureMode {
+            ToolExposureMode::CLI if !Self::isCliPublicTool(toolName) => Some(format!(
+                "{}",
+                CliToolModeSupport::buildCliTopLevelRestrictionErrorMessage(
+                    &Self::resolveDisplayToolName(&invocation.tool),
+                    true,
+                )
+            )),
+            ToolExposureMode::FULL if Self::isCliPublicTool(toolName) => {
+                Some(CliToolModeSupport::buildCliModeUnavailableMessage(true))
+            }
+            _ => None,
+        }?;
+
+        Some(ToolResult {
+            toolName: if toolExposureMode == ToolExposureMode::CLI
+                && !Self::isCliPublicTool(toolName)
+            {
+                Self::resolveDisplayToolName(&invocation.tool)
+            } else {
+                toolName.to_string()
+            },
+            success: false,
+            result: stringResultData(""),
+            error: Some(denied),
+        })
+    }
+
+    fn isCliPublicTool(toolName: &str) -> bool {
+        toolName == CLI_SEARCH_TOOL_NAME || toolName == CLI_PROXY_TOOL_NAME
+    }
+
+    fn buildToolNotAvailableErrorMessage(toolName: &str) -> String {
+        if toolName.contains('.') && !toolName.contains(':') {
+            let parts = toolName.splitn(2, '.').collect::<Vec<_>>();
+            return format!(
+                "Tool invocation syntax error: for tools inside a package, use the 'packName:toolName' format instead of '{}'. You may want to call '{}:{}'.",
+                toolName,
+                parts.get(0).copied().unwrap_or(""),
+                parts.get(1).copied().unwrap_or("")
+            );
+        }
+
+        if toolName.contains(':') {
+            let parts = toolName.splitn(2, ':').collect::<Vec<_>>();
+            let packName = parts[0];
+            let toolNamePart = parts.get(1).copied().unwrap_or("");
+            return format!(
+                "Tool package '{}' is not activated. Auto-activation was attempted but failed, or tool '{}' does not exist. Please use 'use_package' with package name '{}' to check available tools.",
+                packName, toolNamePart, packName
+            );
+        }
+
+        format!(
+            "Tool '{}' is unavailable or does not exist. If this is a tool inside a package, call it using the 'packName:toolName' format.",
+            toolName
+        )
+    }
+
+    fn unescapeXml(input: &str) -> String {
+        let mut result = input.to_string();
+        if result.starts_with("<![CDATA[") && result.ends_with("]]>") {
+            result = result[9..result.len() - 3].to_string();
+        }
+        if result.ends_with("]]>") {
+            result.truncate(result.len() - 3);
+        }
+        if result.starts_with("<![CDATA[") {
+            result = result[9..].to_string();
+        }
+        result
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+    }
+}
+
+pub trait ToolExecutor: Send {
+    fn validateParameters(&self, tool: &AITool) -> ToolValidationResult;
+    fn accessSpec(&self, tool: &AITool) -> Result<ToolAccessSpec, String>;
+    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolEffect {
+    READ,
+    WRITE,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolBoundary {
+    None,
+    FilePath { effect: ToolEffect },
+    FilePair {
+        source: ToolEffect,
+        destination: ToolEffect,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolAccessSpec {
+    pub effect: ToolEffect,
+    pub boundary: ToolBoundary,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolValidationResult {
+    pub valid: bool,
+    pub errorMessage: String,
+}
+
+fn ensureEndsWithNewline(content: &str) -> String {
+    if content.ends_with('\n') {
+        content.to_string()
+    } else {
+        format!("{content}\n")
+    }
+}

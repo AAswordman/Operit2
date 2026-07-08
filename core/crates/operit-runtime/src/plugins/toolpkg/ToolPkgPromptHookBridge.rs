@@ -2,23 +2,23 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 
-use crate::core::chat::hooks::PromptHookRegistry::{
+use operit_providers::chat::hooks::PromptHookRegistry::{
     PromptEstimateFinalizeHook, PromptEstimateHistoryHook, PromptFinalizeHook, PromptHistoryHook,
     PromptHookContext, PromptHookMutation, PromptHookRegistry, PromptInputHook,
     SystemPromptComposeHook, ToolPromptComposeHook,
 };
-use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
-use crate::core::tools::packTool::ToolPkgCommonPluginConstants::{
+use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
+use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::{
     TOOLPKG_EVENT_PROMPT_ESTIMATE_FINALIZE, TOOLPKG_EVENT_PROMPT_ESTIMATE_HISTORY,
     TOOLPKG_EVENT_PROMPT_FINALIZE, TOOLPKG_EVENT_PROMPT_HISTORY, TOOLPKG_EVENT_PROMPT_INPUT,
     TOOLPKG_EVENT_SYSTEM_PROMPT_COMPOSE, TOOLPKG_EVENT_TOOL_PROMPT_COMPOSE,
 };
-use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
     decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgPromptHookRegistration,
 };
-use crate::util::AppLogger::AppLogger;
-use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
+use operit_util::AppLogger::AppLogger;
+use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
 const TAG: &str = "ToolPkgPromptHookBridge";
 
@@ -123,7 +123,7 @@ fn replace_hooks(
 
 fn registrations(
     container: &ToolPkgContainerRuntime,
-    hooks: &[crate::core::tools::packTool::ToolPkgParser::ToolPkgFunctionHookRuntime],
+    hooks: &[operit_tools::tools::packTool::ToolPkgParser::ToolPkgFunctionHookRuntime],
 ) -> Vec<ToolPkgPromptHookRegistration> {
     hooks
         .iter()

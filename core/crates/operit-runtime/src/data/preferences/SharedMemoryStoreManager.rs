@@ -4,7 +4,7 @@ use operit_store::PreferencesDataStore::{
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use uuid::Uuid;
 
-use crate::data::model::Memory::SharedMemoryStore;
+use operit_model::Memory::SharedMemoryStore;
 
 #[derive(Clone)]
 pub struct SharedMemoryStoreManager {

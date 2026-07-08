@@ -12,6 +12,7 @@ from common import (
     flutter_command,
     flutter_pub_get,
     read_properties,
+    require_web_access_bundle,
     run,
     write_properties,
 )
@@ -48,6 +49,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    require_web_access_bundle()
     if not args.skip_signing:
         ensure_android_signing()
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile)

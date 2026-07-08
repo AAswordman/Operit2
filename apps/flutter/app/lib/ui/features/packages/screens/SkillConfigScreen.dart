@@ -38,8 +38,8 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
   List<core_proxy.BundledExternalSkillCandidate> _moreSkills =
       <core_proxy.BundledExternalSkillCandidate>[];
 
-  GeneratedSkillRepositoryCoreProxy get _repository =>
-      widget.clients.skillRepository;
+  GeneratedPermissionsSkillRuntimeSkillRepositoryCoreProxy get _repository =>
+      widget.clients.permissionsSkillRuntimeSkillRepository;
 
   @override
   void initState() {

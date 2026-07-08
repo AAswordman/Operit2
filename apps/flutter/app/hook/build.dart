@@ -23,9 +23,12 @@ void main(List<String> args) async {
     final webHostRoot = Directory.fromUri(
       input.packageRoot.resolve('../../../hosts/web/'),
     );
+    final webSourceDir = Directory.fromUri(
+      input.packageRoot.resolve('../../../apps/web_access/web/'),
+    );
     final webDir = Directory.fromUri(input.packageRoot.resolve('web/'));
     final webBuildDir = Directory.fromUri(
-      input.packageRoot.resolve('build/web/'),
+      input.packageRoot.resolve('../../../apps/web_access/build/bundle/'),
     );
     final webAccessAssetsDir = Directory.fromUri(
       input.packageRoot.resolve('assets/web_access/'),
@@ -56,10 +59,14 @@ void main(List<String> args) async {
     await _addRustDependencies(output, bridgeCrate);
     await _addRustDependencies(output, coreRoot);
     await _addRustDependencies(output, webHostRoot);
-    output.dependencies.add(
-      packageRoot.uri.resolve('web/operit_runtime_bridge.js'),
-    );
-    output.dependencies.add(packageRoot.uri.resolve('web/index.html'));
+    await _addDirectoryFileDependencies(output, webSourceDir, {
+      '.html',
+      '.ico',
+      '.js',
+      '.json',
+      '.png',
+      '.wasm',
+    });
 
     await _run(_pythonExecutable(repoRoot), [
       syncScript.path,
@@ -103,6 +110,17 @@ void main(List<String> args) async {
       ).copy(File.fromUri(webDir.uri.resolve('sql-wasm.wasm')).path);
     }
     if (shouldBundleWebAccessAssets) {
+      await _addDirectoryFileDependencies(output, webBuildDir, {
+        '.bin',
+        '.html',
+        '.js',
+        '.json',
+        '.otf',
+        '.png',
+        '.ttf',
+        '.txt',
+        '.wasm',
+      });
       await _syncDirectory(webBuildDir, webAccessAssetsDir);
     }
   });

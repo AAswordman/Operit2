@@ -1,0 +1,41 @@
+[package]
+name = "operit-tools"
+version = "2.0.0-preview.3"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+aes = "0.8"
+base64.workspace = true
+chrono.workspace = true
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+futures-util.workspace = true
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+json5.workspace = true
+md-5 = "0.10"
+operit-host-api = { path = "../operit-host-api" }
+operit-model = { path = "../operit-model" }
+operit-store = { path = "../operit-store" }
+operit-util = { path = "../operit-util" }
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+url = "2"
+uuid.workspace = true
+zip.workspace = true
+
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
+rquickjs.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+rquickjs = { workspace = true, features = ["bindgen"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+quickjs-wasm-rs = "3.1.0"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "XmlHttpRequest"] }

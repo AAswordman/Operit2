@@ -1,25 +1,28 @@
-use crate::data::model::ActivePrompt::ActivePrompt;
-use crate::data::model::ChatDisplayWindowState::ChatDisplayWindowState;
-use crate::data::model::ChatHistory::ChatHistory;
-use crate::data::model::ChatHistoryListItem::ChatHistoryListItem;
-use crate::data::model::ChatMessage::ChatMessage;
-use crate::data::model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
+use operit_model::ActivePrompt::ActivePrompt;
+use operit_model::ChatDisplayWindowState::ChatDisplayWindowState;
+use operit_model::ChatHistory::ChatHistory;
+use operit_model::ChatHistoryListItem::ChatHistoryListItem;
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use crate::data::preferences::ActivePromptManager::ActivePromptManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
-use crate::data::repository::ChatHistoryManager::ChatHistoryManager;
-use crate::util::ChainLogger::{self, MESSAGE_STORE_CHAIN};
+use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
+use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN};
 use operit_store::PreferencesDataStore::{MutableStateFlow, StateFlow, mutableStateFlow};
 
+/// Number of persisted messages loaded per display-window query.
 pub const DISPLAY_WINDOW_QUERY_BATCH_SIZE: usize = 80;
 
 #[derive(Clone, Debug, PartialEq)]
+/// Defines whether chat selection follows global persisted state or stays local.
 pub enum ChatSelectionMode {
     FOLLOW_GLOBAL,
     LOCAL_ONLY,
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Result of loading the currently visible chat message window.
 pub struct CurrentChatWindowLoadResult {
     pub messages: Vec<ChatMessage>,
     pub hasOlderPersistedHistory: bool,
@@ -27,12 +30,14 @@ pub struct CurrentChatWindowLoadResult {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Target chat selected after deleting the current chat.
 pub struct ChatDeletionReplacementTarget {
     pub chatId: String,
     pub syncToGlobal: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Tracks paging state for the currently displayed chat window.
 pub struct CurrentChatWindowController {
     pub hasOlderDisplayHistory: bool,
     pub hasNewerDisplayHistory: bool,
@@ -40,6 +45,7 @@ pub struct CurrentChatWindowController {
 }
 
 impl CurrentChatWindowController {
+    /// Creates an empty display-window controller.
     pub fn new() -> Self {
         Self {
             hasOlderDisplayHistory: false,
@@ -48,6 +54,7 @@ impl CurrentChatWindowController {
         }
     }
 
+    /// Resets all display-window paging flags.
     pub fn reset(&mut self) {
         self.hasOlderDisplayHistory = false;
         self.hasNewerDisplayHistory = false;
@@ -55,6 +62,7 @@ impl CurrentChatWindowController {
     }
 }
 
+/// Coordinates chat history persistence, current-chat state, and display-window updates.
 pub struct ChatHistoryDelegate {
     pub chatHistoryManager: ChatHistoryManager,
     pub characterCardManager: CharacterCardManager,
@@ -83,6 +91,7 @@ pub struct ChatHistoryDelegate {
 }
 
 impl ChatHistoryDelegate {
+    /// Creates a chat history delegate for the requested selection mode.
     pub fn new(selectionMode: ChatSelectionMode) -> Self {
         let chatHistoriesFlow = mutableStateFlow(Vec::<ChatHistory>::new());
         let chatHistoryListItemsFlow = chatHistoriesFlow.asStateFlow().map(|histories| {
@@ -121,6 +130,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Clones the delegate while reusing live state-flow handles for core services.
     pub fn clone_for_core(&self) -> Self {
         Self {
             chatHistoryManager: ChatHistoryManager::default()
@@ -152,26 +162,31 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Returns the flow for messages shown in the active chat.
     pub fn chatHistoryFlow(&self) -> StateFlow<Vec<ChatMessage>> {
         self.chatHistoryFlow.asStateFlow()
     }
 
     #[allow(non_snake_case)]
+    /// Returns the flow for persisted chat metadata.
     pub fn chatHistoriesFlow(&self) -> StateFlow<Vec<ChatHistory>> {
         self.chatHistoriesFlow.asStateFlow()
     }
 
     #[allow(non_snake_case)]
+    /// Returns the flow for chat list rows derived from persisted metadata.
     pub fn chatHistoryListItemsFlow(&self) -> StateFlow<Vec<ChatHistoryListItem>> {
         self.chatHistoryListItemsFlow.clone()
     }
 
     #[allow(non_snake_case)]
+    /// Returns the flow for the selected chat id.
     pub fn currentChatIdFlow(&self) -> StateFlow<Option<String>> {
         self.currentChatIdFlow.asStateFlow()
     }
 
     #[allow(non_snake_case)]
+    /// Returns the flow for display-window paging state.
     pub fn displayWindowStateFlow(&self) -> StateFlow<ChatDisplayWindowState> {
         self.displayWindowStateFlow.asStateFlow()
     }
@@ -207,16 +222,19 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Registers a hook invoked before destructive history mutations.
     pub fn setBeforeDestructiveHistoryMutation(&mut self, handler: fn(String)) {
         self.beforeDestructiveHistoryMutation = Some(handler);
     }
 
     #[allow(non_snake_case)]
+    /// Registers a hook invoked after destructive history mutations.
     pub fn setAfterDestructiveHistoryMutation(&mut self, handler: fn(String)) {
         self.afterDestructiveHistoryMutation = Some(handler);
     }
 
     #[allow(non_snake_case)]
+    /// Invokes the pre-mutation hook for a chat id.
     pub fn prepareChatForDestructiveMutation(&self, chatId: String) {
         if let Some(handler) = self.beforeDestructiveHistoryMutation {
             handler(chatId);
@@ -224,6 +242,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Invokes the post-mutation hook for a chat id.
     pub fn finishDestructiveHistoryMutation(&self, chatId: String) {
         if let Some(handler) = self.afterDestructiveHistoryMutation {
             handler(chatId);
@@ -231,6 +250,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Clears active chat messages and resets display-window state in memory.
     pub fn clearCurrentChatHistoryInMemory(&mut self) {
         self.chatHistory.clear();
         self.currentChatWindow.reset();
@@ -242,6 +262,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Replaces active chat messages in memory and optionally updates paging flags.
     pub fn setCurrentChatMessagesInMemory(
         &mut self,
         messages: Vec<ChatMessage>,
@@ -262,11 +283,13 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Refreshes active chat display flags while preserving existing paging metadata.
     pub fn refreshCurrentChatDisplayFlags(&mut self, _chatId: String, messages: Vec<ChatMessage>) {
         self.setCurrentChatMessagesInMemory(messages, None, None);
     }
 
     #[allow(non_snake_case)]
+    /// Builds the display-window load result for a set of messages.
     pub fn buildCurrentChatLoadResult(
         &self,
         _chatId: String,
@@ -280,6 +303,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Applies a loaded display window to the active in-memory chat state.
     pub fn applyCurrentChatDisplayWindow(
         &mut self,
         chatId: String,
@@ -295,11 +319,13 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Returns the current display-window page count.
     pub fn currentDisplayPageCount(&self) -> i32 {
         if self.chatHistory.is_empty() { 1 } else { 1 }
     }
 
     #[allow(non_snake_case)]
+    /// Loads the newest display pages for a chat.
     pub fn collectNewestDisplayPages(
         &self,
         chatId: String,
@@ -310,6 +336,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Loads display pages older than the supplied timestamp.
     pub fn collectOlderDisplayPagesBefore(
         &self,
         chatId: String,
@@ -323,6 +350,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Loads display pages newer than the supplied timestamp.
     pub fn collectNewerDisplayPagesAfter(
         &self,
         chatId: String,
@@ -336,6 +364,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Loads and applies the latest display window for the active chat.
     pub fn loadLatestCurrentChatDisplayWindow(&mut self) -> Vec<ChatMessage> {
         let Some(chatId) = self.currentChatId.clone() else {
             self.clearCurrentChatHistoryInMemory();
@@ -346,12 +375,14 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Reloads the display window for the supplied chat id.
     pub fn reloadCurrentChatDisplayHistory(&mut self, chatId: String) -> Vec<ChatMessage> {
         let messages = self.getChatHistory(chatId.clone());
         self.applyCurrentChatDisplayWindow(chatId, messages)
     }
 
     #[allow(non_snake_case)]
+    /// Runs a destructive history mutation with before and after hooks.
     pub fn runDestructiveHistoryMutation<F>(&mut self, chatId: String, mutation: F) -> bool
     where
         F: FnOnce(&mut Self, String) -> bool,
@@ -365,6 +396,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Runs a destructive history mutation for the currently selected chat.
     pub fn runCurrentChatDestructiveHistoryMutation<F>(
         &mut self,
         _staleMessage: String,
@@ -380,6 +412,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Loads all persisted messages for a chat.
     pub fn getChatHistory(&self, chatId: String) -> Vec<ChatMessage> {
         self.chatHistoryManager
             .loadChatMessages(&chatId)
@@ -387,14 +420,16 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Loads persisted messages that should participate in runtime model context.
     pub fn getRuntimeChatHistory(&self, chatId: String) -> Vec<ChatMessage> {
         self.getChatHistory(chatId)
             .into_iter()
-            .filter(|message| message.displayMode != crate::data::model::ChatMessageDisplayMode::ChatMessageDisplayMode::HIDDEN_PLACEHOLDER)
+            .filter(|message| message.displayMode != operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode::HIDDEN_PLACEHOLDER)
             .collect()
     }
 
     #[allow(non_snake_case)]
+    /// Returns a runtime-visible snapshot of the currently selected chat.
     pub fn getCurrentRuntimeChatHistorySnapshot(&self) -> Vec<ChatMessage> {
         let Some(chatId) = self.currentChatId.clone() else {
             return Vec::new();
@@ -403,6 +438,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Loads messages used when inserting or refreshing conversation summaries.
     pub fn loadMessagesForSummaryInsertion(
         &self,
         chatId: String,
@@ -425,6 +461,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Loads compact locator previews for messages matching a query.
     pub fn loadChatMessageLocatorPreviews(
         &self,
         chatId: String,
@@ -436,6 +473,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Returns whether a chat contains at least one user-authored message.
     pub fn hasUserMessage(&self, chatId: String) -> bool {
         self.getChatHistory(chatId)
             .iter()
@@ -443,6 +481,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Returns whether the target timestamp is already visible in the active chat.
     pub fn revealMessageForCurrentChat(&mut self, targetTimestamp: i64) -> bool {
         self.chatHistory
             .iter()
@@ -450,6 +489,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Loads older messages into the active chat display window.
     pub fn loadOlderMessagesForCurrentChat(&mut self) -> bool {
         let Some(chatId) = self.currentChatId.clone() else {
             return false;
@@ -472,6 +512,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Loads newer messages into the active chat display window.
     pub fn loadNewerMessagesForCurrentChat(&mut self) -> bool {
         let Some(chatId) = self.currentChatId.clone() else {
             return false;
@@ -494,10 +535,12 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Shows the latest messages for the active chat.
     pub fn showLatestMessagesForCurrentChat(&mut self) -> bool {
         !self.loadLatestCurrentChatDisplayWindow().is_empty()
     }
 
+    /// Initializes flows and active-chat state from persisted chat storage.
     pub fn initialize(&mut self) {
         self.chatHistories = self.chatHistoryManager.chatHistoriesFlow.value();
         self.emitChatHistoriesState();
@@ -535,6 +578,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Loads one chat as the active in-memory chat.
     pub fn loadChatMessages(&mut self, chatId: String) {
         self.allowAddMessage = false;
         let messages = self.getChatHistory(chatId.clone());
@@ -546,6 +590,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Reloads the active display window for a chat.
     pub fn reloadChatMessagesSmart(&mut self, chatId: String) {
         self.reloadCurrentChatDisplayHistory(chatId);
     }
@@ -563,6 +608,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Switches active state to the latest chat for a character card or creates one.
     pub fn switchActiveCharacterCardTarget(&mut self, characterCardId: String) {
         let targetCard = self
             .characterCardManager
@@ -583,6 +629,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Switches active state to the latest chat for a character group or creates one.
     pub fn switchActiveCharacterGroupTarget(&mut self, characterGroupId: String) {
         let targetGroup = self
             .characterGroupCardManager
@@ -665,14 +712,17 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Synchronizes an opening statement when the chat has no user message.
     pub fn syncOpeningStatementIfNoUserMessage(&mut self, _chatId: String) {}
 
     #[allow(non_snake_case)]
+    /// Returns whether the current state requires creating a new chat.
     pub fn checkIfShouldCreateNewChat(&self) -> bool {
         self.currentChatId.is_none()
     }
 
     #[allow(non_snake_case)]
+    /// Creates a new chat and optionally makes it the active chat.
     pub fn createNewChat(
         &mut self,
         characterCardName: Option<String>,
@@ -753,6 +803,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Switches the selected chat and refreshes in-memory message state.
     pub fn switchChat(&mut self, chatId: String, _syncToGlobal: bool) {
         let exists = self
             .chatHistoryManager
@@ -778,6 +829,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a branch from the active chat up to an optional message timestamp.
     pub fn createBranch(&mut self, upToMessageTimestamp: Option<i64>) {
         let Some(currentChatId) = self.currentChatId.clone() else {
             return;
@@ -806,6 +858,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Loads branches whose parent is the supplied chat id.
     pub fn getBranches(&self, parentChatId: String) -> Vec<ChatHistory> {
         self.chatHistoryManager
             .getBranches(parentChatId)
@@ -813,6 +866,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Updates the locked state for a chat and emits metadata changes.
     pub fn updateChatLocked(&mut self, chatId: String, locked: bool) {
         self.chatHistoryManager
             .updateChatLocked(chatId.clone(), locked)
@@ -825,6 +879,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Updates the pinned state for a chat and emits metadata changes.
     pub fn updateChatPinned(&mut self, chatId: String, pinned: bool) {
         self.chatHistoryManager
             .updateChatPinned(chatId.clone(), pinned)
@@ -837,6 +892,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Chooses the chat that should replace a deleted chat selection.
     pub fn resolveDeletionReplacementTarget(
         &self,
         chat: ChatHistory,
@@ -851,6 +907,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Checks whether a chat matches a deletion replacement target.
     pub fn matchesDeletionReplacementTarget(
         &self,
         chat: &ChatHistory,
@@ -860,6 +917,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Finds the latest chat that can replace a deleted chat.
     pub fn findLatestDeletionReplacementChat(&self, chat: ChatHistory) -> Option<ChatHistory> {
         self.chatHistories
             .iter()
@@ -868,16 +926,19 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Checks whether the supplied chat is currently selected.
     pub fn awaitCurrentChatSelection(&self, chatId: String, _timeoutMs: i64) -> bool {
         self.currentChatId.as_ref() == Some(&chatId)
     }
 
     #[allow(non_snake_case)]
+    /// Checks whether the current chat differs from the supplied previous chat id.
     pub fn awaitCurrentChatChangeFrom(&self, previousChatId: String, _timeoutMs: i64) -> bool {
         self.currentChatId.as_ref() != Some(&previousChatId)
     }
 
     #[allow(non_snake_case)]
+    /// Moves selection away from a chat before it is deleted.
     pub fn moveCurrentChatAwayBeforeDeletion(&mut self, currentChat: ChatHistory) -> bool {
         let Some(target) = self.resolveDeletionReplacementTarget(currentChat) else {
             return false;
@@ -887,6 +948,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Deletes a chat history and updates selection state when needed.
     pub fn deleteChatHistory(&mut self, chatId: String) -> bool {
         self.prepareChatForDestructiveMutation(chatId.clone());
         if self.currentChatId.as_ref() == Some(&chatId) {
@@ -910,6 +972,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Deletes a visible message by its display index.
     pub fn deleteMessage(&mut self, index: usize) -> bool {
         let Some(chatId) = self.currentChatId.clone() else {
             return false;
@@ -924,6 +987,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Deletes a message from a chat by timestamp.
     pub fn deleteMessageByTimestamp(&mut self, chatId: String, timestamp: i64) -> bool {
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
             chat.messages
@@ -936,6 +1000,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Deletes multiple messages from a chat by timestamp.
     pub fn deleteMessagesByTimestamps(&mut self, chatId: String, timestamps: Vec<i64>) {
         for timestamp in timestamps {
             self.deleteMessageByTimestamp(chatId.clone(), timestamp);
@@ -943,6 +1008,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Updates the favorite marker on the active chat message with the timestamp.
     pub fn setMessageFavorite(&mut self, timestamp: i64, isFavorite: bool) {
         let Some(chatId) = self.currentChatId.clone() else {
             return;
@@ -960,11 +1026,13 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Deletes one message variant by timestamp.
     pub fn deleteMessageVariant(&mut self, timestamp: i64, _variantIndex: i32) {
         self.deleteMessageByTimestamp(self.currentChatId.clone().unwrap_or_default(), timestamp);
     }
 
     #[allow(non_snake_case)]
+    /// Deletes all visible messages starting at the supplied index.
     pub fn deleteMessagesFrom(&mut self, index: usize) -> bool {
         let Some(chatId) = self.currentChatId.clone() else {
             return false;
@@ -982,6 +1050,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Selects the active variant for a message by timestamp.
     pub fn selectMessageVariant(&mut self, timestamp: i64, selectedVariantIndex: i32) {
         let Some(chatId) = self.currentChatId.clone() else {
             return;
@@ -999,6 +1068,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Adds a variant to a message and refreshes the active display when applicable.
     pub fn addMessageVariant(
         &mut self,
         timestamp: i64,
@@ -1028,6 +1098,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Clears messages from the current chat.
     pub fn clearCurrentChat(&mut self) -> bool {
         let Some(chatId) = self.currentChatId.clone() else {
             self.createNewChat(None, None, None, true, true, None);
@@ -1043,6 +1114,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Persists token metrics for the current or supplied chat.
     pub fn saveCurrentChat(
         &mut self,
         inputTokens: i32,
@@ -1089,6 +1161,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Binds a chat to a workspace.
     pub fn bindChatToWorkspace(&mut self, chatId: String, workspace: String) {
         self.chatHistoryManager
             .updateChatWorkspace(chatId.clone(), Some(workspace.clone()))
@@ -1100,16 +1173,19 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Updates the character-card binding for a chat.
     pub fn updateChatCharacterCard(&mut self, chatId: String, characterCardName: Option<String>) {
         self.updateChatCharacterBinding(chatId, characterCardName, None);
     }
 
     #[allow(non_snake_case)]
+    /// Updates the character-group binding for a chat.
     pub fn updateChatCharacterGroup(&mut self, chatId: String, characterGroupId: Option<String>) {
         self.updateChatCharacterBinding(chatId, None, characterGroupId);
     }
 
     #[allow(non_snake_case)]
+    /// Updates character-card and character-group bindings for a chat.
     pub fn updateChatCharacterBinding(
         &mut self,
         chatId: String,
@@ -1135,6 +1211,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Removes the workspace binding from a chat.
     pub fn unbindChatFromWorkspace(&mut self, chatId: String) {
         self.chatHistoryManager
             .updateChatWorkspace(chatId.clone(), None)
@@ -1146,6 +1223,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Updates a chat title and emits metadata changes.
     pub fn updateChatTitle(&mut self, chatId: String, title: String) {
         self.chatHistoryManager
             .updateChatTitle(chatId.clone(), title.clone())
@@ -1157,6 +1235,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Updates both workspace binding and title for a chat.
     pub fn renameWorkspaceAndChat(
         &mut self,
         chatId: String,
@@ -1168,6 +1247,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Inserts or replaces an in-memory message in the current chat.
     pub fn upsertCurrentChatMessageInMemory(&mut self, message: ChatMessage) -> bool {
         self.chatHistory = self.chatHistoryFlow.value();
         if let Some(existingIndex) = self
@@ -1189,6 +1269,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Adds, updates, or persists a message for the current or supplied chat.
     pub fn addMessageToChat(&mut self, message: ChatMessage, chatIdOverride: Option<String>) {
         let Some(targetChatId) = chatIdOverride.or_else(|| self.currentChatIdFlow.value()) else {
             return;
@@ -1302,11 +1383,13 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Async-compatible wrapper for adding a message to a chat.
     pub fn addMessageToChatAsync(&mut self, message: ChatMessage, chatIdOverride: Option<String>) {
         self.addMessageToChat(message, chatIdOverride);
     }
 
     #[allow(non_snake_case)]
+    /// Removes messages from the active chat starting at an optional timestamp.
     pub fn truncateChatHistory(&mut self, timestampOfFirstDeletedMessage: Option<i64>) {
         let Some(chatId) = self.currentChatId.clone() else {
             return;
@@ -1324,6 +1407,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Persists a reordered chat list and optionally moves one chat to a group.
     pub fn updateChatOrderAndGroup(
         &mut self,
         reorderedHistories: Vec<ChatHistoryListItem>,
@@ -1356,6 +1440,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Renames a chat group, optionally scoped to a character card.
     pub fn updateGroupName(
         &mut self,
         oldName: String,
@@ -1368,6 +1453,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Deletes a chat group and optionally deletes the chats inside it.
     pub fn deleteGroup(
         &mut self,
         groupName: String,
@@ -1380,6 +1466,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a chat group and switches into its new backing chat.
     pub fn createGroup(
         &mut self,
         groupName: String,
@@ -1409,6 +1496,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Inserts a persisted summary message between neighboring message timestamps.
     pub fn addSummaryMessage(
         &mut self,
         summaryMessage: ChatMessage,
@@ -1443,6 +1531,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Returns whether the current token pressure requires summarization.
     pub fn shouldGenerateSummary(
         &self,
         messages: Vec<ChatMessage>,
@@ -1453,9 +1542,11 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Placeholder hook for summarizing chat memory.
     pub fn summarizeMemory(&self, _messages: Vec<ChatMessage>) {}
 
     #[allow(non_snake_case)]
+    /// Finds the insertion position after the latest AI message.
     pub fn findProperSummaryPosition(&self, messages: Vec<ChatMessage>) -> usize {
         messages
             .iter()
@@ -1465,26 +1556,31 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Toggles the chat history selector visibility.
     pub fn toggleChatHistorySelector(&mut self) {
         self.showChatHistorySelector = !self.showChatHistorySelector;
     }
 
     #[allow(non_snake_case)]
+    /// Sets the chat history selector visibility.
     pub fn showChatHistorySelector(&mut self, show: bool) {
         self.showChatHistorySelector = show;
     }
 
     #[allow(non_snake_case)]
+    /// Returns memory entries associated with the active chat context.
     pub fn getMemory(&self, _includePlanInfo: bool) -> Vec<(String, String)> {
         Vec::new()
     }
 
     #[allow(non_snake_case)]
+    /// Returns the enhanced AI service identifier associated with this delegate.
     pub fn getEnhancedAiService(&self) -> Option<String> {
         None
     }
 
     #[allow(non_snake_case)]
+    /// Returns the current chat's input and output token counts.
     pub fn getCurrentTokenCounts(&self) -> (i32, i32) {
         let Some(chatId) = self.currentChatId.clone() else {
             return (0, 0);

@@ -2290,6 +2290,7 @@ dependencies = [
  "md-5",
  "operit-host-api",
  "operit-store",
+ "operit-tools",
  "quickjs-wasm-rs",
  "regex",
  "reqwest",
@@ -2319,6 +2320,36 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "operit-tools"
+version = "2.0.0-preview.3"
+dependencies = [
+ "aes",
+ "async-trait",
+ "base64",
+ "chrono",
+ "flate2",
+ "futures-util",
+ "image",
+ "json5",
+ "md-5",
+ "operit-host-api",
+ "operit-store",
+ "quickjs-wasm-rs",
+ "regex",
+ "rquickjs",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+ "uuid",
+ "wasm-bindgen",
+ "web-sys",
+ "zip",
 ]
 
 [[package]]

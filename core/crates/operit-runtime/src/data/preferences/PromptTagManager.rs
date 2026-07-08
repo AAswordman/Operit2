@@ -4,7 +4,7 @@ use operit_store::PreferencesDataStore::{
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use uuid::Uuid;
 
-use crate::data::model::PromptTag::{PromptTag, TagType};
+use operit_model::PromptTag::{PromptTag, TagType};
 
 #[derive(Clone)]
 pub struct PromptTagManager {

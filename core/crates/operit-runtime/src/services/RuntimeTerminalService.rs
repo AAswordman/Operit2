@@ -12,13 +12,14 @@ use operit_store::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::core::files::PathMapper::PathMapper;
-use crate::core::files::VisualFileSystem::VisualFileSystem;
-use crate::util::stream::HotStream::MutableSharedStreamImpl;
-use crate::util::stream::Stream::Stream;
+use operit_host_api::HostManager::HostManager;
+use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_util::stream::HotStream::MutableSharedStreamImpl;
+use operit_util::stream::Stream::Stream;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Published terminal session metadata for UI session lists.
 pub struct RuntimeTerminalSessionInfo {
     pub sessionId: String,
     pub sessionName: String,
@@ -29,6 +30,7 @@ pub struct RuntimeTerminalSessionInfo {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Current terminal screen snapshot returned by the host.
 pub struct RuntimeTerminalScreen {
     pub sessionId: String,
     pub terminalType: String,
@@ -38,17 +40,20 @@ pub struct RuntimeTerminalScreen {
     pub commandRunning: bool,
 }
 
+/// Facade over host terminal APIs and shared terminal output streams.
 pub struct RuntimeTerminalService {
     terminalHost: Arc<dyn TerminalHost>,
-    context: OperitApplicationContext,
+    context: HostManager,
 }
 
 #[derive(Clone, Debug)]
+/// Stream wrapper exposing PTY output to Kotlin-style collectors.
 pub struct RuntimeTerminalPtyOutputStream {
     upstream: MutableSharedStreamImpl<String>,
 }
 
 impl RuntimeTerminalPtyOutputStream {
+    /// Wraps a shared PTY output stream.
     pub fn new(upstream: MutableSharedStreamImpl<String>) -> Self {
         Self { upstream }
     }
@@ -159,7 +164,8 @@ fn start_terminal_pty_output_reader(
 
 impl RuntimeTerminalService {
     #[allow(non_snake_case)]
-    pub fn getInstance(context: &OperitApplicationContext) -> Self {
+    /// Creates a terminal service from application host context.
+    pub fn getInstance(context: &HostManager) -> Self {
         Self {
             terminalHost: context
                 .terminalHost
@@ -170,11 +176,13 @@ impl RuntimeTerminalService {
     }
 
     #[allow(non_snake_case)]
+    /// Lists terminal sessions currently known by the host.
     pub fn listTerminalSessions(&self) -> Result<Vec<RuntimeTerminalSessionInfo>, String> {
         publish_terminal_sessions(&self.terminalHost)
     }
 
     #[allow(non_snake_case)]
+    /// Returns a state flow of published terminal sessions.
     pub fn terminalSessionsFlow(
         &self,
     ) -> Result<StateFlow<Vec<RuntimeTerminalSessionInfo>>, String> {
@@ -183,6 +191,7 @@ impl RuntimeTerminalService {
     }
 
     #[allow(non_snake_case)]
+    /// Starts a PTY terminal session and attaches its output stream.
     pub fn startTerminalPty(
         &self,
         sessionName: String,
@@ -201,11 +210,13 @@ impl RuntimeTerminalService {
     }
 
     #[allow(non_snake_case)]
+    /// Returns the shared output stream for a PTY session.
     pub fn terminalPtyOutput(&self, sessionId: String) -> RuntimeTerminalPtyOutputStream {
         RuntimeTerminalPtyOutputStream::new(self.ensureTerminalPtyOutputStream(sessionId))
     }
 
     #[allow(non_snake_case)]
+    /// Writes base64-encoded bytes to a PTY session.
     pub fn writeTerminalPty(&self, sessionId: String, dataBase64: String) -> Result<i32, String> {
         let data = STANDARD
             .decode(dataBase64.as_bytes())
@@ -217,6 +228,7 @@ impl RuntimeTerminalService {
     }
 
     #[allow(non_snake_case)]
+    /// Resizes a PTY session.
     pub fn resizeTerminalPty(&self, sessionId: String, rows: i32, cols: i32) -> Result<(), String> {
         self.terminalHost
             .resizePtySession(&sessionId, rows as u16, cols as u16)
@@ -224,6 +236,7 @@ impl RuntimeTerminalService {
     }
 
     #[allow(non_snake_case)]
+    /// Polls the exit code for a PTY session.
     pub fn pollTerminalPtyExit(&self, sessionId: String) -> Result<Option<i32>, String> {
         self.terminalHost
             .pollPtyExitCode(&sessionId)
@@ -231,6 +244,7 @@ impl RuntimeTerminalService {
     }
 
     #[allow(non_snake_case)]
+    /// Closes a PTY session and removes its output stream.
     pub fn closeTerminalPty(&self, sessionId: String) -> Result<(), String> {
         close_terminal_pty_output_stream(&sessionId);
         self.terminalHost
@@ -241,6 +255,7 @@ impl RuntimeTerminalService {
     }
 
     #[allow(non_snake_case)]
+    /// Sends text input to a terminal session.
     pub fn inputTerminalSession(&self, sessionId: String, input: String) -> Result<i32, String> {
         self.terminalHost
             .inputInSession(&sessionId, Some(&input), None)
@@ -249,6 +264,7 @@ impl RuntimeTerminalService {
     }
 
     #[allow(non_snake_case)]
+    /// Reads the current screen contents for a terminal session.
     pub fn getTerminalSessionScreen(
         &self,
         sessionId: String,
@@ -287,7 +303,7 @@ impl RuntimeTerminalService {
 }
 
 fn resolve_terminal_working_dir(
-    context: &OperitApplicationContext,
+    context: &HostManager,
     workingDir: &str,
 ) -> Result<String, String> {
     let trimmed = workingDir.trim();
@@ -299,7 +315,7 @@ fn resolve_terminal_working_dir(
     Ok(trimmed.to_string())
 }
 
-fn terminal_vfs(context: &OperitApplicationContext) -> Result<VisualFileSystem, String> {
+fn terminal_vfs(context: &HostManager) -> Result<VisualFileSystem, String> {
     let runtimeStoreRoot = context
         .runtimeStorageHost
         .as_ref()

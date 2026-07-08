@@ -1,10 +1,10 @@
 use std::fs;
 
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
-use operit_store::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
+use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
 use serde_json::{json, Value};
 
-use crate::core::files::PathMapper::PathMapper;
+use operit_tools::files::PathMapper::PathMapper;
 use crate::ui::features::chat::webview::workspace::WorkspaceTemplateAssets::WORKSPACE_TEMPLATE_ASSETS;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -1,39 +1,42 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
-use crate::api::chat::EnhancedAIService::{
+use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
+use operit_providers::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions,
 };
 use crate::core::chat::AIMessageManager::{
     logMessageTiming, messageTimingNow, AIMessageManager, BuildUserMessageContentRequest,
     SendMessageRequest as AIMessageSendRequest, StableContextWindowRequest,
 };
-use crate::core::tools::ToolProgressBus::ToolProgressBus;
-use crate::data::model::AttachmentInfo::AttachmentInfo;
-use crate::data::model::ChatMessage::ChatMessage;
-use crate::data::model::ChatMessageDisplayMode::ChatMessageDisplayMode;
-use crate::data::model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
-use crate::data::model::ChatTurnOptions::ChatTurnOptions;
-use crate::data::model::FunctionType::FunctionType;
-use crate::data::model::InputProcessingState::InputProcessingState;
-use crate::data::model::PromptFunctionType::PromptFunctionType;
+use operit_tools::tools::ToolProgressBus::ToolProgressBus;
+use operit_model::AttachmentInfo::AttachmentInfo;
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
+use operit_model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
+use operit_model::ChatTurnOptions::ChatTurnOptions;
+use operit_model::FunctionType::FunctionType;
+use operit_model::InputProcessingState::InputProcessingState;
+use operit_model::PromptFunctionType::PromptFunctionType;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
-use crate::util::stream::HotStream::SharedStream;
-use crate::util::stream::RevisableTextStream::{TextStreamEventCarrier, TextStreamEventType};
-use crate::util::stream::Stream::Stream;
-use crate::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
-use crate::util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
+use operit_util::stream::HotStream::SharedStream;
+use operit_util::stream::RevisableTextStream::{TextStreamEventCarrier, TextStreamEventType};
+use operit_util::stream::Stream::Stream;
+use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
+use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 
+/// Minimum interval between persisted streaming snapshots.
 pub const STREAM_PERSIST_INTERVAL_MS: i64 = 1000;
+/// Maximum text length used when preparing automatic speech previews.
 pub const AUTO_READ_PREVIEW_MAX: usize = 48;
 
+/// Per-chat runtime state for one active or recently active send turn.
 #[derive(Clone, Debug)]
 pub struct ChatRuntime {
     pub sendJob: Option<String>,
@@ -48,6 +51,7 @@ pub struct ChatRuntime {
 }
 
 impl ChatRuntime {
+    /// Creates an idle chat runtime state.
     pub fn new() -> Self {
         Self {
             sendJob: None,
@@ -63,6 +67,7 @@ impl ChatRuntime {
     }
 }
 
+/// Captures enough turn state to preserve or discard partial output during cancellation.
 #[derive(Clone, Debug)]
 pub struct TurnCancellationSnapshot {
     pub chatId: String,
@@ -71,6 +76,7 @@ pub struct TurnCancellationSnapshot {
     pub turnOptions: ChatTurnOptions,
 }
 
+/// Request data used to construct the user message sent to the chat model.
 pub struct BuildUserMessageContentForSendRequest {
     pub messageText: String,
     pub proxySenderNameOverride: Option<String>,
@@ -83,6 +89,7 @@ pub struct BuildUserMessageContentForSendRequest {
     pub chatModelIdOverride: Option<String>,
 }
 
+/// Request data used to construct a group-orchestration user message.
 pub struct BuildUserMessageContentForGroupOrchestrationRequest {
     pub messageText: String,
     pub attachments: Vec<AttachmentInfo>,
@@ -92,6 +99,7 @@ pub struct BuildUserMessageContentForGroupOrchestrationRequest {
     pub roleCardId: String,
 }
 
+/// End-to-end request for sending a user message through enhanced AI processing.
 pub struct SendUserMessageProcessingRequest<'a> {
     pub enhancedAiService: &'a mut EnhancedAIService,
     pub chatHistoryDelegate: &'a mut ChatHistoryDelegate,
@@ -120,12 +128,14 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub turnOptions: ChatTurnOptions,
 }
 
+/// Result returned after a user message send finishes and history is updated.
 #[derive(Clone, Debug)]
 pub struct SendUserMessageProcessingResult {
     pub aiMessage: ChatMessage,
     pub nextWindowSize: Option<i32>,
 }
 
+/// Request data used to regenerate one AI message variant.
 pub struct RegenerateAiMessageVariantRequest<'a> {
     pub enhancedAiService: &'a mut EnhancedAIService,
     pub chatHistoryDelegate: &'a mut ChatHistoryDelegate,
@@ -147,6 +157,7 @@ pub struct RegenerateAiMessageVariantRequest<'a> {
     pub chatModelIdOverride: Option<String>,
 }
 
+/// Manages message send state, streaming persistence, cancellation, and UI flows.
 pub struct MessageProcessingDelegate {
     pub functionalConfigManager: FunctionalConfigManager,
     pub modelConfigManager: ModelConfigManager,
@@ -171,11 +182,13 @@ pub struct MessageProcessingDelegate {
     pub speakMessageHandler: Option<fn(String, bool)>,
 }
 
+/// Bridges enhanced AI callbacks back into processing delegate state flows.
 struct MessageProcessingCallbacks {
     nonFatalErrorEventFlow: MutableStateFlow<Option<String>>,
 }
 
 impl SendMessageCallbacks for MessageProcessingCallbacks {
+    /// Publishes non-fatal model/provider errors to observers.
     #[allow(non_snake_case)]
     fn onNonFatalError(&self, error: String) {
         self.nonFatalErrorEventFlow.set_value(Some(error));
@@ -183,6 +196,7 @@ impl SendMessageCallbacks for MessageProcessingCallbacks {
 }
 
 impl MessageProcessingDelegate {
+    /// Creates a processing delegate backed by the supplied config managers.
     pub fn new(
         functionalConfigManager: FunctionalConfigManager,
         modelConfigManager: ModelConfigManager,
@@ -212,6 +226,7 @@ impl MessageProcessingDelegate {
         }
     }
 
+    /// Clones the delegate for use by another service core while sharing runtime state flows.
     #[allow(non_snake_case)]
     pub fn clone_for_core(&self) -> Self {
         let rootDir = ApiPreferences::data_dir();
@@ -244,32 +259,38 @@ impl MessageProcessingDelegate {
         }
     }
 
+    /// Emits a toast message to UI observers.
     #[allow(non_snake_case)]
     pub fn showToast(&mut self, message: String) {
         self.toastEventFlow.set_value(Some(message));
     }
 
+    /// Emits a non-fatal error event and stores it in the local event list.
     #[allow(non_snake_case)]
     pub fn emitNonFatalError(&mut self, message: String) {
         self.nonFatalErrorEvent.push(message.clone());
         self.nonFatalErrorEventFlow.set_value(Some(message));
     }
 
+    /// Returns the observable non-fatal error event flow.
     #[allow(non_snake_case)]
     pub fn nonFatalErrorEventFlow(&self) -> StateFlow<Option<String>> {
         self.nonFatalErrorEventFlow.asStateFlow()
     }
 
+    /// Clears the active toast event.
     #[allow(non_snake_case)]
     pub fn clearToastEvent(&mut self) {
         self.toastEventFlow.set_value(None);
     }
 
+    /// Returns the observable toast event flow.
     #[allow(non_snake_case)]
     pub fn toastEventFlow(&self) -> StateFlow<Option<String>> {
         self.toastEventFlow.asStateFlow()
     }
 
+    /// Builds a compact single-line preview for spoken message output.
     #[allow(non_snake_case)]
     pub fn speechPreview(text: String) -> String {
         text.replace('\n', "\\n")
@@ -278,11 +299,13 @@ impl MessageProcessingDelegate {
             .collect()
     }
 
+    /// Maps an optional chat id to the runtime map key used by state flows.
     #[allow(non_snake_case)]
     pub fn chatKey(chatId: Option<String>) -> String {
         chatId.unwrap_or_else(|| "__DEFAULT_CHAT__".to_string())
     }
 
+    /// Emits a scroll-to-bottom event for a chat and records the emission time.
     #[allow(non_snake_case)]
     pub fn tryEmitScrollToBottomThrottled(&mut self, chatId: Option<String>) {
         let key = Self::chatKey(chatId);
@@ -293,6 +316,7 @@ impl MessageProcessingDelegate {
         self.scrollToBottomEvent.push(());
     }
 
+    /// Emits a scroll-to-bottom event regardless of recent scroll emissions.
     #[allow(non_snake_case)]
     pub fn forceEmitScrollToBottom(&mut self, chatId: Option<String>) {
         let key = Self::chatKey(chatId);
@@ -303,6 +327,7 @@ impl MessageProcessingDelegate {
         self.scrollToBottomEvent.push(());
     }
 
+    /// Looks up or creates a runtime state entry and applies an action to it.
     #[allow(non_snake_case)]
     fn withRuntime<R>(
         &self,
@@ -317,6 +342,7 @@ impl MessageProcessingDelegate {
         action(runtimes.entry(key).or_insert_with(ChatRuntime::new))
     }
 
+    /// Applies an action only when a runtime state entry already exists.
     #[allow(non_snake_case)]
     fn withExistingRuntime<R>(
         &self,
@@ -331,6 +357,7 @@ impl MessageProcessingDelegate {
         runtimes.get_mut(&key).map(action)
     }
 
+    /// Recomputes aggregate loading state and active streaming chat ids.
     #[allow(non_snake_case)]
     pub fn updateGlobalLoadingState(&mut self) {
         let (isLoading, activeStreamingChatIds) = {
@@ -352,11 +379,13 @@ impl MessageProcessingDelegate {
         self.activeStreamingChatIdsFlow
             .set_value(self.activeStreamingChatIds.clone());
     }
+    /// Refreshes global loading state from the current runtime map.
     #[allow(non_snake_case)]
     pub fn refreshGlobalLoadingState(&mut self) {
         self.updateGlobalLoadingState();
     }
 
+    /// Returns whether an input-processing state represents an inactive terminal state.
     #[allow(non_snake_case)]
     pub fn isTerminalInputState(state: &InputProcessingState) -> bool {
         matches!(
@@ -365,6 +394,7 @@ impl MessageProcessingDelegate {
         )
     }
 
+    /// Updates the observable input-processing state for a chat.
     #[allow(non_snake_case)]
     pub fn setChatInputProcessingState(
         &mut self,
@@ -399,6 +429,7 @@ impl MessageProcessingDelegate {
         self.inputProcessingStateByChatIdFlow.set_value(states);
     }
 
+    /// Enables or clears suppression of idle/completed UI state for one chat.
     #[allow(non_snake_case)]
     pub fn setSuppressIdleCompletedStateForChat(&mut self, chatId: String, suppress: bool) {
         let mut states = self
@@ -412,6 +443,7 @@ impl MessageProcessingDelegate {
         }
     }
 
+    /// Marks whether a send-triggered summary is pending for one chat.
     #[allow(non_snake_case)]
     pub fn setPendingAsyncSummaryUiForChat(&mut self, chatId: String, pending: bool) {
         let mut states = self
@@ -425,16 +457,18 @@ impl MessageProcessingDelegate {
         }
     }
 
+    /// Updates input-processing state for a concrete chat id.
     #[allow(non_snake_case)]
     pub fn setInputProcessingStateForChat(&mut self, chatId: String, state: InputProcessingState) {
         self.setChatInputProcessingState(Some(chatId), state);
     }
 
+    /// Builds the user message payload used by group orchestration turns.
     #[allow(non_snake_case)]
     pub fn buildUserMessageContentForGroupOrchestration(
         &self,
         request: BuildUserMessageContentForGroupOrchestrationRequest,
-    ) -> Result<String, crate::api::chat::llmprovider::AIService::AiServiceError> {
+    ) -> Result<String, operit_providers::chat::llmprovider::AIService::AiServiceError> {
         self.buildUserMessageContentForSend(BuildUserMessageContentForSendRequest {
             messageText: request.messageText,
             proxySenderNameOverride: None,
@@ -448,11 +482,12 @@ impl MessageProcessingDelegate {
         })
     }
 
+    /// Builds model-ready user message content with attachments, workspace, and reply context.
     #[allow(non_snake_case)]
     pub fn buildUserMessageContentForSend(
         &self,
         request: BuildUserMessageContentForSendRequest,
-    ) -> Result<String, crate::api::chat::llmprovider::AIService::AiServiceError> {
+    ) -> Result<String, operit_providers::chat::llmprovider::AIService::AiServiceError> {
         let (providerId, modelId) = match (
             request.chatProviderIdOverride.as_ref(),
             request.chatModelIdOverride.as_ref(),
@@ -467,7 +502,7 @@ impl MessageProcessingDelegate {
                     .functionalConfigManager
                     .getModelBindingForFunction(FunctionType::CHAT)
                     .map_err(|error| {
-                        crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(
+                        operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(
                             error.to_string(),
                         )
                     })?;
@@ -475,7 +510,7 @@ impl MessageProcessingDelegate {
             }
             _ => {
                 return Err(
-                    crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(
+                    operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(
                         "chat provider and model override must be set together".to_string(),
                     ),
                 );
@@ -487,7 +522,7 @@ impl MessageProcessingDelegate {
             .modelConfigManager
             .getResolvedModelConfig(&providerId, &modelId)
             .map_err(|error| {
-                crate::api::chat::llmprovider::AIService::AiServiceError::RequestFailed(
+                operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(
                     error.to_string(),
                 )
             })?;
@@ -526,12 +561,14 @@ impl MessageProcessingDelegate {
         Ok(finalMessageContent)
     }
 
+    /// Returns the current response stream for a chat.
     #[allow(non_snake_case)]
     pub fn getResponseStream(&self, chatId: String) -> Option<SharedAiResponseStream> {
         self.withExistingRuntime(Some(chatId), |runtime| runtime.responseStream.clone())
             .flatten()
     }
 
+    /// Resolves the final display content from an AI message and its active variant.
     #[allow(non_snake_case)]
     pub fn resolveFinalContent(aiMessage: ChatMessage) -> String {
         let replayChunks = aiMessage
@@ -559,6 +596,7 @@ impl MessageProcessingDelegate {
         }
     }
 
+    /// Runs an action while attaching timing metrics to the current turn.
     #[allow(non_snake_case)]
     pub fn withTurnMetrics(
         mut aiMessage: ChatMessage,
@@ -578,6 +616,7 @@ impl MessageProcessingDelegate {
         aiMessage
     }
 
+    /// Persists the current streaming response snapshot for one chat.
     #[allow(non_snake_case)]
     fn persistStreamingSnapshot(
         chatHistoryDelegate: &mut ChatHistoryDelegate,
@@ -608,6 +647,7 @@ impl MessageProcessingDelegate {
         );
     }
 
+    /// Reads the latest cancellation snapshot for a chat's active turn.
     #[allow(non_snake_case)]
     pub fn readCurrentTurnCancellationSnapshot(
         &self,
@@ -625,12 +665,14 @@ impl MessageProcessingDelegate {
         })
     }
 
+    /// Removes and returns the active streaming AI message for a chat.
     #[allow(non_snake_case)]
     pub fn detachStreamingAiMessage(&mut self, chatId: String) -> Option<ChatMessage> {
         let snapshot = self.readCurrentTurnCancellationSnapshot(chatId)?;
         snapshot.aiMessage
     }
 
+    /// Cancels an active message turn and optionally keeps partial response content.
     #[allow(non_snake_case)]
     pub async fn cancelMessageInternal(&mut self, chatId: String, keepPartialResponse: bool) {
         if !keepPartialResponse {
@@ -657,44 +699,53 @@ impl MessageProcessingDelegate {
         self.updateGlobalLoadingState();
     }
 
+    /// Cancels an active message turn while preserving partial response content.
     #[allow(non_snake_case)]
     pub async fn cancelMessage(&mut self, chatId: String) {
         self.cancelMessageInternal(chatId, true).await;
     }
 
+    /// Cancels an active message turn before destructive history mutation.
     #[allow(non_snake_case)]
     pub async fn cancelMessageForDestructiveMutation(&mut self, chatId: String) {
         self.cancelMessageInternal(chatId, false).await;
     }
 
+    /// Returns the observable global loading flow.
     pub fn isLoadingFlow(&self) -> StateFlow<bool> {
         self.isLoadingFlow.asStateFlow()
     }
 
+    /// Returns the observable set of chat ids with active streaming turns.
     pub fn activeStreamingChatIdsFlow(&self) -> StateFlow<HashSet<String>> {
         self.activeStreamingChatIdsFlow.asStateFlow()
     }
 
+    /// Returns the observable input-processing state map.
     pub fn inputProcessingStateByChatIdFlow(
         &self,
     ) -> StateFlow<HashMap<String, InputProcessingState>> {
         self.inputProcessingStateByChatIdFlow.asStateFlow()
     }
 
+    /// Returns the observable turn-completion counter map.
     pub fn turnCompleteCounterByChatIdFlow(&self) -> StateFlow<HashMap<String, i64>> {
         self.turnCompleteCounterByChatIdFlow.asStateFlow()
     }
 
+    /// Returns the observable current-turn tool invocation count map.
     pub fn currentTurnToolInvocationCountByChatIdFlow(&self) -> StateFlow<HashMap<String, i32>> {
         self.currentTurnToolInvocationCountByChatIdFlow
             .asStateFlow()
     }
 
+    /// Emits a scroll-to-bottom event for the default chat target.
     #[allow(non_snake_case)]
     pub fn scrollToBottom(&mut self) {
         self.forceEmitScrollToBottom(None);
     }
 
+    /// Returns the completion counter for one chat.
     #[allow(non_snake_case)]
     pub fn getTurnCompleteCounter(&self, chatId: String) -> i64 {
         *self
@@ -704,17 +755,20 @@ impl MessageProcessingDelegate {
             .unwrap_or(&0)
     }
 
+    /// Reports whether one chat currently has a loading runtime.
     #[allow(non_snake_case)]
     pub fn isChatLoading(&self, chatId: String) -> bool {
         self.withExistingRuntime(Some(chatId), |runtime| runtime.isLoading)
             .unwrap_or(false)
     }
 
+    /// Installs the callback used to speak assistant messages.
     #[allow(non_snake_case)]
     pub fn setSpeakMessageHandler(&mut self, handler: fn(String, bool)) {
         self.speakMessageHandler = Some(handler);
     }
 
+    /// Resets current-turn tool invocation count for one chat.
     #[allow(non_snake_case)]
     pub fn resetCurrentTurnToolInvocationCount(&mut self, chatId: String) {
         let mut counts = self.currentTurnToolInvocationCountByChatIdFlow.value();
@@ -724,6 +778,7 @@ impl MessageProcessingDelegate {
             .set_value(counts);
     }
 
+    /// Increments current-turn tool invocation count for one chat.
     #[allow(non_snake_case)]
     pub fn incrementCurrentTurnToolInvocationCount(&mut self, chatId: String) {
         let mut counts = self.currentTurnToolInvocationCountByChatIdFlow.value();
@@ -734,6 +789,7 @@ impl MessageProcessingDelegate {
             .set_value(counts);
     }
 
+    /// Clears current-turn tool invocation count for one chat.
     #[allow(non_snake_case)]
     pub fn clearCurrentTurnToolInvocationCount(&mut self, chatId: String) {
         let mut counts = self.currentTurnToolInvocationCountByChatIdFlow.value();
@@ -743,13 +799,14 @@ impl MessageProcessingDelegate {
             .set_value(counts);
     }
 
+    /// Sends a user message, streams the AI response, persists history, and updates UI state.
     #[allow(non_snake_case)]
     pub async fn sendUserMessage(
         &mut self,
         mut request: SendUserMessageProcessingRequest<'_>,
     ) -> Result<
         SendUserMessageProcessingResult,
-        crate::api::chat::llmprovider::AIService::AiServiceError,
+        operit_providers::chat::llmprovider::AIService::AiServiceError,
     > {
         let chatId = request.chatId.clone();
         let originalMessageText = request.messageText.trim().to_string();
@@ -1178,7 +1235,7 @@ impl MessageProcessingDelegate {
             let providerModel = workerService.getLastProviderModel().unwrap_or_default();
             let (provider, modelName) = split_provider_model(&providerModel);
             let tokenSnapshot = workerService.getLastTurnTokenSnapshot().unwrap_or(
-                crate::api::chat::EnhancedAIService::TurnTokenSnapshot {
+                operit_providers::chat::EnhancedAIService::TurnTokenSnapshot {
                     inputTokens: 0,
                     outputTokens: 0,
                     cachedInputTokens: 0,
@@ -1257,11 +1314,12 @@ impl MessageProcessingDelegate {
         })
     }
 
+    /// Regenerates one AI message variant from a prior user request and history snapshot.
     #[allow(non_snake_case)]
     pub async fn regenerateAiMessageVariant(
         &mut self,
         request: RegenerateAiMessageVariantRequest<'_>,
-    ) -> Result<ChatMessage, crate::api::chat::llmprovider::AIService::AiServiceError> {
+    ) -> Result<ChatMessage, operit_providers::chat::llmprovider::AIService::AiServiceError> {
         let targetMessageTimestamp = request.targetMessageTimestamp;
         let result = self
             .sendUserMessage(SendUserMessageProcessingRequest {
@@ -1301,6 +1359,7 @@ impl MessageProcessingDelegate {
         })
     }
 
+    /// Updates completion counters and clears send-time processing state.
     #[allow(non_snake_case)]
     pub fn notifyTurnComplete(
         &mut self,
@@ -1318,6 +1377,7 @@ impl MessageProcessingDelegate {
         }
     }
 
+    /// Finalizes a completed AI message and publishes completion notifications.
     #[allow(non_snake_case)]
     pub fn finalizeMessageAndNotify(
         &mut self,
@@ -1336,6 +1396,7 @@ impl MessageProcessingDelegate {
         let _ = nextWindowSize;
     }
 
+    /// Clears runtime state after a send has finished.
     #[allow(non_snake_case)]
     pub fn cleanupRuntimeAfterSend(&mut self, chatId: String, _turnOptions: ChatTurnOptions) {
         self.withExistingRuntime(Some(chatId.clone()), |runtime| {
@@ -1359,6 +1420,7 @@ impl Default for MessageProcessingDelegate {
     }
 }
 
+/// Splits a provider/model identifier into its provider and model parts.
 fn split_provider_model(providerModel: &str) -> (String, String) {
     let Some(index) = providerModel.find(':') else {
         return (providerModel.to_string(), String::new());

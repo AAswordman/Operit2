@@ -20,11 +20,29 @@ class AndroidPlatformChannel(
     fun handle(call: MethodCall, result: MethodChannel.Result): Boolean {
         when (call.method) {
             "androidRuntimePaths" -> androidRuntimePaths(result)
-            "androidOnboardingPermissionSnapshot" -> onboardingPermissionSnapshot(result)
-            "androidOnboardingRequestPermission" -> onboardingRequestPermission(call, result)
+            "hostOnboardingPermissionSnapshot" -> hostOnboardingPermissionSnapshot(call, result)
+            "hostOnboardingRequestPermission" -> hostOnboardingRequestPermission(call, result)
             else -> return false
         }
         return true
+    }
+
+    private fun hostOnboardingPermissionSnapshot(call: MethodCall, result: MethodChannel.Result) {
+        val hostId = call.argument<String>("hostId")
+        if (hostId != "android") {
+            result.error("INVALID_HOST", "Invalid onboarding host", null)
+            return
+        }
+        onboardingPermissionSnapshot(result)
+    }
+
+    private fun hostOnboardingRequestPermission(call: MethodCall, result: MethodChannel.Result) {
+        val hostId = call.argument<String>("hostId")
+        if (hostId != "android") {
+            result.error("INVALID_HOST", "Invalid onboarding host", null)
+            return
+        }
+        onboardingRequestPermission(call, result)
     }
 
     private fun androidRuntimePaths(result: MethodChannel.Result) {
@@ -43,29 +61,37 @@ class AndroidPlatformChannel(
     private fun onboardingPermissionSnapshot(result: MethodChannel.Result) {
         result.success(
             mapOf(
-                "location" to hasPermission(Manifest.permission.ACCESS_FINE_LOCATION),
-                "bluetoothConnect" to hasBluetoothConnectPermission(),
-                "bluetoothScan" to hasBluetoothScanPermission(),
-                "overlay" to canDrawOverlays(),
-                "batteryOptimization" to isIgnoringBatteryOptimizations(),
+                "android.location" to requirement(
+                    "android.location",
+                    hasPermission(Manifest.permission.ACCESS_FINE_LOCATION),
+                ),
+                "android.bluetooth" to requirement(
+                    "android.bluetooth",
+                    hasBluetoothConnectPermission() && hasBluetoothScanPermission(),
+                ),
+                "android.overlay" to requirement("android.overlay", canDrawOverlays()),
+                "android.batteryOptimization" to requirement(
+                    "android.batteryOptimization",
+                    isIgnoringBatteryOptimizations(),
+                ),
             ),
         )
     }
 
     private fun onboardingRequestPermission(call: MethodCall, result: MethodChannel.Result) {
-        when (call.argument<String>("permission")) {
-            "location" -> requestRuntimePermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), result)
-            "bluetooth" -> requestBluetoothPermissions(result)
-            "overlay" -> {
+        when (call.argument<String>("requirementId")) {
+            "android.location" -> requestRuntimePermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), result)
+            "android.bluetooth" -> requestBluetoothPermissions(result)
+            "android.overlay" -> {
                 openOverlayPermissionSettings()
                 result.success(null)
             }
-            "battery" -> {
+            "android.batteryOptimization" -> {
                 openBatteryOptimizationSettings()
                 result.success(null)
             }
             else -> {
-                result.error("INVALID_ONBOARDING_PERMISSION", "Invalid onboarding permission", null)
+                result.error("INVALID_ONBOARDING_REQUIREMENT", "Invalid onboarding requirement", null)
                 return
             }
         }
@@ -172,6 +198,13 @@ class AndroidPlatformChannel(
         }
         val powerManager = activity.getSystemService(Context.POWER_SERVICE) as PowerManager
         return powerManager.isIgnoringBatteryOptimizations(activity.packageName)
+    }
+
+    private fun requirement(id: String, satisfied: Boolean): Map<String, Any> {
+        return mapOf(
+            "id" to id,
+            "status" to if (satisfied) "Satisfied" else "Missing",
+        )
     }
 
     private companion object {

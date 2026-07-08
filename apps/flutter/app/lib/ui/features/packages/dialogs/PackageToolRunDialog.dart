@@ -27,7 +27,7 @@ class PackageToolRunDialog extends StatefulWidget {
 class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
   late final Map<String, TextEditingController> _controllers;
   bool _executing = false;
-  core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult? _result;
+  core_proxy.CoreOperitToolsConversationMarkupManagerToolResult? _result;
 
   @override
   void initState() {
@@ -133,10 +133,10 @@ class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
     if (missing.isNotEmpty) {
       setState(() {
         _result =
-            core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult(
+            core_proxy.CoreOperitToolsConversationMarkupManagerToolResult(
               toolName: '${widget.packageName}:${widget.tool.name}',
               success: false,
-              result: core_proxy.CoreCoreToolsToolResultDataClassesToolResultData.stringResultData(
+              result: core_proxy.CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
                 value: const core_proxy.StringResultData(value: ''),
               ),
               error: '缺少必填参数：${missing.join(", ")}',
@@ -151,12 +151,12 @@ class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
     });
     try {
       final result = await widget.clients.permissionsAiToolHandler.executeTool(
-        tool: core_proxy.CoreApiChatEnhanceToolExecutionManagerAiTool(
+        tool: core_proxy.CoreOperitToolsToolExecutionManagerAiTool(
           name: '${widget.packageName}:${widget.tool.name}',
           parameters: widget.tool.parameters
               .map(
                 (parameter) =>
-                    core_proxy.CoreApiChatEnhanceToolExecutionManagerToolParameter(
+                    core_proxy.CoreOperitToolsToolExecutionManagerToolParameter(
                       name: parameter.name,
                       value: _controllers[parameter.name]!.text,
                     ),
@@ -176,10 +176,10 @@ class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
       }
       setState(() {
         _result =
-            core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult(
+            core_proxy.CoreOperitToolsConversationMarkupManagerToolResult(
               toolName: '${widget.packageName}:${widget.tool.name}',
               success: false,
-              result: core_proxy.CoreCoreToolsToolResultDataClassesToolResultData.stringResultData(
+              result: core_proxy.CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
                 value: const core_proxy.StringResultData(value: ''),
               ),
               error: error.toString(),
@@ -198,7 +198,7 @@ class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
 class _ExecutionResultCard extends StatelessWidget {
   const _ExecutionResultCard({required this.result});
 
-  final core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult result;
+  final core_proxy.CoreOperitToolsConversationMarkupManagerToolResult result;
 
   @override
   Widget build(BuildContext context) {
@@ -228,7 +228,7 @@ class _ExecutionResultCard extends StatelessWidget {
 }
 
 String _toolResultText(
-  core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult result,
+  core_proxy.CoreOperitToolsConversationMarkupManagerToolResult result,
 ) {
   if (!result.success) {
     return result.error ?? '';

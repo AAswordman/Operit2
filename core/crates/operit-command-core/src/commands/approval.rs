@@ -1,9 +1,9 @@
 use crate::output::CoreCommandOutput;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::core::tools::ToolPermissionSystem::{PermissionLevel, ToolPermissionSystem};
+use operit_host_api::HostManager::HostManager;
+use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, ToolPermissionSystem};
 
 pub fn run_approval_command(
-    _context: OperitApplicationContext,
+    _context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -14,57 +14,19 @@ pub fn run_approval_command(
     let permissionSystem = ToolPermissionSystem::getInstance();
     match args[0].as_str() {
         "status" => {
-            let master = permissionSystem
-                .getMasterSwitch()
+            let mode = permissionSystem
+                .getAiPermissionMode()
                 .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("master={}", master.name()));
-            let overrides = permissionSystem
-                .getToolPermissionOverrides()
-                .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("overrides={}", overrides.len()));
+            output.push_stdout_line(format!("mode={}", mode.name()));
             Ok(())
         }
-        "list" => {
-            let overrides = permissionSystem
-                .getToolPermissionOverrides()
-                .map_err(|error| error.to_string())?;
-            for (toolName, level) in overrides {
-                output.push_stdout_line(format!("{toolName}\t{}", level.name()));
-            }
-            Ok(())
-        }
-        "allow" | "ask" | "forbid" => {
-            let level = parse_permission_level_arg(Some(args[0].as_str()))?;
+        "read-only" | "workspace-write" | "full" => {
+            let mode = parse_ai_permission_mode_arg(Some(args[0].as_str()))?;
             permissionSystem
-                .saveMasterSwitch(level.clone())
+                .saveAiPermissionMode(mode.clone())
                 .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("master={}", level.name()));
+            output.push_stdout_line(format!("mode={}", mode.name()));
             Ok(())
-        }
-        "tool" => {
-            let toolName = args.get(1).ok_or_else(|| {
-                "usage: operit2 approval tool <tool-name> <allow|ask|forbid|clear>".to_string()
-            })?;
-            match args.get(2).map(String::as_str) {
-                Some("clear") => {
-                    permissionSystem
-                        .clearToolPermission(toolName)
-                        .map_err(|error| error.to_string())?;
-                    output.push_stdout_line(format!("cleared={toolName}"));
-                    Ok(())
-                }
-                value @ (Some("allow") | Some("ask") | Some("forbid")) => {
-                    let level = parse_permission_level_arg(value)?;
-                    permissionSystem
-                        .saveToolPermission(toolName, level.clone())
-                        .map_err(|error| error.to_string())?;
-                    output.push_stdout_line(format!("{toolName}={}", level.name()));
-                    Ok(())
-                }
-                _ => Err(
-                    "usage: operit2 approval tool <tool-name> <allow|ask|forbid|clear>".to_string(),
-                ),
-            }
         }
         _ => {
             print_approval_usage(output);
@@ -73,18 +35,20 @@ pub fn run_approval_command(
     }
 }
 
-fn parse_permission_level_arg(value: Option<&str>) -> Result<PermissionLevel, String> {
+fn parse_ai_permission_mode_arg(value: Option<&str>) -> Result<AiPermissionMode, String> {
     match value {
-        Some("allow") | Some("ALLOW") => Ok(PermissionLevel::ALLOW),
-        Some("ask") | Some("ASK") => Ok(PermissionLevel::ASK),
-        Some("forbid") | Some("FORBID") => Ok(PermissionLevel::FORBID),
-        _ => Err("expected allow, ask, or forbid".to_string()),
+        Some("read-only") | Some("READ_ONLY") | Some("ReadOnly") => {
+            Ok(AiPermissionMode::ReadOnly)
+        }
+        Some("workspace-write") | Some("WORKSPACE_WRITE") | Some("WorkspaceWrite") => {
+            Ok(AiPermissionMode::WorkspaceWrite)
+        }
+        Some("full") | Some("FULL") | Some("Full") => Ok(AiPermissionMode::Full),
+        _ => Err("expected read-only, workspace-write, or full".to_string()),
     }
 }
 
 fn print_approval_usage(output: &mut CoreCommandOutput) {
     output.push_stdout_line("operit2 approval status");
-    output.push_stdout_line("operit2 approval list");
-    output.push_stdout_line("operit2 approval <allow|ask|forbid>");
-    output.push_stdout_line("operit2 approval tool <tool-name> <allow|ask|forbid|clear>");
+    output.push_stdout_line("operit2 approval <read-only|workspace-write|full>");
 }

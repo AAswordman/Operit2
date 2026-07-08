@@ -1,11 +1,11 @@
 use crate::output::CoreCommandOutput;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::core::tools::packTool::PackageManager::BundledExternalPackageCandidate;
-use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
+use operit_host_api::HostManager::HostManager;
+use operit_tools::tools::packTool::PackageManager::BundledExternalPackageCandidate;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
 use std::collections::BTreeSet;
 
 pub fn run_plugin_command(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -60,7 +60,7 @@ pub fn run_plugin_command(
 }
 
 fn list_plugins(
-    context: OperitApplicationContext,
+    context: HostManager,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let package_manager = package_manager(&context);
@@ -81,7 +81,7 @@ fn list_plugins(
 }
 
 fn list_more_plugins(
-    context: OperitApplicationContext,
+    context: HostManager,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let package_manager = package_manager(&context);
@@ -95,7 +95,7 @@ fn list_more_plugins(
 }
 
 fn show_plugin(
-    context: OperitApplicationContext,
+    context: HostManager,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -187,7 +187,7 @@ fn show_plugin(
 }
 
 fn load_more_plugin(
-    context: OperitApplicationContext,
+    context: HostManager,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -200,7 +200,7 @@ fn load_more_plugin(
 }
 
 fn delete_plugin(
-    context: OperitApplicationContext,
+    context: HostManager,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -227,7 +227,7 @@ fn format_bundled_external_candidate(candidate: &BundledExternalPackageCandidate
 }
 
 fn set_plugin_enabled(
-    context: OperitApplicationContext,
+    context: HostManager,
     name: Option<&String>,
     enabled: bool,
     output: &mut CoreCommandOutput,
@@ -253,7 +253,7 @@ fn set_plugin_enabled(
 }
 
 fn enabled_plugin_names_from_manager(
-    manager: &operit_runtime::core::tools::packTool::PackageManager::PackageManager,
+    manager: &operit_tools::tools::packTool::PackageManager::PackageManager,
 ) -> BTreeSet<String> {
     manager
         .getEnabledToolPkgContainerRuntimes()
@@ -263,9 +263,9 @@ fn enabled_plugin_names_from_manager(
 }
 
 fn package_manager(
-    context: &OperitApplicationContext,
+    context: &HostManager,
 ) -> std::sync::Arc<
-    std::sync::Mutex<operit_runtime::core::tools::packTool::PackageManager::PackageManager>,
+    std::sync::Mutex<operit_tools::tools::packTool::PackageManager::PackageManager>,
 > {
     AIToolHandler::getInstance(context.clone()).getOrCreatePackageManager()
 }

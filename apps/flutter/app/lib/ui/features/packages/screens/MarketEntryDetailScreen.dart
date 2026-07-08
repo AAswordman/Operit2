@@ -36,8 +36,8 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
   List<core_proxy.MarketComment> _comments = <core_proxy.MarketComment>[];
   List<core_proxy.MarketReactionCount> _reactions = <core_proxy.MarketReactionCount>[];
 
-  GeneratedApiMarketStatsApiServiceCoreProxy get _market =>
-      widget.clients.apiMarketStatsApiService;
+  GeneratedProvidersMarketStatsApiServiceCoreProxy get _market =>
+      widget.clients.providersMarketStatsApiService;
 
   @override
   void initState() {
@@ -359,14 +359,14 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       if (entry.type == 'skill') {
         final repoUrl = entry.source?.url.trim() ?? '';
         if (repoUrl.isEmpty) throw StateError('技能缺少仓库地址');
-        final result = await widget.clients.skillRepository.importSkillFromGitHubRepo(repoUrl: repoUrl);
+        final result = await widget.clients.permissionsSkillRuntimeSkillRepository.importSkillFromGitHubRepo(repoUrl: repoUrl);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result)));
         }
       } else if (entry.type == 'mcp') {
         final repoUrl = entry.source?.url.trim() ?? '';
         if (repoUrl.isEmpty) throw StateError('MCP 缺少仓库地址');
-        final result = await widget.clients.mcpRepository.installMcpServerWithObjectForFlutter(
+        final result = await widget.clients.permissionsMcpRuntimeMcpRepository.installMcpServerWithObjectForFlutter(
           pluginId: _safePackageId(entry.title),
           repoUrl: repoUrl,
           name: entry.title,

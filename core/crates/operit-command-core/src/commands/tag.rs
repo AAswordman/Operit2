@@ -1,10 +1,10 @@
 use crate::output::CoreCommandOutput;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::data::model::PromptTag::{PromptTag, TagType};
+use operit_host_api::HostManager::HostManager;
+use operit_model::PromptTag::{PromptTag, TagType};
 use operit_runtime::data::preferences::PromptTagManager::PromptTagManager;
 
 pub fn run_tag_command(
-    _context: OperitApplicationContext,
+    _context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {

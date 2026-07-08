@@ -4,6 +4,7 @@
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 #include <windows.h>
+#include <shellapi.h>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -358,6 +359,85 @@ const std::string* StringMapValue(
   return std::get_if<std::string>(&item->second);
 }
 
+// Reads an integer value from a Flutter method argument map.
+bool IntegerMapValue(
+    const flutter::MethodCall<flutter::EncodableValue>& method_call,
+    const char* key,
+    int64_t* value) {
+  const flutter::EncodableValue* arguments = method_call.arguments();
+  if (arguments == nullptr || value == nullptr) {
+    return false;
+  }
+  const auto* map =
+      std::get_if<flutter::EncodableMap>(arguments);
+  if (map == nullptr) {
+    return false;
+  }
+  auto item = map->find(flutter::EncodableValue(std::string(key)));
+  if (item == map->end()) {
+    return false;
+  }
+  const auto* int32_value = std::get_if<int32_t>(&item->second);
+  if (int32_value != nullptr) {
+    *value = *int32_value;
+    return true;
+  }
+  const auto* int64_value = std::get_if<int64_t>(&item->second);
+  if (int64_value != nullptr) {
+    *value = *int64_value;
+    return true;
+  }
+  return false;
+}
+
+bool IsCurrentProcessElevated() {
+  HANDLE token = nullptr;
+  if (::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token) == 0) {
+    return false;
+  }
+  TOKEN_ELEVATION elevation{};
+  DWORD size = 0;
+  const BOOL ok = ::GetTokenInformation(token, TokenElevation, &elevation,
+                                        sizeof(elevation), &size);
+  ::CloseHandle(token);
+  return ok != 0 && elevation.TokenIsElevated != 0;
+}
+
+flutter::EncodableValue WindowsAdminRequirementSnapshot() {
+  flutter::EncodableMap item;
+  item[flutter::EncodableValue("id")] =
+      flutter::EncodableValue("windows.admin");
+  item[flutter::EncodableValue("status")] = flutter::EncodableValue(
+      IsCurrentProcessElevated() ? "Satisfied" : "Missing");
+
+  flutter::EncodableMap result;
+  result[flutter::EncodableValue("windows.admin")] =
+      flutter::EncodableValue(item);
+  return flutter::EncodableValue(result);
+}
+
+void RequestWindowsAdminAuthorization(
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  wchar_t exe_path[MAX_PATH];
+  const DWORD path_length =
+      ::GetModuleFileNameW(nullptr, exe_path, static_cast<DWORD>(MAX_PATH));
+  if (path_length == 0 || path_length >= MAX_PATH) {
+    result->Error("HOST_AUTHORIZATION_ERROR",
+                  "Unable to read current executable path");
+    return;
+  }
+
+  HINSTANCE instance =
+      ::ShellExecuteW(nullptr, L"runas", exe_path, nullptr, nullptr,
+                      SW_SHOWNORMAL);
+  if (reinterpret_cast<INT_PTR>(instance) <= 32) {
+    result->Error("HOST_AUTHORIZATION_DENIED",
+                  "Administrator launch was not approved");
+    return;
+  }
+  result->Success();
+}
+
 void DispatchWatchChannelEvent(std::string frame) {
   PostOperitRuntimePlatformTask([frame = std::move(frame)]() {
     for (const auto& channel : g_operit_runtime_channels) {
@@ -544,14 +624,13 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
           return;
         }
         if (method_call.method_name().compare("discoverDevices") == 0) {
-          const std::string* timeout_ms =
-              StringMapValue(method_call, "timeoutMs");
-          if (timeout_ms == nullptr) {
+          int64_t timeout_ms = 0;
+          if (!IntegerMapValue(method_call, "timeoutMs", &timeout_ms)) {
             result->Error("INVALID_ARGS",
                           "discoverDevices expects timeoutMs");
             return;
           }
-          std::string timeout = *timeout_ms;
+          std::string timeout = std::to_string(timeout_ms);
           auto library = runtime_library;
           std::thread([library, timeout = std::move(timeout),
                        result = std::move(result)]() mutable {
@@ -568,6 +647,34 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                   }
                 });
           }).detach();
+          return;
+        }
+        if (method_call.method_name().compare(
+                "hostOnboardingPermissionSnapshot") == 0) {
+          const std::string* host_id = StringMapValue(method_call, "hostId");
+          if (host_id == nullptr || *host_id != "windows") {
+            result->Error("INVALID_HOST", "Invalid onboarding host");
+            return;
+          }
+          result->Success(WindowsAdminRequirementSnapshot());
+          return;
+        }
+        if (method_call.method_name().compare(
+                "hostOnboardingRequestPermission") == 0) {
+          const std::string* host_id = StringMapValue(method_call, "hostId");
+          const std::string* requirement_id =
+              StringMapValue(method_call, "requirementId");
+          if (host_id != nullptr && *host_id != "windows") {
+            result->Error("INVALID_HOST", "Invalid onboarding host");
+            return;
+          }
+          if (requirement_id == nullptr ||
+              *requirement_id != "windows.admin") {
+            result->Error("INVALID_ONBOARDING_REQUIREMENT",
+                          "Invalid onboarding requirement");
+            return;
+          }
+          RequestWindowsAdminAuthorization(std::move(result));
           return;
         }
         if (method_call.method_name().compare("stopWebAccessServer") == 0) {

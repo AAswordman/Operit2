@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::data::model::CharacterCard::{
+use operit_model::CharacterCard::{
     CharacterCard, CharacterCardChatModelBindingMode, CharacterCardMemoryBindingMode,
     CharacterCardToolAccessConfig, CharacterSharedMemoryMount, OperitAttachedTagPayload,
     OperitCharacterCardPayload, OperitTavernExtension, TavernCharacterCard, TavernCharacterData,
     TavernExtensions,
 };
-use crate::data::model::PromptFunctionType::PromptFunctionType;
-use crate::data::model::PromptTag::{PromptTag, TagType};
+use operit_model::PromptFunctionType::PromptFunctionType;
+use operit_model::PromptTag::{PromptTag, TagType};
 use crate::data::preferences::CharacterCardBilingualData::CharacterCardBilingualData;
 use crate::data::preferences::PromptTagManager::PromptTagManager;
 

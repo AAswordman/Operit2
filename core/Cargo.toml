@@ -5,6 +5,11 @@ members = [
     "crates/operit-core-proxy",
     "crates/operit-link",
     "crates/operit-store",
+    "crates/operit-model",
+    "crates/operit-util",
+    "crates/operit-tools",
+    "crates/operit-js-bridge",
+    "crates/operit-providers",
     "crates/operit-runtime",
 ]
 resolver = "2"

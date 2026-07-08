@@ -7,19 +7,24 @@ from pathlib import Path
 from common import (
     FLUTTER_APP_DIR,
     REPO_ROOT,
+    WEB_ACCESS_BUNDLE_DIR,
     ensure_node_and_npm,
     ensure_typescript,
     flutter_command,
     host_platform,
     prepare_python_command,
     require_command,
+    require_web_access_bundle,
+    reset_dir,
     run,
+    stage_web_access_source,
 )
 
 
 WASI_SDK_MAJOR_VERSION = "20"
 
 
+# Ensures wasm-bindgen is installed at the requested version.
 def ensure_wasm_bindgen(version: str) -> Path:
     root = REPO_ROOT / ".ci-tools" / "wasm-bindgen"
     suffix = ".exe" if sys.platform == "win32" else ""
@@ -41,6 +46,7 @@ def ensure_wasm_bindgen(version: str) -> Path:
     return binary.parent
 
 
+# Ensures the WASI SDK is available for the host platform.
 def ensure_wasi_sdk(version: str) -> Path:
     platform_name = host_platform()
     if platform_name == "windows":
@@ -82,6 +88,7 @@ def ensure_wasi_sdk(version: str) -> Path:
     return root
 
 
+# Builds the shared Web Access Flutter Web bundle.
 def main() -> int:
     os.environ.setdefault("RUSTFLAGS", "-Awarnings")
     typescript_version = os.environ.get("TYPESCRIPT_VERSION", "5.9.3")
@@ -101,7 +108,14 @@ def main() -> int:
     env["QUICKJS_WASM_SYS_WASI_SDK_PATH"] = str(wasi_sdk)
 
     run(["rustup", "target", "add", "wasm32-unknown-unknown"])
-    run([flutter, "build", "web", "--release"], cwd=FLUTTER_APP_DIR, env=env)
+    stage_web_access_source()
+    reset_dir(WEB_ACCESS_BUNDLE_DIR)
+    run(
+        [flutter, "build", "web", "--release", "--output", WEB_ACCESS_BUNDLE_DIR],
+        cwd=FLUTTER_APP_DIR,
+        env=env,
+    )
+    require_web_access_bundle()
     return 0
 
 

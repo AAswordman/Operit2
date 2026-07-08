@@ -51,6 +51,9 @@ String localizedText(Object? value) {
   if (value is String) {
     return value;
   }
+  if (value is core_proxy.LocalizedText) {
+    return _localizedTextFromMap(value.values);
+  }
   if (value is Map<Object?, Object?>) {
     final values = value['values'];
     if (values is Map<Object?, Object?>) {
@@ -58,7 +61,7 @@ String localizedText(Object? value) {
     }
     return _localizedTextFromMap(value);
   }
-  return value.toString();
+  throw StateError('Unsupported localized text value: ${value.runtimeType}');
 }
 
 int packageCategoryOrder(String category) {

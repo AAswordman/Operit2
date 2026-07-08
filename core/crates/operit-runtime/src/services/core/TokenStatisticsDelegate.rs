@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::thread;
 
-use crate::api::chat::EnhancedAIService::EnhancedAIService;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 
 #[derive(Clone)]

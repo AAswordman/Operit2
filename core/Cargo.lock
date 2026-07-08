@@ -1338,8 +1338,12 @@ name = "operit-command-core"
 version = "0.1.0"
 dependencies = [
  "operit-host-api",
+ "operit-model",
+ "operit-providers",
  "operit-runtime",
  "operit-store",
+ "operit-tools",
+ "operit-util",
  "reqwest",
  "serde",
  "serde_json",
@@ -1355,8 +1359,12 @@ dependencies = [
  "operit-command-core",
  "operit-host-api",
  "operit-link",
+ "operit-model",
+ "operit-providers",
  "operit-runtime",
  "operit-store",
+ "operit-tools",
+ "operit-util",
  "quote",
  "serde",
  "serde_json",
@@ -1375,6 +1383,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-js-bridge"
+version = "2.0.0-preview.3"
+dependencies = [
+ "aes",
+ "base64",
+ "flate2",
+ "image",
+ "md-5",
+ "operit-host-api",
+ "operit-store",
+ "operit-tools",
+ "operit-util",
+ "quickjs-wasm-rs",
+ "rquickjs",
+ "serde",
+ "serde_json",
+ "uuid",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "operit-link"
 version = "0.1.0"
 dependencies = [
@@ -1384,6 +1414,44 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "operit-model"
+version = "2.0.0-preview.3"
+dependencies = [
+ "chrono",
+ "operit-host-api",
+ "operit-util",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "operit-providers"
+version = "2.0.0-preview.3"
+dependencies = [
+ "async-trait",
+ "base64",
+ "chrono",
+ "futures-util",
+ "json5",
+ "operit-host-api",
+ "operit-model",
+ "operit-store",
+ "operit-tools",
+ "operit-util",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+ "uuid",
+ "zip",
 ]
 
 [[package]]
@@ -1403,7 +1471,12 @@ dependencies = [
  "lmdb-rkv",
  "md-5",
  "operit-host-api",
+ "operit-js-bridge",
+ "operit-model",
+ "operit-providers",
  "operit-store",
+ "operit-tools",
+ "operit-util",
  "quickjs-wasm-rs",
  "regex",
  "reqwest",
@@ -1427,12 +1500,60 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "chacha20poly1305",
+ "chrono",
  "getrandom 0.2.17",
  "js-sys",
  "operit-host-api",
+ "operit-model",
+ "operit-util",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
+name = "operit-tools"
+version = "2.0.0-preview.3"
+dependencies = [
+ "aes",
+ "async-trait",
+ "base64",
+ "chrono",
+ "flate2",
+ "futures-util",
+ "image",
+ "json5",
+ "md-5",
+ "operit-host-api",
+ "operit-model",
+ "operit-store",
+ "operit-util",
+ "quickjs-wasm-rs",
+ "regex",
+ "rquickjs",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+ "uuid",
+ "wasm-bindgen",
+ "web-sys",
+ "zip",
+]
+
+[[package]]
+name = "operit-util"
+version = "2.0.0-preview.3"
+dependencies = [
+ "operit-host-api",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

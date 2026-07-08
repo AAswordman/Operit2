@@ -2,24 +2,24 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
-use crate::api::chat::llmprovider::AIService::SharedAiResponseStream;
-use crate::api::chat::llmprovider::MediaLinkParser::MediaLinkParser;
-use crate::api::chat::EnhancedAIService::{
+use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
+use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
+use operit_providers::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
 };
-use crate::core::chat::hooks::PromptTurn::{PromptTurn, PromptTurnKind};
+use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
     MessageProcessingHookParams, MessageProcessingPluginRegistry,
 };
-use crate::data::model::AttachmentInfo::AttachmentInfo;
-use crate::data::model::ChatMessage::ChatMessage;
-use crate::data::model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
-use crate::data::model::PromptFunctionType::PromptFunctionType;
+use operit_model::AttachmentInfo::AttachmentInfo;
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
+use operit_model::PromptFunctionType::PromptFunctionType;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
-use crate::util::stream::HotStream::StreamStart;
-use crate::util::stream::RevisableTextStream::{share_revisable, with_event_channel_shared};
-use crate::util::AppLogger::AppLogger;
-use crate::util::ChainLogger::{self, PLUGIN_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
+use operit_util::stream::HotStream::StreamStart;
+use operit_util::stream::RevisableTextStream::{share_revisable, with_event_channel_shared};
+use operit_util::AppLogger::AppLogger;
+use operit_util::ChainLogger::{self, PLUGIN_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
 use operit_store::PreferencesDataStore::FlowLike;
 
 const DEFAULT_CHAT_KEY: &str = "__DEFAULT_CHAT__";
@@ -191,8 +191,8 @@ impl AIMessageManager {
     pub async fn sendMessage(
         request: SendMessageRequest<'_>,
     ) -> Result<
-        crate::api::chat::llmprovider::AIService::SharedAiResponseStream,
-        crate::api::chat::llmprovider::AIService::AiServiceError,
+        operit_providers::chat::llmprovider::AIService::SharedAiResponseStream,
+        operit_providers::chat::llmprovider::AIService::AiServiceError,
     > {
         let chatKey = match &request.chatId {
             Some(chatId) => chatId.clone(),
@@ -261,7 +261,7 @@ impl AIMessageManager {
             Self::forgetActiveEnhancedAiService(&chatKey);
             return Ok(with_event_channel_shared(
                 pluginExecution.stream,
-                crate::util::stream::HotStream::mutable_shared_stream(usize::MAX),
+                operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
             ));
         }
 
@@ -355,7 +355,7 @@ impl AIMessageManager {
         messages: Vec<ChatMessage>,
         autoContinue: bool,
         isGroupChat: bool,
-    ) -> Result<Option<ChatMessage>, crate::api::chat::llmprovider::AIService::AiServiceError> {
+    ) -> Result<Option<ChatMessage>, operit_providers::chat::llmprovider::AIService::AiServiceError> {
         let lastSummaryIndex = messages
             .iter()
             .rposition(|message| message.sender == "summary");
@@ -471,7 +471,7 @@ impl AIMessageManager {
     #[allow(non_snake_case)]
     pub async fn calculateStableContextWindow(
         request: StableContextWindowRequest<'_>,
-    ) -> Result<i32, crate::api::chat::llmprovider::AIService::AiServiceError> {
+    ) -> Result<i32, operit_providers::chat::llmprovider::AIService::AiServiceError> {
         let memory = Self::getMemoryFromMessages(
             request.chatHistory,
             request.splitHistoryByRole,
@@ -906,10 +906,10 @@ impl AIMessageManager {
 
 struct ActiveChatTextStream {
     chatKey: String,
-    stream: Box<dyn crate::util::stream::RevisableTextStream::RevisableTextStreamLike>,
+    stream: Box<dyn operit_util::stream::RevisableTextStream::RevisableTextStreamLike>,
 }
 
-impl crate::util::stream::Stream::Stream for ActiveChatTextStream {
+impl operit_util::stream::Stream::Stream for ActiveChatTextStream {
     type Item = String;
 
     fn is_locked(&self) -> bool {
@@ -940,17 +940,17 @@ impl crate::util::stream::Stream::Stream for ActiveChatTextStream {
     }
 }
 
-impl crate::util::stream::RevisableTextStream::TextStreamEventCarrier for ActiveChatTextStream {
+impl operit_util::stream::RevisableTextStream::TextStreamEventCarrier for ActiveChatTextStream {
     fn event_channel(
         &self,
-    ) -> &crate::util::stream::HotStream::MutableSharedStreamImpl<
-        crate::util::stream::RevisableTextStream::TextStreamEvent,
+    ) -> &operit_util::stream::HotStream::MutableSharedStreamImpl<
+        operit_util::stream::RevisableTextStream::TextStreamEvent,
     > {
         self.stream.event_channel()
     }
 }
 
-impl crate::util::stream::RevisableTextStream::RevisableTextStream for ActiveChatTextStream {}
+impl operit_util::stream::RevisableTextStream::RevisableTextStream for ActiveChatTextStream {}
 
 fn strip_xml_tags(input: &str) -> String {
     let mut output = String::new();

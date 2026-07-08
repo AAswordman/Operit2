@@ -1,18 +1,18 @@
 use crate::commands::util::{parse_bool_arg, read_content_arg};
 use crate::output::CoreCommandOutput;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::core::tools::mcp::MCPManager::MCPManager;
-use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
-use operit_runtime::data::mcp::plugins::MCPBridge::MCPBridge;
-use operit_runtime::data::mcp::plugins::MCPStarter::{MCPStarter, StartStatus};
-use operit_runtime::data::mcp::MCPLocalServer::{MCPLocalServer, PluginMetadata};
-use operit_runtime::data::mcp::MCPRepository::MCPRepository;
+use operit_host_api::HostManager::HostManager;
+use operit_tools::tools::mcp::MCPManager::MCPManager;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::tools::mcp_runtime::plugins::MCPBridge::MCPBridge;
+use operit_tools::tools::mcp_runtime::plugins::MCPStarter::{MCPStarter, StartStatus};
+use operit_tools::tools::mcp_runtime::MCPLocalServer::{MCPLocalServer, PluginMetadata};
+use operit_tools::tools::mcp_runtime::MCPRepository::MCPRepository;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub fn run_mcp_command(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -49,7 +49,7 @@ pub fn run_mcp_command(
 }
 
 fn print_mcp_dir(
-    context: OperitApplicationContext,
+    context: HostManager,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let server = mcp_local_server(&context);
@@ -59,7 +59,7 @@ fn print_mcp_dir(
 }
 
 fn list_mcp_servers(
-    context: OperitApplicationContext,
+    context: HostManager,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let server = mcp_local_server(&context);
@@ -89,7 +89,7 @@ fn list_mcp_servers(
 }
 
 fn show_mcp_server(
-    context: OperitApplicationContext,
+    context: HostManager,
     id: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -135,7 +135,7 @@ fn show_mcp_server(
 }
 
 fn import_mcp_config(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -147,7 +147,7 @@ fn import_mcp_config(
 }
 
 fn export_mcp_config(
-    context: OperitApplicationContext,
+    context: HostManager,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     output.push_stdout_line(mcp_local_server(&context).exportConfigAsJson());
@@ -155,7 +155,7 @@ fn export_mcp_config(
 }
 
 fn remove_mcp_server(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -166,7 +166,7 @@ fn remove_mcp_server(
 }
 
 fn set_mcp_enabled(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     enabled: bool,
     output: &mut CoreCommandOutput,
@@ -187,7 +187,7 @@ fn set_mcp_enabled(
 }
 
 fn start_mcp_server(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -220,7 +220,7 @@ fn start_mcp_server(
 }
 
 fn kill_mcp_server(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -248,7 +248,7 @@ fn kill_mcp_server(
 }
 
 fn print_mcp_tools(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -266,7 +266,7 @@ fn print_mcp_tools(
 }
 
 fn print_mcp_config(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -277,7 +277,7 @@ fn print_mcp_config(
 }
 
 fn save_mcp_config(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -293,7 +293,7 @@ fn save_mcp_config(
 }
 
 fn save_local_mcp_server(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -313,7 +313,7 @@ fn save_local_mcp_server(
 }
 
 fn install_mcp_from_github(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -329,17 +329,17 @@ fn install_mcp_from_github(
         mcpConfig,
         |_| {},
     ) {
-        operit_runtime::data::mcp::MCPRepository::InstallResult::Success { pluginPath } => {
+        operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Success { pluginPath } => {
             output.push_stdout_line(format!("installed={id}"));
             output.push_stdout_line(format!("path={pluginPath}"));
             Ok(())
         }
-        operit_runtime::data::mcp::MCPRepository::InstallResult::Error { message } => Err(message),
+        operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Error { message } => Err(message),
     }
 }
 
 fn install_mcp_from_zip(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -355,17 +355,17 @@ fn install_mcp_from_zip(
         mcpConfig,
         |_| {},
     ) {
-        operit_runtime::data::mcp::MCPRepository::InstallResult::Success { pluginPath } => {
+        operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Success { pluginPath } => {
             output.push_stdout_line(format!("installed={id}"));
             output.push_stdout_line(format!("path={pluginPath}"));
             Ok(())
         }
-        operit_runtime::data::mcp::MCPRepository::InstallResult::Error { message } => Err(message),
+        operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Error { message } => Err(message),
     }
 }
 
 fn print_mcp_metadata(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -381,7 +381,7 @@ fn print_mcp_metadata(
 }
 
 fn save_mcp_metadata(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -406,7 +406,7 @@ fn save_mcp_metadata(
 }
 
 fn generate_mcp_description(
-    context: OperitApplicationContext,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -509,7 +509,7 @@ fn optional_content_arg(value: Option<&String>) -> Result<String, String> {
         .map(|item| item.unwrap_or_default())
 }
 
-fn require_mcp_server(context: &OperitApplicationContext, id: &str) -> Result<(), String> {
+fn require_mcp_server(context: &HostManager, id: &str) -> Result<(), String> {
     mcp_local_server(context)
         .getMCPServer(id)
         .map(|_| ())
@@ -584,7 +584,7 @@ fn required_arg<'a>(args: &'a [String], index: usize, usage: &str) -> Result<&'a
     args.get(index).ok_or_else(|| format!("usage: {usage}"))
 }
 
-fn mcp_local_server(context: &OperitApplicationContext) -> MCPLocalServer {
+fn mcp_local_server(context: &HostManager) -> MCPLocalServer {
     MCPLocalServer::getInstance(context)
 }
 

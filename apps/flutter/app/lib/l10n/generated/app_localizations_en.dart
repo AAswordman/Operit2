@@ -205,7 +205,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get toolApprovalAllowOnce => 'Allow once';
 
   @override
-  String get toolApprovalAlwaysAllow => 'Always allow';
+  String get toolApprovalAlwaysAllow => 'Always allow in this session';
 
   @override
   String get createGroupTitle => 'New group';
@@ -822,15 +822,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'Manage character cards, groups, active roles, and role-level model, memory, and tool bindings.';
 
   @override
-  String get settingsCategoryToolsTitle => 'Tools & Extensions';
+  String get settingsCategoryToolsTitle => 'Tools & Permissions';
 
   @override
   String get settingsCategoryToolsSubtitle =>
-      'Permissions, packages, skills, MCP';
+      'AI capability, system authorization, extensions';
 
   @override
   String get settingsCategoryToolsDescription =>
-      'Control which tools Operit can call, and manage plugins, tool packages, skills, and MCP servers.';
+      'Set AI read-only, read-write, or full access, and review the current device system authorization status.';
 
   @override
   String get settingsCategoryWorkspaceTitle => 'Workspace & Browser';
@@ -1710,7 +1710,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get settingsToolsPermissionMode => 'Tool permission mode';
+  String get settingsToolsPermissionMode => 'AI capability mode';
 
   @override
   String get settingsToolsAsk => 'Ask';
@@ -1748,21 +1748,21 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get settingsToolsOverrides => 'Per-tool permission records';
+  String get settingsToolsOverrides => 'Tool records';
 
   @override
-  String get settingsToolsToolGroups => 'Per-tool permissions';
+  String get settingsToolsToolGroups => 'Registered tools';
 
   @override
   String get settingsToolsToolGroupsDescription =>
-      'Keep Ask for normal use. Put trusted tools in Always allow, and risky or unwanted tools in Always forbid.';
+      'Tools registered by the current runtime for AI use.';
 
   @override
-  String get settingsToolsAlwaysAllow => 'Always allow';
+  String get settingsToolsAlwaysAllow => 'Allowed in this session';
 
   @override
   String get settingsToolsAlwaysAllowDescription =>
-      'These tools run without asking again.';
+      'These tools were approved for the current session.';
 
   @override
   String get settingsToolsAlwaysForbid => 'Always forbid';

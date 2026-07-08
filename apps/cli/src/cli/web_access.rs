@@ -512,6 +512,7 @@ fn base_url_for_bind_address(bind_address: &str) -> Result<String, String> {
     Ok(format!("http://{host}:{port}"))
 }
 
+/// Resolves the Web Access asset root used by the local HTTP server.
 fn resolve_web_root(value: Option<PathBuf>) -> Result<PathBuf, String> {
     let web_root = match value {
         Some(path) => path,
@@ -520,7 +521,7 @@ fn resolve_web_root(value: Option<PathBuf>) -> Result<PathBuf, String> {
     let index = web_root.join("index.html");
     if !index.is_file() {
         return Err(format!(
-            "Flutter Web bundle not found: {}. Rebuild operit2 after building Flutter Web or pass --web-root <path>.",
+            "Web Access bundle not found: {}. Rebuild operit2 after building the Web Access bundle or pass --web-root <path>.",
             web_root.display()
         ));
     }

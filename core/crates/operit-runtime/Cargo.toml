@@ -16,7 +16,12 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 json5.workspace = true
 md-5 = "0.10"
 operit-host-api = { path = "../operit-host-api" }
+operit-js-bridge = { path = "../operit-js-bridge" }
+operit-model = { path = "../operit-model" }
+operit-providers = { path = "../operit-providers" }
 operit-store = { path = "../operit-store" }
+operit-tools = { path = "../operit-tools" }
+operit-util = { path = "../operit-util" }
 reqwest.workspace = true
 regex.workspace = true
 serde.workspace = true

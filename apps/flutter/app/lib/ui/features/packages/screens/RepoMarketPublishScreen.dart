@@ -62,8 +62,8 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
   List<core_proxy.MarketCategoryInfo> _categories =
       <core_proxy.MarketCategoryInfo>[];
 
-  GeneratedApiMarketStatsApiServiceCoreProxy get _market =>
-      widget.clients.apiMarketStatsApiService;
+  GeneratedProvidersMarketStatsApiServiceCoreProxy get _market =>
+      widget.clients.providersMarketStatsApiService;
 
   bool get _isContinuationMode => widget.publishContext != null;
 

@@ -3,31 +3,34 @@
 use uuid::Uuid;
 
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
-use operit_store::RuntimeStorageLayout::RUNTIME_TTS_AUDIO_DIR_PATH;
+use operit_util::RuntimeStorageLayout::RUNTIME_TTS_AUDIO_DIR_PATH;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
-use crate::api::voice::VoiceServiceFactory::VoiceServiceFactory;
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::data::model::TtsConfig::{TtsConfig, TtsSynthesisResult};
+use operit_providers::voice::VoiceServiceFactory::VoiceServiceFactory;
+use operit_host_api::HostManager::HostManager;
+use operit_model::TtsConfig::{TtsConfig, TtsSynthesisResult};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::TtsConfigManager::TtsConfigManager;
-use crate::util::TtsCleaner::TtsCleaner;
-use crate::util::TtsSegmenter::TtsSegmenter;
+use operit_util::TtsCleaner::TtsCleaner;
+use operit_util::TtsSegmenter::TtsSegmenter;
 
 #[derive(Clone)]
+/// Synthesizes speech audio using configured character or TTS profiles.
 pub struct TtsSynthesisService {
     paths: RuntimeStorePaths,
     characterCardManager: CharacterCardManager,
     ttsConfigManager: TtsConfigManager,
-    context: Option<OperitApplicationContext>,
+    context: Option<HostManager>,
 }
 
 impl TtsSynthesisService {
-    pub fn getInstance(context: &OperitApplicationContext) -> Self {
+    /// Creates a synthesis service from application host context.
+    pub fn getInstance(context: &HostManager) -> Self {
         let paths = RuntimeStorePaths::default();
         Self::newWithContext(paths, context.clone())
     }
 
+    /// Creates a synthesis service for explicit runtime paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
             characterCardManager: CharacterCardManager::new(paths.clone()),
@@ -37,7 +40,8 @@ impl TtsSynthesisService {
         }
     }
 
-    pub fn newWithContext(paths: RuntimeStorePaths, context: OperitApplicationContext) -> Self {
+    /// Creates a synthesis service with runtime paths and host context.
+    pub fn newWithContext(paths: RuntimeStorePaths, context: HostManager) -> Self {
         Self {
             characterCardManager: CharacterCardManager::new(paths.clone()),
             ttsConfigManager: TtsConfigManager::new(paths.clone()),
@@ -46,6 +50,7 @@ impl TtsSynthesisService {
         }
     }
 
+    /// Synthesizes text with the TTS configuration bound to a character card.
     pub fn synthesizeForCharacter(
         &self,
         characterCardId: &str,
@@ -76,6 +81,7 @@ impl TtsSynthesisService {
         self.synthesizeWithResolvedConfig(characterCardId, &config, &cleanedText)
     }
 
+    /// Synthesizes text with a selected TTS configuration.
     pub fn synthesizeWithConfig(
         &self,
         ttsConfigId: &str,

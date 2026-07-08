@@ -2,12 +2,19 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_host_api::HostManager::HostManager;
+use operit_host_api::{
+    HostCapability, HostIsolation, HostOnboardingRequirement, HostPlatform, HostPrivilege,
+    WorkspaceRootDescriptor,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeHostDescriptor {
     pub id: String,
     pub displayName: String,
+    pub platform: HostPlatform,
+    pub privilege: HostPrivilege,
+    pub isolation: HostIsolation,
     pub pathStyleDescriptionEn: String,
     pub pathStyleDescriptionCn: String,
     pub examplePaths: Vec<String>,
@@ -15,6 +22,9 @@ pub struct RuntimeHostDescriptor {
     pub environmentParameterDescriptionEn: String,
     pub environmentParameterDescriptionCn: String,
     pub capabilities: Vec<String>,
+    pub structuredCapabilities: Vec<HostCapability>,
+    pub onboardingRequirements: Vec<HostOnboardingRequirement>,
+    pub workspaceRoots: Vec<WorkspaceRootDescriptor>,
     pub fileSystemHost: bool,
     pub webVisitHost: bool,
     pub systemOperationHost: bool,
@@ -35,12 +45,15 @@ pub struct RuntimeHostInfoService {
 }
 
 impl RuntimeHostInfoService {
-    pub fn getInstance(context: &OperitApplicationContext) -> Self {
+    pub fn getInstance(context: &HostManager) -> Self {
         let host = &context.hostEnvironment;
         Self {
             descriptor: RuntimeHostDescriptor {
                 id: host.id.clone(),
                 displayName: host.displayName.clone(),
+                platform: host.platform.clone(),
+                privilege: host.privilege.clone(),
+                isolation: host.isolation.clone(),
                 pathStyleDescriptionEn: host.pathStyleDescriptionEn.clone(),
                 pathStyleDescriptionCn: host.pathStyleDescriptionCn.clone(),
                 examplePaths: host.examplePaths.clone(),
@@ -48,6 +61,9 @@ impl RuntimeHostInfoService {
                 environmentParameterDescriptionEn: host.environmentParameterDescriptionEn.clone(),
                 environmentParameterDescriptionCn: host.environmentParameterDescriptionCn.clone(),
                 capabilities: host.capabilities.clone(),
+                structuredCapabilities: host.structuredCapabilities.clone(),
+                onboardingRequirements: host.onboardingRequirements.clone(),
+                workspaceRoots: host.workspaceRoots.clone(),
                 fileSystemHost: context.fileSystemHost.is_some(),
                 webVisitHost: context.webVisitHost.is_some(),
                 systemOperationHost: context.systemOperationHost.is_some(),

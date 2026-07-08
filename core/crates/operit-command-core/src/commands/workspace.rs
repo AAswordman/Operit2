@@ -1,14 +1,14 @@
 use std::collections::BTreeMap;
 
 use crate::output::CoreCommandOutput;
-use operit_runtime::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
-use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::core::files::PathMapper::PathMapper;
-use operit_runtime::core::files::VisualFileSystem::VisualFileSystem;
-use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
+use operit_host_api::HostManager::HostManager;
+use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::ui::features::chat::webview::workspace::WorkspaceUtils;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::Deserialize;
@@ -183,7 +183,7 @@ fn list_workspace_commands(
         .get(0)
         .ok_or_else(|| "usage: operit2 workspace commands <chat-id>".to_string())?;
     let workspacePath = workspace_path_for_chat(application, chatId)?;
-    list_commands_at_path(&application.applicationContext, &workspacePath, output)
+    list_commands_at_path(&application.hostManager, &workspacePath, output)
 }
 
 fn list_workspace_commands_path(
@@ -197,7 +197,7 @@ fn list_workspace_commands_path(
         .and_then(nonBlankString)
         .ok_or_else(|| "usage: operit2 workspace commands-path <workspace>".to_string())?;
     let workspacePath = PathMapper::normalizeWorkspaceBindingPath(&workspacePath)?;
-    list_commands_at_path(&application.applicationContext, &workspacePath, output)
+    list_commands_at_path(&application.hostManager, &workspacePath, output)
 }
 
 fn run_workspace_shortcut(
@@ -213,7 +213,7 @@ fn run_workspace_shortcut(
         .ok_or_else(|| "usage: operit2 workspace run <chat-id> <command-id>".to_string())?;
     let workspacePath = workspace_path_for_chat(application, chatId)?;
     run_command_at_path(
-        application.applicationContext.clone(),
+        application.hostManager.clone(),
         &workspacePath,
         commandId,
         output,
@@ -235,7 +235,7 @@ fn run_workspace_shortcut_path(
         .get(1)
         .ok_or_else(|| "usage: operit2 workspace run-path <workspace> <command-id>".to_string())?;
     run_command_at_path(
-        application.applicationContext.clone(),
+        application.hostManager.clone(),
         &workspacePath,
         commandId,
         output,
@@ -260,7 +260,7 @@ fn workspace_path_for_chat(
 }
 
 #[allow(non_snake_case)]
-fn vfsForWorkspace(context: &OperitApplicationContext) -> Result<VisualFileSystem, String> {
+fn vfsForWorkspace(context: &HostManager) -> Result<VisualFileSystem, String> {
     let runtimeStoreRoot = context
         .runtimeStorageHost
         .as_ref()
@@ -283,7 +283,7 @@ fn vfsForWorkspace(context: &OperitApplicationContext) -> Result<VisualFileSyste
 }
 
 fn list_commands_at_path(
-    context: &OperitApplicationContext,
+    context: &HostManager,
     workspacePath: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -304,7 +304,7 @@ fn list_commands_at_path(
 }
 
 fn run_command_at_path(
-    context: OperitApplicationContext,
+    context: HostManager,
     workspacePath: &str,
     commandId: &str,
     output: &mut CoreCommandOutput,
@@ -331,7 +331,7 @@ fn run_command_at_path(
 }
 
 fn execute_workspace_tool(
-    context: OperitApplicationContext,
+    context: HostManager,
     command: &CommandConfig,
     workspacePath: &str,
     toolName: &str,
@@ -354,7 +354,7 @@ fn execute_workspace_tool(
 }
 
 fn execute_workspace_shell_command(
-    context: &OperitApplicationContext,
+    context: &HostManager,
     workspacePath: &str,
     command: &CommandConfig,
     commandText: &str,

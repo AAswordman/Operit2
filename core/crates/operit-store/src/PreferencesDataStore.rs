@@ -13,6 +13,7 @@ use crate::RuntimeStorePaths::RuntimeStorePaths;
 use crate::SyncOperationStore::{NewSyncOperation, SyncOperationStore, SyncOperationStoreError};
 
 #[derive(Debug, Error)]
+/// Error type for preference files, preference flows, and sync application.
 pub enum PreferencesDataStoreError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -28,32 +29,41 @@ pub enum PreferencesDataStoreError {
     Message(String),
 }
 
+/// Result alias used by Flow-like preference APIs.
 pub type FlowResult<T> = Result<T, PreferencesDataStoreError>;
 
+/// Minimal Kotlin Flow-like contract for one-shot reads and collection.
 pub trait FlowLike<T>: Clone
 where
     T: Clone,
 {
+    /// Reads the first emitted value.
     fn first(&self) -> FlowResult<T>;
 
+    /// Collects values emitted by this flow.
     fn collect<F>(&self, collector: F) -> FlowResult<()>
     where
         F: Fn(T);
 }
 
+/// Flow contract that also exposes the current value synchronously.
 pub trait StateFlowLike<T>: FlowLike<T>
 where
     T: Clone,
 {
+    /// Returns the currently held value.
     fn value(&self) -> T;
 }
 
+/// Mutable state flow contract for value updates and compare-and-set writes.
 pub trait MutableStateFlowLike<T>: StateFlowLike<T>
 where
     T: Clone + PartialEq,
 {
+    /// Replaces the current value.
     fn set_value(&self, value: T);
 
+    /// Replaces the current value only when it equals `expect`.
     fn compare_and_set(&self, expect: T, update: T) -> bool;
 }
 
@@ -91,6 +101,7 @@ struct FlowCancellationHooks {
     callbacks: HashMap<usize, Arc<dyn Fn() + Send + Sync>>,
 }
 
+/// Guard that unregisters a flow cancellation hook when dropped.
 pub struct FlowCancellationHook {
     cancellation: Weak<FlowCancellationInner>,
     id: Option<usize>,
@@ -106,10 +117,12 @@ trait FlowObservationGuard: Send {}
 
 impl<T> FlowObservationGuard for T where T: Send {}
 
+/// Guard that keeps a shared flow observation subscription active.
 pub struct FlowObservationSubscription {
     _guard: Box<dyn FlowObservationGuard>,
 }
 
+/// Handle returned by a live Flow subscription.
 pub struct FlowSubscription {
     cancellation: FlowCancellation,
     _observation: Option<FlowObservationSubscription>,
@@ -475,14 +488,17 @@ where
 }
 
 #[derive(Clone, Debug)]
+/// Placeholder scope type used to mirror Kotlin `stateIn` call sites.
 pub struct CoroutineScope;
 
 #[derive(Clone, Debug)]
+/// Supported sharing policy for Flow-to-StateFlow conversion.
 pub enum SharingStarted {
     Lazily,
 }
 
 #[derive(Clone)]
+/// Mutable observable value with Kotlin StateFlow-like semantics.
 pub struct StateFlow<T> {
     inner: Arc<StateFlowInner<T>>,
 }
@@ -525,6 +541,7 @@ impl<T> StateFlow<T>
 where
     T: Clone + PartialEq,
 {
+    /// Creates a state flow with an initial value.
     pub fn new(initialValue: T) -> Self {
         Self {
             inner: Arc::new(StateFlowInner {
@@ -560,6 +577,7 @@ where
             .push(subscription);
     }
 
+    /// Returns the current state value.
     pub fn value(&self) -> T {
         self.inner
             .value
@@ -568,10 +586,12 @@ where
             .clone()
     }
 
+    /// Reads the current state value.
     pub fn first(&self) -> FlowResult<T> {
         Ok(self.value())
     }
 
+    /// Reads the current value when it satisfies `predicate`.
     pub fn firstWhere<P>(&self, predicate: P) -> FlowResult<Option<T>>
     where
         P: Fn(&T) -> bool,
@@ -584,6 +604,7 @@ where
         }
     }
 
+    /// Emits the current value and then emits each subsequent change.
     pub fn collect<F>(&self, collector: F) -> FlowResult<()>
     where
         F: Fn(T),
@@ -612,6 +633,7 @@ where
     }
 
     #[allow(non_snake_case)]
+    /// Collects values until `shouldStop` returns true for an emitted value.
     pub fn collectUntil<F, P>(&self, mut collector: F, shouldStop: P) -> FlowResult<()>
     where
         F: FnMut(T),
@@ -648,6 +670,7 @@ where
         }
     }
 
+    /// Updates the current value and notifies collectors when it changed.
     pub fn set_value(&self, value: T) {
         let mut guard = self
             .inner
@@ -683,6 +706,7 @@ where
         }
     }
 
+    /// Updates the current value only when the current value equals `expect`.
     pub fn compare_and_set(&self, expect: T, update: T) -> bool {
         let mut guard = self
             .inner
@@ -720,6 +744,7 @@ where
         }
     }
 
+    /// Subscribes to value changes and immediately emits the current value.
     pub fn subscribe<F>(&self, subscriber: F) -> usize
     where
         F: FnMut(T) + Send + 'static,
@@ -739,6 +764,7 @@ where
         id
     }
 
+    /// Removes a previously registered state-flow subscriber.
     pub fn unsubscribe(&self, subscriptionId: usize) {
         let mut subscribers = self
             .inner
@@ -748,6 +774,7 @@ where
         subscribers.callbacks.remove(&subscriptionId);
     }
 
+    /// Derives a new state flow by transforming each source value.
     pub fn map<U, F>(&self, transform: F) -> StateFlow<U>
     where
         T: Send + 'static,
@@ -807,6 +834,7 @@ where
     }));
 }
 
+/// Combines two state flows into one derived state flow.
 pub fn combine2<A, B, R, F>(
     source1: &StateFlow<A>,
     source2: &StateFlow<B>,
@@ -874,6 +902,7 @@ where
     stateFlow
 }
 
+/// Combines three state flows into one derived state flow.
 pub fn combine3<A, B, C, R, F>(
     source1: &StateFlow<A>,
     source2: &StateFlow<B>,
@@ -968,6 +997,7 @@ where
     stateFlow
 }
 
+/// Combines four state flows into one derived state flow.
 pub fn combine4<A, B, C, D, R, F>(
     source1: &StateFlow<A>,
     source2: &StateFlow<B>,
@@ -1111,6 +1141,7 @@ where
     stateFlow
 }
 
+/// Combines five state flows into one derived state flow.
 pub fn combine5<A, B, C, D, E, R, F>(
     source1: &StateFlow<A>,
     source2: &StateFlow<B>,
@@ -1315,6 +1346,7 @@ where
 }
 
 #[derive(Clone)]
+/// Mutable wrapper around `StateFlow` used by preferences and runtime state.
 pub struct MutableStateFlow<T> {
     state: StateFlow<T>,
 }
@@ -1323,6 +1355,7 @@ impl<T> MutableStateFlow<T>
 where
     T: Clone + PartialEq,
 {
+    /// Creates a mutable state flow with an initial value.
     pub fn new(initialValue: T) -> Self {
         Self {
             state: StateFlow::new(initialValue),
@@ -1330,18 +1363,22 @@ where
     }
 
     #[allow(non_snake_case)]
+    /// Returns the read-oriented state-flow view.
     pub fn asStateFlow(&self) -> StateFlow<T> {
         self.state.clone()
     }
 
+    /// Returns the current value.
     pub fn value(&self) -> T {
         self.state.value()
     }
 
+    /// Reads the current value.
     pub fn first(&self) -> FlowResult<T> {
         Ok(self.value())
     }
 
+    /// Emits the current value and then emits each subsequent change.
     pub fn collect<F>(&self, collector: F) -> FlowResult<()>
     where
         F: Fn(T),
@@ -1350,6 +1387,7 @@ where
     }
 
     #[allow(non_snake_case)]
+    /// Collects values until `shouldStop` accepts an emitted value.
     pub fn collectUntil<F, P>(&self, collector: F, shouldStop: P) -> FlowResult<()>
     where
         F: FnMut(T),
@@ -1358,10 +1396,12 @@ where
         self.state.collectUntil(collector, shouldStop)
     }
 
+    /// Updates the current value and notifies subscribers when it changed.
     pub fn set_value(&self, value: T) {
         self.state.set_value(value);
     }
 
+    /// Subscribes to value changes and immediately emits the current value.
     pub fn subscribe<F>(&self, subscriber: F) -> usize
     where
         F: FnMut(T) + Send + 'static,
@@ -1369,10 +1409,12 @@ where
         self.state.subscribe(subscriber)
     }
 
+    /// Removes a previously registered subscriber.
     pub fn unsubscribe(&self, subscriptionId: usize) {
         self.state.unsubscribe(subscriptionId);
     }
 
+    /// Updates the current value only when the current value equals `expect`.
     pub fn compare_and_set(&self, expect: T, update: T) -> bool {
         self.state.compare_and_set(expect, update)
     }
@@ -1417,11 +1459,13 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// Strongly typed key for entries in a `Preferences` value.
 pub struct PreferencesKey {
     pub name: String,
 }
 
 #[allow(non_snake_case)]
+/// Creates a string preferences key.
 pub fn stringPreferencesKey(name: &str) -> PreferencesKey {
     PreferencesKey {
         name: name.to_string(),
@@ -1430,27 +1474,33 @@ pub fn stringPreferencesKey(name: &str) -> PreferencesKey {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
+/// In-memory representation of a preferences file.
 pub struct Preferences {
     values: HashMap<String, String>,
 }
 
 impl Preferences {
+    /// Reads a preference value by key.
     pub fn get(&self, key: &PreferencesKey) -> Option<&String> {
         self.values.get(&key.name)
     }
 
+    /// Writes a preference value by key.
     pub fn set(&mut self, key: &PreferencesKey, value: String) {
         self.values.insert(key.name.clone(), value);
     }
 
+    /// Removes a preference value by key.
     pub fn remove(&mut self, key: &PreferencesKey) {
         self.values.remove(&key.name);
     }
 
+    /// Returns whether a value exists for the supplied key.
     pub fn contains(&self, key: &PreferencesKey) -> bool {
         self.values.contains_key(&key.name)
     }
 
+    /// Returns all preference entries as owned key-value pairs.
     pub fn entries(&self) -> Vec<(String, String)> {
         self.values
             .iter()
@@ -1460,11 +1510,13 @@ impl Preferences {
 }
 
 #[allow(non_snake_case)]
+/// Creates an empty preferences value.
 pub fn emptyPreferences() -> Preferences {
     Preferences::default()
 }
 
 #[allow(non_snake_case)]
+/// Creates a mutable state flow.
 pub fn mutableStateFlow<T>(initialValue: T) -> MutableStateFlow<T>
 where
     T: Clone + PartialEq,
@@ -1473,6 +1525,7 @@ where
 }
 
 #[derive(Clone)]
+/// File-backed preferences store with Flow-like observation and optional encryption.
 pub struct PreferencesDataStore {
     path: PathBuf,
     storagePath: String,
@@ -1485,6 +1538,7 @@ pub struct PreferencesDataStore {
 }
 
 #[derive(Clone, Debug)]
+/// Sync metadata describing how a preferences file participates in runtime sync.
 pub struct PreferencesSyncDescriptor {
     pub domain: String,
     pub entityType: String,
@@ -1493,6 +1547,7 @@ pub struct PreferencesSyncDescriptor {
 }
 
 impl PreferencesSyncDescriptor {
+    /// Creates an explicit preferences sync descriptor.
     pub fn new(
         domain: impl Into<String>,
         entityType: impl Into<String>,
@@ -1508,6 +1563,7 @@ impl PreferencesSyncDescriptor {
     }
 
     #[allow(non_snake_case)]
+    /// Builds the standard sync descriptor for a preferences file path.
     pub fn forPreferencesPath(path: &Path) -> Self {
         let fileName = path
             .file_name()
@@ -1563,6 +1619,7 @@ impl Drop for PreferencesDataStoreFlowSubscription {
 }
 
 impl PreferencesDataStore {
+    /// Creates a preferences store backed by the default runtime storage host.
     pub fn new(path: PathBuf) -> Self {
         let changeSignal = preferencesDataStoreChangeSignal(&path);
         let sharedState = preferencesDataStoreSharedState(&path);
@@ -1585,6 +1642,7 @@ impl PreferencesDataStore {
     }
 
     #[allow(non_snake_case)]
+    /// Creates an encrypted preferences store backed by the default runtime storage host.
     pub fn newEncrypted(path: PathBuf) -> Self {
         let storageHost = defaultRuntimeStorageHost();
         let storagePath = runtimeStoragePath(&path);
@@ -1605,6 +1663,7 @@ impl PreferencesDataStore {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a preferences store backed by an explicit storage host and path.
     pub fn newWithStorage(
         storageHost: Arc<dyn RuntimeStorageHost>,
         storagePath: impl Into<String>,
@@ -1626,6 +1685,7 @@ impl PreferencesDataStore {
     }
 
     #[allow(non_snake_case)]
+    /// Creates an encrypted preferences store backed by an explicit storage host and path.
     pub fn newEncryptedWithStorage(
         storageHost: Arc<dyn RuntimeStorageHost>,
         storagePath: impl Into<String>,
@@ -1648,11 +1708,13 @@ impl PreferencesDataStore {
         }
     }
 
+    /// Returns the logical path associated with this preferences store.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
     #[allow(non_snake_case)]
+    /// Applies a synced preferences payload to local storage and observers.
     pub fn applySyncedPreferences(
         entityId: &str,
         payload: serde_json::Value,
@@ -1680,6 +1742,7 @@ impl PreferencesDataStore {
         Ok(())
     }
 
+    /// Reads the current preferences snapshot.
     pub fn data(&self) -> Result<Preferences, PreferencesDataStoreError> {
         let mut loaded = self
             .sharedState
@@ -1710,6 +1773,7 @@ impl PreferencesDataStore {
         Ok(serde_json::from_str(&content)?)
     }
 
+    /// Returns an observed flow of preference snapshots.
     pub fn dataFlow(&self) -> Flow<Preferences> {
         let store = self.clone();
         let signal = Arc::clone(&self.changeSignal);
@@ -1741,6 +1805,7 @@ impl PreferencesDataStore {
         )
     }
 
+    /// Edits preferences in memory and persists the updated snapshot.
     pub fn edit<F>(&self, transform: F) -> Result<(), PreferencesDataStoreError>
     where
         F: FnOnce(&mut Preferences),
@@ -1751,6 +1816,7 @@ impl PreferencesDataStore {
         })
     }
 
+    /// Edits preferences and returns a value produced by the edit closure.
     pub fn edit_result<F, T>(&self, transform: F) -> Result<T, PreferencesDataStoreError>
     where
         F: FnOnce(&mut Preferences) -> T,
@@ -1758,6 +1824,7 @@ impl PreferencesDataStore {
         self.try_edit_result(|preferences| Ok(transform(preferences)))
     }
 
+    /// Edits preferences with a caller-defined error type.
     pub fn try_edit_result<F, T, E>(&self, transform: F) -> Result<T, E>
     where
         F: FnOnce(&mut Preferences) -> Result<T, E>,
@@ -1779,6 +1846,7 @@ impl PreferencesDataStore {
         Ok(result)
     }
 
+    /// Replaces the full preferences snapshot and notifies observers.
     pub fn replace(&self, preferences: Preferences) -> Result<(), PreferencesDataStoreError> {
         let mut loaded = self
             .sharedState

@@ -656,7 +656,7 @@ target_arch = "wasm32" -> operit_host_web
 
 ```text
 hosts/web
-apps/flutter/app/web/operit_runtime_bridge.js
+apps/web_access/web/operit_runtime_bridge.js
 ```
 
 Web host 由浏览器 JS 安装：

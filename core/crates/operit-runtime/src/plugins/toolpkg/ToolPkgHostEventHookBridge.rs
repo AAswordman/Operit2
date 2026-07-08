@@ -7,12 +7,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_HOST_EVENT;
-use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_HOST_EVENT;
+use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
     toolPkgPackageManager, ToolPkgHostEventRegistration,
 };
-use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
+use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static HOST_EVENT_HOOKS: OnceLock<Mutex<Vec<ToolPkgHostEventRegistration>>> = OnceLock::new();
 static HOST_EVENT_SCHEDULE_GENERATION: OnceLock<Arc<AtomicU64>> = OnceLock::new();

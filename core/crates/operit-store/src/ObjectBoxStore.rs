@@ -12,9 +12,11 @@ use crate::RuntimeStorePaths::RuntimeStorePaths;
 use crate::SqliteStore::{toSqliteValue, SqliteRowGet, SqliteStore, SqliteStoreError};
 use crate::SyncOperationStore::{NewSyncOperation, SyncOperationStore, SyncOperationStoreError};
 
+/// Sync domain used for persisted ObjectBox-compatible entity operations.
 pub const OBJECTBOX_SYNC_DOMAIN: &str = "objectbox";
 
 #[derive(Debug, Error)]
+/// Error type for the SQLite-backed ObjectBox compatibility store.
 pub enum ObjectBoxStoreError {
     #[error("sqlite error: {0}")]
     Sqlite(#[from] SqliteStoreError),
@@ -26,12 +28,17 @@ pub enum ObjectBoxStoreError {
     Message(String),
 }
 
+/// Entity contract required by the ObjectBox compatibility layer.
 pub trait ObjectBoxEntity: Clone {
+    /// Returns the stable ObjectBox-style numeric identifier.
     fn objectBoxId(&self) -> i64;
+
+    /// Assigns the stable ObjectBox-style numeric identifier.
     fn setObjectBoxId(&mut self, id: i64);
 }
 
 #[derive(Clone)]
+/// SQLite-backed store that mimics the subset of ObjectBox APIs used by runtime data models.
 pub struct ObjectBox<T> {
     databaseStoragePath: String,
     entityType: String,
@@ -51,6 +58,7 @@ impl<T> ObjectBox<T>
 where
     T: ObjectBoxEntity + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
+    /// Opens an ObjectBox-compatible entity store at the supplied database path.
     pub fn new(path: PathBuf, entityType: impl Into<String>) -> Self {
         let databasePath = path.with_extension("sqlite");
         let databaseStoragePath = runtimeStoragePath(&databasePath);
@@ -68,10 +76,12 @@ where
         }
     }
 
+    /// Loads every entity of this store's entity type ordered by object id.
     pub fn all(&self) -> Result<Vec<T>, ObjectBoxStoreError> {
         self.readEntities()
     }
 
+    /// Loads one entity by object id.
     pub fn get(&self, id: i64) -> Result<Option<T>, ObjectBoxStoreError> {
         let row = self.sqliteStore.queryOne(
             "SELECT payload FROM objectbox_entities WHERE entity_type = ?1 AND id = ?2",
@@ -87,6 +97,7 @@ where
     }
 
     #[allow(non_snake_case)]
+    /// Loads all entities whose object ids are included in `ids`.
     pub fn getMany(&self, ids: &[i64]) -> Result<Vec<T>, ObjectBoxStoreError> {
         let selected = ids
             .iter()
@@ -99,6 +110,7 @@ where
             .collect())
     }
 
+    /// Inserts or updates one entity and records a sync operation.
     pub fn put(&self, mut entity: T) -> Result<T, ObjectBoxStoreError> {
         let saved = self.sqliteStore.transaction(|transaction| {
             if entity.objectBoxId() == 0 {
@@ -126,6 +138,7 @@ where
     }
 
     #[allow(non_snake_case)]
+    /// Inserts or updates many entities in one transaction and records sync operations.
     pub fn putMany(&self, incoming: Vec<T>) -> Result<Vec<T>, ObjectBoxStoreError> {
         let saved = self.sqliteStore.transaction(|transaction| {
             let mut saved = Vec::with_capacity(incoming.len());
@@ -158,6 +171,7 @@ where
         Ok(saved)
     }
 
+    /// Removes one entity by object id and records a sync operation when it existed.
     pub fn remove(&self, id: i64) -> Result<bool, ObjectBoxStoreError> {
         let affected = self.sqliteStore.execute(
             "DELETE FROM objectbox_entities WHERE entity_type = ?1 AND id = ?2",
@@ -172,11 +186,13 @@ where
     }
 
     #[allow(non_snake_case)]
+    /// Removes the entity identified by the supplied object's current object id.
     pub fn removeEntity(&self, entity: &T) -> Result<bool, ObjectBoxStoreError> {
         self.remove(entity.objectBoxId())
     }
 
     #[allow(non_snake_case)]
+    /// Removes all entities matching the supplied object ids and returns the deletion count.
     pub fn removeByIds(&self, ids: &[i64]) -> Result<usize, ObjectBoxStoreError> {
         let mut removed = 0usize;
         for id in ids {
@@ -188,6 +204,7 @@ where
     }
 
     #[allow(non_snake_case)]
+    /// Edits the full entity collection and persists the transformed set.
     pub fn editEntities<F, R>(&self, transform: F) -> Result<R, ObjectBoxStoreError>
     where
         F: FnOnce(&mut Vec<T>) -> R,
@@ -198,6 +215,7 @@ where
         Ok(result)
     }
 
+    /// Creates an in-memory query builder for this entity store.
     pub fn query(&self) -> ObjectBoxQueryBuilder<T> {
         ObjectBoxQueryBuilder {
             objectBox: self.clone(),
@@ -206,6 +224,7 @@ where
     }
 
     #[allow(non_snake_case)]
+    /// Applies a remote sync operation to the local entity database.
     pub fn applySyncedEntity(
         entityId: &str,
         operation: &str,
@@ -367,6 +386,7 @@ where
     }
 }
 
+/// Builder for filtering an ObjectBox-compatible entity collection.
 pub struct ObjectBoxQueryBuilder<T>
 where
     T: ObjectBoxEntity + Serialize + DeserializeOwned + Send + Sync + 'static,
@@ -379,6 +399,7 @@ impl<T> ObjectBoxQueryBuilder<T>
 where
     T: ObjectBoxEntity + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
+    /// Adds an in-memory predicate to the query.
     pub fn filter<F>(mut self, predicate: F) -> Self
     where
         F: Fn(&T) -> bool + Send + Sync + 'static,
@@ -387,6 +408,7 @@ where
         self
     }
 
+    /// Builds an executable query from the accumulated predicates.
     pub fn build(self) -> ObjectBoxQuery<T> {
         ObjectBoxQuery {
             objectBox: self.objectBox,
@@ -395,6 +417,7 @@ where
     }
 }
 
+/// Executable in-memory query over an ObjectBox-compatible entity collection.
 pub struct ObjectBoxQuery<T>
 where
     T: ObjectBoxEntity + Serialize + DeserializeOwned + Send + Sync + 'static,
@@ -407,6 +430,7 @@ impl<T> ObjectBoxQuery<T>
 where
     T: ObjectBoxEntity + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
+    /// Finds all entities that satisfy every query predicate.
     pub fn find(&self) -> Result<Vec<T>, ObjectBoxStoreError> {
         Ok(self
             .objectBox
@@ -417,11 +441,13 @@ where
     }
 
     #[allow(non_snake_case)]
+    /// Finds the first matching entity.
     pub fn findFirst(&self) -> Result<Option<T>, ObjectBoxStoreError> {
         Ok(self.find()?.into_iter().next())
     }
 
     #[allow(non_snake_case)]
+    /// Finds a single matching entity and errors when multiple entities match.
     pub fn findUnique(&self) -> Result<Option<T>, ObjectBoxStoreError> {
         let found = self.find()?;
         match found.len() {

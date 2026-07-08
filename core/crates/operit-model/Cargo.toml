@@ -1,0 +1,14 @@
+[package]
+name = "operit-model"
+version = "2.0.0-preview.3"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+operit-host-api = { path = "../operit-host-api" }
+operit-util = { path = "../operit-util" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true

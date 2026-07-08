@@ -3,20 +3,20 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::api::chat::llmprovider::AIService::collect_stream_chunks;
-use crate::api::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
+use operit_providers::chat::llmprovider::AIService::collect_stream_chunks;
+use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use crate::core::chat::AIMessageManager::{AIMessageManager, StableContextWindowRequest};
-use crate::core::config::FunctionalPrompts::FunctionalPrompts;
-use crate::data::model::ActivePrompt::ActivePrompt;
-use crate::data::model::AttachmentInfo::AttachmentInfo;
-use crate::data::model::CharacterCard::CharacterCard;
-use crate::data::model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
-use crate::data::model::ChatMessage::ChatMessage;
-use crate::data::model::ChatMessageDisplayMode::ChatMessageDisplayMode;
-use crate::data::model::ChatTurnOptions::ChatTurnOptions;
-use crate::data::model::FunctionType::FunctionType;
-use crate::data::model::InputProcessingState::InputProcessingState;
-use crate::data::model::PromptFunctionType::PromptFunctionType;
+use operit_providers::chat::config::FunctionalPrompts::FunctionalPrompts;
+use operit_model::ActivePrompt::ActivePrompt;
+use operit_model::AttachmentInfo::AttachmentInfo;
+use operit_model::CharacterCard::CharacterCard;
+use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
+use operit_model::ChatTurnOptions::ChatTurnOptions;
+use operit_model::FunctionType::FunctionType;
+use operit_model::InputProcessingState::InputProcessingState;
+use operit_model::PromptFunctionType::PromptFunctionType;
 use crate::data::preferences::ActivePromptManager::ActivePromptManager;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
@@ -27,9 +27,10 @@ use crate::services::core::MessageProcessingDelegate::{
     RegenerateAiMessageVariantRequest, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
-use crate::util::stream::Stream::Stream;
-use crate::util::ChainLogger::{self, SEND_CHAIN};
+use operit_util::stream::Stream::Stream;
+use operit_util::ChainLogger::{self, SEND_CHAIN};
 
+/// Queued continuation work scheduled after a summary completes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingAutoContinuationRequest {
     pub chatId: String,
@@ -42,17 +43,20 @@ pub struct PendingAutoContinuationRequest {
     pub waitJob: Option<String>,
 }
 
+/// Planned group member turn inside an orchestration round.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PlannedMember {
     id: String,
     speak: bool,
 }
 
+/// Parsed group orchestration plan grouped by speaking round.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PlannedRounds {
     rounds: Vec<Vec<PlannedMember>>,
 }
 
+/// Coordinates high-level chat sends, group orchestration, summaries, and memory updates.
 pub struct MessageCoordinationDelegate {
     pub chatHistoryDelegate: ChatHistoryDelegate,
     pub messageProcessingDelegate: MessageProcessingDelegate,
@@ -75,6 +79,7 @@ pub struct MessageCoordinationDelegate {
 }
 
 impl MessageCoordinationDelegate {
+    /// Creates a coordinator from history and message-processing delegates.
     pub fn new(
         chatHistoryDelegate: ChatHistoryDelegate,
         messageProcessingDelegate: MessageProcessingDelegate,
@@ -103,6 +108,7 @@ impl MessageCoordinationDelegate {
         delegate
     }
 
+    /// Subscribes non-fatal processing errors into toast notifications.
     fn ensureNonFatalErrorCollectorStarted(&mut self) {
         if self.nonFatalErrorCollectorJob.is_some() {
             return;
@@ -117,6 +123,7 @@ impl MessageCoordinationDelegate {
         self.nonFatalErrorCollectorJob = Some("nonFatalErrorCollectorJob".to_string());
     }
 
+    /// Recalculates the stable context window size for a chat and prompt mode.
     pub async fn recalculateStableWindowSize(
         &mut self,
         service: &mut EnhancedAIService,
@@ -175,6 +182,7 @@ impl MessageCoordinationDelegate {
         .expect("stable context window must be calculated")
     }
 
+    /// Recalculates and persists the stable context window for a chat.
     pub async fn refreshStableContextWindow(
         &mut self,
         service: &mut EnhancedAIService,
@@ -223,6 +231,7 @@ impl MessageCoordinationDelegate {
         Some(newWindowSize)
     }
 
+    /// Public entry point for sending a user message from the active chat UI.
     pub async fn sendUserMessage(
         &mut self,
         enhancedAiService: &mut EnhancedAIService,
@@ -303,6 +312,7 @@ impl MessageCoordinationDelegate {
         .await;
     }
 
+    /// Regenerates a single AI message variant using the surrounding conversation state.
     pub async fn regenerateSingleAiMessage(
         &mut self,
         enhancedAiService: &mut EnhancedAIService,
@@ -400,6 +410,7 @@ impl MessageCoordinationDelegate {
         Ok(())
     }
 
+    /// Shared send pipeline used by direct sends, continuations, and orchestration turns.
     pub async fn sendMessageInternal(
         &mut self,
         enhancedAiService: &mut EnhancedAIService,
@@ -597,9 +608,10 @@ impl MessageCoordinationDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Resolves the role card that should drive the next send.
     fn resolveRoleCardIdForSend(
         &self,
-        currentChat: Option<&crate::data::model::ChatHistory::ChatHistory>,
+        currentChat: Option<&operit_model::ChatHistory::ChatHistory>,
     ) -> Result<String, operit_store::PreferencesDataStore::PreferencesDataStoreError> {
         if let Some(chat) = currentChat {
             let hasGroupBinding = chat
@@ -626,6 +638,7 @@ impl MessageCoordinationDelegate {
         ActivePromptManager::getInstance().resolveActiveCardIdForSend()
     }
 
+    /// Triggers a manual memory update for a chat.
     pub fn handleManualMemoryUpdate(&mut self, _chatId: Option<String>) {
         if self.isUpdatingMemory {
             return;
@@ -635,6 +648,7 @@ impl MessageCoordinationDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Determines whether the current chat should use group orchestration.
     fn shouldRunGroupOrchestration(
         &self,
         promptFunctionType: PromptFunctionType,
@@ -967,6 +981,7 @@ impl MessageCoordinationDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Parses a model-generated group turn plan into round and member entries.
     fn parsePlannedRounds(
         &self,
         rawContent: &str,
@@ -1062,6 +1077,7 @@ impl MessageCoordinationDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Builds a compact participant name list for group prompt context.
     fn buildGroupParticipantNamesText(
         &self,
         members: &[GroupMemberConfig],
@@ -1084,6 +1100,7 @@ impl MessageCoordinationDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Resolves the character group associated with a chat id.
     fn resolveTargetGroupForChat(&self, chatId: &str) -> Option<CharacterGroupCard> {
         let activePrompt = self.activePromptManager.getActivePrompt().ok()?;
         let activeGroupId = match activePrompt {
@@ -1195,6 +1212,7 @@ impl MessageCoordinationDelegate {
         }
     }
 
+    /// Starts a user-requested conversation summary for the current chat.
     pub async fn manuallySummarizeConversation(
         &mut self,
         enhancedAiService: &mut EnhancedAIService,
@@ -1218,6 +1236,7 @@ impl MessageCoordinationDelegate {
         .await;
     }
 
+    /// Summarizes history after context limits are exceeded, then continues the turn.
     pub async fn handleTokenLimitExceeded(
         &mut self,
         enhancedAiService: &mut EnhancedAIService,
@@ -1243,8 +1262,10 @@ impl MessageCoordinationDelegate {
         self.summaryJob = None;
     }
 
+    /// Cancels active summary streaming work.
     fn cancelSummaryStreamingInternal(&mut self, _enhancedAiService: &mut EnhancedAIService) {}
 
+    /// Cancels summary jobs and queued continuations for a chat target.
     fn cancelSummaryInternal(
         &mut self,
         enhancedAiService: &mut EnhancedAIService,
@@ -1292,10 +1313,12 @@ impl MessageCoordinationDelegate {
         self.messageProcessingDelegate.refreshGlobalLoadingState();
     }
 
+    /// Cancels active summary work for the current chat.
     pub fn cancelSummary(&mut self, enhancedAiService: &mut EnhancedAIService) {
         self.cancelSummaryInternal(enhancedAiService, None);
     }
 
+    /// Cancels active summary work for one chat.
     pub fn cancelSummaryForChat(
         &mut self,
         enhancedAiService: &mut EnhancedAIService,
@@ -1304,6 +1327,7 @@ impl MessageCoordinationDelegate {
         self.cancelSummaryInternal(enhancedAiService, Some(chatId));
     }
 
+    /// Cancels summary work before destructive history mutation.
     pub fn cancelSummaryForDestructiveMutation(
         &mut self,
         enhancedAiService: &mut EnhancedAIService,
@@ -1312,6 +1336,7 @@ impl MessageCoordinationDelegate {
         self.cancelSummaryInternal(enhancedAiService, Some(chatId));
     }
 
+    /// Runs the asynchronous summary task created by a send turn.
     async fn launchAsyncSummaryForSend(
         &mut self,
         enhancedAiService: &mut EnhancedAIService,
@@ -1383,6 +1408,7 @@ impl MessageCoordinationDelegate {
             .setInputProcessingStateForChat(originalChatId, InputProcessingState::Idle);
     }
 
+    /// Generates and stores a summary message for the selected chat history.
     async fn summarizeHistory(
         &mut self,
         enhancedAiService: &mut EnhancedAIService,
@@ -1532,6 +1558,7 @@ impl MessageCoordinationDelegate {
         summarySuccess
     }
 
+    /// Queues an automatic continuation to run after the active turn settles.
     fn queuePendingAutoContinuation(
         &mut self,
         chatId: String,
@@ -1557,13 +1584,16 @@ impl MessageCoordinationDelegate {
         );
     }
 
+    /// Removes queued automatic continuation state for one chat.
     fn removePendingAutoContinuation(&mut self, chatId: String) {
         self.pendingAutoContinuationByChatId.remove(&chatId);
     }
 
+    /// Installs UI bridge callbacks used by platform integrations.
     pub fn setUiBridge(&mut self) {}
 }
 
+/// Removes explicit thinking blocks before speech output is extracted.
 #[allow(non_snake_case)]
 fn removeThinkingContent(input: &str) -> String {
     let mut output = String::new();
@@ -1583,6 +1613,7 @@ fn removeThinkingContent(input: &str) -> String {
     output
 }
 
+/// Extracts assistant content suitable for speech playback.
 #[allow(non_snake_case)]
 fn extractEffectiveSpeechContent(content: &str) -> String {
     let withoutThinking = removeThinkingContent(content);
@@ -1592,6 +1623,7 @@ fn extractEffectiveSpeechContent(content: &str) -> String {
         .to_string()
 }
 
+/// Shortens a member message for inclusion in group prompts.
 #[allow(non_snake_case)]
 fn shrinkForMemberPrompt(content: &str, maxLength: usize) -> String {
     let normalized = content.replace('\n', " ").trim().to_string();
@@ -1603,6 +1635,7 @@ fn shrinkForMemberPrompt(content: &str, maxLength: usize) -> String {
     }
 }
 
+/// Removes paired XML-like tag blocks from text.
 #[allow(non_snake_case)]
 fn removeTagBlocks(content: &str, tagName: &str) -> String {
     let mut output = String::new();
@@ -1628,6 +1661,7 @@ fn removeTagBlocks(content: &str, tagName: &str) -> String {
     output
 }
 
+/// Removes self-closing XML-like tags from text.
 #[allow(non_snake_case)]
 fn removeSelfClosingTags(content: &str, tagName: &str) -> String {
     let mut output = String::new();

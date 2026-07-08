@@ -5,6 +5,7 @@ use operit_host_api::{RuntimeSqliteHost, RuntimeStorageHost};
 
 use crate::RuntimeStorePaths::RuntimeStorePaths;
 
+/// Registers the runtime storage host used by store helpers and repositories.
 #[allow(non_snake_case)]
 pub fn setDefaultRuntimeStorageHost(host: Arc<dyn RuntimeStorageHost>) {
     let holder = DEFAULT_RUNTIME_STORAGE_HOST.get_or_init(|| Mutex::new(None));
@@ -14,6 +15,7 @@ pub fn setDefaultRuntimeStorageHost(host: Arc<dyn RuntimeStorageHost>) {
     *guard = Some(host);
 }
 
+/// Registers the SQLite host used by database-backed runtime stores.
 #[allow(non_snake_case)]
 pub fn setDefaultRuntimeSqliteHost(host: Arc<dyn RuntimeSqliteHost>) {
     let holder = DEFAULT_RUNTIME_SQLITE_HOST.get_or_init(|| Mutex::new(None));
@@ -23,6 +25,7 @@ pub fn setDefaultRuntimeSqliteHost(host: Arc<dyn RuntimeSqliteHost>) {
     *guard = Some(host);
 }
 
+/// Returns the registered runtime storage host.
 #[allow(non_snake_case)]
 pub fn defaultRuntimeStorageHost() -> Arc<dyn RuntimeStorageHost> {
     let holder = DEFAULT_RUNTIME_STORAGE_HOST.get_or_init(|| Mutex::new(None));
@@ -35,6 +38,7 @@ pub fn defaultRuntimeStorageHost() -> Arc<dyn RuntimeStorageHost> {
     }
 }
 
+/// Returns the registered runtime SQLite host.
 #[allow(non_snake_case)]
 pub fn defaultRuntimeSqliteHost() -> Arc<dyn RuntimeSqliteHost> {
     let holder = DEFAULT_RUNTIME_SQLITE_HOST.get_or_init(|| Mutex::new(None));
@@ -47,6 +51,7 @@ pub fn defaultRuntimeSqliteHost() -> Arc<dyn RuntimeSqliteHost> {
     }
 }
 
+/// Converts an absolute runtime path into the host-relative storage path.
 #[allow(non_snake_case)]
 pub fn runtimeStoragePath(path: &Path) -> String {
     let root = RuntimeStorePaths::default().root_dir().to_path_buf();

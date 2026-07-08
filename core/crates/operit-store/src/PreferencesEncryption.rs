@@ -17,6 +17,7 @@ const KEY_LENGTH: usize = 32;
 const NONCE_LENGTH: usize = 24;
 
 #[derive(Clone)]
+/// XChaCha20-Poly1305 encryption helper for encrypted preferences files.
 pub struct PreferencesEncryption {
     keyId: String,
     key: [u8; KEY_LENGTH],
@@ -44,6 +45,7 @@ struct EncryptedPreferencesEnvelope {
 }
 
 impl PreferencesEncryption {
+    /// Loads the existing preferences encryption key or creates and stores a new one.
     pub fn load_or_create(
         storageHost: &dyn RuntimeStorageHost,
     ) -> Result<Self, PreferencesDataStoreError> {
@@ -109,6 +111,7 @@ impl PreferencesEncryption {
         })
     }
 
+    /// Encrypts preference bytes using the storage path as authenticated data.
     pub fn encrypt(
         &self,
         storagePath: &str,
@@ -139,6 +142,7 @@ impl PreferencesEncryption {
         Ok(serde_json::to_vec_pretty(&envelope)?)
     }
 
+    /// Decrypts preference bytes and verifies the storage-path authenticated data.
     pub fn decrypt(
         &self,
         storagePath: &str,

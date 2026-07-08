@@ -1,0 +1,9 @@
+#[path = "AIForegroundService.rs"]
+pub mod AIForegroundService;
+#[path = "EnhancedAIService.rs"]
+pub mod EnhancedAIService;
+pub mod config;
+pub mod enhance;
+pub mod hooks;
+pub mod library;
+pub mod llmprovider;

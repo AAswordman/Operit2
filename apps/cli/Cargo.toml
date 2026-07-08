@@ -5,6 +5,10 @@ edition = "2021"
 license = "MIT"
 publish = false
 
+[features]
+default = ["embedded-web-access"]
+embedded-web-access = ["dep:include_dir"]
+
 [[bin]]
 name = "operit2"
 path = "src/main.rs"
@@ -20,7 +24,7 @@ futures-util = "0.3"
 hmac = "0.12"
 image = { version = "0.25", default-features = false, features = ["png"] }
 mdns-sd = "0.12"
-include_dir = "0.7"
+include_dir = { version = "0.7", optional = true }
 operit-core-proxy = { path = "../../core/crates/operit-core-proxy" }
 operit-command-core = { path = "../../core/crates/operit-command-core" }
 operit-host-api = { path = "../../core/crates/operit-host-api" }

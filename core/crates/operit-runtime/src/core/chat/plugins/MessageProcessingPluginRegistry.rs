@@ -1,6 +1,6 @@
-use super::super::hooks::PromptTurn::PromptTurn;
-use crate::util::stream::HotStream::MutableSharedStreamImpl;
-use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
+use operit_model::PromptTurn::PromptTurn;
+use operit_util::stream::HotStream::MutableSharedStreamImpl;
+use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub struct MessageProcessingHookParams {

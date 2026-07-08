@@ -8,11 +8,15 @@ publish.workspace = true
 [dependencies]
 base64.workspace = true
 chacha20poly1305 = "0.10"
+chrono.workspace = true
 getrandom = "0.2"
 operit-host-api = { path = "../operit-host-api" }
+operit-model = { path = "../operit-model" }
+operit-util = { path = "../operit-util" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+uuid.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }

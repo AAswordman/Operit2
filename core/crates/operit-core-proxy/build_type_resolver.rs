@@ -1,19 +1,21 @@
 use super::*;
 
-pub(crate) fn collect_type_registry(runtime_src: &Path) -> TypeRegistry {
+pub(crate) fn collect_type_registry(source_roots: &[SourceRoot]) -> TypeRegistry {
     let mut registry = TypeRegistry::default();
-    collect_type_registry_from_dir(runtime_src, runtime_src, &mut registry);
+    for source_root in source_roots {
+        collect_type_registry_from_dir(source_root, source_root.as_path(), &mut registry);
+    }
     registry
 }
 
-fn collect_type_registry_from_dir(root: &Path, dir: &Path, registry: &mut TypeRegistry) {
+fn collect_type_registry_from_dir(source_root: &SourceRoot, dir: &Path, registry: &mut TypeRegistry) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_type_registry_from_dir(root, &path, registry);
+            collect_type_registry_from_dir(source_root, &path, registry);
             continue;
         }
         if path.extension().and_then(|value| value.to_str()) != Some("rs") {
@@ -21,19 +23,34 @@ fn collect_type_registry_from_dir(root: &Path, dir: &Path, registry: &mut TypeRe
         }
         let content = fs::read_to_string(&path).expect("read runtime source");
         let file = syn::parse_file(&content).expect("parse runtime source");
-        let module_path = module_path_for_source(root, &path);
-        let resolver =
-            TypeResolver::from_file(
-                &file,
-                &module_path,
-                HashSet::new(),
-                HashSet::new(),
-                TypeRegistry::default(),
-            );
+        let module_path =
+            module_path_for_source_with_crate(source_root.as_path(), &path, &source_root.crate_name);
+        let resolver = TypeResolver::from_file(
+            &file,
+            &module_path,
+            &source_root.crate_name,
+            HashSet::new(),
+            HashSet::new(),
+            TypeRegistry::default(),
+        );
         for item in &file.items {
             match item {
+                Item::Use(item_use) if matches!(item_use.vis, Visibility::Public(_)) => {
+                    collect_public_use_aliases(
+                        &item_use.tree,
+                        Vec::new(),
+                        &source_root.crate_name,
+                        &module_path,
+                        registry,
+                    );
+                }
                 Item::Type(item_type) => {
-                    let alias = full_type_for_source(root, &path, &item_type.ident.to_string());
+                    let alias = full_type_for_source_with_crate(
+                        source_root.as_path(),
+                        &path,
+                        &item_type.ident.to_string(),
+                        &source_root.crate_name,
+                    );
                     registry
                         .aliases
                         .insert(alias, normalize_type(&item_type.ty, &resolver));
@@ -71,11 +88,55 @@ fn collect_type_registry_from_dir(root: &Path, dir: &Path, registry: &mut TypeRe
     }
 }
 
+/// Records aliases introduced by public use declarations.
+fn collect_public_use_aliases(
+    tree: &UseTree,
+    mut prefix: Vec<String>,
+    crate_name: &str,
+    module_path: &str,
+    registry: &mut TypeRegistry,
+) {
+    match tree {
+        UseTree::Path(path) => {
+            prefix.push(normalize_import_segment(&path.ident.to_string(), crate_name));
+            collect_public_use_aliases(&path.tree, prefix, crate_name, module_path, registry);
+        }
+        UseTree::Name(name) => {
+            let local = name.ident.to_string();
+            let mut target = prefix;
+            target.push(local.clone());
+            let alias = format!("{module_path}::{local}");
+            registry.aliases.insert(alias, target.join("::"));
+        }
+        UseTree::Rename(rename) => {
+            let local = rename.rename.to_string();
+            let mut target = prefix;
+            target.push(rename.ident.to_string());
+            let alias = format!("{module_path}::{local}");
+            registry.aliases.insert(alias, target.join("::"));
+        }
+        UseTree::Group(group) => {
+            for item in group.items.iter() {
+                collect_public_use_aliases(
+                    item,
+                    prefix.clone(),
+                    crate_name,
+                    module_path,
+                    registry,
+                );
+            }
+        }
+        UseTree::Glob(_) => {}
+    }
+}
+
 pub(crate) fn collect_serializable_type_definitions(
-    runtime_src: &Path,
+    source_roots: &[SourceRoot],
 ) -> HashMap<String, SerializableType> {
     let mut out = HashMap::new();
-    collect_serializable_type_definitions_from_dir(runtime_src, runtime_src, &mut out);
+    for source_root in source_roots {
+        collect_serializable_type_definitions_from_dir(source_root, source_root.as_path(), &mut out);
+    }
     out
 }
 
@@ -112,6 +173,7 @@ fn collect_error_type_definitions_from_dir(
         let resolver = TypeResolver::from_file(
             &file,
             &module_path,
+            crate_name,
             HashSet::new(),
             HashSet::new(),
             TypeRegistry::default(),
@@ -191,7 +253,7 @@ fn error_enum_type(
 }
 
 fn collect_serializable_type_definitions_from_dir(
-    root: &Path,
+    source_root: &SourceRoot,
     dir: &Path,
     out: &mut HashMap<String, SerializableType>,
 ) {
@@ -201,7 +263,7 @@ fn collect_serializable_type_definitions_from_dir(
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_serializable_type_definitions_from_dir(root, &path, out);
+            collect_serializable_type_definitions_from_dir(source_root, &path, out);
             continue;
         }
         if path.extension().and_then(|value| value.to_str()) != Some("rs") {
@@ -209,23 +271,28 @@ fn collect_serializable_type_definitions_from_dir(
         }
         let content = fs::read_to_string(&path).expect("read runtime source");
         let file = syn::parse_file(&content).expect("parse runtime source");
-        let module_path = module_path_for_source(root, &path);
-        let resolver =
-            TypeResolver::from_file(
-                &file,
-                &module_path,
-                HashSet::new(),
-                HashSet::new(),
-                TypeRegistry::default(),
-            );
+        let module_path =
+            module_path_for_source_with_crate(source_root.as_path(), &path, &source_root.crate_name);
+        let resolver = TypeResolver::from_file(
+            &file,
+            &module_path,
+            &source_root.crate_name,
+            HashSet::new(),
+            HashSet::new(),
+            TypeRegistry::default(),
+        );
         for item in &file.items {
             match item {
                 Item::Struct(item_struct)
                     if matches!(item_struct.vis, Visibility::Public(_))
                         && derives_serde_value(&item_struct.attrs) =>
                 {
-                    let full_type =
-                        full_type_for_source(root, &path, &item_struct.ident.to_string());
+                    let full_type = full_type_for_source_with_crate(
+                        source_root.as_path(),
+                        &path,
+                        &item_struct.ident.to_string(),
+                        &source_root.crate_name,
+                    );
                     out.insert(
                         full_type.clone(),
                         serializable_struct_type(full_type, item_struct, &resolver),
@@ -235,7 +302,12 @@ fn collect_serializable_type_definitions_from_dir(
                     if matches!(item_enum.vis, Visibility::Public(_))
                         && derives_serde_value(&item_enum.attrs) =>
                 {
-                    let full_type = full_type_for_source(root, &path, &item_enum.ident.to_string());
+                    let full_type = full_type_for_source_with_crate(
+                        source_root.as_path(),
+                        &path,
+                        &item_enum.ident.to_string(),
+                        &source_root.crate_name,
+                    );
                     out.insert(
                         full_type.clone(),
                         serializable_enum_type(full_type, item_enum, &resolver),
@@ -430,6 +502,7 @@ fn serde_rename(attrs: &[syn::Attribute]) -> Option<String> {
 
 pub(crate) struct TypeResolver {
     pub(crate) names: HashMap<String, String>,
+    pub(crate) crate_name: String,
     pub(crate) serializable_types: HashSet<String>,
     pub(crate) deserializable_types: HashSet<String>,
     pub(crate) type_registry: TypeRegistry,
@@ -439,6 +512,7 @@ impl TypeResolver {
     pub(crate) fn from_file(
         file: &syn::File,
         module_path: &str,
+        crate_name: &str,
         serializable_types: HashSet<String>,
         deserializable_types: HashSet<String>,
         type_registry: TypeRegistry,
@@ -446,7 +520,9 @@ impl TypeResolver {
         let mut names = HashMap::new();
         for item in &file.items {
             match item {
-                Item::Use(item_use) => collect_use_tree(&item_use.tree, Vec::new(), &mut names),
+                Item::Use(item_use) => {
+                    collect_use_tree(&item_use.tree, Vec::new(), crate_name, &mut names)
+                }
                 Item::Struct(item_struct) => {
                     let name = item_struct.ident.to_string();
                     names.insert(name.clone(), format!("{module_path}::{name}"));
@@ -464,6 +540,7 @@ impl TypeResolver {
         }
         Self {
             names,
+            crate_name: crate_name.to_string(),
             serializable_types,
             deserializable_types,
             type_registry,
@@ -476,6 +553,7 @@ impl TypeResolver {
     ) -> Self {
         Self {
             names: HashMap::new(),
+            crate_name: String::new(),
             serializable_types: HashSet::new(),
             deserializable_types: HashSet::new(),
             type_registry: TypeRegistry::default(),
@@ -483,12 +561,17 @@ impl TypeResolver {
     }
 }
 
-fn collect_use_tree(tree: &UseTree, mut prefix: Vec<String>, names: &mut HashMap<String, String>) {
+fn collect_use_tree(
+    tree: &UseTree,
+    mut prefix: Vec<String>,
+    crate_name: &str,
+    names: &mut HashMap<String, String>,
+) {
     match tree {
         UseTree::Path(path) => {
-            let segment = normalize_import_segment(&path.ident.to_string());
+            let segment = normalize_import_segment(&path.ident.to_string(), crate_name);
             prefix.push(segment);
-            collect_use_tree(&path.tree, prefix, names);
+            collect_use_tree(&path.tree, prefix, crate_name, names);
         }
         UseTree::Name(name) => {
             let local = name.ident.to_string();
@@ -504,26 +587,27 @@ fn collect_use_tree(tree: &UseTree, mut prefix: Vec<String>, names: &mut HashMap
         }
         UseTree::Group(group) => {
             for item in group.items.iter() {
-                collect_use_tree(item, prefix.clone(), names);
+                collect_use_tree(item, prefix.clone(), crate_name, names);
             }
         }
         UseTree::Glob(_) => {}
     }
 }
 
-fn normalize_import_segment(segment: &str) -> String {
+fn normalize_import_segment(segment: &str, crate_name: &str) -> String {
     match segment {
-        "crate" => "operit_runtime".to_string(),
+        "crate" => crate_name.to_string(),
         other => other.to_string(),
     }
 }
 
 pub(crate) fn normalize_type(ty: &Type, resolver: &TypeResolver) -> String {
+    let crate_prefix = format!("{}::", resolver.crate_name);
     let normalized = ty
         .to_token_stream()
         .to_string()
         .replace(' ', "")
-        .replace("crate::", "operit_runtime::");
+        .replace("crate::", &crate_prefix);
     resolve_bare_type_names(&normalized, resolver)
 }
 

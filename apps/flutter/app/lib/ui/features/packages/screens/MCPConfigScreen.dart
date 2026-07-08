@@ -39,8 +39,8 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
   Map<String, core_proxy.ServerStatus> _statuses =
       <String, core_proxy.ServerStatus>{};
 
-  GeneratedMcpLocalServerCoreProxy get _localServer =>
-      widget.clients.mcpLocalServer;
+  GeneratedPermissionsMcpRuntimeMcpLocalServerCoreProxy get _localServer =>
+      widget.clients.permissionsMcpRuntimeMcpLocalServer;
 
   @override
   void initState() {

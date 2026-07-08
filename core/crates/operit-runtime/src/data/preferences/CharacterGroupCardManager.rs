@@ -5,7 +5,7 @@ use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::data::model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
+use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

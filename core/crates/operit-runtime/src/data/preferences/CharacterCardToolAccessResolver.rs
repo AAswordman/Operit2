@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::core::tools::packTool::PackageManager::PackageManager;
+use operit_host_api::HostManager::HostManager;
+use operit_tools::tools::packTool::PackageManager::PackageManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
-use crate::data::skill::SkillRepository::SkillRepository;
+use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 
 #[derive(Clone, Debug, Default)]
 pub struct ResolvedCharacterCardToolAccess {
@@ -72,7 +72,7 @@ impl CharacterCardToolAccessResolver {
             .into_iter()
             .filter(|packageName| !packageManager.isToolPkgContainer(packageName))
             .collect::<HashSet<_>>();
-        let globalSkillNames = SkillRepository::getInstance(&OperitApplicationContext::new())
+        let globalSkillNames = SkillRepository::getInstance(&HostManager::new())
             .getAiVisibleSkillPackages()
             .keys()
             .cloned()

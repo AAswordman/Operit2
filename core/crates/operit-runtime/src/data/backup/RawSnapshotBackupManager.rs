@@ -2,7 +2,7 @@ use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
 use operit_host_api::RuntimeStorageHost;
-use operit_store::RuntimeStorageLayout;
+use operit_util::RuntimeStorageLayout;
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -11,6 +11,7 @@ const FORMAT_VERSION: i32 = 1;
 const ENTRY_MANIFEST: &str = "manifest.json";
 const ENTRY_PAYLOAD_PREFIX: &str = "payload/";
 
+/// Describes the contents and format version of a raw runtime snapshot archive.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct RawSnapshotManifest {
     pub formatVersion: i32,
@@ -18,16 +19,19 @@ pub struct RawSnapshotManifest {
     pub includes: Vec<String>,
 }
 
+/// Exports, restores, and inspects raw runtime storage snapshots.
 #[derive(Clone)]
 pub struct RawSnapshotBackupManager {
     storageHost: Arc<dyn RuntimeStorageHost>,
 }
 
 impl RawSnapshotBackupManager {
+    /// Creates a snapshot manager over the supplied runtime storage host.
     pub fn new(storageHost: Arc<dyn RuntimeStorageHost>) -> Self {
         Self { storageHost }
     }
 
+    /// Serializes the full runtime storage tree into a ZIP snapshot.
     #[allow(non_snake_case)]
     pub fn exportSnapshot(&self) -> Result<Vec<u8>, String> {
         let files = self.collectFiles(RuntimeStorageLayout::RUNTIME_ROOT_DIR_PATH)?;
@@ -59,6 +63,7 @@ impl RawSnapshotBackupManager {
         Ok(out.into_inner())
     }
 
+    /// Replaces runtime storage contents with the payload from a snapshot archive.
     #[allow(non_snake_case)]
     pub fn restoreSnapshot(&self, bytes: Vec<u8>) -> Result<(), String> {
         let mut archive = ZipArchive::new(Cursor::new(bytes)).map_err(|error| error.to_string())?;
@@ -96,12 +101,14 @@ impl RawSnapshotBackupManager {
         Ok(())
     }
 
+    /// Reads snapshot manifest metadata without writing to storage.
     #[allow(non_snake_case)]
     pub fn inspectSnapshot(&self, bytes: Vec<u8>) -> Result<RawSnapshotManifest, String> {
         let mut archive = ZipArchive::new(Cursor::new(bytes)).map_err(|error| error.to_string())?;
         readManifest(&mut archive)
     }
 
+    /// Collects sorted file paths and bytes from a storage subtree.
     #[allow(non_snake_case)]
     fn collectFiles(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
         let mut files = Vec::new();
@@ -126,6 +133,7 @@ impl RawSnapshotBackupManager {
     }
 }
 
+/// Reads and decodes the manifest entry from a snapshot archive.
 #[allow(non_snake_case)]
 fn readManifest(archive: &mut ZipArchive<Cursor<Vec<u8>>>) -> Result<RawSnapshotManifest, String> {
     let mut manifestFile = archive
@@ -138,6 +146,7 @@ fn readManifest(archive: &mut ZipArchive<Cursor<Vec<u8>>>) -> Result<RawSnapshot
     serde_json::from_str(&manifestText).map_err(|error| error.to_string())
 }
 
+/// Validates that an archive payload entry is a relative storage path.
 #[allow(non_snake_case)]
 fn validateSnapshotPath(path: &str) -> Result<(), String> {
     if path.is_empty()
@@ -153,6 +162,7 @@ fn validateSnapshotPath(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Returns the host-provided current time in milliseconds.
 #[allow(non_snake_case)]
 fn currentTimeMillis() -> i64 {
     operit_host_api::TimeUtils::currentTimeMillis()

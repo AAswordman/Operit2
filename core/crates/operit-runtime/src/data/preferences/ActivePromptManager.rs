@@ -3,7 +3,7 @@ use operit_store::PreferencesDataStore::{
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
-use crate::data::model::ActivePrompt::ActivePrompt;
+use operit_model::ActivePrompt::ActivePrompt;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
 

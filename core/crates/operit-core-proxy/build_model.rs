@@ -1,5 +1,26 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+#[derive(Clone, Debug)]
+pub(crate) struct SourceRoot {
+    pub(crate) src: PathBuf,
+    pub(crate) crate_name: String,
+}
+
+impl SourceRoot {
+    /// Creates a source root with the Rust crate name used in generated paths.
+    pub(crate) fn new(src: PathBuf, crate_name: impl Into<String>) -> Self {
+        Self {
+            src,
+            crate_name: crate_name.into(),
+        }
+    }
+
+    /// Returns a borrowed source root for scanners that only need paths.
+    pub(crate) fn as_path(&self) -> &Path {
+        &self.src
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct ObjectSpec {

@@ -1,0 +1,1066 @@
+use std::collections::BTreeMap;
+
+use super::AIService::AiServiceError;
+use operit_model::ModelConfigData::{ApiProviderType, ModelBuiltinTool, ResolvedModelConfig};
+
+/// Trace metadata attached to one outbound LLM request attempt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LlmRequestTraceContext {
+    pub request_id: String,
+    pub provider: String,
+    pub model: String,
+    pub stream: bool,
+    pub attempt: i32,
+    pub endpoint_label: String,
+}
+
+/// Concrete provider implementation selected for a resolved model config.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProviderServiceKind {
+    OpenAIProvider,
+    OpenAIResponsesProvider,
+    ClaudeProvider,
+    GeminiProvider,
+    OllamaProvider,
+    MNNProvider,
+    LlamaProvider,
+    QwenAIProvider,
+    KimiProvider,
+    MimoProvider,
+    DeepseekProvider,
+    MistralProvider,
+    OpenRouterProvider,
+    FourRouterProvider,
+    NousPortalProvider,
+    DoubaoAIProvider,
+    NvidiaAIProvider,
+    ToolPkgJsAiProviderService,
+}
+
+/// Describes how a provider should obtain API keys at runtime.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ApiKeyProviderSpec {
+    /// Uses the API key stored directly on the resolved model config.
+    SingleApiKeyProvider { api_key: String },
+    /// Resolves keys from the multi-key store for the provider profile.
+    MultiApiKeyProvider { provider_id: String },
+}
+
+/// Runtime settings used when constructing a llama.cpp session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LlamaSessionConfig {
+    pub n_threads: i32,
+    pub n_ctx: i32,
+    pub n_batch: i32,
+    pub n_ubatch: i32,
+    pub n_gpu_layers: i32,
+    pub use_mmap: bool,
+    pub flash_attention: bool,
+    pub kv_unified: bool,
+    pub offload_kqv: bool,
+}
+
+/// Provider-specific constructor parameters emitted by the service factory.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProviderCreateParams {
+    OpenAIProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    },
+    OpenAIResponsesProvider {
+        responses_api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        responses_provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    },
+    ClaudeProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        enable_tool_call: bool,
+    },
+    GeminiProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        builtin_tools: Vec<ModelBuiltinTool>,
+        enable_tool_call: bool,
+    },
+    OllamaProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    },
+    MNNProvider {
+        model_name: String,
+        forward_type: String,
+        thread_count: i32,
+        provider_type: ApiProviderType,
+        enable_tool_call: bool,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+    },
+    LlamaProvider {
+        model_name: String,
+        session_config: LlamaSessionConfig,
+        provider_type: ApiProviderType,
+        enable_tool_call: bool,
+    },
+    QwenAIProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        qwen_provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    },
+    KimiProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    },
+    MimoProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    },
+    DeepseekProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    },
+    MistralProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    },
+    OpenRouterProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    },
+    FourRouterProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    },
+    NousPortalProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    },
+    DoubaoAIProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    },
+    NvidiaAIProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    },
+    ToolPkgJsAiProviderService {
+        provider_type_id: String,
+        provider_id: String,
+        model_id: String,
+    },
+}
+
+/// Provider implementation kind paired with its constructor parameters.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProviderServiceSpec {
+    pub kind: ProviderServiceKind,
+    pub params: ProviderCreateParams,
+}
+
+/// Request used to select and parameterize an AI provider service.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProviderCreateRequest {
+    pub config: ResolvedModelConfig,
+    pub provider_type: ApiProviderType,
+    pub provider_type_id: String,
+    pub tool_pkg_provider_registered: bool,
+}
+
+/// API-key lookup mode for a resolved provider/model config.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ApiKeyMode {
+    /// The config contains one direct API key value.
+    Single,
+    /// The provider profile owns multiple named API keys.
+    Multiple,
+}
+
+/// Converts resolved model configuration into provider construction specs.
+pub struct AIServiceFactory;
+
+impl AIServiceFactory {
+    /// Selects the concrete provider spec for a resolved model configuration.
+    pub fn create_service(
+        request: ProviderCreateRequest,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        let config = request.config;
+        let provider_type_id = request.provider_type_id.trim().to_string();
+
+        if request.tool_pkg_provider_registered {
+            return Ok(ProviderServiceSpec {
+                kind: ProviderServiceKind::ToolPkgJsAiProviderService,
+                params: ProviderCreateParams::ToolPkgJsAiProviderService {
+                    provider_type_id,
+                    provider_id: config.providerId,
+                    model_id: config.modelId,
+                },
+            });
+        }
+
+        let custom_headers = Self::parse_custom_headers(&config.customHeaders)?;
+        let api_key_provider = Self::api_key_provider(&config);
+        let supports_vision = config.capabilities.directImage;
+        let supports_audio = config.capabilities.directAudio;
+        let supports_video = config.capabilities.directVideo;
+        let enable_tool_call = config.capabilities.toolCall;
+        let builtin_tools = config.builtinTools.clone();
+        let model_name = config.modelId.clone();
+        let provider_type = request.provider_type;
+
+        let spec = match provider_type {
+            ApiProviderType::OPENAI
+            | ApiProviderType::OPENAI_GENERIC
+            | ApiProviderType::OPENAI_LOCAL => Self::open_ai_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::OPENAI_RESPONSES | ApiProviderType::OPENAI_RESPONSES_GENERIC => {
+                Self::open_ai_responses_provider(
+                    config.apiEndpoint,
+                    api_key_provider,
+                    model_name,
+                    custom_headers,
+                    provider_type,
+                    supports_vision,
+                    supports_audio,
+                    supports_video,
+                    enable_tool_call,
+                )
+            }
+            ApiProviderType::ANTHROPIC | ApiProviderType::ANTHROPIC_GENERIC => {
+                Self::claude_provider(
+                    config.apiEndpoint,
+                    api_key_provider,
+                    model_name,
+                    custom_headers,
+                    provider_type,
+                    enable_tool_call,
+                )
+            }
+            ApiProviderType::GOOGLE | ApiProviderType::GEMINI_GENERIC => Self::gemini_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                builtin_tools,
+                enable_tool_call,
+            ),
+            ApiProviderType::LMSTUDIO => Self::open_ai_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::OLLAMA => Self::ollama_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::MNN => Self::mnn_provider(
+                model_name,
+                config.localRuntime.mnnForwardType.to_string(),
+                config.localRuntime.mnnThreadCount,
+                provider_type,
+                enable_tool_call,
+                supports_vision,
+                supports_audio,
+                supports_video,
+            ),
+            ApiProviderType::LLAMA_CPP => Self::llama_provider(
+                model_name,
+                Self::build_android_llama_session_config(&config, 1),
+                provider_type,
+                enable_tool_call,
+            ),
+            ApiProviderType::ALIYUN => Self::qwen_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::BAIDU
+            | ApiProviderType::XUNFEI
+            | ApiProviderType::ZHIPU
+            | ApiProviderType::BAICHUAN
+            | ApiProviderType::IFLOW
+            | ApiProviderType::INFINIAI
+            | ApiProviderType::ALIPAY_BAILING
+            | ApiProviderType::PPINFRA
+            | ApiProviderType::NOVITA
+            | ApiProviderType::OTHER => Self::open_ai_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::MOONSHOT => Self::kimi_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::MIMO => Self::mimo_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::DEEPSEEK => Self::deepseek_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::MISTRAL => Self::mistral_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::SILICONFLOW => Self::qwen_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::OPENROUTER => Self::open_router_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::FOUR_ROUTER => Self::four_router_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::NOUS_PORTAL => Self::nous_portal_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::DOUBAO => Self::doubao_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+            ApiProviderType::NVIDIA => Self::nvidia_provider(
+                config.apiEndpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            ),
+        }?;
+
+        Ok(spec)
+    }
+
+    /// Parses custom HTTP headers from persisted JSON text.
+    pub fn parse_custom_headers(
+        custom_headers_json: &str,
+    ) -> Result<BTreeMap<String, String>, AiServiceError> {
+        let trimmed = custom_headers_json.trim();
+        if trimmed.is_empty() || trimmed == "{}" {
+            return Ok(BTreeMap::new());
+        }
+
+        let value: serde_json::Value = serde_json::from_str(trimmed).map_err(|error| {
+            AiServiceError::RequestFailed(format!("parse custom headers failed: {error}"))
+        })?;
+        let object = value.as_object().ok_or_else(|| {
+            AiServiceError::RequestFailed("customHeaders is not a JSON object".to_string())
+        })?;
+
+        object
+            .iter()
+            .map(|(key, value)| {
+                value
+                    .as_str()
+                    .map(|header_value| (key.clone(), header_value.to_string()))
+                    .ok_or_else(|| {
+                        AiServiceError::RequestFailed(format!(
+                            "customHeaders value for {key} is not a string"
+                        ))
+                    })
+            })
+            .collect()
+    }
+
+    /// Determines whether a config uses direct or provider-managed API keys.
+    pub fn api_key_mode(config: &ResolvedModelConfig) -> ApiKeyMode {
+        if config.useMultipleApiKeys {
+            ApiKeyMode::Multiple
+        } else {
+            ApiKeyMode::Single
+        }
+    }
+
+    /// Builds the API-key provider spec for a resolved config.
+    pub fn api_key_provider(config: &ResolvedModelConfig) -> ApiKeyProviderSpec {
+        if config.useMultipleApiKeys {
+            ApiKeyProviderSpec::MultiApiKeyProvider {
+                provider_id: config.providerId.clone(),
+            }
+        } else {
+            ApiKeyProviderSpec::SingleApiKeyProvider {
+                api_key: config.apiKey.clone(),
+            }
+        }
+    }
+
+    /// Builds llama.cpp runtime settings from resolved local model configuration.
+    pub fn build_android_llama_session_config(
+        config: &ResolvedModelConfig,
+        available_processors: i32,
+    ) -> LlamaSessionConfig {
+        let processor_count = available_processors.max(1);
+        let thread_count = config
+            .localRuntime
+            .llamaThreadCount
+            .max(1)
+            .min(processor_count);
+        LlamaSessionConfig {
+            n_threads: thread_count,
+            n_ctx: config.localRuntime.llamaContextSize.max(1),
+            n_batch: config.localRuntime.llamaBatchSize.max(1),
+            n_ubatch: config.localRuntime.llamaUBatchSize.max(1),
+            n_gpu_layers: config.localRuntime.llamaGpuLayers.max(0),
+            use_mmap: config.localRuntime.llamaUseMmap,
+            flash_attention: config.localRuntime.llamaFlashAttention,
+            kv_unified: config.localRuntime.llamaKvUnified,
+            offload_kqv: config.localRuntime.llamaOffloadKqv,
+        }
+    }
+
+    /// Builds an OpenAI-compatible provider spec.
+    fn open_ai_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::OpenAIProvider,
+            params: ProviderCreateParams::OpenAIProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds a DeepSeek provider spec.
+    fn deepseek_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::DeepseekProvider,
+            params: ProviderCreateParams::DeepseekProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds an OpenAI Responses API provider spec.
+    fn open_ai_responses_provider(
+        responses_api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        responses_provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::OpenAIResponsesProvider,
+            params: ProviderCreateParams::OpenAIResponsesProvider {
+                responses_api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                responses_provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds an Anthropic Claude provider spec.
+    fn claude_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::ClaudeProvider,
+            params: ProviderCreateParams::ClaudeProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds a Google Gemini provider spec.
+    fn gemini_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        builtin_tools: Vec<ModelBuiltinTool>,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::GeminiProvider,
+            params: ProviderCreateParams::GeminiProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                builtin_tools,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds an Ollama provider spec.
+    fn ollama_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::OllamaProvider,
+            params: ProviderCreateParams::OllamaProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds an MNN local-runtime provider spec.
+    fn mnn_provider(
+        model_name: String,
+        forward_type: String,
+        thread_count: i32,
+        provider_type: ApiProviderType,
+        enable_tool_call: bool,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::MNNProvider,
+            params: ProviderCreateParams::MNNProvider {
+                model_name,
+                forward_type,
+                thread_count,
+                provider_type,
+                enable_tool_call,
+                supports_vision,
+                supports_audio,
+                supports_video,
+            },
+        })
+    }
+
+    /// Builds a llama.cpp local-runtime provider spec.
+    fn llama_provider(
+        model_name: String,
+        session_config: LlamaSessionConfig,
+        provider_type: ApiProviderType,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::LlamaProvider,
+            params: ProviderCreateParams::LlamaProvider {
+                model_name,
+                session_config,
+                provider_type,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds a Qwen provider spec.
+    fn qwen_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        qwen_provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::QwenAIProvider,
+            params: ProviderCreateParams::QwenAIProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                qwen_provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds a Kimi provider spec.
+    fn kimi_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::KimiProvider,
+            params: ProviderCreateParams::KimiProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds a Mimo provider spec.
+    fn mimo_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::MimoProvider,
+            params: ProviderCreateParams::MimoProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds a Mistral provider spec.
+    fn mistral_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::MistralProvider,
+            params: ProviderCreateParams::MistralProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds an OpenRouter provider spec.
+    fn open_router_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::OpenRouterProvider,
+            params: ProviderCreateParams::OpenRouterProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds a 4Router provider spec.
+    fn four_router_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::FourRouterProvider,
+            params: ProviderCreateParams::FourRouterProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds a Nous Portal provider spec.
+    fn nous_portal_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::NousPortalProvider,
+            params: ProviderCreateParams::NousPortalProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds a Doubao provider spec.
+    fn doubao_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::DoubaoAIProvider,
+            params: ProviderCreateParams::DoubaoAIProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds an NVIDIA provider spec.
+    fn nvidia_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::NvidiaAIProvider,
+            params: ProviderCreateParams::NvidiaAIProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+}

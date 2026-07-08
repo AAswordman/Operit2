@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::data::model::ModelConfigData::ApiProviderType;
-use crate::util::OperitPaths;
+use operit_model::ModelConfigData::ApiProviderType;
+use operit_util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
 
+/// Stores API, token accounting, tool visibility, and runtime preference values.
 pub struct ApiPreferences {
     apiDataStore: PreferencesDataStore,
 }
@@ -28,14 +29,17 @@ impl ApiPreferences {
     pub const DEFAULT_TOOL_PROMPT_VISIBILITY_JSON: &'static str = "{}";
     pub const DEFAULT_FEATURE_TOGGLES_JSON: &'static str = "{}";
 
+    /// Returns the root directory used for API preference storage.
     pub fn data_dir() -> PathBuf {
         OperitPaths::operitRootDir().expect("Operit root dir must be available")
     }
 
+    /// Creates preferences using the default runtime data directory.
     pub fn getInstance() -> Self {
         Self::new(Self::data_dir())
     }
 
+    /// Creates preferences rooted at the supplied directory.
     pub fn new(root_dir: PathBuf) -> Self {
         let path = root_dir.join(OperitPaths::API_PREFERENCES_PATH);
         Self {
@@ -44,11 +48,13 @@ impl ApiPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Builds the key for uncached input tokens for one provider/model.
     fn tokenInputKey(providerModel: &str) -> String {
         format!("token_input_{}", Self::encodeProviderModel(providerModel))
     }
 
     #[allow(non_snake_case)]
+    /// Builds the key for cached input tokens for one provider/model.
     fn tokenCachedInputKey(providerModel: &str) -> String {
         format!(
             "token_cached_input_{}",
@@ -57,16 +63,19 @@ impl ApiPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Builds the key for output tokens for one provider/model.
     fn tokenOutputKey(providerModel: &str) -> String {
         format!("token_output_{}", Self::encodeProviderModel(providerModel))
     }
 
     #[allow(non_snake_case)]
+    /// Encodes a provider/model identifier for safe preference keys.
     fn encodeProviderModel(providerModel: &str) -> String {
         providerModel.replace(':', "_")
     }
 
     #[allow(non_snake_case)]
+    /// Decodes a provider/model identifier from a preference-key suffix.
     fn decodeProviderModelFromKeySuffix(encoded: &str) -> String {
         let mut providerNames = vec![
             ApiProviderType::OPENAI.name(),
@@ -191,6 +200,7 @@ impl ApiPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Adds token counts to the cumulative total for one provider/model.
     pub fn updateTokensForProviderModel(
         &self,
         providerModel: &str,
@@ -231,6 +241,7 @@ impl ApiPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Reads uncached input token count for one provider/model.
     pub fn getInputTokensForProviderModel(
         &self,
         providerModel: &str,
@@ -243,6 +254,7 @@ impl ApiPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Reads cached input token count for one provider/model.
     pub fn getCachedInputTokensForProviderModel(
         &self,
         providerModel: &str,
@@ -255,6 +267,7 @@ impl ApiPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Reads output token count for one provider/model.
     pub fn getOutputTokensForProviderModel(
         &self,
         providerModel: &str,
@@ -267,6 +280,7 @@ impl ApiPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Reads all provider/model token counters.
     pub fn getAllProviderModelTokens(
         &self,
     ) -> Result<HashMap<String, Vec<i64>>, PreferencesDataStoreError> {
@@ -274,6 +288,7 @@ impl ApiPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Observes all provider/model token counters.
     pub fn allProviderModelTokensFlow(&self) -> Flow<HashMap<String, Vec<i64>>> {
         self.apiDataStore
             .dataFlow()
@@ -281,6 +296,7 @@ impl ApiPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Clears every provider/model token counter.
     pub fn resetAllProviderModelTokenCounts(&self) -> Result<(), PreferencesDataStoreError> {
         self.apiDataStore.edit(|preferences| {
             let keysToRemove = preferences
@@ -300,6 +316,7 @@ impl ApiPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Clears token counters for one provider/model.
     pub fn resetProviderModelTokenCounts(
         &self,
         providerModel: &str,
@@ -320,6 +337,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Observes whether thinking mode is enabled.
     pub fn enableThinkingModeFlow(&self) -> Flow<bool> {
         self.apiDataStore.dataFlow().map(|preferences| {
             preferences
@@ -329,6 +347,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Observes the persisted feature toggle map.
     pub fn featureTogglesFlow(&self) -> Flow<HashMap<String, bool>> {
         self.apiDataStore.dataFlow().map(|preferences| {
             preferences
@@ -346,6 +365,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Observes one feature toggle with an explicit default.
     pub fn featureToggleFlow(&self, featureKey: &str, defaultValue: bool) -> Flow<bool> {
         let normalizedKey = featureKey.trim().to_string();
         self.featureTogglesFlow().map(move |toggles| {
@@ -357,6 +377,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Observes the current thinking quality level.
     pub fn thinkingQualityLevelFlow(&self) -> Flow<i32> {
         self.apiDataStore.dataFlow().map(|preferences| {
             preferences
@@ -367,6 +388,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Observes whether memory auto-update is enabled.
     pub fn enableMemoryAutoUpdateFlow(&self) -> Flow<bool> {
         self.apiDataStore.dataFlow().map(|preferences| {
             preferences
@@ -376,6 +398,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Observes whether AI tools are enabled.
     pub fn enableToolsFlow(&self) -> Flow<bool> {
         self.apiDataStore.dataFlow().map(|preferences| {
             preferences
@@ -385,6 +408,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Observes per-tool prompt visibility settings.
     pub fn toolPromptVisibilityFlow(&self) -> Flow<HashMap<String, bool>> {
         self.apiDataStore.dataFlow().map(|preferences| {
             preferences
@@ -402,6 +426,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Observes whether streaming output is disabled.
     pub fn disableStreamOutputFlow(&self) -> Flow<bool> {
         self.apiDataStore.dataFlow().map(|preferences| {
             preferences
@@ -411,6 +436,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Observes whether user preference descriptions are hidden from prompts.
     pub fn disableUserPreferenceDescriptionFlow(&self) -> Flow<bool> {
         self.apiDataStore.dataFlow().map(|preferences| {
             preferences
@@ -420,6 +446,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Observes the image-history turn limit.
     pub fn maxImageHistoryUserTurnsFlow(&self) -> Flow<i32> {
         self.apiDataStore.dataFlow().map(|preferences| {
             preferences
@@ -429,6 +456,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Observes the media-history turn limit.
     pub fn maxMediaHistoryUserTurnsFlow(&self) -> Flow<i32> {
         self.apiDataStore.dataFlow().map(|preferences| {
             preferences
@@ -438,6 +466,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Observes the MCP startup timeout in seconds.
     pub fn mcpStartupTimeoutSecondsFlow(&self) -> Flow<i32> {
         self.apiDataStore.dataFlow().map(|preferences| {
             preferences
@@ -448,6 +477,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Saves the thinking-mode toggle.
     pub fn saveEnableThinkingMode(&self, isEnabled: bool) -> Result<(), PreferencesDataStoreError> {
         self.apiDataStore.edit(|preferences| {
             preferences.set(
@@ -457,6 +487,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Saves one feature toggle value.
     pub fn saveFeatureToggle(
         &self,
         featureKey: &str,
@@ -487,6 +518,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Saves the thinking quality level.
     pub fn saveThinkingQualityLevel(&self, level: i32) -> Result<(), PreferencesDataStoreError> {
         self.apiDataStore.edit(|preferences| {
             preferences.set(
@@ -496,6 +528,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Saves the memory auto-update toggle.
     pub fn saveEnableMemoryAutoUpdate(
         &self,
         isEnabled: bool,
@@ -508,12 +541,14 @@ impl ApiPreferences {
         })
     }
 
+    /// Saves the global tools toggle.
     pub fn saveEnableTools(&self, isEnabled: bool) -> Result<(), PreferencesDataStoreError> {
         self.apiDataStore.edit(|preferences| {
             preferences.set(&stringPreferencesKey("enable_tools"), isEnabled.to_string());
         })
     }
 
+    /// Saves prompt visibility for one tool.
     pub fn saveToolPromptVisibility(
         &self,
         toolName: &str,
@@ -541,6 +576,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Replaces the full tool prompt visibility map.
     pub fn saveToolPromptVisibilityMap(
         &self,
         visibilityMap: HashMap<String, bool>,
@@ -554,6 +590,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Reads the full tool prompt visibility map.
     pub fn getToolPromptVisibilityMap(
         &self,
     ) -> Result<HashMap<String, bool>, PreferencesDataStoreError> {
@@ -573,6 +610,7 @@ impl ApiPreferences {
         Ok(map)
     }
 
+    /// Saves whether streaming output should be disabled.
     pub fn saveDisableStreamOutput(
         &self,
         isDisabled: bool,
@@ -585,6 +623,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Saves whether user preference descriptions should be hidden from prompts.
     pub fn saveDisableUserPreferenceDescription(
         &self,
         isDisabled: bool,
@@ -597,6 +636,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Saves image and media history turn limits.
     pub fn updateMediaHistorySettings(
         &self,
         maxImageHistoryUserTurns: i32,
@@ -614,6 +654,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Saves the MCP startup timeout in seconds.
     pub fn saveMcpStartupTimeoutSeconds(
         &self,
         seconds: i32,
@@ -626,6 +667,7 @@ impl ApiPreferences {
         })
     }
 
+    /// Reads the MCP startup timeout in seconds.
     pub fn getMcpStartupTimeoutSeconds(&self) -> Result<i32, PreferencesDataStoreError> {
         let preferences = self.apiDataStore.data()?;
         Ok(preferences
@@ -635,6 +677,7 @@ impl ApiPreferences {
             .clamp(1, 10))
     }
 
+    /// Updates thinking settings in one edit transaction.
     pub fn updateThinkingSettings(
         &self,
         enableThinkingMode: Option<bool>,

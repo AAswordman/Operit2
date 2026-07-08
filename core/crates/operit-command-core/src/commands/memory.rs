@@ -1,16 +1,16 @@
 use crate::commands::util::{parseCsvList, parse_i64_arg};
 use crate::output::CoreCommandOutput;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
-use operit_runtime::data::model::CharacterCard::CharacterSharedMemoryMount;
-use operit_runtime::data::model::Memory::Memory;
+use operit_host_api::HostManager::HostManager;
+use operit_model::CharacterCard::CharacterSharedMemoryMount;
+use operit_model::Memory::Memory;
 use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
 use operit_runtime::data::preferences::SharedMemoryStoreManager::SharedMemoryStoreManager;
-use operit_runtime::data::repository::MemoryRepository::MemoryRepository;
-use operit_runtime::data::repository::UserMarkdownRepository::UserMarkdownRepository;
-use operit_runtime::util::OperitPaths::{characterMemoryOwnerKey, sharedMemoryOwnerKey};
+use operit_store::repository::MemoryRepository::MemoryRepository;
+use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
+use operit_util::OperitPaths::{characterMemoryOwnerKey, sharedMemoryOwnerKey};
 
 pub fn run_memory_command(
-    _context: OperitApplicationContext,
+    _context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {

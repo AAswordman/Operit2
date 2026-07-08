@@ -2,15 +2,15 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 
-use crate::api::chat::enhance::ConversationMarkupManager::ToolResult;
-use crate::api::chat::enhance::ToolExecutionManager::AITool;
-use crate::core::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_TOOL_LIFECYCLE;
-use crate::core::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
-use crate::core::tools::AIToolHook::AIToolHook;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::AITool;
+use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_TOOL_LIFECYCLE;
+use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_tools::tools::AIToolHook::AIToolHook;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
     toolPkgPackageManager, toolPkgToolHandler, ToolPkgToolLifecycleHookRegistration,
 };
-use crate::util::ChainLogger::{self, PLUGIN_CHAIN};
+use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static TOOL_LIFECYCLE_HOOKS: OnceLock<Mutex<Vec<ToolPkgToolLifecycleHookRegistration>>> =
     OnceLock::new();

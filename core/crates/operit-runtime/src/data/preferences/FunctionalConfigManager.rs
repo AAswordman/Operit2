@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::data::model::FunctionType::FunctionType;
+use operit_model::FunctionType::FunctionType;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_store::PreferencesDataStore::{

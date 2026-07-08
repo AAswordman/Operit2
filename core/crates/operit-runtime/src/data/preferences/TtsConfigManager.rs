@@ -4,9 +4,9 @@ use operit_store::PreferencesDataStore::{
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use uuid::Uuid;
 
-use crate::api::voice::TtsVoiceListFetcher::TtsVoiceListFetcher;
-use crate::data::model::TtsCatalog::TtsCatalog;
-use crate::data::model::TtsConfig::{
+use operit_providers::voice::TtsVoiceListFetcher::TtsVoiceListFetcher;
+use operit_model::TtsCatalog::TtsCatalog;
+use operit_model::TtsConfig::{
     AvailableTtsVoice, TtsConfig, TtsHttpHeader, TtsHttpResponsePipelineStep,
     TtsProviderCatalogEntry, TtsProviderType,
 };

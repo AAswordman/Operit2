@@ -28,7 +28,7 @@ class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
   late final List<_MCPToolParameter> _parameters;
   late final Map<String, TextEditingController> _controllers;
   bool _executing = false;
-  core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult? _result;
+  core_proxy.CoreOperitToolsConversationMarkupManagerToolResult? _result;
 
   @override
   void initState() {
@@ -149,10 +149,10 @@ class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
     if (missing.isNotEmpty) {
       setState(() {
         _result =
-            core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult(
+            core_proxy.CoreOperitToolsConversationMarkupManagerToolResult(
               toolName: '${widget.serverId}:${widget.tool.name}',
               success: false,
-              result: core_proxy.CoreCoreToolsToolResultDataClassesToolResultData.stringResultData(
+              result: core_proxy.CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
                 value: const core_proxy.StringResultData(value: ''),
               ),
               error: '缺少必填参数：${missing.join(", ")}',
@@ -175,14 +175,14 @@ class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
           )
           .map(
             (parameter) =>
-                core_proxy.CoreApiChatEnhanceToolExecutionManagerToolParameter(
+                core_proxy.CoreOperitToolsToolExecutionManagerToolParameter(
                   name: parameter.name,
                   value: _controllers[parameter.name]!.text,
                 ),
           )
           .toList(growable: false);
       final result = await widget.clients.permissionsAiToolHandler.executeTool(
-        tool: core_proxy.CoreApiChatEnhanceToolExecutionManagerAiTool(
+        tool: core_proxy.CoreOperitToolsToolExecutionManagerAiTool(
           name: '${widget.serverId}:${widget.tool.name}',
           parameters: parameters,
         ),
@@ -199,10 +199,10 @@ class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
       }
       setState(() {
         _result =
-            core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult(
+            core_proxy.CoreOperitToolsConversationMarkupManagerToolResult(
               toolName: '${widget.serverId}:${widget.tool.name}',
               success: false,
-              result: core_proxy.CoreCoreToolsToolResultDataClassesToolResultData.stringResultData(
+              result: core_proxy.CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
                 value: const core_proxy.StringResultData(value: ''),
               ),
               error: error.toString(),
@@ -221,7 +221,7 @@ class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
 class _ExecutionResultCard extends StatelessWidget {
   const _ExecutionResultCard({required this.result});
 
-  final core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult result;
+  final core_proxy.CoreOperitToolsConversationMarkupManagerToolResult result;
 
   @override
   Widget build(BuildContext context) {
@@ -251,7 +251,7 @@ class _ExecutionResultCard extends StatelessWidget {
 }
 
 String _toolResultText(
-  core_proxy.CoreApiChatEnhanceConversationMarkupManagerToolResult result,
+  core_proxy.CoreOperitToolsConversationMarkupManagerToolResult result,
 ) {
   if (!result.success) {
     return result.error ?? '';

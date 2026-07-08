@@ -1,5 +1,5 @@
 use crate::output::CoreCommandOutput;
-use operit_runtime::util::GithubReleaseUtil::{
+use operit_util::GithubReleaseUtil::{
     FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
 };
 

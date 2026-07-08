@@ -2,15 +2,15 @@ use std::cell::Cell;
 
 use crate::commands::util::parseCsvList;
 use crate::output::CoreCommandOutput;
-use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_runtime::data::model::ActivePrompt::ActivePrompt;
-use operit_runtime::data::model::CharacterCard::{
+use operit_model::ActivePrompt::ActivePrompt;
+use operit_model::CharacterCard::{
     CharacterCard, CharacterCardChatModelBindingMode, CharacterCardMemoryBindingMode,
     CharacterCardToolAccessConfig,
 };
-use operit_runtime::data::model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
-use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
+use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
+use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_runtime::data::preferences::ActivePromptManager::ActivePromptManager;
 use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
 use operit_runtime::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;

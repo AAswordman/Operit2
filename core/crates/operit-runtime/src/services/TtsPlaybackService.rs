@@ -5,15 +5,16 @@ use std::sync::Arc;
 use operit_host_api::{AudioPlaybackHost, TtsPlaybackHost, TtsPlaybackRequest, TtsPlaybackStatus};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
-use crate::core::application::OperitApplicationContext::OperitApplicationContext;
-use crate::data::model::TtsConfig::{
+use operit_host_api::HostManager::HostManager;
+use operit_model::TtsConfig::{
     TtsConfig, TtsHostPlaybackResult, TtsPlaybackResult, TtsProviderType,
 };
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::TtsConfigManager::TtsConfigManager;
-use crate::util::TtsCleaner::TtsCleaner;
+use operit_util::TtsCleaner::TtsCleaner;
 
 #[derive(Clone)]
+/// Coordinates generated audio playback and host TTS playback controls.
 pub struct TtsPlaybackService {
     audioPlaybackHost: Option<Arc<dyn AudioPlaybackHost>>,
     ttsPlaybackHost: Option<Arc<dyn TtsPlaybackHost>>,
@@ -22,7 +23,8 @@ pub struct TtsPlaybackService {
 }
 
 impl TtsPlaybackService {
-    pub fn getInstance(context: &OperitApplicationContext) -> Result<Self, String> {
+    /// Creates a playback service from application host context.
+    pub fn getInstance(context: &HostManager) -> Result<Self, String> {
         let paths = RuntimeStorePaths::default();
         Ok(Self {
             audioPlaybackHost: context.audioPlaybackHost.clone(),
@@ -32,6 +34,7 @@ impl TtsPlaybackService {
         })
     }
 
+    /// Plays an audio file through the host audio playback service.
     pub fn playAudio(&self, path: &str) -> Result<TtsPlaybackResult, String> {
         let path = path.trim();
         if path.is_empty() {
@@ -51,6 +54,7 @@ impl TtsPlaybackService {
         })
     }
 
+    /// Speaks text with the TTS configuration bound to a character card.
     pub fn speakForCharacter(
         &self,
         characterCardId: &str,
@@ -82,6 +86,7 @@ impl TtsPlaybackService {
         self.speakWithResolvedConfig(config, cleanedText, interrupt)
     }
 
+    /// Speaks text with a selected TTS configuration.
     pub fn speakWithConfig(
         &self,
         ttsConfigId: &str,
@@ -129,6 +134,7 @@ impl TtsPlaybackService {
         Ok(ttsHostPlaybackResult(status))
     }
 
+    /// Pauses host speech playback.
     pub fn pauseSpeech(&self) -> Result<TtsHostPlaybackResult, String> {
         self.ttsPlaybackHost()?
             .pauseSpeech()
@@ -136,6 +142,7 @@ impl TtsPlaybackService {
             .map_err(|error| error.to_string())
     }
 
+    /// Resumes host speech playback.
     pub fn resumeSpeech(&self) -> Result<TtsHostPlaybackResult, String> {
         self.ttsPlaybackHost()?
             .resumeSpeech()
@@ -143,6 +150,7 @@ impl TtsPlaybackService {
             .map_err(|error| error.to_string())
     }
 
+    /// Stops host speech playback.
     pub fn stopSpeech(&self) -> Result<TtsHostPlaybackResult, String> {
         self.ttsPlaybackHost()?
             .stopSpeech()
@@ -150,6 +158,7 @@ impl TtsPlaybackService {
             .map_err(|error| error.to_string())
     }
 
+    /// Reads current host speech playback state.
     pub fn speechState(&self) -> Result<TtsHostPlaybackResult, String> {
         self.ttsPlaybackHost()?
             .speechState()

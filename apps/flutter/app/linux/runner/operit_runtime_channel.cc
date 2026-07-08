@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <stdint.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <cstdlib>
@@ -241,6 +242,24 @@ void respond_success(FlMethodCall* method_call, const std::string& value) {
   fl_method_call_respond(method_call, FL_METHOD_RESPONSE(response), nullptr);
 }
 
+void respond_success_value(FlMethodCall* method_call, FlValue* value) {
+  g_autoptr(FlMethodSuccessResponse) response =
+      fl_method_success_response_new(value);
+  fl_method_call_respond(method_call, FL_METHOD_RESPONSE(response), nullptr);
+}
+
+FlValue* linux_root_requirement_snapshot() {
+  g_autoptr(FlValue) item = fl_value_new_map();
+  fl_value_set_string_take(item, "id", fl_value_new_string("linux.root"));
+  fl_value_set_string_take(
+      item, "status",
+      fl_value_new_string(geteuid() == 0 ? "Satisfied" : "Missing"));
+
+  FlValue* result = fl_value_new_map();
+  fl_value_set_string_take(result, "linux.root", fl_value_ref(item));
+  return result;
+}
+
 void dispatch_watch_channel_event(std::string frame) {
   g_main_context_invoke(
       nullptr,
@@ -351,6 +370,41 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
     } else {
       respond_error(method_call, "RUNTIME_BRIDGE_ERROR", error);
     }
+    return;
+  }
+  if (strcmp(method, "hostOnboardingPermissionSnapshot") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    const gchar* host_id = nullptr;
+    if (args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
+      host_id = string_map_value(args, "hostId");
+    }
+    if (host_id == nullptr || strcmp(host_id, "linux") != 0) {
+      respond_error(method_call, "INVALID_HOST", "Invalid onboarding host");
+      return;
+    }
+    g_autoptr(FlValue) result = linux_root_requirement_snapshot();
+    respond_success_value(method_call, result);
+    return;
+  }
+  if (strcmp(method, "hostOnboardingRequestPermission") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    const gchar* host_id = nullptr;
+    const gchar* requirement_id = nullptr;
+    if (args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
+      host_id = string_map_value(args, "hostId");
+      requirement_id = string_map_value(args, "requirementId");
+    }
+    if (host_id != nullptr && strcmp(host_id, "linux") != 0) {
+      respond_error(method_call, "INVALID_HOST", "Invalid onboarding host");
+      return;
+    }
+    if (requirement_id == nullptr || strcmp(requirement_id, "linux.root") != 0) {
+      respond_error(method_call, "INVALID_ONBOARDING_REQUIREMENT",
+                    "Invalid onboarding requirement");
+      return;
+    }
+    respond_error(method_call, "HOST_AUTHORIZATION_MANAGED",
+                  "Restart Operit Host as root or through the service manager");
     return;
   }
   g_autoptr(FlMethodNotImplementedResponse) response =

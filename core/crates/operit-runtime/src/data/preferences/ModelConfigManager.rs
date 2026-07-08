@@ -2,24 +2,25 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::api::chat::llmprovider::ModelConfigConnectionTester::{
+use operit_providers::chat::llmprovider::ModelConfigConnectionTester::{
     ModelConfigConnectionTester, ModelConnectionTestReport,
 };
-use crate::api::chat::llmprovider::ModelListFetcher::ModelListFetcher;
-use crate::data::model::ModelCatalog::ModelCatalog;
-use crate::data::model::ModelConfigData::{
+use operit_providers::chat::llmprovider::ModelListFetcher::ModelListFetcher;
+use operit_model::ModelCatalog::ModelCatalog;
+use operit_model::ModelConfigData::{
     default_deepseek_provider, ApiProviderType, AvailableProviderModel,
     AvailableProviderModelSource, ModelCapabilities, ModelCatalogKey, ModelConfigDefaults,
     ModelContextSpec, ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderModelSummary,
     ProviderProfile, ResolvedModelConfig,
 };
-use crate::data::model::ModelParameter::ModelParameter;
+use operit_model::ModelParameter::ModelParameter;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
+/// Error surface for provider and model configuration operations.
 #[derive(Debug, Error)]
 pub enum ModelConfigError {
     #[error("json error: {0}")]
@@ -55,6 +56,7 @@ pub enum ModelConfigError {
     ConnectionTest(String),
 }
 
+/// Stores provider profiles, model profiles, and resolved model configuration.
 #[derive(Clone)]
 pub struct ModelConfigManager {
     paths: RuntimeStorePaths,
@@ -65,10 +67,12 @@ impl ModelConfigManager {
     pub const DEFAULT_PROVIDER_ID: &'static str = ModelConfigDefaults::DEFAULT_PROVIDER_ID;
     pub const DEFAULT_MODEL_ID: &'static str = ModelConfigDefaults::DEFAULT_MODEL_ID;
 
+    /// Returns the preference key storing provider profile order.
     pub fn PROVIDER_LIST_KEY() -> operit_store::PreferencesDataStore::PreferencesKey {
         stringPreferencesKey("provider_list")
     }
 
+    /// Creates a manager rooted at a runtime data directory.
     pub fn new(root_dir: PathBuf) -> Self {
         let paths = RuntimeStorePaths::new(root_dir);
         let modelConfigDataStore =
@@ -79,10 +83,12 @@ impl ModelConfigManager {
         }
     }
 
+    /// Creates a manager using the default API data directory.
     pub fn default() -> Self {
         Self::new(ApiPreferences::data_dir())
     }
 
+    /// Ensures the default provider profile exists in preferences.
     pub fn initializeIfNeeded(&self) -> Result<(), ModelConfigError> {
         self.modelConfigDataStore.try_edit_result(|preferences| {
             let providerIds = Self::readProviderList(preferences)?;
@@ -95,6 +101,7 @@ impl ModelConfigManager {
         })
     }
 
+    /// Observes the ordered provider id list.
     pub fn providerListFlow(&self) -> Result<Flow<Vec<String>>, ModelConfigError> {
         Ok(self
             .modelConfigDataStore
@@ -102,10 +109,12 @@ impl ModelConfigManager {
             .mapResult(|preferences| Self::readProviderList(&preferences)))
     }
 
+    /// Reads the ordered provider id list.
     pub fn getProviderIds(&self) -> Result<Vec<String>, ModelConfigError> {
         Ok(self.providerListFlow()?.first()?)
     }
 
+    /// Observes all provider profiles in persisted order.
     pub fn getProviderProfilesFlow(&self) -> Result<Flow<Vec<ProviderProfile>>, ModelConfigError> {
         let manager = self.clone();
         Ok(self.modelConfigDataStore.dataFlow().mapResult(move |_| {
@@ -115,6 +124,7 @@ impl ModelConfigManager {
         }))
     }
 
+    /// Reads all provider profiles in persisted order.
     pub fn getProviderProfiles(&self) -> Result<Vec<ProviderProfile>, ModelConfigError> {
         self.getProviderIds()?
             .iter()
@@ -122,6 +132,7 @@ impl ModelConfigManager {
             .collect()
     }
 
+    /// Reads one provider profile by id.
     pub fn getProviderProfile(
         &self,
         providerId: &str,
@@ -129,6 +140,7 @@ impl ModelConfigManager {
         self.loadProviderFromDataStore(providerId)
     }
 
+    /// Builds summary rows for every configured provider model.
     pub fn getAllModelSummaries(&self) -> Result<Vec<ProviderModelSummary>, ModelConfigError> {
         let providers = self.getProviderProfiles()?;
         let mut summaries = Vec::new();
@@ -149,13 +161,15 @@ impl ModelConfigManager {
         Ok(summaries)
     }
 
+    /// Reads provider catalog entries from the built-in catalog.
     pub fn getProviderCatalogEntries(
         &self,
-    ) -> Result<Vec<crate::data::model::ModelConfigData::ProviderCatalogEntry>, ModelConfigError>
+    ) -> Result<Vec<operit_model::ModelConfigData::ProviderCatalogEntry>, ModelConfigError>
     {
         ModelCatalog::providers().map_err(ModelConfigError::ModelListFetch)
     }
 
+    /// Creates a new provider profile and stores it in provider order.
     pub fn createProvider(
         &self,
         name: String,
@@ -177,6 +191,7 @@ impl ModelConfigManager {
         Ok(providerId)
     }
 
+    /// Replaces an existing provider profile after validation.
     pub fn updateProviderProfile(
         &self,
         provider: ProviderProfile,
@@ -194,6 +209,7 @@ impl ModelConfigManager {
         Ok(provider)
     }
 
+    /// Replaces the default provider profile and preserves its id.
     pub fn replaceDefaultProviderProfile(
         &self,
         provider: ProviderProfile,
@@ -213,6 +229,7 @@ impl ModelConfigManager {
         Ok(provider)
     }
 
+    /// Deletes one provider profile and removes it from provider order.
     pub fn deleteProvider(&self, providerId: &str) -> Result<(), ModelConfigError> {
         let providerKey = self.providerKey(providerId);
         self.modelConfigDataStore.try_edit_result(|preferences| {
@@ -226,6 +243,7 @@ impl ModelConfigManager {
         Ok(())
     }
 
+    /// Creates a model profile under an existing provider.
     pub fn createProviderModel(
         &self,
         providerId: &str,
@@ -240,6 +258,7 @@ impl ModelConfigManager {
         Ok(modelId)
     }
 
+    /// Fetches provider models available for import into a provider profile.
     pub fn getAvailableProviderModels(
         &self,
         providerId: &str,
@@ -274,6 +293,7 @@ impl ModelConfigManager {
         Ok(models)
     }
 
+    /// Adds a provider model using catalog or remote availability metadata.
     pub fn addProviderModelFromAvailable(
         &self,
         providerId: &str,
@@ -307,6 +327,7 @@ impl ModelConfigManager {
         Ok(modelId)
     }
 
+    /// Replaces a model profile under an existing provider.
     pub fn updateModelProfile(
         &self,
         providerId: &str,
@@ -323,6 +344,7 @@ impl ModelConfigManager {
         Ok(model)
     }
 
+    /// Deletes one model profile from a provider.
     pub fn deleteModel(&self, providerId: &str, modelId: &str) -> Result<(), ModelConfigError> {
         self.updateProviderInternal(providerId, |mut provider| {
             provider.models.retain(|model| model.id != modelId);
@@ -331,6 +353,7 @@ impl ModelConfigManager {
         Ok(())
     }
 
+    /// Reads one model profile from a provider.
     pub fn getModelProfile(
         &self,
         providerId: &str,
@@ -340,6 +363,7 @@ impl ModelConfigManager {
         Ok(model)
     }
 
+    /// Resolves provider and model profile data into a runtime model config.
     pub fn getResolvedModelConfig(
         &self,
         providerId: &str,
@@ -349,6 +373,7 @@ impl ModelConfigManager {
         self.resolveFromProfiles(&provider, &model)
     }
 
+    /// Reads model parameters for one provider/model pair.
     pub fn getModelParametersForModel(
         &self,
         providerId: &str,
@@ -358,6 +383,7 @@ impl ModelConfigManager {
         Ok(model.parameters)
     }
 
+    /// Updates model parameters for one provider/model pair.
     pub fn updateParametersForModel(
         &self,
         providerId: &str,
@@ -370,6 +396,7 @@ impl ModelConfigManager {
         Ok(())
     }
 
+    /// Updates model capabilities for one provider/model pair.
     pub fn updateCapabilitiesForModel(
         &self,
         providerId: &str,
@@ -381,6 +408,7 @@ impl ModelConfigManager {
         self.updateModelProfile(providerId, model)
     }
 
+    /// Updates model context settings for one provider/model pair.
     pub fn updateContextForModel(
         &self,
         providerId: &str,
@@ -392,17 +420,19 @@ impl ModelConfigManager {
         self.updateModelProfile(providerId, model)
     }
 
+    /// Updates built-in tool settings for one provider/model pair.
     pub fn updateBuiltinToolsForModel(
         &self,
         providerId: &str,
         modelId: &str,
-        builtinTools: Vec<crate::data::model::ModelConfigData::ModelBuiltinTool>,
+        builtinTools: Vec<operit_model::ModelConfigData::ModelBuiltinTool>,
     ) -> Result<ModelProfile, ModelConfigError> {
         let mut model = self.getModelProfile(providerId, modelId)?;
         model.builtinToolsOverride = Some(builtinTools);
         self.updateModelProfile(providerId, model)
     }
 
+    /// Updates request settings for one provider/model pair.
     pub fn updateRequestForModel(
         &self,
         providerId: &str,
@@ -414,6 +444,7 @@ impl ModelConfigManager {
         self.updateModelProfile(providerId, model)
     }
 
+    /// Updates summary settings for one provider/model pair.
     pub fn updateSummaryForModel(
         &self,
         providerId: &str,
@@ -425,6 +456,7 @@ impl ModelConfigManager {
         self.updateModelProfile(providerId, model)
     }
 
+    /// Tests connectivity for one provider/model configuration.
     pub async fn testModelConnection(
         &self,
         providerId: &str,
@@ -435,6 +467,7 @@ impl ModelConfigManager {
             .map_err(ModelConfigError::ConnectionTest)
     }
 
+    /// Exports all provider profiles as formatted JSON.
     pub fn exportAllProviders(&self) -> Result<String, String> {
         serde_json::to_string_pretty(
             &self
@@ -444,6 +477,7 @@ impl ModelConfigManager {
         .map_err(|error| error.to_string())
     }
 
+    /// Resolves a model profile against its owning provider profile.
     fn resolveFromProfiles(
         &self,
         provider: &ProviderProfile,
@@ -513,6 +547,7 @@ impl ModelConfigManager {
         })
     }
 
+    /// Reads provider ids from the preferences object.
     fn readProviderList(
         preferences: &Preferences,
     ) -> Result<Vec<String>, PreferencesDataStoreError> {
@@ -524,6 +559,7 @@ impl ModelConfigManager {
         }
     }
 
+    /// Loads and decodes one provider profile from preferences.
     fn loadProviderFromDataStore(
         &self,
         providerId: &str,
@@ -536,6 +572,7 @@ impl ModelConfigManager {
         Ok(serde_json::from_str(providerJson)?)
     }
 
+    /// Saves one provider profile to preferences.
     fn saveProviderToDataStore(&self, provider: &ProviderProfile) -> Result<(), ModelConfigError> {
         self.modelConfigDataStore.try_edit_result(|preferences| {
             Self::writeProvider(preferences, provider)?;
@@ -543,6 +580,7 @@ impl ModelConfigManager {
         })
     }
 
+    /// Saves provider order to preferences.
     fn saveProviderList(&self, providerIds: Vec<String>) -> Result<(), ModelConfigError> {
         self.modelConfigDataStore.try_edit_result(|preferences| {
             Self::writeProviderList(preferences, &providerIds)?;
@@ -749,7 +787,7 @@ impl ModelConfigManager {
     fn catalogModelForProfile(
         provider: &ProviderProfile,
         model: &ModelProfile,
-    ) -> Result<Option<crate::data::model::ModelConfigData::ModelCatalogEntry>, ModelConfigError>
+    ) -> Result<Option<operit_model::ModelConfigData::ModelCatalogEntry>, ModelConfigError>
     {
         match &model.catalogKey {
             Some(key) => ModelCatalog::model(&key.providerTypeId, &key.modelId)
@@ -802,10 +840,10 @@ impl ModelConfigManager {
 #[cfg(test)]
 mod tests {
     use super::{ModelConfigError, ModelConfigManager};
-    use crate::data::model::ModelConfigData::ModelConfigDefaults;
+    use operit_model::ModelConfigData::ModelConfigDefaults;
     use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorageHost};
     use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
-    use operit_store::RuntimeStorePaths::setDefaultRuntimeStoreRoot;
+    use operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRoot;
     use std::fs;
     use std::path::{Component, Path, PathBuf};
     use std::sync::Arc;

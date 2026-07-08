@@ -2,6 +2,10 @@
 pub mod ChatServiceCore;
 #[path = "RuntimeEventIngressService.rs"]
 pub mod RuntimeEventIngressService;
+#[path = "ProviderRuntimeSupportService.rs"]
+pub mod ProviderRuntimeSupportService;
+#[path = "ToolRuntimeSupportService.rs"]
+pub mod ToolRuntimeSupportService;
 #[path = "RuntimeHostInfoService.rs"]
 pub mod RuntimeHostInfoService;
 #[path = "RuntimeHostInteractionService.rs"]
@@ -12,12 +16,17 @@ pub mod RuntimeTerminalService;
 pub mod TtsPlaybackService;
 #[path = "TtsSynthesisService.rs"]
 pub mod TtsSynthesisService;
+#[path = "WorkspaceService.rs"]
+pub mod WorkspaceService;
 
 pub mod core;
 
+pub use ProviderRuntimeSupportService::*;
 pub use RuntimeEventIngressService::*;
 pub use RuntimeHostInfoService::*;
 pub use RuntimeHostInteractionService::*;
 pub use RuntimeTerminalService::*;
+pub use ToolRuntimeSupportService::*;
 pub use TtsPlaybackService::*;
 pub use TtsSynthesisService::*;
+pub use WorkspaceService::*;

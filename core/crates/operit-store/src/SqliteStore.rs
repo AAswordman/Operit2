@@ -9,6 +9,7 @@ use crate::RuntimeStorageHost::{defaultRuntimeSqliteHost, runtimeStoragePath};
 pub use operit_host_api::{SqliteRow, SqliteValue};
 
 #[derive(Debug, Error)]
+/// Error type for the runtime SQLite storage adapter.
 pub enum SqliteStoreError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -23,6 +24,7 @@ pub enum SqliteStoreError {
 }
 
 #[derive(Clone)]
+/// Shared SQLite connection wrapper backed by the registered runtime host.
 pub struct SqliteStore {
     path: PathBuf,
     connection: Arc<Mutex<Box<dyn RuntimeSqliteConnection>>>,
@@ -30,6 +32,7 @@ pub struct SqliteStore {
 }
 
 impl SqliteStore {
+    /// Opens a runtime-hosted SQLite database and enables foreign keys.
     pub fn open(path: PathBuf) -> Result<Self, SqliteStoreError> {
         let storagePath = runtimeStoragePath(&path);
         let mut connection = defaultRuntimeSqliteHost().openSqliteDatabase(&storagePath)?;
@@ -41,11 +44,13 @@ impl SqliteStore {
         })
     }
 
+    /// Returns the logical database path used to open this store.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
     #[allow(non_snake_case)]
+    /// Executes a SQL batch against the store connection.
     pub fn executeBatch(&self, sql: &str) -> Result<(), SqliteStoreError> {
         let mut connection = self
             .connection
@@ -55,6 +60,7 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Executes a single SQL statement and returns the affected row count.
     pub fn execute(&self, sql: &str, params: Vec<SqliteValue>) -> Result<usize, SqliteStoreError> {
         let mut connection = self
             .connection
@@ -63,6 +69,7 @@ impl SqliteStore {
         Ok(connection.execute(sql, params)?)
     }
 
+    /// Runs a query and returns all rows.
     pub fn queryRows(
         &self,
         sql: &str,
@@ -75,6 +82,7 @@ impl SqliteStore {
         Ok(connection.query(sql, params)?)
     }
 
+    /// Runs a query and returns the first row, if one exists.
     pub fn queryOne(
         &self,
         sql: &str,
@@ -88,6 +96,7 @@ impl SqliteStore {
         }
     }
 
+    /// Runs a query and converts the first column of the first row.
     pub fn queryScalar<T: FromSqliteValue>(
         &self,
         sql: &str,
@@ -100,17 +109,20 @@ impl SqliteStore {
     }
 
     #[allow(non_snake_case)]
+    /// Reads SQLite's `PRAGMA user_version` value.
     pub fn getUserVersion(&self) -> Result<i32, SqliteStoreError> {
         self.queryScalar("PRAGMA user_version", Vec::new())
     }
 
     #[allow(non_snake_case)]
+    /// Writes SQLite's `PRAGMA user_version` value.
     pub fn setUserVersion(&self, version: i32) -> Result<(), SqliteStoreError> {
         self.execute(&format!("PRAGMA user_version = {version}"), Vec::new())?;
         Ok(())
     }
 
     #[allow(non_snake_case)]
+    /// Checks whether a table with the supplied name exists.
     pub fn tableExists(&self, tableName: &str) -> Result<bool, SqliteStoreError> {
         let found: Option<i32> = self
             .queryOne(
@@ -123,6 +135,7 @@ impl SqliteStore {
     }
 
     #[allow(non_snake_case)]
+    /// Registers a callback invoked by `notifyInvalidated`.
     pub fn addInvalidationObserver<F>(&self, observer: F) -> Result<(), SqliteStoreError>
     where
         F: Fn() -> Result<(), SqliteStoreError> + Send + Sync + 'static,
@@ -136,6 +149,7 @@ impl SqliteStore {
     }
 
     #[allow(non_snake_case)]
+    /// Notifies all registered invalidation observers.
     pub fn notifyInvalidated(&self) -> Result<(), SqliteStoreError> {
         let observers = self
             .observers
@@ -148,6 +162,7 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Runs a closure inside a SQLite transaction and commits on success.
     pub fn transaction<T, F>(&self, action: F) -> Result<T, SqliteStoreError>
     where
         F: FnOnce(&mut SqliteTransaction<'_>) -> Result<T, SqliteStoreError>,
@@ -164,11 +179,13 @@ impl SqliteStore {
     }
 }
 
+/// Active SQLite transaction wrapper exposed to store migrations and writes.
 pub struct SqliteTransaction<'a> {
     inner: Box<dyn RuntimeSqliteTransaction + 'a>,
 }
 
 impl SqliteTransaction<'_> {
+    /// Executes a statement within this transaction.
     pub fn execute(
         &mut self,
         sql: &str,
@@ -177,6 +194,7 @@ impl SqliteTransaction<'_> {
         Ok(self.inner.execute(sql, params)?)
     }
 
+    /// Runs a query within this transaction and returns all rows.
     pub fn queryRows(
         &mut self,
         sql: &str,
@@ -185,6 +203,7 @@ impl SqliteTransaction<'_> {
         Ok(self.inner.query(sql, params)?)
     }
 
+    /// Runs a query within this transaction and returns the first row, if present.
     pub fn queryOne(
         &mut self,
         sql: &str,
@@ -199,12 +218,15 @@ impl SqliteTransaction<'_> {
     }
 
     #[allow(non_snake_case)]
+    /// Returns the last inserted row id for this transaction.
     pub fn lastInsertRowId(&self) -> Result<i64, SqliteStoreError> {
         Ok(self.inner.lastInsertRowId()?)
     }
 }
 
+/// Typed row accessor for host-provided SQLite rows.
 pub trait SqliteRowGet {
+    /// Reads and converts a column by index or name.
     fn get<K, T>(&self, key: K) -> Result<T, SqliteStoreError>
     where
         K: SqliteColumnKey,
@@ -221,7 +243,9 @@ impl SqliteRowGet for SqliteRow {
     }
 }
 
+/// Key that can resolve a value from a SQLite row.
 pub trait SqliteColumnKey {
+    /// Returns the SQLite value addressed by this key.
     fn value<'a>(&self, row: &'a SqliteRow) -> Result<&'a SqliteValue, SqliteStoreError>;
 }
 
@@ -243,8 +267,10 @@ impl SqliteColumnKey for String {
     }
 }
 
+/// Converts host SQLite values into strongly typed Rust values.
 pub trait FromSqliteValue: Sized {
     #[allow(non_snake_case)]
+    /// Converts one SQLite value into this Rust type.
     fn fromSqliteValue(value: &SqliteValue) -> Result<Self, SqliteStoreError>;
 }
 
@@ -288,8 +314,10 @@ impl<T: FromSqliteValue> FromSqliteValue for Option<T> {
     }
 }
 
+/// Converts Rust values into host SQLite values.
 pub trait ToSqliteValue {
     #[allow(non_snake_case)]
+    /// Converts this Rust value into a SQLite value.
     fn toSqliteValue(&self) -> SqliteValue;
 }
 
@@ -345,6 +373,7 @@ impl ToSqliteValue for bool {
 }
 
 #[allow(non_snake_case)]
+/// Converts a supported Rust value into a host SQLite value.
 pub fn toSqliteValue<T: ToSqliteValue + ?Sized>(value: &T) -> SqliteValue {
     value.toSqliteValue()
 }

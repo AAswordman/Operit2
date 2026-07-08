@@ -167,14 +167,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       const <core_proxy.AvailableProviderModel>[];
   String? _setupError;
   bool _providerConfirmed = false;
-  _OnboardingPermissionSnapshot _permissions =
-      const _OnboardingPermissionSnapshot(
-    location: false,
-    bluetoothConnect: false,
-    bluetoothScan: false,
-    overlay: false,
-    batteryOptimization: false,
-  );
+  List<_OnboardingRequirement> _requirements =
+      const <_OnboardingRequirement>[];
 
   late final AnimationController _introAnimationController;
   late final AnimationController _introExitController;
@@ -645,22 +639,23 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _refreshPermissionSnapshot() async {
-    final snapshot = await _OnboardingPermissionBridge.snapshot();
+    final requirements =
+        await _OnboardingPermissionBridge.requirements(widget.clients);
     if (!mounted) {
       return;
     }
     setState(() {
-      _permissions = snapshot;
+      _requirements = requirements;
     });
   }
 
-  Future<void> _requestPermission(_OnboardingPermissionAction action) async {
+  Future<void> _requestPermission(String requirementId) async {
     setState(() {
       _requestingPermission = true;
       _setupError = null;
     });
     try {
-      await _OnboardingPermissionBridge.request(action);
+      await _OnboardingPermissionBridge.request(widget.clients, requirementId);
       await _refreshPermissionSnapshot();
     } catch (error) {
       if (!mounted) {
@@ -788,7 +783,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
                                 );
                               }
                               return _AiSetupPermissionPage(
-                                permissions: _permissions,
+                                requirements: _requirements,
                                 requesting: _requestingPermission,
                                 onRefresh: _refreshPermissionSnapshot,
                                 onRequest: _requestPermission,
@@ -2160,17 +2155,17 @@ class _AiSetupModelPage extends StatelessWidget {
 
 class _AiSetupPermissionPage extends StatelessWidget {
   const _AiSetupPermissionPage({
-    required this.permissions,
+    required this.requirements,
     required this.requesting,
     required this.onRefresh,
     required this.onRequest,
     required this.errorText,
   });
 
-  final _OnboardingPermissionSnapshot permissions;
+  final List<_OnboardingRequirement> requirements;
   final bool requesting;
   final VoidCallback onRefresh;
-  final ValueChanged<_OnboardingPermissionAction> onRequest;
+  final ValueChanged<String> onRequest;
   final String? errorText;
 
   @override
@@ -2188,39 +2183,27 @@ class _AiSetupPermissionPage extends StatelessWidget {
             children: <Widget>[
               _SetupSectionHeader(
                 icon: Icons.admin_panel_settings_rounded,
-                eyebrow: '按需开启',
-                title: '给工具箱必要能力',
-                description: '附近设备、悬浮入口和持续任务会在对应场景里使用。',
+                eyebrow: '系统授权',
+                title: '按当前设备要求授权',
+                description: '每一项由当前运行环境声明、检查和申请；点击后会重新读取系统状态。',
               ),
               const SizedBox(height: 22),
-              _PermissionTile(
-                title: '附近设备',
-                subtitle: '用于发现、连接和管理身边的设备',
-                granted: permissions.location,
-                requesting: requesting,
-                onTap: () => onRequest(_OnboardingPermissionAction.location),
-              ),
-              _PermissionTile(
-                title: '蓝牙连接',
-                subtitle: '用于和已授权的设备保持稳定通信',
-                granted: permissions.bluetoothConnect && permissions.bluetoothScan,
-                requesting: requesting,
-                onTap: () => onRequest(_OnboardingPermissionAction.bluetooth),
-              ),
-              _PermissionTile(
-                title: '悬浮入口',
-                subtitle: '用于在其他应用中快速唤起工具箱',
-                granted: permissions.overlay,
-                requesting: requesting,
-                onTap: () => onRequest(_OnboardingPermissionAction.overlay),
-              ),
-              _PermissionTile(
-                title: '持续任务',
-                subtitle: '用于让同步、协作和长任务保持连续',
-                granted: permissions.batteryOptimization,
-                requesting: requesting,
-                onTap: () => onRequest(_OnboardingPermissionAction.battery),
-              ),
+              if (requirements.isEmpty)
+                Card(
+                  elevation: 0,
+                  color: colorScheme.surfaceContainerHighest,
+                  child: const ListTile(
+                    leading: Icon(Icons.check_circle_rounded),
+                    title: Text('当前设备没有需要处理的授权项'),
+                    subtitle: Text('当前运行环境没有需要在欢迎页处理的系统授权。'),
+                  ),
+                ),
+              for (final requirement in requirements)
+                _PermissionTile(
+                  requirement: requirement,
+                  requesting: requesting,
+                  onTap: () => onRequest(requirement.id),
+                ),
               TextButton.icon(
                 onPressed: requesting ? null : onRefresh,
                 icon: const Icon(Icons.refresh_rounded),
@@ -2243,22 +2226,22 @@ class _AiSetupPermissionPage extends StatelessWidget {
 
 class _PermissionTile extends StatelessWidget {
   const _PermissionTile({
-    required this.title,
-    required this.subtitle,
-    required this.granted,
+    required this.requirement,
     required this.requesting,
     required this.onTap,
   });
 
-  final String title;
-  final String subtitle;
-  final bool granted;
+  final _OnboardingRequirement requirement;
   final bool requesting;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final granted = requirement.status == 'Satisfied';
+    final canRequest = requirement.action == 'RuntimePermission' ||
+        requirement.action == 'OpenSystemSettings' ||
+        requirement.action == 'HostManaged';
     return Card(
       elevation: 0,
       color: granted
@@ -2270,11 +2253,11 @@ class _PermissionTile extends StatelessWidget {
           granted ? Icons.check_circle_rounded : Icons.radio_button_unchecked,
           color: granted ? colorScheme.primary : colorScheme.onSurfaceVariant,
         ),
-        title: Text(title),
-        subtitle: Text(subtitle),
+        title: Text(requirement.title),
+        subtitle: Text(requirement.description),
         trailing: TextButton(
-          onPressed: granted || requesting ? null : onTap,
-          child: Text(granted ? '已授权' : '去授权'),
+          onPressed: granted || requesting || !canRequest ? null : onTap,
+          child: Text(_requirementButtonLabel(requirement)),
         ),
       ),
     );
@@ -2288,67 +2271,106 @@ String? _requiredField(String? value) {
   return null;
 }
 
-enum _OnboardingPermissionAction {
-  location('location'),
-  bluetooth('bluetooth'),
-  overlay('overlay'),
-  battery('battery');
-
-  const _OnboardingPermissionAction(this.methodName);
-
-  final String methodName;
-}
-
 enum _AiSetupStartMode {
   quickStart,
   operit1Import,
 }
 
-class _OnboardingPermissionSnapshot {
-  const _OnboardingPermissionSnapshot({
-    required this.location,
-    required this.bluetoothConnect,
-    required this.bluetoothScan,
-    required this.overlay,
-    required this.batteryOptimization,
+class _OnboardingRequirement {
+  const _OnboardingRequirement({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.status,
+    required this.action,
   });
 
-  factory _OnboardingPermissionSnapshot.fromJson(Map<Object?, Object?> json) {
-    return _OnboardingPermissionSnapshot(
-      location: json['location'] == true,
-      bluetoothConnect: json['bluetoothConnect'] == true,
-      bluetoothScan: json['bluetoothScan'] == true,
-      overlay: json['overlay'] == true,
-      batteryOptimization: json['batteryOptimization'] == true,
+  factory _OnboardingRequirement.fromJson(Map<Object?, Object?> json) {
+    return _OnboardingRequirement(
+      id: json['id'] as String,
+      title: json['title'] as String,
+      description: json['description'] as String,
+      status: json['status'] as String,
+      action: json['action'] as String,
     );
   }
 
-  final bool location;
-  final bool bluetoothConnect;
-  final bool bluetoothScan;
-  final bool overlay;
-  final bool batteryOptimization;
+  final String id;
+  final String title;
+  final String description;
+  final String status;
+  final String action;
+
+  _OnboardingRequirement withStatus(String status) {
+    return _OnboardingRequirement(
+      id: id,
+      title: title,
+      description: description,
+      status: status,
+      action: action,
+    );
+  }
 }
 
 class _OnboardingPermissionBridge {
   static const MethodChannel _channel = MethodChannel('operit/runtime');
 
-  static Future<_OnboardingPermissionSnapshot> snapshot() async {
-    final result = await _channel.invokeMapMethod<Object?, Object?>(
-      'androidOnboardingPermissionSnapshot',
-    );
-    if (result == null) {
-      throw StateError('android onboarding permission snapshot is empty');
+  static Future<List<_OnboardingRequirement>> requirements(
+    GeneratedCoreProxyClients clients,
+  ) async {
+    final host = await clients.servicesRuntimeHostInfoService
+        .runtimeHostDescriptor();
+    if (host.onboardingRequirements.isEmpty) {
+      return const <_OnboardingRequirement>[];
     }
-    return _OnboardingPermissionSnapshot.fromJson(result);
+    final statusById = await _requirementStatus(host.id);
+    return host.onboardingRequirements.map((item) {
+      final requirement = _OnboardingRequirement.fromJson(
+        Map<Object?, Object?>.from(item as Map),
+      );
+      final status = statusById[requirement.id] as String;
+      return requirement.withStatus(status);
+    }).toList(growable: false);
   }
 
-  static Future<void> request(_OnboardingPermissionAction action) {
+  static Future<Map<String, String>> _requirementStatus(String hostId) async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>(
+      'hostOnboardingPermissionSnapshot',
+      <String, Object?>{'hostId': hostId},
+    );
+    if (result == null) {
+      throw StateError('host onboarding permission snapshot is empty');
+    }
+    return result.map((key, value) {
+      final item = Map<Object?, Object?>.from(value as Map);
+      return MapEntry(key as String, item['status'] as String);
+    });
+  }
+
+  static Future<void> request(
+    GeneratedCoreProxyClients clients,
+    String requirementId,
+  ) async {
+    final host = await clients.servicesRuntimeHostInfoService
+        .runtimeHostDescriptor();
     return _channel.invokeMethod<void>(
-      'androidOnboardingRequestPermission',
-      <String, Object?>{'permission': action.methodName},
+      'hostOnboardingRequestPermission',
+      <String, Object?>{'hostId': host.id, 'requirementId': requirementId},
     );
   }
+}
+
+String _requirementButtonLabel(_OnboardingRequirement requirement) {
+  if (requirement.status == 'Satisfied') {
+    return '已授权';
+  }
+  if (requirement.action == 'HostManaged') {
+    return '去授权';
+  }
+  if (requirement.action == 'None') {
+    return '无需操作';
+  }
+  return '去授权';
 }
 
 class _PickedOperit1SnapshotFile {
