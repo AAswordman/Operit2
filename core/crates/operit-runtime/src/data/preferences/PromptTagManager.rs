@@ -13,10 +13,12 @@ pub struct PromptTagManager {
 
 impl PromptTagManager {
     #[allow(non_snake_case)]
+    /// Opens the prompt tag manager with default runtime store paths.
     pub fn getInstance() -> Self {
         Self::new(RuntimeStorePaths::default())
     }
 
+    /// Creates a prompt tag manager backed by runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
             dataStore: PreferencesDataStore::new(paths.prompt_tags_preferences_path()),
@@ -29,6 +31,7 @@ impl PromptTagManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes the ordered list of prompt tag identifiers.
     pub fn tagListFlow(&self) -> Flow<Vec<String>> {
         let dataStore = self.dataStore.clone();
         dataStore
@@ -37,6 +40,7 @@ impl PromptTagManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes all prompt tags sorted by most recent update time.
     pub fn allTagsFlow(&self) -> Flow<Vec<PromptTag>> {
         let manager = self.clone();
         self.dataStore.dataFlow().map(move |preferences| {
@@ -50,6 +54,7 @@ impl PromptTagManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes one prompt tag by identifier.
     pub fn getPromptTagFlow(&self, id: &str) -> Flow<PromptTag> {
         let manager = self.clone();
         let id = id.to_string();
@@ -99,6 +104,7 @@ impl PromptTagManager {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a prompt tag and returns its generated identifier.
     pub fn createPromptTag(
         &self,
         name: String,
@@ -145,6 +151,7 @@ impl PromptTagManager {
     }
 
     #[allow(non_snake_case)]
+    /// Updates selected prompt tag fields and refreshes the update timestamp.
     pub fn updatePromptTag(
         &self,
         id: &str,
@@ -189,6 +196,7 @@ impl PromptTagManager {
     }
 
     #[allow(non_snake_case)]
+    /// Deletes a prompt tag and removes its stored fields.
     pub fn deletePromptTag(&self, id: &str) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.try_edit_result(|preferences| {
             let mut currentList = Self::readTagList(preferences);
@@ -200,11 +208,13 @@ impl PromptTagManager {
     }
 
     #[allow(non_snake_case)]
+    /// Reads all prompt tags sorted by most recent update time.
     pub fn getAllTags(&self) -> Result<Vec<PromptTag>, PreferencesDataStoreError> {
         self.allTagsFlow().first()
     }
 
     #[allow(non_snake_case)]
+    /// Reads prompt tags that match the requested tag type.
     pub fn getTagsByType(
         &self,
         tagType: TagType,
@@ -217,6 +227,7 @@ impl PromptTagManager {
     }
 
     #[allow(non_snake_case)]
+    /// Finds a prompt tag whose prompt content matches the provided content.
     pub fn findTagWithSameContent(
         &self,
         promptContent: &str,
@@ -229,6 +240,7 @@ impl PromptTagManager {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a prompt tag or returns an existing tag with identical prompt content.
     pub fn createOrReusePromptTag(
         &self,
         name: String,
@@ -243,6 +255,7 @@ impl PromptTagManager {
     }
 
     #[allow(non_snake_case)]
+    /// Removes built-in prompt tag records created by older preference schemas.
     pub fn removeLegacyBuiltInTags(&self) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.try_edit_result(|preferences| {
             let mut currentList = Self::readTagList(preferences);

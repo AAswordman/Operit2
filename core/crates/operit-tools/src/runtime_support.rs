@@ -10,7 +10,12 @@ use operit_model::ToolPrompt::SystemToolPromptCategory;
 use crate::tools::packTool::PackageManager::PackageManager;
 
 /// Future returned by runtime support async boundaries.
+#[cfg(not(target_arch = "wasm32"))]
 pub type ToolRuntimeSupportFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// Future returned by runtime support async boundaries on wasm targets.
+#[cfg(target_arch = "wasm32")]
+pub type ToolRuntimeSupportFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 /// Runtime-owned character card tool-access result consumed by tools.
 #[derive(Clone, Debug, Default)]
@@ -268,7 +273,8 @@ pub trait ToolRuntimeSupport: Send + Sync {
 
     /// Resolves memory binding metadata by character card id.
     #[allow(non_snake_case)]
-    fn characterMemoryBinding(&self, cardId: &str) -> Result<RuntimeCharacterMemoryBinding, String>;
+    fn characterMemoryBinding(&self, cardId: &str)
+        -> Result<RuntimeCharacterMemoryBinding, String>;
 
     /// Loads memory search settings for an owner scope.
     #[allow(non_snake_case)]

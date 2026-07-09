@@ -10,8 +10,21 @@ use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_runtime::ui::features::chat::webview::workspace::WorkspaceUtils;
+use operit_runtime::services::ChatServiceCore::ChatServiceCore;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::Deserialize;
+
+/// Runs a synchronous action against the local main chat runtime core.
+fn with_main_chat_core<R>(
+    application: &OperitApplication,
+    action: impl FnOnce(&mut ChatServiceCore) -> R,
+) -> Result<R, String> {
+    let mut holder = application
+        .chatRuntimeHolder
+        .try_lock()
+        .map_err(|_| "Chat runtime holder is busy".to_string())?;
+    Ok(action(holder.getCore(ChatRuntimeSlot::MAIN)))
+}
 
 pub fn run_workspace_command(
     application: &mut OperitApplication,
@@ -80,10 +93,9 @@ fn bind_default_workspace(
         "operit2 workspace bind-default <chat-id> [project-type]",
     )?;
     let workspacePath = WorkspaceUtils::createAndGetDefaultWorkspace(chatId.clone(), projectType)?;
-    application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .bindChatToWorkspace(chatId.clone(), workspacePath.clone());
+    with_main_chat_core(application, |core| {
+        core.bindChatToWorkspace(chatId.clone(), workspacePath.clone())
+    })?;
     output.push_stdout_line(format!("workspace bound: {chatId}\t{workspacePath}"));
     Ok(())
 }
@@ -103,10 +115,9 @@ fn bind_workspace(
         .and_then(nonBlankString)
         .ok_or_else(|| "usage: operit2 workspace bind <chat-id> <workspace>".to_string())?;
     let workspace = PathMapper::normalizeWorkspaceBindingPath(&workspace)?;
-    application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .bindChatToWorkspace(chatId.clone(), workspace.clone());
+    with_main_chat_core(application, |core| {
+        core.bindChatToWorkspace(chatId.clone(), workspace.clone())
+    })?;
     output.push_stdout_line(format!("workspace bound: {chatId}\t{workspace}"));
     Ok(())
 }
@@ -120,10 +131,7 @@ fn unbind_workspace(
         .get(0)
         .ok_or_else(|| "usage: operit2 workspace unbind <chat-id>".to_string())?
         .clone();
-    application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .unbindChatFromWorkspace(chatId.clone());
+    with_main_chat_core(application, |core| core.unbindChatFromWorkspace(chatId.clone()))?;
     output.push_stdout_line(format!("workspace unbound: {chatId}"));
     Ok(())
 }
@@ -133,12 +141,8 @@ fn list_workspaces(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let mut workspaces = BTreeMap::<String, usize>::new();
-    for chat in application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .chatHistoriesFlow()
-        .value()
-    {
+    let chats = with_main_chat_core(application, |core| core.chatHistoriesFlow().value())?;
+    for chat in chats {
         let Some(workspace) = chat.workspace else {
             continue;
         };
@@ -161,11 +165,8 @@ fn list_workspace_chats(
         .cloned()
         .and_then(nonBlankString)
         .ok_or_else(|| "usage: operit2 workspace chats <workspace>".to_string())?;
-    for chat in application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .chatHistoriesFlow()
-        .value()
+    let chats = with_main_chat_core(application, |core| core.chatHistoriesFlow().value())?;
+    for chat in chats
         .into_iter()
         .filter(|chat| chat.workspace.as_deref() == Some(workspace.as_str()))
     {
@@ -246,14 +247,13 @@ fn workspace_path_for_chat(
     application: &mut OperitApplication,
     chatId: &str,
 ) -> Result<String, String> {
-    let chat = application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .chatHistoriesFlow()
-        .value()
-        .into_iter()
-        .find(|chat| chat.id == chatId)
-        .ok_or_else(|| format!("chat not found: {chatId}"))?;
+    let chat = with_main_chat_core(application, |core| {
+        core.chatHistoriesFlow()
+            .value()
+            .into_iter()
+            .find(|chat| chat.id == chatId)
+            .ok_or_else(|| format!("chat not found: {chatId}"))
+    })??;
     chat.workspace
         .and_then(nonBlankString)
         .ok_or_else(|| format!("chat has no workspace: {chatId}"))

@@ -1,8 +1,8 @@
-use operit_runtime::util::streamnative::NativeMarkdownSplitter::{
+use operit_util::streamnative::NativeMarkdownSplitter::{
     MarkdownNodeStable, MarkdownProcessorType,
 };
-use operit_runtime::util::streamnative::NativeMarkdownStreamOperators::NativeMarkdownStreamOperators;
-use operit_runtime::util::ChatMarkupRegex::{attr_value, tag_body, ChatMarkupRegex};
+use operit_util::streamnative::NativeMarkdownStreamOperators::NativeMarkdownStreamOperators;
+use operit_util::ChatMarkupRegex::{attr_value, tag_body, ChatMarkupRegex};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::collections::{HashMap, HashSet};

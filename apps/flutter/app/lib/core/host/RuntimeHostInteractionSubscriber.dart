@@ -24,17 +24,18 @@ class RuntimeHostInteractionSubscriber {
   );
   static const List<RuntimeHostInteractionKind> _ownerKinds =
       <RuntimeHostInteractionKind>[
-    RuntimeHostInteractionKind.browserAutomation,
-    RuntimeHostInteractionKind.webVisit,
-    RuntimeHostInteractionKind.composeWebViewController,
-    RuntimeHostInteractionKind.systemCaptureScreenshot,
-    RuntimeHostInteractionKind.systemRecognizeText,
-    RuntimeHostInteractionKind.audioPlay,
-    RuntimeHostInteractionKind.musicPlayback,
-    RuntimeHostInteractionKind.bluetooth,
-    RuntimeHostInteractionKind.ttsSynthesis,
-    RuntimeHostInteractionKind.ttsPlayback,
-  ];
+        RuntimeHostInteractionKind.browserAutomation,
+        RuntimeHostInteractionKind.webVisit,
+        RuntimeHostInteractionKind.composeWebViewController,
+        RuntimeHostInteractionKind.systemCaptureScreenshot,
+        RuntimeHostInteractionKind.systemLanguageCode,
+        RuntimeHostInteractionKind.systemRecognizeText,
+        RuntimeHostInteractionKind.audioPlay,
+        RuntimeHostInteractionKind.musicPlayback,
+        RuntimeHostInteractionKind.bluetooth,
+        RuntimeHostInteractionKind.ttsSynthesis,
+        RuntimeHostInteractionKind.ttsPlayback,
+      ];
 
   static StreamSubscription<RuntimeHostInteractionRequest>? _subscription;
 
@@ -61,7 +62,9 @@ class RuntimeHostInteractionSubscriber {
         );
   }
 
-  static Future<void> _handleEvent(RuntimeHostInteractionRequest request) async {
+  static Future<void> _handleEvent(
+    RuntimeHostInteractionRequest request,
+  ) async {
     try {
       final response = await _dispatch(request);
       await _clients.servicesRuntimeHostInteractionService
@@ -86,38 +89,41 @@ class RuntimeHostInteractionSubscriber {
   ) {
     return switch (request.kind) {
       RuntimeHostInteractionKind.browserAutomation => _handleBrowserAutomation(
-          _requirePayload(request.browserAutomation, request.kind),
-        ),
+        _requirePayload(request.browserAutomation, request.kind),
+      ),
       RuntimeHostInteractionKind.webVisit => _handleWebVisit(
-          _requirePayload(request.webVisit, request.kind),
-        ),
+        _requirePayload(request.webVisit, request.kind),
+      ),
       RuntimeHostInteractionKind.composeWebViewController =>
         _handleComposeWebViewController(
           _requirePayload(request.composeWebViewController, request.kind),
         ),
       RuntimeHostInteractionKind.systemCaptureScreenshot =>
         _handleSystemCaptureScreenshot(),
-      RuntimeHostInteractionKind.systemRecognizeText => _handleSystemRecognizeText(
+      RuntimeHostInteractionKind.systemLanguageCode =>
+        _handleSystemLanguageCode(),
+      RuntimeHostInteractionKind.systemRecognizeText =>
+        _handleSystemRecognizeText(
           _requirePayload(request.systemRecognizeText, request.kind),
         ),
       RuntimeHostInteractionKind.audioPlay => _handleAudioPlay(
-          _requirePayload(request.audioPlay, request.kind),
-        ),
+        _requirePayload(request.audioPlay, request.kind),
+      ),
       RuntimeHostInteractionKind.musicPlayback => _handleMusicPlayback(
-          _requirePayload(request.musicPlayback, request.kind),
-        ),
+        _requirePayload(request.musicPlayback, request.kind),
+      ),
       RuntimeHostInteractionKind.bluetooth => _handleBluetooth(
-          _requirePayload(request.bluetooth, request.kind),
-        ),
+        _requirePayload(request.bluetooth, request.kind),
+      ),
       RuntimeHostInteractionKind.ttsSynthesis => _handleTtsSynthesis(
-          _requirePayload(request.ttsSynthesis, request.kind),
-        ),
+        _requirePayload(request.ttsSynthesis, request.kind),
+      ),
       RuntimeHostInteractionKind.ttsPlayback => _handleTtsPlayback(
-          _requirePayload(request.ttsPlayback, request.kind),
-        ),
+        _requirePayload(request.ttsPlayback, request.kind),
+      ),
       RuntimeHostInteractionKind.toolPermission => throw StateError(
-          'tool permission is handled by the approval bridge',
-        ),
+        'tool permission is handled by the approval bridge',
+      ),
     };
   }
 
@@ -175,21 +181,35 @@ class RuntimeHostInteractionSubscriber {
     return _response(
       composeWebViewController:
           RuntimeHostInteractionComposeWebViewControllerResponse(
-        result: result,
-      ),
+            result: result,
+          ),
     );
   }
 
   static Future<RuntimeHostInteractionResponse>
-      _handleSystemCaptureScreenshot() async {
+  _handleSystemCaptureScreenshot() async {
     final rawResponse = await _channel.invokeMethod<Object?>(
       'ownerSystemCaptureScreenshot',
     );
     final response =
         RuntimeHostInteractionSystemCaptureScreenshotResponse.fromJson(
-      _requireMethodResponseMap(rawResponse, 'ownerSystemCaptureScreenshot'),
-    );
+          _requireMethodResponseMap(
+            rawResponse,
+            'ownerSystemCaptureScreenshot',
+          ),
+        );
     return _response(systemCaptureScreenshot: response);
+  }
+
+  static Future<RuntimeHostInteractionResponse>
+  _handleSystemLanguageCode() async {
+    final rawResponse = await _channel.invokeMethod<Object?>(
+      'ownerSystemLanguageCode',
+    );
+    final response = RuntimeHostInteractionSystemLanguageCodeResponse.fromJson(
+      _requireMethodResponseMap(rawResponse, 'ownerSystemLanguageCode'),
+    );
+    return _response(systemLanguageCode: response);
   }
 
   static Future<RuntimeHostInteractionResponse> _handleSystemRecognizeText(
@@ -285,7 +305,9 @@ class RuntimeHostInteractionSubscriber {
     return RuntimeHostInteractionWebVisitResponse(
       requestId: response.requestId,
       success: response.success,
-      result: response.result == null ? null : _webVisitResult(response.result!),
+      result: response.result == null
+          ? null
+          : _webVisitResult(response.result!),
       error: response.error,
     );
   }
@@ -334,9 +356,10 @@ class RuntimeHostInteractionSubscriber {
     RuntimeHostInteractionBrowserAutomationResponse? browserAutomation,
     RuntimeHostInteractionWebVisitResponse? webVisit,
     RuntimeHostInteractionComposeWebViewControllerResponse?
-        composeWebViewController,
+    composeWebViewController,
     RuntimeHostInteractionSystemCaptureScreenshotResponse?
-        systemCaptureScreenshot,
+    systemCaptureScreenshot,
+    RuntimeHostInteractionSystemLanguageCodeResponse? systemLanguageCode,
     RuntimeHostInteractionSystemRecognizeTextResponse? systemRecognizeText,
     RuntimeHostInteractionAudioPlayResponse? audioPlay,
     RuntimeHostInteractionMusicPlaybackResponse? musicPlayback,
@@ -350,6 +373,7 @@ class RuntimeHostInteractionSubscriber {
       webVisit: webVisit,
       composeWebViewController: composeWebViewController,
       systemCaptureScreenshot: systemCaptureScreenshot,
+      systemLanguageCode: systemLanguageCode,
       systemRecognizeText: systemRecognizeText,
       audioPlay: audioPlay,
       musicPlayback: musicPlayback,

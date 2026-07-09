@@ -31,7 +31,8 @@ pub struct ProviderRuntimeSupportService;
 impl ProviderRuntimeSupportService {
     /// Installs provider runtime support for this process.
     pub fn install() -> Result<(), String> {
-        setProviderRuntimeSupport(Arc::new(RuntimeProviderSupport)).map_err(|error| error.to_string())
+        setProviderRuntimeSupport(Arc::new(RuntimeProviderSupport))
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -154,7 +155,11 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
     }
 
     /// Returns a provider profile by id.
-    fn providerProfile(&self, rootDir: PathBuf, providerId: &str) -> Result<ProviderProfile, String> {
+    fn providerProfile(
+        &self,
+        rootDir: PathBuf,
+        providerId: &str,
+    ) -> Result<ProviderProfile, String> {
         ModelConfigManager::new(rootDir)
             .getProviderProfile(providerId)
             .map_err(|error| error.to_string())

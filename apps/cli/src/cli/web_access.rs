@@ -10,9 +10,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::mdns::MdnsRegistration;
-use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
-use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
+use operit_providers::chat::enhance::ConversationService::ConversationService;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -271,11 +271,15 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
 
     let mut core = create_local_core();
     core.localApplicationMut().onCreate()?;
-    let main_core = core
-        .localApplicationMut()
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN);
-    main_core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
+    {
+        let application = core.localApplicationMut();
+        let mut holder = application
+            .chatRuntimeHolder
+            .try_lock()
+            .map_err(|_| "Chat runtime holder is busy".to_string())?;
+        holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService =
+            Some(EnhancedAIService::new(ConversationService));
+    }
     super::link::install_link_permission_requester(&mut core);
 
     println!("runtimeMode=local");

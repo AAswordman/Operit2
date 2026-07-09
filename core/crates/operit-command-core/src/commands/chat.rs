@@ -16,8 +16,21 @@ use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
+use operit_runtime::services::ChatServiceCore::ChatServiceCore;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_util::stream::Stream::Stream;
+
+/// Runs a synchronous action against the local main chat runtime core.
+fn with_main_chat_core<R>(
+    application: &OperitApplication,
+    action: impl FnOnce(&mut ChatServiceCore) -> R,
+) -> Result<R, String> {
+    let mut holder = application
+        .chatRuntimeHolder
+        .try_lock()
+        .map_err(|_| "Chat runtime holder is busy".to_string())?;
+    Ok(action(holder.getCore(ChatRuntimeSlot::MAIN)))
+}
 
 pub fn run_chat_command(
     application: &mut OperitApplication,
@@ -59,12 +72,8 @@ fn list_chats(
     application: &mut OperitApplication,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    for chat in application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .chatHistoriesFlow()
-        .value()
-    {
+    let chats = with_main_chat_core(application, |core| core.chatHistoriesFlow().value())?;
+    for chat in chats {
         output.push_stdout_line(format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             chat.id,
@@ -92,16 +101,18 @@ fn show_chat(
         .get(0)
         .ok_or_else(|| "usage: operit2 chat show <chat-id> [--runtime]".to_string())?
         .clone();
-    let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-    core.switchChat(chatId.clone());
-    let chat = core
-        .chatHistoriesFlow()
-        .value()
-        .into_iter()
-        .find(|chat| chat.id == chatId)
-        .ok_or_else(|| format!("chat not found: {chatId}"))?;
+    let (chat, messages) = with_main_chat_core(application, |core| {
+        core.switchChat(chatId.clone());
+        let chat = core
+            .chatHistoriesFlow()
+            .value()
+            .into_iter()
+            .find(|chat| chat.id == chatId)
+            .ok_or_else(|| format!("chat not found: {chatId}"))?;
+        Ok::<_, String>((chat, core.chatHistoryFlow().value()))
+    })??;
     print_chat_history_header(&chat, output);
-    for message in core.chatHistoryFlow().value() {
+    for message in messages {
         print_chat_message(&message, output);
     }
     Ok(())
@@ -116,10 +127,7 @@ fn delete_chat(
         .get(0)
         .ok_or_else(|| "usage: operit2 chat delete <chat-id>".to_string())?
         .clone();
-    application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .deleteChatHistory(chatId.clone());
+    with_main_chat_core(application, |core| core.deleteChatHistory(chatId.clone()))?;
     output.push_stdout_line(format!("chat deleted: {chatId}"));
     Ok(())
 }
@@ -134,10 +142,7 @@ fn delete_chat_message(
         .ok_or_else(|| "usage: operit2 chat delete-message <index>".to_string())?
         .parse::<usize>()
         .map_err(|error| error.to_string())?;
-    application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .deleteMessage(index);
+    with_main_chat_core(application, |core| core.deleteMessage(index))?;
     output.push_stdout_line(format!("message deleted: {index}"));
     Ok(())
 }
@@ -146,10 +151,7 @@ fn clear_current_chat(
     application: &mut OperitApplication,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .clearCurrentChat();
+    with_main_chat_core(application, |core| core.clearCurrentChat())?;
     output.push_stdout_line("current chat cleared");
     Ok(())
 }
@@ -164,10 +166,7 @@ fn rollback_chat(
         .ok_or_else(|| "usage: operit2 chat rollback <message-index>".to_string())?
         .parse::<usize>()
         .map_err(|error| error.to_string())?;
-    let rolledBack = application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .rollbackToMessage(index);
+    let rolledBack = with_main_chat_core(application, |core| core.rollbackToMessage(index))?;
     if rolledBack.is_some() {
         output.push_stdout_line(format!("rolled back to message: {index}"));
     } else {
@@ -182,12 +181,12 @@ fn create_chat_branch(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let upToMessageTimestamp = parse_branch_args(args)?;
-    let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-    core.createBranch(upToMessageTimestamp);
-    let chatId = core
-        .currentChatIdFlow()
-        .value()
-        .ok_or_else(|| "core did not create branch".to_string())?;
+    let chatId = with_main_chat_core(application, |core| {
+        core.createBranch(upToMessageTimestamp);
+        core.currentChatIdFlow()
+            .value()
+            .ok_or_else(|| "core did not create branch".to_string())
+    })??;
     output.push_stdout_line(chatId);
     Ok(())
 }
@@ -197,15 +196,17 @@ fn list_chat_branches(
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-    let parentChatId = match args.get(0) {
-        Some(chatId) => chatId.clone(),
-        None => core
-            .currentChatIdFlow()
-            .value()
-            .ok_or_else(|| "usage: operit2 chat branches [parent-chat-id]".to_string())?,
-    };
-    for chat in core.getBranches(parentChatId) {
+    let branches = with_main_chat_core(application, |core| {
+        let parentChatId = match args.get(0) {
+            Some(chatId) => chatId.clone(),
+            None => core
+                .currentChatIdFlow()
+                .value()
+                .ok_or_else(|| "usage: operit2 chat branches [parent-chat-id]".to_string())?,
+        };
+        Ok::<_, String>(core.getBranches(parentChatId))
+    })??;
+    for chat in branches {
         output.push_stdout_line(format!(
             "{}\t{}\t{}\t{}\t{}\t{}",
             chat.id, chat.title, chat.createdAt, chat.updatedAt, chat.locked, chat.pinned
@@ -220,10 +221,7 @@ fn update_chat_locked(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let (chatId, locked) = parse_chat_bool_update_args(args, "lock")?;
-    application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .updateChatLocked(chatId.clone(), locked);
+    with_main_chat_core(application, |core| core.updateChatLocked(chatId.clone(), locked))?;
     output.push_stdout_line(format!("chat locked={locked}: {chatId}"));
     Ok(())
 }
@@ -234,10 +232,7 @@ fn update_chat_pinned(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let (chatId, pinned) = parse_chat_bool_update_args(args, "pin")?;
-    application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .updateChatPinned(chatId.clone(), pinned);
+    with_main_chat_core(application, |core| core.updateChatPinned(chatId.clone(), pinned))?;
     output.push_stdout_line(format!("chat pinned={pinned}: {chatId}"));
     Ok(())
 }
@@ -246,12 +241,7 @@ fn show_current_chat(
     application: &mut OperitApplication,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    match application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .currentChatIdFlow()
-        .value()
-    {
+    match with_main_chat_core(application, |core| core.currentChatIdFlow().value())? {
         Some(chatId) => output.push_stdout_line(chatId),
         None => output.push_stdout_line(""),
     }
@@ -267,10 +257,7 @@ fn switch_chat_command(
         .get(0)
         .ok_or_else(|| "usage: operit2 chat switch <chat-id>".to_string())?
         .clone();
-    application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .switchChat(chatId.clone());
+    with_main_chat_core(application, |core| core.switchChat(chatId.clone()))?;
     output.push_stdout_line(format!("current chat: {chatId}"));
     Ok(())
 }
@@ -332,10 +319,9 @@ fn bind_chat_character(
         .ok_or_else(|| {
             "usage: operit2 chat bind-character <chat-id> <character-card-name>".to_string()
         })?;
-    application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .updateChatCharacterCard(chatId.clone(), Some(characterCardName));
+    with_main_chat_core(application, |core| {
+        core.updateChatCharacterCard(chatId.clone(), Some(characterCardName))
+    })?;
     output.push_stdout_line(format!("chat character binding updated: {chatId}"));
     Ok(())
 }
@@ -356,10 +342,9 @@ fn bind_chat_group_card(
         .ok_or_else(|| {
             "usage: operit2 chat bind-group <chat-id> <character-group-id>".to_string()
         })?;
-    application
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN)
-        .updateChatCharacterGroup(chatId.clone(), Some(characterGroupId));
+    with_main_chat_core(application, |core| {
+        core.updateChatCharacterGroup(chatId.clone(), Some(characterGroupId))
+    })?;
     output.push_stdout_line(format!("chat group binding updated: {chatId}"));
     Ok(())
 }
@@ -388,12 +373,12 @@ fn create_chat(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let (characterCardName, characterGroupId, group) = parse_chat_new_args(args)?;
-    let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-    core.createNewChat(characterCardName, group, true, true, characterGroupId);
-    let chatId = core
-        .currentChatIdFlow()
-        .value()
-        .ok_or_else(|| "core did not create chat".to_string())?;
+    let chatId = with_main_chat_core(application, |core| {
+        core.createNewChat(characterCardName, group, true, true, characterGroupId);
+        core.currentChatIdFlow()
+            .value()
+            .ok_or_else(|| "core did not create chat".to_string())
+    })??;
     output.push_stdout_line(chatId);
     Ok(())
 }
@@ -540,19 +525,21 @@ async fn send_chat_message_with_application(
 ) -> Result<ChatSendResult, String> {
     let beforeLastAiTimestamp =
         dispatch_chat_message_with_application(application, sendArgs).await?;
-    let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-    let currentChatId = core
-        .currentChatIdFlow()
-        .value()
-        .ok_or_else(|| "core has no active chat after send".to_string())?;
-    let mut aiMessage = core
-        .chatHistoryFlow()
-        .value()
-        .iter()
-        .rev()
-        .find(|message| message.sender == "ai" && message.timestamp > beforeLastAiTimestamp)
-        .ok_or_else(|| "core did not produce ai message for current turn".to_string())?
-        .clone();
+    let (currentChatId, mut aiMessage) = with_main_chat_core(application, |core| {
+        let currentChatId = core
+            .currentChatIdFlow()
+            .value()
+            .ok_or_else(|| "core has no active chat after send".to_string())?;
+        let aiMessage = core
+            .chatHistoryFlow()
+            .value()
+            .iter()
+            .rev()
+            .find(|message| message.sender == "ai" && message.timestamp > beforeLastAiTimestamp)
+            .ok_or_else(|| "core did not produce ai message for current turn".to_string())?
+            .clone();
+        Ok::<_, String>((currentChatId, aiMessage))
+    })??;
     if let Some(mut stream) = aiMessage.contentStream.clone() {
         let mut content = String::new();
         stream.collect(&mut |chunk| {
@@ -589,7 +576,8 @@ async fn dispatch_chat_message_with_application(
         .getModelBindingForFunction(FunctionType::CHAT)
         .map_err(|error| error.to_string())?;
     let turnOptions = ChatTurnOptions::default();
-    let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+    let mut holder = application.chatRuntimeHolder.lock().await;
+    let core = holder.getCore(ChatRuntimeSlot::MAIN);
     core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
     if let Some(chatId) = sendArgs.chatId.as_ref() {
         core.switchChat(chatId.clone());
@@ -655,18 +643,23 @@ fn wait_for_committed_ai_message(
 ) -> Result<ChatMessage, String> {
     let startedAt = Instant::now();
     loop {
-        let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-        if let Some(message) = core.chatHistoryFlow().value().into_iter().find(|message| {
-            message.sender == "ai"
-                && message.timestamp == timestamp
-                && message.contentStream.is_none()
-                && message.completedAt > 0
-        }) {
+        let result = with_main_chat_core(application, |core| {
+            if let Some(message) = core.chatHistoryFlow().value().into_iter().find(|message| {
+                message.sender == "ai"
+                    && message.timestamp == timestamp
+                    && message.contentStream.is_none()
+                    && message.completedAt > 0
+            }) {
+                return Ok(Some(message));
+            }
+            let stateByChatId = core.inputProcessingStateByChatIdFlow().value();
+            if let Some(InputProcessingState::Error { message }) = stateByChatId.get(chatId) {
+                return Err(message.clone());
+            }
+            Ok(None)
+        })??;
+        if let Some(message) = result {
             return Ok(message);
-        }
-        let stateByChatId = core.inputProcessingStateByChatIdFlow().value();
-        if let Some(InputProcessingState::Error { message }) = stateByChatId.get(chatId) {
-            return Err(message.clone());
         }
         if startedAt.elapsed() >= timeout {
             return Err(format!(

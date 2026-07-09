@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use quote::ToTokens;
 use syn::{
-    Fields, FnArg, ImplItem, ImplItemFn, Item, ItemEnum, ItemImpl, ItemStruct, Pat, ReturnType,
-    Type, TypePath, UseTree, Visibility,
+    Expr, Fields, FnArg, ImplItem, ImplItemFn, Item, ItemEnum, ItemImpl, ItemStruct, Lit, Meta,
+    Pat, ReturnType, Type, TypePath, UseTree, Visibility,
 };
 
 mod build_dart_codegen;
@@ -28,15 +28,20 @@ use build_utils::*;
 fn main() {
     let manifest_dir =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let runtime_root = SourceRoot::new(manifest_dir.join("../operit-runtime/src"), "operit_runtime");
+    let runtime_root =
+        SourceRoot::new(manifest_dir.join("../operit-runtime/src"), "operit_runtime");
     let model_root = SourceRoot::new(manifest_dir.join("../operit-model/src"), "operit_model");
     let store_root = SourceRoot::new(manifest_dir.join("../operit-store/src"), "operit_store");
     let util_root = SourceRoot::new(manifest_dir.join("../operit-util/src"), "operit_util");
     let tools_root = SourceRoot::new(manifest_dir.join("../operit-tools/src"), "operit_tools");
-    let providers_root =
-        SourceRoot::new(manifest_dir.join("../operit-providers/src"), "operit_providers");
-    let host_api_root =
-        SourceRoot::new(manifest_dir.join("../operit-host-api/src"), "operit_host_api");
+    let providers_root = SourceRoot::new(
+        manifest_dir.join("../operit-providers/src"),
+        "operit_providers",
+    );
+    let host_api_root = SourceRoot::new(
+        manifest_dir.join("../operit-host-api/src"),
+        "operit_host_api",
+    );
     let source_roots = vec![
         runtime_root.clone(),
         model_root,
@@ -102,18 +107,14 @@ fn main() {
     for spec in &factory_specs {
         println!("cargo:rerun-if-changed={}", spec.source_path.display());
     }
-    objects.extend(
-        factory_specs
-            .iter()
-            .map(|spec| {
-                scan_object(
-                    spec,
-                    &serializable_types,
-                    &deserializable_types,
-                    &type_registry,
-                )
-            }),
-    );
+    objects.extend(factory_specs.iter().map(|spec| {
+        scan_object(
+            spec,
+            &serializable_types,
+            &deserializable_types,
+            &type_registry,
+        )
+    }));
     let schema_json = build_rust_codegen::render_schema(&objects, &serializable_type_definitions);
     let generated =
         build_rust_codegen::render_generated(&objects, &schema_json, &error_type_definitions);

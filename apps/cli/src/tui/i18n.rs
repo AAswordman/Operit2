@@ -1,6 +1,6 @@
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_host_api::HostManager::HostManager;
 use operit_runtime::data::preferences::UserPreferencesManager::UserPreferencesManager;
-use operit_runtime::util::LocaleUtils::{LanguageCodes, LocaleUtils};
+use operit_util::LocaleUtils::{LanguageCodes, LocaleUtils};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum TuiLanguage {
@@ -16,8 +16,11 @@ pub(super) struct TuiText {
 include!(concat!(env!("OUT_DIR"), "/tui_i18n_generated.rs"));
 
 impl TuiLanguage {
-    pub(super) fn from_context(context: &OperitApplicationContext) -> Result<Self, String> {
-        let language_code = LocaleUtils::getCurrentLanguage(context)?;
+    pub(super) fn from_context(context: &HostManager) -> Result<Self, String> {
+        let saved_language = UserPreferencesManager::getInstance()
+            .getCurrentLanguage()
+            .map_err(|error| error.to_string())?;
+        let language_code = LocaleUtils::getCurrentLanguage(context, &saved_language)?;
         Self::from_language_code(&language_code)
     }
 

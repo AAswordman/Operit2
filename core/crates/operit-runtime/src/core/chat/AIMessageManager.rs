@@ -2,25 +2,25 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
+use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
+    MessageProcessingHookParams, MessageProcessingPluginRegistry,
+};
+use crate::data::preferences::ApiPreferences::ApiPreferences;
+use operit_model::AttachmentInfo::AttachmentInfo;
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
+use operit_model::PromptFunctionType::PromptFunctionType;
+use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_providers::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
 };
-use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
-use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
-    MessageProcessingHookParams, MessageProcessingPluginRegistry,
-};
-use operit_model::AttachmentInfo::AttachmentInfo;
-use operit_model::ChatMessage::ChatMessage;
-use operit_model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
-use operit_model::PromptFunctionType::PromptFunctionType;
-use crate::data::preferences::ApiPreferences::ApiPreferences;
+use operit_store::PreferencesDataStore::FlowLike;
 use operit_util::stream::HotStream::StreamStart;
 use operit_util::stream::RevisableTextStream::{share_revisable, with_event_channel_shared};
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
-use operit_store::PreferencesDataStore::FlowLike;
 
 const DEFAULT_CHAT_KEY: &str = "__DEFAULT_CHAT__";
 const MESSAGE_PROCESS_TIMING_TAG: &str = "MessageProcessTiming";
@@ -355,7 +355,8 @@ impl AIMessageManager {
         messages: Vec<ChatMessage>,
         autoContinue: bool,
         isGroupChat: bool,
-    ) -> Result<Option<ChatMessage>, operit_providers::chat::llmprovider::AIService::AiServiceError> {
+    ) -> Result<Option<ChatMessage>, operit_providers::chat::llmprovider::AIService::AiServiceError>
+    {
         let lastSummaryIndex = messages
             .iter()
             .rposition(|message| message.sender == "summary");

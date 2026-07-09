@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use operit_model::ModelConfigData::ApiProviderType;
-use operit_util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
+use operit_util::OperitPaths;
 
 /// Stores API, token accounting, tool visibility, and runtime preference values.
 pub struct ApiPreferences {

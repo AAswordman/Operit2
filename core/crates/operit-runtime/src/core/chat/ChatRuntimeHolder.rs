@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use crate::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_providers::chat::enhance::ConversationService::ConversationService;
-use operit_providers::chat::EnhancedAIService::EnhancedAIService;
-use operit_host_api::HostManager::HostManager;
-use operit_tools::tools::AIToolHandler::AIToolHandler;
 use crate::services::core::ChatHistoryDelegate::ChatSelectionMode;
 use crate::services::ChatServiceCore::ChatServiceCore;
+use operit_host_api::HostManager::HostManager;
+use operit_providers::chat::enhance::ConversationService::ConversationService;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
 
 /// Builds chat service cores for each runtime slot.
 pub struct ChatRuntimeCoreFactory {
@@ -16,9 +16,7 @@ pub struct ChatRuntimeCoreFactory {
 impl ChatRuntimeCoreFactory {
     /// Creates a factory used before host capabilities have been installed.
     pub fn bootstrap() -> Self {
-        Self {
-            hostManager: None,
-        }
+        Self { hostManager: None }
     }
 
     /// Creates a factory that wires chat cores to host-backed tools and services.

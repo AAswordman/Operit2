@@ -2,7 +2,7 @@ use std::env;
 use std::process::ExitCode;
 
 use error::CliError;
-use operit_runtime::util::AppLogger::AppLogger;
+use operit_util::AppLogger::AppLogger;
 
 mod access;
 mod bootstrap;

@@ -26,6 +26,8 @@ pub enum RuntimeHostInteractionKind {
     ComposeWebViewController,
     #[serde(rename = "system_capture_screenshot")]
     SystemCaptureScreenshot,
+    #[serde(rename = "system_language_code")]
+    SystemLanguageCode,
     #[serde(rename = "system_recognize_text")]
     SystemRecognizeText,
     #[serde(rename = "audio_play")]
@@ -51,6 +53,7 @@ pub struct RuntimeHostInteractionRequest {
     pub webVisit: Option<RuntimeHostInteractionWebVisitPayload>,
     pub composeWebViewController: Option<RuntimeHostInteractionComposeWebViewControllerPayload>,
     pub systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotPayload>,
+    pub systemLanguageCode: Option<RuntimeHostInteractionSystemLanguageCodePayload>,
     pub systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextPayload>,
     pub audioPlay: Option<RuntimeHostInteractionAudioPlayPayload>,
     pub musicPlayback: Option<RuntimeHostInteractionMusicPlaybackPayload>,
@@ -102,7 +105,15 @@ impl RuntimeHostInteractionRequest {
 
     fn systemCaptureScreenshot() -> Self {
         let mut request = Self::empty(RuntimeHostInteractionKind::SystemCaptureScreenshot);
-        request.systemCaptureScreenshot = Some(RuntimeHostInteractionSystemCaptureScreenshotPayload {});
+        request.systemCaptureScreenshot =
+            Some(RuntimeHostInteractionSystemCaptureScreenshotPayload {});
+        request
+    }
+
+    /// Builds a request for the current owner host language code.
+    fn systemLanguageCode() -> Self {
+        let mut request = Self::empty(RuntimeHostInteractionKind::SystemLanguageCode);
+        request.systemLanguageCode = Some(RuntimeHostInteractionSystemLanguageCodePayload {});
         request
     }
 
@@ -156,6 +167,7 @@ impl RuntimeHostInteractionRequest {
             webVisit: None,
             composeWebViewController: None,
             systemCaptureScreenshot: None,
+            systemLanguageCode: None,
             systemRecognizeText: None,
             audioPlay: None,
             musicPlayback: None,
@@ -203,6 +215,10 @@ pub struct RuntimeHostInteractionComposeWebViewControllerPayload {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Screenshot capture request marker.
 pub struct RuntimeHostInteractionSystemCaptureScreenshotPayload {}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// System language code request marker.
+pub struct RuntimeHostInteractionSystemLanguageCodePayload {}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// OCR request payload sent to the owner host.
@@ -311,6 +327,7 @@ pub struct RuntimeHostInteractionResponse {
     pub webVisit: Option<RuntimeHostInteractionWebVisitResponse>,
     pub composeWebViewController: Option<RuntimeHostInteractionComposeWebViewControllerResponse>,
     pub systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotResponse>,
+    pub systemLanguageCode: Option<RuntimeHostInteractionSystemLanguageCodeResponse>,
     pub systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextResponse>,
     pub audioPlay: Option<RuntimeHostInteractionAudioPlayResponse>,
     pub musicPlayback: Option<RuntimeHostInteractionMusicPlaybackResponse>,
@@ -350,6 +367,13 @@ impl RuntimeHostInteractionResponse {
     ) -> Self {
         let mut value = Self::empty();
         value.systemCaptureScreenshot = Some(response);
+        value
+    }
+
+    /// Builds a system language response envelope.
+    pub fn systemLanguageCode(response: RuntimeHostInteractionSystemLanguageCodeResponse) -> Self {
+        let mut value = Self::empty();
+        value.systemLanguageCode = Some(response);
         value
     }
 
@@ -410,6 +434,7 @@ impl RuntimeHostInteractionResponse {
             webVisit: None,
             composeWebViewController: None,
             systemCaptureScreenshot: None,
+            systemLanguageCode: None,
             systemRecognizeText: None,
             audioPlay: None,
             musicPlayback: None,
@@ -474,6 +499,12 @@ pub struct RuntimeHostInteractionComposeWebViewControllerResponse {
 /// Screenshot capture response payload.
 pub struct RuntimeHostInteractionSystemCaptureScreenshotResponse {
     pub path: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// System language response payload.
+pub struct RuntimeHostInteractionSystemLanguageCodeResponse {
+    pub languageCode: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -665,6 +696,20 @@ pub fn requestOwnerSystemCaptureScreenshot(
     response
         .systemCaptureScreenshot
         .ok_or_else(|| "system capture screenshot response payload is missing".to_string())
+}
+
+/// Requests the current system language code from the owner host.
+pub fn requestOwnerSystemLanguageCode(
+    timeout: Duration,
+) -> Result<RuntimeHostInteractionSystemLanguageCodeResponse, String> {
+    let response = runtimeHostInteractionBroker().request(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::systemLanguageCode(),
+        timeout,
+    )?;
+    response
+        .systemLanguageCode
+        .ok_or_else(|| "system language code response payload is missing".to_string())
 }
 
 /// Requests OCR for an image from the owner host.

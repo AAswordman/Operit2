@@ -2,10 +2,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use operit_providers::chat::llmprovider::ModelConfigConnectionTester::{
-    ModelConfigConnectionTester, ModelConnectionTestReport,
-};
-use operit_providers::chat::llmprovider::ModelListFetcher::ModelListFetcher;
+use crate::data::preferences::ApiPreferences::ApiPreferences;
 use operit_model::ModelCatalog::ModelCatalog;
 use operit_model::ModelConfigData::{
     default_deepseek_provider, ApiProviderType, AvailableProviderModel,
@@ -14,7 +11,10 @@ use operit_model::ModelConfigData::{
     ProviderProfile, ResolvedModelConfig,
 };
 use operit_model::ModelParameter::ModelParameter;
-use crate::data::preferences::ApiPreferences::ApiPreferences;
+use operit_providers::chat::llmprovider::ModelConfigConnectionTester::{
+    ModelConfigConnectionTester, ModelConnectionTestReport,
+};
+use operit_providers::chat::llmprovider::ModelListFetcher::ModelListFetcher;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
@@ -164,8 +164,7 @@ impl ModelConfigManager {
     /// Reads provider catalog entries from the built-in catalog.
     pub fn getProviderCatalogEntries(
         &self,
-    ) -> Result<Vec<operit_model::ModelConfigData::ProviderCatalogEntry>, ModelConfigError>
-    {
+    ) -> Result<Vec<operit_model::ModelConfigData::ProviderCatalogEntry>, ModelConfigError> {
         ModelCatalog::providers().map_err(ModelConfigError::ModelListFetch)
     }
 
@@ -787,8 +786,7 @@ impl ModelConfigManager {
     fn catalogModelForProfile(
         provider: &ProviderProfile,
         model: &ModelProfile,
-    ) -> Result<Option<operit_model::ModelConfigData::ModelCatalogEntry>, ModelConfigError>
-    {
+    ) -> Result<Option<operit_model::ModelConfigData::ModelCatalogEntry>, ModelConfigError> {
         match &model.catalogKey {
             Some(key) => ModelCatalog::model(&key.providerTypeId, &key.modelId)
                 .map(Some)
@@ -840,8 +838,8 @@ impl ModelConfigManager {
 #[cfg(test)]
 mod tests {
     use super::{ModelConfigError, ModelConfigManager};
-    use operit_model::ModelConfigData::ModelConfigDefaults;
     use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorageHost};
+    use operit_model::ModelConfigData::ModelConfigDefaults;
     use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
     use operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRoot;
     use std::fs;

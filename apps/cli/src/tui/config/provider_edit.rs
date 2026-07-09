@@ -6,7 +6,7 @@ use ratatui::Frame;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use operit_runtime::data::model::ModelConfigData::ApiProviderType;
+use operit_model::ModelConfigData::ApiProviderType;
 
 use crate::tui::theme;
 
@@ -136,7 +136,7 @@ impl FormState {
     }
 
     pub(crate) fn new_edit(
-        profile: &operit_runtime::data::model::ModelConfigData::ProviderProfile,
+        profile: &operit_model::ModelConfigData::ProviderProfile,
     ) -> Self {
         Self {
             fields: vec![

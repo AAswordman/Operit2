@@ -4,13 +4,13 @@ use operit_store::PreferencesDataStore::{
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use uuid::Uuid;
 
-use operit_providers::voice::TtsVoiceListFetcher::TtsVoiceListFetcher;
+use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use operit_model::TtsCatalog::TtsCatalog;
 use operit_model::TtsConfig::{
     AvailableTtsVoice, TtsConfig, TtsHttpHeader, TtsHttpResponsePipelineStep,
     TtsProviderCatalogEntry, TtsProviderType,
 };
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use operit_providers::voice::TtsVoiceListFetcher::TtsVoiceListFetcher;
 
 const DEFAULT_SYSTEM_TTS_CONFIG_ID: &str = "system_tts_default";
 
@@ -21,6 +21,7 @@ pub struct TtsConfigManager {
 }
 
 impl TtsConfigManager {
+    /// Creates a text-to-speech configuration manager backed by runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
             dataStore: PreferencesDataStore::new(paths.tts_configs_preferences_path()),
@@ -29,6 +30,7 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a text-to-speech configuration manager using default runtime store paths.
     pub fn getInstance() -> Self {
         Self::new(RuntimeStorePaths::default())
     }
@@ -44,6 +46,7 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes the ordered list of text-to-speech configuration identifiers.
     pub fn ttsConfigListFlow(&self) -> Flow<Vec<String>> {
         self.dataStore
             .dataFlow()
@@ -51,6 +54,7 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes the identifier of the currently selected text-to-speech configuration.
     pub fn currentTtsConfigIdFlow(&self) -> Flow<String> {
         self.dataStore
             .dataFlow()
@@ -58,6 +62,7 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Reads the currently selected text-to-speech configuration identifier.
     pub fn getCurrentTtsConfigId(&self) -> Result<String, String> {
         self.bootstrapDefaultSystemTtsConfig()?;
         self.currentTtsConfigIdFlow()
@@ -66,12 +71,14 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Reads the currently selected text-to-speech configuration.
     pub fn getCurrentTtsConfig(&self) -> Result<TtsConfig, String> {
         let id = self.getCurrentTtsConfigId()?;
         self.getTtsConfig(&id)
     }
 
     #[allow(non_snake_case)]
+    /// Selects the active text-to-speech configuration by identifier.
     pub fn setCurrentTtsConfigId(&self, id: &str) -> Result<String, String> {
         self.bootstrapDefaultSystemTtsConfig()?;
         let id = id.trim().to_string();
@@ -88,6 +95,7 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Reads every configured text-to-speech provider or voice profile.
     pub fn getAllTtsConfigs(&self) -> Result<Vec<TtsConfig>, String> {
         self.bootstrapDefaultSystemTtsConfig()?;
         let ids = self
@@ -102,11 +110,13 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Reads the built-in catalog of supported text-to-speech provider presets.
     pub fn getProviderCatalogEntries(&self) -> Result<Vec<TtsProviderCatalogEntry>, String> {
         TtsCatalog::providers()
     }
 
     #[allow(non_snake_case)]
+    /// Reads one text-to-speech configuration by identifier.
     pub fn getTtsConfig(&self, id: &str) -> Result<TtsConfig, String> {
         self.bootstrapDefaultSystemTtsConfig()?;
         self.getTtsConfigFlow(id)
@@ -115,6 +125,7 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes one text-to-speech configuration by identifier.
     pub fn getTtsConfigFlow(&self, id: &str) -> Flow<TtsConfig> {
         let id = id.trim().to_string();
         self.dataStore
@@ -123,6 +134,7 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a text-to-speech configuration and assigns store timestamps.
     pub fn createTtsConfig(&self, config: TtsConfig) -> Result<TtsConfig, String> {
         self.bootstrapDefaultSystemTtsConfig()?;
         let now = currentTimeMillis();
@@ -149,6 +161,7 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Lists available voices reported by a provider configuration.
     pub fn getAvailableTtsVoices(
         &self,
         providerConfigId: &str,
@@ -158,6 +171,7 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a voice configuration from one provider-reported voice entry.
     pub fn addTtsVoiceFromAvailable(
         &self,
         providerConfigId: &str,
@@ -176,6 +190,7 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a voice configuration from custom model and voice values.
     pub fn createCustomTtsVoice(
         &self,
         providerConfigId: &str,
@@ -227,6 +242,7 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Updates a text-to-speech configuration and preserves its creation timestamp.
     pub fn updateTtsConfig(&self, config: TtsConfig) -> Result<TtsConfig, String> {
         self.bootstrapDefaultSystemTtsConfig()?;
         let id = config.id.trim().to_string();
@@ -257,6 +273,7 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
+    /// Deletes a text-to-speech configuration and reports whether it existed.
     pub fn deleteTtsConfig(&self, id: &str) -> Result<bool, String> {
         let id = id.trim().to_string();
         if id.is_empty() {

@@ -136,6 +136,7 @@ impl ToolPermissionSystem {
             .clear();
     }
 
+    /// Saves the global AI permission mode used to allow or block tool effects.
     #[allow(non_snake_case)]
     pub fn saveAiPermissionMode(
         &self,
@@ -146,11 +147,14 @@ impl ToolPermissionSystem {
         })
     }
 
+    /// Reads the global AI permission mode used to allow or block tool effects.
     #[allow(non_snake_case)]
     pub fn getAiPermissionMode(&self) -> Result<AiPermissionMode, PreferencesDataStoreError> {
         let preferences = self.dataStore.data()?;
         AiPermissionMode::fromString(
-            preferences.get(&Self::AI_PERMISSION_MODE()).map(String::as_str),
+            preferences
+                .get(&Self::AI_PERMISSION_MODE())
+                .map(String::as_str),
         )
     }
 
@@ -165,6 +169,7 @@ impl ToolPermissionSystem {
             .unwrap_or_else(|| format!("Tool operation: {}", tool.name))
     }
 
+    /// Requests approval for a package tool invocation.
     #[allow(non_snake_case)]
     pub fn checkPackageToolApproval(
         &self,
@@ -173,6 +178,7 @@ impl ToolPermissionSystem {
         self.requestPermission(tool)
     }
 
+    /// Requests approval for a tool invocation that can escape the sandbox boundary.
     #[allow(non_snake_case)]
     pub fn checkSandboxEscapeApproval(
         &self,

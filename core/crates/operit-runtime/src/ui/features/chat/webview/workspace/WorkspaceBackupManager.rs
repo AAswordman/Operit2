@@ -7,13 +7,13 @@ use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use operit_tools::ConversationMarkupManager::ToolResult;
-use operit_tools::ToolExecutionManager::AITool;
+use crate::ui::features::chat::webview::workspace::process::GitIgnoreFilter::GitIgnoreFilter;
 use operit_host_api::HostManager::HostManager;
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_tools::tools::AIToolHook::AIToolHook;
-use crate::ui::features::chat::webview::workspace::process::GitIgnoreFilter::GitIgnoreFilter;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::AITool;
 
 const BACKUP_DIR_NAME: &str = ".backup";
 const OBJECTS_DIR_NAME: &str = "objects";

@@ -137,6 +137,7 @@ pub(crate) struct SourceMethod {
     pub(crate) rust_return_type: String,
     pub(crate) is_async: bool,
     pub(crate) cfg_attrs: Vec<String>,
+    pub(crate) doc_lines: Vec<String>,
     pub(crate) protocol: MethodProtocol,
 }
 
@@ -222,7 +223,9 @@ pub(crate) enum MethodProtocol {
 #[derive(Clone, Debug)]
 pub(crate) enum CallProtocol {
     Unit,
-    ResultUnit { error_type: String },
+    ResultUnit {
+        error_type: String,
+    },
     Value(String),
     ResultValue {
         value_type: String,

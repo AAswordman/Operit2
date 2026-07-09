@@ -5,21 +5,34 @@ use std::time::{Duration, Instant};
 
 use crate::bootstrap::create_cli_application;
 use crate::core_proxy::{local_cli_core, CliCore};
-use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
-use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
+use operit_model::AttachmentInfo::AttachmentInfo;
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatTurnOptions::ChatTurnOptions;
+use operit_model::FunctionType::FunctionType;
+use operit_model::InputProcessingState::InputProcessingState;
+use operit_model::PromptFunctionType::PromptFunctionType;
+use operit_providers::chat::enhance::ConversationService::ConversationService;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_runtime::data::model::AttachmentInfo::AttachmentInfo;
-use operit_runtime::data::model::ChatMessage::ChatMessage;
-use operit_runtime::data::model::ChatTurnOptions::ChatTurnOptions;
-use operit_runtime::data::model::FunctionType::FunctionType;
-use operit_runtime::data::model::InputProcessingState::InputProcessingState;
-use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
-use operit_runtime::data::repository::ChatHistoryManager::ChatHistoryManager;
+use operit_runtime::services::ChatServiceCore::ChatServiceCore;
 use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
-use operit_runtime::util::stream::Stream::Stream;
+use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
+use operit_util::stream::Stream::Stream;
+
+/// Runs a synchronous action against the local main chat runtime core.
+fn with_main_chat_core<R>(
+    application: &OperitApplication,
+    action: impl FnOnce(&mut ChatServiceCore) -> R,
+) -> Result<R, String> {
+    let mut holder = application
+        .chatRuntimeHolder
+        .try_lock()
+        .map_err(|_| "Chat runtime holder is busy".to_string())?;
+    Ok(action(holder.getCore(ChatRuntimeSlot::MAIN)))
+}
 
 pub(super) async fn run_chat_shell_command_with_core(
     core: &mut CliCore,
@@ -674,28 +687,29 @@ pub(crate) fn initialize_shell_chat(
     application: &mut OperitApplication,
     shellArgs: &ShellArgs,
 ) -> Result<String, String> {
-    let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-    core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
-    if let Some(chatId) = shellArgs.chatId.clone() {
-        ensure_chat_exists(&chatId)?;
-        core.switchChat(chatId.clone());
-        Ok(chatId)
-    } else if shellArgs.resume {
-        let chatId = latest_chat_id()?;
-        core.switchChat(chatId.clone());
-        Ok(chatId)
-    } else {
-        core.createNewChat(
-            shellArgs.characterCardName.clone(),
-            shellArgs.group.clone(),
-            true,
-            true,
-            shellArgs.characterGroupId.clone(),
-        );
-        core.currentChatIdFlow()
-            .value()
-            .ok_or_else(|| "core did not create chat".to_string())
-    }
+    with_main_chat_core(application, |core| {
+        core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
+        if let Some(chatId) = shellArgs.chatId.clone() {
+            ensure_chat_exists(&chatId)?;
+            core.switchChat(chatId.clone());
+            Ok(chatId)
+        } else if shellArgs.resume {
+            let chatId = latest_chat_id()?;
+            core.switchChat(chatId.clone());
+            Ok(chatId)
+        } else {
+            core.createNewChat(
+                shellArgs.characterCardName.clone(),
+                shellArgs.group.clone(),
+                true,
+                true,
+                shellArgs.characterGroupId.clone(),
+            );
+            core.currentChatIdFlow()
+                .value()
+                .ok_or_else(|| "core did not create chat".to_string())
+        }
+    })?
 }
 
 fn latest_chat_id() -> Result<String, String> {
@@ -759,10 +773,11 @@ pub(crate) fn ensure_chat_exists(chatId: &str) -> Result<(), String> {
 }
 
 pub(crate) fn current_shell_chat_id(application: &mut OperitApplication) -> Result<String, String> {
-    let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-    core.currentChatIdFlow()
-        .value()
-        .ok_or_else(|| "no active chat in shell".to_string())
+    with_main_chat_core(application, |core| {
+        core.currentChatIdFlow()
+            .value()
+            .ok_or_else(|| "no active chat in shell".to_string())
+    })?
 }
 
 async fn current_shell_chat_id_with_core(core: &mut CliCore) -> Result<String, String> {
@@ -799,18 +814,18 @@ async fn handle_shell_command(
             if shellArgs.chatId.is_some() {
                 return Err("shell /new does not accept --chat".to_string());
             }
-            let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-            core.createNewChat(
-                shellArgs.characterCardName,
-                shellArgs.group,
-                true,
-                true,
-                shellArgs.characterGroupId,
-            );
-            let chatId = core
-                .currentChatIdFlow()
-                .value()
-                .ok_or_else(|| "core did not create chat".to_string())?;
+            let chatId = with_main_chat_core(application, |core| {
+                core.createNewChat(
+                    shellArgs.characterCardName,
+                    shellArgs.group,
+                    true,
+                    true,
+                    shellArgs.characterGroupId,
+                );
+                core.currentChatIdFlow()
+                    .value()
+                    .ok_or_else(|| "core did not create chat".to_string())
+            })??;
             println!("chat={chatId}");
         }
         "switch" => {
@@ -819,8 +834,7 @@ async fn handle_shell_command(
                 .ok_or_else(|| "usage: /switch <chat-id>".to_string())?
                 .clone();
             ensure_chat_exists(&chatId)?;
-            let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-            core.switchChat(chatId.clone());
+            with_main_chat_core(application, |core| core.switchChat(chatId.clone()))?;
             println!("chat={chatId}");
         }
         "resume" => {
@@ -847,8 +861,7 @@ async fn handle_shell_command(
                 println!("no previous chat to resume");
                 return Ok(ShellLoopControl::Continue);
             };
-            let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-            core.switchChat(target.id.clone());
+            with_main_chat_core(application, |core| core.switchChat(target.id.clone()))?;
             println!("chat={}", target.id);
         }
         "show" => {
@@ -861,8 +874,8 @@ async fn handle_shell_command(
                 .find(|chat| chat.id == chatId)
                 .ok_or_else(|| format!("chat not found: {chatId}"))?;
             print_chat_history_header(&chat);
-            let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-            for message in core.chatHistoryFlow().value() {
+            let messages = with_main_chat_core(application, |core| core.chatHistoryFlow().value())?;
+            for message in messages {
                 print_chat_message(&message);
             }
         }
@@ -1115,19 +1128,21 @@ pub(crate) async fn begin_chat_message_with_application(
 ) -> Result<ChatSendResult, String> {
     let beforeLastAiTimestamp =
         dispatch_chat_message_with_application(application, sendArgs).await?;
-    let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-    let currentChatId = core
-        .currentChatIdFlow()
-        .value()
-        .ok_or_else(|| "core has no active chat after send".to_string())?;
-    let aiMessage = core
-        .chatHistoryFlow()
-        .value()
-        .iter()
-        .rev()
-        .find(|message| message.sender == "ai" && message.timestamp > beforeLastAiTimestamp)
-        .ok_or_else(|| "core did not produce ai message for current turn".to_string())?
-        .clone();
+    let (currentChatId, aiMessage) = with_main_chat_core(application, |core| {
+        let currentChatId = core
+            .currentChatIdFlow()
+            .value()
+            .ok_or_else(|| "core has no active chat after send".to_string())?;
+        let aiMessage = core
+            .chatHistoryFlow()
+            .value()
+            .iter()
+            .rev()
+            .find(|message| message.sender == "ai" && message.timestamp > beforeLastAiTimestamp)
+            .ok_or_else(|| "core did not produce ai message for current turn".to_string())?
+            .clone();
+        Ok::<_, String>((currentChatId, aiMessage))
+    })??;
     Ok(ChatSendResult {
         chatId: currentChatId,
         aiMessage,
@@ -1150,7 +1165,8 @@ pub(crate) async fn dispatch_chat_message_with_application(
         .getModelBindingForFunction(FunctionType::CHAT)
         .map_err(|error| error.to_string())?;
     let turnOptions = ChatTurnOptions::default();
-    let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
+    let mut holder = application.chatRuntimeHolder.lock().await;
+    let core = holder.getCore(ChatRuntimeSlot::MAIN);
     core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
     if let Some(chatId) = sendArgs.chatId.as_ref() {
         core.switchChat(chatId.clone());
@@ -1226,53 +1242,56 @@ pub(crate) fn launch_chat_message_with_application(
     let chatBinding = functionalConfigManager
         .getModelBindingForFunction(FunctionType::CHAT)
         .map_err(|error| error.to_string())?;
-    let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-    core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
-    if let Some(chatId) = sendArgs.chatId.as_ref() {
-        core.switchChat(chatId.clone());
-    }
-    let chatId = core
-        .currentChatIdFlow()
-        .value()
-        .ok_or_else(|| "core has no active chat before send".to_string())?;
+    let (chatId, replyToMessage, messageText, mut service, mut delegate) =
+        with_main_chat_core(application, |core| {
+            core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
+            if let Some(chatId) = sendArgs.chatId.as_ref() {
+                core.switchChat(chatId.clone());
+            }
+            let chatId = core
+                .currentChatIdFlow()
+                .value()
+                .ok_or_else(|| "core has no active chat before send".to_string())?;
+            let replyToMessage = match sendArgs.replyToTimestamp {
+                Some(timestamp) => core
+                    .chatHistoryFlow()
+                    .value()
+                    .iter()
+                    .find(|message| message.timestamp == timestamp)
+                    .cloned()
+                    .ok_or_else(|| format!("reply-to message not found: {timestamp}"))?,
+                None => ChatMessage::new(String::new()),
+            };
+            let replyToMessage = if replyToMessage.sender.is_empty() {
+                None
+            } else {
+                Some(replyToMessage)
+            };
+            let messageText = sendArgs.message;
+            let service = core
+                .enhancedAiService
+                .clone()
+                .ok_or_else(|| "ai service is not initialized".to_string())?;
+            let chatHistoryDelegate = core.chatHistoryDelegate.clone_for_core();
+            let messageProcessingDelegate = core.messageProcessingDelegate.clone_for_core();
+            let mut delegate =
+                MessageCoordinationDelegate::new(chatHistoryDelegate, messageProcessingDelegate);
+            if let Some(coreDelegate) = core.messageCoordinationDelegate.as_mut() {
+                coreDelegate
+                    .tokenStatisticsDelegate
+                    .setActiveChatId(Some(chatId.clone()));
+                coreDelegate
+                    .tokenStatisticsDelegate
+                    .bindChatService(Some(chatId.clone()), &service);
+                delegate.tokenStatisticsDelegate = coreDelegate.tokenStatisticsDelegate.clone();
+            }
+            Ok::<_, String>((chatId, replyToMessage, messageText, service, delegate))
+        })??;
     let attachments = sendArgs
         .attachmentPaths
         .iter()
         .map(|path| build_attachment_info(path))
         .collect::<Result<Vec<_>, _>>()?;
-    let replyToMessage = match sendArgs.replyToTimestamp {
-        Some(timestamp) => core
-            .chatHistoryFlow()
-            .value()
-            .iter()
-            .find(|message| message.timestamp == timestamp)
-            .cloned()
-            .ok_or_else(|| format!("reply-to message not found: {timestamp}"))?,
-        None => ChatMessage::new(String::new()),
-    };
-    let replyToMessage = if replyToMessage.sender.is_empty() {
-        None
-    } else {
-        Some(replyToMessage)
-    };
-    let messageText = sendArgs.message;
-    let mut service = core
-        .enhancedAiService
-        .clone()
-        .ok_or_else(|| "ai service is not initialized".to_string())?;
-    let chatHistoryDelegate = core.chatHistoryDelegate.clone_for_core();
-    let messageProcessingDelegate = core.messageProcessingDelegate.clone_for_core();
-    let mut delegate =
-        MessageCoordinationDelegate::new(chatHistoryDelegate, messageProcessingDelegate);
-    if let Some(coreDelegate) = core.messageCoordinationDelegate.as_mut() {
-        coreDelegate
-            .tokenStatisticsDelegate
-            .setActiveChatId(Some(chatId.clone()));
-        coreDelegate
-            .tokenStatisticsDelegate
-            .bindChatService(Some(chatId.clone()), &service);
-        delegate.tokenStatisticsDelegate = coreDelegate.tokenStatisticsDelegate.clone();
-    }
     let threadChatId = chatId.clone();
     std::thread::spawn(move || {
         let runtimeResult = tokio::runtime::Builder::new_current_thread()
@@ -1343,18 +1362,23 @@ fn wait_for_committed_ai_message(
 ) -> Result<ChatMessage, String> {
     let startedAt = Instant::now();
     loop {
-        let core = application.chatRuntimeHolder.getCore(ChatRuntimeSlot::MAIN);
-        if let Some(message) = core.chatHistoryFlow().value().into_iter().find(|message| {
-            message.sender == "ai"
-                && message.timestamp == timestamp
-                && message.contentStream.is_none()
-                && message.completedAt > 0
-        }) {
+        let result = with_main_chat_core(application, |core| {
+            if let Some(message) = core.chatHistoryFlow().value().into_iter().find(|message| {
+                message.sender == "ai"
+                    && message.timestamp == timestamp
+                    && message.contentStream.is_none()
+                    && message.completedAt > 0
+            }) {
+                return Ok(Some(message));
+            }
+            let stateByChatId = core.inputProcessingStateByChatIdFlow().value();
+            if let Some(InputProcessingState::Error { message }) = stateByChatId.get(chatId) {
+                return Err(message.clone());
+            }
+            Ok(None)
+        })??;
+        if let Some(message) = result {
             return Ok(message);
-        }
-        let stateByChatId = core.inputProcessingStateByChatIdFlow().value();
-        if let Some(InputProcessingState::Error { message }) = stateByChatId.get(chatId) {
-            return Err(message.clone());
         }
         if startedAt.elapsed() >= timeout {
             return Err(format!(
@@ -1517,7 +1541,7 @@ pub(crate) fn guess_mime_type(path: &str) -> &'static str {
     }
 }
 
-fn print_chat_history_header(chat: &operit_runtime::data::model::ChatHistory::ChatHistory) {
+fn print_chat_history_header(chat: &operit_model::ChatHistory::ChatHistory) {
     println!("id={}", chat.id);
     println!("title={}", chat.title);
     println!("createdAt={}", chat.createdAt);
@@ -1544,7 +1568,7 @@ fn print_chat_history_header(chat: &operit_runtime::data::model::ChatHistory::Ch
     println!("pinned={}", chat.pinned);
 }
 
-fn print_chat_message(message: &operit_runtime::data::model::ChatMessage::ChatMessage) {
+fn print_chat_message(message: &operit_model::ChatMessage::ChatMessage) {
     println!("--- message ---");
     println!("sender={}", message.sender);
     println!("timestamp={}", message.timestamp);

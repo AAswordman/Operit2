@@ -23,21 +23,25 @@ pub struct BundledExternalSkillCandidate {
 }
 
 impl SkillManager {
+    /// Creates a skill manager using the default runtime store paths.
     #[allow(non_snake_case)]
     pub fn getInstance() -> Self {
         Self::new(RuntimeStorePaths::default())
     }
 
+    /// Creates a skill manager rooted at explicit runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self { paths }
     }
 
+    /// Returns the directory where user-installed skills are stored.
     #[allow(non_snake_case)]
     pub fn getSkillsDirectoryPath(&self) -> String {
         let skillsDir = self.getSkillsRootDir();
         skillsDir.to_string_lossy().to_string()
     }
 
+    /// Scans the skills directory and returns loaded packages plus load errors.
     #[allow(non_snake_case)]
     pub fn refreshAvailableSkills(
         &self,
@@ -137,11 +141,13 @@ impl SkillManager {
         (availableSkills, skillLoadErrors)
     }
 
+    /// Returns all valid skill packages currently installed.
     #[allow(non_snake_case)]
     pub fn getAvailableSkills(&self) -> BTreeMap<String, SkillPackage> {
         self.refreshAvailableSkills().0
     }
 
+    /// Returns a scan snapshot containing valid skill packages and load errors.
     #[allow(non_snake_case)]
     pub fn getAvailableSkillsSnapshot(
         &self,
@@ -149,11 +155,13 @@ impl SkillManager {
         self.refreshAvailableSkills()
     }
 
+    /// Returns load errors from scanning installed skill directories.
     #[allow(non_snake_case)]
     pub fn getSkillLoadErrors(&self) -> BTreeMap<String, String> {
         self.refreshAvailableSkills().1
     }
 
+    /// Lists bundled external skills that have not been installed yet.
     #[allow(non_snake_case)]
     pub fn getBundledExternalSkillCandidates(&self) -> Vec<BundledExternalSkillCandidate> {
         let loadedSkillNames = self
@@ -196,6 +204,7 @@ impl SkillManager {
             .collect()
     }
 
+    /// Installs one bundled external skill into the skills directory.
     #[allow(non_snake_case)]
     pub fn importBundledExternalSkill(&self, skillName: &str) -> Result<SkillPackage, String> {
         let skillAssets = toolRuntimeSupport()
@@ -243,11 +252,13 @@ impl SkillManager {
         Ok(skill.clone())
     }
 
+    /// Installs the bundled package-builder skill used by quick plugin creation.
     #[allow(non_snake_case)]
     pub fn ensureQuickPluginCreatorBundledSkill(&self) -> Result<SkillPackage, String> {
         self.importBundledExternalSkill(QUICK_PLUGIN_CREATOR_SKILL_NAME)
     }
 
+    /// Reads the SKILL.md content for one installed skill.
     #[allow(non_snake_case)]
     pub fn readSkillContent(&self, skillName: &str) -> Option<String> {
         let skills = self.getAvailableSkills();
@@ -255,6 +266,7 @@ impl SkillManager {
         fs::read_to_string(&skill.skillFile).ok()
     }
 
+    /// Builds the system prompt fragment used when a skill is activated.
     #[allow(non_snake_case)]
     pub fn getSkillSystemPrompt(&self, skillName: &str) -> Option<String> {
         let skills = self.getAvailableSkills();
@@ -287,6 +299,7 @@ impl SkillManager {
         Some(prompt)
     }
 
+    /// Deletes one installed skill directory.
     #[allow(non_snake_case)]
     pub fn deleteSkill(&self, skillName: &str) -> bool {
         let skills = self.getAvailableSkills();
@@ -296,11 +309,13 @@ impl SkillManager {
         fs::remove_dir_all(&skill.directory).is_ok()
     }
 
+    /// Imports a skill from a zip archive by searching for SKILL.md.
     #[allow(non_snake_case)]
     pub fn importSkillFromZip(&self, zipFile: &Path) -> String {
         self.importSkillFromZipWithSubDir(zipFile, None)
     }
 
+    /// Imports a skill from a zip archive using an optional subdirectory inside the zip.
     #[allow(non_snake_case)]
     pub fn importSkillFromZipWithSubDir(
         &self,

@@ -8,7 +8,11 @@ pub(crate) fn collect_type_registry(source_roots: &[SourceRoot]) -> TypeRegistry
     registry
 }
 
-fn collect_type_registry_from_dir(source_root: &SourceRoot, dir: &Path, registry: &mut TypeRegistry) {
+fn collect_type_registry_from_dir(
+    source_root: &SourceRoot,
+    dir: &Path,
+    registry: &mut TypeRegistry,
+) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -23,8 +27,11 @@ fn collect_type_registry_from_dir(source_root: &SourceRoot, dir: &Path, registry
         }
         let content = fs::read_to_string(&path).expect("read runtime source");
         let file = syn::parse_file(&content).expect("parse runtime source");
-        let module_path =
-            module_path_for_source_with_crate(source_root.as_path(), &path, &source_root.crate_name);
+        let module_path = module_path_for_source_with_crate(
+            source_root.as_path(),
+            &path,
+            &source_root.crate_name,
+        );
         let resolver = TypeResolver::from_file(
             &file,
             &module_path,
@@ -98,7 +105,10 @@ fn collect_public_use_aliases(
 ) {
     match tree {
         UseTree::Path(path) => {
-            prefix.push(normalize_import_segment(&path.ident.to_string(), crate_name));
+            prefix.push(normalize_import_segment(
+                &path.ident.to_string(),
+                crate_name,
+            ));
             collect_public_use_aliases(&path.tree, prefix, crate_name, module_path, registry);
         }
         UseTree::Name(name) => {
@@ -117,13 +127,7 @@ fn collect_public_use_aliases(
         }
         UseTree::Group(group) => {
             for item in group.items.iter() {
-                collect_public_use_aliases(
-                    item,
-                    prefix.clone(),
-                    crate_name,
-                    module_path,
-                    registry,
-                );
+                collect_public_use_aliases(item, prefix.clone(), crate_name, module_path, registry);
             }
         }
         UseTree::Glob(_) => {}
@@ -135,7 +139,11 @@ pub(crate) fn collect_serializable_type_definitions(
 ) -> HashMap<String, SerializableType> {
     let mut out = HashMap::new();
     for source_root in source_roots {
-        collect_serializable_type_definitions_from_dir(source_root, source_root.as_path(), &mut out);
+        collect_serializable_type_definitions_from_dir(
+            source_root,
+            source_root.as_path(),
+            &mut out,
+        );
     }
     out
 }
@@ -182,13 +190,15 @@ fn collect_error_type_definitions_from_dir(
             let Item::Enum(item_enum) = item else {
                 continue;
             };
-            if !matches!(item_enum.vis, Visibility::Public(_))
-                || !derives_error(&item_enum.attrs)
-            {
+            if !matches!(item_enum.vis, Visibility::Public(_)) || !derives_error(&item_enum.attrs) {
                 continue;
             }
-            let full_type =
-                full_type_for_source_with_crate(root, &path, &item_enum.ident.to_string(), crate_name);
+            let full_type = full_type_for_source_with_crate(
+                root,
+                &path,
+                &item_enum.ident.to_string(),
+                crate_name,
+            );
             out.insert(
                 full_type.clone(),
                 error_enum_type(full_type, item_enum, &resolver),
@@ -271,8 +281,11 @@ fn collect_serializable_type_definitions_from_dir(
         }
         let content = fs::read_to_string(&path).expect("read runtime source");
         let file = syn::parse_file(&content).expect("parse runtime source");
-        let module_path =
-            module_path_for_source_with_crate(source_root.as_path(), &path, &source_root.crate_name);
+        let module_path = module_path_for_source_with_crate(
+            source_root.as_path(),
+            &path,
+            &source_root.crate_name,
+        );
         let resolver = TypeResolver::from_file(
             &file,
             &module_path,
@@ -365,14 +378,15 @@ fn serializable_enum_type(
                         .named
                         .iter()
                         .filter_map(|field| {
-                        let field_name = field.ident.as_ref()?.to_string();
-                        Some(SerializableField {
-                            name: field_name.clone(),
-                            json_name: serde_rename(&field.attrs)
-                                .unwrap_or_else(|| field_name.trim_start_matches("r#").to_string()),
-                            ty: normalize_type(&field.ty, resolver),
+                            let field_name = field.ident.as_ref()?.to_string();
+                            Some(SerializableField {
+                                name: field_name.clone(),
+                                json_name: serde_rename(&field.attrs).unwrap_or_else(|| {
+                                    field_name.trim_start_matches("r#").to_string()
+                                }),
+                                ty: normalize_type(&field.ty, resolver),
+                            })
                         })
-                    })
                         .collect::<Vec<_>>();
                     (false, fields)
                 }
@@ -382,17 +396,17 @@ fn serializable_enum_type(
                         .iter()
                         .enumerate()
                         .map(|(index, field)| {
-                        let field_name = if fields.unnamed.len() == 1 {
-                            "value".to_string()
-                        } else {
-                            format!("value{index}")
-                        };
-                        SerializableField {
-                            name: field_name.clone(),
-                            json_name: field_name,
-                            ty: normalize_type(&field.ty, resolver),
-                        }
-                    })
+                            let field_name = if fields.unnamed.len() == 1 {
+                                "value".to_string()
+                            } else {
+                                format!("value{index}")
+                            };
+                            SerializableField {
+                                name: field_name.clone(),
+                                json_name: field_name,
+                                ty: normalize_type(&field.ty, resolver),
+                            }
+                        })
                         .collect::<Vec<_>>();
                     (true, fields)
                 }
@@ -406,9 +420,7 @@ fn serializable_enum_type(
             }
         })
         .collect();
-    let unit_only = mapped
-        .iter()
-        .all(|variant| variant.fields.is_empty());
+    let unit_only = mapped.iter().all(|variant| variant.fields.is_empty());
     if unit_only {
         return SerializableType {
             full_type: full_type.clone(),
@@ -420,8 +432,12 @@ fn serializable_enum_type(
             },
         };
     }
-    let (tag_name, content_name) = serde_tag_content(&item_enum.attrs)
-        .unwrap_or_else(|| (full_type.rsplit("::").next().unwrap_or("type").to_string(), None));
+    let (tag_name, content_name) = serde_tag_content(&item_enum.attrs).unwrap_or_else(|| {
+        (
+            full_type.rsplit("::").next().unwrap_or("type").to_string(),
+            None,
+        )
+    });
     SerializableType {
         full_type,
         supports_serialize: derives_serialize(&item_enum.attrs),
@@ -547,10 +563,7 @@ impl TypeResolver {
         }
     }
 
-    pub(crate) fn default_from(
-        _variants: &[&syn::Variant],
-        _full_type: &str,
-    ) -> Self {
+    pub(crate) fn default_from(_variants: &[&syn::Variant], _full_type: &str) -> Self {
         Self {
             names: HashMap::new(),
             crate_name: String::new(),

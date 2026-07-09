@@ -29,7 +29,9 @@ class ToolApprovalBridge {
   }
 
   Future<void> handlePermissionResult(ToolApprovalResult result) async {
-    throw StateError('permission result must be sent with respondPermissionRequest');
+    throw StateError(
+      'permission result must be sent with respondPermissionRequest',
+    );
   }
 
   Future<void> respondPermissionRequest(
@@ -48,6 +50,7 @@ class ToolApprovalBridge {
             webVisit: null,
             composeWebViewController: null,
             systemCaptureScreenshot: null,
+            systemLanguageCode: null,
             systemRecognizeText: null,
             audioPlay: null,
             musicPlayback: null,
@@ -68,9 +71,11 @@ class ToolApprovalBridge {
       return;
     }
     _subscription = _clients.servicesRuntimeHostInteractionService
-        .ownerHostInteractionEventsChanges(kinds: <RuntimeHostInteractionKind>[
-          RuntimeHostInteractionKind.toolPermission,
-        ])
+        .ownerHostInteractionEventsChanges(
+          kinds: <RuntimeHostInteractionKind>[
+            RuntimeHostInteractionKind.toolPermission,
+          ],
+        )
         .listen(
           (event) => unawaited(_handleEvent(event)),
           onError: (Object error, StackTrace stackTrace) {
@@ -86,7 +91,9 @@ class ToolApprovalBridge {
         );
   }
 
-  static Future<void> _handleEvent(RuntimeHostInteractionRequest request) async {
+  static Future<void> _handleEvent(
+    RuntimeHostInteractionRequest request,
+  ) async {
     try {
       final payload = request.toolPermission;
       if (payload == null) {

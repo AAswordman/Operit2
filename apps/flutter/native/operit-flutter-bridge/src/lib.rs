@@ -35,7 +35,8 @@ use operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEve
 use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerAudioPlay, requestOwnerBluetooth, requestOwnerBrowserAutomation,
     requestOwnerComposeWebViewController, requestOwnerMusicPlayback,
-    requestOwnerSystemCaptureScreenshot, requestOwnerSystemRecognizeText,
+    requestOwnerSystemCaptureScreenshot, requestOwnerSystemLanguageCode,
+    requestOwnerSystemRecognizeText,
     requestOwnerToolPermission, requestOwnerTtsPlayback, requestOwnerTtsSynthesis,
     requestOwnerWebVisit, RuntimeHostInteractionAudioPlayPayload,
     RuntimeHostInteractionBluetoothPayload, RuntimeHostInteractionBrowserAutomationPayload,
@@ -413,7 +414,9 @@ impl FlutterSystemOperationBridge {
 #[cfg(target_os = "android")]
 impl operit_host_api::SystemOperationHost for FlutterSystemOperationBridge {
     fn getSystemLanguageCode(&self) -> operit_host_api::HostResult<String> {
-        self.native.getSystemLanguageCode()
+        let response = requestOwnerSystemLanguageCode(Duration::from_secs(60))
+            .map_err(operit_host_api::HostError::new)?;
+        Ok(response.languageCode)
     }
 
     fn toast(&self, message: &str) -> operit_host_api::HostResult<()> {

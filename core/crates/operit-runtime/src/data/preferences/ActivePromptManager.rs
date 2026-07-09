@@ -3,9 +3,9 @@ use operit_store::PreferencesDataStore::{
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
-use operit_model::ActivePrompt::ActivePrompt;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
+use operit_model::ActivePrompt::ActivePrompt;
 
 #[derive(Clone)]
 pub struct ActivePromptManager {
@@ -14,6 +14,7 @@ pub struct ActivePromptManager {
 }
 
 impl ActivePromptManager {
+    /// Creates an active prompt manager over explicit runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
             characterCardManager: CharacterCardManager::new(paths.clone()),
@@ -21,11 +22,13 @@ impl ActivePromptManager {
         }
     }
 
+    /// Creates an active prompt manager over the default runtime store paths.
     #[allow(non_snake_case)]
     pub fn getInstance() -> Self {
         Self::new(RuntimeStorePaths::default())
     }
 
+    /// Returns the active prompt state derived from selected group and character card.
     #[allow(non_snake_case)]
     pub fn activePromptFlow(&self) -> StateFlow<ActivePrompt> {
         let cardIdFlow = self.characterCardManager.observeActiveCharacterCardId();
@@ -62,11 +65,13 @@ impl ActivePromptManager {
         })
     }
 
+    /// Reads the current active prompt snapshot.
     #[allow(non_snake_case)]
     pub fn getActivePrompt(&self) -> Result<ActivePrompt, PreferencesDataStoreError> {
         Ok(self.activePromptFlow().value())
     }
 
+    /// Stores the active prompt and clears the opposite prompt target.
     #[allow(non_snake_case)]
     pub fn setActivePrompt(&self, prompt: ActivePrompt) -> Result<(), PreferencesDataStoreError> {
         match prompt {
@@ -83,6 +88,7 @@ impl ActivePromptManager {
         }
     }
 
+    /// Activates a character group or card based on chat binding metadata.
     #[allow(non_snake_case)]
     pub fn activateForChatBinding(
         &self,
@@ -113,6 +119,7 @@ impl ActivePromptManager {
         })
     }
 
+    /// Returns the character card id that should be used for the next send operation.
     #[allow(non_snake_case)]
     pub fn resolveActiveCardIdForSend(&self) -> Result<String, PreferencesDataStoreError> {
         match self.getActivePrompt()? {

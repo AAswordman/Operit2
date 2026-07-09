@@ -3,20 +3,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use operit_providers::chat::llmprovider::AIService::collect_stream_chunks;
-use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use crate::core::chat::AIMessageManager::{AIMessageManager, StableContextWindowRequest};
-use operit_providers::chat::config::FunctionalPrompts::FunctionalPrompts;
-use operit_model::ActivePrompt::ActivePrompt;
-use operit_model::AttachmentInfo::AttachmentInfo;
-use operit_model::CharacterCard::CharacterCard;
-use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
-use operit_model::ChatMessage::ChatMessage;
-use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
-use operit_model::ChatTurnOptions::ChatTurnOptions;
-use operit_model::FunctionType::FunctionType;
-use operit_model::InputProcessingState::InputProcessingState;
-use operit_model::PromptFunctionType::PromptFunctionType;
 use crate::data::preferences::ActivePromptManager::ActivePromptManager;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
@@ -27,6 +14,19 @@ use crate::services::core::MessageProcessingDelegate::{
     RegenerateAiMessageVariantRequest, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
+use operit_model::ActivePrompt::ActivePrompt;
+use operit_model::AttachmentInfo::AttachmentInfo;
+use operit_model::CharacterCard::CharacterCard;
+use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
+use operit_model::ChatTurnOptions::ChatTurnOptions;
+use operit_model::FunctionType::FunctionType;
+use operit_model::InputProcessingState::InputProcessingState;
+use operit_model::PromptFunctionType::PromptFunctionType;
+use operit_providers::chat::config::FunctionalPrompts::FunctionalPrompts;
+use operit_providers::chat::llmprovider::AIService::collect_stream_chunks;
+use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use operit_util::stream::Stream::Stream;
 use operit_util::ChainLogger::{self, SEND_CHAIN};
 

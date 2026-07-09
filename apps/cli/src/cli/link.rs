@@ -7,12 +7,12 @@ use crate::access::{
     RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig,
 };
 use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest};
-use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
-use operit_runtime::api::chat::enhance::ToolExecutionManager::AITool;
-use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
-use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
-use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
+use operit_providers::chat::enhance::ConversationService::ConversationService;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
+use operit_tools::ToolExecutionManager::AITool;
 use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerToolPermission, RuntimeHostInteractionToolPermissionPayload,
     RuntimeHostInteractionToolPermissionTool, RuntimeHostInteractionToolPermissionToolParameter,
@@ -92,11 +92,15 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
     }
     let mut core = create_local_core();
     core.localApplicationMut().onCreate()?;
-    let main_core = core
-        .localApplicationMut()
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN);
-    main_core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
+    {
+        let application = core.localApplicationMut();
+        let mut holder = application
+            .chatRuntimeHolder
+            .try_lock()
+            .map_err(|_| "Chat runtime holder is busy".to_string())?;
+        holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService =
+            Some(EnhancedAIService::new(ConversationService));
+    }
     install_link_permission_requester(&mut core);
     let accepted_sessions = load_link_server_sessions()?;
     let accepted_session_loader: AcceptedRemoteSessionLoader = Arc::new(load_link_server_sessions);
@@ -142,7 +146,7 @@ pub(crate) fn load_link_host_device_id() -> Result<String, String> {
 }
 
 pub(crate) fn install_link_permission_requester(core: &mut operit_core_proxy::LocalCoreProxy) {
-    let context = core.localApplicationMut().applicationContext.clone();
+    let context = core.localApplicationMut().hostManager.clone();
     let handler = AIToolHandler::getInstance(context);
     handler
         .getToolPermissionSystem()
@@ -157,7 +161,7 @@ pub(crate) fn install_link_permission_requester(core: &mut operit_core_proxy::Lo
             .expect("permission request failed");
             match response.result.as_str() {
                 "allow" => PermissionRequestResult::ALLOW,
-                "always_allow" => PermissionRequestResult::ALWAYS_ALLOW,
+                "always_allow" => PermissionRequestResult::ALLOW_SESSION,
                 "deny" => PermissionRequestResult::DENY,
                 other => panic!("unknown permission response result: {other}"),
             }

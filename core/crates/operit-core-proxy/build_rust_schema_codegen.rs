@@ -115,10 +115,7 @@ fn render_schema_types(serializable_types: &HashMap<String, SerializableType>) -
                     variants_json
                 )
             }
-            SerializableTypeKind::TaggedEnum {
-                variants,
-                ..
-            } => {
+            SerializableTypeKind::TaggedEnum { variants, .. } => {
                 let variants_json = variants
                     .iter()
                     .map(|variant| {

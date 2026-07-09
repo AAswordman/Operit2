@@ -1,54 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use operit_host_api::HostManager::HostManager;
-use operit_tools::tools::packTool::PackageManager::PackageManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use operit_host_api::HostManager::HostManager;
+use operit_tools::runtime_support::ResolvedCharacterCardToolAccess;
+use operit_tools::tools::packTool::PackageManager::PackageManager;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
-
-#[derive(Clone, Debug, Default)]
-pub struct ResolvedCharacterCardToolAccess {
-    pub customEnabled: bool,
-    pub effectiveBuiltinToolVisibility: HashMap<String, bool>,
-    pub allowedPackageNames: HashSet<String>,
-    pub allowedSkillNames: HashSet<String>,
-    pub allowedMcpServerNames: HashSet<String>,
-    pub canUsePackageSystem: bool,
-    pub hasAnyAllowedExternalSource: bool,
-}
-
-impl ResolvedCharacterCardToolAccess {
-    #[allow(non_snake_case)]
-    pub fn isBuiltinToolAllowed(&self, toolName: &str) -> bool {
-        if !self.customEnabled {
-            return self
-                .effectiveBuiltinToolVisibility
-                .get(toolName)
-                .copied()
-                .unwrap_or(true);
-        }
-        match toolName {
-            "package_proxy" => self.hasAnyAllowedExternalSource,
-            _ => self
-                .effectiveBuiltinToolVisibility
-                .get(toolName)
-                .copied()
-                .unwrap_or(false),
-        }
-    }
-
-    #[allow(non_snake_case)]
-    pub fn isExternalSourceAllowed(&self, sourceName: &str) -> bool {
-        if !self.customEnabled {
-            return true;
-        }
-        if !self.canUsePackageSystem {
-            return false;
-        }
-        self.allowedPackageNames.contains(sourceName)
-            || self.allowedSkillNames.contains(sourceName)
-            || self.allowedMcpServerNames.contains(sourceName)
-    }
-}
 
 pub struct CharacterCardToolAccessResolver;
 

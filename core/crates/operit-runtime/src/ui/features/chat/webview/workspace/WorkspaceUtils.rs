@@ -4,8 +4,8 @@ use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
 use serde_json::{json, Value};
 
-use operit_tools::files::PathMapper::PathMapper;
 use crate::ui::features::chat::webview::workspace::WorkspaceTemplateAssets::WORKSPACE_TEMPLATE_ASSETS;
+use operit_tools::files::PathMapper::PathMapper;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProjectType {

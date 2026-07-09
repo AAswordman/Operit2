@@ -1,17 +1,19 @@
 use std::collections::BTreeMap;
 
-use operit_util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
+use operit_util::OperitPaths;
 
 pub struct PreferenceStorageManager {}
 
 impl PreferenceStorageManager {
+    /// Creates a manager for named custom preference files.
     pub fn getInstance() -> Self {
         Self {}
     }
 
+    /// Reads one value from a named custom preference file.
     pub fn getPreference(
         &self,
         fileName: &str,
@@ -25,6 +27,7 @@ impl PreferenceStorageManager {
             .cloned())
     }
 
+    /// Reads selected values from a named custom preference file.
     pub fn getPreferences(
         &self,
         fileName: &str,
@@ -42,6 +45,7 @@ impl PreferenceStorageManager {
         Ok(values)
     }
 
+    /// Writes one value to a named custom preference file.
     pub fn setPreference(
         &self,
         fileName: &str,
@@ -55,6 +59,7 @@ impl PreferenceStorageManager {
         })
     }
 
+    /// Writes multiple values to a named custom preference file.
     pub fn setPreferences(
         &self,
         fileName: &str,
@@ -72,6 +77,7 @@ impl PreferenceStorageManager {
         })
     }
 
+    /// Removes one key from a named custom preference file.
     pub fn removePreference(
         &self,
         fileName: &str,
@@ -84,6 +90,7 @@ impl PreferenceStorageManager {
         })
     }
 
+    /// Removes selected keys from a named custom preference file.
     pub fn removePreferences(
         &self,
         fileName: &str,
@@ -101,6 +108,7 @@ impl PreferenceStorageManager {
         })
     }
 
+    /// Removes every key from a named custom preference file.
     pub fn clearPreferences(&self, fileName: &str) -> Result<(), PreferencesDataStoreError> {
         let fileName = normalizePreferenceFileName(fileName)?;
         preferencesDataStore(&fileName).edit(|preferences| {

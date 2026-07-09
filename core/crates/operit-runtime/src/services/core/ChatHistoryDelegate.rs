@@ -1,15 +1,15 @@
+use crate::data::preferences::ActivePromptManager::ActivePromptManager;
+use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
 use operit_model::ActivePrompt::ActivePrompt;
 use operit_model::ChatDisplayWindowState::ChatDisplayWindowState;
 use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatHistoryListItem::ChatHistoryListItem;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
-use crate::data::preferences::ActivePromptManager::ActivePromptManager;
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
-use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
+use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN};
-use operit_store::PreferencesDataStore::{MutableStateFlow, StateFlow, mutableStateFlow};
 
 /// Number of persisted messages loaded per display-window query.
 pub const DISPLAY_WINDOW_QUERY_BATCH_SIZE: usize = 80;
@@ -321,7 +321,11 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     /// Returns the current display-window page count.
     pub fn currentDisplayPageCount(&self) -> i32 {
-        if self.chatHistory.is_empty() { 1 } else { 1 }
+        if self.chatHistory.is_empty() {
+            1
+        } else {
+            1
+        }
     }
 
     #[allow(non_snake_case)]

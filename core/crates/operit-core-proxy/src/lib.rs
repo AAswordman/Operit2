@@ -6,8 +6,8 @@ use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
     CoreLinkError, CoreObjectPath, CoreRequestId, CoreWatchRequest,
 };
-use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_util::stream::RevisableTextStream::{
     RevisableTextStream, TextStreamEventCarrier, TextStreamEventType,
 };

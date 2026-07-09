@@ -2,9 +2,9 @@ use std::ops::{Deref, DerefMut};
 
 use operit_core_proxy::GeneratedCoreProxy;
 use operit_link::CoreLinkClient;
-use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
-use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
+use operit_providers::chat::enhance::ConversationService::ConversationService;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 
 use crate::create_local_core;
 
@@ -21,11 +21,15 @@ pub(crate) fn cli_core(client: impl CoreLinkClient + Send + 'static) -> CliCore 
 pub(crate) fn local_cli_core() -> Result<CliCore, String> {
     let mut core = create_local_core();
     core.localApplicationMut().onCreate()?;
-    let main_core = core
-        .localApplicationMut()
-        .chatRuntimeHolder
-        .getCore(ChatRuntimeSlot::MAIN);
-    main_core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
+    {
+        let application = core.localApplicationMut();
+        let mut holder = application
+            .chatRuntimeHolder
+            .try_lock()
+            .map_err(|_| "Chat runtime holder is busy".to_string())?;
+        holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService =
+            Some(EnhancedAIService::new(ConversationService));
+    }
     Ok(CliCore {
         proxy: GeneratedCoreProxy::new(Box::new(core)),
     })

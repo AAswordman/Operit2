@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use operit_model::FunctionType::FunctionType;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use operit_model::FunctionType::FunctionType;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
@@ -29,6 +29,7 @@ impl Default for FunctionModelBinding {
 }
 
 impl FunctionModelBinding {
+    /// Creates a model binding for one function using the supplied provider and model.
     pub fn new(providerId: String, modelId: String) -> Self {
         Self {
             providerId,
@@ -56,10 +57,12 @@ pub struct FunctionalConfigManager {
 }
 
 impl FunctionalConfigManager {
+    /// Returns the preference key that stores function-to-model bindings.
     pub fn FUNCTION_MODEL_BINDING() -> operit_store::PreferencesDataStore::PreferencesKey {
         stringPreferencesKey("function_model_binding")
     }
 
+    /// Creates a manager rooted at the directory that owns functional configuration data.
     pub fn new(root_dir: PathBuf) -> Self {
         let paths = RuntimeStorePaths::new(root_dir.clone());
         Self {
@@ -70,10 +73,12 @@ impl FunctionalConfigManager {
         }
     }
 
+    /// Creates a manager using the runtime data directory from API preferences.
     pub fn default() -> Self {
         Self::new(ApiPreferences::data_dir())
     }
 
+    /// Ensures model configuration exists and seeds function bindings when empty.
     pub fn initializeIfNeeded(&self) -> Result<(), FunctionalConfigError> {
         self.modelConfigManager
             .initializeIfNeeded()
@@ -86,6 +91,7 @@ impl FunctionalConfigManager {
         Ok(())
     }
 
+    /// Observes the full mapping from runtime functions to provider model bindings.
     pub fn functionModelBindingFlow(
         &self,
     ) -> Result<Flow<HashMap<FunctionType, FunctionModelBinding>>, FunctionalConfigError> {
@@ -115,6 +121,7 @@ impl FunctionalConfigManager {
         Ok(binding)
     }
 
+    /// Saves the complete function-to-model binding map.
     pub fn saveFunctionModelBinding(
         &self,
         binding: HashMap<FunctionType, FunctionModelBinding>,
@@ -130,6 +137,7 @@ impl FunctionalConfigManager {
         Ok(())
     }
 
+    /// Reads the model binding currently assigned to one runtime function.
     pub fn getModelBindingForFunction(
         &self,
         functionType: FunctionType,
@@ -143,6 +151,7 @@ impl FunctionalConfigManager {
         })
     }
 
+    /// Assigns one runtime function to the specified provider and model.
     pub fn setModelForFunction(
         &self,
         functionType: FunctionType,
@@ -157,6 +166,7 @@ impl FunctionalConfigManager {
         self.saveFunctionModelBinding(binding)
     }
 
+    /// Restores one runtime function to the default provider and model.
     pub fn resetFunctionConfig(
         &self,
         functionType: FunctionType,
@@ -168,6 +178,7 @@ impl FunctionalConfigManager {
         )
     }
 
+    /// Restores every runtime function to the default provider and model map.
     pub fn resetAllFunctionConfigs(&self) -> Result<(), FunctionalConfigError> {
         self.saveFunctionModelBinding(Self::defaultBinding())
     }

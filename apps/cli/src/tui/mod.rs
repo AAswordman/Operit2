@@ -50,18 +50,18 @@ use i18n::TuiLanguage;
 use link_proxy_rs::tui_core;
 use operit_core_proxy::GeneratedCoreProxy;
 use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest};
-use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
-use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
-use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
-use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
-use operit_runtime::core::tools::ToolPermissionSystem::PermissionRequestResult;
+use operit_providers::chat::enhance::ConversationService::ConversationService;
+use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use operit_runtime::services::RuntimeHostInteractionService::{
     RuntimeHostInteractionKind, RuntimeHostInteractionRequest, RuntimeHostInteractionResponse,
     RuntimeHostInteractionToolPermissionResponse, RuntimeHostInteractionToolPermissionTool,
 };
-use operit_runtime::util::GithubReleaseUtil::{
+use operit_util::GithubReleaseUtil::{
     FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
 };
 use std::collections::BTreeMap;
@@ -77,7 +77,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     let shell_args = parse_shell_args(args)?;
     let mut core = create_local_core();
     core.localApplicationMut().onCreate()?;
-    let language = TuiLanguage::from_context(&core.localApplicationMut().applicationContext)?;
+    let language = TuiLanguage::from_context(&core.localApplicationMut().hostManager)?;
     let initial_chat_id = initialize_shell_chat(core.localApplicationMut(), &shell_args)?;
     let approval_bridge = TuiApprovalBridge::new();
     install_local_permission_requester(&mut core, approval_bridge.clone());
@@ -118,7 +118,7 @@ pub(crate) async fn run_link_tui_command(args: &[String]) -> Result<(), String> 
     let shell_args = parse_shell_args(&args[1..])?;
     let session = load_link_session(&session_name)?;
     let local_application = crate::bootstrap::create_cli_application();
-    let language = TuiLanguage::from_context(&local_application.applicationContext)?;
+    let language = TuiLanguage::from_context(&local_application.hostManager)?;
     let host_interaction_session = session.clone();
     let mut core = tui_core(session);
     let initial_chat_id = initialize_remote_chat(&mut core, &shell_args).await?;
@@ -197,7 +197,7 @@ fn install_local_permission_requester(
     core: &mut operit_core_proxy::LocalCoreProxy,
     approval_bridge: TuiApprovalBridge,
 ) {
-    let context = core.localApplicationMut().applicationContext.clone();
+    let context = core.localApplicationMut().hostManager.clone();
     let handler = AIToolHandler::getInstance(context);
     handler
         .getToolPermissionSystem()
@@ -247,7 +247,7 @@ async fn handle_remote_tool_permission_interaction(
     let result = match result {
         PermissionRequestResult::ALLOW => "allow",
         PermissionRequestResult::DENY => "deny",
-        PermissionRequestResult::ALWAYS_ALLOW => "always_allow",
+        PermissionRequestResult::ALLOW_SESSION => "always_allow",
     };
     proxy
         .services_runtime_host_interaction_service()

@@ -78,6 +78,7 @@ impl MCPBridge {
         Self
     }
 
+    /// Registers a local MCP service process with command, arguments, environment, and working directory.
     #[allow(non_snake_case)]
     pub fn registerMcpService(
         &self,
@@ -111,6 +112,7 @@ impl MCPBridge {
         successResponse("register", json!({ "name": name }))
     }
 
+    /// Registers a remote MCP service endpoint with optional authentication headers.
     #[allow(non_snake_case)]
     pub fn registerRemoteMcpService(
         &self,
@@ -148,6 +150,7 @@ impl MCPBridge {
         successResponse("register", json!({ "name": name }))
     }
 
+    /// Unregisters an MCP service and stops its active process or session.
     #[allow(non_snake_case)]
     pub fn unregisterMcpService(&self, name: &str) -> Value {
         let mut state = bridgeState().lock().expect("mcp bridge mutex poisoned");
@@ -162,6 +165,7 @@ impl MCPBridge {
         successResponse("unregister", json!({ "name": name }))
     }
 
+    /// Lists registered MCP services with active state and discovered tools.
     #[allow(non_snake_case)]
     pub fn listMcpServices(&self, serviceName: Option<&str>) -> Value {
         let state = bridgeState().lock().expect("mcp bridge mutex poisoned");
@@ -189,6 +193,7 @@ impl MCPBridge {
         successResponse("list", json!({ "services": services }))
     }
 
+    /// Returns compact runtime information for one MCP service.
     #[allow(non_snake_case)]
     pub fn getServiceInfo(&self, serviceName: &str) -> Option<ServiceInfo> {
         let state = bridgeState().lock().expect("mcp bridge mutex poisoned");
@@ -211,6 +216,7 @@ impl MCPBridge {
         })
     }
 
+    /// Starts a registered MCP service and initializes its tool list.
     #[allow(non_snake_case)]
     pub fn spawnMcpService(
         &self,
@@ -302,6 +308,7 @@ impl MCPBridge {
         }
     }
 
+    /// Stops an active MCP service without removing its registration.
     #[allow(non_snake_case)]
     pub fn unspawnMcpService(&self, name: &str) -> Value {
         let mut state = bridgeState().lock().expect("mcp bridge mutex poisoned");
@@ -313,6 +320,7 @@ impl MCPBridge {
         successResponse("unspawn", json!({ "name": name }))
     }
 
+    /// Stores a tool list for a service when it is not currently active.
     #[allow(non_snake_case)]
     pub fn cacheTools(&self, serviceName: String, tools: Vec<Value>) -> Value {
         bridgeState()
@@ -323,6 +331,7 @@ impl MCPBridge {
         successResponse("cachetools", json!({ "name": serviceName }))
     }
 
+    /// Lists tools from an active service or its cached tool metadata.
     #[allow(non_snake_case)]
     pub fn listTools(&self, serviceName: &str) -> Value {
         let state = bridgeState().lock().expect("mcp bridge mutex poisoned");
@@ -335,6 +344,7 @@ impl MCPBridge {
         successResponse("listtools", json!({ "tools": tools }))
     }
 
+    /// Calls one tool on an active local or remote MCP service.
     #[allow(non_snake_case)]
     pub fn callTool(&self, serviceName: &str, method: &str, params: Value) -> Value {
         let mut state = bridgeState().lock().expect("mcp bridge mutex poisoned");
@@ -352,6 +362,7 @@ impl MCPBridge {
         }
     }
 
+    /// Returns logs or the latest startup error for an MCP service.
     #[allow(non_snake_case)]
     pub fn getServiceLogs(&self, serviceName: &str) -> Value {
         let state = bridgeState().lock().expect("mcp bridge mutex poisoned");
@@ -364,6 +375,7 @@ impl MCPBridge {
         successResponse("logs", json!({ "name": serviceName, "logs": logs }))
     }
 
+    /// Stops all active MCP services and clears bridge registrations and cached tools.
     #[allow(non_snake_case)]
     pub fn resetBridge(&self) -> Value {
         let mut state = bridgeState().lock().expect("mcp bridge mutex poisoned");

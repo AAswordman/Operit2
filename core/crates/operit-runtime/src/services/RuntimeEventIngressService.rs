@@ -5,13 +5,14 @@ use std::sync::Arc;
 use operit_host_api::HostRuntimeEventRegistration;
 use serde_json::Value;
 
-use operit_host_api::HostManager::HostManager;
 use crate::core::events::RuntimeEvent::RuntimeEvent;
 use crate::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
+use operit_host_api::HostManager::HostManager;
 
 pub struct RuntimeEventIngressService;
 
 impl RuntimeEventIngressService {
+    /// Creates the runtime event ingress service for the supplied host context.
     pub fn getInstance(_context: &HostManager) -> Self {
         Self
     }
@@ -42,6 +43,7 @@ impl RuntimeEventIngressService {
         Ok(Some(registration))
     }
 
+    /// Dispatches one runtime event into registered tool package host-event hooks.
     pub fn ingestEvent(&self, event: RuntimeEvent) -> Value {
         ToolPkgHostEventHookBridge::dispatchHostEvent("broadcast", event.hostEventPayload());
         serde_json::json!({

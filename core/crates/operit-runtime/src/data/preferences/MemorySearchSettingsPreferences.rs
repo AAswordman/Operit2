@@ -1,8 +1,8 @@
 use operit_model::MemorySearchConfig::MemorySearchConfig;
-use operit_util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
+use operit_util::OperitPaths;
 
 #[derive(Clone)]
 pub struct MemorySearchSettingsPreferences {

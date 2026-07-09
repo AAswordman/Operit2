@@ -317,6 +317,7 @@ pub struct ConversationRoundManagerMirror {
 }
 
 impl ConversationRoundManagerMirror {
+    /// Creates an empty mirror for conversation round content.
     pub fn new() -> Self {
         Self {
             content: String::new(),
@@ -324,23 +325,28 @@ impl ConversationRoundManagerMirror {
         }
     }
 
+    /// Starts a new mirrored conversation round and clears mirrored content.
     pub fn startNewRound(&mut self) {
         self.roundIndex += 1;
         self.content.clear();
     }
 
+    /// Replaces the mirrored content for the current conversation round.
     pub fn updateContent(&mut self, content: String) {
         self.content = content;
     }
 
+    /// Appends text to the mirrored content for the current conversation round.
     pub fn appendContent(&mut self, content: &str) {
         self.content.push_str(content);
     }
 
+    /// Returns the mirrored content formatted for display.
     pub fn getDisplayContent(&self) -> String {
         self.content.clone()
     }
 
+    /// Returns the mirrored content for the current conversation round.
     pub fn getCurrentRoundContent(&self) -> String {
         self.content.clone()
     }

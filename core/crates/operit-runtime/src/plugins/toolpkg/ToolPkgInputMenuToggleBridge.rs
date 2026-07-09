@@ -7,12 +7,12 @@ use serde_json::Value;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
 
-use operit_tools::tools::packTool::PackageManager::PackageManager;
-use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_INPUT_MENU_TOGGLE;
-use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
     decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgInputMenuToggleHookRegistration,
 };
+use operit_tools::tools::packTool::PackageManager::PackageManager;
+use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_INPUT_MENU_TOGGLE;
+use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_util::AppLogger::AppLogger;
 
 static INPUT_MENU_HOOKS: OnceLock<Mutex<Vec<ToolPkgInputMenuToggleHookRegistration>>> =
@@ -104,6 +104,7 @@ impl InputMenuTogglePluginRegistry {
     }
 
     #[allow(non_snake_case)]
+    /// Reports the current input-menu toggle registry change counter.
     pub fn changeVersion() -> i64 {
         INPUT_MENU_CHANGE_VERSION.load(Ordering::SeqCst)
     }
@@ -210,6 +211,7 @@ impl ToolPkgInputMenuToggleBridge {
     }
 
     #[allow(non_snake_case)]
+    /// Builds input-menu toggle definitions for Flutter from active tool package hooks.
     pub fn createToggleDefinitionsForFlutter(
         &self,
         chatId: Option<String>,
@@ -244,6 +246,7 @@ impl ToolPkgInputMenuToggleBridge {
     }
 
     #[allow(non_snake_case)]
+    /// Runs a Flutter-requested input-menu toggle hook by toggle identifier.
     pub fn triggerToggleForFlutter(
         &self,
         toggleId: String,
@@ -254,6 +257,7 @@ impl ToolPkgInputMenuToggleBridge {
     }
 
     #[allow(non_snake_case)]
+    /// Reports the input-menu toggle change counter for Flutter watchers.
     pub fn changeVersion(&self) -> i64 {
         InputMenuTogglePluginRegistry::changeVersion()
     }

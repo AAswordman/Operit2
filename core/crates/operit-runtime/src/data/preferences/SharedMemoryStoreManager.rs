@@ -12,6 +12,7 @@ pub struct SharedMemoryStoreManager {
 }
 
 impl SharedMemoryStoreManager {
+    /// Creates a shared memory store manager backed by the supplied runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
             dataStore: PreferencesDataStore::new(paths.shared_memory_stores_preferences_path()),
@@ -19,6 +20,7 @@ impl SharedMemoryStoreManager {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a shared memory store manager using the default runtime store paths.
     pub fn getInstance() -> Self {
         Self::new(RuntimeStorePaths::default())
     }
@@ -29,6 +31,7 @@ impl SharedMemoryStoreManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes the ordered list of shared memory store identifiers.
     pub fn sharedMemoryStoreListFlow(&self) -> Flow<Vec<String>> {
         self.dataStore
             .dataFlow()
@@ -36,6 +39,7 @@ impl SharedMemoryStoreManager {
     }
 
     #[allow(non_snake_case)]
+    /// Reads every shared memory store in persisted list order.
     pub fn getAllSharedMemoryStores(&self) -> Result<Vec<SharedMemoryStore>, String> {
         let ids = self
             .sharedMemoryStoreListFlow()
@@ -52,6 +56,7 @@ impl SharedMemoryStoreManager {
     }
 
     #[allow(non_snake_case)]
+    /// Reads one shared memory store by identifier.
     pub fn getSharedMemoryStore(
         &self,
         id: &str,
@@ -60,6 +65,7 @@ impl SharedMemoryStoreManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes one shared memory store by identifier.
     pub fn getSharedMemoryStoreFlow(&self, id: &str) -> Flow<SharedMemoryStore> {
         let id = id.to_string();
         self.dataStore
@@ -68,6 +74,7 @@ impl SharedMemoryStoreManager {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a shared memory store with a generated identifier.
     pub fn createSharedMemoryStore(&self, name: String) -> Result<SharedMemoryStore, String> {
         let trimmedName = name.trim();
         if trimmedName.is_empty() {
@@ -78,6 +85,7 @@ impl SharedMemoryStoreManager {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a shared memory store with an explicit identifier.
     pub fn createSharedMemoryStoreWithId(
         &self,
         id: String,
@@ -114,6 +122,7 @@ impl SharedMemoryStoreManager {
     }
 
     #[allow(non_snake_case)]
+    /// Renames a shared memory store and refreshes its update timestamp.
     pub fn renameSharedMemoryStore(
         &self,
         id: &str,
@@ -149,6 +158,7 @@ impl SharedMemoryStoreManager {
     }
 
     #[allow(non_snake_case)]
+    /// Deletes a shared memory store and returns whether an entry was removed.
     pub fn deleteSharedMemoryStore(&self, id: &str) -> Result<bool, String> {
         let id = id.trim().to_string();
         if id.is_empty() {

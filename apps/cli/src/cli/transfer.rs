@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use operit_runtime::data::model::ImportStrategy;
+use operit_model::ImportStrategy;
 
 use super::*;
 use crate::core_proxy::CliCore;
@@ -138,7 +138,6 @@ pub(super) async fn run_backup_command(core: &mut CliCore, args: &[String]) -> R
             println!("createdAt={}", preview.createdAt);
             println!("chatCount={}", preview.chatCount);
             println!("messageCount={}", preview.messageCount);
-            println!("problemRecordCount={}", preview.problemRecordCount);
             println!("datastoreFileCount={}", preview.datastoreFiles.len());
             println!("importedFileCount={}", preview.importedFileCount);
             println!("importedExternalFileCount={}", preview.importedExternalFileCount);

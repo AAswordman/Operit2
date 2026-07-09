@@ -1,12 +1,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use operit_tools::ConversationMarkupManager::ToolResult;
-use operit_tools::ToolExecutionManager::{
-    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutionManager, ToolExecutor,
-    ToolValidationResult,
-};
+use operit_host_api::HostEnvironmentDescriptor;
 use operit_host_api::HostManager::HostManager;
+use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
 use operit_tools::tools::mcp::MCPToolExecutor::MCPToolExecutor;
@@ -16,9 +13,12 @@ use operit_tools::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
 use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, ToolPermissionSystem};
 use operit_tools::tools::ToolRegistration::registerAllTools;
 use operit_tools::tools::ToolResultDataClasses::stringResultData;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{
+    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutionManager, ToolExecutor,
+    ToolValidationResult,
+};
 use operit_util::ChainLogger::{self, TOOL_CHAIN};
-use operit_host_api::HostEnvironmentDescriptor;
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 
 static INSTANCE: OnceLock<Arc<Mutex<AIToolHandlerState>>> = OnceLock::new();
@@ -137,6 +137,7 @@ impl AIToolHandler {
         count
     }
 
+    /// Removes the package registration created for an MCP server.
     #[allow(non_snake_case)]
     pub fn unregisterMcpServerPackage(&mut self, serverName: &str) -> bool {
         let packageManager = {
@@ -155,6 +156,7 @@ impl AIToolHandler {
         guard.unregisterMCPServerPackage(serverName)
     }
 
+    /// Returns the permission system used before write or package tool execution.
     #[allow(non_snake_case)]
     pub fn getToolPermissionSystem(&self) -> ToolPermissionSystem {
         self.inner
@@ -164,6 +166,7 @@ impl AIToolHandler {
             .clone()
     }
 
+    /// Adds a tool lifecycle hook when a hook with the same id is not already registered.
     #[allow(non_snake_case)]
     pub fn addToolHook(&mut self, hook: Arc<dyn AIToolHook>) {
         let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
@@ -176,6 +179,7 @@ impl AIToolHandler {
         }
     }
 
+    /// Removes a tool lifecycle hook by hook id.
     #[allow(non_snake_case)]
     pub fn removeToolHook(&mut self, hookId: &str) {
         self.inner
@@ -185,6 +189,7 @@ impl AIToolHandler {
             .retain(|hook| hook.id() != hookId);
     }
 
+    /// Removes every registered tool lifecycle hook.
     #[allow(non_snake_case)]
     pub fn clearToolHooks(&mut self) {
         self.inner
@@ -209,36 +214,43 @@ impl AIToolHandler {
         }
     }
 
+    /// Notifies hooks that a tool call has been requested.
     #[allow(non_snake_case)]
     pub fn notifyToolCallRequested(&self, tool: &AITool) {
         self.notifyHooks(|hook| hook.onToolCallRequested(tool));
     }
 
+    /// Notifies hooks that permission was checked for a tool call.
     #[allow(non_snake_case)]
     pub fn notifyToolPermissionChecked(&self, tool: &AITool, granted: bool, reason: Option<&str>) {
         self.notifyHooks(|hook| hook.onToolPermissionChecked(tool, granted, reason));
     }
 
+    /// Notifies hooks that tool execution is about to start.
     #[allow(non_snake_case)]
     pub fn notifyToolExecutionStarted(&self, tool: &AITool) {
         self.notifyHooks(|hook| hook.onToolExecutionStarted(tool));
     }
 
+    /// Notifies hooks that tool execution returned a result.
     #[allow(non_snake_case)]
     pub fn notifyToolExecutionResult(&self, tool: &AITool, result: &ToolResult) {
         self.notifyHooks(|hook| hook.onToolExecutionResult(tool, result));
     }
 
+    /// Notifies hooks that tool execution failed before producing a normal result.
     #[allow(non_snake_case)]
     pub fn notifyToolExecutionError(&self, tool: &AITool, message: &str) {
         self.notifyHooks(|hook| hook.onToolExecutionError(tool, message));
     }
 
+    /// Notifies hooks that tool execution has fully finished.
     #[allow(non_snake_case)]
     pub fn notifyToolExecutionFinished(&self, tool: &AITool) {
         self.notifyHooks(|hook| hook.onToolExecutionFinished(tool));
     }
 
+    /// Returns every registered tool name regardless of visibility.
     #[allow(non_snake_case)]
     pub fn getAllToolNames(&self) -> Vec<String> {
         self.inner
@@ -250,6 +262,7 @@ impl AIToolHandler {
             .collect()
     }
 
+    /// Returns the host environment descriptor associated with this handler.
     #[allow(non_snake_case)]
     pub fn getHostEnvironmentDescriptor(&self) -> HostEnvironmentDescriptor {
         self.inner
@@ -260,6 +273,7 @@ impl AIToolHandler {
             .clone()
     }
 
+    /// Returns the host manager associated with this handler.
     #[allow(non_snake_case)]
     pub fn getContext(&self) -> HostManager {
         self.inner
@@ -269,6 +283,7 @@ impl AIToolHandler {
             .clone()
     }
 
+    /// Returns the shared package manager, creating it with this handler context.
     #[allow(non_snake_case)]
     pub fn getOrCreatePackageManager(&self) -> Arc<Mutex<PackageManager>> {
         let context = {
@@ -290,6 +305,7 @@ impl AIToolHandler {
         packageManager
     }
 
+    /// Returns tool names that should be visible to normal callers.
     #[allow(non_snake_case)]
     pub fn getPublicToolNames(&self) -> Vec<String> {
         let guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
@@ -301,6 +317,7 @@ impl AIToolHandler {
             .collect()
     }
 
+    /// Returns tool names reserved for internal runtime calls.
     #[allow(non_snake_case)]
     pub fn getInternalToolNames(&self) -> Vec<String> {
         let guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
@@ -312,16 +329,19 @@ impl AIToolHandler {
             .collect()
     }
 
+    /// Registers a public tool executor.
     #[allow(non_snake_case)]
     pub fn registerTool(&mut self, name: String, executor: Box<dyn ToolExecutor>) {
         self.registerToolWithVisibility(name, executor, ToolRegistrationVisibility::PUBLIC);
     }
 
+    /// Registers an internal tool executor.
     #[allow(non_snake_case)]
     pub fn registerInternalTool(&mut self, name: String, executor: Box<dyn ToolExecutor>) {
         self.registerToolWithVisibility(name, executor, ToolRegistrationVisibility::INTERNAL);
     }
 
+    /// Registers a tool executor with explicit public or internal visibility.
     #[allow(non_snake_case)]
     pub fn registerToolWithVisibility(
         &mut self,
@@ -334,6 +354,7 @@ impl AIToolHandler {
         guard.toolVisibility.insert(name, visibility);
     }
 
+    /// Returns the configured visibility for one tool.
     #[allow(non_snake_case)]
     pub fn getToolVisibility(&self, toolName: &str) -> Option<ToolRegistrationVisibility> {
         self.inner
@@ -372,6 +393,7 @@ impl AIToolHandler {
         None
     }
 
+    /// Returns whether a tool executor is already registered.
     #[allow(non_snake_case)]
     pub fn hasToolExecutor(&self, toolName: &str) -> bool {
         self.inner
@@ -381,6 +403,7 @@ impl AIToolHandler {
             .contains_key(toolName)
     }
 
+    /// Ensures default or package tools are registered, then reports whether a tool exists.
     #[allow(non_snake_case)]
     pub fn getToolExecutorOrActivate(&mut self, toolName: &str) -> bool {
         if self.hasToolExecutor(toolName) {
@@ -611,9 +634,7 @@ impl AIToolHandler {
     ) -> Result<(), String> {
         match &accessSpec.boundary {
             ToolBoundary::None => Ok(()),
-            ToolBoundary::FilePath { effect } => {
-                self.checkWorkspacePath(tool, "path", *effect)
-            }
+            ToolBoundary::FilePath { effect } => self.checkWorkspacePath(tool, "path", *effect),
             ToolBoundary::FilePair {
                 source,
                 destination,

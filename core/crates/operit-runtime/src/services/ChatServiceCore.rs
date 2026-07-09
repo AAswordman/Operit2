@@ -1,10 +1,15 @@
-use operit_tools::ConversationMarkupManager::ToolResult;
-use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
-use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
-use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use crate::core::chat::AIMessageManager::AIMessageManager;
-use operit_tools::files::PathMapper::PathMapper;
-use operit_tools::tools::AIToolHandler::AIToolHandler;
+use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
+use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
+use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
+use crate::services::core::MessageProcessingDelegate::MessageProcessingDelegate;
+use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
+use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
+    WorkspaceBackupManager, WorkspaceFileChange,
+};
+use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
 use operit_model::ActivePrompt::ActivePrompt;
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatDisplayWindowState::ChatDisplayWindowState;
@@ -17,23 +22,18 @@ use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::PromptFunctionType::PromptFunctionType;
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
-use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
-use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_store::repository::ChatHistoryManager::ChatImportResult;
+use operit_store::PreferencesDataStore::{combine3, combine5, StateFlow};
+use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
-use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
-use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
-use crate::services::core::MessageProcessingDelegate::MessageProcessingDelegate;
-use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
-use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
-    WorkspaceBackupManager, WorkspaceFileChange,
-};
-use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};
 use operit_util::OperitPaths;
-use operit_store::PreferencesDataStore::{combine3, combine5, StateFlow};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -273,14 +273,17 @@ impl ChatServiceCore {
         }
     }
 
+    /// Cancels message generation for a specific chat id.
     pub async fn cancelMessage(&mut self, chatId: String) {
         self.messageProcessingDelegate.cancelMessage(chatId).await;
     }
 
+    /// Returns the live response stream attached to a chat turn.
     pub fn getResponseStream(&self, chatId: String) -> Option<SharedAiResponseStream> {
         self.messageProcessingDelegate.getResponseStream(chatId)
     }
 
+    /// Splits markdown content into stable render events for the client.
     pub fn splitMarkdownContent(&self, content: String) -> Vec<MarkdownStreamEvent> {
         MarkdownRenderEventStream::fromContent(content)
     }
@@ -311,11 +314,13 @@ impl ChatServiceCore {
         self.syncTokenStatisticsForCurrentChat();
     }
 
+    /// Switches the local runtime selection without writing the global chat selection.
     pub fn switchChatLocal(&mut self, chatId: String) {
         self.chatHistoryDelegate.switchChat(chatId, false);
         self.syncTokenStatisticsForCurrentChat();
     }
 
+    /// Changes the active character card target used when new chat turns are sent.
     #[allow(non_snake_case)]
     pub fn switchActiveCharacterCardTarget(&mut self, characterCardId: String) {
         self.chatHistoryDelegate
@@ -323,6 +328,7 @@ impl ChatServiceCore {
         self.syncTokenStatisticsForCurrentChat();
     }
 
+    /// Changes the active character group target used when new group chat turns are sent.
     #[allow(non_snake_case)]
     pub fn switchActiveCharacterGroupTarget(&mut self, characterGroupId: String) {
         self.chatHistoryDelegate
@@ -330,6 +336,7 @@ impl ChatServiceCore {
         self.syncTokenStatisticsForCurrentChat();
     }
 
+    /// Updates the character card binding stored on an existing chat.
     #[allow(non_snake_case)]
     pub fn updateChatCharacterCard(&mut self, chatId: String, characterCardName: Option<String>) {
         self.chatHistoryDelegate
@@ -337,6 +344,7 @@ impl ChatServiceCore {
         self.syncTokenStatisticsForCurrentChat();
     }
 
+    /// Updates the character group binding stored on an existing chat.
     #[allow(non_snake_case)]
     pub fn updateChatCharacterGroup(&mut self, chatId: String, characterGroupId: Option<String>) {
         self.chatHistoryDelegate
@@ -344,6 +352,7 @@ impl ChatServiceCore {
         self.syncTokenStatisticsForCurrentChat();
     }
 
+    /// Synchronizes the current runtime chat id to the global chat selection.
     pub fn syncCurrentChatIdToGlobal(&mut self) {}
 
     /// Deletes a chat history and updates current chat selection.
@@ -351,10 +360,12 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.deleteChatHistory(chatId);
     }
 
+    /// Deletes one message from the current chat by visible message index.
     pub fn deleteMessage(&mut self, index: usize) {
         self.chatHistoryDelegate.deleteMessage(index);
     }
 
+    /// Deletes multiple messages from the current chat by visible message indices.
     #[allow(non_snake_case)]
     pub fn deleteMessages(&mut self, indices: Vec<usize>) -> bool {
         let Some(chatId) = self.chatHistoryDelegate.currentChatId.clone() else {
@@ -372,6 +383,7 @@ impl ChatServiceCore {
         true
     }
 
+    /// Replaces the content of one message and refreshes the stable context window.
     #[allow(non_snake_case)]
     pub async fn updateMessage(&mut self, index: usize, editedContent: String) -> bool {
         let Some(message) = self.chatHistoryDelegate.chatHistory.get(index).cloned() else {
@@ -406,23 +418,27 @@ impl ChatServiceCore {
         true
     }
 
+    /// Deletes the selected message and every following message in the current chat.
     #[allow(non_snake_case)]
     pub fn deleteMessagesFrom(&mut self, index: usize) -> bool {
         self.chatHistoryDelegate.deleteMessagesFrom(index)
     }
 
+    /// Deletes one alternate response variant from a message timestamp.
     #[allow(non_snake_case)]
     pub fn deleteMessageVariant(&mut self, timestamp: i64, variantIndex: i32) {
         self.chatHistoryDelegate
             .deleteMessageVariant(timestamp, variantIndex);
     }
 
+    /// Creates a branch chat from the current conversation at an optional message timestamp.
     pub fn createBranch(&mut self, upToMessageTimestamp: Option<i64>) {
         self.chatHistoryDelegate.createBranch(upToMessageTimestamp);
         self.syncTokenStatisticsForCurrentChat();
         self.messageProcessingDelegate.scrollToBottom();
     }
 
+    /// Generates and inserts a summary message around the selected user or AI message.
     #[allow(non_snake_case)]
     pub async fn insertSummary(&mut self, message: ChatMessage) -> bool {
         if message.sender != "user" && message.sender != "ai" {
@@ -514,21 +530,22 @@ impl ChatServiceCore {
         true
     }
 
-    pub fn getBranches(
-        &self,
-        parentChatId: String,
-    ) -> Vec<operit_model::ChatHistory::ChatHistory> {
+    /// Returns branch chats that were derived from the requested parent chat.
+    pub fn getBranches(&self, parentChatId: String) -> Vec<operit_model::ChatHistory::ChatHistory> {
         self.chatHistoryDelegate.getBranches(parentChatId)
     }
 
+    /// Updates whether a chat is locked against destructive changes.
     pub fn updateChatLocked(&mut self, chatId: String, locked: bool) {
         self.chatHistoryDelegate.updateChatLocked(chatId, locked);
     }
 
+    /// Updates whether a chat is pinned in chat history ordering.
     pub fn updateChatPinned(&mut self, chatId: String, pinned: bool) {
         self.chatHistoryDelegate.updateChatPinned(chatId, pinned);
     }
 
+    /// Applies a reordered chat list and optionally moves the active item into a group.
     #[allow(non_snake_case)]
     pub fn updateChatOrderAndGroup(
         &mut self,
@@ -543,6 +560,7 @@ impl ChatServiceCore {
         );
     }
 
+    /// Removes every message from the currently selected chat.
     pub fn clearCurrentChat(&mut self) {
         self.chatHistoryDelegate.clearCurrentChat();
     }
@@ -578,6 +596,7 @@ impl ChatServiceCore {
         Ok(result)
     }
 
+    /// Updates the stored title of a chat history.
     pub fn updateChatTitle(&mut self, chatId: String, title: String) {
         self.chatHistoryDelegate.updateChatTitle(chatId, title);
     }
@@ -591,6 +610,7 @@ impl ChatServiceCore {
         Ok(())
     }
 
+    /// Creates the default workspace directory for a chat and returns its path.
     #[allow(non_snake_case)]
     pub fn createAndGetDefaultWorkspace(
         &mut self,
@@ -601,6 +621,7 @@ impl ChatServiceCore {
             .expect("WorkspaceUtils.createAndGetDefaultWorkspace must succeed")
     }
 
+    /// Creates the default workspace for a chat and stores the workspace binding.
     #[allow(non_snake_case)]
     pub fn createAndBindDefaultWorkspace(
         &mut self,
@@ -615,11 +636,13 @@ impl ChatServiceCore {
         workspacePath
     }
 
+    /// Removes the workspace binding from a chat without deleting workspace files.
     #[allow(non_snake_case)]
     pub fn unbindChatFromWorkspace(&mut self, chatId: String) {
         self.chatHistoryDelegate.unbindChatFromWorkspace(chatId);
     }
 
+    /// Renames the workspace binding and chat title together.
     #[allow(non_snake_case)]
     pub fn renameWorkspaceAndChat(
         &mut self,
@@ -634,6 +657,7 @@ impl ChatServiceCore {
             .renameWorkspaceAndChat(chatId, newWorkspace, newTitle);
     }
 
+    /// Shows file changes that would be applied when rewinding to a message index.
     #[allow(non_snake_case)]
     pub fn previewWorkspaceChangesForMessage(&mut self, index: usize) -> Vec<WorkspaceFileChange> {
         let Some((chatId, workspacePath, rewindTimestamp)) =
@@ -645,6 +669,7 @@ impl ChatServiceCore {
             .previewChangesForRewind(workspacePath, rewindTimestamp, Some(chatId))
     }
 
+    /// Restores the bound workspace to the snapshot before a message index.
     #[allow(non_snake_case)]
     pub fn rewindWorkspaceForMessage(&mut self, index: usize) -> bool {
         let Some((chatId, workspacePath, rewindTimestamp)) =
@@ -675,6 +700,7 @@ impl ChatServiceCore {
         Some(stripXmlLikeTags(&targetMessage.content))
     }
 
+    /// Rewinds a user message and sends edited content as a new turn.
     #[allow(non_snake_case)]
     pub async fn rewindAndResendMessage(&mut self, index: usize, editedContent: String) -> bool {
         let Some(targetMessage) = self.chatHistoryDelegate.chatHistory.get(index).cloned() else {
@@ -702,6 +728,7 @@ impl ChatServiceCore {
         true
     }
 
+    /// Regenerates one AI message in place while preserving the surrounding chat history.
     #[allow(non_snake_case)]
     pub async fn regenerateSingleAiMessage(&mut self, index: usize) -> Result<(), String> {
         let Some(service) = self.enhancedAiService.as_mut() else {
@@ -742,6 +769,7 @@ impl ChatServiceCore {
         Some((chatId, workspacePath, rewindTimestamp))
     }
 
+    /// Clears the token counters associated with the current chat service.
     pub fn resetTokenStatistics(&mut self) {
         let service = self.enhancedAiService.as_mut();
         if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
@@ -751,6 +779,7 @@ impl ChatServiceCore {
         }
     }
 
+    /// Recomputes cumulative token statistics for the current chat and service.
     pub fn updateCumulativeStatistics(&mut self) {
         let chatId = self.chatHistoryDelegate.currentChatId.clone();
         let service = self.enhancedAiService.as_ref();
@@ -761,6 +790,7 @@ impl ChatServiceCore {
         }
     }
 
+    /// Adds a file, package, screen capture, notification capture, or location capture as an attachment.
     pub fn handleAttachment(&mut self, _filePath: String) {
         let filePath = _filePath.trim();
         if filePath.is_empty() {
@@ -1021,23 +1051,28 @@ impl ChatServiceCore {
         })
     }
 
+    /// Removes one attachment by its stored file path.
     pub fn removeAttachment(&mut self, _filePath: String) {
         self.attachments
             .retain(|attachment| attachment.filePath != _filePath);
     }
 
+    /// Removes every pending attachment from the chat input.
     pub fn clearAttachments(&mut self) {
         self.attachments.clear();
     }
 
+    /// Returns whether any chat turn is currently streaming or processing.
     pub fn isLoading(&self) -> bool {
         self.messageProcessingDelegate.isLoading
     }
 
+    /// Returns the loading state flow shared with chat UI observers.
     pub fn isLoadingFlow(&self) -> StateFlow<bool> {
         self.messageProcessingDelegate.isLoadingFlow()
     }
 
+    /// Returns chat ids that currently have active streaming turns.
     pub fn activeStreamingChatIds(&self) -> Vec<String> {
         self.messageProcessingDelegate
             .activeStreamingChatIds
@@ -1046,16 +1081,19 @@ impl ChatServiceCore {
             .collect()
     }
 
+    /// Returns the state flow of chat ids that currently have active streaming turns.
     pub fn activeStreamingChatIdsFlow(&self) -> StateFlow<std::collections::HashSet<String>> {
         self.messageProcessingDelegate.activeStreamingChatIdsFlow()
     }
 
+    /// Returns processing states keyed by chat id.
     pub fn inputProcessingStateByChatId(
         &self,
     ) -> &std::collections::HashMap<String, InputProcessingState> {
         &self.messageProcessingDelegate.inputProcessingStateByChatId
     }
 
+    /// Returns the state flow of processing states keyed by chat id.
     pub fn inputProcessingStateByChatIdFlow(
         &self,
     ) -> StateFlow<std::collections::HashMap<String, InputProcessingState>> {
@@ -1063,16 +1101,19 @@ impl ChatServiceCore {
             .inputProcessingStateByChatIdFlow()
     }
 
+    /// Returns transient toast messages emitted by chat input actions.
     #[allow(non_snake_case)]
     pub fn toastEventFlow(&self) -> StateFlow<Option<String>> {
         self.messageProcessingDelegate.toastEventFlow()
     }
 
+    /// Clears the current transient toast event after the UI has consumed it.
     #[allow(non_snake_case)]
     pub fn clearToastEvent(&mut self) {
         self.messageProcessingDelegate.clearToastEvent();
     }
 
+    /// Returns the processing state for the currently selected chat.
     #[allow(non_snake_case)]
     pub fn currentChatInputProcessingState(&self) -> InputProcessingState {
         let Some(chatId) = self.chatHistoryDelegate.currentChatIdFlow().value() else {
@@ -1090,6 +1131,7 @@ impl ChatServiceCore {
         }
     }
 
+    /// Returns whether the currently selected chat is actively streaming.
     #[allow(non_snake_case)]
     pub fn currentChatIsLoading(&self) -> bool {
         let Some(chatId) = self.chatHistoryDelegate.currentChatIdFlow().value() else {
@@ -1101,21 +1143,25 @@ impl ChatServiceCore {
             .contains(&chatId)
     }
 
+    /// Returns whether older messages exist beyond the current display window.
     #[allow(non_snake_case)]
     pub fn hasOlderDisplayHistory(&self) -> bool {
         self.chatHistoryDelegate.hasOlderDisplayHistory
     }
 
+    /// Returns whether newer messages exist beyond the current display window.
     #[allow(non_snake_case)]
     pub fn hasNewerDisplayHistory(&self) -> bool {
         self.chatHistoryDelegate.hasNewerDisplayHistory
     }
 
+    /// Returns whether the display-window loader is currently fetching messages.
     #[allow(non_snake_case)]
     pub fn isLoadingDisplayWindow(&self) -> bool {
         self.chatHistoryDelegate.isLoadingDisplayWindow
     }
 
+    /// Returns tool invocation counts for the current turn keyed by chat id.
     pub fn currentTurnToolInvocationCountByChatId(
         &self,
     ) -> &std::collections::HashMap<String, i32> {
@@ -1124,6 +1170,7 @@ impl ChatServiceCore {
             .currentTurnToolInvocationCountByChatId
     }
 
+    /// Returns the state flow of tool invocation counts keyed by chat id.
     pub fn currentTurnToolInvocationCountByChatIdFlow(
         &self,
     ) -> StateFlow<std::collections::HashMap<String, i32>> {
@@ -1131,40 +1178,46 @@ impl ChatServiceCore {
             .currentTurnToolInvocationCountByChatIdFlow()
     }
 
+    /// Returns the in-memory messages for the current chat.
     pub fn chatHistory(&self) -> &Vec<ChatMessage> {
         &self.chatHistoryDelegate.chatHistory
     }
 
+    /// Returns the state flow of messages for the current chat.
     #[allow(non_snake_case)]
     pub fn chatHistoryFlow(&self) -> StateFlow<Vec<ChatMessage>> {
         self.chatHistoryDelegate.chatHistoryFlow()
     }
 
+    /// Returns the currently selected chat id.
     pub fn currentChatId(&self) -> &Option<String> {
         &self.chatHistoryDelegate.currentChatId
     }
 
+    /// Returns the state flow of the currently selected chat id.
     #[allow(non_snake_case)]
     pub fn currentChatIdFlow(&self) -> StateFlow<Option<String>> {
         self.chatHistoryDelegate.currentChatIdFlow()
     }
 
+    /// Returns all persisted chat histories currently loaded by this runtime.
     pub fn chatHistories(&self) -> &Vec<operit_model::ChatHistory::ChatHistory> {
         &self.chatHistoryDelegate.chatHistories
     }
 
+    /// Returns the state flow of all persisted chat histories.
     #[allow(non_snake_case)]
-    pub fn chatHistoriesFlow(
-        &self,
-    ) -> StateFlow<Vec<operit_model::ChatHistory::ChatHistory>> {
+    pub fn chatHistoriesFlow(&self) -> StateFlow<Vec<operit_model::ChatHistory::ChatHistory>> {
         self.chatHistoryDelegate.chatHistoriesFlow()
     }
 
+    /// Returns chat history list items prepared for grouped history UI.
     #[allow(non_snake_case)]
     pub fn chatHistoryListItemsFlow(&self) -> StateFlow<Vec<ChatHistoryListItem>> {
         self.chatHistoryDelegate.chatHistoryListItemsFlow()
     }
 
+    /// Combines chat messages, selection, loading, display-window, and prompt state for the main chat UI.
     #[allow(non_snake_case)]
     pub fn chatMainStateFlow(&self) -> StateFlow<ChatMainState> {
         let chatHistoryFlow = self.chatHistoryDelegate.chatHistoryFlow();
@@ -1223,26 +1276,32 @@ impl ChatServiceCore {
         )
     }
 
+    /// Returns whether the chat history selector should be visible.
     pub fn showChatHistorySelector(&self) -> bool {
         self.chatHistoryDelegate.showChatHistorySelector
     }
 
+    /// Returns a snapshot of pending input attachments.
     pub fn attachments(&self) -> Vec<AttachmentInfo> {
         self.attachments.clone()
     }
 
+    /// Returns mutable access to chat history operations for host-side integrations.
     pub fn getChatHistoryDelegate(&mut self) -> &mut ChatHistoryDelegate {
         &mut self.chatHistoryDelegate
     }
 
+    /// Returns mutable access to message processing state for host-side integrations.
     pub fn getMessageProcessingDelegate(&mut self) -> &mut MessageProcessingDelegate {
         &mut self.messageProcessingDelegate
     }
 
+    /// Returns mutable access to message coordination state when enhanced AI is initialized.
     pub fn getMessageCoordinationDelegate(&mut self) -> Option<&mut MessageCoordinationDelegate> {
         self.messageCoordinationDelegate.as_mut()
     }
 
+    /// Returns token statistics state owned by the coordination delegate.
     #[allow(non_snake_case)]
     pub fn getTokenStatisticsDelegate(&self) -> Option<&TokenStatisticsDelegate> {
         self.messageCoordinationDelegate
@@ -1250,6 +1309,7 @@ impl ChatServiceCore {
             .map(|delegate| &delegate.tokenStatisticsDelegate)
     }
 
+    /// Returns the current context window size state flow.
     #[allow(non_snake_case)]
     pub fn currentWindowSizeFlow(&self) -> StateFlow<i32> {
         self.getTokenStatisticsDelegate()
@@ -1257,6 +1317,7 @@ impl ChatServiceCore {
             .currentWindowSizeFlow()
     }
 
+    /// Returns the cumulative input token count state flow.
     #[allow(non_snake_case)]
     pub fn inputTokenCountFlow(&self) -> StateFlow<i32> {
         self.getTokenStatisticsDelegate()
@@ -1264,6 +1325,7 @@ impl ChatServiceCore {
             .cumulativeInputTokensFlow()
     }
 
+    /// Returns the cumulative output token count state flow.
     #[allow(non_snake_case)]
     pub fn outputTokenCountFlow(&self) -> StateFlow<i32> {
         self.getTokenStatisticsDelegate()
@@ -1271,18 +1333,22 @@ impl ChatServiceCore {
             .cumulativeOutputTokensFlow()
     }
 
+    /// Returns the enhanced AI service used by this chat core.
     pub fn getEnhancedAiService(&self) -> Option<&EnhancedAIService> {
         self.enhancedAiService.as_ref()
     }
 
+    /// Returns whether this chat core has finished delegate initialization.
     pub fn isInitialized(&self) -> bool {
         self.initialized
     }
 
+    /// Registers a callback invoked when the enhanced AI service becomes ready.
     pub fn setOnEnhancedAiServiceReady(&mut self, callback: fn(&EnhancedAIService)) {
         self.onEnhancedAiServiceReady = Some(callback);
     }
 
+    /// Registers an optional callback invoked when a chat turn completes.
     pub fn setAdditionalOnTurnComplete(
         &mut self,
         callback: Option<fn(Option<String>, i32, i32, i32)>,
@@ -1290,31 +1356,38 @@ impl ChatServiceCore {
         self.additionalOnTurnComplete = callback;
     }
 
+    /// Replaces the UI bridge used by this chat core.
     pub fn setUiBridge(&mut self, uiBridge: EmptyChatServiceUiBridge) {
         self.uiBridge = uiBridge;
     }
 
+    /// Registers the speech handler used by message playback actions.
     pub fn setSpeakMessageHandler(&mut self, handler: fn(String, bool)) {
         self.messageProcessingDelegate
             .setSpeakMessageHandler(handler);
     }
 
+    /// Reloads chat messages using the display-window strategy for the requested chat.
     pub fn reloadChatMessagesSmart(&mut self, chatId: String) {
         self.chatHistoryDelegate.reloadChatMessagesSmart(chatId);
     }
 
+    /// Loads older messages into the current chat display window.
     pub fn loadOlderMessagesForCurrentChat(&mut self) {
         self.chatHistoryDelegate.loadOlderMessagesForCurrentChat();
     }
 
+    /// Loads newer messages into the current chat display window.
     pub fn loadNewerMessagesForCurrentChat(&mut self) {
         self.chatHistoryDelegate.loadNewerMessagesForCurrentChat();
     }
 
+    /// Moves the current chat display window to the latest messages.
     pub fn showLatestMessagesForCurrentChat(&mut self) {
         self.chatHistoryDelegate.showLatestMessagesForCurrentChat();
     }
 
+    /// Searches a chat and returns lightweight message previews for navigation.
     #[allow(non_snake_case)]
     pub fn loadChatMessageLocatorPreviews(
         &self,
@@ -1325,6 +1398,7 @@ impl ChatServiceCore {
             .loadChatMessageLocatorPreviews(chatId, query)
     }
 
+    /// Marks or unmarks one message as a favorite by message timestamp.
     #[allow(non_snake_case)]
     pub fn setMessageFavorite(&mut self, timestamp: i64, isFavorite: bool) {
         self.chatHistoryDelegate

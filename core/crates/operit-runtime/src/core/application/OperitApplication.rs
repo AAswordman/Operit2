@@ -1,9 +1,5 @@
-use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
-use operit_host_api::HostManager::{
-    setDefaultHttpHost, HostManager,
-};
 use crate::core::chat::AIMessageManager::AIMessageManager;
-use operit_tools::tools::AIToolHandler::AIToolHandler;
+use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::data::backup::Operit1SnapshotImportManager::{
     observeOperit1SnapshotImportProgress, publishOperit1SnapshotImportProgress,
@@ -14,21 +10,21 @@ use crate::data::backup::Operit1SnapshotImportManager::{
 use crate::data::backup::RawSnapshotBackupManager::{
     RawSnapshotBackupManager, RawSnapshotManifest,
 };
-use operit_store::db::AppDatabase::AppDatabase;
-use operit_tools::tools::mcp_runtime::plugins::MCPStarter::MCPStarter;
-use operit_model::Memory::{Memory, MemoryLink};
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::data::preferences::UserPreferencesManager::UserPreferencesManager;
-use operit_store::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use crate::plugins::PluginRegistry::PluginRegistry;
 use crate::services::ProviderRuntimeSupportService::ProviderRuntimeSupportService;
 use crate::services::ToolRuntimeSupportService::ToolRuntimeSupportService;
-use operit_js_bridge::javascript::JsBridgeSupportService::JsBridgeSupportService;
+use operit_host_api::HostManager::{setDefaultHttpHost, HostManager};
 use operit_host_api::HostRuntimeEventRegistration;
 use operit_host_api::TimeUtils::currentTimeMillis;
+use operit_js_bridge::javascript::JsBridgeSupportService::JsBridgeSupportService;
+use operit_model::Memory::{Memory, MemoryLink};
+use operit_store::db::AppDatabase::AppDatabase;
+use operit_store::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
 use operit_store::PreferencesDataStore::PreferencesDataStore;
 use operit_store::PreferencesDataStore::StateFlow;
@@ -36,12 +32,15 @@ use operit_store::RuntimeStorageHost::{
     defaultRuntimeStorageHost, setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
-use operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRoot;
 use operit_store::SyncOperationStore::{
     compactSyncOperations, SyncClock, SyncOperation, SyncOperationStore,
 };
+use operit_tools::tools::mcp_runtime::plugins::MCPStarter::MCPStarter;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRoot;
 use std::fs;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio::sync::Mutex as AsyncMutex;
 
 use operit_util::AppLogger::AppLogger;
 use operit_util::OperitPaths;
@@ -52,7 +51,7 @@ static HOST_MANAGER: OnceLock<Mutex<Option<HostManager>>> = OnceLock::new();
 pub struct OperitApplication {
     pub appStartupTimeMs: i64,
     pub hostManager: HostManager,
-    pub chatRuntimeHolder: ChatRuntimeHolder,
+    pub chatRuntimeHolder: Arc<AsyncMutex<ChatRuntimeHolder>>,
     pub initialized: bool,
     hostRuntimeEventRegistration: Option<Box<dyn HostRuntimeEventRegistration>>,
 }
@@ -82,7 +81,7 @@ impl OperitApplication {
         Self {
             appStartupTimeMs: 0,
             hostManager,
-            chatRuntimeHolder: ChatRuntimeHolder::new(),
+            chatRuntimeHolder: Arc::new(AsyncMutex::new(ChatRuntimeHolder::new())),
             initialized: false,
             hostRuntimeEventRegistration: None,
         }
@@ -95,7 +94,7 @@ impl OperitApplication {
         setHostManager(self.hostManager.clone());
         JsBridgeSupportService::install()?;
         ProviderRuntimeSupportService::install()?;
-        ToolRuntimeSupportService::install()?;
+        ToolRuntimeSupportService::install(self.chatRuntimeHolder.clone())?;
         self.configureOpenMpEnvironment();
         OperitPaths::cleanOnExitCleanup()?;
         self.ensureWorkManagerInitialized();
@@ -110,7 +109,10 @@ impl OperitApplication {
         toolHandler.registerDefaultTools();
         PluginRegistry::initializeBuiltins();
         self.initMcpPlugins();
-        self.chatRuntimeHolder =
+        *self
+            .chatRuntimeHolder
+            .try_lock()
+            .map_err(|_| "Chat runtime holder is busy during application startup".to_string())? =
             ChatRuntimeHolder::newWithHostManager(self.hostManager.clone());
         self.hostRuntimeEventRegistration = crate::services::RuntimeEventIngressService::RuntimeEventIngressService::startHostRuntimeEventSupport(
             self.hostManager.clone(),

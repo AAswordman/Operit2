@@ -10,10 +10,12 @@ pub struct SkillVisibilityPreferences {
 
 impl SkillVisibilityPreferences {
     #[allow(non_snake_case)]
+    /// Opens skill AI-visibility preferences with the default runtime store paths.
     pub fn getInstance() -> Self {
         Self::new(RuntimeStorePaths::default())
     }
 
+    /// Creates a skill AI-visibility preference manager backed by runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
             dataStore: PreferencesDataStore::new(paths.skill_visibility_preferences_path()),
@@ -21,6 +23,7 @@ impl SkillVisibilityPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Reads whether a skill is visible to AI tool selection.
     pub fn isSkillVisibleToAi(&self, skillName: &str) -> bool {
         if skillName.trim().is_empty() {
             return true;
@@ -32,6 +35,7 @@ impl SkillVisibilityPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Persists whether a skill is visible to AI tool selection.
     pub fn setSkillVisibleToAi(
         &self,
         skillName: &str,

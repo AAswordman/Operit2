@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-use operit_util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
+use operit_util::OperitPaths;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,14 +34,17 @@ impl GitHubAuthPreferences {
     const REQUIRED_AUTH_VERSION: i64 = 2;
     const GITHUB_SCOPE: &'static str = "notifications,public_repo,user:email,read:user";
 
+    /// Returns the runtime directory that owns GitHub authentication preferences.
     pub fn data_dir() -> PathBuf {
         OperitPaths::operitRootDir().expect("Operit root dir must be available")
     }
 
+    /// Opens GitHub authentication preferences from the default runtime directory.
     pub fn getInstance() -> Self {
         Self::new(Self::data_dir())
     }
 
+    /// Creates a GitHub authentication preference manager rooted at a directory.
     pub fn new(root_dir: PathBuf) -> Self {
         let path = root_dir.join(OperitPaths::GITHUB_AUTH_PREFERENCES_PATH);
         Self {
@@ -50,6 +53,7 @@ impl GitHubAuthPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Saves a GitHub login session including token metadata and user profile data.
     pub fn saveAuthInfo(
         &self,
         accessToken: &str,
@@ -66,6 +70,7 @@ impl GitHubAuthPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Updates the saved GitHub access token without replacing the saved user profile.
     pub fn updateAccessToken(
         &self,
         accessToken: &str,
@@ -80,6 +85,7 @@ impl GitHubAuthPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Returns the saved GitHub access token when the stored session is current.
     pub fn getCurrentAccessToken(&self) -> Option<String> {
         let preferences = self.dataStore.dataFlow().first().ok()?;
         if !self.isAuthSessionCurrent(&preferences) {
@@ -91,6 +97,7 @@ impl GitHubAuthPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Returns the saved GitHub user profile when the stored session is current.
     pub fn getCurrentUserInfo(&self) -> Option<GitHubUser> {
         let preferences = self.dataStore.dataFlow().first().ok()?;
         if !self.isAuthSessionCurrent(&preferences) {
@@ -102,6 +109,7 @@ impl GitHubAuthPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Reports whether the saved GitHub authentication session is usable.
     pub fn isLoggedIn(&self) -> bool {
         self.dataStore
             .dataFlow()
@@ -116,6 +124,7 @@ impl GitHubAuthPreferences {
             .unwrap_or(false)
     }
 
+    /// Clears the saved GitHub authentication session.
     pub fn logout(&self) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.edit(|preferences| {
             for key in [
@@ -136,6 +145,7 @@ impl GitHubAuthPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Builds the HTTP Authorization header for the current GitHub token.
     pub fn getAuthorizationHeader(&self) -> Option<String> {
         self.getCurrentAccessToken()
             .filter(|token| !token.trim().is_empty())

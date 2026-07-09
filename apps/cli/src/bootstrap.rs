@@ -26,7 +26,7 @@ use operit_host_windows_native::{
     WindowsTerminalHost as NativeTerminalHost, WindowsWebVisitHost as NativeWebVisitHost,
 };
 use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_runtime::core::application::OperitApplicationContext::OperitApplicationContext;
+use operit_host_api::HostManager::HostManager;
 
 #[cfg(not(any(windows, target_os = "linux")))]
 compile_error!("operit2 CLI host is implemented for Windows and Linux.");
@@ -37,7 +37,7 @@ pub(crate) fn create_cli_application() -> OperitApplication {
     ));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let mut context =
-        OperitApplicationContext::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
+        HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
             Arc::new(NativeFileSystemHost::new()),
             Arc::new(NativeWebVisitHost::new()),
             Arc::new(NativeHttpHost::new()),
@@ -55,7 +55,7 @@ pub(crate) fn create_cli_application() -> OperitApplication {
     context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
     context = context.withBrowserAutomationHost(Arc::new(NativeBrowserAutomationHost::new()));
     let commandContext = context.clone();
-    OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(move |args| {
+    OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(move |args: Vec<String>| {
         let output =
             operit_command_core::run_core_command_with_context(commandContext.clone(), &args)?;
         Ok(output.stdout)
@@ -69,14 +69,14 @@ pub(crate) fn create_local_core() -> LocalCoreProxy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
-    use operit_runtime::core::tools::AIToolHandler::AIToolHandler;
-    use operit_runtime::core::tools::ToolResultDataClasses::ToolResultData;
+    use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+    use operit_tools::tools::AIToolHandler::AIToolHandler;
+    use operit_tools::tools::ToolResultDataClasses::ToolResultData;
 
     #[test]
     fn direct_terminal_tool_chain_executes_visible_terminal() {
         let application = create_cli_application();
-        let mut handler = AIToolHandler::getInstance(application.applicationContext.clone());
+        let mut handler = AIToolHandler::getInstance(application.hostManager.clone());
         handler.registerDefaultTools();
 
         #[cfg(windows)]

@@ -10,29 +10,35 @@ use lmdb::{Cursor as LmdbCursor, Environment, EnvironmentFlags, Transaction};
 use operit_store::PreferencesDataStore::{
     mutableStateFlow, stringPreferencesKey, MutableStateFlow, PreferencesDataStore, StateFlow,
 };
-use operit_util::RuntimeStorageLayout::DATA_MEMORY_SHARED_DIR_PATH;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+use operit_util::RuntimeStorageLayout::DATA_MEMORY_SHARED_DIR_PATH;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use zip::ZipArchive;
 
+use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
+use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
+use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use crate::data::preferences::SharedMemoryStoreManager::SharedMemoryStoreManager;
+use crate::data::preferences::TtsConfigManager::TtsConfigManager;
 use operit_model::ApiKeyInfo::{ApiKeyAvailabilityStatus, ApiKeyInfo};
-use operit_model::ChatMessage::ChatMessage;
-use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
 use operit_model::CharacterCard::{
     CharacterCard, CharacterCardChatModelBindingMode, CharacterCardMemoryBindingMode,
     CharacterCardToolAccessConfig,
 };
 use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
 use operit_model::FunctionType::FunctionType;
+use operit_model::MemoryExportModel::{
+    ImportStrategy, MemoryExportData, SerializableLink, SerializableMemory,
+};
 use operit_model::ModelCatalog::ModelCatalog;
 use operit_model::ModelConfigData::{
     ApiProviderType, ModelCapabilities, ModelCatalogKey, ModelConfigDefaults, ModelContextSpec,
     ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderProfile,
-};
-use operit_model::MemoryExportModel::{
-    ImportStrategy, MemoryExportData, SerializableLink, SerializableMemory,
 };
 use operit_model::ModelParameter::{CustomParameterData, ModelParameter, ParameterCategory};
 use operit_model::OperitChatArchive::{
@@ -44,12 +50,6 @@ use operit_model::StandardModelParameters::StandardModelParameters;
 use operit_model::TtsConfig::{
     TtsConfig, TtsHttpHeader, TtsHttpResponsePipelineStep, TtsProviderType,
 };
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
-use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
-use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
-use crate::data::preferences::ModelConfigManager::ModelConfigManager;
-use crate::data::preferences::SharedMemoryStoreManager::SharedMemoryStoreManager;
-use crate::data::preferences::TtsConfigManager::TtsConfigManager;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_store::repository::MemoryRepository::MemoryRepository;
 use operit_util::OperitPaths::{sanitizeMemoryOwnerId, sharedMemoryOwnerKey};
@@ -97,7 +97,6 @@ pub struct Operit1SnapshotPreview {
     pub datastoreFiles: Vec<Operit1DataStoreFilePreview>,
     pub chatCount: i32,
     pub messageCount: i32,
-    pub problemRecordCount: i32,
     pub importedFileCount: i32,
     pub importedExternalFileCount: i32,
     pub detectedDomains: Vec<String>,
@@ -257,10 +256,7 @@ impl Operit1SnapshotImportManager {
 
     #[allow(non_snake_case)]
     /// Imports a full Operit1 snapshot into runtime storage.
-    pub fn importSnapshot(
-        &self,
-        bytes: Vec<u8>,
-    ) -> Result<Operit1SnapshotImportResult, String> {
+    pub fn importSnapshot(&self, bytes: Vec<u8>) -> Result<Operit1SnapshotImportResult, String> {
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "parse",
             "解析快照",
@@ -279,11 +275,8 @@ impl Operit1SnapshotImportManager {
             .selectedModelId
             .clone()
             .ok_or_else(|| "Operit1 快照里的聊天模型索引没有对应模型".to_string())?;
-        let modelConfig = self.importModelConfigFromParsed(
-            &parsed,
-            selected.configId.clone(),
-            selectedModelId,
-        )?;
+        let modelConfig =
+            self.importModelConfigFromParsed(&parsed, selected.configId.clone(), selectedModelId)?;
         let fileImportPlan = SnapshotFileImportPlan::new(&self.rootDir);
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "structured_preferences",
@@ -348,7 +341,10 @@ impl Operit1SnapshotImportManager {
     ) -> Result<(), String> {
         let paths = RuntimeStorePaths::new(self.rootDir.clone());
         let promptTags = buildOperit2PromptTags(parsed)?;
-        if !promptTags.is_empty() || parsed.datastorePreferences.contains_key(ENTRY_CHARACTER_CARDS)
+        if !promptTags.is_empty()
+            || parsed
+                .datastorePreferences
+                .contains_key(ENTRY_CHARACTER_CARDS)
         {
             let cards = buildOperit2CharacterCards(parsed, fileImportPlan)?;
             let backup = serde_json::json!({
@@ -356,7 +352,9 @@ impl Operit1SnapshotImportManager {
                 "promptTags": promptTags,
             });
             CharacterCardManager::new(paths.clone())
-                .importAllCharacterCardsFromBackupContent(&serde_json::to_string(&backup).map_err(|error| error.to_string())?)
+                .importAllCharacterCardsFromBackupContent(
+                    &serde_json::to_string(&backup).map_err(|error| error.to_string())?,
+                )
                 .map_err(|error| format!("导入 Operit1 角色卡失败：{error}"))?;
         }
 
@@ -366,7 +364,9 @@ impl Operit1SnapshotImportManager {
                 "characterGroups": groups,
             });
             CharacterGroupCardManager::new(paths.clone())
-                .importAllCharacterGroupsFromBackupContent(&serde_json::to_string(&backup).map_err(|error| error.to_string())?)
+                .importAllCharacterGroupsFromBackupContent(
+                    &serde_json::to_string(&backup).map_err(|error| error.to_string())?,
+                )
                 .map_err(|error| format!("导入 Operit1 角色组失败：{error}"))?;
         }
 
@@ -381,10 +381,7 @@ impl Operit1SnapshotImportManager {
     fn importUserMarkdownPreferences(&self, parsed: &ParsedOperit1Snapshot) -> Result<(), String> {
         let profiles = buildOperit1UserPreferenceProfiles(parsed)?;
         let cardBindings = collectOperit1CharacterMemoryProfileBindings(parsed)?;
-        let profileIds = cardBindings
-            .values()
-            .cloned()
-            .collect::<BTreeSet<String>>();
+        let profileIds = cardBindings.values().cloned().collect::<BTreeSet<String>>();
         for profileId in profileIds {
             let profile = profiles
                 .get(&profileId)
@@ -460,7 +457,9 @@ impl Operit1SnapshotImportManager {
         provider.maxConcurrentRequests = config.maxConcurrentRequests;
         provider.models = modelIds
             .iter()
-            .map(|currentModelId| buildModelProfile(&provider.providerTypeId, currentModelId, &config))
+            .map(|currentModelId| {
+                buildModelProfile(&provider.providerTypeId, currentModelId, &config)
+            })
             .collect::<Result<Vec<_>, String>>()?;
 
         let modelConfigManager = ModelConfigManager::new(self.rootDir.clone());
@@ -535,7 +534,11 @@ impl Operit1SnapshotImportManager {
             .entries
             .get(ENTRY_DATABASE)
             .ok_or_else(|| format!("Operit1 快照缺少聊天数据库：{ENTRY_DATABASE}"))?;
-        let tempPath = self.rootDir.join("runtime").join("temp").join(SQLITE_INSPECTION_TEMP_FILE);
+        let tempPath = self
+            .rootDir
+            .join("runtime")
+            .join("temp")
+            .join(SQLITE_INSPECTION_TEMP_FILE);
         writeTempFile(&tempPath, databaseBytes)?;
         let result = (|| {
             let archive = buildChatArchiveFromOperit1Database(&tempPath, fileImportPlan)?;
@@ -664,7 +667,7 @@ impl ParsedOperit1Snapshot {
         )
         .map_err(|error| error.to_string())?;
         let manifest: Operit1Manifest = serde_json::from_str(&manifestText)
-        .map_err(|error| format!("Operit1 快照清单格式不正确：{error}"))?;
+            .map_err(|error| format!("Operit1 快照清单格式不正确：{error}"))?;
         if manifest.formatVersion != FORMAT_VERSION {
             return Err(format!(
                 "暂不支持这个 Operit1 快照版本：{}",
@@ -695,9 +698,10 @@ impl ParsedOperit1Snapshot {
                 &key,
                 &format!("快照缺少模型配置：{configId}"),
             )?;
-            configs.push(serde_json::from_str(configJson).map_err(|error| {
-                format!("模型配置「{configId}」格式不正确：{error}")
-            })?);
+            configs.push(
+                serde_json::from_str(configJson)
+                    .map_err(|error| format!("模型配置「{configId}」格式不正确：{error}"))?,
+            );
         }
 
         let functionalPrefs = datastorePreferences
@@ -732,7 +736,7 @@ impl ParsedOperit1Snapshot {
                 keyCount: values.len() as i32,
             })
             .collect::<Vec<_>>();
-        let (chatCount, messageCount, problemRecordCount) = self.databaseCounts()?;
+        let (chatCount, messageCount) = self.databaseCounts()?;
         let importedFileCount = self.countImportableFiles(ENTRY_FILES_PREFIX);
         let importedExternalFileCount = self.countImportableFiles(ENTRY_EXTERNAL_FILES_PREFIX);
         let mut detectedDomains = Vec::new();
@@ -763,7 +767,6 @@ impl ParsedOperit1Snapshot {
             datastoreFiles,
             chatCount,
             messageCount,
-            problemRecordCount,
             importedFileCount,
             importedExternalFileCount,
             detectedDomains,
@@ -838,7 +841,8 @@ impl ParsedOperit1Snapshot {
     }
 
     #[allow(non_snake_case)]
-    fn databaseCounts(&self) -> Result<(i32, i32, i32), String> {
+    /// Counts chat and message rows in the snapshot database.
+    fn databaseCounts(&self) -> Result<(i32, i32), String> {
         let databaseBytes = self
             .entries
             .get(ENTRY_DATABASE)
@@ -847,11 +851,14 @@ impl ParsedOperit1Snapshot {
         writeTempFile(&tempPath, databaseBytes)?;
         let result = (|| {
             let connection = Connection::open(&tempPath).map_err(|error| error.to_string())?;
+            if !sqliteTableExists(&connection, "chats")?
+                || !sqliteTableExists(&connection, "messages")?
+            {
+                return Ok((0, 0));
+            }
             let chatCount = queryCount(&connection, "SELECT COUNT(*) FROM chats")?;
             let messageCount = queryCount(&connection, "SELECT COUNT(*) FROM messages")?;
-            let problemRecordCount =
-                queryCount(&connection, "SELECT COUNT(*) FROM problem_records")?;
-            Ok((chatCount, messageCount, problemRecordCount))
+            Ok((chatCount, messageCount))
         })();
         let _ = fs::remove_file(&tempPath);
         result
@@ -1124,8 +1131,9 @@ fn buildModelParameters(config: &Operit1ModelConfig) -> Result<Vec<ModelParamete
         serde_json::json!(config.repetitionPenalty),
     )?;
     if config.hasCustomParameters && config.customParameters.trim() != "[]" {
-        let customParameters: Vec<CustomParameterData> = serde_json::from_str(&config.customParameters)
-            .map_err(|error| format!("Operit1 自定义模型参数格式不正确：{error}"))?;
+        let customParameters: Vec<CustomParameterData> =
+            serde_json::from_str(&config.customParameters)
+                .map_err(|error| format!("Operit1 自定义模型参数格式不正确：{error}"))?;
         for parameter in customParameters {
             parameters.push(ModelParameter {
                 id: parameter.id,
@@ -1182,8 +1190,8 @@ fn pushStandardParameter(
 
 #[allow(non_snake_case)]
 fn decodeChatMapping(json: &str) -> Result<Operit1FunctionConfigMapping, String> {
-    let value: Value = serde_json::from_str(json)
-        .map_err(|error| format!("功能模型映射格式不正确：{error}"))?;
+    let value: Value =
+        serde_json::from_str(json).map_err(|error| format!("功能模型映射格式不正确：{error}"))?;
     let chat = value
         .get("CHAT")
         .ok_or_else(|| "功能模型映射缺少 CHAT".to_string())?;
@@ -1300,7 +1308,9 @@ impl Operit1PreferenceValue {
             Self::Double(value) => Ok(value.to_string()),
             Self::Int(value) => Ok(value.to_string()),
             Self::String(value) => fileImportPlan.rewritePreferenceValue(key, value),
-            Self::StringSet(value) => serde_json::to_string(value).map_err(|error| error.to_string()),
+            Self::StringSet(value) => {
+                serde_json::to_string(value).map_err(|error| error.to_string())
+            }
             Self::Long(value) => Ok(value.to_string()),
         }
     }
@@ -1365,7 +1375,11 @@ impl SnapshotFileImportPlan {
     }
 
     #[allow(non_snake_case)]
-    fn rewriteWorkspaceStatePreferenceValue(&self, key: &str, value: &str) -> Result<String, String> {
+    fn rewriteWorkspaceStatePreferenceValue(
+        &self,
+        key: &str,
+        value: &str,
+    ) -> Result<String, String> {
         if splitOperit1WorkspaceStatePreferenceKey(key)
             .map(|(prefix, _)| prefix)
             .map(isOperit1WorkspaceStateScalarPreferencePrefix)
@@ -1547,47 +1561,69 @@ fn datastorePreferenceMappings(paths: &RuntimeStorePaths) -> BTreeMap<String, Pa
     );
     mappings.insert(
         "payload/files/datastore/user_preferences.preferences_pb".to_string(),
-        paths.root_dir().join("runtime/config/preferences/user_preferences.preferences.json"),
+        paths
+            .root_dir()
+            .join("runtime/config/preferences/user_preferences.preferences.json"),
     );
     mappings.insert(
         "payload/files/datastore/api_settings.preferences_pb".to_string(),
-        paths.root_dir().join("runtime/config/preferences/api_settings.json"),
+        paths
+            .root_dir()
+            .join("runtime/config/preferences/api_settings.json"),
     );
     mappings.insert(
         "payload/files/datastore/display_preferences.preferences_pb".to_string(),
-        paths.root_dir().join("runtime/config/preferences/display_preferences.preferences.json"),
+        paths
+            .root_dir()
+            .join("runtime/config/preferences/display_preferences.preferences.json"),
     );
     mappings.insert(
         "payload/files/datastore/ui_preferences.preferences_pb".to_string(),
-        paths.root_dir().join("runtime/config/preferences/ui_preferences.preferences.json"),
+        paths
+            .root_dir()
+            .join("runtime/config/preferences/ui_preferences.preferences.json"),
     );
     mappings.insert(
         "payload/files/datastore/waifu_settings.preferences_pb".to_string(),
-        paths.root_dir().join("runtime/config/preferences/waifu_settings.preferences.json"),
+        paths
+            .root_dir()
+            .join("runtime/config/preferences/waifu_settings.preferences.json"),
     );
     mappings.insert(
         "payload/files/datastore/wake_word_preferences.preferences_pb".to_string(),
-        paths.root_dir().join("runtime/config/preferences/wake_word_preferences.preferences.json"),
+        paths
+            .root_dir()
+            .join("runtime/config/preferences/wake_word_preferences.preferences.json"),
     );
     mappings.insert(
         "payload/files/datastore/custom_emoji_settings.preferences_pb".to_string(),
-        paths.root_dir().join("runtime/config/preferences/custom_emoji_settings.preferences.json"),
+        paths
+            .root_dir()
+            .join("runtime/config/preferences/custom_emoji_settings.preferences.json"),
     );
     mappings.insert(
         "payload/files/datastore/android_permission_preferences.preferences_pb".to_string(),
-        paths.root_dir().join("runtime/config/preferences/android_permission_preferences.preferences.json"),
+        paths
+            .root_dir()
+            .join("runtime/config/preferences/android_permission_preferences.preferences.json"),
     );
     mappings.insert(
         "payload/files/datastore/database_backup_settings.preferences_pb".to_string(),
-        paths.root_dir().join("runtime/config/preferences/database_backup_settings.preferences.json"),
+        paths
+            .root_dir()
+            .join("runtime/config/preferences/database_backup_settings.preferences.json"),
     );
     mappings.insert(
         "payload/files/datastore/github_auth_preferences.preferences_pb".to_string(),
-        paths.root_dir().join("runtime/config/preferences/github_auth_preferences.json"),
+        paths
+            .root_dir()
+            .join("runtime/config/preferences/github_auth_preferences.json"),
     );
     mappings.insert(
         "payload/files/datastore/persona_card_chat_history.preferences_pb".to_string(),
-        paths.root_dir().join("runtime/config/preferences/persona_card_chat_history.preferences.json"),
+        paths
+            .root_dir()
+            .join("runtime/config/preferences/persona_card_chat_history.preferences.json"),
     );
     mappings
 }
@@ -1691,10 +1727,13 @@ fn buildOperit2CharacterCards(
                 &format!("character_card_{id}_other_content_voice"),
             )?
             .unwrap_or_default(),
-            avatarUri: optionalPreferenceString(preferences, &format!("character_card_{id}_avatar_uri"))?
-                .map(|value| fileImportPlan.rewritePath(&value))
-                .transpose()?
-                .filter(|value| !value.trim().is_empty()),
+            avatarUri: optionalPreferenceString(
+                preferences,
+                &format!("character_card_{id}_avatar_uri"),
+            )?
+            .map(|value| fileImportPlan.rewritePath(&value))
+            .transpose()?
+            .filter(|value| !value.trim().is_empty()),
             attachedTagIds: optionalPreferenceStringSet(
                 preferences,
                 &format!("character_card_{id}_attached_tag_ids"),
@@ -1727,12 +1766,21 @@ fn buildOperit2CharacterCards(
             .transpose()
             .map_err(|error| format!("Operit1 角色卡工具权限格式不正确：{id}: {error}"))?
             .unwrap_or_default(),
-            isDefault: optionalPreferenceBool(preferences, &format!("character_card_{id}_is_default"))?
-                .unwrap_or(id == CharacterCardManager::DEFAULT_CHARACTER_CARD_ID),
-            createdAt: optionalPreferenceI64(preferences, &format!("character_card_{id}_created_at"))?
-                .unwrap_or_else(currentTimeMillis),
-            updatedAt: optionalPreferenceI64(preferences, &format!("character_card_{id}_updated_at"))?
-                .unwrap_or_else(currentTimeMillis),
+            isDefault: optionalPreferenceBool(
+                preferences,
+                &format!("character_card_{id}_is_default"),
+            )?
+            .unwrap_or(id == CharacterCardManager::DEFAULT_CHARACTER_CARD_ID),
+            createdAt: optionalPreferenceI64(
+                preferences,
+                &format!("character_card_{id}_created_at"),
+            )?
+            .unwrap_or_else(currentTimeMillis),
+            updatedAt: optionalPreferenceI64(
+                preferences,
+                &format!("character_card_{id}_updated_at"),
+            )?
+            .unwrap_or_else(currentTimeMillis),
         });
     }
     Ok(cards)
@@ -2028,7 +2076,9 @@ fn appendSharedUserMarkdown(
 }
 
 #[allow(non_snake_case)]
-fn buildOperit2CharacterGroups(parsed: &ParsedOperit1Snapshot) -> Result<Vec<CharacterGroupCard>, String> {
+fn buildOperit2CharacterGroups(
+    parsed: &ParsedOperit1Snapshot,
+) -> Result<Vec<CharacterGroupCard>, String> {
     let Some(preferences) = parsed.datastorePreferences.get(ENTRY_CHARACTER_GROUPS) else {
         return Ok(Vec::new());
     };
@@ -2328,7 +2378,12 @@ fn collectOperit1LegacyPromptTagIds(
             optionalPreferenceBool(preferences, &format!("prompt_tag_{id}_is_system_tag"))?
                 .unwrap_or(false);
         let tagType = optionalPreferenceString(preferences, &format!("prompt_tag_{id}_tag_type"))?;
-        if isSystemTag || tagType.as_deref().map(str::trim).is_some_and(|value| value.starts_with("SYSTEM_")) {
+        if isSystemTag
+            || tagType
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| value.starts_with("SYSTEM_"))
+        {
             legacyTagIds.insert(id);
         }
     }
@@ -2347,11 +2402,20 @@ fn parseOperit1PromptTagType(value: Option<&str>) -> Result<TagType, String> {
 }
 
 #[allow(non_snake_case)]
+/// Builds a chat archive from the Operit1 SQLite database.
 fn buildChatArchiveFromOperit1Database(
     path: &Path,
     fileImportPlan: &SnapshotFileImportPlan,
 ) -> Result<OperitChatArchive, String> {
     let connection = Connection::open(path).map_err(|error| error.to_string())?;
+    if !sqliteTableExists(&connection, "chats")? || !sqliteTableExists(&connection, "messages")? {
+        return Ok(OperitChatArchive {
+            archiveType: ARCHIVE_TYPE.to_string(),
+            formatVersion: CURRENT_FORMAT_VERSION,
+            exportedAt: currentTimeMillis(),
+            chats: Vec::new(),
+        });
+    }
     let mut chatStatement = connection
         .prepare(
             r#"
@@ -2436,6 +2500,7 @@ struct Operit1ChatRow {
 }
 
 #[allow(non_snake_case)]
+/// Reads archived messages for one Operit1 chat row.
 fn readOperit1Messages(
     connection: &Connection,
     chatId: &str,
@@ -2485,6 +2550,19 @@ fn readOperit1Messages(
 }
 
 #[allow(non_snake_case)]
+/// Returns whether the opened SQLite database contains the named table.
+fn sqliteTableExists(connection: &Connection, tableName: &str) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            [tableName],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| error.to_string())
+}
+
+#[allow(non_snake_case)]
+/// Counts rows with a scalar count query.
 fn queryCount(connection: &Connection, sql: &str) -> Result<i32, String> {
     connection
         .query_row(sql, [], |row| row.get::<_, i32>(0))
@@ -2686,9 +2764,7 @@ fn buildMemoryExportDataFromOperit1ObjectBox(path: &Path) -> Result<MemoryExport
             folderPath: memory.folderPath.clone(),
             createdAt: memory.createdAt,
             updatedAt: memory.updatedAt,
-            tagNames: tagNamesByMemoryId
-                .remove(&memory.id)
-                .unwrap_or_default(),
+            tagNames: tagNamesByMemoryId.remove(&memory.id).unwrap_or_default(),
         });
     }
 
@@ -2915,47 +2991,37 @@ impl<'a> FlatObjectBoxTable<'a> {
 
 #[allow(non_snake_case)]
 fn readBigEndianU32(bytes: &[u8]) -> Result<u32, String> {
-    Ok(u32::from_be_bytes(
-        bytes
-            .try_into()
-            .map_err(|_| "Operit1 ObjectBox u32 字节长度无效".to_string())?,
-    ))
+    Ok(u32::from_be_bytes(bytes.try_into().map_err(|_| {
+        "Operit1 ObjectBox u32 字节长度无效".to_string()
+    })?))
 }
 
 #[allow(non_snake_case)]
 fn readLittleEndianU16(bytes: &[u8]) -> Result<u16, String> {
-    Ok(u16::from_le_bytes(
-        bytes
-            .try_into()
-            .map_err(|_| "Operit1 ObjectBox u16 字节长度无效".to_string())?,
-    ))
+    Ok(u16::from_le_bytes(bytes.try_into().map_err(|_| {
+        "Operit1 ObjectBox u16 字节长度无效".to_string()
+    })?))
 }
 
 #[allow(non_snake_case)]
 fn readLittleEndianU32(bytes: &[u8]) -> Result<u32, String> {
-    Ok(u32::from_le_bytes(
-        bytes
-            .try_into()
-            .map_err(|_| "Operit1 ObjectBox u32 字节长度无效".to_string())?,
-    ))
+    Ok(u32::from_le_bytes(bytes.try_into().map_err(|_| {
+        "Operit1 ObjectBox u32 字节长度无效".to_string()
+    })?))
 }
 
 #[allow(non_snake_case)]
 fn readLittleEndianI32(bytes: &[u8]) -> Result<i32, String> {
-    Ok(i32::from_le_bytes(
-        bytes
-            .try_into()
-            .map_err(|_| "Operit1 ObjectBox i32 字节长度无效".to_string())?,
-    ))
+    Ok(i32::from_le_bytes(bytes.try_into().map_err(|_| {
+        "Operit1 ObjectBox i32 字节长度无效".to_string()
+    })?))
 }
 
 #[allow(non_snake_case)]
 fn readLittleEndianI64(bytes: &[u8]) -> Result<i64, String> {
-    Ok(i64::from_le_bytes(
-        bytes
-            .try_into()
-            .map_err(|_| "Operit1 ObjectBox i64 字节长度无效".to_string())?,
-    ))
+    Ok(i64::from_le_bytes(bytes.try_into().map_err(|_| {
+        "Operit1 ObjectBox i64 字节长度无效".to_string()
+    })?))
 }
 
 #[allow(non_snake_case)]
@@ -3041,7 +3107,9 @@ fn decodeDataStorePreferences(
     while !decoder.isComplete() {
         let (fieldNumber, wireType) = decoder.readTag()?;
         if fieldNumber != 1 || wireType != 2 {
-            return Err(format!("DataStore Preferences 出现未知字段：{fieldNumber}/{wireType}"));
+            return Err(format!(
+                "DataStore Preferences 出现未知字段：{fieldNumber}/{wireType}"
+            ));
         }
         let entryBytes = decoder.readLengthDelimited()?;
         if let Some((key, value)) = decodePreferenceEntry(entryBytes)? {
@@ -3076,24 +3144,32 @@ fn decodePreferenceValue(bytes: &[u8]) -> Result<Option<Operit1PreferenceValue>,
         let (fieldNumber, wireType) = decoder.readTag()?;
         match (fieldNumber, wireType) {
             (1, 0) => value = Some(Operit1PreferenceValue::Boolean(decoder.readVarint()? != 0)),
-            (2, 5) => value = Some(Operit1PreferenceValue::Float(f32::from_le_bytes(
-                decoder.readFixed32()?.to_le_bytes(),
-            ))),
-            (3, 1) => value = Some(Operit1PreferenceValue::Double(f64::from_le_bytes(
-                decoder.readFixed64()?.to_le_bytes(),
-            ))),
-            (4, 0) => value = Some(Operit1PreferenceValue::Int(decodeInt32Varint(
-                decoder.readVarint()?,
-            ))),
+            (2, 5) => {
+                value = Some(Operit1PreferenceValue::Float(f32::from_le_bytes(
+                    decoder.readFixed32()?.to_le_bytes(),
+                )))
+            }
+            (3, 1) => {
+                value = Some(Operit1PreferenceValue::Double(f64::from_le_bytes(
+                    decoder.readFixed64()?.to_le_bytes(),
+                )))
+            }
+            (4, 0) => {
+                value = Some(Operit1PreferenceValue::Int(decodeInt32Varint(
+                    decoder.readVarint()?,
+                )))
+            }
             (5, 2) => value = Some(Operit1PreferenceValue::String(decoder.readString()?)),
             (6, 2) => {
                 value = Some(Operit1PreferenceValue::StringSet(
                     decodePreferenceStringSet(decoder.readLengthDelimited()?)?,
                 ));
             }
-            (7, 0) => value = Some(Operit1PreferenceValue::Long(decodeInt64Varint(
-                decoder.readVarint()?,
-            ))),
+            (7, 0) => {
+                value = Some(Operit1PreferenceValue::Long(decodeInt64Varint(
+                    decoder.readVarint()?,
+                )))
+            }
             _ => decoder.skipField(wireType)?,
         }
     }

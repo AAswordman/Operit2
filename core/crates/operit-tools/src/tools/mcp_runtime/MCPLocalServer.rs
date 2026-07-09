@@ -96,6 +96,7 @@ impl MCPLocalServer {
     }
 
     #[allow(non_snake_case)]
+    /// Reloads MCP server and plugin configuration from the runtime store.
     pub fn reloadConfigurations(&self) -> Result<(), String> {
         self.loadAllConfigurations()
     }
@@ -139,18 +140,21 @@ impl MCPLocalServer {
         Ok(())
     }
 
+    /// Rewrites the MCP configuration file after loading and sanitizing it.
     #[allow(non_snake_case)]
     pub fn saveMCPConfig(&self) -> Result<(), String> {
         let config = self.readMCPConfig()?;
         self.writeMCPConfig(&config)
     }
 
+    /// Rewrites the persisted MCP server status file after loading it.
     #[allow(non_snake_case)]
     pub fn saveServerStatus(&self) -> Result<(), String> {
         let status = self.readServerStatus()?;
         self.writeServerStatus(&status)
     }
 
+    /// Adds or replaces a command-based MCP server entry in the local config.
     #[allow(non_snake_case)]
     pub fn addOrUpdateMCPServer(
         &self,
@@ -189,6 +193,7 @@ impl MCPLocalServer {
         self.writeMCPConfig(&config)
     }
 
+    /// Adds or replaces a complete MCP server config after validation.
     #[allow(non_snake_case)]
     pub fn addOrUpdateMCPServerConfig(
         &self,
@@ -205,6 +210,7 @@ impl MCPLocalServer {
         self.writeMCPConfig(&config)
     }
 
+    /// Removes an MCP server config, metadata, status, and local plugin directory.
     #[allow(non_snake_case)]
     pub fn removeMCPServer(&self, serverId: &str) -> Result<(), String> {
         let mut config = self.readMCPConfig()?;
@@ -235,6 +241,7 @@ impl MCPLocalServer {
         Ok(())
     }
 
+    /// Imports MCP server entries from a JSON config payload and returns the inserted count.
     #[allow(non_snake_case)]
     pub fn mergeConfigFromJson(&self, jsonConfig: &str) -> Result<usize, String> {
         let parsedConfig = serde_json::from_str::<MCPConfig>(jsonConfig)
@@ -259,6 +266,7 @@ impl MCPLocalServer {
         Ok(addedCount)
     }
 
+    /// Returns the absolute path of the MCP configuration file.
     #[allow(non_snake_case)]
     pub fn getConfigFilePath(&self) -> String {
         self.storePaths
@@ -267,6 +275,7 @@ impl MCPLocalServer {
             .to_string()
     }
 
+    /// Returns the directory used for local MCP plugin runtime files.
     #[allow(non_snake_case)]
     pub fn getConfigDirectory(&self) -> String {
         self.storePaths
@@ -275,11 +284,13 @@ impl MCPLocalServer {
             .to_string()
     }
 
+    /// Returns one MCP server config by id.
     #[allow(non_snake_case)]
     pub fn getMCPServer(&self, serverId: &str) -> Option<ServerConfig> {
         self.readMCPConfig().ok()?.mcpServers.get(serverId).cloned()
     }
 
+    /// Returns every configured MCP server keyed by server id.
     #[allow(non_snake_case)]
     pub fn getAllMCPServers(&self) -> BTreeMap<String, ServerConfig> {
         self.readMCPConfig()
@@ -287,6 +298,7 @@ impl MCPLocalServer {
             .unwrap_or_default()
     }
 
+    /// Adds or replaces display metadata for an installed MCP plugin.
     #[allow(non_snake_case)]
     pub fn addOrUpdatePluginMetadata(
         &self,
@@ -298,6 +310,7 @@ impl MCPLocalServer {
         self.writeMCPConfig(&config)
     }
 
+    /// Removes display metadata for an MCP plugin.
     #[allow(non_snake_case)]
     pub fn removePluginMetadata(&self, pluginId: &str) -> Result<(), String> {
         let mut config = self.readMCPConfig()?;
@@ -305,6 +318,7 @@ impl MCPLocalServer {
         self.writeMCPConfig(&config)
     }
 
+    /// Returns display metadata for one MCP plugin.
     #[allow(non_snake_case)]
     pub fn getPluginMetadata(&self, pluginId: &str) -> Option<PluginMetadata> {
         self.readMCPConfig()
@@ -314,6 +328,7 @@ impl MCPLocalServer {
             .cloned()
     }
 
+    /// Returns all MCP plugin metadata keyed by plugin id.
     #[allow(non_snake_case)]
     pub fn getAllPluginMetadata(&self) -> BTreeMap<String, PluginMetadata> {
         self.readMCPConfig()
@@ -321,6 +336,7 @@ impl MCPLocalServer {
             .unwrap_or_default()
     }
 
+    /// Updates runtime status, cached tool metadata, and timestamps for one MCP server.
     #[allow(non_snake_case)]
     pub fn updateServerStatus(
         &self,
@@ -358,6 +374,7 @@ impl MCPLocalServer {
         self.writeServerStatus(&statusMap)
     }
 
+    /// Stores the latest discovered tools for an MCP server.
     #[allow(non_snake_case)]
     pub fn cacheServerTools(
         &self,
@@ -367,6 +384,7 @@ impl MCPLocalServer {
         self.updateServerStatus(serverId, None, Some(tools), None, None)
     }
 
+    /// Returns cached tool metadata for an MCP server.
     #[allow(non_snake_case)]
     pub fn getCachedTools(&self, serverId: &str) -> Option<Vec<CachedToolInfo>> {
         self.readServerStatus()
@@ -375,6 +393,7 @@ impl MCPLocalServer {
             .and_then(|status| status.cachedTools.clone())
     }
 
+    /// Returns whether an MCP server has non-empty tool cache newer than one day.
     #[allow(non_snake_case)]
     pub fn hasValidToolCache(&self, serverId: &str) -> bool {
         let Some(status) = self
@@ -393,6 +412,7 @@ impl MCPLocalServer {
         currentTimeMillis() - status.toolsCachedTime < 24 * 60 * 60 * 1000
     }
 
+    /// Removes runtime status information for one MCP server.
     #[allow(non_snake_case)]
     pub fn removeServerStatus(&self, serverId: &str) -> Result<(), String> {
         let mut statusMap = self.readServerStatus()?;
@@ -400,16 +420,19 @@ impl MCPLocalServer {
         self.writeServerStatus(&statusMap)
     }
 
+    /// Returns runtime status information for one MCP server.
     #[allow(non_snake_case)]
     pub fn getServerStatus(&self, serverId: &str) -> Option<ServerStatus> {
         self.readServerStatus().ok()?.get(serverId).cloned()
     }
 
+    /// Returns runtime status information for every known MCP server.
     #[allow(non_snake_case)]
     pub fn getAllServerStatus(&self) -> BTreeMap<String, ServerStatus> {
         self.readServerStatus().unwrap_or_default()
     }
 
+    /// Returns whether the last status timestamps indicate that the server is running.
     #[allow(non_snake_case)]
     pub fn isServerLikelyRunning(&self, serverId: &str) -> bool {
         let Some(status) = self.getServerStatus(serverId) else {
@@ -418,6 +441,7 @@ impl MCPLocalServer {
         status.lastStartTime > 0 && status.lastStartTime >= status.lastStopTime
     }
 
+    /// Returns whether a configured MCP server is enabled.
     #[allow(non_snake_case)]
     pub fn isServerEnabled(&self, serverId: &str) -> bool {
         if let Some(serverConfig) = self.getMCPServer(serverId) {
@@ -426,6 +450,7 @@ impl MCPLocalServer {
         true
     }
 
+    /// Enables or disables a configured MCP server.
     #[allow(non_snake_case)]
     pub fn setServerEnabled(&self, serverId: &str, enabled: bool) -> Result<(), String> {
         let mut config = self.readMCPConfig()?;
@@ -438,6 +463,7 @@ impl MCPLocalServer {
         ))
     }
 
+    /// Returns the runtime directory used by an installed MCP plugin.
     #[allow(non_snake_case)]
     pub fn getPluginRuntimeDirectory(&self, pluginId: &str) -> String {
         self.storePaths
@@ -447,6 +473,7 @@ impl MCPLocalServer {
             .to_string()
     }
 
+    /// Exports one plugin server config as a pretty JSON document.
     #[allow(non_snake_case)]
     pub fn getPluginConfig(&self, pluginId: &str) -> String {
         if let Some(serverConfig) = self.getMCPServer(pluginId) {
@@ -457,6 +484,7 @@ impl MCPLocalServer {
         serde_json::to_string_pretty(&MCPConfig::default()).unwrap_or_else(|_| "{}".to_string())
     }
 
+    /// Saves one plugin server config from either a full MCP config JSON or a server JSON.
     #[allow(non_snake_case)]
     pub fn savePluginConfig(&self, pluginId: &str, configJson: &str) -> Result<bool, String> {
         let parsedServerConfig = serde_json::from_str::<MCPConfig>(configJson)
@@ -479,6 +507,7 @@ impl MCPLocalServer {
         Ok(true)
     }
 
+    /// Exports MCP config and server status as one JSON document.
     #[allow(non_snake_case)]
     pub fn exportConfigAsJson(&self) -> String {
         serde_json::json!({
@@ -490,6 +519,7 @@ impl MCPLocalServer {
         .to_string()
     }
 
+    /// Imports MCP config and server status from an exported JSON document.
     #[allow(non_snake_case)]
     pub fn importConfigFromJson(&self, json: &str) -> Result<bool, String> {
         let value =

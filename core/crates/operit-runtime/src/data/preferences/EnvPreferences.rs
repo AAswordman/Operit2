@@ -1,7 +1,7 @@
-use operit_util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
+use operit_util::OperitPaths;
 use std::collections::BTreeMap;
 
 #[derive(Clone)]
@@ -13,6 +13,7 @@ impl EnvPreferences {
     const PREFS_FILE_NAME: &'static str = "env_preferences.preferences.json";
 
     #[allow(non_snake_case)]
+    /// Opens the persistent environment preference store.
     pub fn getInstance() -> Self {
         Self {
             dataStore: PreferencesDataStore::new(
@@ -22,6 +23,7 @@ impl EnvPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Reads an environment value from persistent preferences or the process environment.
     pub fn getEnv(&self, key: &str) -> Result<Option<String>, PreferencesDataStoreError> {
         let name = key.trim();
         if name.is_empty() {
@@ -41,6 +43,7 @@ impl EnvPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Stores an environment value in persistent preferences.
     pub fn setEnv(&self, key: &str, value: &str) -> Result<(), PreferencesDataStoreError> {
         let name = key.trim();
         if name.is_empty() {
@@ -51,6 +54,7 @@ impl EnvPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Removes a persisted environment value by key.
     pub fn removeEnv(&self, key: &str) -> Result<(), PreferencesDataStoreError> {
         let name = key.trim();
         if name.is_empty() {
@@ -61,6 +65,7 @@ impl EnvPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Returns all persisted environment values keyed by variable name.
     pub fn getAllEnv(&self) -> Result<BTreeMap<String, String>, PreferencesDataStoreError> {
         Ok(self
             .dataStore
@@ -72,6 +77,7 @@ impl EnvPreferences {
     }
 
     #[allow(non_snake_case)]
+    /// Replaces the persisted environment values with the provided map.
     pub fn setAllEnv(
         &self,
         variables: BTreeMap<String, String>,

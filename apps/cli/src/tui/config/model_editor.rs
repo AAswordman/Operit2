@@ -4,8 +4,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem};
 use ratatui::Frame;
 
-use operit_runtime::data::model::FunctionType::FunctionType;
-use operit_runtime::data::model::ModelConfigData::{
+use operit_model::FunctionType::FunctionType;
+use operit_model::ModelConfigData::{
     ModelBuiltinTool, ModelCapabilities, ModelContextSpec, ModelRequestSpec, ModelSummarySettings,
     ResolvedModelConfig,
 };

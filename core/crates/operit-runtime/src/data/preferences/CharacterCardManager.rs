@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use crate::data::preferences::CharacterCardBilingualData::CharacterCardBilingualData;
+use crate::data::preferences::PromptTagManager::PromptTagManager;
 use operit_model::CharacterCard::{
     CharacterCard, CharacterCardChatModelBindingMode, CharacterCardMemoryBindingMode,
     CharacterCardToolAccessConfig, CharacterSharedMemoryMount, OperitAttachedTagPayload,
@@ -14,8 +16,6 @@ use operit_model::CharacterCard::{
 };
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTag::{PromptTag, TagType};
-use crate::data::preferences::CharacterCardBilingualData::CharacterCardBilingualData;
-use crate::data::preferences::PromptTagManager::PromptTagManager;
 
 #[derive(Clone)]
 pub struct CharacterCardManager {
@@ -57,6 +57,7 @@ impl CharacterCardManager {
     #[allow(non_snake_case)]
     pub const DEFAULT_CHARACTER_NAME: &str = "Operit";
 
+    /// Creates a character card manager over explicit runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
             dataStore: PreferencesDataStore::new(paths.character_cards_preferences_path()),
@@ -64,6 +65,7 @@ impl CharacterCardManager {
         }
     }
 
+    /// Creates a character card manager over the default runtime store paths.
     #[allow(non_snake_case)]
     pub fn getInstance() -> Self {
         Self::new(RuntimeStorePaths::default())
@@ -79,6 +81,7 @@ impl CharacterCardManager {
         stringPreferencesKey("active_character_card_id")
     }
 
+    /// Returns the ordered list of character card ids as a preference flow.
     #[allow(non_snake_case)]
     pub fn characterCardListFlow(&self) -> Flow<Vec<String>> {
         self.dataStore
@@ -86,6 +89,7 @@ impl CharacterCardManager {
             .map(|preferences| Self::readCardList(&preferences))
     }
 
+    /// Returns the active character card id as a preference flow.
     #[allow(non_snake_case)]
     pub fn observeActiveCharacterCardId(&self) -> Flow<Option<String>> {
         self.dataStore
@@ -93,6 +97,7 @@ impl CharacterCardManager {
             .map(|preferences| preferences.get(&Self::ACTIVE_CHARACTER_CARD_ID()).cloned())
     }
 
+    /// Returns a character card preference flow for one card id.
     #[allow(non_snake_case)]
     pub fn getCharacterCardFlow(&self, id: &str) -> Flow<CharacterCard> {
         let manager = self.clone();
@@ -102,6 +107,7 @@ impl CharacterCardManager {
             .map(move |preferences| manager.getCharacterCardFromPreferences(&preferences, &id))
     }
 
+    /// Reads one character card snapshot by id.
     #[allow(non_snake_case)]
     pub fn getCharacterCard(&self, id: &str) -> Result<CharacterCard, PreferencesDataStoreError> {
         self.getCharacterCardFlow(id).first()
@@ -220,6 +226,7 @@ impl CharacterCardManager {
         }
     }
 
+    /// Creates a character card and returns the stored id.
     #[allow(non_snake_case)]
     pub fn createCharacterCard(
         &self,
@@ -251,6 +258,7 @@ impl CharacterCardManager {
         Ok(id)
     }
 
+    /// Updates all stored fields for an existing character card.
     #[allow(non_snake_case)]
     pub fn updateCharacterCard(
         &self,
@@ -264,6 +272,7 @@ impl CharacterCardManager {
         })
     }
 
+    /// Deletes a non-default character card and clears it from the active selection.
     #[allow(non_snake_case)]
     pub fn deleteCharacterCard(&self, id: &str) -> Result<(), PreferencesDataStoreError> {
         if id == Self::DEFAULT_CHARACTER_CARD_ID {
@@ -280,6 +289,7 @@ impl CharacterCardManager {
         })
     }
 
+    /// Sets the active character card id used by active prompt resolution.
     #[allow(non_snake_case)]
     pub fn setActiveCharacterCard(&self, id: &str) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.edit(|preferences| {
@@ -287,6 +297,7 @@ impl CharacterCardManager {
         })
     }
 
+    /// Clears the active character card selection.
     #[allow(non_snake_case)]
     pub fn clearActiveCharacterCard(&self) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.edit(|preferences| {
@@ -294,6 +305,7 @@ impl CharacterCardManager {
         })
     }
 
+    /// Returns every character card sorted with the default card first.
     #[allow(non_snake_case)]
     pub fn getAllCharacterCards(&self) -> Result<Vec<CharacterCard>, PreferencesDataStoreError> {
         let ids = self.characterCardListFlow().first()?;
@@ -304,6 +316,7 @@ impl CharacterCardManager {
             .collect())
     }
 
+    /// Finds a character card by its display name.
     #[allow(non_snake_case)]
     pub fn findCharacterCardByName(
         &self,
@@ -316,6 +329,7 @@ impl CharacterCardManager {
             .find(|card| card.name.trim() == normalized))
     }
 
+    /// Ensures the default character card exists in preferences.
     #[allow(non_snake_case)]
     pub fn initializeIfNeeded(&self) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.edit(|preferences| {
@@ -341,6 +355,7 @@ impl CharacterCardManager {
         Ok(())
     }
 
+    /// Recreates the default character card with the built-in default content.
     #[allow(non_snake_case)]
     pub fn resetDefaultCharacterCard(&self) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.edit(|preferences| {
@@ -348,6 +363,7 @@ impl CharacterCardManager {
         })
     }
 
+    /// Combines character card content and attached tags into a prompt string.
     #[allow(non_snake_case)]
     pub fn combinePrompts(
         &self,
@@ -390,6 +406,7 @@ impl CharacterCardManager {
         Ok(parts.join("\n\n").trim().to_string())
     }
 
+    /// Exports all character cards and prompt tags as backup JSON.
     #[allow(non_snake_case)]
     pub fn exportAllCharacterCardsToBackupContent(&self) -> Result<String, String> {
         let cards = self
@@ -415,6 +432,7 @@ impl CharacterCardManager {
             .map_err(|error| format!("导出角色卡备份失败：{error}"))
     }
 
+    /// Imports character cards and prompt tags from backup JSON.
     #[allow(non_snake_case)]
     pub fn importAllCharacterCardsFromBackupContent(
         &self,
@@ -488,6 +506,7 @@ impl CharacterCardManager {
         })
     }
 
+    /// Creates a character card from Tavern card JSON.
     #[allow(non_snake_case)]
     pub fn createCharacterCardFromTavernJson(&self, jsonString: &str) -> Result<String, String> {
         let tavernCard = serde_json::from_str::<TavernCharacterCard>(jsonString)
@@ -568,6 +587,7 @@ impl CharacterCardManager {
             .map_err(|error| error.to_string())
     }
 
+    /// Exports one character card as Tavern-compatible JSON.
     #[allow(non_snake_case)]
     pub fn exportCharacterCardToTavernJson(&self, characterCardId: &str) -> Result<String, String> {
         let card = self

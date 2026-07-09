@@ -1,8 +1,8 @@
-use operit_util::LocaleUtils::LanguageCodes;
-use operit_util::OperitPaths;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, PreferencesDataStore, PreferencesDataStoreError,
 };
+use operit_util::LocaleUtils::LanguageCodes;
+use operit_util::OperitPaths;
 
 #[derive(Clone)]
 pub struct UserPreferencesManager {
@@ -17,6 +17,7 @@ pub struct PreferencesManager {
 impl UserPreferencesManager {
     pub const DEFAULT_LANGUAGE: &'static str = LanguageCodes::AUTO;
 
+    /// Opens user preferences from the default runtime preference path.
     pub fn getInstance() -> Self {
         Self {
             dataStore: PreferencesDataStore::new(
@@ -27,6 +28,7 @@ impl UserPreferencesManager {
     }
 
     #[allow(non_snake_case)]
+    /// Initializes the user preference store.
     pub fn initializeIfNeeded(
         &self,
         _defaultProfileName: &str,
@@ -36,6 +38,7 @@ impl UserPreferencesManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes the selected application language code.
     pub fn appLanguage(&self) -> Flow<String> {
         self.dataStore.dataFlow().map(|preferences| {
             preferences
@@ -46,6 +49,7 @@ impl UserPreferencesManager {
     }
 
     #[allow(non_snake_case)]
+    /// Saves the selected application language code.
     pub fn saveAppLanguage(&self, languageCode: String) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.edit(|preferences| {
             preferences.set(&stringPreferencesKey("app_language"), languageCode.clone());
@@ -53,12 +57,14 @@ impl UserPreferencesManager {
     }
 
     #[allow(non_snake_case)]
+    /// Reads the selected application language code.
     pub fn getCurrentLanguage(&self) -> Result<String, PreferencesDataStoreError> {
         self.appLanguage().first()
     }
 }
 
 impl PreferencesManager {
+    /// Opens the preferences facade backed by user preferences.
     pub fn getInstance() -> Self {
         Self {
             inner: UserPreferencesManager::getInstance(),
@@ -66,21 +72,25 @@ impl PreferencesManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes the selected application language code.
     pub fn appLanguage(&self) -> Flow<String> {
         self.inner.appLanguage()
     }
 
     #[allow(non_snake_case)]
+    /// Saves the selected application language code.
     pub fn saveAppLanguage(&self, languageCode: String) -> Result<(), PreferencesDataStoreError> {
         self.inner.saveAppLanguage(languageCode)
     }
 
     #[allow(non_snake_case)]
+    /// Reads the selected application language code.
     pub fn getCurrentLanguage(&self) -> Result<String, PreferencesDataStoreError> {
         self.inner.getCurrentLanguage()
     }
 
     #[allow(non_snake_case)]
+    /// Initializes the user preference store through the preferences facade.
     pub fn initializeIfNeeded(
         &self,
         defaultProfileName: &str,

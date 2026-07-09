@@ -3,7 +3,7 @@ use base64::Engine;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use image::codecs::png::PngEncoder;
 use image::{ColorType, ImageEncoder};
-use operit_runtime::data::model::AttachmentInfo::AttachmentInfo;
+use operit_model::AttachmentInfo::AttachmentInfo;
 use std::fs;
 use std::path::PathBuf;
 

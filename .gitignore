@@ -54,6 +54,7 @@ desktop.ini
 **/android/app/debug/
 **/android/app/profile/
 **/android/app/release/
+.kotlin
 **/ios/Flutter/.last_build_id
 **/ios/Flutter/flutter_export_environment.sh
 **/ios/Pods/

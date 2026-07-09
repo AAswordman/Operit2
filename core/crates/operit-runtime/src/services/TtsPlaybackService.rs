@@ -5,12 +5,12 @@ use std::sync::Arc;
 use operit_host_api::{AudioPlaybackHost, TtsPlaybackHost, TtsPlaybackRequest, TtsPlaybackStatus};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
+use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::data::preferences::TtsConfigManager::TtsConfigManager;
 use operit_host_api::HostManager::HostManager;
 use operit_model::TtsConfig::{
     TtsConfig, TtsHostPlaybackResult, TtsPlaybackResult, TtsProviderType,
 };
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
-use crate::data::preferences::TtsConfigManager::TtsConfigManager;
 use operit_util::TtsCleaner::TtsCleaner;
 
 #[derive(Clone)]

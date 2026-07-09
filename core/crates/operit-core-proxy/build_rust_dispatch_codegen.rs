@@ -131,7 +131,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         .find(|object| object.access == ObjectAccess::ChatRuntimeMain)
     {
         output.push_str(&format!(
-            "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let core = proxy.application.chatRuntimeHolder.getCore(slot);\n        return generated_dispatch_{}_call(core, request).await;\n    }}\n",
+            "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let mut holder = proxy.application.chatRuntimeHolder.lock().await;\n        let core = holder.getCore(slot);\n        return generated_dispatch_{}_call(core, request).await;\n    }}\n",
             chat_runtime.dispatch_name
         ));
     }
@@ -178,7 +178,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         .find(|object| object.access == ObjectAccess::ChatRuntimeMain)
     {
         output.push_str(&format!(
-            "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let propertyName = request.propertyName.clone();\n        let core = proxy.application.chatRuntimeHolder.getCore(slot);\n        let value = generated_dispatch_{}_watch_snapshot(core, &request)?;\n        return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetPath: request.targetPath, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n    }}\n",
+            "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let propertyName = request.propertyName.clone();\n        let mut holder = proxy.application.chatRuntimeHolder.try_lock().map_err(|_| operit_link::CoreLinkError::internal(\"Chat runtime holder is busy\"))?;\n        let core = holder.getCore(slot);\n        let value = generated_dispatch_{}_watch_snapshot(core, &request)?;\n        return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetPath: request.targetPath, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n    }}\n",
             chat_runtime.dispatch_name
         ));
     }
@@ -235,7 +235,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         .find(|object| object.access == ObjectAccess::ChatRuntimeMain)
     {
         output.push_str(&format!(
-            "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let core = proxy.application.chatRuntimeHolder.getCore(slot);\n        return generated_dispatch_{}_watch(core, request);\n    }}\n",
+            "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let mut holder = proxy.application.chatRuntimeHolder.try_lock().map_err(|_| operit_link::CoreLinkError::internal(\"Chat runtime holder is busy\"))?;\n        let core = holder.getCore(slot);\n        return generated_dispatch_{}_watch(core, request);\n    }}\n",
             chat_runtime.dispatch_name
         ));
     }

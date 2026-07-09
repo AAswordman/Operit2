@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
-use operit_runtime::data::model::ChatMessage::ChatMessage;
-use operit_runtime::data::model::InputProcessingState::InputProcessingState;
-use operit_runtime::util::streamnative::NativeMarkdownSplitter::MarkdownNodeStable;
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::InputProcessingState::InputProcessingState;
+use operit_util::streamnative::NativeMarkdownSplitter::MarkdownNodeStable;
 use ratatui::text::Line;
 
 use super::empty_state::render_blue_cat_lines;

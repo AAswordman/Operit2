@@ -6,7 +6,7 @@ use ratatui::Frame;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use operit_runtime::data::model::ModelConfigData::{
+use operit_model::ModelConfigData::{
     ModelCapabilities, ModelContextSpec, ProviderProfile, ResolvedModelConfig,
 };
 
@@ -63,7 +63,7 @@ pub(crate) struct ConfigUi {
     pub(crate) add_model_filtered: Vec<usize>,
     pub(crate) add_model_index: usize,
     pub(crate) available_models:
-        Vec<operit_runtime::data::model::ModelConfigData::AvailableProviderModel>,
+        Vec<operit_model::ModelConfigData::AvailableProviderModel>,
 }
 
 pub(crate) enum ConfirmAction {
@@ -167,7 +167,7 @@ impl ConfigUi {
 
     pub(crate) fn selected_model(
         &self,
-    ) -> Option<&operit_runtime::data::model::ModelConfigData::ModelProfile> {
+    ) -> Option<&operit_model::ModelConfigData::ModelProfile> {
         match &self.state {
             ConfigState::ModelList { provider_index, .. } => {
                 let provider = self.providers.get(*provider_index)?;
@@ -1357,7 +1357,7 @@ impl ConfigUi {
                                 let _ = core
                                     .preferences_model_config_manager()
                                     .updateProviderProfile(
-                                        operit_runtime::data::model::ModelConfigData::ProviderProfile {
+                                        operit_model::ModelConfigData::ProviderProfile {
                                             apiKey: api_key,
                                             customHeaders: custom_headers,
                                             requestLimitPerMinute: req_limit,
@@ -1379,7 +1379,7 @@ impl ConfigUi {
                     .getProviderProfile(pid)
                     .await
                 {
-                    let updated = operit_runtime::data::model::ModelConfigData::ProviderProfile {
+                    let updated = operit_model::ModelConfigData::ProviderProfile {
                         name,
                         providerTypeId: provider_type_id,
                         endpoint,

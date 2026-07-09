@@ -137,6 +137,7 @@ fn render_proxy_factory_method(method: &SourceMethod) -> String {
     let proxy_type = proxy_object_type_name_from_schema_key(&factory.target_schema_key);
     let params = render_proxy_params(method);
     let mut output = render_cfg_attrs(method);
+    output.push_str(&render_doc_comments(method));
     output.push_str(&format!(
         "    pub fn {}(&mut self{}) -> {}<'_, C> {{\n",
         method.name, params, proxy_type
@@ -178,7 +179,7 @@ fn render_proxy_call_method(method: &SourceMethod) -> String {
         ),
         None => String::new(),
     };
-    render_cfg_attrs(method) + &method_code
+    render_cfg_attrs(method) + &render_doc_comments(method) + &method_code
 }
 
 fn render_proxy_watch_method(object: &SourceObject, method: &SourceMethod) -> String {
@@ -195,7 +196,7 @@ fn render_proxy_watch_method(object: &SourceObject, method: &SourceMethod) -> St
                 "    pub async fn {}(&mut self{}) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {{\n        self.client.watch(operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), {:?}, {})).await\n    }}\n\n",
                 method.name, params, method.name, args_json
             );
-            render_cfg_attrs(method) + &method_code
+            render_cfg_attrs(method) + &render_doc_comments(method) + &method_code
         }
         WatchStreamProtocol::JsonFlow { .. } | WatchStreamProtocol::JsonState { .. } => {
             let Some(value) = watch.snapshot_type.as_ref() else {
@@ -204,6 +205,7 @@ fn render_proxy_watch_method(object: &SourceObject, method: &SourceMethod) -> St
             let params = render_proxy_params(method);
             let args_json = render_proxy_args_json(method);
             let mut output = render_cfg_attrs(method);
+            output.push_str(&render_doc_comments(method));
             output.push_str(&format!(
                 "    pub async fn {}Snapshot(&mut self{}) -> Result<{}, operit_link::CoreLinkError> {{\n        self.watchGenerated({:?}, {}).await\n    }}\n\n",
                 method.name, params, value, method.name, args_json
@@ -215,6 +217,7 @@ fn render_proxy_watch_method(object: &SourceObject, method: &SourceMethod) -> St
                 return output;
             }
             output.push_str(&render_cfg_attrs(method));
+            output.push_str(&render_alias_doc_comments(method, alias));
             output.push_str(&format!(
                 "    pub async fn {}(&mut self{}) -> Result<{}, operit_link::CoreLinkError> {{\n        self.watchGenerated({:?}, {}).await\n    }}\n\n",
                 alias, params, value, method.name, args_json
@@ -244,10 +247,10 @@ fn render_proxy_watch_all_method(object: &SourceObject) -> String {
         })
         .collect::<Vec<_>>();
     if watchable.is_empty() {
-        return "    pub async fn watchAllGeneratedStateFlows(&mut self, _sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {\n        Ok(())\n    }\n\n".to_string();
+        return "    /// Watches every generated state-flow property on this proxy object.\n    pub async fn watchAllGeneratedStateFlows(&mut self, _sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {\n        Ok(())\n    }\n\n".to_string();
     }
     format!(
-        "    pub async fn watchAllGeneratedStateFlows(&mut self, sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {{\n        let mut propertyNames: Vec<&'static str> = Vec::new();\n{}        for propertyName in propertyNames {{\n            let request = operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), propertyName, serde_json::json!({{}}));\n            let mut stream = self.client.watch(request).await?;\n            let sender = sender.clone();\n            tokio::spawn(async move {{\n                while let Some(event) = stream.recv().await {{\n                    let _ = sender.send(event);\n                }}\n            }});\n        }}\n        Ok(())\n    }}\n\n",
+        "    /// Watches every generated state-flow property on this proxy object.\n    pub async fn watchAllGeneratedStateFlows(&mut self, sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {{\n        let mut propertyNames: Vec<&'static str> = Vec::new();\n{}        for propertyName in propertyNames {{\n            let request = operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), propertyName, serde_json::json!({{}}));\n            let mut stream = self.client.watch(request).await?;\n            let sender = sender.clone();\n            tokio::spawn(async move {{\n                while let Some(event) = stream.recv().await {{\n                    let _ = sender.send(event);\n                }}\n            }});\n        }}\n        Ok(())\n    }}\n\n",
         watchable.join("")
     )
 }
@@ -292,4 +295,35 @@ fn render_cfg_attrs(method: &SourceMethod) -> String {
         .iter()
         .map(|attr| format!("    {attr}\n"))
         .collect()
+}
+
+fn render_doc_comments(method: &SourceMethod) -> String {
+    if method.doc_lines.is_empty() {
+        return format!("    /// Generated proxy for `{}`.\n", method.name);
+    }
+    method
+        .doc_lines
+        .iter()
+        .map(|line| format!("    ///{}\n", doc_comment_suffix(line)))
+        .collect()
+}
+
+fn render_alias_doc_comments(method: &SourceMethod, alias: &str) -> String {
+    if method.doc_lines.is_empty() {
+        return format!(
+            "    /// Generated proxy alias `{alias}` for `{}`.\n",
+            method.name
+        );
+    }
+    let mut output = format!("    /// Alias for `{}`.\n", method.name);
+    output.push_str(&render_doc_comments(method));
+    output
+}
+
+fn doc_comment_suffix(line: &str) -> String {
+    if line.is_empty() {
+        String::new()
+    } else {
+        format!(" {line}")
+    }
 }

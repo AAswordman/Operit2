@@ -19,10 +19,10 @@ serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 
-[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
+[target.'cfg(all(not(target_arch = "wasm32"), not(any(target_os = "android", target_os = "ios"))))'.dependencies]
 rquickjs.workspace = true
 
-[target.'cfg(target_os = "android")'.dependencies]
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 rquickjs = { workspace = true, features = ["bindgen"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

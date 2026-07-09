@@ -10,28 +10,28 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use flate2::read::GzDecoder;
 use operit_link::CoreLinkError;
-use operit_runtime::api::chat::enhance::ConversationService::ConversationService;
-use operit_runtime::api::chat::enhance::ToolExecutionManager::{AITool, ToolParameter};
-use operit_runtime::api::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::api::chat::EnhancedAIService::EnhancedAIService;
-use operit_runtime::core::tools::ToolPermissionSystem::{PermissionLevel, PermissionRequestResult};
-use operit_runtime::data::api::MarketStatsApiService::{MarketEntrySummary, MarketListPage};
-use operit_runtime::data::model::ActivePrompt::ActivePrompt;
-use operit_runtime::data::model::ApiKeyInfo::ApiKeyInfo;
-use operit_runtime::data::model::AttachmentInfo::AttachmentInfo;
-use operit_runtime::data::model::CharacterCard::{
+use operit_providers::chat::enhance::ConversationService::ConversationService;
+use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
+use operit_providers::market::MarketStatsApiService::{MarketEntrySummary, MarketListPage};
+use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, PermissionRequestResult};
+use operit_model::ActivePrompt::ActivePrompt;
+use operit_model::ApiKeyInfo::ApiKeyInfo;
+use operit_model::AttachmentInfo::AttachmentInfo;
+use operit_model::CharacterCard::{
     CharacterCard, CharacterCardChatModelBindingMode, CharacterCardToolAccessConfig,
 };
-use operit_runtime::data::model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
-use operit_runtime::data::model::ChatMessage::ChatMessage;
-use operit_runtime::data::model::ChatTurnOptions::ChatTurnOptions;
-use operit_runtime::data::model::FunctionType::FunctionType;
-use operit_runtime::data::model::InputProcessingState::InputProcessingState;
-use operit_runtime::data::model::ModelConfigData::ApiProviderType;
-use operit_runtime::data::model::ModelParameter::ModelParameter;
-use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
-use operit_runtime::data::model::PromptTag::TagType;
-use operit_runtime::data::model::TtsConfig::TtsConfig;
+use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatTurnOptions::ChatTurnOptions;
+use operit_model::FunctionType::FunctionType;
+use operit_model::InputProcessingState::InputProcessingState;
+use operit_model::ModelConfigData::ApiProviderType;
+use operit_model::ModelParameter::ModelParameter;
+use operit_model::PromptFunctionType::PromptFunctionType;
+use operit_model::PromptTag::TagType;
+use operit_model::TtsConfig::TtsConfig;
 use operit_runtime::data::preferences::ActivePromptManager::ActivePromptManager;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
@@ -40,11 +40,11 @@ use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfig
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::data::preferences::PromptTagManager::PromptTagManager;
 use operit_runtime::data::preferences::TtsConfigManager::TtsConfigManager;
-use operit_runtime::data::repository::ChatHistoryManager::ChatHistoryManager;
+use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use operit_runtime::services::TtsSynthesisService::TtsSynthesisService;
-use operit_runtime::util::stream::Stream::Stream;
-use operit_runtime::util::GithubReleaseUtil::{
+use operit_util::stream::Stream::Stream;
+use operit_util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
 };
 use sha2::{Digest, Sha256};
@@ -1560,7 +1560,7 @@ fn print_mcp_usage() {
     println!("operit2 cli mcp describe <id>");
 }
 
-fn print_chat_history_header(chat: &operit_runtime::data::model::ChatHistory::ChatHistory) {
+fn print_chat_history_header(chat: &operit_model::ChatHistory::ChatHistory) {
     println!("id={}", chat.id);
     println!("title={}", chat.title);
     println!("createdAt={}", chat.createdAt);
@@ -1587,7 +1587,7 @@ fn print_chat_history_header(chat: &operit_runtime::data::model::ChatHistory::Ch
     println!("pinned={}", chat.pinned);
 }
 
-fn print_chat_message(message: &operit_runtime::data::model::ChatMessage::ChatMessage) {
+fn print_chat_message(message: &operit_model::ChatMessage::ChatMessage) {
     println!("--- message ---");
     println!("sender={}", message.sender);
     println!("timestamp={}", message.timestamp);
@@ -1608,7 +1608,7 @@ fn print_chat_message(message: &operit_runtime::data::model::ChatMessage::ChatMe
     println!("content={}", message.content);
 }
 
-fn print_tag(tag: &operit_runtime::data::model::PromptTag::PromptTag) {
+fn print_tag(tag: &operit_model::PromptTag::PromptTag) {
     println!("id={}", tag.id);
     println!("name={}", tag.name);
     println!("description={}", tag.description);
@@ -1695,11 +1695,11 @@ fn parseTagType(value: Option<&str>) -> Result<TagType, String> {
     }
 }
 
-fn parse_permission_level_arg(value: Option<&str>) -> Result<PermissionLevel, String> {
+fn parse_permission_level_arg(value: Option<&str>) -> Result<AiPermissionMode, String> {
     match value {
-        Some("allow") | Some("ALLOW") => Ok(PermissionLevel::ALLOW),
-        Some("ask") | Some("ASK") => Ok(PermissionLevel::ASK),
-        Some("forbid") | Some("FORBID") => Ok(PermissionLevel::FORBID),
+        Some("allow") | Some("ALLOW") => Ok(AiPermissionMode::Full),
+        Some("ask") | Some("ASK") => Ok(AiPermissionMode::WorkspaceWrite),
+        Some("forbid") | Some("FORBID") => Ok(AiPermissionMode::ReadOnly),
         _ => Err("expected allow, ask, or forbid".to_string()),
     }
 }
@@ -1814,7 +1814,7 @@ fn parseCsvList(value: &str) -> Vec<String> {
     result
 }
 
-fn print_memory_item_line(memory: &operit_runtime::data::model::Memory::Memory) {
+fn print_memory_item_line(memory: &operit_model::Memory::Memory) {
     println!(
         "{}\t{}\t{}\t{}",
         memory.id,
@@ -1829,7 +1829,7 @@ fn print_memory_item_line(memory: &operit_runtime::data::model::Memory::Memory) 
     );
 }
 
-fn print_memory_item(memory: &operit_runtime::data::model::Memory::Memory) {
+fn print_memory_item(memory: &operit_model::Memory::Memory) {
     println!("id={}", memory.id);
     println!("uuid={}", memory.uuid);
     println!("title={}", memory.title);

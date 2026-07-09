@@ -16,20 +16,20 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use operit_runtime::core::tools::ToolPermissionSystem::{PermissionLevel, PermissionRequestResult};
-use operit_runtime::data::model::ActivePrompt::ActivePrompt;
-use operit_runtime::data::model::AttachmentInfo::AttachmentInfo;
-use operit_runtime::data::model::CharacterCard::CharacterCardChatModelBindingMode;
-use operit_runtime::data::model::ChatHistory::ChatHistory;
-use operit_runtime::data::model::ChatMessage::ChatMessage;
-use operit_runtime::data::model::ChatTurnOptions::ChatTurnOptions;
-use operit_runtime::data::model::FunctionType::FunctionType;
-use operit_runtime::data::model::InputProcessingState::InputProcessingState;
-use operit_runtime::data::model::PromptFunctionType::PromptFunctionType;
+use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, PermissionRequestResult};
+use operit_model::ActivePrompt::ActivePrompt;
+use operit_model::AttachmentInfo::AttachmentInfo;
+use operit_model::CharacterCard::CharacterCardChatModelBindingMode;
+use operit_model::ChatHistory::ChatHistory;
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatTurnOptions::ChatTurnOptions;
+use operit_model::FunctionType::FunctionType;
+use operit_model::InputProcessingState::InputProcessingState;
+use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
-use operit_runtime::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
-use operit_runtime::util::AppLogger::AppLogger;
-use operit_runtime::util::GithubReleaseUtil::{
+use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
+use operit_util::AppLogger::AppLogger;
+use operit_util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStage, FullUpdateTarget, ReleaseInfo,
 };
 
@@ -1032,7 +1032,7 @@ impl OperitTui {
         self.status_message = text.downloading_full_update_package().to_string();
         tokio::spawn(async move {
             let progress_tx = tx.clone();
-            let result = operit_runtime::util::GithubReleaseUtil::GithubReleaseUtil::downloadAndPrepareFullUpdateWithProgress(
+            let result = operit_util::GithubReleaseUtil::GithubReleaseUtil::downloadAndPrepareFullUpdateWithProgress(
                 package_url,
                 package_file_name,
                 work_dir,
@@ -1353,7 +1353,7 @@ impl OperitTui {
             }
             KeyCode::Char('3') | KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.approval_bridge
-                    .respond(PermissionRequestResult::ALWAYS_ALLOW);
+                    .respond(PermissionRequestResult::ALLOW_SESSION);
                 self.status_message = self.text().tool_approved_remembered().to_string();
             }
             _ => {}
@@ -1363,73 +1363,28 @@ impl OperitTui {
     async fn handle_approval_command(&mut self, args: &[String]) -> Result<(), String> {
         match args.first().map(String::as_str) {
             None | Some("status") => {
-                let master = self
+                let mode = self
                     .core
                     .permissions_tool_permission_system()
-                    .getMasterSwitch()
+                    .getAiPermissionMode()
                     .await
                     .map_err(|error| error.to_string())?;
-                let overrides = self
-                    .core
-                    .permissions_tool_permission_system()
-                    .getToolPermissionOverrides()
-                    .await
-                    .map_err(|error| error.to_string())?;
-                self.status_message = self.text().approval_status(master.name(), overrides.len());
+                self.status_message = self.text().approval_status(mode.name(), 0);
             }
             Some("allow") | Some("ask") | Some("forbid") => {
                 let level = parse_permission_level(args.first().map(String::as_str))?;
                 self.core
                     .permissions_tool_permission_system()
-                    .saveMasterSwitch(level.clone())
+                    .saveAiPermissionMode(level.clone())
                     .await
                     .map_err(|error| error.to_string())?;
                 self.status_message = self.text().approval_master(level.name());
             }
             Some("tool") => {
-                let toolName = args
-                    .get(1)
-                    .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
-                match args.get(2).map(String::as_str) {
-                    Some("clear") => {
-                        self.core
-                            .permissions_tool_permission_system()
-                            .clearToolPermission(toolName)
-                            .await
-                            .map_err(|error| error.to_string())?;
-                        self.status_message = self.text().approval_cleared(toolName);
-                    }
-                    value @ (Some("allow") | Some("ask") | Some("forbid")) => {
-                        let level = parse_permission_level(value)?;
-                        self.core
-                            .permissions_tool_permission_system()
-                            .saveToolPermission(toolName, level.clone())
-                            .await
-                            .map_err(|error| error.to_string())?;
-                        self.status_message =
-                            self.text().approval_tool_level(toolName, level.name());
-                    }
-                    _ => {
-                        return Err(self.text().usage_approval_tool().to_string());
-                    }
-                }
+                return Err("per-tool permission overrides are not supported by AiPermissionMode".to_string());
             }
             Some("list") => {
-                let overrides = self
-                    .core
-                    .permissions_tool_permission_system()
-                    .getToolPermissionOverrides()
-                    .await
-                    .map_err(|error| error.to_string())?;
-                self.status_message = if overrides.is_empty() {
-                    self.text().approval_overrides_none().to_string()
-                } else {
-                    overrides
-                        .iter()
-                        .map(|(tool, level)| format!("{tool}={}", level.name()))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
+                self.status_message = self.text().approval_overrides_none().to_string();
             }
             Some("help") => {
                 self.status_message = self.text().approval_help().to_string();
@@ -2456,7 +2411,7 @@ impl OperitTui {
         }
         let plugins = self
             .core
-            .mcp_local_server()
+            .permissions_mcp_runtime_mcp_local_server()
             .getAllPluginMetadata()
             .await
             .map_err(|error| error.to_string())?;
@@ -2483,7 +2438,7 @@ impl OperitTui {
         }
         let servers = self
             .core
-            .mcp_local_server()
+            .permissions_mcp_runtime_mcp_local_server()
             .getAllMCPServers()
             .await
             .map_err(|error| error.to_string())?;
@@ -2584,11 +2539,11 @@ impl OperitTui {
     }
 }
 
-fn parse_permission_level(value: Option<&str>) -> Result<PermissionLevel, String> {
+fn parse_permission_level(value: Option<&str>) -> Result<AiPermissionMode, String> {
     match value {
-        Some("allow") | Some("ALLOW") => Ok(PermissionLevel::ALLOW),
-        Some("ask") | Some("ASK") => Ok(PermissionLevel::ASK),
-        Some("forbid") | Some("FORBID") => Ok(PermissionLevel::FORBID),
+        Some("allow") | Some("ALLOW") => Ok(AiPermissionMode::Full),
+        Some("ask") | Some("ASK") => Ok(AiPermissionMode::WorkspaceWrite),
+        Some("forbid") | Some("FORBID") => Ok(AiPermissionMode::ReadOnly),
         _ => Err("expected allow, ask, or forbid".to_string()),
     }
 }

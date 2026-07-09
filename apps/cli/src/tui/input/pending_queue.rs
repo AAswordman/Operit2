@@ -2,7 +2,7 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use operit_runtime::data::model::InputProcessingState::InputProcessingState;
+use operit_model::InputProcessingState::InputProcessingState;
 
 use super::app::{FocusArea, OperitTui};
 use super::helpers::display_width;

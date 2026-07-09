@@ -96,6 +96,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         _packageManager.getEnabledPackageNames(),
         _packageManager.getToolPkgContainerRuntimes(),
         _packageManager.getBundledExternalPackageCandidates(),
+        _packageManager.getBundledExternalToolPkgContainerRuntimes(),
       ]);
       final availablePackages =
           results[0] as Map<String, core_proxy.ToolPackage>;
@@ -104,6 +105,13 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
           results[2] as List<core_proxy.ToolPkgContainerRuntime>;
       final bundledExternalPackageCandidates =
           results[3] as List<core_proxy.BundledExternalPackageCandidate>;
+      final bundledExternalToolPkgContainers =
+          results[4] as List<core_proxy.ToolPkgContainerRuntime>;
+      final bundledExternalPluginCandidates =
+          _mergeBundledExternalPluginCandidates(
+            bundledExternalPackageCandidates,
+            bundledExternalToolPkgContainers,
+          );
       final enabledPackageNameSet = enabledPackages.toSet();
       if (!mounted) {
         return;
@@ -119,7 +127,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
               )
               .map((plugin) => plugin.packageName)
               .toSet(),
-          bundledExternalPackageCandidates: bundledExternalPackageCandidates,
+          bundledExternalPackageCandidates: bundledExternalPluginCandidates,
         );
         _loading = false;
       });
@@ -554,6 +562,48 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         .toList(growable: false);
   }
 
+  /// Merges bundled external package and ToolPkg container candidates.
+  List<core_proxy.BundledExternalPackageCandidate>
+  _mergeBundledExternalPluginCandidates(
+    List<core_proxy.BundledExternalPackageCandidate> packageCandidates,
+    List<core_proxy.ToolPkgContainerRuntime> toolPkgContainers,
+  ) {
+    final merged = <core_proxy.BundledExternalPackageCandidate>[];
+    final packageNames = <String>{};
+    for (final candidate in packageCandidates) {
+      if (packageNames.add(candidate.packageName)) {
+        merged.add(candidate);
+      }
+    }
+    for (final container in toolPkgContainers) {
+      if (packageNames.add(container.packageName)) {
+        merged.add(_bundledExternalCandidateFromToolPkgContainer(container));
+      }
+    }
+    return merged;
+  }
+
+  /// Builds a bundled external candidate from a ToolPkg runtime.
+  core_proxy.BundledExternalPackageCandidate
+  _bundledExternalCandidateFromToolPkgContainer(
+    core_proxy.ToolPkgContainerRuntime container,
+  ) {
+    return core_proxy.BundledExternalPackageCandidate(
+      packageName: container.packageName,
+      displayName: container.displayName,
+      description: container.description,
+      author: container.author,
+      packageKind: 'toolpkg',
+      sourcePath: container.sourcePath,
+      sourceFileName: container.sourcePath,
+      isToolPkg: true,
+      version: container.version,
+      category: 'ToolPkg',
+      toolCount: 0,
+      subpackageCount: container.subpackages.length,
+    );
+  }
+
   List<core_proxy.ToolPackage> get _filteredPackages {
     final query = _searchQuery.trim().toLowerCase();
     final items = _snapshot.availablePackages.values.toList()
@@ -604,7 +654,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
   }
 
   bool _isExternalPlugin(core_proxy.ToolPkgContainerRuntime plugin) {
-    return plugin.sourceType?.toString() == 'EXTERNAL';
+    return plugin.sourceType.toString() == 'EXTERNAL';
   }
 
   Future<void> _loadBundledExternalPlugin(

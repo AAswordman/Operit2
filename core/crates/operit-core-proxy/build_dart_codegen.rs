@@ -68,10 +68,7 @@ fn render_dart_models(
             } => {
                 output.push_str(&render_dart_enum(ty, variants, serializable_types));
             }
-            SerializableTypeKind::TaggedEnum {
-                variants,
-                ..
-            } => {
+            SerializableTypeKind::TaggedEnum { variants, .. } => {
                 output.push_str(&render_dart_tagged_enum(ty, variants, serializable_types));
             }
             SerializableTypeKind::Enum {
@@ -97,9 +94,13 @@ fn render_core_proxy_error_details() -> String {
     output.push_str("  factory CoreProxyErrorDetails.fromCoreLinkError(CoreLinkError error) {\n");
     output.push_str("    final details = error.details;\n");
     output.push_str("    if (details is Map<String, Object?>) {\n");
-    output.push_str("      return CoreProxyErrorDetails.fromJson(details, message: error.message);\n");
+    output.push_str(
+        "      return CoreProxyErrorDetails.fromJson(details, message: error.message);\n",
+    );
     output.push_str("    }\n");
-    output.push_str("    return CoreProxyErrorDetails(errorType: error.code, message: error.message);\n");
+    output.push_str(
+        "    return CoreProxyErrorDetails(errorType: error.code, message: error.message);\n",
+    );
     output.push_str("  }\n\n");
     output.push_str("  factory CoreProxyErrorDetails.fromJson(Map<String, Object?> json, {String? message}) {\n");
     output.push_str("    final classification = json['classification'];\n");
@@ -111,7 +112,9 @@ fn render_core_proxy_error_details() -> String {
     output.push_str("      kind: classification is Map<String, Object?> ? _stringValue(classification['kind']) : _stringValue(json['kind']),\n");
     output.push_str("      httpStatus: _intValue(json['httpStatus']),\n");
     output.push_str("      remoteMessage: _stringValue(json['remoteMessage']),\n");
-    output.push_str("      fields: fields is Map<String, Object?> ? fields : const <String, Object?>{},\n");
+    output.push_str(
+        "      fields: fields is Map<String, Object?> ? fields : const <String, Object?>{},\n",
+    );
     output.push_str("    );\n");
     output.push_str("  }\n\n");
     output.push_str("  final String errorType;\n");
@@ -158,6 +161,10 @@ fn render_dart_clients(
     {
         let getter_name = dart_schema_getter_name(&object.schema_key);
         let class_name = dart_proxy_class_name(&object.schema_key);
+        output.push_str(&format!(
+            "  /// Returns a generated proxy client for `{}`.\n",
+            object.schema_key
+        ));
         output.push_str(&format!(
             "  {class_name} get {getter_name} => {class_name}(bridge, CoreObjectPath.parse('{}'));\n",
             object.schema_key
@@ -225,6 +232,7 @@ fn render_dart_call_method(
     let args = render_dart_args_map(&method.args, serializable_types);
     let mut output = String::new();
     let method_name = dart_identifier(&method.name);
+    output.push_str(&render_dart_doc_comments(method, "  "));
     output.push_str(&format!(
         "  Future<{return_type}> {method_name}({params}) async {{\n"
     ));
@@ -283,9 +291,11 @@ fn render_dart_factory_method(
             method.name
         )
     };
-    format!(
+    let mut output = render_dart_doc_comments(method, "  ");
+    output.push_str(&format!(
         "  {class_name} {factory_method_name}({params}) {{\n    return {class_name}(bridge, CoreObjectPath({segments_expr}));\n  }}\n\n"
-    )
+    ));
+    output
 }
 
 fn render_dart_watch_method(
@@ -303,6 +313,7 @@ fn render_dart_watch_method(
     let args = render_dart_args_map(&method.args, serializable_types);
     let mut output = String::new();
     let method_name = dart_identifier(&method.name);
+    output.push_str(&render_dart_doc_comments(method, "  "));
     output.push_str(&format!(
         "  Future<{value_type}> {method_name}Snapshot({params}) async {{\n"
     ));
@@ -319,6 +330,7 @@ fn render_dart_watch_method(
         dart_decode_expr("event.value", &value_type, serializable_types)
     ));
     output.push_str("  }\n\n");
+    output.push_str(&render_dart_doc_comments(method, "  "));
     output.push_str(&format!(
         "  Stream<{value_type}> {method_name}Changes({params}) {{\n"
     ));
@@ -342,6 +354,10 @@ fn render_dart_struct(
 ) -> String {
     let class_name = dart_class_name(&ty.full_type, serializable_types);
     let mut output = String::new();
+    output.push_str(&format!(
+        "/// Generated Dart model for Rust type `{}`.\n",
+        ty.full_type
+    ));
     output.push_str(&format!("class {class_name} {{\n"));
     if fields.is_empty() {
         output.push_str(&format!("  const {class_name}();\n\n"));
@@ -395,6 +411,10 @@ fn render_dart_struct(
     output.push_str("  }\n\n");
     for field in fields {
         output.push_str(&format!(
+            "  /// Rust field `{}` serialized as `{}`.\n",
+            field.name, field.json_name
+        ));
+        output.push_str(&format!(
             "  final {} {};\n",
             dart_type(&field.ty, serializable_types),
             dart_identifier(&field.name)
@@ -411,6 +431,10 @@ fn render_dart_enum(
 ) -> String {
     let enum_name = dart_class_name(&ty.full_type, serializable_types);
     let mut output = String::new();
+    output.push_str(&format!(
+        "/// Generated Dart enum for Rust type `{}`.\n",
+        ty.full_type
+    ));
     output.push_str(&format!("enum {enum_name} {{\n"));
     for variant in variants {
         output.push_str(&format!(
@@ -449,6 +473,10 @@ fn render_dart_tagged_enum(
 ) -> String {
     let enum_name = dart_class_name(&ty.full_type, serializable_types);
     let mut output = String::new();
+    output.push_str(&format!(
+        "/// Generated Dart tagged enum model for Rust type `{}`.\n",
+        ty.full_type
+    ));
     output.push_str(&format!("class {enum_name} {{\n"));
     output.push_str(&format!("  const {enum_name}._({{\n"));
     let mut seen_fields: Vec<String> = Vec::new();
@@ -456,7 +484,8 @@ fn render_dart_tagged_enum(
         for field in &variant.fields {
             let name = dart_identifier(&field.name);
             if !seen_fields.contains(&name) {
-                let field_type = dart_tagged_enum_field_type(&field.name, variants, serializable_types);
+                let field_type =
+                    dart_tagged_enum_field_type(&field.name, variants, serializable_types);
                 let default_val = dart_default_value(&field_type);
                 output.push_str(&format!("    this.{} = {},\n", name, default_val));
                 seen_fields.push(name);
@@ -468,7 +497,10 @@ fn render_dart_tagged_enum(
     for variant in variants {
         let variant_name = dart_identifier(&variant.name);
         if variant.fields.is_empty() {
-            output.push_str(&format!("  factory {enum_name}.{variant_name}() => {enum_name}._(tag: '{}');\n", dart_string_literal(&variant.json_name)));
+            output.push_str(&format!(
+                "  factory {enum_name}.{variant_name}() => {enum_name}._(tag: '{}');\n",
+                dart_string_literal(&variant.json_name)
+            ));
         } else {
             let mut factory_params = String::from("{");
             let mut forward_args = String::new();
@@ -496,12 +528,9 @@ fn render_dart_tagged_enum(
         for field in &variant.fields {
             let name = dart_identifier(&field.name);
             if !seen_field_decls.contains(&name) {
-                let field_type = dart_tagged_enum_field_type(&field.name, variants, serializable_types);
-                output.push_str(&format!(
-                    "  final {} {};\n",
-                    field_type,
-                    name
-                ));
+                let field_type =
+                    dart_tagged_enum_field_type(&field.name, variants, serializable_types);
+                output.push_str(&format!("  final {} {};\n", field_type, name));
                 seen_field_decls.push(name);
             }
         }
@@ -509,17 +538,17 @@ fn render_dart_tagged_enum(
     output.push_str(&format!(
         "\n  factory {enum_name}.fromJson(Object? json) {{\n"
     ));
-    output.push_str(&format!(
-        "    final map = json as Map<String, Object?>;\n"
-    ));
+    output.push_str(&format!("    final map = json as Map<String, Object?>;\n"));
     // externally tagged: {{\"CharacterCard\": {{\"id\": \"...\"}}}}
     output.push_str("    final tag = map.keys.first;\n");
     output.push_str("    final data = map[tag] as Map<String, Object?>? ?? <String, Object?>{};\n");
     output.push_str("    return switch (tag) {\n");
     for variant in variants {
         let variant_name = dart_identifier(&variant.name);
-        output.push_str(&format!("      '{}' => {enum_name}.{variant_name}(",
-            dart_string_literal(&variant.json_name)));
+        output.push_str(&format!(
+            "      '{}' => {enum_name}.{variant_name}(",
+            dart_string_literal(&variant.json_name)
+        ));
         for field in &variant.fields {
             output.push_str(&format!(
                 "{}: {}, ",
@@ -551,7 +580,12 @@ fn render_dart_tagged_enum(
                 "        '{}': {},\n",
                 field.json_name,
                 dart_encode_expr(
-                    &dart_tagged_enum_encode_value(&field.name, &field_type, variants, serializable_types),
+                    &dart_tagged_enum_encode_value(
+                        &field.name,
+                        &field_type,
+                        variants,
+                        serializable_types
+                    ),
                     &field_type,
                     serializable_types,
                 )
@@ -661,10 +695,7 @@ fn reachable_serializable_types(
                 MethodProtocol::Call(CallProtocol::Value(ty)) => {
                     collect_reachable_type(ty, serializable_types, &mut out);
                 }
-                MethodProtocol::Call(CallProtocol::ResultValue {
-                    value_type,
-                    ..
-                }) => {
+                MethodProtocol::Call(CallProtocol::ResultValue { value_type, .. }) => {
                     collect_reachable_type(value_type, serializable_types, &mut out);
                 }
                 MethodProtocol::Watch(watch) => {
@@ -685,11 +716,7 @@ fn collect_reachable_type(
     out: &mut HashSet<String>,
 ) {
     if serializable_types.contains_key(ty) && out.insert(ty.to_string()) {
-        if let Some(SerializableType {
-            kind,
-            ..
-        }) = serializable_types.get(ty)
-        {
+        if let Some(SerializableType { kind, .. }) = serializable_types.get(ty) {
             match kind {
                 SerializableTypeKind::Struct { fields } => {
                     for field in fields {
@@ -909,10 +936,8 @@ fn dart_is_tagged_enum_type(
     serializable_types: &HashMap<String, SerializableType>,
 ) -> bool {
     serializable_types.values().any(|ty| {
-        matches!(
-            &ty.kind,
-            SerializableTypeKind::TaggedEnum { .. }
-        ) && dart_class_name(&ty.full_type, serializable_types) == dart_type
+        matches!(&ty.kind, SerializableTypeKind::TaggedEnum { .. })
+            && dart_class_name(&ty.full_type, serializable_types) == dart_type
     })
 }
 
@@ -1207,4 +1232,22 @@ fn dart_string_literal(value: &str) -> String {
         .replace('$', "\\$")
         .replace('\n', "\\n")
         .replace('\r', "\\r")
+}
+
+/// Renders Dart doc comments for a generated proxy method.
+fn render_dart_doc_comments(method: &SourceMethod, indent: &str) -> String {
+    if method.doc_lines.is_empty() {
+        return format!("{indent}/// Generated proxy for `{}`.\n", method.name);
+    }
+    method
+        .doc_lines
+        .iter()
+        .map(|line| {
+            if line.is_empty() {
+                format!("{indent}///\n")
+            } else {
+                format!("{indent}/// {line}\n")
+            }
+        })
+        .collect()
 }

@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::Frame;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use operit_runtime::util::GithubReleaseUtil::FullUpdateStage;
+use operit_util::GithubReleaseUtil::FullUpdateStage;
 
 use super::app::{FocusArea, FullUpdateDownloadState, OperitTui, StartupInstallState};
 use super::helpers::{

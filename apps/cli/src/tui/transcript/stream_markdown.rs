@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use operit_runtime::util::streamnative::NativeMarkdownSplitter::{
+use operit_util::streamnative::NativeMarkdownSplitter::{
     MarkdownNodeStable, MarkdownProcessorType,
 };
 

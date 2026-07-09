@@ -34,11 +34,13 @@ pub struct UsageRequestRecord {
 pub struct UsageStatisticsStore;
 
 impl UsageStatisticsStore {
+    /// Creates a usage statistics repository.
     pub fn new() -> Self {
         Self
     }
 
     #[allow(non_snake_case)]
+    /// Reads all recorded provider model requests ordered by creation time.
     pub fn getAllRequestRecords(&self) -> Result<Vec<UsageRequestRecord>, String> {
         let database = AppDatabase::default().map_err(|error| error.to_string())?;
         database
@@ -60,6 +62,7 @@ impl UsageStatisticsStore {
     }
 
     #[allow(non_snake_case)]
+    /// Deletes every recorded provider model request.
     pub fn clearAllRequestRecords(&self) -> Result<(), String> {
         let database = AppDatabase::default().map_err(|error| error.to_string())?;
         database
@@ -70,6 +73,7 @@ impl UsageStatisticsStore {
     }
 
     #[allow(non_snake_case)]
+    /// Records token usage for one provider model request.
     pub fn recordProviderModelRequest(
         &self,
         providerModel: String,

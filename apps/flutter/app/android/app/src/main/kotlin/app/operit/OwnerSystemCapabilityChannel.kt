@@ -33,6 +33,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.util.ArrayDeque
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ConcurrentHashMap
@@ -98,6 +99,7 @@ class OwnerSystemCapabilityChannel(
     fun handle(call: MethodCall, result: MethodChannel.Result): Boolean {
         when (call.method) {
             "ownerSystemCaptureScreenshot" -> ownerSystemCaptureScreenshot(result)
+            "ownerSystemLanguageCode" -> ownerSystemLanguageCode(result)
             "ownerSystemRecognizeText" -> ownerSystemRecognizeText(call, result)
             "ownerAudioPlay" -> ownerAudioPlay(call, result)
             "ownerMusicPlayback" -> ownerMusicPlayback(call, result)
@@ -151,6 +153,7 @@ class OwnerSystemCapabilityChannel(
     fun handleRuntimeHostRequest(methodName: String, payloadJson: String): String {
         return when (methodName) {
             "systemCaptureScreenshot" -> systemCaptureScreenshot()
+            "systemLanguageCode" -> systemLanguageCode()
             "systemRecognizeText" -> systemRecognizeText(payloadJson)
             "musicPlayback" -> musicPlayback(payloadJson)
             "bluetooth" -> bluetooth(payloadJson)
@@ -165,6 +168,14 @@ class OwnerSystemCapabilityChannel(
             result.success(systemCaptureScreenshotResult())
         } catch (error: Throwable) {
             result.error("OWNER_SYSTEM_CAPTURE_SCREENSHOT_ERROR", error.message, null)
+        }
+    }
+
+    private fun ownerSystemLanguageCode(result: MethodChannel.Result) {
+        try {
+            result.success(systemLanguageCodeResult())
+        } catch (error: Throwable) {
+            result.error("OWNER_SYSTEM_LANGUAGE_CODE_ERROR", error.message, null)
         }
     }
 
@@ -282,6 +293,14 @@ class OwnerSystemCapabilityChannel(
 
     private fun systemCaptureScreenshotResult(): Map<String, String> {
         return mapOf("path" to captureScreenshotToFile())
+    }
+
+    private fun systemLanguageCode(): String {
+        return JSONObject(systemLanguageCodeResult()).toString()
+    }
+
+    private fun systemLanguageCodeResult(): Map<String, String> {
+        return mapOf("languageCode" to Locale.getDefault().toLanguageTag())
     }
 
     private fun systemRecognizeText(payloadJson: String): String {

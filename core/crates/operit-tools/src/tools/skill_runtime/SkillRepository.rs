@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use operit_host_api::HostManager::defaultHttpHost;
-use operit_host_api::HostManager::HostManager;
 use crate::runtime_support::toolRuntimeSupport;
 use crate::tools::skill::SkillManager::{BundledExternalSkillCandidate, SkillManager};
 use crate::tools::skill::SkillPackage::SkillPackage;
+use operit_host_api::HostManager::defaultHttpHost;
+use operit_host_api::HostManager::HostManager;
 use operit_host_api::HttpRequestData;
 use url::Url;
 
@@ -23,6 +23,7 @@ struct GitHubSkillTarget {
 }
 
 impl SkillRepository {
+    /// Creates a repository facade for managing installed and imported skills.
     #[allow(non_snake_case)]
     pub fn getInstance(_context: &HostManager) -> Self {
         Self {
@@ -30,16 +31,19 @@ impl SkillRepository {
         }
     }
 
+    /// Returns the directory where user-installed skills are stored.
     #[allow(non_snake_case)]
     pub fn getSkillsDirectoryPath(&self) -> String {
         self.skillManager.getSkillsDirectoryPath()
     }
 
+    /// Returns all valid installed skill packages.
     #[allow(non_snake_case)]
     pub fn getAvailableSkillPackages(&self) -> BTreeMap<String, SkillPackage> {
         self.skillManager.getAvailableSkills()
     }
 
+    /// Returns valid installed skill packages together with scan errors.
     #[allow(non_snake_case)]
     pub fn getAvailableSkillPackagesSnapshot(
         &self,
@@ -47,21 +51,25 @@ impl SkillRepository {
         self.skillManager.getAvailableSkillsSnapshot()
     }
 
+    /// Returns skill directory scan errors keyed by directory name.
     #[allow(non_snake_case)]
     pub fn getSkillLoadErrors(&self) -> BTreeMap<String, String> {
         self.skillManager.getSkillLoadErrors()
     }
 
+    /// Lists bundled external skills that are available for installation.
     #[allow(non_snake_case)]
     pub fn getBundledExternalSkillCandidates(&self) -> Vec<BundledExternalSkillCandidate> {
         self.skillManager.getBundledExternalSkillCandidates()
     }
 
+    /// Installs one bundled external skill.
     #[allow(non_snake_case)]
     pub fn importBundledExternalSkill(&self, skillName: &str) -> Result<SkillPackage, String> {
         self.skillManager.importBundledExternalSkill(skillName)
     }
 
+    /// Returns installed skill packages that are visible to AI package activation.
     #[allow(non_snake_case)]
     pub fn getAiVisibleSkillPackages(&self) -> BTreeMap<String, SkillPackage> {
         self.skillManager
@@ -71,30 +79,31 @@ impl SkillRepository {
             .collect()
     }
 
+    /// Reads the SKILL.md content for one installed skill.
     #[allow(non_snake_case)]
     pub fn readSkillContent(&self, skillName: &str) -> Option<String> {
         self.skillManager.readSkillContent(skillName)
     }
 
+    /// Deletes one installed skill directory.
     #[allow(non_snake_case)]
     pub fn deleteSkill(&self, skillName: &str) -> bool {
         self.skillManager.deleteSkill(skillName)
     }
 
+    /// Returns whether one skill is visible to AI package activation.
     #[allow(non_snake_case)]
     pub fn isSkillVisibleToAi(&self, skillName: &str) -> bool {
         toolRuntimeSupport().isSkillVisibleToAi(skillName)
     }
 
+    /// Sets whether one skill is visible to AI package activation.
     #[allow(non_snake_case)]
-    pub fn setSkillVisibleToAi(
-        &self,
-        skillName: &str,
-        visible: bool,
-    ) -> Result<(), String> {
+    pub fn setSkillVisibleToAi(&self, skillName: &str, visible: bool) -> Result<(), String> {
         toolRuntimeSupport().setSkillVisibleToAi(skillName, visible)
     }
 
+    /// Installs the quick plugin creator skill and marks it visible to AI.
     #[allow(non_snake_case)]
     pub fn ensureQuickPluginCreatorSkillVisible(&self) -> Result<SkillPackage, String> {
         let skill = self.skillManager.ensureQuickPluginCreatorBundledSkill()?;
@@ -102,11 +111,13 @@ impl SkillRepository {
         Ok(skill)
     }
 
+    /// Imports a skill from a zip archive by searching for SKILL.md.
     #[allow(non_snake_case)]
     pub fn importSkillFromZip(&self, zipFile: &Path) -> String {
         self.skillManager.importSkillFromZip(zipFile)
     }
 
+    /// Imports a skill from a zip archive using an optional subdirectory inside the zip.
     #[allow(non_snake_case)]
     pub fn importSkillFromZipWithSubDir(
         &self,
@@ -117,6 +128,7 @@ impl SkillRepository {
             .importSkillFromZipWithSubDir(zipFile, subDirPathInZip)
     }
 
+    /// Downloads a GitHub repository zip and imports a skill from it.
     #[allow(non_snake_case)]
     pub fn importSkillFromGitHubRepo(&self, repoUrl: &str) -> String {
         let Some(target) = parseGitHubSkillTarget(repoUrl) else {
@@ -176,6 +188,7 @@ impl SkillRepository {
         result
     }
 
+    /// Creates a skill directly from text content and copied attachment files.
     #[allow(non_snake_case)]
     pub fn importSkillFromDirectInput(
         &self,

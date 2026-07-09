@@ -17,11 +17,13 @@ pub struct LocalArtifactAuthorDeclaration {
 pub struct ArtifactAuthorValidation;
 
 impl ArtifactAuthorValidation {
+    /// Creates a validator for local artifact author declarations.
     pub fn new() -> Self {
         Self
     }
 
     #[allow(non_snake_case)]
+    /// Inspects a local package source and counts declared author slots.
     pub fn inspectLocalArtifactAuthorDeclaration(
         &self,
         source: PublishablePackageSource,

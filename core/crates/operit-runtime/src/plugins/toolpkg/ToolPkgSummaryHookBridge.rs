@@ -2,14 +2,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
+    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgPromptHookRegistration,
+};
 use operit_providers::chat::hooks::SummaryHookRegistry::{
     SummaryGenerateHook, SummaryHookContext, SummaryHookMutation, SummaryHookRegistry,
 };
 use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_SUMMARY_GENERATE;
 use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgPromptHookRegistration,
-};
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static SUMMARY_GENERATE_HOOKS: OnceLock<Mutex<Vec<ToolPkgPromptHookRegistration>>> =

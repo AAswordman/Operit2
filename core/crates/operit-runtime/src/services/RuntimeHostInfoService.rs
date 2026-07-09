@@ -45,6 +45,7 @@ pub struct RuntimeHostInfoService {
 }
 
 impl RuntimeHostInfoService {
+    /// Captures a host descriptor snapshot from the current host manager.
     pub fn getInstance(context: &HostManager) -> Self {
         let host = &context.hostEnvironment;
         Self {
@@ -81,6 +82,7 @@ impl RuntimeHostInfoService {
         }
     }
 
+    /// Returns the captured runtime host descriptor.
     pub fn runtimeHostDescriptor(&self) -> RuntimeHostDescriptor {
         self.descriptor.clone()
     }

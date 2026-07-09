@@ -4,42 +4,36 @@ use std::sync::{Arc, OnceLock};
 use operit_host_api::HostEnvironmentDescriptor;
 use operit_model::FunctionType::FunctionType;
 use operit_model::PromptFunctionType::PromptFunctionType;
-use operit_model::ToolPrompt::{
-    SystemToolPromptCategory, ToolParameterSchema, ToolPrompt,
-};
+use operit_model::ToolPrompt::{SystemToolPromptCategory, ToolParameterSchema, ToolPrompt};
 use operit_providers::chat::config::FunctionalPrompts::FunctionalPrompts;
 use operit_providers::chat::config::SystemToolPrompts as ProviderToolPrompts;
 use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::enhance::FileBindingService::{
     FileBindingService, StructuredEditAction, StructuredEditOperation,
 };
-use operit_providers::chat::EnhancedAIService::{
-    EnhancedAIService, SendMessageOptions,
-};
+use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use operit_tools::runtime_support::{
     setToolRuntimeSupport, CachedMcpToolInfo, ResolvedCharacterCardToolAccess,
-    RuntimeBundledExternalSkillAsset, RuntimeCharacterCardInfo,
-    RuntimeCharacterMemoryBinding, RuntimeChatSendRequest, RuntimeChatSlot, RuntimePluginAsset,
-    RuntimeSkillCatalogEntry, RuntimeStructuredEditAction, RuntimeStructuredEditOperation,
-    ToolRuntimeSupport, ToolRuntimeSupportFuture,
+    RuntimeBundledExternalSkillAsset, RuntimeCharacterCardInfo, RuntimeCharacterMemoryBinding,
+    RuntimeChatSendRequest, RuntimeChatSlot, RuntimePluginAsset, RuntimeSkillCatalogEntry,
+    RuntimeStructuredEditAction, RuntimeStructuredEditOperation, ToolRuntimeSupport,
+    ToolRuntimeSupportFuture,
 };
 use operit_tools::tools::mcp_runtime::MCPLocalServer::MCPLocalServer;
 use operit_tools::tools::packTool::PackageManager::PackageManager;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_util::stream::Stream::Stream;
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::core::application::OperitApplication::OperitApplication;
+use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
+use crate::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
-use crate::data::preferences::CharacterCardToolAccessResolver::{
-    CharacterCardToolAccessResolver,
-    ResolvedCharacterCardToolAccess as RuntimeResolvedCharacterCardToolAccess,
-};
+use crate::data::preferences::CharacterCardToolAccessResolver::CharacterCardToolAccessResolver;
 use crate::data::preferences::EnvPreferences::EnvPreferences;
 use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
-use crate::plugins::BuiltinPluginAssets::{
-    BUILTIN_PLUGIN_ASSETS, BUNDLED_EXTERNAL_PLUGIN_ASSETS,
-};
+use crate::plugins::BuiltinPluginAssets::{BUILTIN_PLUGIN_ASSETS, BUNDLED_EXTERNAL_PLUGIN_ASSETS};
 use crate::plugins::BundledExternalSkillAssets::BUNDLED_EXTERNAL_SKILL_ASSETS;
 
 /// Installs runtime-backed services required by the tools crate.
@@ -47,13 +41,16 @@ pub struct ToolRuntimeSupportService;
 
 impl ToolRuntimeSupportService {
     /// Installs tool runtime support for this process.
-    pub fn install() -> Result<(), String> {
-        setToolRuntimeSupport(Arc::new(RuntimeToolSupport))
+    #[allow(non_snake_case)]
+    pub fn install(chatRuntimeHolder: Arc<AsyncMutex<ChatRuntimeHolder>>) -> Result<(), String> {
+        setToolRuntimeSupport(Arc::new(RuntimeToolSupport { chatRuntimeHolder }))
     }
 }
 
 /// Bridges tool-owned interfaces to runtime-owned managers and registries.
-struct RuntimeToolSupport;
+struct RuntimeToolSupport {
+    chatRuntimeHolder: Arc<AsyncMutex<ChatRuntimeHolder>>,
+}
 
 impl ToolRuntimeSupport for RuntimeToolSupport {
     /// Resolves role-card tool access through runtime preferences.
@@ -64,12 +61,10 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         packageManager: &PackageManager,
         globalToolVisibility: Option<HashMap<String, bool>>,
     ) -> ResolvedCharacterCardToolAccess {
-        runtimeToolAccessToToolAccess(
-            CharacterCardToolAccessResolver::getInstance().resolve(
-                roleCardId,
-                packageManager,
-                globalToolVisibility,
-            ),
+        CharacterCardToolAccessResolver::getInstance().resolve(
+            roleCardId,
+            packageManager,
+            globalToolVisibility,
         )
     }
 
@@ -127,7 +122,10 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                 hostEnvironment,
             )
         };
-        categories.into_iter().map(providerCategoryToModel).collect()
+        categories
+            .into_iter()
+            .map(providerCategoryToModel)
+            .collect()
     }
 
     /// Returns AI-visible built-in tool names.
@@ -245,9 +243,8 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                 &toolDescriptions.join("\n"),
                 true,
             );
-            options.customSystemPromptTemplate = Some(
-                FunctionalPrompts::packageDescriptionSystemPrompt(true).to_string(),
-            );
+            options.customSystemPromptTemplate =
+                Some(FunctionalPrompts::packageDescriptionSystemPrompt(true).to_string());
             options.functionType = FunctionType::CHAT;
             options.promptFunctionType = PromptFunctionType::CHAT;
             options.roleCardId = Some(CharacterCardManager::DEFAULT_CHARACTER_CARD_ID.to_string());
@@ -266,46 +263,106 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
     /// Starts parent-owned chat services.
     #[allow(non_snake_case)]
     fn startChatServices(&self) -> Result<(), String> {
-        Err("Chat runtime support is not connected to the application holder".to_string())
+        let mut holder = self
+            .chatRuntimeHolder
+            .try_lock()
+            .map_err(|_| "Chat runtime holder is busy".to_string())?;
+        holder.getCore(ChatRuntimeSlot::MAIN);
+        holder.getCore(ChatRuntimeSlot::FLOATING);
+        holder.observeStats();
+        Ok(())
     }
 
     /// Stops parent-owned chat services.
     #[allow(non_snake_case)]
     fn stopChatServices(&self) -> Result<(), String> {
-        Err("Chat runtime support is not connected to the application holder".to_string())
+        let mut holder = self
+            .chatRuntimeHolder
+            .try_lock()
+            .map_err(|_| "Chat runtime holder is busy".to_string())?;
+        holder.cores.clear();
+        holder.activeConversationCount = 0;
+        holder.currentSessionToolCount = 0;
+        Ok(())
     }
 
     /// Returns whether the requested chat is currently processing.
     #[allow(non_snake_case)]
-    fn isChatProcessing(&self, _chatId: &str) -> Result<bool, String> {
-        Err("Chat runtime support is not connected to the application holder".to_string())
+    fn isChatProcessing(&self, chatId: &str) -> Result<bool, String> {
+        let holder = self
+            .chatRuntimeHolder
+            .try_lock()
+            .map_err(|_| "Chat runtime holder is busy".to_string())?;
+        Ok(holder
+            .cores
+            .values()
+            .any(|core| core.activeStreamingChatIds().iter().any(|id| id == chatId)))
     }
 
     /// Switches the parent-owned main chat runtime to a chat id.
     #[allow(non_snake_case)]
-    fn switchMainChat(&self, _chatId: &str) -> Result<(), String> {
-        Err("Chat runtime support is not connected to the application holder".to_string())
+    fn switchMainChat(&self, chatId: &str) -> Result<(), String> {
+        let mut holder = self
+            .chatRuntimeHolder
+            .try_lock()
+            .map_err(|_| "Chat runtime holder is busy".to_string())?;
+        holder
+            .getCore(ChatRuntimeSlot::MAIN)
+            .switchChat(chatId.to_string());
+        holder.syncMainChatSelectionToFloating(chatId.to_string());
+        holder.observeStats();
+        Ok(())
     }
 
     /// Creates a chat through the parent-owned chat runtime.
     #[allow(non_snake_case)]
     fn createChatRuntime(
         &self,
-        _characterCardName: Option<String>,
-        _group: Option<String>,
-        _setAsCurrentChat: bool,
+        characterCardName: Option<String>,
+        group: Option<String>,
+        setAsCurrentChat: bool,
     ) -> Result<(), String> {
-        Err("Chat runtime support is not connected to the application holder".to_string())
+        let mut holder = self
+            .chatRuntimeHolder
+            .try_lock()
+            .map_err(|_| "Chat runtime holder is busy".to_string())?;
+        holder.getCore(ChatRuntimeSlot::MAIN).createNewChat(
+            characterCardName,
+            group,
+            false,
+            setAsCurrentChat,
+            None,
+        );
+        holder.observeStats();
+        Ok(())
     }
 
     /// Sends a message through the parent-owned chat runtime.
     #[allow(non_snake_case)]
     fn sendChatMessage<'a>(
         &'a self,
-        _request: RuntimeChatSendRequest,
+        request: RuntimeChatSendRequest,
     ) -> ToolRuntimeSupportFuture<'a, Result<(), String>> {
-        Box::pin(async {
-            Err("Chat runtime support is not connected to the application holder".to_string())
+        Box::pin(async move {
+            let mut holder = self.chatRuntimeHolder.lock().await;
+            let slot = runtimeChatSlotToRuntimeSlot(request.slot);
+            holder
+                .getCore(slot)
+                .sendUserMessage(
+                    PromptFunctionType::CHAT,
+                    request.roleCardId,
+                    request.chatId,
+                    request.message,
+                    request.proxySenderName,
+                    None,
+                    None,
+                    Vec::new(),
+                    None,
+                    request.turnOptions,
+                )
+                .await;
+            holder.observeStats();
+            Ok(())
         })
     }
 
@@ -341,7 +398,10 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
 
     /// Resolves memory binding metadata by character card id.
     #[allow(non_snake_case)]
-    fn characterMemoryBinding(&self, cardId: &str) -> Result<RuntimeCharacterMemoryBinding, String> {
+    fn characterMemoryBinding(
+        &self,
+        cardId: &str,
+    ) -> Result<RuntimeCharacterMemoryBinding, String> {
         CharacterCardManager::getInstance()
             .getCharacterCard(cardId)
             .map(|card| RuntimeCharacterMemoryBinding {
@@ -384,21 +444,6 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
     }
 }
 
-/// Converts runtime preference access data into the tools crate shape.
-fn runtimeToolAccessToToolAccess(
-    access: RuntimeResolvedCharacterCardToolAccess,
-) -> ResolvedCharacterCardToolAccess {
-    ResolvedCharacterCardToolAccess {
-        customEnabled: access.customEnabled,
-        effectiveBuiltinToolVisibility: access.effectiveBuiltinToolVisibility,
-        allowedPackageNames: access.allowedPackageNames,
-        allowedSkillNames: access.allowedSkillNames,
-        allowedMcpServerNames: access.allowedMcpServerNames,
-        canUsePackageSystem: access.canUsePackageSystem,
-        hasAnyAllowedExternalSource: access.hasAnyAllowedExternalSource,
-    }
-}
-
 /// Converts provider prompt categories into the shared model shape.
 fn providerCategoryToModel(
     category: ProviderToolPrompts::SystemToolPromptCategory,
@@ -406,7 +451,11 @@ fn providerCategoryToModel(
     SystemToolPromptCategory {
         categoryName: category.category_name,
         categoryHeader: category.category_header,
-        tools: category.tools.into_iter().map(providerToolToModel).collect(),
+        tools: category
+            .tools
+            .into_iter()
+            .map(providerToolToModel)
+            .collect(),
         categoryFooter: category.category_footer,
     }
 }
@@ -488,6 +537,15 @@ fn runtimeBundledExternalSkillAssets() -> &'static [RuntimeBundledExternalSkillA
                 .collect()
         })
         .as_slice()
+}
+
+/// Converts a tool runtime slot into the runtime holder slot.
+#[allow(non_snake_case)]
+fn runtimeChatSlotToRuntimeSlot(slot: RuntimeChatSlot) -> ChatRuntimeSlot {
+    match slot {
+        RuntimeChatSlot::MAIN => ChatRuntimeSlot::MAIN,
+        RuntimeChatSlot::FLOATING => ChatRuntimeSlot::FLOATING,
+    }
 }
 
 /// Converts tool crate edit operations into provider edit operations.

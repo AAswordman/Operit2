@@ -35,7 +35,7 @@ fn main() {
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let source_dir = manifest_dir.join("assets").join("plugins").join("buildin");
-    println!("cargo:rerun-if-changed={}", source_dir.display());
+    emit_rerun_for_asset_tree(&source_dir);
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let packaged_dir = out_dir.join("buildin_plugins");
@@ -91,10 +91,7 @@ fn main() {
     code.push_str("\n");
 
     let external_assets = collect_packaged_plugin_assets(
-        &manifest_dir
-            .join("assets")
-            .join("plugins")
-            .join("external"),
+        &manifest_dir.join("assets").join("plugins").join("external"),
     );
     code.push_str("pub static BUNDLED_EXTERNAL_PLUGIN_ASSETS: &[PluginAsset] = &[\n");
     for asset in &external_assets {
@@ -120,7 +117,7 @@ fn push_plugin_asset_struct(code: &mut String) {
 }
 
 fn collect_packaged_plugin_assets(source_dir: &Path) -> Vec<BuildinAsset> {
-    println!("cargo:rerun-if-changed={}", source_dir.display());
+    emit_rerun_for_asset_tree(source_dir);
     let mut assets = Vec::new();
     if !source_dir.is_dir() {
         return assets;
@@ -141,6 +138,26 @@ fn collect_packaged_plugin_assets(source_dir: &Path) -> Vec<BuildinAsset> {
         assets.push(BuildinAsset { name, path });
     }
     assets
+}
+
+fn emit_rerun_for_asset_tree(path: &Path) {
+    println!("cargo:rerun-if-changed={}", path.display());
+    if !path.is_dir() {
+        return;
+    }
+    let mut entries = fs::read_dir(path)
+        .expect("read asset dependency directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.file_name().map(|name| name.to_os_string()));
+    for entry in entries {
+        if entry.is_dir() {
+            emit_rerun_for_asset_tree(&entry);
+        } else {
+            println!("cargo:rerun-if-changed={}", entry.display());
+        }
+    }
 }
 
 fn is_syncable_file(path: &Path) -> bool {

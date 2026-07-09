@@ -5,8 +5,8 @@ use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct CharacterGroupsBackupFile {
@@ -29,6 +29,7 @@ pub struct CharacterGroupCardManager {
 }
 
 impl CharacterGroupCardManager {
+    /// Creates a character group manager backed by the supplied runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
             dataStore: PreferencesDataStore::new(paths.character_groups_preferences_path()),
@@ -37,6 +38,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a character group manager that uses the default runtime store paths.
     pub fn getInstance() -> Self {
         Self::new(RuntimeStorePaths::default())
     }
@@ -57,6 +59,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes the ordered list of stored character group identifiers.
     pub fn characterGroupCardListFlow(&self) -> Flow<Vec<String>> {
         self.dataStore
             .dataFlow()
@@ -64,6 +67,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes the currently selected character group identifier.
     pub fn observeActiveCharacterGroupId(&self) -> Flow<Option<String>> {
         self.dataStore.dataFlow().map(|preferences| {
             preferences
@@ -74,6 +78,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes all stored character groups sorted by most recent update time.
     pub fn allCharacterGroupCardsFlow(&self) -> Flow<Vec<CharacterGroupCard>> {
         let manager = self.clone();
         self.dataStore.dataFlow().map(move |preferences| {
@@ -91,6 +96,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes one character group by identifier.
     pub fn getCharacterGroupCardFlow(&self, id: &str) -> Flow<Option<CharacterGroupCard>> {
         let manager = self.clone();
         let id = id.to_string();
@@ -102,6 +108,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Observes the full character group selected as active.
     pub fn activeCharacterGroupCardFlow(&self) -> Flow<Option<CharacterGroupCard>> {
         let manager = self.clone();
         self.dataStore.dataFlow().map(move |preferences| {
@@ -116,6 +123,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a character group and assigns timestamps plus an id when required.
     pub fn createCharacterGroupCard(
         &self,
         group: CharacterGroupCard,
@@ -155,6 +163,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Updates an existing character group and refreshes its update timestamp.
     pub fn updateCharacterGroupCard(
         &self,
         group: CharacterGroupCard,
@@ -184,6 +193,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Deletes a character group and clears it from active selection when selected.
     pub fn deleteCharacterGroupCard(&self, groupId: &str) -> Result<(), PreferencesDataStoreError> {
         if groupId.trim().is_empty() {
             return Ok(());
@@ -200,6 +210,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Selects a character group as active or clears the active selection.
     pub fn setActiveCharacterGroupCard(
         &self,
         groupId: Option<String>,
@@ -216,6 +227,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Reads one character group by identifier.
     pub fn getCharacterGroupCard(
         &self,
         groupId: &str,
@@ -224,6 +236,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Reads every stored character group sorted by most recent update time.
     pub fn getAllCharacterGroupCards(
         &self,
     ) -> Result<Vec<CharacterGroupCard>, PreferencesDataStoreError> {
@@ -231,6 +244,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Creates the persisted character group list key when the store is empty.
     pub fn initializeIfNeeded(&self) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.edit(|preferences| {
             if preferences.get(&Self::CHARACTER_GROUP_LIST()).is_none() {
@@ -240,6 +254,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Duplicates a character group and returns the newly created group id.
     pub fn duplicateCharacterGroupCard(
         &self,
         sourceGroupId: &str,
@@ -266,9 +281,11 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Copies external bindings owned by one character group to another group.
     pub fn cloneBindingsFromCharacterGroup(&self, _sourceGroupId: &str, _targetGroupId: &str) {}
 
     #[allow(non_snake_case)]
+    /// Exports all character groups as pretty-printed backup JSON.
     pub fn exportAllCharacterGroupsToBackupContent(&self) -> Result<String, String> {
         let groups = self
             .getAllCharacterGroupCards()
@@ -281,6 +298,7 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
+    /// Imports character groups from backup JSON and reports create, update, and skip counts.
     pub fn importAllCharacterGroupsFromBackupContent(
         &self,
         jsonContent: &str,

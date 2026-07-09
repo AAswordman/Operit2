@@ -1,15 +1,16 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
-use operit_providers::chat::EnhancedAIService::{
-    EnhancedAIService, SendMessageCallbacks, SendMessageOptions,
-};
 use crate::core::chat::AIMessageManager::{
     logMessageTiming, messageTimingNow, AIMessageManager, BuildUserMessageContentRequest,
     SendMessageRequest as AIMessageSendRequest, StableContextWindowRequest,
 };
-use operit_tools::tools::ToolProgressBus::ToolProgressBus;
+use crate::data::preferences::ApiPreferences::ApiPreferences;
+use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
+use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
+use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
@@ -18,18 +19,17 @@ use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::PromptFunctionType::PromptFunctionType;
-use crate::data::preferences::ApiPreferences::ApiPreferences;
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
-use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
-use crate::data::preferences::ModelConfigManager::ModelConfigManager;
-use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
-use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
+use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
+use operit_providers::chat::EnhancedAIService::{
+    EnhancedAIService, SendMessageCallbacks, SendMessageOptions,
+};
+use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
+use operit_tools::tools::ToolProgressBus::ToolProgressBus;
 use operit_util::stream::HotStream::SharedStream;
 use operit_util::stream::RevisableTextStream::{TextStreamEventCarrier, TextStreamEventType};
 use operit_util::stream::Stream::Stream;
 use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
-use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 
 /// Minimum interval between persisted streaming snapshots.
 pub const STREAM_PERSIST_INTERVAL_MS: i64 = 1000;

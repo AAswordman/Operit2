@@ -239,6 +239,7 @@ impl StreamingJsonXmlConverter {
         self.primitiveNestingDepth == 0 && !self.primitiveInString && !self.primitiveEscape
     }
 
+    /// Reports whether the streaming JSON-to-XML converter has an open parameter tag.
     pub fn hasUnfinishedParam(&self) -> bool {
         self.hasOpenParam
     }

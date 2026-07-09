@@ -3,13 +3,13 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::collections::HashSet;
 
-use operit_runtime::data::model::ChatMessage::ChatMessage;
-use operit_runtime::data::model::InputProcessingState::InputProcessingState;
-use operit_runtime::util::stream::HotStream::SharedStream;
-use operit_runtime::util::streamnative::NativeMarkdownSplitter::{
+use operit_model::ChatMessage::ChatMessage;
+use operit_model::InputProcessingState::InputProcessingState;
+use operit_util::stream::HotStream::SharedStream;
+use operit_util::streamnative::NativeMarkdownSplitter::{
     MarkdownNodeStable, MarkdownProcessorType,
 };
-use operit_runtime::util::ChatMarkupRegex::{attr_value, tag_body, tag_ranges, ChatMarkupRegex};
+use operit_util::ChatMarkupRegex::{attr_value, tag_body, tag_ranges, ChatMarkupRegex};
 
 use super::empty_state::render_blue_cat_lines;
 use super::i18n::TuiText;

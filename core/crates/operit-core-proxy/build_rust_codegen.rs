@@ -71,7 +71,12 @@ fn render_generated_error_details(
     let mut generated_helpers = HashSet::new();
     for error_type in &used {
         let error_type = *error_type;
-        render_error_type_helper_recursive(error_type, error_types, &mut generated_helpers, &mut output);
+        render_error_type_helper_recursive(
+            error_type,
+            error_types,
+            &mut generated_helpers,
+            &mut output,
+        );
     }
     output
 }
@@ -91,7 +96,12 @@ fn render_error_type_helper_recursive(
     for variant in &definition.variants {
         for field in &variant.fields {
             if error_types.contains_key(&field.ty) {
-                render_error_type_helper_recursive(&field.ty, error_types, generated_helpers, output);
+                render_error_type_helper_recursive(
+                    &field.ty,
+                    error_types,
+                    generated_helpers,
+                    output,
+                );
             }
         }
     }
@@ -185,7 +195,9 @@ fn error_field_json_expr(
 
 fn render_string_error_details_helper() -> String {
     let mut output = String::new();
-    output.push_str("fn generated_core_proxy_error_details_for_string(error: &String) -> serde_json::Value {\n");
+    output.push_str(
+        "fn generated_core_proxy_error_details_for_string(error: &String) -> serde_json::Value {\n",
+    );
     output.push_str("    serde_json::json!({\n");
     output.push_str("        \"errorType\": \"String\",\n");
     output.push_str("        \"message\": error,\n");

@@ -1,4 +1,4 @@
-use operit_runtime::util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
+use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use serde::Deserialize;
 
 use super::app::OperitTui;

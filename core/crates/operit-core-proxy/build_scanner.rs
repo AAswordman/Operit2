@@ -65,7 +65,9 @@ pub(crate) fn object_specs(
     specs
 }
 
-pub(crate) fn collect_public_object_types(source_roots: &[SourceRoot]) -> HashMap<String, PublicObjectType> {
+pub(crate) fn collect_public_object_types(
+    source_roots: &[SourceRoot],
+) -> HashMap<String, PublicObjectType> {
     let mut out = HashMap::new();
     for source_root in source_roots {
         collect_public_object_types_from_dir(source_root, source_root.as_path(), &mut out);
@@ -616,6 +618,7 @@ fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
     let mut method_error = None::<String>;
     let is_async = function.sig.asyncness.is_some();
     let cfg_attrs = cfg_attrs(function);
+    let doc_lines = doc_lines(function);
     let mut has_receiver = false;
 
     for input in function.sig.inputs.iter() {
@@ -657,8 +660,31 @@ fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
         rust_return_type,
         is_async,
         cfg_attrs,
+        doc_lines,
         protocol,
     }
+}
+
+fn doc_lines(function: &ImplItemFn) -> Vec<String> {
+    function
+        .attrs
+        .iter()
+        .filter_map(|attr| {
+            if !attr.path().is_ident("doc") {
+                return None;
+            }
+            match &attr.meta {
+                Meta::NameValue(name_value) => match &name_value.value {
+                    Expr::Lit(expr_lit) => match &expr_lit.lit {
+                        Lit::Str(value) => Some(value.value().trim().to_string()),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 fn cfg_attrs(function: &ImplItemFn) -> Vec<String> {
