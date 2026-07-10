@@ -1625,6 +1625,11 @@ struct PreferencesDataStoreLoadedPreferences {
     preferences: Preferences,
 }
 
+enum StoredEncryptedPreferences {
+    LegacyPlaintext(Preferences),
+    EncryptedEnvelope(Vec<u8>),
+}
+
 impl Drop for PreferencesDataStoreFlowSubscription {
     fn drop(&mut self) {
         let Some(signal) = self.signal.upgrade() else {
@@ -1857,7 +1862,16 @@ impl PreferencesDataStore {
         }
         let storedContent = self.storageHost.readBytes(&self.storagePath)?;
         let contentBytes = match &self.encryption {
-            Some(encryption) => encryption.decrypt(&self.storagePath, &storedContent)?,
+            Some(encryption) => match classifyStoredEncryptedPreferences(&storedContent)? {
+                StoredEncryptedPreferences::LegacyPlaintext(preferences) => {
+                    let encrypted = encryption.encrypt(&self.storagePath, &storedContent)?;
+                    self.storageHost.writeBytes(&self.storagePath, &encrypted)?;
+                    return Ok(preferences);
+                }
+                StoredEncryptedPreferences::EncryptedEnvelope(content) => {
+                    encryption.decrypt(&self.storagePath, &content)?
+                }
+            },
             None => storedContent,
         };
         let content = String::from_utf8(contentBytes)
@@ -2002,6 +2016,25 @@ impl PreferencesDataStore {
         *version += 1;
         self.changeSignal.changed.notify_all();
     }
+}
+
+/// Classifies encrypted-store bytes as a legacy plaintext preferences map or an envelope.
+fn classifyStoredEncryptedPreferences(
+    content: &[u8],
+) -> Result<StoredEncryptedPreferences, PreferencesDataStoreError> {
+    let value: serde_json::Value = serde_json::from_slice(content)?;
+    let isLegacyPlaintext = value
+        .as_object()
+        .map(|object| object.values().all(serde_json::Value::is_string))
+        .unwrap_or(false);
+    if isLegacyPlaintext {
+        return Ok(StoredEncryptedPreferences::LegacyPlaintext(
+            serde_json::from_value(value)?,
+        ));
+    }
+    Ok(StoredEncryptedPreferences::EncryptedEnvelope(
+        content.to_vec(),
+    ))
 }
 
 #[allow(non_snake_case)]

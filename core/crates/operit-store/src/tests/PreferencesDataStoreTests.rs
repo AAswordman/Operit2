@@ -307,6 +307,41 @@ fn encrypted_store_round_trips_without_plaintext_file() {
 }
 
 #[test]
+/// Verifies encrypted stores migrate legacy plaintext preference maps in place.
+fn encrypted_store_migrates_legacy_plaintext_preferences() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let storagePath = "runtime/config/preferences/legacy_encrypted.preferences.json";
+    let mut legacyPreferences = Preferences::default();
+    legacyPreferences.set(
+        &stringPreferencesKey("provider_list"),
+        "[\"DEEPSEEK\"]".to_string(),
+    );
+    legacyPreferences.set(
+        &stringPreferencesKey("provider_DEEPSEEK"),
+        "{\"apiKey\":\"secret\"}".to_string(),
+    );
+    let plaintext = serde_json::to_vec_pretty(&legacyPreferences)
+        .expect("legacy plaintext preferences serialization");
+    host.writeBytes(storagePath, &plaintext)
+        .expect("legacy plaintext preferences write");
+
+    let store = PreferencesDataStore::newEncryptedWithStorage(host.clone(), storagePath);
+    let loaded = store.data().expect("migrated preferences read");
+
+    assert_eq!(loaded, legacyPreferences);
+    let stored = host
+        .readBytes(storagePath)
+        .expect("migrated encrypted preferences");
+    let storedJson: Value =
+        serde_json::from_slice(&stored).expect("migrated encrypted preferences envelope");
+    assert_eq!(storedJson["format"], "operit.preferences.encrypted");
+    assert!(String::from_utf8(stored)
+        .expect("migrated encrypted preferences utf8")
+        .find("DEEPSEEK")
+        .is_none());
+}
+
+#[test]
 /// Verifies encrypted-only stores write no sync operations.
 fn encrypted_store_does_not_record_sync_operations() {
     let host = Arc::new(MemoryStorageHost::default());
