@@ -2,14 +2,14 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
-use operit_tools::ConversationMarkupManager::ToolResult;
-use operit_tools::ToolExecutionManager::{
-    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
-};
 use operit_tools::tools::mcp::MCPManager::MCPManager;
 use operit_tools::tools::mcp::MCPToolParameter::MCPToolParameter;
 use operit_tools::tools::ToolExecutionLimits::ToolExecutionLimits;
 use operit_tools::tools::ToolResultDataClasses::stringResultData;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{
+    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
+};
 
 #[derive(Clone)]
 /// Tool executor that dispatches package-qualified calls to MCP servers.

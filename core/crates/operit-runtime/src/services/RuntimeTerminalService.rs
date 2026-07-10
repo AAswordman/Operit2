@@ -191,10 +191,20 @@ impl RuntimeTerminalService {
     }
 
     #[allow(non_snake_case)]
+    /// Returns the host-declared terminal type for manual PTY creation.
+    pub fn defaultTerminalType(&self) -> Result<String, String> {
+        self.terminalHost
+            .terminalInfo()
+            .map(|info| info.defaultType)
+            .map_err(|error| error.message)
+    }
+
+    #[allow(non_snake_case)]
     /// Starts a PTY terminal session and attaches its output stream.
     pub fn startTerminalPty(
         &self,
         sessionName: String,
+        terminalType: String,
         workingDir: String,
         rows: i32,
         cols: i32,
@@ -202,7 +212,13 @@ impl RuntimeTerminalService {
         let resolvedWorkingDir = resolve_terminal_working_dir(&self.context, &workingDir)?;
         let sessionId = self
             .terminalHost
-            .startPtySession(&sessionName, &resolvedWorkingDir, rows as u16, cols as u16)
+            .startPtySession(
+                &sessionName,
+                &terminalType,
+                &resolvedWorkingDir,
+                rows as u16,
+                cols as u16,
+            )
             .map_err(|error| error.message)?;
         self.ensureTerminalPtyOutputStream(sessionId.clone());
         publish_terminal_sessions(&self.terminalHost)?;

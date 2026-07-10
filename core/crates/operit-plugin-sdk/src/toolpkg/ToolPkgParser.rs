@@ -4,12 +4,12 @@ use std::io::Cursor;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::*;
-use operit_tools::tools::packTool::ToolPkgTemplateModels::{
+use crate::package::{LocalizedText, ToolPackage};
+use crate::toolpkg::ToolPkgCommonPluginConstants::*;
+use crate::toolpkg::ToolPkgTemplateModels::{
     ToolPkgManifestWorkflowTemplate, ToolPkgManifestWorkspaceTemplate,
     ToolPkgWorkflowTemplateRuntime, ToolPkgWorkspaceTemplateRuntime,
 };
-use operit_tools::tools::ToolPackage::{LocalizedText, ToolPackage};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolPkgSourceType {
@@ -254,6 +254,7 @@ pub struct ToolPkgRegisteredHostEventHook {
     #[serde(default = "defaultTrue")]
     pub enabled: bool,
 }
+/// Returns the default enabled value used by omitted manifest flags.
 fn defaultTrue() -> bool {
     true
 }
@@ -371,10 +372,10 @@ pub struct ToolPkgContainerRuntime {
     pub resources: Vec<ToolPkgResourceRuntime>,
     #[serde(rename = "workflowTemplates")]
     pub workflowTemplates:
-        Vec<operit_tools::tools::packTool::ToolPkgTemplateModels::ToolPkgWorkflowTemplateRuntime>,
+        Vec<crate::toolpkg::ToolPkgTemplateModels::ToolPkgWorkflowTemplateRuntime>,
     #[serde(rename = "workspaceTemplates")]
     pub workspaceTemplates:
-        Vec<operit_tools::tools::packTool::ToolPkgTemplateModels::ToolPkgWorkspaceTemplateRuntime>,
+        Vec<crate::toolpkg::ToolPkgTemplateModels::ToolPkgWorkspaceTemplateRuntime>,
     #[serde(rename = "uiModules")]
     pub uiModules: Vec<ToolPkgUiModuleRuntime>,
     #[serde(rename = "uiRoutes")]
@@ -478,11 +479,13 @@ pub struct ToolPkgEntryIndex {
 }
 
 impl ToolPkgEntryIndex {
+    /// Returns whether an archive entry exists after path normalization.
     #[allow(non_snake_case)]
     pub fn containsEntry(&self, rawPath: &str) -> bool {
         self.resolveEntryName(rawPath).is_some()
     }
 
+    /// Resolves a normalized archive path to its original entry name.
     #[allow(non_snake_case)]
     pub fn resolveEntryName(&self, rawPath: &str) -> Option<String> {
         let normalizedPath = ToolPkgArchiveParser::normalizeZipEntryPath(rawPath)?;
@@ -491,6 +494,7 @@ impl ToolPkgEntryIndex {
             .cloned()
     }
 
+    /// Returns whether the index contains entries below a directory path.
     #[allow(non_snake_case)]
     pub fn containsEntriesUnderDirectory(&self, rawDirectoryPath: &str) -> bool {
         let normalizedDirectoryPath =
@@ -518,6 +522,7 @@ pub struct ToolPkgParser;
 pub struct ToolPkgArchiveParser;
 
 impl ToolPkgArchiveParser {
+    /// Parses and validates a ToolPkg container from an indexed archive source.
     #[allow(non_snake_case)]
     pub fn parseToolPkgFromIndexedEntries<
         FReadEntryText,
@@ -1029,6 +1034,7 @@ impl ToolPkgArchiveParser {
         })
     }
 
+    /// Builds a normalized entry index from an open ZIP archive.
     #[allow(non_snake_case)]
     pub fn buildZipEntryIndex<R: std::io::Read + std::io::Seek>(
         archive: &mut zip::ZipArchive<R>,
@@ -1057,6 +1063,7 @@ impl ToolPkgArchiveParser {
         }
     }
 
+    /// Builds a normalized entry index from an extracted ToolPkg directory.
     #[allow(non_snake_case)]
     pub fn buildDirectoryEntryIndex(rootDir: &std::path::Path) -> ToolPkgEntryIndex {
         let mut normalizedEntryNames = BTreeSet::new();
@@ -1076,6 +1083,7 @@ impl ToolPkgArchiveParser {
         }
     }
 
+    /// Normalizes a ZIP entry path and rejects unsafe traversal segments.
     #[allow(non_snake_case)]
     pub fn normalizeZipEntryPath(rawPath: &str) -> Option<String> {
         let normalized = rawPath
@@ -1089,6 +1097,7 @@ impl ToolPkgArchiveParser {
         Some(normalized)
     }
 
+    /// Resolves a path relative to the ToolPkg manifest entry.
     #[allow(non_snake_case)]
     pub fn resolveManifestRelativeZipEntryPath(
         manifestBasePath: &str,
@@ -1101,6 +1110,7 @@ impl ToolPkgArchiveParser {
         Self::normalizeZipEntryPath(&format!("{manifestBasePath}/{normalized}"))
     }
 
+    /// Normalizes a resource path used by ToolPkg runtime APIs.
     #[allow(non_snake_case)]
     pub fn normalizeResourcePath(rawPath: &str) -> Option<String> {
         let normalized = Self::normalizeZipEntryPath(rawPath)?;
@@ -1111,6 +1121,7 @@ impl ToolPkgArchiveParser {
         Some(trimmed)
     }
 
+    /// Resolves a resource path relative to the ToolPkg manifest entry.
     #[allow(non_snake_case)]
     pub fn resolveManifestRelativeResourcePath(
         manifestBasePath: &str,
@@ -1123,6 +1134,7 @@ impl ToolPkgArchiveParser {
         Self::normalizeResourcePath(&format!("{manifestBasePath}/{normalized}"))
     }
 
+    /// Returns whether a resource MIME type represents a directory archive.
     #[allow(non_snake_case)]
     pub fn isDirectoryResourceMime(mime: Option<&str>) -> bool {
         matches!(
@@ -1134,6 +1146,7 @@ impl ToolPkgArchiveParser {
         )
     }
 
+    /// Reads one indexed ZIP entry as UTF-8 text.
     #[allow(non_snake_case)]
     pub fn readZipEntryText<R: std::io::Read + std::io::Seek>(
         archive: &mut zip::ZipArchive<R>,
@@ -1147,6 +1160,7 @@ impl ToolPkgArchiveParser {
         Some(text)
     }
 
+    /// Reads one indexed directory entry as UTF-8 text.
     #[allow(non_snake_case)]
     pub fn readDirectoryEntryText(
         rootDir: &std::path::Path,
@@ -1157,6 +1171,7 @@ impl ToolPkgArchiveParser {
         std::fs::read_to_string(rootDir.join(relativePath)).ok()
     }
 
+    /// Extracts normalized ToolPkg entries from an external ZIP file.
     #[allow(non_snake_case)]
     pub fn extractZipEntriesFromExternal(
         zipFilePath: &str,
@@ -1169,6 +1184,7 @@ impl ToolPkgArchiveParser {
         Self::extractZipEntriesFromFile(zipFile, destinationDir)
     }
 
+    /// Extracts normalized ToolPkg entries from embedded archive bytes.
     #[allow(non_snake_case)]
     pub fn extractZipEntriesFromAssetBytes(
         bytes: &'static [u8],
@@ -1177,6 +1193,7 @@ impl ToolPkgArchiveParser {
         Self::extractZipEntriesFromReader(Cursor::new(bytes), destinationDir)
     }
 
+    /// Extracts normalized ToolPkg entries from an opened archive file.
     #[allow(non_snake_case)]
     fn extractZipEntriesFromFile(
         zipFile: &std::path::Path,
@@ -1188,6 +1205,7 @@ impl ToolPkgArchiveParser {
         Self::extractZipEntriesFromReader(file, destinationDir)
     }
 
+    /// Extracts normalized ToolPkg entries from a generic seekable reader.
     #[allow(non_snake_case)]
     fn extractZipEntriesFromReader<R: std::io::Read + std::io::Seek>(
         reader: R,
@@ -1224,6 +1242,7 @@ impl ToolPkgArchiveParser {
 }
 
 #[allow(non_snake_case)]
+/// Validates desktop widgets against declared UI routes.
 fn validateDesktopWidgets(
     registration: &ToolPkgMainRegistration,
     uiRoutes: &[ToolPkgUiRouteRuntime],
@@ -1283,6 +1302,7 @@ fn validateDesktopWidgets(
 }
 
 #[allow(non_snake_case)]
+/// Validates function-based hook registrations and duplicate identifiers.
 fn validateFunctionHooks(
     hooks: &[ToolPkgRegisteredFunctionHook],
     registryName: &str,
@@ -1314,6 +1334,7 @@ fn validateFunctionHooks(
 }
 
 #[allow(non_snake_case)]
+/// Validates event-scoped function hook registrations.
 fn validateFunctionHooksWithEvent(
     hooks: &[ToolPkgRegisteredAppLifecycleHook],
     registryName: &str,
@@ -1347,6 +1368,7 @@ fn validateFunctionHooksWithEvent(
 }
 
 #[allow(non_snake_case)]
+/// Validates host event hook declarations and trigger payloads.
 fn validateHostEventHooks(
     hooks: &[ToolPkgRegisteredHostEventHook],
     registryName: &str,
@@ -1385,6 +1407,7 @@ fn validateHostEventHooks(
 }
 
 #[allow(non_snake_case)]
+/// Validates tag-scoped function hook registrations.
 fn validateTagFunctionHooks(
     hooks: &[ToolPkgRegisteredTagFunctionHook],
     registryName: &str,
@@ -1421,6 +1444,7 @@ fn validateTagFunctionHooks(
 }
 
 #[allow(non_snake_case)]
+/// Validates ToolPkg AI provider declarations and required handlers.
 fn validateAiProviders(
     providers: &[ToolPkgRegisteredAiProvider],
 ) -> Result<Vec<ToolPkgAiProviderRuntime>, String> {
@@ -1473,6 +1497,7 @@ fn validateAiProviders(
 }
 
 #[allow(non_snake_case)]
+/// Builds one normalized AI provider handler from manifest fields.
 fn buildAiProviderHandler(
     index: usize,
     fieldName: &str,
@@ -1491,6 +1516,7 @@ fn buildAiProviderHandler(
 }
 
 #[allow(non_snake_case)]
+/// Returns the human-readable label used for duplicate registration errors.
 fn duplicateLabel(registryName: &str) -> &'static str {
     match registryName {
         TOOLPKG_REGISTRATION_MESSAGE_PROCESSING_PLUGIN => "message processing plugin",
@@ -1513,6 +1539,7 @@ fn duplicateLabel(registryName: &str) -> &'static str {
 }
 
 #[allow(non_snake_case)]
+/// Recursively adds directory entries to a normalized ToolPkg entry index.
 fn collectDirectoryEntryIndex(
     rootDir: &std::path::Path,
     currentDir: &std::path::Path,
@@ -1549,6 +1576,7 @@ fn collectDirectoryEntryIndex(
 }
 
 #[allow(non_snake_case)]
+/// Finds the supported ToolPkg manifest entry in an archive index.
 fn findManifestEntry(entryNames: &BTreeSet<String>) -> Option<String> {
     if let Some(entry) = entryNames
         .iter()
@@ -1582,6 +1610,7 @@ fn findManifestEntry(entryNames: &BTreeSet<String>) -> Option<String> {
 }
 
 #[allow(non_snake_case)]
+/// Parses one ToolPkg manifest and records its source entry path.
 fn parseToolPkgManifest(content: &str, manifestEntryName: &str) -> Result<ToolPkgManifest, String> {
     let manifestJson = if manifestEntryName.to_ascii_lowercase().ends_with(".hjson") {
         let value: Value =
@@ -1594,6 +1623,7 @@ fn parseToolPkgManifest(content: &str, manifestEntryName: &str) -> Result<ToolPk
 }
 
 #[allow(non_snake_case)]
+/// Normalizes HJSON-like manifest text before structured parsing.
 fn normalizeHjsonLike(content: &str) -> String {
     content
         .lines()
@@ -1603,11 +1633,13 @@ fn normalizeHjsonLike(content: &str) -> String {
 }
 
 #[allow(non_snake_case)]
+/// Returns whether a localized text value contains any visible content.
 fn hasLocalizedTextContent(text: &LocalizedText) -> bool {
     text.values.values().any(|value| !value.trim().is_empty())
 }
 
 #[allow(non_snake_case)]
+/// Creates a localized text value from one default-language string.
 fn localizedTextOf(value: &str) -> LocalizedText {
     LocalizedText {
         values: HashMap::from([("default".to_string(), value.to_string())]),
@@ -1615,16 +1647,19 @@ fn localizedTextOf(value: &str) -> LocalizedText {
 }
 
 #[allow(non_snake_case)]
+/// Returns the default ToolPkg manifest schema version.
 fn defaultSchemaVersion() -> i32 {
     1
 }
 
 #[allow(non_snake_case)]
+/// Returns the default enabled state for ToolPkg subpackages.
 fn defaultEnabledByDefault() -> bool {
     true
 }
 
 #[allow(non_snake_case)]
+/// Deserializes a manifest field that accepts either one string or a string list.
 fn deserializeStringOrStringList<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,

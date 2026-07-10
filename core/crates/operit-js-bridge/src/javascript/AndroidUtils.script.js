@@ -24,7 +24,11 @@
  */
 
 function executeShell(command, timeout = 15000) {
-    return Tools.System.terminal.hiddenExec(command, { executorKey: 'android-utils', timeoutMs: timeout }).then(function(result) {
+    return Tools.System.terminal.hiddenExec(command, {
+        executorKey: 'android-utils',
+        type: 'shell',
+        timeoutMs: timeout
+    }).then(function(result) {
         if (result && result.output !== undefined) {
             return result.output;
         }

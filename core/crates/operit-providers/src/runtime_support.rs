@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use serde_json::Value;
 
@@ -9,8 +9,6 @@ use operit_model::MemorySearchConfig::MemorySearchConfig;
 use operit_model::ModelConfigData::{ProviderProfile, ResolvedModelConfig};
 use operit_model::PromptFunctionType::PromptFunctionType;
 
-use crate::chat::llmprovider::AIService::AiServiceError;
-
 /// Describes the model binding selected for one runtime function.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(non_snake_case)]
@@ -19,23 +17,9 @@ pub struct ProviderFunctionModelBinding {
     pub modelId: String,
 }
 
-/// Describes a tool package AI provider registration.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(non_snake_case)]
-pub struct ProviderToolPkgAiProviderRegistration {
-    pub containerPackageName: String,
-    pub providerId: String,
-    pub displayName: String,
-    pub description: String,
-    pub listModelsFunctionName: String,
-    pub listModelsFunctionSource: Option<String>,
-    pub sendMessageFunctionName: String,
-    pub sendMessageFunctionSource: Option<String>,
-    pub testConnectionFunctionName: String,
-    pub testConnectionFunctionSource: Option<String>,
-    pub calculateInputTokensFunctionName: String,
-    pub calculateInputTokensFunctionSource: Option<String>,
-}
+/// Describes a ToolPkg-backed AI provider registration.
+pub type ProviderToolPkgAiProviderRegistration =
+    operit_plugin_sdk::toolpkg::ToolPkgHooks::ToolPkgAiProviderRegistration;
 
 /// Captures a timestamp for provider request timing logs.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,17 +92,17 @@ pub trait ProviderRuntimeSupport: Send + Sync {
     ) -> Result<ResolvedModelConfig, String>;
 
     /// Returns the provider profile for a provider id.
-    fn providerProfile(&self, rootDir: PathBuf, providerId: &str)
-        -> Result<ProviderProfile, String>;
+    fn providerProfile(
+        &self,
+        rootDir: PathBuf,
+        providerId: &str,
+    ) -> Result<ProviderProfile, String>;
 
     /// Returns whether a tool package AI provider is registered.
     fn hasToolPkgAiProvider(&self, providerId: &str) -> bool;
 
     /// Returns a tool package AI provider registration.
-    fn toolPkgAiProvider(
-        &self,
-        providerId: &str,
-    ) -> Option<ProviderToolPkgAiProviderRegistration>;
+    fn toolPkgAiProvider(&self, providerId: &str) -> Option<ProviderToolPkgAiProviderRegistration>;
 
     /// Invokes a tool package AI provider function.
     fn runToolPkgAiProviderHook(
@@ -150,27 +134,25 @@ pub trait ProviderRuntimeSupport: Send + Sync {
     );
 }
 
-static PROVIDER_RUNTIME_SUPPORT: OnceLock<Arc<dyn ProviderRuntimeSupport>> = OnceLock::new();
-
-/// Installs the runtime support implementation used by provider code.
-pub fn setProviderRuntimeSupport(
+/// Carries one runtime-specific provider support implementation.
+#[derive(Clone)]
+pub struct ProviderRuntimeContext {
     support: Arc<dyn ProviderRuntimeSupport>,
-) -> Result<(), AiServiceError> {
-    PROVIDER_RUNTIME_SUPPORT.set(support).map_err(|_| {
-        AiServiceError::RequestFailed(
-            "provider runtime support is already installed".to_string(),
-        )
-    })
 }
 
-/// Returns the installed provider runtime support implementation.
-pub fn providerRuntimeSupport() -> Result<&'static dyn ProviderRuntimeSupport, AiServiceError> {
-    PROVIDER_RUNTIME_SUPPORT
-        .get()
-        .map(|support| support.as_ref())
-        .ok_or_else(|| {
-            AiServiceError::RequestFailed(
-                "provider runtime support is not installed".to_string(),
-            )
-        })
+impl ProviderRuntimeContext {
+    /// Creates a provider context from a caller-owned support implementation.
+    pub fn new(support: Arc<dyn ProviderRuntimeSupport>) -> Self {
+        Self { support }
+    }
+
+    /// Returns the runtime support implementation for this context.
+    pub fn support(&self) -> &dyn ProviderRuntimeSupport {
+        self.support.as_ref()
+    }
+
+    /// Clones the shared runtime support implementation.
+    pub fn shared_support(&self) -> Arc<dyn ProviderRuntimeSupport> {
+        self.support.clone()
+    }
 }

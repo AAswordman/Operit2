@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use operit_host_api::HostEnvironmentDescriptor;
 use serde_json::{json, Value};
 
-use crate::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use crate::chat::config::SystemToolPrompts::SystemToolPrompts;
+use crate::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use operit_tools::tools::climode::CliToolModeSupport::CliToolModeSupport;
 
 const TOOL_USAGE_GUIDELINES_EN: &str = r#"When calling a tool, the user will see your response, and then will automatically send the tool results back to you in a follow-up message.

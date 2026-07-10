@@ -3,10 +3,14 @@ name = "operit-util"
 version = "2.0.0-preview.3"
 edition.workspace = true
 license.workspace = true
-publish.workspace = true
+publish = true
+description = "Shared utility services and stream primitives for Operit."
+readme = "README.md"
+repository = "https://github.com/AAswordman/Operit2"
+documentation = "https://docs.rs/operit-util"
 
 [dependencies]
-operit-host-api = { path = "../operit-host-api" }
+operit-host-api = { version = "0.1.0", path = "../operit-host-api" }
 regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true

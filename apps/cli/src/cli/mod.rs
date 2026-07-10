@@ -10,12 +10,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use flate2::read::GzDecoder;
 use operit_link::CoreLinkError;
-use operit_providers::chat::enhance::ConversationService::ConversationService;
-use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
-use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_providers::chat::EnhancedAIService::EnhancedAIService;
-use operit_providers::market::MarketStatsApiService::{MarketEntrySummary, MarketListPage};
-use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, PermissionRequestResult};
 use operit_model::ActivePrompt::ActivePrompt;
 use operit_model::ApiKeyInfo::ApiKeyInfo;
 use operit_model::AttachmentInfo::AttachmentInfo;
@@ -32,6 +26,10 @@ use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTag::TagType;
 use operit_model::TtsConfig::TtsConfig;
+use operit_providers::chat::enhance::ConversationService::ConversationService;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
+use operit_providers::market::MarketStatsApiService::{MarketEntrySummary, MarketListPage};
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::data::preferences::ActivePromptManager::ActivePromptManager;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
@@ -40,9 +38,11 @@ use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfig
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::data::preferences::PromptTagManager::PromptTagManager;
 use operit_runtime::data::preferences::TtsConfigManager::TtsConfigManager;
-use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use operit_runtime::services::TtsSynthesisService::TtsSynthesisService;
+use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
+use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, PermissionRequestResult};
+use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
 use operit_util::stream::Stream::Stream;
 use operit_util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
@@ -59,6 +59,7 @@ pub(crate) mod link;
 mod transfer;
 mod web_access;
 
+use crate::bootstrap::persist_cli_storage_config;
 use crate::chat_runtime::{run_chat_shell_command_with_core, run_shell_command};
 use crate::core_proxy::{cli_core, local_cli_core};
 use host_ops::{schedule_cli_uninstall, schedule_cli_update};
@@ -115,6 +116,7 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
         }
         "chat" => run_core_command_and_print(&mut core, &args).await,
         "workspace" => run_core_command_and_print(&mut core, &args).await,
+        "storage" => run_local_core_command_and_print(&mut core, &args).await,
         "shell" => run_shell_command(&args[1..]).await,
         "tag" => run_core_command_and_print(&mut core, &args).await,
         "character" => run_core_command_and_print(&mut core, &args).await,
@@ -158,6 +160,7 @@ pub(crate) async fn run_cli_link_root(session_name: &str, args: &[String]) -> Re
         }
         "chat" => run_core_command_and_print(&mut core, &args).await,
         "workspace" => run_core_command_and_print(&mut core, &args).await,
+        "storage" => run_core_command_and_print(&mut core, &args).await,
         "shell" => {
             let mut shell_args = vec!["shell".to_string()];
             shell_args.extend_from_slice(&args[1..]);
@@ -1190,6 +1193,27 @@ async fn run_core_command_and_print(
     Ok(())
 }
 
+/// Runs a local core command and applies local CLI side effects.
+async fn run_local_core_command_and_print(
+    core: &mut crate::core_proxy::CliCore,
+    args: &[String],
+) -> Result<(), String> {
+    let output = core
+        .runCoreCommand(args)
+        .await
+        .map_err(core_command_error_message)?;
+    if args.first().map(String::as_str) == Some("storage") {
+        persist_cli_storage_config(&output.stdout)?;
+    }
+    if !output.stdout.is_empty() {
+        print!("{}", rewrite_core_command_usage_message(output.stdout));
+    }
+    if !output.stderr.is_empty() {
+        eprint!("{}", rewrite_core_command_usage_message(output.stderr));
+    }
+    Ok(())
+}
+
 fn rewrite_core_command_usage_message(message: String) -> String {
     let ends_with_newline = message.ends_with('\n');
     let lines = message
@@ -1244,8 +1268,8 @@ pub(crate) fn print_root_usage() {
     println!("operit2 uninstall");
     println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]");
     println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]");
-    println!("operit2 cli <version|prefs|host|log|memory|tts|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|install|uninstall|skill|package|plugin|mcp|link|web|shell>");
-    println!("operit2 cli --link <session> <version|prefs|host|log|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
+    println!("operit2 cli <version|prefs|host|log|memory|tts|export|import|backup|model|chat|workspace|storage|tag|character|group|active-prompt|approval|tool|market|update|install|uninstall|skill|package|plugin|mcp|link|web|shell>");
+    println!("operit2 cli --link <session> <version|prefs|host|log|memory|export|import|backup|model|chat|workspace|storage|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
     println!();
     print_cli_usage();
 }
@@ -1255,6 +1279,7 @@ fn print_cli_usage() {
     println!("operit2 cli version");
     println!("operit2 cli prefs <show|thinking|thinking-quality|stream|media-history|mcp-timeout>");
     println!("operit2 cli host <show|capabilities|paths>");
+    println!("operit2 cli storage <paths|migrate>");
     println!("operit2 cli log <show|package|path|clear>");
     println!("operit2 cli memory <character|shared|mount|unmount>");
     println!("operit2 cli tts config <list|show|current|use|create|update|delete>");

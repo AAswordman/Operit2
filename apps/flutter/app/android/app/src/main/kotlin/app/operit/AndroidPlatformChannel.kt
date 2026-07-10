@@ -20,6 +20,8 @@ class AndroidPlatformChannel(
     fun handle(call: MethodCall, result: MethodChannel.Result): Boolean {
         when (call.method) {
             "androidRuntimePaths" -> androidRuntimePaths(result)
+            "localRuntimeStoragePaths" -> localRuntimeStoragePaths(call, result)
+            "setLocalRuntimeStorage" -> setLocalRuntimeStorage(call, result)
             "hostOnboardingPermissionSnapshot" -> hostOnboardingPermissionSnapshot(call, result)
             "hostOnboardingRequestPermission" -> hostOnboardingRequestPermission(call, result)
             else -> return false
@@ -56,6 +58,25 @@ class AndroidPlatformChannel(
                 }
             }
         }.start()
+    }
+
+    /** Returns local runtime storage paths for the requested root. */
+    private fun localRuntimeStoragePaths(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            result.success(runtimeHost.storagePathsMap(call.argument<String>("storageRoot")))
+        } catch (error: Throwable) {
+            result.error("RUNTIME_STORAGE_PATHS_ERROR", error.message, null)
+        }
+    }
+
+    /** Applies the local runtime storage root before runtime creation. */
+    private fun setLocalRuntimeStorage(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            runtimeHost.setStorageRoot(call.argument<String>("storageRoot"))
+            result.success(null)
+        } catch (error: Throwable) {
+            result.error("RUNTIME_STORAGE_SET_ERROR", error.message, null)
+        }
     }
 
     private fun onboardingPermissionSnapshot(result: MethodChannel.Result) {

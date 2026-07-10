@@ -51,19 +51,17 @@ use link_proxy_rs::tui_core;
 use operit_core_proxy::GeneratedCoreProxy;
 use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest};
 use operit_providers::chat::enhance::ConversationService::ConversationService;
-use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
-use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
-use operit_tools::tools::AIToolHandler::AIToolHandler;
-use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use operit_runtime::services::RuntimeHostInteractionService::{
     RuntimeHostInteractionKind, RuntimeHostInteractionRequest, RuntimeHostInteractionResponse,
     RuntimeHostInteractionToolPermissionResponse, RuntimeHostInteractionToolPermissionTool,
 };
-use operit_util::GithubReleaseUtil::{
-    FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
-};
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+use operit_util::GithubReleaseUtil::{FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
@@ -197,8 +195,7 @@ fn install_local_permission_requester(
     core: &mut operit_core_proxy::LocalCoreProxy,
     approval_bridge: TuiApprovalBridge,
 ) {
-    let context = core.localApplicationMut().hostManager.clone();
-    let handler = AIToolHandler::getInstance(context);
+    let handler = core.localApplicationMut().toolHandler.clone();
     handler
         .getToolPermissionSystem()
         .setPermissionRequester(move |tool, description| {
@@ -259,6 +256,7 @@ async fn handle_remote_tool_permission_interaction(
                 composeWebViewController: None,
                 systemCaptureScreenshot: None,
                 systemRecognizeText: None,
+                systemLanguageCode: None,
                 audioPlay: None,
                 musicPlayback: None,
                 bluetooth: None,

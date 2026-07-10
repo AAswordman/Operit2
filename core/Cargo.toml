@@ -7,6 +7,7 @@ members = [
     "crates/operit-store",
     "crates/operit-model",
     "crates/operit-util",
+    "crates/operit-plugin-sdk",
     "crates/operit-tools",
     "crates/operit-js-bridge",
     "crates/operit-providers",

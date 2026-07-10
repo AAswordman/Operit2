@@ -24,21 +24,19 @@ use access::{
     RemoteLinkServer, RemoteLinkServerConfig, RemotePairingCodeRecord, RemotePairingCodeSink,
     RemoteWebAccessConfig,
 };
+use operit_host_api::HostManager::HostManager;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
     CoreLinkError, CoreRequestId, CoreWatchRequest,
 };
-use operit_host_api::HostManager::HostManager;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_runtime::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgHostEventRegistration;
 use operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
 use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerAudioPlay, requestOwnerBluetooth, requestOwnerBrowserAutomation,
     requestOwnerComposeWebViewController, requestOwnerMusicPlayback,
     requestOwnerSystemCaptureScreenshot, requestOwnerSystemLanguageCode,
-    requestOwnerSystemRecognizeText,
-    requestOwnerToolPermission, requestOwnerTtsPlayback, requestOwnerTtsSynthesis,
-    requestOwnerWebVisit, RuntimeHostInteractionAudioPlayPayload,
+    requestOwnerSystemRecognizeText, requestOwnerToolPermission, requestOwnerTtsPlayback,
+    requestOwnerTtsSynthesis, requestOwnerWebVisit, RuntimeHostInteractionAudioPlayPayload,
     RuntimeHostInteractionBluetoothPayload, RuntimeHostInteractionBrowserAutomationPayload,
     RuntimeHostInteractionComposeWebViewControllerPayload,
     RuntimeHostInteractionMusicPlaybackPayload, RuntimeHostInteractionSystemRecognizeTextPayload,
@@ -1045,8 +1043,7 @@ impl CoreLinkClient for SharedFlutterCoreClient {
 }
 
 fn install_permission_requester(core: &mut LocalCoreProxy) {
-    let context = core.localApplicationMut().hostManager.clone();
-    let handler = AIToolHandler::getInstance(context);
+    let handler = core.localApplicationMut().toolHandler.clone();
     handler
         .getToolPermissionSystem()
         .setPermissionRequester(move |tool, description| {
@@ -1117,23 +1114,24 @@ fn create_local_core(
     let appFilesRoot = root_dir.clone();
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(root_dir));
     let runtimeSqliteHost = runtimeStorageHost.clone();
+    let hostSecretStore = runtimeStorageHost.clone();
     #[cfg(target_os = "android")]
     let systemOperationHost: Arc<dyn operit_host_api::SystemOperationHost> =
         Arc::new(FlutterSystemOperationBridge::new());
     #[cfg(not(target_os = "android"))]
     let systemOperationHost: Arc<dyn operit_host_api::SystemOperationHost> =
         Arc::new(NativeSystemOperationHost::new());
-    let mut context =
-        HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
-            Arc::new(NativeFileSystemHost::new()),
-            webVisitHost,
-            Arc::new(NativeHttpHost::new()),
-            systemOperationHost,
-            Arc::new(NativeManagedRuntimeHost::new()),
-            runtimeStorageHost,
-            runtimeSqliteHost,
-        )
-        .withAppFilesRoot(appFilesRoot);
+    let mut context = HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
+        Arc::new(NativeFileSystemHost::new()),
+        webVisitHost,
+        Arc::new(NativeHttpHost::new()),
+        systemOperationHost,
+        Arc::new(NativeManagedRuntimeHost::new()),
+        runtimeStorageHost,
+        runtimeSqliteHost,
+    )
+    .withHostSecretStore(hostSecretStore)
+    .withAppFilesRoot(appFilesRoot);
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
     }
@@ -1341,17 +1339,18 @@ fn create_local_core(
     let appFilesRoot = root_dir.clone();
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(root_dir));
     let runtimeSqliteHost = runtimeStorageHost.clone();
-    let mut context =
-        HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
-            Arc::new(NativeFileSystemHost::new()),
-            webVisitHost,
-            Arc::new(NativeHttpHost::new()),
-            Arc::new(NativeSystemOperationHost::new()),
-            Arc::new(NativeManagedRuntimeHost::new()),
-            runtimeStorageHost,
-            runtimeSqliteHost,
-        )
-        .withAppFilesRoot(appFilesRoot);
+    let hostSecretStore = runtimeStorageHost.clone();
+    let mut context = HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
+        Arc::new(NativeFileSystemHost::new()),
+        webVisitHost,
+        Arc::new(NativeHttpHost::new()),
+        Arc::new(NativeSystemOperationHost::new()),
+        Arc::new(NativeManagedRuntimeHost::new()),
+        runtimeStorageHost,
+        runtimeSqliteHost,
+    )
+    .withHostSecretStore(hostSecretStore)
+    .withAppFilesRoot(appFilesRoot);
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
     }
@@ -1518,17 +1517,18 @@ fn create_local_core(
 ) -> Result<LocalCoreProxy, String> {
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new());
     let runtimeSqliteHost = runtimeStorageHost.clone();
-    let mut context =
-        HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
-            Arc::new(NativeFileSystemHost::new()),
-            webVisitHost,
-            Arc::new(NativeHttpHost::new()),
-            Arc::new(NativeSystemOperationHost::new()),
-            Arc::new(NativeManagedRuntimeHost::new()),
-            runtimeStorageHost,
-            runtimeSqliteHost,
-        )
-        .withAppFilesRoot(NativeRuntimeStorageHost::defaultRoot());
+    let hostSecretStore = runtimeStorageHost.clone();
+    let mut context = HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
+        Arc::new(NativeFileSystemHost::new()),
+        webVisitHost,
+        Arc::new(NativeHttpHost::new()),
+        Arc::new(NativeSystemOperationHost::new()),
+        Arc::new(NativeManagedRuntimeHost::new()),
+        runtimeStorageHost,
+        runtimeSqliteHost,
+    )
+    .withHostSecretStore(hostSecretStore)
+    .withAppFilesRoot(NativeRuntimeStorageHost::defaultRoot());
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
     }
@@ -2283,7 +2283,7 @@ mod android_jni {
         mut env: JNIEnv,
         _class: JClass,
         storage_root: JString,
-        _host: JObject,
+        host: JObject,
     ) -> jlong {
         let storage_root = match env.get_string(&storage_root) {
             Ok(value) => PathBuf::from(String::from(value)),
@@ -2292,9 +2292,30 @@ mod android_jni {
                 return 0;
             }
         };
+        let java_vm = match env.get_java_vm() {
+            Ok(value) => value,
+            Err(error) => {
+                set_last_create_error(format!("Android Java VM is unavailable: {error}"));
+                return 0;
+            }
+        };
+        let host = match env.new_global_ref(host) {
+            Ok(value) => value,
+            Err(error) => {
+                set_last_create_error(format!("Android host secret bridge is invalid: {error}"));
+                return 0;
+            }
+        };
+        if let Err(error) =
+            operit_host_android_native::setAndroidHostSecretStoreBridge(java_vm, host)
+        {
+            set_last_create_error(error.to_string());
+            return 0;
+        }
         match OperitFlutterBridge::new_with_storage_root(Some(storage_root)) {
             Ok(bridge) => Box::into_raw(Box::new(bridge)) as jlong,
             Err(error) => {
+                operit_host_android_native::clearAndroidHostSecretStoreBridge();
                 set_last_create_error(error);
                 0
             }
@@ -2322,6 +2343,7 @@ mod android_jni {
         handle: jlong,
     ) {
         operit_flutter_bridge_destroy(handle as *mut OperitFlutterBridge);
+        operit_host_android_native::clearAndroidHostSecretStoreBridge();
     }
 
     #[no_mangle]

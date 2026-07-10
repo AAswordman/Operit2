@@ -1,3 +1,4 @@
+/// Returns the stable JavaScript `Tools` namespace backed by the `toolCall` contract.
 #[allow(non_snake_case)]
 pub fn getJsToolsDefinition() -> &'static str {
     r#"
@@ -578,8 +579,8 @@ pub fn getJsToolsDefinition() -> &'static str {
                 terminal: {
                     info: function() { return toolCall("get_terminal_info", {}); },
                     create: function(sessionName, type) {
-                        var params = { session_name: sessionName };
-                        if (type !== undefined && type !== null) params.type = String(type);
+                        if (type === undefined || type === null) throw new Error("Terminal type is required.");
+                        var params = { session_name: sessionName, type: String(type) };
                         return toolCall("create_terminal_session", params);
                     },
                     exec: function(sessionId, command, timeoutMs) {
@@ -596,8 +597,8 @@ pub fn getJsToolsDefinition() -> &'static str {
                         return toolCall("execute_in_terminal_session_streaming", params, toolOptions);
                     },
                     hiddenExec: function(command, options) {
-                        var params = { command: command };
-                        options = options || {};
+                        if (!options || options.type === undefined || options.type === null) throw new Error("Terminal type is required.");
+                        var params = { command: command, type: String(options.type) };
                         if (options.executorKey !== undefined && options.executorKey !== null) params.executor_key = String(options.executorKey);
                         if (options.timeoutMs !== undefined && options.timeoutMs !== null) params.timeout_ms = String(options.timeoutMs);
                         return toolCall("execute_hidden_terminal_command", params);

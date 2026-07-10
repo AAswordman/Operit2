@@ -17,8 +17,8 @@ use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
-use operit_runtime::services::ChatServiceCore::ChatServiceCore;
 use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
+use operit_runtime::services::ChatServiceCore::ChatServiceCore;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_util::stream::Stream::Stream;
 
@@ -687,8 +687,12 @@ pub(crate) fn initialize_shell_chat(
     application: &mut OperitApplication,
     shellArgs: &ShellArgs,
 ) -> Result<String, String> {
+    let enhanced_ai_service = EnhancedAIService::new(
+        application.toolHandler.clone(),
+        application.providerRuntimeContext.clone(),
+    );
     with_main_chat_core(application, |core| {
-        core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
+        core.enhancedAiService = Some(enhanced_ai_service);
         if let Some(chatId) = shellArgs.chatId.clone() {
             ensure_chat_exists(&chatId)?;
             core.switchChat(chatId.clone());
@@ -1165,9 +1169,13 @@ pub(crate) async fn dispatch_chat_message_with_application(
         .getModelBindingForFunction(FunctionType::CHAT)
         .map_err(|error| error.to_string())?;
     let turnOptions = ChatTurnOptions::default();
+    let enhanced_ai_service = EnhancedAIService::new(
+        application.toolHandler.clone(),
+        application.providerRuntimeContext.clone(),
+    );
     let mut holder = application.chatRuntimeHolder.lock().await;
     let core = holder.getCore(ChatRuntimeSlot::MAIN);
-    core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
+    core.enhancedAiService = Some(enhanced_ai_service);
     if let Some(chatId) = sendArgs.chatId.as_ref() {
         core.switchChat(chatId.clone());
     }
@@ -1242,9 +1250,13 @@ pub(crate) fn launch_chat_message_with_application(
     let chatBinding = functionalConfigManager
         .getModelBindingForFunction(FunctionType::CHAT)
         .map_err(|error| error.to_string())?;
+    let enhanced_ai_service = EnhancedAIService::new(
+        application.toolHandler.clone(),
+        application.providerRuntimeContext.clone(),
+    );
     let (chatId, replyToMessage, messageText, mut service, mut delegate) =
         with_main_chat_core(application, |core| {
-            core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
+            core.enhancedAiService = Some(enhanced_ai_service);
             if let Some(chatId) = sendArgs.chatId.as_ref() {
                 core.switchChat(chatId.clone());
             }

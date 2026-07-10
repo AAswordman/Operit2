@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 use crate::chat::enhance::MultiServiceManager::MultiServiceManager;
 use crate::chat::llmprovider::AIService::{collect_stream_chunks, SendMessageRequest};
 use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
-use operit_model::PromptTurn::{toPromptTurns, PromptTurn, PromptTurnKind};
+use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::ModelConfigData::ResolvedModelConfig;
+use operit_model::PromptTurn::{toPromptTurns, PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
-use crate::runtime_support::providerRuntimeSupport;
+use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ImagePoolManager::ImagePoolManager;
 use operit_util::MediaPoolManager::MediaPoolManager;
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelConnectionTestType {
@@ -45,20 +45,23 @@ pub struct ModelConnectionTestReport {
 pub struct ModelConfigConnectionTester;
 
 impl ModelConfigConnectionTester {
+    /// Runs model connection checks with an explicit provider runtime context.
     pub async fn run(
         rootDir: PathBuf,
         providerId: &str,
         modelId: &str,
+        runtimeContext: ProviderRuntimeContext,
     ) -> Result<ModelConnectionTestReport, String> {
-        providerRuntimeSupport()
-            .map_err(|error| error.to_string())?
+        runtimeContext
+            .support()
             .initializeFunctionModelBindings(rootDir.clone())?;
-        let config = providerRuntimeSupport()
-            .map_err(|error| error.to_string())?
-            .resolvedModelConfig(rootDir.clone(), providerId, modelId)?;
+        let config =
+            runtimeContext
+                .support()
+                .resolvedModelConfig(rootDir.clone(), providerId, modelId)?;
         let mut items = Vec::new();
 
-        let mut serviceManager = MultiServiceManager::new(rootDir.clone());
+        let mut serviceManager = MultiServiceManager::new(rootDir.clone(), runtimeContext);
         let bundleResult = serviceManager
             .createTransientServiceBundleForModel(providerId.to_string(), modelId.to_string());
         let (configForTest, parameters, serviceHandle) = match bundleResult {
@@ -139,7 +142,7 @@ impl ModelConfigConnectionTester {
                     let imagePath = Self::copyAssetToCache(
                         &rootDir,
                         "1.jpg",
-                        include_bytes!("../../../../operit-runtime/assets/test/1.jpg"),
+                        include_bytes!("../../../assets/test/1.jpg"),
                     )
                     .map_err(|error| error.to_string())?;
                     let imageId = ImagePoolManager::add_image(&imagePath.to_string_lossy(), None);
@@ -180,7 +183,7 @@ impl ModelConfigConnectionTester {
                     let audioPath = Self::copyAssetToCache(
                         &rootDir,
                         "1.mp3",
-                        include_bytes!("../../../../operit-runtime/assets/test/1.mp3"),
+                        include_bytes!("../../../assets/test/1.mp3"),
                     )
                     .map_err(|error| error.to_string())?;
                     let audioId =
@@ -222,7 +225,7 @@ impl ModelConfigConnectionTester {
                     let videoPath = Self::copyAssetToCache(
                         &rootDir,
                         "1.mp4",
-                        include_bytes!("../../../../operit-runtime/assets/test/1.mp4"),
+                        include_bytes!("../../../assets/test/1.mp4"),
                     )
                     .map_err(|error| error.to_string())?;
                     let videoId =

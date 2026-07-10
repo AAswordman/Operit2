@@ -5,14 +5,14 @@ use operit_host_api::{
     TerminalInfo, TerminalScreenOutput, TerminalSessionInfo,
 };
 
-use operit_tools::ConversationMarkupManager::ToolResult;
-use operit_tools::ToolExecutionManager::{
-    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
-};
 use operit_tools::tools::ToolResultDataClasses::{
     HiddenTerminalCommandResultData, StringResultData, TerminalCommandResultData,
     TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData,
     TerminalSessionScreenResultData, TerminalStreamEventData, TerminalTypeInfoData, ToolResultData,
+};
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{
+    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
 };
 
 const TERMINAL_SESSION_TIMEOUT_MS: u64 = 1800000;
@@ -69,9 +69,7 @@ impl StandardTerminalTools {
     /// Creates or reuses an interactive terminal session.
     pub fn createOrGetSession(&self, tool: &AITool) -> ToolResult {
         let sessionName = parameterValue(tool, "session_name");
-        let terminalType = optionalParameterValue(tool, "type")
-            .map(|value| value.trim().to_string())
-            .unwrap_or_default();
+        let terminalType = parameterValue(tool, "type");
         match self
             .host()
             .and_then(|host| host.createOrGetSession(&sessionName, &terminalType))
@@ -158,9 +156,7 @@ impl StandardTerminalTools {
     /// Executes a hidden host command outside an interactive session.
     pub fn executeHiddenCommand(&self, tool: &AITool) -> ToolResult {
         let command = parameterValue(tool, "command");
-        let terminalType = optionalParameterValue(tool, "type")
-            .map(|value| value.trim().to_string())
-            .unwrap_or_default();
+        let terminalType = parameterValue(tool, "type");
         let executorKey = stringParameterValue(tool, "executor_key", "default");
         let timeoutMs = timeoutParameterValue(tool, "timeout_ms", HIDDEN_TERMINAL_TIMEOUT_MS);
         match self.host().and_then(|host| {
@@ -315,15 +311,25 @@ fn validateTerminalTool(operation: TerminalToolOperation, tool: &AITool) -> Tool
     };
     match operation {
         TerminalToolOperation::ExecuteInSession
-        | TerminalToolOperation::ExecuteInSessionStreaming
-        | TerminalToolOperation::ExecuteHiddenCommand => {
+        | TerminalToolOperation::ExecuteInSessionStreaming => {
             if parameterValue(tool, "command").is_empty() {
                 return invalid("Command parameter is required");
+            }
+        }
+        TerminalToolOperation::ExecuteHiddenCommand => {
+            if parameterValue(tool, "command").is_empty() {
+                return invalid("Command parameter is required");
+            }
+            if parameterValue(tool, "type").is_empty() {
+                return invalid("type is required.");
             }
         }
         TerminalToolOperation::CreateSession => {
             if parameterValue(tool, "session_name").is_empty() {
                 return invalid("session_name is required.");
+            }
+            if parameterValue(tool, "type").is_empty() {
+                return invalid("type is required.");
             }
         }
         TerminalToolOperation::InputInSession => {
@@ -367,6 +373,7 @@ fn terminalCommandResultData(data: &TerminalCommandOutput) -> TerminalCommandRes
         output: data.output.clone(),
         exitCode: data.exitCode,
         sessionId: data.sessionId.clone(),
+        terminalType: data.terminalType.clone(),
         timedOut: data.timedOut,
     }
 }
@@ -380,6 +387,7 @@ fn hiddenTerminalCommandResultData(
         output: data.output.clone(),
         exitCode: data.exitCode,
         executorKey: data.executorKey.clone(),
+        terminalType: data.terminalType.clone(),
         timedOut: data.timedOut,
     }
 }
@@ -391,6 +399,7 @@ fn terminalSessionCreationResultData(
     TerminalSessionCreationResultData {
         sessionId: data.sessionId.clone(),
         sessionName: data.sessionName.clone(),
+        terminalType: data.terminalType.clone(),
         isNewSession: data.isNewSession,
     }
 }
@@ -408,9 +417,11 @@ fn terminalSessionCloseResultData(data: &TerminalCloseOutput) -> TerminalSession
 fn terminalSessionScreenResultData(data: &TerminalScreenOutput) -> TerminalSessionScreenResultData {
     TerminalSessionScreenResultData {
         sessionId: data.sessionId.clone(),
+        terminalType: data.terminalType.clone(),
         rows: data.rows,
         cols: data.cols,
         content: data.content.clone(),
+        commandRunning: data.commandRunning,
     }
 }
 

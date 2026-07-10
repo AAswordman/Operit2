@@ -132,15 +132,16 @@ class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
         .toList(growable: false);
     if (missing.isNotEmpty) {
       setState(() {
-        _result =
-            core_proxy.CoreOperitToolsConversationMarkupManagerToolResult(
-              toolName: '${widget.packageName}:${widget.tool.name}',
-              success: false,
-              result: core_proxy.CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
+        _result = core_proxy.CoreOperitToolsConversationMarkupManagerToolResult(
+          toolName: '${widget.packageName}:${widget.tool.name}',
+          success: false,
+          result:
+              core_proxy
+                  .CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
                 value: const core_proxy.StringResultData(value: ''),
               ),
-              error: '缺少必填参数：${missing.join(", ")}',
-            );
+          error: '缺少必填参数：${missing.join(", ")}',
+        );
       });
       return;
     }
@@ -150,7 +151,7 @@ class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
       _result = null;
     });
     try {
-      final result = await widget.clients.permissionsAiToolHandler.executeTool(
+      final result = await widget.clients.application.aiToolHandler().executeTool(
         tool: core_proxy.CoreOperitToolsToolExecutionManagerAiTool(
           name: '${widget.packageName}:${widget.tool.name}',
           parameters: widget.tool.parameters
@@ -175,15 +176,16 @@ class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
         return;
       }
       setState(() {
-        _result =
-            core_proxy.CoreOperitToolsConversationMarkupManagerToolResult(
-              toolName: '${widget.packageName}:${widget.tool.name}',
-              success: false,
-              result: core_proxy.CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
+        _result = core_proxy.CoreOperitToolsConversationMarkupManagerToolResult(
+          toolName: '${widget.packageName}:${widget.tool.name}',
+          success: false,
+          result:
+              core_proxy
+                  .CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
                 value: const core_proxy.StringResultData(value: ''),
               ),
-              error: error.toString(),
-            );
+          error: error.toString(),
+        );
       });
     } finally {
       if (mounted) {

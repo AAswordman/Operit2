@@ -301,7 +301,8 @@ class _MarketListPaneState extends State<_MarketListPane> {
   int _page = 1;
   int _totalPages = 1;
   final Set<String> _busyEntryIds = <String>{};
-  List<core_proxy.MarketEntrySummary> _items = <core_proxy.MarketEntrySummary>[];
+  List<core_proxy.MarketEntrySummary> _items =
+      <core_proxy.MarketEntrySummary>[];
   List<core_proxy.MarketEntrySummary> _searchItems =
       <core_proxy.MarketEntrySummary>[];
   List<core_proxy.MarketEntrySummary>? _searchCorpus;
@@ -382,10 +383,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
         return;
       }
       setState(() {
-        _items = <core_proxy.MarketEntrySummary>[
-          ..._items,
-          ...page.items,
-        ];
+        _items = <core_proxy.MarketEntrySummary>[..._items, ...page.items];
         _page = page.page;
         _totalPages = _pageCount(page.total, page.pageSize);
         _loadingMore = false;
@@ -434,7 +432,9 @@ class _MarketListPaneState extends State<_MarketListPane> {
         _searchLoading = false;
       });
     } catch (error, stackTrace) {
-      debugPrint('Failed to load local market search corpus: $error\n$stackTrace');
+      debugPrint(
+        'Failed to load local market search corpus: $error\n$stackTrace',
+      );
       if (!mounted) {
         return;
       }
@@ -573,10 +573,8 @@ class _MarketListPaneState extends State<_MarketListPane> {
   void _openDetails(core_proxy.MarketEntrySummary item) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => MarketEntryDetailScreen(
-          clients: widget.clients,
-          entry: item,
-        ),
+        builder: (context) =>
+            MarketEntryDetailScreen(clients: widget.clients, entry: item),
       ),
     );
   }
@@ -598,7 +596,10 @@ class _MarketListPaneState extends State<_MarketListPane> {
         );
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(result), behavior: SnackBarBehavior.floating),
+            SnackBar(
+              content: Text(result),
+              behavior: SnackBarBehavior.floating,
+            ),
           );
         }
       }
@@ -627,7 +628,8 @@ class _MarketListPaneState extends State<_MarketListPane> {
     if (repoUrl.isEmpty) {
       throw StateError('技能缺少仓库地址');
     }
-    final result = await widget.clients.permissionsSkillRuntimeSkillRepository
+    final result = await widget.clients.application
+        .skillRepository()
         .importSkillFromGitHubRepo(repoUrl: repoUrl);
     if (!mounted) {
       return;
@@ -642,13 +644,17 @@ class _MarketListPaneState extends State<_MarketListPane> {
     if (repoUrl.isEmpty) {
       throw StateError('MCP 缺少仓库地址');
     }
-    final result = await widget.clients.permissionsMcpRuntimeMcpRepository
+    final result = await widget.clients.application
+        .mcpRepository()
         .installMcpServerWithObjectForFlutter(
           pluginId: _safePackageId(item.title),
           repoUrl: repoUrl,
           name: item.title,
           description: item.description,
-          mcpConfig: item.repoVersion?.installConfig ?? item.latestVersion?.installConfig ?? '',
+          mcpConfig:
+              item.repoVersion?.installConfig ??
+              item.latestVersion?.installConfig ??
+              '',
         );
     if (!mounted) {
       return;
@@ -668,6 +674,7 @@ int _reactionTotal(core_proxy.MarketEntrySummary item, String reaction) {
       .where((count) => count.reaction == reaction)
       .fold<int>(0, (sum, count) => sum + count.total);
 }
+
 class _ArtifactManageScreen extends StatefulWidget {
   const _ArtifactManageScreen({required this.clients});
 
@@ -681,8 +688,10 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
   bool _loading = true;
   String? _errorMessage;
   String? _openingEntryId;
-  List<core_proxy.MarketPublisherEntrySummary> _entries = <core_proxy.MarketPublisherEntrySummary>[];
-  List<core_proxy.MarketNotification> _notifications = <core_proxy.MarketNotification>[];
+  List<core_proxy.MarketPublisherEntrySummary> _entries =
+      <core_proxy.MarketPublisherEntrySummary>[];
+  List<core_proxy.MarketNotification> _notifications =
+      <core_proxy.MarketNotification>[];
 
   GeneratedProvidersMarketStatsApiServiceCoreProxy get _market =>
       widget.clients.providersMarketStatsApiService;
@@ -736,10 +745,8 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (context) => MarketEntryDetailScreen(
-            clients: widget.clients,
-            entry: detail,
-          ),
+          builder: (context) =>
+              MarketEntryDetailScreen(clients: widget.clients, entry: detail),
         ),
       );
     } catch (error, stackTrace) {
@@ -793,7 +800,8 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
               publishContext: ArtifactPublishClusterContext(
                 entryId: detail.id,
                 projectId: artifact?.projectId ?? '',
-                runtimePackageId: artifact?.runtimePackageId ??
+                runtimePackageId:
+                    artifact?.runtimePackageId ??
                     detail.latestVersion?.runtimePackageId ??
                     '',
                 lockedDisplayName: detail.title,
@@ -849,9 +857,9 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
                 const SizedBox(height: 12),
                 Text(
                   '审核原因',
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 6),
                 Text(reasons),
@@ -910,8 +918,8 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
                 Text(
                   '我的发布',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 if (_entries.isEmpty)
@@ -930,8 +938,8 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
                 Text(
                   '通知',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 if (_notifications.isEmpty)
@@ -1044,56 +1052,56 @@ class _MarketNotificationTile extends StatelessWidget {
 }
 
 String _marketTypeLabel(String type) => switch (type) {
-      'script' => '脚本',
-      'package' => '包',
-      'skill' => 'Skill',
-      'mcp' => 'MCP',
-      _ => type,
-    };
+  'script' => '脚本',
+  'package' => '包',
+  'skill' => 'Skill',
+  'mcp' => 'MCP',
+  _ => type,
+};
 
 IconData _marketTypeIcon(String type) => switch (type) {
-      'script' => Icons.code_outlined,
-      'package' => Icons.inventory_2_outlined,
-      'skill' => Icons.psychology_outlined,
-      'mcp' => Icons.hub_outlined,
-      _ => Icons.extension_outlined,
-    };
+  'script' => Icons.code_outlined,
+  'package' => Icons.inventory_2_outlined,
+  'skill' => Icons.psychology_outlined,
+  'mcp' => Icons.hub_outlined,
+  _ => Icons.extension_outlined,
+};
 
 String _marketStateLabel(String stateCode) => switch (stateCode) {
-      'pending' => '待审核',
-      'approved' => '已发布',
-      'changes_requested' => '需修改',
-      'rejected' => '已拒绝',
-      'withdrawn' => '已撤回',
-      _ => stateCode,
-    };
+  'pending' => '待审核',
+  'approved' => '已发布',
+  'changes_requested' => '需修改',
+  'rejected' => '已拒绝',
+  'withdrawn' => '已撤回',
+  _ => stateCode,
+};
 
 String _marketRelationLabel(String relation) => switch (relation) {
-      'owner' => '归属者',
-      'contributor' => '贡献者',
-      _ => relation,
-    };
+  'owner' => '归属者',
+  'contributor' => '贡献者',
+  _ => relation,
+};
 
 String _marketReasonLabel(String reasonCode) => switch (reasonCode) {
-      'metadata-incomplete' => '元信息不完整',
-      'repository-unreachable' => '仓库无法访问',
-      'invalid-artifact' => '资源文件无效',
-      'invalid-version' => '版本信息无效',
-      'malware-risk' => '存在安全风险',
-      'policy-violation' => '不符合市场规范',
-      'duplicate-entry' => '重复条目',
-      _ => reasonCode,
-    };
+  'metadata-incomplete' => '元信息不完整',
+  'repository-unreachable' => '仓库无法访问',
+  'invalid-artifact' => '资源文件无效',
+  'invalid-version' => '版本信息无效',
+  'malware-risk' => '存在安全风险',
+  'policy-violation' => '不符合市场规范',
+  'duplicate-entry' => '重复条目',
+  _ => reasonCode,
+};
 
 IconData _marketNotificationIcon(String kind) => switch (kind) {
-      'comment_new' => Icons.comment_outlined,
-      'comment_reply' => Icons.reply_outlined,
-      'review_approved' => Icons.verified_outlined,
-      'review_rejected' => Icons.block_outlined,
-      'review_changes' => Icons.rate_review_outlined,
-      'entry_curated' => Icons.star_outline,
-      _ => Icons.notifications_outlined,
-    };
+  'comment_new' => Icons.comment_outlined,
+  'comment_reply' => Icons.reply_outlined,
+  'review_approved' => Icons.verified_outlined,
+  'review_rejected' => Icons.block_outlined,
+  'review_changes' => Icons.rate_review_outlined,
+  'entry_curated' => Icons.star_outline,
+  _ => Icons.notifications_outlined,
+};
 
 String _marketNotificationTitle(core_proxy.MarketNotification notice) {
   final entrySuffix = notice.entryId == null ? '' : ' · ${notice.entryId}';
@@ -1128,7 +1136,9 @@ String marketSortMetric(MarketSortOption option) => switch (option) {
 };
 
 int _entryDownloads(core_proxy.MarketEntrySummary entry) {
-  return entry.downloadCount > entry.downloads ? entry.downloadCount : entry.downloads;
+  return entry.downloadCount > entry.downloads
+      ? entry.downloadCount
+      : entry.downloads;
 }
 
 int _pageCount(int total, int pageSize) {
@@ -1185,9 +1195,7 @@ class _MarketTypeFilterBar extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: colorScheme.surface,
-        border: Border(
-          bottom: BorderSide(color: colorScheme.outlineVariant),
-        ),
+        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
       ),
       child: DefaultTabController(
         key: ValueKey<String>(selectedType ?? 'all'),
@@ -1203,9 +1211,9 @@ class _MarketTypeFilterBar extends StatelessWidget {
           indicatorSize: TabBarIndicatorSize.tab,
           labelColor: colorScheme.primary,
           unselectedLabelColor: colorScheme.onSurfaceVariant,
-          labelStyle: Theme.of(context).textTheme.bodySmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+          labelStyle: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
           unselectedLabelStyle: Theme.of(context).textTheme.bodySmall,
           onTap: (index) => onChanged(_marketTypeTabs[index].type),
           tabs: <Widget>[
@@ -1246,10 +1254,7 @@ int _marketTypeTabIndex(String? type) {
 }
 
 class _MarketTypeTabSpec {
-  const _MarketTypeTabSpec({
-    required this.type,
-    required this.label,
-  });
+  const _MarketTypeTabSpec({required this.type, required this.label});
 
   final String? type;
   final String label;
@@ -1267,7 +1272,8 @@ class _MarketCategoriesPane extends StatefulWidget {
 class _MarketCategoriesPaneState extends State<_MarketCategoriesPane> {
   bool _loading = true;
   String? _errorMessage;
-  List<core_proxy.MarketCategoryInfo> _categories = <core_proxy.MarketCategoryInfo>[];
+  List<core_proxy.MarketCategoryInfo> _categories =
+      <core_proxy.MarketCategoryInfo>[];
 
   GeneratedProvidersMarketStatsApiServiceCoreProxy get _market =>
       widget.clients.providersMarketStatsApiService;
@@ -1396,10 +1402,7 @@ class _MarketCategoryGridSliver extends StatelessWidget {
 }
 
 class _MarketCategoryGridCard extends StatelessWidget {
-  const _MarketCategoryGridCard({
-    required this.category,
-    required this.onTap,
-  });
+  const _MarketCategoryGridCard({required this.category, required this.onTap});
 
   final core_proxy.MarketCategoryInfo category;
   final VoidCallback onTap;
@@ -1476,11 +1479,7 @@ class _MarketCategoryGridCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: colorScheme.outline,
-              ),
+              Icon(Icons.chevron_right, size: 20, color: colorScheme.outline),
             ],
           ),
         ),
@@ -1488,6 +1487,7 @@ class _MarketCategoryGridCard extends StatelessWidget {
     );
   }
 }
+
 class _MarketMinePane extends StatefulWidget {
   const _MarketMinePane({required this.clients});
 
@@ -1640,10 +1640,8 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
     }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => RepoMarketPublishScreen(
-          clients: widget.clients,
-          type: type,
-        ),
+        builder: (context) =>
+            RepoMarketPublishScreen(clients: widget.clients, type: type),
       ),
     );
   }
@@ -1670,7 +1668,9 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
                 tokenType: 'bearer',
                 grantedScope: null,
               );
-              final apiUser = await widget.clients.providersMarketStatsApiService
+              final apiUser = await widget
+                  .clients
+                  .providersMarketStatsApiService
                   .getCurrentGithubUser();
               await _githubAuth.saveAuthInfo(
                 accessToken: token,

@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use operit_tools::tools::packTool::PackageManager::PublishablePackageSource;
-use operit_tools::tools::packTool::ToolPkgParser::ToolPkgArchiveParser;
+use operit_plugin_sdk::package::PublishablePackageSource;
+use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgArchiveParser;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

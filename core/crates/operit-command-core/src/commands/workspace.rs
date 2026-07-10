@@ -1,17 +1,17 @@
 use std::collections::BTreeMap;
 
 use crate::output::CoreCommandOutput;
-use operit_tools::ConversationMarkupManager::ToolResult;
-use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
-use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_host_api::HostManager::HostManager;
+use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
+use operit_runtime::services::ChatServiceCore::ChatServiceCore;
+use operit_runtime::ui::features::chat::webview::workspace::WorkspaceUtils;
+use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
-use operit_runtime::ui::features::chat::webview::workspace::WorkspaceUtils;
-use operit_runtime::services::ChatServiceCore::ChatServiceCore;
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
 use serde::Deserialize;
 
 /// Runs a synchronous action against the local main chat runtime core.
@@ -131,7 +131,9 @@ fn unbind_workspace(
         .get(0)
         .ok_or_else(|| "usage: operit2 workspace unbind <chat-id>".to_string())?
         .clone();
-    with_main_chat_core(application, |core| core.unbindChatFromWorkspace(chatId.clone()))?;
+    with_main_chat_core(application, |core| {
+        core.unbindChatFromWorkspace(chatId.clone())
+    })?;
     output.push_stdout_line(format!("workspace unbound: {chatId}"));
     Ok(())
 }
@@ -213,12 +215,7 @@ fn run_workspace_shortcut(
         .get(1)
         .ok_or_else(|| "usage: operit2 workspace run <chat-id> <command-id>".to_string())?;
     let workspacePath = workspace_path_for_chat(application, chatId)?;
-    run_command_at_path(
-        application.hostManager.clone(),
-        &workspacePath,
-        commandId,
-        output,
-    )
+    run_command_at_path(application, &workspacePath, commandId, output)
 }
 
 fn run_workspace_shortcut_path(
@@ -235,12 +232,7 @@ fn run_workspace_shortcut_path(
     let commandId = args
         .get(1)
         .ok_or_else(|| "usage: operit2 workspace run-path <workspace> <command-id>".to_string())?;
-    run_command_at_path(
-        application.hostManager.clone(),
-        &workspacePath,
-        commandId,
-        output,
-    )
+    run_command_at_path(application, &workspacePath, commandId, output)
 }
 
 fn workspace_path_for_chat(
@@ -304,11 +296,12 @@ fn list_commands_at_path(
 }
 
 fn run_command_at_path(
-    context: HostManager,
+    application: &OperitApplication,
     workspacePath: &str,
     commandId: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
+    let context = application.hostManager.clone();
     let vfs = vfsForWorkspace(&context)?;
     let config = WorkspaceConfigReader::readConfig(&vfs, workspacePath)?;
     let command = config
@@ -319,7 +312,13 @@ fn run_command_at_path(
 
     let toolName = command.tool.clone().and_then(nonBlankString);
     if let Some(toolName) = toolName {
-        return execute_workspace_tool(context, &command, workspacePath, &toolName, output);
+        return execute_workspace_tool(
+            application.toolHandler.clone(),
+            &command,
+            workspacePath,
+            &toolName,
+            output,
+        );
     }
 
     let commandText = command
@@ -331,7 +330,7 @@ fn run_command_at_path(
 }
 
 fn execute_workspace_tool(
-    context: HostManager,
+    mut handler: AIToolHandler,
     command: &CommandConfig,
     workspacePath: &str,
     toolName: &str,
@@ -345,7 +344,6 @@ fn execute_workspace_tool(
         });
     }
 
-    let mut handler = AIToolHandler::getInstance(context);
     let result = handler.executeTool(AITool {
         name: toolName.to_string(),
         parameters,

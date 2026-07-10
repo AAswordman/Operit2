@@ -1,13 +1,14 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use operit_host_api::HostEnvironmentDescriptor;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::ToolPrompt::SystemToolPromptCategory;
+use operit_plugin_sdk::javascript::JsExecutionProvider;
 
-use crate::tools::packTool::PackageManager::PackageManager;
+use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 
 /// Future returned by runtime support async boundaries.
 #[cfg(not(target_arch = "wasm32"))]
@@ -163,7 +164,7 @@ pub trait ToolRuntimeSupport: Send + Sync {
     fn resolveCharacterCardToolAccess(
         &self,
         roleCardId: Option<&str>,
-        packageManager: &PackageManager,
+        packageManager: &RuntimePackageManager,
         globalToolVisibility: Option<HashMap<String, bool>>,
     ) -> ResolvedCharacterCardToolAccess;
 
@@ -293,21 +294,42 @@ pub trait ToolRuntimeSupport: Send + Sync {
     fn generateUnifiedDiff(&self, oldContent: &str, newContent: &str) -> String;
 }
 
-static TOOL_RUNTIME_SUPPORT: OnceLock<Arc<dyn ToolRuntimeSupport>> = OnceLock::new();
-
-/// Installs the runtime support implementation supplied by the parent crate.
-#[allow(non_snake_case)]
-pub fn setToolRuntimeSupport(support: Arc<dyn ToolRuntimeSupport>) -> Result<(), String> {
-    TOOL_RUNTIME_SUPPORT
-        .set(support)
-        .map_err(|_| "Tool runtime support is already installed".to_string())
+/// Carries all runtime-specific dependencies required by one tool runtime.
+#[derive(Clone)]
+pub struct ToolRuntimeDependencies {
+    runtime_support: Arc<dyn ToolRuntimeSupport>,
+    js_execution_provider: Arc<dyn JsExecutionProvider>,
 }
 
-/// Returns the active runtime support implementation.
-#[allow(non_snake_case)]
-pub fn toolRuntimeSupport() -> &'static dyn ToolRuntimeSupport {
-    TOOL_RUNTIME_SUPPORT
-        .get()
-        .map(|support| support.as_ref())
-        .expect("Tool runtime support must be installed before tools are used")
+impl ToolRuntimeDependencies {
+    /// Creates one tool runtime dependency set.
+    pub fn new(
+        runtime_support: Arc<dyn ToolRuntimeSupport>,
+        js_execution_provider: Arc<dyn JsExecutionProvider>,
+    ) -> Self {
+        Self {
+            runtime_support,
+            js_execution_provider,
+        }
+    }
+
+    /// Returns the runtime support implementation for this tool runtime.
+    pub fn runtime_support(&self) -> &dyn ToolRuntimeSupport {
+        self.runtime_support.as_ref()
+    }
+
+    /// Clones the shared runtime support implementation.
+    pub fn shared_runtime_support(&self) -> Arc<dyn ToolRuntimeSupport> {
+        self.runtime_support.clone()
+    }
+
+    /// Returns the JavaScript execution provider for this tool runtime.
+    pub fn js_execution_provider(&self) -> &dyn JsExecutionProvider {
+        self.js_execution_provider.as_ref()
+    }
+
+    /// Clones the JavaScript execution provider for this tool runtime.
+    pub fn shared_js_execution_provider(&self) -> Arc<dyn JsExecutionProvider> {
+        self.js_execution_provider.clone()
+    }
 }

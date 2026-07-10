@@ -140,16 +140,20 @@ pub(crate) fn discover_factory_object_specs(
         let Some(parent_spec) = spec_by_schema.get(&object.schema_key) else {
             continue;
         };
-        if !parent_spec.access.is_constructible() {
+        if !parent_spec.access.supports_factory_methods() {
             continue;
         }
         for method in &object.methods {
-            let returned_type = method
-                .rust_return_type
-                .as_str()
-                .strip_prefix("Result<")
-                .and_then(|value| value.strip_suffix('>'))
-                .unwrap_or(&method.rust_return_type);
+            let Some((returned_type, returns_result, returns_arc_mutex)) =
+                factory_returned_object_type(&method.rust_return_type)
+            else {
+                continue;
+            };
+            if serializable_types.contains(returned_type)
+                || deserializable_types.contains(returned_type)
+            {
+                continue;
+            }
             let Some(target_type) = public_object_types.get(returned_type) else {
                 continue;
             };
@@ -187,11 +191,27 @@ pub(crate) fn discover_factory_object_specs(
                     parent_access: Box::new(parent_spec.access.clone()),
                     factory_method: method.name.clone(),
                     factory_arg_types: method.args.iter().map(|arg| arg.ty.clone()).collect(),
+                    returns_result,
+                    returns_arc_mutex,
                 },
             });
         }
     }
     specs
+}
+
+/// Resolves the object type and synchronization wrapper returned by a factory method.
+fn factory_returned_object_type(return_type: &str) -> Option<(&str, bool, bool)> {
+    let (value_type, returns_result) = match generic_args(return_type, "Result") {
+        Some(arguments) if arguments.len() == 2 => (arguments[0], true),
+        Some(_) => return None,
+        None => (return_type, false),
+    };
+    let Some(arc_inner) = single_generic_arg(value_type, "Arc") else {
+        return Some((value_type, returns_result, false));
+    };
+    let mutex_inner = single_generic_arg(arc_inner, "Mutex")?;
+    Some((mutex_inner, returns_result, true))
 }
 
 pub(crate) fn has_proxyable_instance_methods(methods: &[SourceMethod]) -> bool {

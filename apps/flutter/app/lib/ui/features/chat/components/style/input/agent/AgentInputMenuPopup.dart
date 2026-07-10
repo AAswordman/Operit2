@@ -63,7 +63,8 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     _checkingPluginChangeVersion = true;
     final int version;
     try {
-      version = await _clients.pluginsToolpkgToolPkgInputMenuToggleBridge
+      version = await _clients.application
+          .inputMenuToggleBridge()
           .changeVersion();
     } finally {
       _checkingPluginChangeVersion = false;
@@ -79,11 +80,9 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   }
 
   Future<_AgentInputMenuData> _loadSettings() async {
-    _observedPluginChangeVersion = await _clients
-        .pluginsToolpkgToolPkgInputMenuToggleBridge
-        .changeVersion();
-    final pluginToggles = await _clients
-        .pluginsToolpkgToolPkgInputMenuToggleBridge
+    final inputMenuToggleBridge = _clients.application.inputMenuToggleBridge();
+    _observedPluginChangeVersion = await inputMenuToggleBridge.changeVersion();
+    final pluginToggles = await inputMenuToggleBridge
         .createToggleDefinitionsForFlutter(
           chatId: widget.currentChatId,
           featureStates: const <String, bool>{},
@@ -141,12 +140,11 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   Future<void> _togglePlugin(
     core_proxy.InputMenuToggleDefinitionSnapshot toggle,
   ) async {
-    await _clients.pluginsToolpkgToolPkgInputMenuToggleBridge
-        .triggerToggleForFlutter(
-          toggleId: toggle.id,
-          chatId: widget.currentChatId,
-          runtime: 'main',
-        );
+    await _clients.application.inputMenuToggleBridge().triggerToggleForFlutter(
+      toggleId: toggle.id,
+      chatId: widget.currentChatId,
+      runtime: 'main',
+    );
     _reloadSettings();
   }
 

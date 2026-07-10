@@ -62,10 +62,11 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         widget.clients.preferencesSharedMemoryStoreManager;
     final apiPreferences = widget.clients.preferencesApiPreferences;
     final modelManager = widget.clients.preferencesModelConfigManager;
-    final toolHandler = widget.clients.permissionsAiToolHandler;
-    final packageManager = widget.clients.permissionsPackToolPackageManager;
-    final permissionsSkillRuntimeSkillRepository = widget.clients.permissionsSkillRuntimeSkillRepository;
-    final permissionsMcpRuntimeMcpLocalServer = widget.clients.permissionsMcpRuntimeMcpLocalServer;
+    final toolHandler = widget.clients.application.aiToolHandler();
+    final packageManager = widget.clients.application.packageManager();
+    final skillRepository = widget.clients.application.skillRepository();
+    final permissionsMcpRuntimeMcpLocalServer =
+        widget.clients.permissionsMcpRuntimeMcpLocalServer;
     final promptTagManager = widget.clients.preferencesPromptTagManager;
     await cardManager.initializeIfNeeded();
     await groupManager.initializeIfNeeded();
@@ -92,7 +93,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     }
     packageOptions.sort(_compareToolAccessOption);
     final skillOptions =
-        (await permissionsSkillRuntimeSkillRepository.getAiVisibleSkillPackages()).entries
+        (await skillRepository.getAiVisibleSkillPackages()).entries
             .map(
               (entry) => _ToolAccessOption(
                 key: entry.key,

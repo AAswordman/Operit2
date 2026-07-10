@@ -1,42 +1,44 @@
 # operit-providers
 
-`operit-providers` owns provider-facing code that used to live under the
-runtime `api` tree. It contains chat provider orchestration, LLM adapters,
-voice providers, market APIs, prompt composition, and provider-side runtime
-support contracts.
+`operit-providers` owns Operit's provider contracts and built-in provider
+implementations.
+
+The crate root re-exports `AIService`, `SendMessageRequest`, `AiServiceError`,
+token/stream helpers, and `ProviderRuntimeSupport`, so SDK consumers do not
+need to import the internal `chat::llmprovider` path.
+
+## Usage
+
+External providers implement the public contracts from the crate root:
+
+```toml
+operit-providers = "2.0.0-preview.3"
+```
+
+The same crate contains the built-in LLM adapters, voice and market services,
+ToolPkg provider integration, conversation orchestration, store access, and
+tool integration.
 
 ## Responsibilities
 
-- Prepare provider requests and stream provider responses.
-- Own LLM provider adapters and model connection testing.
-- Own voice provider abstractions and TTS response processing.
-- Own market API service code and market data DTOs.
-- Compose system prompts, functional prompts, and prompt hooks used by provider
-  calls.
+- Define provider requests, errors, token counters, and streaming contracts.
 - Define provider-side interfaces for runtime-owned model bindings, prompt
   context, token accounting, ToolPkg AI provider hooks, and timing logs.
+- Provide Operit's built-in provider implementations and orchestration.
 
 ## Main Modules
 
-- `src/chat/EnhancedAIService.rs`: provider-backed assistant loop and tool
-  integration.
-- `src/chat/llmprovider/`: provider adapters, model list fetching, connection
-  tests, and structured tool-call bridge.
-- `src/chat/enhance/`: conversation services, reference handling, input
-  processing, round management, and file binding.
-- `src/chat/config/`: system prompts, functional prompts, and provider prompt
-  configuration.
-- `src/chat/hooks/`: prompt and summary hook registries.
-- `src/chat/library/`: memory library support used by provider requests.
-- `src/voice/`: voice providers and TTS pipeline steps.
-- `src/market/`: market API services and support code.
+- `src/chat/llmprovider/AIService.rs`: provider request, result, stream, and
+  service contracts.
 - `src/runtime_support.rs`: provider-side contract implemented by
   `operit-runtime`.
+- `src/chat`: built-in chat providers and conversation orchestration.
+- `src/voice`: built-in voice providers.
+- `src/market`: provider market services.
 
 ## Boundary
 
-Provider code may use model, store, tools, util, and host-api crates. It must
-not depend on `operit-runtime`; runtime-owned behavior is requested through
-`ProviderRuntimeSupport`.
+Runtime-owned behavior is requested through `ProviderRuntimeSupport`;
+`operit-providers` does not depend on `operit-runtime`.
 
 See `core/CRATE_BOUNDARIES.md` for the full dependency direction.

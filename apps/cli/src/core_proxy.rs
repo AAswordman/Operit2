@@ -2,7 +2,6 @@ use std::ops::{Deref, DerefMut};
 
 use operit_core_proxy::GeneratedCoreProxy;
 use operit_link::CoreLinkClient;
-use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 
@@ -23,12 +22,15 @@ pub(crate) fn local_cli_core() -> Result<CliCore, String> {
     core.localApplicationMut().onCreate()?;
     {
         let application = core.localApplicationMut();
+        let enhanced_ai_service = EnhancedAIService::new(
+            application.toolHandler.clone(),
+            application.providerRuntimeContext.clone(),
+        );
         let mut holder = application
             .chatRuntimeHolder
             .try_lock()
             .map_err(|_| "Chat runtime holder is busy".to_string())?;
-        holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService =
-            Some(EnhancedAIService::new(ConversationService));
+        holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService = Some(enhanced_ai_service);
     }
     Ok(CliCore {
         proxy: GeneratedCoreProxy::new(Box::new(core)),

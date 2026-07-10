@@ -1,3 +1,4 @@
+/// Returns the stable JavaScript context bridge used by ToolPkg Compose DSL screens.
 #[allow(non_snake_case)]
 pub fn buildComposeDslContextBridgeDefinition() -> String {
     r#"

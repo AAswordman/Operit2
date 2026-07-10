@@ -337,10 +337,13 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     );
   }
 
+  /// Creates and opens a manual terminal session using the host-declared type.
   Future<void> _createAndOpenTerminalSession() async {
+    final terminalType = await _terminalSessions.defaultTerminalType();
     final workingDirectory = await _manualTerminalWorkingDirectory();
     final sessionId = await _terminalSessions.startPtySession(
       sessionName: _nextManualTerminalSessionName(),
+      terminalType: terminalType,
       workingDirectory: workingDirectory,
       rows: 24,
       columns: 80,
@@ -394,8 +397,8 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
               setDialogState(() {
                 closingSessionIds.add(session.sessionId);
               });
-              await _terminalSessions.closePtySession(session.sessionId);
               _removeTerminalTabsForSession(session.sessionId);
+              await _closeManualTerminalSession(session.sessionId);
               final updatedSessions = await _terminalSessions.listSessions();
               if (!mounted) {
                 return;
@@ -786,7 +789,9 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     }
   }
 
+  /// Closes the host PTY after removed terminal widgets dispose listeners.
   Future<void> _closeManualTerminalSession(String sessionId) async {
+    await WidgetsBinding.instance.endOfFrame;
     await _terminalSessions.closePtySession(sessionId);
   }
 

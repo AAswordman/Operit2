@@ -3,11 +3,11 @@ use std::sync::Arc;
 use operit_host_api::{BrowserAutomationHost, BrowserAutomationRequest};
 use serde_json::{Map, Value};
 
+use operit_tools::tools::ToolResultDataClasses::stringResultData;
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
 };
-use operit_tools::tools::ToolResultDataClasses::stringResultData;
 
 #[derive(Clone)]
 pub struct StandardBrowserAutomationTools {

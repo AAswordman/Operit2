@@ -3,10 +3,6 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::output::CoreCommandOutput;
-use operit_providers::chat::enhance::ConversationService::ConversationService;
-use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_providers::chat::EnhancedAIService::EnhancedAIService;
-use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatMessage::ChatMessage;
@@ -14,6 +10,10 @@ use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::PromptFunctionType::PromptFunctionType;
+use operit_providers::chat::enhance::ConversationService::ConversationService;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
+use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::services::ChatServiceCore::ChatServiceCore;
@@ -221,7 +221,9 @@ fn update_chat_locked(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let (chatId, locked) = parse_chat_bool_update_args(args, "lock")?;
-    with_main_chat_core(application, |core| core.updateChatLocked(chatId.clone(), locked))?;
+    with_main_chat_core(application, |core| {
+        core.updateChatLocked(chatId.clone(), locked)
+    })?;
     output.push_stdout_line(format!("chat locked={locked}: {chatId}"));
     Ok(())
 }
@@ -232,7 +234,9 @@ fn update_chat_pinned(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let (chatId, pinned) = parse_chat_bool_update_args(args, "pin")?;
-    with_main_chat_core(application, |core| core.updateChatPinned(chatId.clone(), pinned))?;
+    with_main_chat_core(application, |core| {
+        core.updateChatPinned(chatId.clone(), pinned)
+    })?;
     output.push_stdout_line(format!("chat pinned={pinned}: {chatId}"));
     Ok(())
 }
@@ -578,7 +582,10 @@ async fn dispatch_chat_message_with_application(
     let turnOptions = ChatTurnOptions::default();
     let mut holder = application.chatRuntimeHolder.lock().await;
     let core = holder.getCore(ChatRuntimeSlot::MAIN);
-    core.enhancedAiService = Some(EnhancedAIService::new(ConversationService));
+    core.enhancedAiService = Some(EnhancedAIService::new(
+        application.toolHandler.clone(),
+        application.providerRuntimeContext.clone(),
+    ));
     if let Some(chatId) = sendArgs.chatId.as_ref() {
         core.switchChat(chatId.clone());
     }

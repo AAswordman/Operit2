@@ -21,3 +21,6 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 operit-host-linux-native = { path = "../linux" }
+
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+security-framework = "3.7"

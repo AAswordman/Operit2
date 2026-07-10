@@ -22,25 +22,25 @@ use rquickjs::{
 use serde_json::Value;
 use uuid::Uuid;
 
-use operit_host_api::HostManager::HostManager;
-use crate::javascript::JsComposeDslRuntimeScript::buildComposeDslRuntimeWrappedScript;
-use crate::javascript::JsExecutionResultProtocol::{
-    buildJsExecutionErrorPayload, decodeJsExecutionResultValue, extractJsExecutionErrorMessage,
-};
 use crate::javascript::JsJavaBridgeDelegates::{
     nativeJavaCallInstanceStrings, nativeJavaCallStaticString, nativeJavaClassExistsString,
     nativeJavaGetApplicationContextString, nativeJavaNewInstanceString,
 };
 use crate::javascript::JsLibraries::buildRuntimeBootstrapScript;
 use crate::javascript::JsNativeInterfaceDelegates;
-use crate::javascript::JsToolPkgRegistration::buildToolPkgRegistrationBridgeScript;
-use operit_tools::runtime_support::toolRuntimeSupport;
-use operit_tools::tools::javascript::{JsExecutionEngine, ToolPkgMainRegistrationCapture};
-use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_plugin_sdk::execution_result::{
+    build_js_execution_error_payload as buildJsExecutionErrorPayload,
+    extract_js_execution_error_message as extractJsExecutionErrorMessage, JsExecutionError,
+    JsExecutionResult,
+};
+use operit_plugin_sdk::javascript::{
+    JsExecutionEngine, JsExecutionHost, JsToolNameResolutionRequest, JsToolPkgIpcRequest,
+    JsToolPkgResourceRequest, ToolPkgMainRegistrationCapture,
+};
+use operit_plugin_sdk::toolpkg::ToolPkgComposeDslRuntimeScript::buildComposeDslRuntimeWrappedScript;
+use operit_plugin_sdk::toolpkg::ToolPkgRegistrationBridge::buildToolPkgRegistrationBridgeScript;
 use operit_util::stream::Stream::Stream;
 use operit_util::AppLogger::AppLogger;
-use operit_util::LocaleUtils::LocaleUtils;
-use operit_util::OperitPaths;
 
 const TAG: &str = "OperitQuickJsEngine";
 const TOOLPKG_SCRIPT_TIMEOUT_SECONDS: u64 = 60;
@@ -48,14 +48,14 @@ type ToolPkgTextResources = BTreeMap<String, String>;
 
 #[allow(non_snake_case)]
 pub trait JsExecutionListener {
-    fn onIntermediateResult(&self, callId: &str, result: &str);
-    fn onFailed(&self, callId: &str, reason: &str);
+    fn on_intermediate_result(&self, callId: &str, result: &str);
+    fn on_failed(&self, callId: &str, reason: &str);
 }
 
 type JsExecutionListenerRef = Arc<dyn JsExecutionListener + Send + Sync>;
 
 thread_local! {
-    static CURRENT_TOOL_HANDLER: RefCell<Option<AIToolHandler>> = RefCell::new(None);
+    static CURRENT_EXECUTION_HOST: RefCell<Option<Arc<dyn JsExecutionHost>>> = RefCell::new(None);
     static CURRENT_INTERMEDIATE_CALLBACK: RefCell<Option<Arc<dyn Fn(String) + Send + Sync>>> = RefCell::new(None);
     static CURRENT_EXECUTION_LISTENER: RefCell<Option<JsExecutionListenerRef>> = RefCell::new(None);
     static CURRENT_ENV_OVERRIDES: RefCell<BTreeMap<String, String>> = RefCell::new(BTreeMap::new());
@@ -102,18 +102,18 @@ enum JsEngineRequest {
         functionName: String,
         params: BTreeMap<String, Value>,
         envOverrides: BTreeMap<String, String>,
-        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
         dispatchIntermediateOnMain: bool,
         executionListener: Option<JsExecutionListenerRef>,
         timeoutSec: u64,
-        response: mpsc::Sender<Option<String>>,
+        response: mpsc::Sender<JsExecutionResult<Option<String>>>,
     },
     ExecuteToolPkgMainRegistration {
         script: String,
         functionName: String,
         params: BTreeMap<String, Value>,
         textResources: Option<Arc<ToolPkgTextResources>>,
-        response: mpsc::Sender<Result<ToolPkgMainRegistrationCapture, String>>,
+        response: mpsc::Sender<JsExecutionResult<ToolPkgMainRegistrationCapture>>,
     },
 }
 
@@ -124,56 +124,48 @@ struct JsEngineState {
     context: QuickJsContext,
     #[cfg(target_arch = "wasm32")]
     context: WasmQuickJsContext,
-    toolHandler: Option<AIToolHandler>,
+    executionHost: Option<Arc<dyn JsExecutionHost>>,
     jsEnvironmentInitialized: bool,
 }
 
 impl JsEngine {
-    /// Creates a JavaScript execution engine wired to a tool handler.
-    pub fn new(toolHandler: AIToolHandler) -> Self {
+    /// Creates a JavaScript execution engine backed by a caller-supplied execution host.
+    pub fn new(executionHost: Arc<dyn JsExecutionHost>) -> Self {
         Self {
-            worker: JsEngineWorker::new(Some(toolHandler)),
+            worker: JsEngineWorker::new(Some(executionHost)),
         }
     }
 
     /// Creates a JavaScript engine used only for ToolPkg registration.
     #[allow(non_snake_case)]
-    pub fn newToolPkgRegistrationEngine() -> Self {
+    pub fn new_toolpkg_registration_engine() -> Self {
         Self {
             worker: JsEngineWorker::new(None),
         }
     }
 
-    /// Creates a ToolPkg registration engine with application context access.
-    #[allow(non_snake_case)]
-    pub fn newToolPkgRegistrationEngineWithContext(context: HostManager) -> Self {
-        Self {
-            worker: JsEngineWorker::new(Some(AIToolHandler::getInstance(context))),
-        }
-    }
-
     /// Executes a named JavaScript function with serialized parameters.
     #[allow(non_snake_case)]
-    pub fn executeScriptFunction(
+    pub fn execute_script_function(
         &self,
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
-        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
         dispatchIntermediateOnMain: bool,
         timeoutSec: u64,
         executionListener: Option<JsExecutionListenerRef>,
-    ) -> Option<String> {
+    ) -> JsExecutionResult<Option<String>> {
         let safeTimeoutSec = timeoutSec.max(1);
         #[cfg(target_arch = "wasm32")]
         {
-            return self.worker.executeScriptFunction(
+            return self.worker.execute_script_function(
                 script,
                 functionName,
                 params,
                 envOverrides,
-                onIntermediateResult,
+                on_intermediate_result,
                 dispatchIntermediateOnMain,
                 safeTimeoutSec,
                 executionListener,
@@ -187,7 +179,7 @@ impl JsEngine {
                 functionName: functionName.to_string(),
                 params: params.clone(),
                 envOverrides: envOverrides.clone(),
-                onIntermediateResult,
+                on_intermediate_result,
                 dispatchIntermediateOnMain,
                 executionListener: executionListener.clone(),
                 timeoutSec: safeTimeoutSec,
@@ -205,9 +197,9 @@ impl JsEngine {
                     ),
                 );
                 if let Some(listener) = executionListener.as_ref() {
-                    listener.onFailed("", &error.to_string());
+                    listener.on_failed("", &error.to_string());
                 }
-                return Some(buildJsExecutionErrorPayload(&error.to_string()));
+                return Err(JsExecutionError::worker_unavailable(error.to_string()));
             }
             match receiver.recv_timeout(Duration::from_secs(safeTimeoutSec)) {
                 Ok(value) => value,
@@ -215,9 +207,9 @@ impl JsEngine {
                     let reason =
                         format!("Script execution timed out after {safeTimeoutSec} seconds");
                     if let Some(listener) = executionListener.as_ref() {
-                        listener.onFailed("", &reason);
+                        listener.on_failed("", &reason);
                     }
-                    Some(buildJsExecutionErrorPayload(&reason))
+                    Err(JsExecutionError::timeout(reason))
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     AppLogger::e(
@@ -230,9 +222,9 @@ impl JsEngine {
                         ),
                     );
                     if let Some(listener) = executionListener.as_ref() {
-                        listener.onFailed("", "JS execution worker disconnected");
+                        listener.on_failed("", "JS execution worker disconnected");
                     }
-                    Some(buildJsExecutionErrorPayload(
+                    Err(JsExecutionError::worker_unavailable(
                         "JS execution worker disconnected",
                     ))
                 }
@@ -242,13 +234,13 @@ impl JsEngine {
 
     /// Executes a ToolPkg registration function and captures its declaration.
     #[allow(non_snake_case)]
-    pub fn executeToolPkgMainRegistrationFunction(
+    pub fn execute_toolpkg_main_registration_function(
         &self,
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
-    ) -> Result<ToolPkgMainRegistrationCapture, String> {
-        self.executeToolPkgMainRegistrationFunctionWithTextResources(
+    ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
+        self.execute_toolpkg_main_registration_function_with_text_resources(
             script,
             functionName,
             params,
@@ -257,16 +249,16 @@ impl JsEngine {
     }
 
     #[allow(non_snake_case)]
-    pub(crate) fn executeToolPkgMainRegistrationFunctionWithTextResources(
+    pub(crate) fn execute_toolpkg_main_registration_function_with_text_resources(
         &self,
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
         textResources: Option<Arc<ToolPkgTextResources>>,
-    ) -> Result<ToolPkgMainRegistrationCapture, String> {
+    ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
         #[cfg(target_arch = "wasm32")]
         {
-            return self.worker.executeToolPkgMainRegistrationFunction(
+            return self.worker.execute_toolpkg_main_registration_function(
                 script,
                 functionName,
                 params,
@@ -294,7 +286,7 @@ impl JsEngine {
                         error
                     ),
                 );
-                return Err(error.to_string());
+                return Err(JsExecutionError::worker_unavailable(error.to_string()));
             }
             match receiver.recv() {
                 Ok(value) => value,
@@ -309,7 +301,7 @@ impl JsEngine {
                             error
                         ),
                     );
-                    Err(error.to_string())
+                    Err(JsExecutionError::worker_unavailable(error.to_string()))
                 }
             }
         }
@@ -317,13 +309,13 @@ impl JsEngine {
 
     /// Executes a Compose DSL script and returns its rendered event stream.
     #[allow(non_snake_case)]
-    pub fn executeComposeDslScript(
+    pub fn execute_compose_dsl_script(
         &self,
         script: &str,
         runtimeOptions: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
-    ) -> Option<String> {
-        self.executeScriptFunction(
+    ) -> JsExecutionResult<Option<String>> {
+        self.execute_script_function(
             &buildComposeDslRuntimeWrappedScript(script),
             "__operit_render_compose_dsl",
             runtimeOptions,
@@ -336,17 +328,17 @@ impl JsEngine {
     }
 
     #[allow(non_snake_case)]
-    pub fn executeComposeDslAction(
+    pub fn execute_compose_dsl_action(
         &self,
         actionId: &str,
         payload: Option<Value>,
         runtimeOptions: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
-        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    ) -> Option<String> {
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    ) -> JsExecutionResult<Option<String>> {
         let normalizedActionId = actionId.trim();
         if normalizedActionId.is_empty() {
-            return Some(buildJsExecutionErrorPayload(
+            return Err(JsExecutionError::invalid_request(
                 "compose action id is required",
             ));
         }
@@ -358,12 +350,12 @@ impl JsEngine {
         if let Some(payload) = payload {
             params.insert("__action_payload".to_string(), payload);
         }
-        self.executeScriptFunction(
+        self.execute_script_function(
             "",
             "__operit_dispatch_compose_dsl_action",
             &params,
             envOverrides,
-            onIntermediateResult,
+            on_intermediate_result,
             true,
             TOOLPKG_SCRIPT_TIMEOUT_SECONDS,
             None,
@@ -371,12 +363,12 @@ impl JsEngine {
     }
 
     #[allow(non_snake_case)]
-    pub fn rerenderComposeDslTree(
+    pub fn rerender_compose_dsl_tree(
         &self,
         runtimeOptions: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
-    ) -> Option<String> {
-        self.executeScriptFunction(
+    ) -> JsExecutionResult<Option<String>> {
+        self.execute_script_function(
             "",
             "__operit_rerender_compose_dsl",
             runtimeOptions,
@@ -389,7 +381,7 @@ impl JsEngine {
     }
 
     #[allow(non_snake_case)]
-    pub fn dispatchComposeDslActionAsync(
+    pub fn dispatch_compose_dsl_action_async(
         &self,
         actionId: &str,
         payload: Option<Value>,
@@ -498,7 +490,7 @@ fn runComposeDslActionDispatch(
         emit(composeDslActionEvent("complete", None, None));
         return;
     }
-    let result = engine.executeComposeDslAction(
+    let result = engine.execute_compose_dsl_action(
         &normalizedActionId,
         payload,
         &runtimeOptions,
@@ -511,10 +503,10 @@ fn runComposeDslActionDispatch(
             ));
         })),
     );
-    if let Some(error) = extractJsExecutionErrorMessage(result.as_deref()) {
-        emit(composeDslActionEvent("error", Some(&error), None));
-    } else if let Some(result) = result {
-        emit(composeDslActionEvent("final", None, Some(&result)));
+    match result {
+        Ok(Some(result)) => emit(composeDslActionEvent("final", None, Some(&result))),
+        Ok(None) => {}
+        Err(error) => emit(composeDslActionEvent("error", Some(&error.message), None)),
     }
     emit(composeDslActionEvent("complete", None, None));
 }
@@ -534,13 +526,14 @@ fn composeDslActionEvent(phase: &str, error: Option<&str>, result: Option<&str>)
 
 #[cfg(not(target_arch = "wasm32"))]
 impl JsEngineWorker {
-    fn new(toolHandler: Option<AIToolHandler>) -> Self {
+    /// Starts a worker containing one isolated JavaScript runtime state.
+    fn new(executionHost: Option<Arc<dyn JsExecutionHost>>) -> Self {
         let (sender, receiver) = mpsc::channel::<JsEngineRequest>();
         std::thread::Builder::new()
             .name("OperitQuickJsEngine".to_string())
             .stack_size(16 * 1024 * 1024)
             .spawn(move || {
-                let mut state = JsEngineState::new(toolHandler);
+                let mut state = JsEngineState::new(executionHost);
                 for request in receiver {
                     match request {
                         JsEngineRequest::ExecuteScript {
@@ -548,18 +541,18 @@ impl JsEngineWorker {
                             functionName,
                             params,
                             envOverrides,
-                            onIntermediateResult,
+                            on_intermediate_result,
                             dispatchIntermediateOnMain,
                             executionListener,
                             timeoutSec,
                             response,
                         } => {
-                            let output = state.executeScriptFunctionOnCurrentThread(
+                            let output = state.execute_script_function_on_current_thread(
                                 &script,
                                 &functionName,
                                 &params,
                                 &envOverrides,
-                                onIntermediateResult,
+                                on_intermediate_result,
                                 dispatchIntermediateOnMain,
                                 timeoutSec,
                                 executionListener,
@@ -582,7 +575,7 @@ impl JsEngineWorker {
                             response,
                         } => {
                             let output = state
-                                .executeToolPkgMainRegistrationFunctionOnCurrentThread(
+                                .execute_toolpkg_main_registration_function_on_current_thread(
                                     &script,
                                     &functionName,
                                     &params,
@@ -608,39 +601,40 @@ impl JsEngineWorker {
 
 #[cfg(target_arch = "wasm32")]
 impl JsEngineWorker {
-    fn new(toolHandler: Option<AIToolHandler>) -> Self {
+    /// Creates one WebAssembly JavaScript runtime state.
+    fn new(executionHost: Option<Arc<dyn JsExecutionHost>>) -> Self {
         let stateId = NEXT_WASM_JS_ENGINE_STATE_ID.fetch_add(1, Ordering::Relaxed);
         WASM_JS_ENGINE_STATES.with(|states| {
             states
                 .borrow_mut()
-                .insert(stateId, JsEngineState::new(toolHandler));
+                .insert(stateId, JsEngineState::new(executionHost));
         });
         Self { stateId }
     }
 
     #[allow(non_snake_case)]
-    fn executeScriptFunction(
+    fn execute_script_function(
         &self,
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
-        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
         dispatchIntermediateOnMain: bool,
         timeoutSec: u64,
         executionListener: Option<JsExecutionListenerRef>,
-    ) -> Option<String> {
+    ) -> JsExecutionResult<Option<String>> {
         WASM_JS_ENGINE_STATES.with(|states| {
             states
                 .borrow_mut()
                 .get_mut(&self.stateId)
                 .expect("wasm JsEngine state must exist")
-                .executeScriptFunctionOnCurrentThread(
+                .execute_script_function_on_current_thread(
                     script,
                     functionName,
                     params,
                     envOverrides,
-                    onIntermediateResult,
+                    on_intermediate_result,
                     dispatchIntermediateOnMain,
                     timeoutSec,
                     executionListener,
@@ -649,19 +643,19 @@ impl JsEngineWorker {
     }
 
     #[allow(non_snake_case)]
-    fn executeToolPkgMainRegistrationFunction(
+    fn execute_toolpkg_main_registration_function(
         &self,
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
         textResources: Option<Arc<ToolPkgTextResources>>,
-    ) -> Result<ToolPkgMainRegistrationCapture, String> {
+    ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
         WASM_JS_ENGINE_STATES.with(|states| {
             states
                 .borrow_mut()
                 .get_mut(&self.stateId)
                 .expect("wasm JsEngine state must exist")
-                .executeToolPkgMainRegistrationFunctionOnCurrentThread(
+                .execute_toolpkg_main_registration_function_on_current_thread(
                     script,
                     functionName,
                     params,
@@ -672,7 +666,8 @@ impl JsEngineWorker {
 }
 
 impl JsEngineState {
-    fn new(toolHandler: Option<AIToolHandler>) -> Self {
+    /// Creates a JavaScript runtime state from an optional execution host.
+    fn new(executionHost: Option<Arc<dyn JsExecutionHost>>) -> Self {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let runtime = QuickJsRuntime::new().expect("OperitQuickJsEngine runtime must start");
@@ -681,7 +676,7 @@ impl JsEngineState {
             let mut state = Self {
                 runtime,
                 context,
-                toolHandler,
+                executionHost,
                 jsEnvironmentInitialized: false,
             };
             state
@@ -694,7 +689,7 @@ impl JsEngineState {
             let context = WasmQuickJsContext::default();
             let mut state = Self {
                 context,
-                toolHandler,
+                executionHost,
                 jsEnvironmentInitialized: false,
             };
             state
@@ -705,25 +700,25 @@ impl JsEngineState {
     }
 
     #[allow(non_snake_case)]
-    fn executeScriptFunctionOnCurrentThread(
+    fn execute_script_function_on_current_thread(
         &mut self,
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
-        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
         _dispatchIntermediateOnMain: bool,
         timeoutSec: u64,
         executionListener: Option<JsExecutionListenerRef>,
-    ) -> Option<String> {
+    ) -> JsExecutionResult<Option<String>> {
         if let Err(error) = self.initJavaScriptEnvironment() {
-            return Some(buildJsExecutionErrorPayload(&error));
+            return Err(JsExecutionError::initialization(error));
         }
-        CURRENT_TOOL_HANDLER.with(|handler| {
-            *handler.borrow_mut() = self.toolHandler.clone();
+        CURRENT_EXECUTION_HOST.with(|host| {
+            *host.borrow_mut() = self.executionHost.clone();
         });
         CURRENT_INTERMEDIATE_CALLBACK.with(|callback| {
-            *callback.borrow_mut() = onIntermediateResult;
+            *callback.borrow_mut() = on_intermediate_result;
         });
         CURRENT_EXECUTION_LISTENER.with(|listener| {
             *listener.borrow_mut() = executionListener;
@@ -744,7 +739,7 @@ impl JsEngineState {
                 Ok(language) => language,
                 Err(error) => {
                     clearThreadLocalCallState();
-                    return Some(buildJsExecutionErrorPayload(&error));
+                    return Err(JsExecutionError::runtime(error));
                 }
             };
             effectiveParams.insert("__operit_package_lang".to_string(), Value::String(language));
@@ -754,18 +749,25 @@ impl JsEngineState {
             Ok(value) => value,
             Err(error) => {
                 clearThreadLocalCallState();
-                return Some(buildJsExecutionErrorPayload(&error.to_string()));
+                return Err(JsExecutionError::serialization(error.to_string()));
             }
         };
-        let scriptJson = serde_json::to_string(script).unwrap_or_else(|_| "\"\"".to_string());
-        let functionNameJson =
-            serde_json::to_string(functionName).unwrap_or_else(|_| "\"\"".to_string());
+        let scriptJson = serde_json::to_string(script).map_err(|error| {
+            clearThreadLocalCallState();
+            JsExecutionError::serialization(error.to_string())
+        })?;
+        let functionNameJson = serde_json::to_string(functionName).map_err(|error| {
+            clearThreadLocalCallState();
+            JsExecutionError::serialization(error.to_string())
+        })?;
         let callId = format!(
             "operit_call_{}",
             Uuid::new_v4().to_string().replace('-', "")
         );
-        let callIdJson =
-            serde_json::to_string(&callId).unwrap_or_else(|_| "\"operit_call\"".to_string());
+        let callIdJson = serde_json::to_string(&callId).map_err(|error| {
+            clearThreadLocalCallState();
+            JsExecutionError::serialization(error.to_string())
+        })?;
         let safeTimeoutSec = timeoutSec.max(1);
 
         clearNativeExecutionSession(&callId);
@@ -785,25 +787,33 @@ impl JsEngineState {
                         callId, functionName, error
                     ),
                 );
-                Some(buildJsExecutionErrorPayload(&error.to_string()))
+                clearNativeExecutionSession(&callId);
+                clearThreadLocalCallState();
+                return Err(JsExecutionError::runtime(error.to_string()));
             }
         };
         clearNativeExecutionSession(&callId);
         clearThreadLocalCallState();
-        output
+        if let Some(message) = extractJsExecutionErrorMessage(output.as_deref()) {
+            Err(JsExecutionError::runtime(message))
+        } else {
+            Ok(output)
+        }
     }
 
     #[allow(non_snake_case)]
-    fn executeToolPkgMainRegistrationFunctionOnCurrentThread(
+    fn execute_toolpkg_main_registration_function_on_current_thread(
         &mut self,
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
         textResources: Option<Arc<ToolPkgTextResources>>,
-    ) -> Result<ToolPkgMainRegistrationCapture, String> {
-        self.initJavaScriptEnvironment()?;
+    ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
+        self.initJavaScriptEnvironment()
+            .map_err(JsExecutionError::initialization)?;
         let bridge = buildToolPkgRegistrationBridgeScript();
-        self.evalJavaScriptVoid(&bridge)?;
+        self.evalJavaScriptVoid(&bridge)
+            .map_err(JsExecutionError::runtime)?;
         CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
             *resources.borrow_mut() = textResources;
         });
@@ -817,19 +827,23 @@ impl JsEngineState {
             .trim()
             .to_string();
         if explicitLanguage.is_empty() {
-            let language = self.resolveCurrentPackageLanguage()?;
+            let language = self
+                .resolveCurrentPackageLanguage()
+                .map_err(JsExecutionError::runtime)?;
             registrationParams.insert("__operit_package_lang".to_string(), Value::String(language));
         }
-        let paramsJson =
-            serde_json::to_string(&registrationParams).map_err(|error| error.to_string())?;
-        let scriptJson = serde_json::to_string(script).map_err(|error| error.to_string())?;
-        let functionNameJson =
-            serde_json::to_string(functionName).map_err(|error| error.to_string())?;
+        let paramsJson = serde_json::to_string(&registrationParams)
+            .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
+        let scriptJson = serde_json::to_string(script)
+            .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
+        let functionNameJson = serde_json::to_string(functionName)
+            .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
         let callId = format!(
             "operit_registration_{}",
             Uuid::new_v4().to_string().replace('-', "")
         );
-        let callIdJson = serde_json::to_string(&callId).map_err(|error| error.to_string())?;
+        let callIdJson = serde_json::to_string(&callId)
+            .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
         clearNativeExecutionSession(&callId);
         let executionScript = format!(
             "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, 60, 10000);"
@@ -838,26 +852,29 @@ impl JsEngineState {
             CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
                 *resources.borrow_mut() = None;
             });
-            return Err(error);
+            return Err(JsExecutionError::runtime(error));
         }
         self.runJavaScriptJobs();
-        let output = readNativeExecutionSession(&callId)
-            .ok_or_else(|| "ToolPkg registration JavaScript did not complete".to_string());
+        let output = readNativeExecutionSession(&callId).ok_or_else(|| {
+            JsExecutionError::runtime("ToolPkg registration JavaScript did not complete")
+        });
         CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
             *resources.borrow_mut() = None;
         });
         let output = output?;
         clearNativeExecutionSession(&callId);
-        ensureRegistrationExecutionSucceeded(&output)?;
+        ensureRegistrationExecutionSucceeded(&output).map_err(JsExecutionError::runtime)?;
 
         let captureScript = r#"
         (function() {
             return JSON.stringify(globalThis.__operitToolPkgRegistrationCapture);
         })()
         "#;
-        let captureJson = self.evalJavaScriptString(captureScript)?;
+        let captureJson = self
+            .evalJavaScriptString(captureScript)
+            .map_err(JsExecutionError::runtime)?;
         serde_json::from_str::<ToolPkgMainRegistrationCapture>(&captureJson)
-            .map_err(|error| error.to_string())
+            .map_err(|error| JsExecutionError::protocol(error.to_string()))
     }
 
     #[allow(non_snake_case)]
@@ -914,17 +931,15 @@ impl JsEngineState {
 
     #[allow(non_snake_case)]
     fn resolveCurrentPackageLanguage(&self) -> Result<String, String> {
-        let toolHandler = self
-            .toolHandler
-            .as_ref()
-            .ok_or_else(|| "AIToolHandler is required to resolve package language".to_string())?;
-        let language = LocaleUtils::getCurrentLanguage(&toolHandler.getContext(), "")?;
+        let executionHost = self.executionHost.as_ref().ok_or_else(|| {
+            "JavaScript execution host is required to resolve package language".to_string()
+        })?;
+        let language = executionHost.package_language()?;
         let trimmed = language.trim();
         if trimmed.is_empty() {
-            Ok("en".to_string())
-        } else {
-            Ok(trimmed.to_string())
+            return Err("JavaScript execution host returned an empty package language".to_string());
         }
+        Ok(trimmed.to_string())
     }
 
     #[allow(non_snake_case)]
@@ -1528,24 +1543,6 @@ fn buildToolPkgIpcFailure(message: &str) -> String {
 }
 
 #[allow(non_snake_case)]
-fn inferToolPkgIpcRuntimeFromContextKey(contextKey: &str) -> String {
-    let normalized = contextKey.trim().to_ascii_lowercase();
-    if normalized.starts_with("toolpkg_main:") {
-        return "main".to_string();
-    }
-    if normalized.starts_with("toolpkg_provider:") {
-        return "provider".to_string();
-    }
-    if normalized.starts_with("toolpkg_compose:")
-        || normalized.starts_with("toolpkg_compose_dsl:")
-        || normalized.starts_with("toolpkg_xml_render:")
-    {
-        return "ui".to_string();
-    }
-    String::new()
-}
-
-#[allow(non_snake_case)]
 fn nativeInvokeToolPkgIpcStrings(
     packageTarget: String,
     callerContextKey: String,
@@ -1573,229 +1570,40 @@ fn nativeInvokeToolPkgIpcStrings(
             "ToolPkg.ipc targetRuntime is invalid: {requestedRuntime}"
         ));
     }
-
-    let resolved = CURRENT_TOOL_HANDLER.with(|handler| -> Result<(Arc<dyn JsExecutionEngine>, String, String, String, String), String> {
-        let borrowed = handler.borrow();
-        let Some(toolHandler) = borrowed.as_ref() else {
-            return Err("NativeInterface tool handler is unavailable".to_string());
-        };
-        let managerSnapshot = {
-            let packageManager = toolHandler.getOrCreatePackageManager();
-            let guard = packageManager
-                .lock()
-                .expect("package manager mutex poisoned");
-            guard.clone()
-        };
-        let Some(containerRuntime) = managerSnapshot.getToolPkgContainerRuntime(&normalizedTarget) else {
-            return Err(format!("ToolPkg container not found: {normalizedTarget}"));
-        };
-        let explicitTargetContextKey = targetContextKey.trim().to_string();
-        let resolvedTargetContextKey = if !explicitTargetContextKey.is_empty() {
-            explicitTargetContextKey.clone()
-        } else if requestedRuntime.is_empty() || requestedRuntime == "main" {
-            format!("toolpkg_main:{normalizedTarget}")
-        } else {
-            return Err(format!(
-                "ToolPkg.ipc targetContextKey is required for targetRuntime={requestedRuntime}"
-            ));
-        };
-        let inferredRuntime = inferToolPkgIpcRuntimeFromContextKey(&resolvedTargetContextKey);
-        if !requestedRuntime.is_empty()
-            && !inferredRuntime.is_empty()
-            && requestedRuntime != inferredRuntime
-        {
-            return Err(format!(
-                "ToolPkg.ipc targetRuntime does not match targetContextKey: {requestedRuntime} != {inferredRuntime}"
-            ));
-        }
-        let resolvedTargetRuntime = if !requestedRuntime.is_empty() {
-            requestedRuntime.clone()
-        } else if !inferredRuntime.is_empty() {
-            inferredRuntime
-        } else {
-            return Err(format!(
-                "ToolPkg.ipc targetRuntime is required for targetContextKey={resolvedTargetContextKey}"
-            ));
-        };
-        let isMainTarget = resolvedTargetRuntime == "main";
-        if isMainTarget
-            && resolvedTargetContextKey.to_ascii_lowercase()
-                != format!("toolpkg_main:{normalizedTarget}").to_ascii_lowercase()
-        {
-            return Err(format!(
-                "ToolPkg.ipc main targetContextKey is invalid: {resolvedTargetContextKey}"
-            ));
-        }
-        if !isMainTarget && explicitTargetContextKey.is_empty() {
-            return Err(format!(
-                "ToolPkg.ipc targetContextKey is required for targetRuntime={resolvedTargetRuntime}"
-            ));
-        }
-        let engine = if isMainTarget {
-            managerSnapshot.getToolPkgExecutionEngine(&resolvedTargetContextKey)
-        } else {
-            let Some(engine) = managerSnapshot.findToolPkgExecutionEngine(&resolvedTargetContextKey) else {
-                return Err(format!(
-                    "ToolPkg.ipc target runtime is not active: {resolvedTargetContextKey}"
-                ));
-            };
-            engine
-        };
-        let (scriptPath, script) = if isMainTarget {
-            let mainEntry = containerRuntime.mainEntry.trim().to_string();
-            if mainEntry.is_empty() {
-                return Err(format!("ToolPkg main entry is unavailable: {normalizedTarget}"));
-            }
-            let Some(mainScript) = managerSnapshot.getToolPkgMainScriptInternal(&normalizedTarget) else {
-                return Err(format!("ToolPkg main script is unavailable: {normalizedTarget}"));
-            };
-            (mainEntry, mainScript)
-        } else {
-            (String::new(), String::new())
-        };
-        Ok((
-            engine,
-            scriptPath,
-            script,
-            resolvedTargetContextKey,
-            resolvedTargetRuntime,
-        ))
-    });
-
-    let (engine, scriptPath, script, resolvedTargetContextKey, resolvedTargetRuntime) =
-        match resolved {
-            Ok(value) => value,
-            Err(error) => return buildToolPkgIpcFailure(&error),
-        };
-
-    let dispatchFunctionName = "__operit_toolpkg_runtime_dispatch__";
-    let dispatchFunctionSource = r#"
-        async function(params) {
-            var dispatch = globalThis.__operitInvokeToolPkgIpcLocal;
-            if (typeof dispatch !== 'function') {
-                throw new Error('ToolPkg.ipc runtime is unavailable in target context');
-            }
-            var payloadJson =
-                params && typeof params.__operit_toolpkg_ipc_payload_json === 'string'
-                    ? params.__operit_toolpkg_ipc_payload_json
-                    : 'null';
-            var payload;
-            try {
-                payload = JSON.parse(payloadJson);
-            } catch (error) {
-                throw new Error(
-                    'ToolPkg.ipc payload JSON is invalid: ' +
-                    String(error && error.message ? error.message : error)
-                );
-            }
-            var channel =
-                params && typeof params.__operit_toolpkg_ipc_channel === 'string'
-                    ? params.__operit_toolpkg_ipc_channel.trim()
-                    : '';
-            if (!channel) {
-                throw new Error('ToolPkg.ipc channel is required');
-            }
-            var callerContextKey =
-                params && typeof params.__operit_toolpkg_ipc_caller_context_key === 'string'
-                    ? params.__operit_toolpkg_ipc_caller_context_key
-                    : '';
-            var currentContextKey =
-                params && typeof params.__operit_execution_context_key === 'string'
-                    ? params.__operit_execution_context_key
-                    : '';
-            var packageTarget =
-                params && typeof params.__operit_ui_package_name === 'string'
-                    ? params.__operit_ui_package_name
-                    : '';
-            var currentRuntime =
-                params && typeof params.__operit_toolpkg_runtime_kind === 'string'
-                    ? params.__operit_toolpkg_runtime_kind.trim()
-                    : '';
-            return await dispatch(channel, payload, {
-                channel: channel,
-                callerContextKey: callerContextKey,
-                currentContextKey: currentContextKey,
-                currentRuntime: currentRuntime,
-                packageTarget: packageTarget
-            });
-        }
-    "#
-    .trim();
-
-    let mut params = BTreeMap::new();
-    params.insert(
-        "__operit_ui_package_name".to_string(),
-        Value::String(normalizedTarget.clone()),
-    );
-    params.insert(
-        "toolPkgId".to_string(),
-        Value::String(normalizedTarget.clone()),
-    );
-    params.insert(
-        "containerPackageName".to_string(),
-        Value::String(normalizedTarget.clone()),
-    );
-    params.insert(
-        "__operit_execution_context_key".to_string(),
-        Value::String(resolvedTargetContextKey.clone()),
-    );
-    params.insert(
-        "__operit_toolpkg_runtime_kind".to_string(),
-        Value::String(resolvedTargetRuntime.clone()),
-    );
-    params.insert(
-        "__operit_script_screen".to_string(),
-        Value::String(scriptPath),
-    );
-    params.insert(
-        "__operit_inline_function_name".to_string(),
-        Value::String(dispatchFunctionName.to_string()),
-    );
-    params.insert(
-        "__operit_inline_function_source".to_string(),
-        Value::String(dispatchFunctionSource.to_string()),
-    );
-    params.insert(
-        "__operit_toolpkg_ipc_channel".to_string(),
-        Value::String(normalizedChannel),
-    );
-    let normalizedPayloadJson = if payloadJson.trim().is_empty() {
-        "null".to_string()
+    let payload = if payloadJson.trim().is_empty() {
+        Value::Null
     } else {
-        payloadJson.trim().to_string()
+        match serde_json::from_str::<Value>(payloadJson.trim()) {
+            Ok(value) => value,
+            Err(error) => {
+                return buildToolPkgIpcFailure(&format!(
+                    "ToolPkg.ipc payload JSON is invalid: {error}"
+                ))
+            }
+        }
     };
-    params.insert(
-        "__operit_toolpkg_ipc_payload_json".to_string(),
-        Value::String(normalizedPayloadJson),
-    );
-    params.insert(
-        "__operit_toolpkg_ipc_caller_context_key".to_string(),
-        Value::String(callerContextKey.trim().to_string()),
-    );
-
-    let result = engine.executeScriptFunction(
-        &script,
-        dispatchFunctionName,
-        &params,
-        &BTreeMap::new(),
-        None,
-        true,
-        TOOLPKG_SCRIPT_TIMEOUT_SECONDS,
-    );
-    if let Some(errorMessage) = extractJsExecutionErrorMessage(result.as_deref()) {
-        return buildToolPkgIpcFailure(&errorMessage);
+    let request = JsToolPkgIpcRequest {
+        package_target: normalizedTarget,
+        caller_context_key: callerContextKey.trim().to_string(),
+        target_context_key: normalizeOptionalString(&targetContextKey),
+        target_runtime: normalizeOptionalString(&requestedRuntime),
+        channel: normalizedChannel,
+        payload,
+    };
+    match currentExecutionHost().and_then(|host| host.invoke_toolpkg_ipc(request)) {
+        Ok(value) => serde_json::json!({
+            "success": true,
+            "value": value
+        })
+        .to_string(),
+        Err(error) => buildToolPkgIpcFailure(&error),
     }
-    serde_json::json!({
-        "success": true,
-        "value": decodeJsExecutionResultValue(result.as_deref())
-    })
-    .to_string()
 }
 
 #[allow(non_snake_case)]
 fn clearThreadLocalCallState() {
-    CURRENT_TOOL_HANDLER.with(|handler| {
-        *handler.borrow_mut() = None;
+    CURRENT_EXECUTION_HOST.with(|host| {
+        *host.borrow_mut() = None;
     });
     CURRENT_INTERMEDIATE_CALLBACK.with(|callback| {
         *callback.borrow_mut() = None;
@@ -1904,23 +1712,23 @@ impl JsEngine {
 impl JsExecutionEngine for JsEngine {
     /// Executes a named JavaScript function through this engine.
     #[allow(non_snake_case)]
-    fn executeScriptFunction(
+    fn execute_script_function(
         &self,
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
-        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
         dispatchIntermediateOnMain: bool,
         timeoutSec: u64,
-    ) -> Option<String> {
-        JsEngine::executeScriptFunction(
+    ) -> JsExecutionResult<Option<String>> {
+        JsEngine::execute_script_function(
             self,
             script,
             functionName,
             params,
             envOverrides,
-            onIntermediateResult,
+            on_intermediate_result,
             dispatchIntermediateOnMain,
             timeoutSec,
             None,
@@ -1929,14 +1737,14 @@ impl JsExecutionEngine for JsEngine {
 
     /// Executes a ToolPkg registration function through this engine.
     #[allow(non_snake_case)]
-    fn executeToolPkgMainRegistrationFunctionWithTextResources(
+    fn execute_toolpkg_main_registration_function_with_text_resources(
         &self,
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
         textResources: Option<Arc<BTreeMap<String, String>>>,
-    ) -> Result<ToolPkgMainRegistrationCapture, String> {
-        JsEngine::executeToolPkgMainRegistrationFunctionWithTextResources(
+    ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
+        JsEngine::execute_toolpkg_main_registration_function_with_text_resources(
             self,
             script,
             functionName,
@@ -1947,32 +1755,32 @@ impl JsExecutionEngine for JsEngine {
 
     /// Executes one Compose DSL render script through this engine.
     #[allow(non_snake_case)]
-    fn executeComposeDslScript(
+    fn execute_compose_dsl_script(
         &self,
         script: &str,
         runtimeOptions: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
-    ) -> Option<String> {
-        JsEngine::executeComposeDslScript(self, script, runtimeOptions, envOverrides)
+    ) -> JsExecutionResult<Option<String>> {
+        JsEngine::execute_compose_dsl_script(self, script, runtimeOptions, envOverrides)
     }
 
     /// Dispatches one Compose DSL action through this engine.
     #[allow(non_snake_case)]
-    fn dispatchComposeDslAction(
+    fn dispatch_compose_dsl_action(
         &self,
         actionId: &str,
         payload: Option<Value>,
         runtimeOptions: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
-        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    ) -> Option<String> {
-        JsEngine::executeComposeDslAction(
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    ) -> JsExecutionResult<Option<String>> {
+        JsEngine::execute_compose_dsl_action(
             self,
             actionId,
             payload,
             runtimeOptions,
             envOverrides,
-            onIntermediateResult,
+            on_intermediate_result,
         )
     }
 
@@ -1991,33 +1799,22 @@ mod PluginConfigTests;
 
 #[allow(non_snake_case)]
 fn nativeCallToolStrings(toolType: String, toolName: String, paramsJson: String) -> String {
-    CURRENT_TOOL_HANDLER.with(|handler| {
-        handler
-            .borrow()
-            .as_ref()
-            .map(|toolHandler| {
-                JsNativeInterfaceDelegates::callToolSync(
-                    toolHandler,
-                    &toolType,
-                    &toolName,
-                    &paramsJson,
-                )
-            })
-            .unwrap_or_else(|| {
-                serde_json::json!({
-                    "success": false,
-                    "message": "NativeInterface tool handler is unavailable"
-                })
-                .to_string()
-            })
-    })
+    match currentExecutionHost() {
+        Ok(host) => JsNativeInterfaceDelegates::callToolSync(
+            host.as_ref(),
+            &toolType,
+            &toolName,
+            &paramsJson,
+        ),
+        Err(error) => serde_json::json!({"success": false, "message": error}).to_string(),
+    }
 }
 
 #[allow(non_snake_case)]
 fn nativeSendIntermediateResultString(callId: String, result: String) {
     CURRENT_EXECUTION_LISTENER.with(|listener| {
         if let Some(listener) = listener.borrow().as_ref() {
-            listener.onIntermediateResult(&callId, &result);
+            listener.on_intermediate_result(&callId, &result);
         }
     });
     CURRENT_INTERMEDIATE_CALLBACK.with(|callback| {
@@ -2038,19 +1835,9 @@ fn nativeReadToolPkgTextResourceStrings(
     {
         return textResources.get(&resourceKey).cloned().unwrap_or_default();
     }
-    CURRENT_TOOL_HANDLER.with(|handler| {
-        let borrowed = handler.borrow();
-        let Some(toolHandler) = borrowed.as_ref() else {
-            return String::new();
-        };
-        let packageManager = toolHandler.getOrCreatePackageManager();
-        let guard = packageManager
-            .lock()
-            .expect("package manager mutex poisoned");
-        guard
-            .readToolPkgTextResource(&packageNameOrSubpackageId, &resourcePath, true)
-            .unwrap_or_default()
-    })
+    currentExecutionHost()
+        .and_then(|host| host.read_toolpkg_text_resource(&packageNameOrSubpackageId, &resourcePath))
+        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
 }
 
 #[allow(non_snake_case)]
@@ -2060,58 +1847,22 @@ fn nativeReadToolPkgResourceStrings(
     outputFileName: String,
     internal: String,
 ) -> String {
-    CURRENT_TOOL_HANDLER.with(|handler| {
-        let borrowed = handler.borrow();
-        let Some(toolHandler) = borrowed.as_ref() else {
-            return String::new();
-        };
-        let target = packageNameOrSubpackageId.trim().to_string();
-        let key = resourceKey.trim().to_string();
-        if target.is_empty() || key.is_empty() {
-            return String::new();
-        }
-        let packageManager = toolHandler.getOrCreatePackageManager();
-        let guard = packageManager
-            .lock()
-            .expect("package manager mutex poisoned");
-        let trimmedOutputFileName = outputFileName.trim();
-        let fileName = if trimmedOutputFileName.is_empty() {
-            guard
-                .getToolPkgResourceOutputFileName(&target, &key, true)
-                .unwrap_or_else(|| format!("{key}.bin"))
-        } else {
-            trimmedOutputFileName.to_string()
-        };
-        let safeName = toolPkgResourceOutputFileName(&key, &fileName);
-        let outputDir = toolPkgResourceOutputDir(parseBooleanFlag(&internal));
-        if std::fs::create_dir_all(&outputDir).is_err() {
-            return String::new();
-        }
-        let outputFile = outputDir.join(safeName);
-        let copied = guard.copyToolPkgResourceToFile(&target, &key, &outputFile)
-            || guard.copyToolPkgResourceToFileBySubpackageId(&target, &key, &outputFile, true);
-        if copied {
-            outputFile.to_string_lossy().to_string()
-        } else {
-            String::new()
-        }
-    })
+    let request = JsToolPkgResourceRequest {
+        package_name_or_subpackage_id: packageNameOrSubpackageId,
+        resource_key: resourceKey,
+        output_file_name: normalizeOptionalString(&outputFileName),
+        internal: parseBooleanFlag(&internal),
+    };
+    currentExecutionHost()
+        .and_then(|host| host.materialize_toolpkg_resource(request))
+        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
 }
 
 #[allow(non_snake_case)]
 fn nativeComposeWebViewControllerCommandString(payloadJson: String) -> String {
-    CURRENT_TOOL_HANDLER.with(|handler| {
-        let borrowed = handler.borrow();
-        let Some(toolHandler) = borrowed.as_ref() else {
-            return buildJsExecutionErrorPayload("NativeInterface tool handler is unavailable");
-        };
-        let context = toolHandler.getContext();
-        let Some(host) = context.composeDslWebViewHost.as_ref() else {
-            return buildJsExecutionErrorPayload("ComposeDslWebViewHost is not registered");
-        };
-        host.handleControllerCommand(&payloadJson)
-            .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error.to_string()))
-    })
+    currentExecutionHost()
+        .and_then(|host| host.handle_compose_webview_controller_command(&payloadJson))
+        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
 }
 
 #[allow(non_snake_case)]
@@ -2133,7 +1884,7 @@ fn nativeSetCallResultStrings(callId: String, result: String) {
 fn nativeSetCallErrorStrings(callId: String, error: String) {
     CURRENT_EXECUTION_LISTENER.with(|listener| {
         if let Some(listener) = listener.borrow().as_ref() {
-            listener.onFailed(&callId, &error);
+            listener.on_failed(&callId, &error);
         }
     });
     CURRENT_CALL_RESULTS.with(|results| {
@@ -2152,106 +1903,54 @@ fn nativeGetEnvForCallStrings(key: String) -> String {
     }) {
         return value;
     }
-    toolRuntimeSupport()
-        .readEnvironmentVariable(&key)
-        .ok()
-        .flatten()
-        .unwrap_or_default()
+    currentExecutionHost()
+        .and_then(|host| host.read_environment_variable(&key))
+        .map(|value| value.unwrap_or_default())
+        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
 }
 
 #[allow(non_snake_case)]
 fn nativeGetPluginConfigDirString(pluginId: String) -> String {
-    OperitPaths::pluginConfigDir(&pluginId)
-        .expect("plugin config dir must be available")
-        .to_string_lossy()
-        .to_string()
+    currentExecutionHost()
+        .and_then(|host| host.plugin_config_dir(&pluginId))
+        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
 }
 
 #[allow(non_snake_case)]
 fn nativeIsPackageImportedString(packageName: String) -> String {
-    CURRENT_TOOL_HANDLER.with(|handler| {
-        let borrowed = handler.borrow();
-        let Some(toolHandler) = borrowed.as_ref() else {
-            return "false".to_string();
-        };
-        let Some(normalizedPackageName) = normalizeNonBlankString(&packageName) else {
-            return "false".to_string();
-        };
-        let packageManager = toolHandler.getOrCreatePackageManager();
-        let guard = packageManager
-            .lock()
-            .expect("package manager mutex poisoned");
-        guard.isPackageEnabled(&normalizedPackageName).to_string()
-    })
+    currentExecutionHost()
+        .and_then(|host| host.is_package_imported(packageName.trim()))
+        .map(|value| value.to_string())
+        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
 }
 
 #[allow(non_snake_case)]
 fn nativeImportPackageString(packageName: String) -> String {
-    CURRENT_TOOL_HANDLER.with(|handler| {
-        let borrowed = handler.borrow();
-        let Some(toolHandler) = borrowed.as_ref() else {
-            return "package import failed".to_string();
-        };
-        let Some(normalizedPackageName) = normalizeNonBlankString(&packageName) else {
-            return "Package name is required".to_string();
-        };
-        let packageManager = toolHandler.getOrCreatePackageManager();
-        let mut guard = packageManager
-            .lock()
-            .expect("package manager mutex poisoned");
-        guard.enablePackage(&normalizedPackageName)
-    })
+    currentExecutionHost()
+        .and_then(|host| host.import_package(packageName.trim()))
+        .unwrap_or_else(|error| error)
 }
 
 #[allow(non_snake_case)]
 fn nativeRemovePackageString(packageName: String) -> String {
-    CURRENT_TOOL_HANDLER.with(|handler| {
-        let borrowed = handler.borrow();
-        let Some(toolHandler) = borrowed.as_ref() else {
-            return "package removal failed".to_string();
-        };
-        let Some(normalizedPackageName) = normalizeNonBlankString(&packageName) else {
-            return "Package name is required".to_string();
-        };
-        let packageManager = toolHandler.getOrCreatePackageManager();
-        let mut guard = packageManager
-            .lock()
-            .expect("package manager mutex poisoned");
-        guard.disablePackage(&normalizedPackageName)
-    })
+    currentExecutionHost()
+        .and_then(|host| host.remove_package(packageName.trim()))
+        .unwrap_or_else(|error| error)
 }
 
 #[allow(non_snake_case)]
 fn nativeUsePackageString(packageName: String) -> String {
-    CURRENT_TOOL_HANDLER.with(|handler| {
-        let borrowed = handler.borrow();
-        let Some(toolHandler) = borrowed.as_ref() else {
-            return "package activation failed".to_string();
-        };
-        let Some(normalizedPackageName) = normalizeNonBlankString(&packageName) else {
-            return "Package name is required".to_string();
-        };
-        let packageManager = toolHandler.getOrCreatePackageManager();
-        let mut guard = packageManager
-            .lock()
-            .expect("package manager mutex poisoned");
-        guard.usePackage(&normalizedPackageName)
-    })
+    currentExecutionHost()
+        .and_then(|host| host.use_package(packageName.trim()))
+        .unwrap_or_else(|error| error)
 }
 
 #[allow(non_snake_case)]
 fn nativeListImportedPackagesJsonString() -> String {
-    CURRENT_TOOL_HANDLER.with(|handler| {
-        let borrowed = handler.borrow();
-        let Some(toolHandler) = borrowed.as_ref() else {
-            return "[]".to_string();
-        };
-        let packageManager = toolHandler.getOrCreatePackageManager();
-        let guard = packageManager
-            .lock()
-            .expect("package manager mutex poisoned");
-        serde_json::to_string(&guard.getEnabledPackageNames()).unwrap_or_else(|_| "[]".to_string())
-    })
+    currentExecutionHost()
+        .and_then(|host| host.list_imported_packages())
+        .and_then(|packages| serde_json::to_string(&packages).map_err(|error| error.to_string()))
+        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
 }
 
 #[allow(non_snake_case)]
@@ -2261,40 +1960,32 @@ fn nativeResolveToolNameString(
     toolName: String,
     preferImported: String,
 ) -> String {
-    CURRENT_TOOL_HANDLER.with(|handler| {
-        let normalizedTool = match normalizeNonBlankString(&toolName) {
-            Some(value) => value,
-            None => return String::new(),
-        };
-        if normalizedTool.contains(':') {
-            return normalizedTool;
-        }
-        let borrowed = handler.borrow();
-        let Some(toolHandler) = borrowed.as_ref() else {
-            return toolName.trim().to_string();
-        };
-        let preferEnabled = !preferImported.eq_ignore_ascii_case("false");
-        let packageManager = toolHandler.getOrCreatePackageManager();
-        let guard = packageManager
-            .lock()
-            .expect("package manager mutex poisoned");
-        let resolvedPackageName = if let Some(candidate) = normalizeNonBlankString(&packageName) {
-            guard
-                .findPreferredPackageNameForSubpackageId(&candidate, preferEnabled)
-                .unwrap_or(candidate)
-        } else if let Some(candidate) = normalizeNonBlankString(&subpackageId) {
-            guard
-                .findPreferredPackageNameForSubpackageId(&candidate, preferEnabled)
-                .unwrap_or(candidate)
-        } else {
-            String::new()
-        };
-        if resolvedPackageName.trim().is_empty() {
-            normalizedTool
-        } else {
-            format!("{resolvedPackageName}:{normalizedTool}")
-        }
+    let request = JsToolNameResolutionRequest {
+        package_name: normalizeOptionalString(&packageName),
+        subpackage_id: normalizeOptionalString(&subpackageId),
+        tool_name: toolName,
+        prefer_imported: !preferImported.eq_ignore_ascii_case("false"),
+    };
+    currentExecutionHost()
+        .and_then(|host| host.resolve_tool_name(request))
+        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
+}
+
+/// Returns the execution host bound to the active JavaScript call.
+#[allow(non_snake_case)]
+fn currentExecutionHost() -> Result<Arc<dyn JsExecutionHost>, String> {
+    CURRENT_EXECUTION_HOST.with(|host| {
+        host.borrow()
+            .clone()
+            .ok_or_else(|| "JavaScript execution host is unavailable".to_string())
     })
+}
+
+/// Converts a trimmed non-empty string into an optional contract value.
+#[allow(non_snake_case)]
+fn normalizeOptionalString(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 #[allow(non_snake_case)]
@@ -2348,26 +2039,6 @@ fn parseBooleanFlag(value: &str) -> bool {
         value.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes" | "y" | "on"
     )
-}
-
-#[allow(non_snake_case)]
-fn toolPkgResourceOutputFileName(resourceKey: &str, outputFileName: &str) -> String {
-    let safeName = outputFileName
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or_default()
-        .trim();
-    if safeName.is_empty() {
-        format!("{resourceKey}.bin")
-    } else {
-        safeName.to_string()
-    }
-}
-
-#[allow(non_snake_case)]
-fn toolPkgResourceOutputDir(internal: bool) -> std::path::PathBuf {
-    OperitPaths::toolPkgResourceExportsDir(internal)
-        .expect("toolpkg resource export path must be available")
 }
 
 #[cfg(target_arch = "wasm32")]

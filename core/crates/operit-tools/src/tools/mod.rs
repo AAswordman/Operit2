@@ -7,8 +7,8 @@ pub mod AIToolHook;
 #[path = "ToolExecutionLimits.rs"]
 pub mod ToolExecutionLimits;
 
-#[path = "ToolPackage.rs"]
-pub mod ToolPackage;
+#[path = "PackageToolExecutor.rs"]
+pub mod PackageToolExecutor;
 
 #[path = "ToolProgressBus.rs"]
 pub mod ToolProgressBus;
@@ -30,8 +30,8 @@ pub mod condition;
 #[path = "defaultTool/mod.rs"]
 pub mod defaultTool;
 
-#[path = "javascript.rs"]
-pub mod javascript;
+#[path = "ToolJsRuntime.rs"]
+pub mod ToolJsRuntime;
 
 #[path = "mcp/mod.rs"]
 pub mod mcp;

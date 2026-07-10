@@ -1,7 +1,5 @@
 use crate::output::CoreCommandOutput;
-use operit_util::GithubReleaseUtil::{
-    FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
-};
+use operit_util::GithubReleaseUtil::{FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil};
 
 pub fn run_update_command(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
     if args.is_empty() {

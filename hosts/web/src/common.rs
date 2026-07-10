@@ -47,6 +47,11 @@ pub(crate) fn call_storage(method: &str, args: &[JsValue]) -> HostResult<JsValue
     call_function(&module, method, args)
 }
 
+pub(crate) fn call_secret_store(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
+    let module = bridge_module("hostSecretStore")?;
+    call_function(&module, method, args)
+}
+
 pub(crate) fn call_sqlite(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
     let module = bridge_module("sqlite")?;
     call_function(&module, method, args)

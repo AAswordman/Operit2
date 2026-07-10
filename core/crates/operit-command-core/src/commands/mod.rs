@@ -11,6 +11,7 @@ mod people;
 mod plugin;
 mod prefs;
 mod skill;
+mod storage;
 mod tag;
 mod tool;
 mod update;
@@ -32,18 +33,12 @@ pub fn run_core_command(
     }
 
     match args[0].as_str() {
-        "tool" => tool::run_tool_command(application.hostManager.clone(), &args[1..], output),
-        "package" => {
-            package::run_package_command(application.hostManager.clone(), &args[1..], output)
-        }
-        "plugin" => {
-            plugin::run_plugin_command(application.hostManager.clone(), &args[1..], output)
-        }
-        "skill" => skill::run_skill_command(application.hostManager.clone(), &args[1..], output),
-        "mcp" => mcp::run_mcp_command(application.hostManager.clone(), &args[1..], output),
-        "market" => {
-            market::run_market_command(application.hostManager.clone(), &args[1..], output)
-        }
+        "tool" => tool::run_tool_command(application, &args[1..], output),
+        "package" => package::run_package_command(application, &args[1..], output),
+        "plugin" => plugin::run_plugin_command(application, &args[1..], output),
+        "skill" => skill::run_skill_command(application, &args[1..], output),
+        "mcp" => mcp::run_mcp_command(application, &args[1..], output),
+        "market" => market::run_market_command(application, &args[1..], output),
         "host" => host::run_host_command(application.hostManager.clone(), &args[1..], output),
         "log" => log::run_log_command(&args[1..], output),
         "prefs" => prefs::run_prefs_command(application.hostManager.clone(), &args[1..], output),
@@ -51,15 +46,14 @@ pub fn run_core_command(
             approval::run_approval_command(application.hostManager.clone(), &args[1..], output)
         }
         "tag" => tag::run_tag_command(application.hostManager.clone(), &args[1..], output),
-        "memory" => {
-            memory::run_memory_command(application.hostManager.clone(), &args[1..], output)
-        }
+        "memory" => memory::run_memory_command(application.hostManager.clone(), &args[1..], output),
         "character" => people::run_character_command(application, &args[1..], output),
         "group" => people::run_group_command(application, &args[1..], output),
         "active-prompt" => people::run_active_prompt_command(application, &args[1..], output),
         "model" => model::run_model_command(application.hostManager.clone(), &args[1..], output),
         "chat" => chat::run_chat_command(application, &args[1..], output),
         "workspace" => workspace::run_workspace_command(application, &args[1..], output),
+        "storage" => storage::run_storage_command(application, &args[1..], output),
         "update" => update::run_update_command(&args[1..], output),
         _ => {
             print_core_usage(output);
@@ -69,7 +63,7 @@ pub fn run_core_command(
 }
 
 fn print_core_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 <tool|package|plugin|skill|mcp|market|host|log|prefs|approval|tag|memory|character|group|active-prompt|model|chat|workspace|update>");
+    output.push_stdout_line("operit2 <tool|package|plugin|skill|mcp|market|host|log|prefs|approval|tag|memory|character|group|active-prompt|model|chat|workspace|storage|update>");
     output.push_stdout_line("operit2 tool <list|show|exec>");
     output.push_stdout_line(
         "operit2 package <help|dir|list|more|load|show|import|enable|disable|use|exec>",
@@ -103,5 +97,6 @@ fn print_core_usage(output: &mut CoreCommandOutput) {
     output.push_stdout_line("operit2 model <init|list|show|set|set-key|api-settings-full|custom-headers|request-queue|api-key-pool|custom-parameters|parameters|tool-call|direct-image|direct-audio|direct-video|google-search|params|context-show|context-set|summary-show|summary-set|function-list|function-show|function-set|function-reset>");
     output.push_stdout_line("operit2 chat <new|list|show|current|switch|delete|delete-message|clear|rollback|branch|branches|lock|pin|stats|bind-character|bind-group|set-group|send>");
     output.push_stdout_line("operit2 workspace <default-path|create-default|bind-default|bind|unbind|list|chats|commands|commands-path|run|run-path>");
+    output.push_stdout_line("operit2 storage <paths|migrate>");
     output.push_stdout_line("operit2 update <run|check|target>");
 }

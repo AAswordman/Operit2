@@ -2,61 +2,102 @@ use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use operit_host_api::HostSecretStore;
 use operit_host_api::{
     HostError, HostResult, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeSqliteTransaction,
     RuntimeStorageEntry, RuntimeStorageHost, SqliteRow, SqliteValue,
 };
 use rusqlite::types::Value;
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use security_framework::passwords::{
+    delete_generic_password, get_generic_password, set_generic_password,
+};
 
 #[derive(Clone, Debug)]
 pub struct AppleRuntimeStorageHost {
     root: PathBuf,
+    runtimeRoot: PathBuf,
+    workspaceRoot: PathBuf,
 }
 
 impl AppleRuntimeStorageHost {
+    /// Returns the default Apple application support root.
+    #[allow(non_snake_case)]
     pub fn defaultRoot() -> PathBuf {
         let base = appleApplicationSupportDirectory();
         base.join("Operit2")
     }
 
+    /// Creates an Apple runtime storage host rooted at the supplied directory.
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        let runtimeRoot = root.join("runtime");
+        let workspaceRoot = root.join("workspaces");
+        Self::newWithRoots(root, runtimeRoot, workspaceRoot)
+    }
+
+    /// Creates an Apple runtime storage host with explicit runtime and workspace roots.
+    #[allow(non_snake_case)]
+    pub fn newWithRoots(root: PathBuf, runtimeRoot: PathBuf, workspaceRoot: PathBuf) -> Self {
+        Self {
+            root,
+            runtimeRoot,
+            workspaceRoot,
+        }
     }
 
     fn resolve(&self, path: &str) -> HostResult<PathBuf> {
-        let path = Path::new(path);
-        if path.is_absolute() {
-            return Err(HostError::new(format!(
-                "Runtime storage path must be relative: {}",
-                path.display()
-            )));
+        let normalized = normalizeStoragePath(path)?;
+        let segments = normalized.iter().map(String::as_str).collect::<Vec<_>>();
+        match segments.as_slice() {
+            ["runtime", rest @ ..] => Ok(joinSegments(&self.runtimeRoot, rest)),
+            ["workspaces", rest @ ..] => Ok(joinSegments(&self.workspaceRoot, rest)),
+            _ => Ok(joinSegments(&self.root, &segments)),
         }
-        let mut resolved = self.root.clone();
-        for component in path.components() {
-            match component {
-                Component::Normal(segment) => resolved.push(segment),
-                Component::CurDir => {}
-                _ => {
-                    return Err(HostError::new(format!(
-                        "Invalid runtime storage path: {}",
-                        path.display()
-                    )));
-                }
-            }
+    }
+
+    fn storagePathForPhysical(&self, path: &Path) -> HostResult<String> {
+        if let Ok(relative) = path.strip_prefix(&self.runtimeRoot) {
+            return Ok(prefixedPath("runtime", relative));
         }
-        Ok(resolved)
+        if let Ok(relative) = path.strip_prefix(&self.workspaceRoot) {
+            return Ok(prefixedPath("workspaces", relative));
+        }
+        Ok(path
+            .strip_prefix(&self.root)
+            .map_err(|error| HostError::new(error.to_string()))?
+            .to_string_lossy()
+            .replace('\\', "/"))
     }
 }
 
 impl RuntimeStorageHost for AppleRuntimeStorageHost {
+    /// Returns the Apple runtime storage data root directory.
+    #[allow(non_snake_case)]
     fn rootDir(&self) -> Option<PathBuf> {
         Some(self.root.clone())
     }
 
+    /// Returns the Apple runtime files root directory.
+    #[allow(non_snake_case)]
+    fn runtimeRootDir(&self) -> Option<PathBuf> {
+        Some(self.runtimeRoot.clone())
+    }
+
+    /// Returns the Apple workspace collection root directory.
+    #[allow(non_snake_case)]
+    fn workspaceRootDir(&self) -> Option<PathBuf> {
+        Some(self.workspaceRoot.clone())
+    }
+
+    /// Reads bytes from Apple runtime storage.
+    #[allow(non_snake_case)]
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
         Ok(fs::read(self.resolve(path)?)?)
     }
 
+    /// Writes bytes into Apple runtime storage.
+    #[allow(non_snake_case)]
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         let path = self.resolve(path)?;
         if let Some(parent) = path.parent() {
@@ -66,6 +107,7 @@ impl RuntimeStorageHost for AppleRuntimeStorageHost {
         Ok(())
     }
 
+    /// Deletes an entry from Apple runtime storage.
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
         let path = self.resolve(path)?;
         if !path.exists() {
@@ -83,10 +125,12 @@ impl RuntimeStorageHost for AppleRuntimeStorageHost {
         Ok(())
     }
 
+    /// Checks whether an Apple runtime storage path exists.
     fn exists(&self, path: &str) -> HostResult<bool> {
         Ok(self.resolve(path)?.exists())
     }
 
+    /// Lists entries under an Apple runtime storage prefix.
     fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
         let directory = self.resolve(prefix)?;
         let mut entries = Vec::new();
@@ -96,14 +140,8 @@ impl RuntimeStorageHost for AppleRuntimeStorageHost {
         for entry in fs::read_dir(directory)? {
             let entry = entry?;
             let metadata = entry.metadata()?;
-            let path = entry
-                .path()
-                .strip_prefix(&self.root)
-                .map_err(|error| HostError::new(error.to_string()))?
-                .to_string_lossy()
-                .replace('\\', "/");
             entries.push(RuntimeStorageEntry {
-                path,
+                path: self.storagePathForPhysical(&entry.path())?,
                 isDirectory: metadata.is_dir(),
                 size: metadata.len() as i64,
             });
@@ -112,7 +150,46 @@ impl RuntimeStorageHost for AppleRuntimeStorageHost {
     }
 }
 
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+impl HostSecretStore for AppleRuntimeStorageHost {
+    /// Reads secret bytes from Apple Keychain.
+    fn readSecret(&self, key: &str) -> HostResult<Option<Vec<u8>>> {
+        let account = validateSecretKey(key)?;
+        match get_generic_password(APPLE_SECRET_SERVICE, &account) {
+            Ok(content) => Ok(Some(content)),
+            Err(error) if error.code() == -25300 => Ok(None),
+            Err(error) => Err(HostError::new(format!(
+                "read Apple Keychain item failed: {error}"
+            ))),
+        }
+    }
+
+    /// Writes secret bytes into Apple Keychain.
+    fn writeSecret(&self, key: &str, content: &[u8]) -> HostResult<()> {
+        let account = validateSecretKey(key)?;
+        set_generic_password(APPLE_SECRET_SERVICE, &account, content)
+            .map_err(|error| HostError::new(format!("write Apple Keychain item failed: {error}")))
+    }
+
+    /// Deletes secret bytes from Apple Keychain.
+    fn deleteSecret(&self, key: &str) -> HostResult<()> {
+        let account = validateSecretKey(key)?;
+        match delete_generic_password(APPLE_SECRET_SERVICE, &account) {
+            Ok(()) => Ok(()),
+            Err(error) if error.code() == -25300 => Ok(()),
+            Err(error) => Err(HostError::new(format!(
+                "delete Apple Keychain item failed: {error}"
+            ))),
+        }
+    }
+}
+
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+const APPLE_SECRET_SERVICE: &str = "Operit2.HostSecretStore";
+
 impl RuntimeSqliteHost for AppleRuntimeStorageHost {
+    /// Opens an SQLite database under Apple runtime storage.
+    #[allow(non_snake_case)]
     fn openSqliteDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> {
         let path = self.resolve(path)?;
         if let Some(parent) = path.parent() {
@@ -121,6 +198,53 @@ impl RuntimeSqliteHost for AppleRuntimeStorageHost {
         let connection =
             rusqlite::Connection::open(path).map_err(|error| HostError::new(error.to_string()))?;
         Ok(Box::new(RusqliteRuntimeConnection { connection }))
+    }
+}
+
+/// Normalizes a storage path into safe relative path segments.
+#[allow(non_snake_case)]
+fn normalizeStoragePath(path: &str) -> HostResult<Vec<String>> {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        return Err(HostError::new(format!(
+            "Runtime storage path must be relative: {}",
+            path.display()
+        )));
+    }
+    let mut segments = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(segment) => segments.push(segment.to_string_lossy().to_string()),
+            Component::CurDir => {}
+            _ => {
+                return Err(HostError::new(format!(
+                    "Invalid runtime storage path: {}",
+                    path.display()
+                )));
+            }
+        }
+    }
+    Ok(segments)
+}
+
+/// Joins normalized relative path segments under a physical root.
+#[allow(non_snake_case)]
+fn joinSegments(root: &Path, segments: &[&str]) -> PathBuf {
+    let mut resolved = root.to_path_buf();
+    for segment in segments {
+        resolved.push(segment);
+    }
+    resolved
+}
+
+/// Builds a runtime-storage path with the requested top-level prefix.
+#[allow(non_snake_case)]
+fn prefixedPath(prefix: &str, relative: &Path) -> String {
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    if relative.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}/{relative}")
     }
 }
 
@@ -186,6 +310,8 @@ impl RuntimeSqliteTransaction for RusqliteRuntimeTransaction<'_> {
     }
 }
 
+/// Queries SQLite rows from a connection and converts values to host rows.
+#[allow(non_snake_case)]
 fn queryRowsConnection(
     connection: &rusqlite::Connection,
     sql: &str,
@@ -198,6 +324,8 @@ fn queryRowsConnection(
     collectRows(&mut statement, params)
 }
 
+/// Queries SQLite rows from a transaction and converts values to host rows.
+#[allow(non_snake_case)]
 fn queryRowsTransaction(
     transaction: &rusqlite::Transaction<'_>,
     sql: &str,
@@ -210,6 +338,8 @@ fn queryRowsTransaction(
     collectRows(&mut statement, params)
 }
 
+/// Collects all rows from a prepared SQLite statement.
+#[allow(non_snake_case)]
 fn collectRows(
     statement: &mut rusqlite::Statement<'_>,
     params: Vec<Value>,
@@ -242,6 +372,8 @@ fn collectRows(
     Ok(out)
 }
 
+/// Converts a host SQLite value into a rusqlite value.
+#[allow(non_snake_case)]
 fn toRusqliteValue(value: SqliteValue) -> Value {
     match value {
         SqliteValue::Null => Value::Null,
@@ -252,6 +384,8 @@ fn toRusqliteValue(value: SqliteValue) -> Value {
     }
 }
 
+/// Converts a rusqlite value into a host SQLite value.
+#[allow(non_snake_case)]
 fn fromRusqliteValue(value: Value) -> SqliteValue {
     match value {
         Value::Null => SqliteValue::Null,
@@ -262,6 +396,24 @@ fn fromRusqliteValue(value: Value) -> SqliteValue {
     }
 }
 
+/// Validates and returns a platform-safe host secret key.
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+fn validateSecretKey(key: &str) -> HostResult<String> {
+    if key.is_empty()
+        || key.chars().any(|character| {
+            !(character.is_ascii_alphanumeric()
+                || character == '.'
+                || character == '_'
+                || character == '-')
+        })
+    {
+        return Err(HostError::new(format!("invalid host secret key: {key}")));
+    }
+    Ok(key.to_string())
+}
+
+/// Returns the Apple application support directory.
+#[allow(non_snake_case)]
 fn appleApplicationSupportDirectory() -> PathBuf {
     let home = env::var_os("HOME").expect("HOME is required for Apple runtime storage");
     PathBuf::from(home)

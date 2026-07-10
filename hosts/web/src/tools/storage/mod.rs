@@ -1,14 +1,14 @@
 use js_sys::{Array, Uint8Array};
 use operit_host_api::{
-    HostResult, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeSqliteTransaction,
-    RuntimeStorageEntry, RuntimeStorageHost, SqliteRow, SqliteValue,
+    HostResult, HostSecretStore, RuntimeSqliteConnection, RuntimeSqliteHost,
+    RuntimeSqliteTransaction, RuntimeStorageEntry, RuntimeStorageHost, SqliteRow, SqliteValue,
 };
 use std::path::PathBuf;
 use wasm_bindgen::prelude::*;
 
 use crate::common::{
-    bytes_to_js, call_sqlite, call_storage, js_bool, js_i64, js_rows, js_string, js_usize,
-    read_bool_property, read_i64_property, read_string_property, sqlite_params_to_js,
+    bytes_to_js, call_secret_store, call_sqlite, call_storage, js_bool, js_i64, js_rows, js_string,
+    js_usize, read_bool_property, read_i64_property, read_string_property, sqlite_params_to_js,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -68,6 +68,26 @@ impl RuntimeStorageHost for WebRuntimeStorageHost {
             });
         }
         Ok(entries)
+    }
+}
+
+impl HostSecretStore for WebRuntimeStorageHost {
+    fn readSecret(&self, key: &str) -> HostResult<Option<Vec<u8>>> {
+        let value = call_secret_store("readSecret", &[JsValue::from_str(key)])?;
+        if value.is_null() || value.is_undefined() {
+            return Ok(None);
+        }
+        Ok(Some(Uint8Array::new(&value).to_vec()))
+    }
+
+    fn writeSecret(&self, key: &str, content: &[u8]) -> HostResult<()> {
+        call_secret_store("writeSecret", &[JsValue::from_str(key), bytes_to_js(content)])?;
+        Ok(())
+    }
+
+    fn deleteSecret(&self, key: &str) -> HostResult<()> {
+        call_secret_store("deleteSecret", &[JsValue::from_str(key)])?;
+        Ok(())
     }
 }
 

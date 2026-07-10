@@ -1,8 +1,8 @@
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use operit_tools::ToolExecutionManager::AITool;
 use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
+use operit_tools::ToolExecutionManager::AITool;
 
 const PERMISSION_REQUEST_TIMEOUT_MS: u64 = 60_000;
 

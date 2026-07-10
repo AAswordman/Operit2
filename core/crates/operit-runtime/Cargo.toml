@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = ["javascript"]
+javascript = ["dep:operit-js-bridge", "operit-tools/javascript"]
+
 [dependencies]
 async-trait.workspace = true
 aes = "0.8"
@@ -16,11 +20,12 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 json5.workspace = true
 md-5 = "0.10"
 operit-host-api = { path = "../operit-host-api" }
-operit-js-bridge = { path = "../operit-js-bridge" }
+operit-js-bridge = { path = "../operit-js-bridge", optional = true }
 operit-model = { path = "../operit-model" }
+operit-plugin-sdk = { path = "../operit-plugin-sdk" }
 operit-providers = { path = "../operit-providers" }
 operit-store = { path = "../operit-store" }
-operit-tools = { path = "../operit-tools" }
+operit-tools = { path = "../operit-tools", default-features = false }
 operit-util = { path = "../operit-util" }
 reqwest.workspace = true
 regex.workspace = true
@@ -57,7 +62,6 @@ rusqlite.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
 js-sys = "0.3"
-quickjs-wasm-rs = "3.1.0"
 uuid = { workspace = true, features = ["js"] }
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = ["Window", "XmlHttpRequest"] }

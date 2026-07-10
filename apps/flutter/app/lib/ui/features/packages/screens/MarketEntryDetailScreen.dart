@@ -21,7 +21,8 @@ class MarketEntryDetailScreen extends StatefulWidget {
   final core_proxy.MarketEntrySummary entry;
 
   @override
-  State<MarketEntryDetailScreen> createState() => _MarketEntryDetailScreenState();
+  State<MarketEntryDetailScreen> createState() =>
+      _MarketEntryDetailScreenState();
 }
 
 class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
@@ -34,7 +35,8 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
   bool _openingPublish = false;
   String? _communityError;
   List<core_proxy.MarketComment> _comments = <core_proxy.MarketComment>[];
-  List<core_proxy.MarketReactionCount> _reactions = <core_proxy.MarketReactionCount>[];
+  List<core_proxy.MarketReactionCount> _reactions =
+      <core_proxy.MarketReactionCount>[];
 
   GeneratedProvidersMarketStatsApiServiceCoreProxy get _market =>
       widget.clients.providersMarketStatsApiService;
@@ -59,7 +61,10 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       _communityError = null;
     });
     try {
-      final page = await _market.getCommentsPage(entryId: widget.entry.id, page: 1);
+      final page = await _market.getCommentsPage(
+        entryId: widget.entry.id,
+        page: 1,
+      );
       if (!mounted) return;
       setState(() {
         _comments = page.items;
@@ -93,7 +98,10 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
     setState(() => _postingComment = true);
     try {
       await _market.createEntryComment(entryId: widget.entry.id, body: body);
-      final page = await _market.getCommentsPage(entryId: widget.entry.id, page: 1);
+      final page = await _market.getCommentsPage(
+        entryId: widget.entry.id,
+        page: 1,
+      );
       if (!mounted) return false;
       setState(() {
         _comments = page.items;
@@ -106,7 +114,10 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       if (!mounted) return false;
       setState(() => _postingComment = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString()), behavior: SnackBarBehavior.floating),
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
       return false;
     }
@@ -127,7 +138,10 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       if (!mounted) return;
       setState(() => _reacting = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString()), behavior: SnackBarBehavior.floating),
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
     }
   }
@@ -140,7 +154,8 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
         var posting = false;
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            final canPost = _commentController.text.trim().isNotEmpty && !posting;
+            final canPost =
+                _commentController.text.trim().isNotEmpty && !posting;
             return AlertDialog(
               title: const Text('发表评论'),
               content: TextField(
@@ -157,7 +172,9 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
               ),
               actions: <Widget>[
                 TextButton(
-                  onPressed: posting ? null : () => Navigator.of(dialogContext).pop(),
+                  onPressed: posting
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
                   child: const Text('取消'),
                 ),
                 TextButton(
@@ -210,7 +227,9 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
               ),
               actions: <Widget>[
                 TextButton(
-                  onPressed: saving ? null : () => Navigator.of(dialogContext).pop(),
+                  onPressed: saving
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
                   child: const Text('取消'),
                 ),
                 TextButton(
@@ -228,9 +247,12 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
                             );
                             if (!mounted) return;
                             setState(() => _comments = page.items);
-                            if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                            if (dialogContext.mounted)
+                              Navigator.of(dialogContext).pop();
                           } catch (error, stackTrace) {
-                            debugPrint('Failed to edit market comment: $error\n$stackTrace');
+                            debugPrint(
+                              'Failed to edit market comment: $error\n$stackTrace',
+                            );
                             if (!dialogContext.mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
@@ -269,7 +291,9 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
               content: const Text('确定删除这条评论吗？删除后评论会从公开列表移除。'),
               actions: <Widget>[
                 TextButton(
-                  onPressed: deleting ? null : () => Navigator.of(dialogContext).pop(),
+                  onPressed: deleting
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
                   child: const Text('取消'),
                 ),
                 TextButton(
@@ -278,16 +302,21 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
                       : () async {
                           setDialogState(() => deleting = true);
                           try {
-                            await _market.deleteEntryComment(commentId: comment.id);
+                            await _market.deleteEntryComment(
+                              commentId: comment.id,
+                            );
                             final page = await _market.getCommentsPage(
                               entryId: widget.entry.id,
                               page: 1,
                             );
                             if (!mounted) return;
                             setState(() => _comments = page.items);
-                            if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+                            if (dialogContext.mounted)
+                              Navigator.of(dialogContext).pop();
                           } catch (error, stackTrace) {
-                            debugPrint('Failed to delete market comment: $error\n$stackTrace');
+                            debugPrint(
+                              'Failed to delete market comment: $error\n$stackTrace',
+                            );
                             if (!dialogContext.mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
@@ -334,9 +363,9 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
           versionId: version.versionId,
         );
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(result)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(result)));
         }
       } catch (error, stackTrace) {
         debugPrint('Failed to install artifact: $error\n$stackTrace');
@@ -359,22 +388,33 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       if (entry.type == 'skill') {
         final repoUrl = entry.source?.url.trim() ?? '';
         if (repoUrl.isEmpty) throw StateError('技能缺少仓库地址');
-        final result = await widget.clients.permissionsSkillRuntimeSkillRepository.importSkillFromGitHubRepo(repoUrl: repoUrl);
+        final result = await widget.clients.application
+            .skillRepository()
+            .importSkillFromGitHubRepo(repoUrl: repoUrl);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result)));
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(result)));
         }
       } else if (entry.type == 'mcp') {
         final repoUrl = entry.source?.url.trim() ?? '';
         if (repoUrl.isEmpty) throw StateError('MCP 缺少仓库地址');
-        final result = await widget.clients.permissionsMcpRuntimeMcpRepository.installMcpServerWithObjectForFlutter(
-          pluginId: _safePackageId(entry.title),
-          repoUrl: repoUrl,
-          name: entry.title,
-          description: entry.description,
-          mcpConfig: entry.repoVersion?.installConfig ?? entry.latestVersion?.installConfig ?? '',
-        );
+        final result = await widget.clients.application
+            .mcpRepository()
+            .installMcpServerWithObjectForFlutter(
+              pluginId: _safePackageId(entry.title),
+              repoUrl: repoUrl,
+              name: entry.title,
+              description: entry.description,
+              mcpConfig:
+                  entry.repoVersion?.installConfig ??
+                  entry.latestVersion?.installConfig ??
+                  '',
+            );
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result)));
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(result)));
         }
       } else {
         throw StateError('请在脚本/包详情页安装资产');
@@ -383,7 +423,10 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       debugPrint('Failed to install market entry: $error\n$stackTrace');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.toString()), behavior: SnackBarBehavior.floating),
+          SnackBar(
+            content: Text(error.toString()),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     } finally {
@@ -406,7 +449,9 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
     return _canPublishArtifactVersion(entry) || _canPublishRepoVersion(entry);
   }
 
-  Future<bool> _canCurrentUserEditEntry(core_proxy.MarketEntrySummary entry) async {
+  Future<bool> _canCurrentUserEditEntry(
+    core_proxy.MarketEntrySummary entry,
+  ) async {
     final currentUser = await _market.getCurrentGithubUser();
     final publisherLogin = entry.publisher?.login.trim().toLowerCase() ?? '';
     return publisherLogin.isNotEmpty &&
@@ -448,7 +493,10 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
             publishContext: ArtifactPublishClusterContext(
               entryId: entry.id,
               projectId: artifact.projectId,
-              runtimePackageId: artifact.runtimePackageId ?? entry.latestVersion?.runtimePackageId ?? '',
+              runtimePackageId:
+                  artifact.runtimePackageId ??
+                  entry.latestVersion?.runtimePackageId ??
+                  '',
               lockedDisplayName: entry.title,
               canEditEntry: canEditEntry,
             ),
@@ -456,12 +504,17 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
         ),
       );
     } catch (error, stackTrace) {
-      debugPrint('Failed to open artifact version publish: $error\n$stackTrace');
+      debugPrint(
+        'Failed to open artifact version publish: $error\n$stackTrace',
+      );
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString()), behavior: SnackBarBehavior.floating),
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
     } finally {
       if (mounted) {
@@ -503,7 +556,10 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString()), behavior: SnackBarBehavior.floating),
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
     } finally {
       if (mounted) {
@@ -532,9 +588,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
             reaction: count.reaction,
             total: count.total + 1,
           ),
-        ] else ...<core_proxy.MarketReactionCount>[
-          count,
-        ],
+        ] else ...<core_proxy.MarketReactionCount>[count],
     ];
     for (final count in reactions) {
       if (count.reaction == reaction) {
@@ -566,7 +620,9 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
             roleLabel: '发布者',
             name: entry.publisher?.login ?? '',
             avatarUrl: _cleanAvatarUrl(entry.publisher?.avatar),
-            fallbackAvatarText: marketDetailInitial(entry.publisher?.login ?? ''),
+            fallbackAvatarText: marketDetailInitial(
+              entry.publisher?.login ?? '',
+            ),
           ),
           for (final contributor in entry.contributors)
             UnifiedMarketDetailParticipant(
@@ -583,14 +639,26 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
           entry.stateCode,
         ].where((value) => value.trim().isNotEmpty).toList(growable: false),
         metrics: <UnifiedMarketDetailMetric>[
-          UnifiedMarketDetailMetric(value: '${_reactionCount('+1')}', label: '喜欢'),
-          UnifiedMarketDetailMetric(value: '${_entryDownloads(entry)}', label: '下载'),
-          UnifiedMarketDetailMetric(value: formatMarketDate(entry.updatedAt), label: '更新'),
+          UnifiedMarketDetailMetric(
+            value: '${_reactionCount('+1')}',
+            label: '喜欢',
+          ),
+          UnifiedMarketDetailMetric(
+            value: '${_entryDownloads(entry)}',
+            label: '下载',
+          ),
+          UnifiedMarketDetailMetric(
+            value: formatMarketDate(entry.updatedAt),
+            label: '更新',
+          ),
         ],
       ),
       overviewChildren: <Widget>[
         if (entry.description.trim().isNotEmpty) ...<Widget>[
-          ArtifactDetailSectionCard(title: '简介', child: Text(entry.description)),
+          ArtifactDetailSectionCard(
+            title: '简介',
+            child: Text(entry.description),
+          ),
           const SizedBox(height: 14),
         ],
         if (entry.detail.trim().isNotEmpty) ...<Widget>[
@@ -662,9 +730,18 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       ArtifactInfoRow(label: '来源', value: entry.source?.url ?? ''),
       ArtifactInfoRow(label: '版本', value: entry.latestVersion?.version ?? ''),
       ArtifactInfoRow(label: '格式', value: entry.latestVersion?.formatVer ?? ''),
-      ArtifactInfoRow(label: '最低版本', value: entry.latestVersion?.minAppVer ?? ''),
-      ArtifactInfoRow(label: '最高版本', value: entry.latestVersion?.maxAppVer ?? ''),
-      ArtifactInfoRow(label: '发布', value: formatMarketDate(entry.publishedAt ?? entry.createdAt)),
+      ArtifactInfoRow(
+        label: '最低版本',
+        value: entry.latestVersion?.minAppVer ?? '',
+      ),
+      ArtifactInfoRow(
+        label: '最高版本',
+        value: entry.latestVersion?.maxAppVer ?? '',
+      ),
+      ArtifactInfoRow(
+        label: '发布',
+        value: formatMarketDate(entry.publishedAt ?? entry.createdAt),
+      ),
       ArtifactInfoRow(label: '更新', value: formatMarketDate(entry.updatedAt)),
     ].where((row) => row.value.trim().isNotEmpty).toList(growable: false);
   }
@@ -685,5 +762,7 @@ String _safePackageId(String raw) {
 }
 
 int _entryDownloads(core_proxy.MarketEntrySummary entry) {
-  return entry.downloadCount > entry.downloads ? entry.downloadCount : entry.downloads;
+  return entry.downloadCount > entry.downloads
+      ? entry.downloadCount
+      : entry.downloads;
 }

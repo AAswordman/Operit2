@@ -1,21 +1,23 @@
 use crate::commands::util::{parse_bool_arg, read_content_arg};
 use crate::output::CoreCommandOutput;
 use operit_host_api::HostManager::HostManager;
+use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
-use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::mcp_runtime::plugins::MCPBridge::MCPBridge;
 use operit_tools::tools::mcp_runtime::plugins::MCPStarter::{MCPStarter, StartStatus};
 use operit_tools::tools::mcp_runtime::MCPLocalServer::{MCPLocalServer, PluginMetadata};
 use operit_tools::tools::mcp_runtime::MCPRepository::MCPRepository;
-use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub fn run_mcp_command(
-    context: HostManager,
+    application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
+    let context = application.hostManager.clone();
     let command = args.first();
     match command.map(String::as_str) {
         Some("dir") => print_mcp_dir(context, output),
@@ -30,17 +32,17 @@ pub fn run_mcp_command(
         Some("remove") => remove_mcp_server(context, args, output),
         Some("enable") => set_mcp_enabled(context, args, true, output),
         Some("disable") => set_mcp_enabled(context, args, false, output),
-        Some("start") => start_mcp_server(context, args, output),
-        Some("kill") => kill_mcp_server(context, args, output),
+        Some("start") => start_mcp_server(application, args, output),
+        Some("kill") => kill_mcp_server(application, args, output),
         Some("tools") => print_mcp_tools(context, args, output),
         Some("config") => print_mcp_config(context, args, output),
         Some("config-set") => save_mcp_config(context, args, output),
         Some("local-set") => save_local_mcp_server(context, args, output),
-        Some("install-github") => install_mcp_from_github(context, args, output),
-        Some("install-zip") => install_mcp_from_zip(context, args, output),
+        Some("install-github") => install_mcp_from_github(application, args, output),
+        Some("install-zip") => install_mcp_from_zip(application, args, output),
         Some("meta") => print_mcp_metadata(context, args, output),
         Some("meta-set") => save_mcp_metadata(context, args, output),
-        Some("describe") => generate_mcp_description(context, args, output),
+        Some("describe") => generate_mcp_description(application, args, output),
         Some(_) | None => {
             print_mcp_usage(output);
             Ok(())
@@ -48,20 +50,14 @@ pub fn run_mcp_command(
     }
 }
 
-fn print_mcp_dir(
-    context: HostManager,
-    output: &mut CoreCommandOutput,
-) -> Result<(), String> {
+fn print_mcp_dir(context: HostManager, output: &mut CoreCommandOutput) -> Result<(), String> {
     let server = mcp_local_server(&context);
     output.push_stdout_line(format!("configDir={}", server.getConfigDirectory()));
     output.push_stdout_line(format!("configFile={}", server.getConfigFilePath()));
     Ok(())
 }
 
-fn list_mcp_servers(
-    context: HostManager,
-    output: &mut CoreCommandOutput,
-) -> Result<(), String> {
+fn list_mcp_servers(context: HostManager, output: &mut CoreCommandOutput) -> Result<(), String> {
     let server = mcp_local_server(&context);
     let servers = server.getAllMCPServers();
     let metadata = server.getAllPluginMetadata();
@@ -146,10 +142,7 @@ fn import_mcp_config(
     Ok(())
 }
 
-fn export_mcp_config(
-    context: HostManager,
-    output: &mut CoreCommandOutput,
-) -> Result<(), String> {
+fn export_mcp_config(context: HostManager, output: &mut CoreCommandOutput) -> Result<(), String> {
     output.push_stdout_line(mcp_local_server(&context).exportConfigAsJson());
     Ok(())
 }
@@ -187,17 +180,18 @@ fn set_mcp_enabled(
 }
 
 fn start_mcp_server(
-    context: HostManager,
+    application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
+    let context = application.hostManager.clone();
     let id = required_arg(args, 1, "operit2 mcp start <id>")?;
     require_mcp_server(&context, id)?;
     let timeoutSeconds = ApiPreferences::getInstance()
         .getMcpStartupTimeoutSeconds()
         .map_err(|error| error.to_string())?;
     let timeoutMs = timeoutSeconds.max(1) as u64 * 1000;
-    let starter = MCPStarter::new(context.clone());
+    let starter = MCPStarter::new(context.clone(), application.toolHandler.runtimeSupport());
     let mut statuses = Vec::new();
     let started = starter.startPluginWithTimeout(id, timeoutMs, |status| {
         statuses.push(status);
@@ -220,10 +214,11 @@ fn start_mcp_server(
 }
 
 fn kill_mcp_server(
-    context: HostManager,
+    application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
+    let context = application.hostManager.clone();
     let id = required_arg(args, 1, "operit2 mcp kill <id>")?;
     require_mcp_server(&context, id)?;
 
@@ -231,7 +226,7 @@ fn kill_mcp_server(
     require_bridge_success(&bridgeResult)?;
 
     MCPManager::getInstance(context.clone()).unregisterServer(id);
-    let mut toolHandler = AIToolHandler::getInstance(context.clone());
+    let mut toolHandler = application.toolHandler.clone();
     let removedTools = toolHandler.unregisterMcpServerTools(id);
     let removedPackage = toolHandler.unregisterMcpServerPackage(id);
     mcp_local_server(&context).updateServerStatus(
@@ -313,54 +308,52 @@ fn save_local_mcp_server(
 }
 
 fn install_mcp_from_github(
-    context: HostManager,
+    application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
+    let context = application.hostManager.clone();
     let usage = "operit2 mcp install-github <id> <repo-url> <name> <description-or-@file> <author> <version> [config-or-@file]";
     let id = required_arg(args, 1, usage)?.to_string();
     let repoUrl = required_arg(args, 2, usage)?.to_string();
     let metadata = metadata_from_install_args(args, usage)?;
     let mcpConfig = optional_content_arg(args.get(7))?;
-    match MCPRepository::getInstance(&context).installMCPServerWithObject(
-        id.clone(),
-        repoUrl,
-        metadata,
-        mcpConfig,
-        |_| {},
-    ) {
+    match MCPRepository::getInstance(&context, application.toolHandler.runtimeSupport())
+        .installMCPServerWithObject(id.clone(), repoUrl, metadata, mcpConfig, |_| {})
+    {
         operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Success { pluginPath } => {
             output.push_stdout_line(format!("installed={id}"));
             output.push_stdout_line(format!("path={pluginPath}"));
             Ok(())
         }
-        operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Error { message } => Err(message),
+        operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Error { message } => {
+            Err(message)
+        }
     }
 }
 
 fn install_mcp_from_zip(
-    context: HostManager,
+    application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
+    let context = application.hostManager.clone();
     let usage = "operit2 mcp install-zip <id> <zip-path> <name> <description-or-@file> <author> <version> [config-or-@file]";
     let id = required_arg(args, 1, usage)?.to_string();
     let zipPath = required_arg(args, 2, usage)?.to_string();
     let metadata = metadata_from_install_args(args, usage)?;
     let mcpConfig = optional_content_arg(args.get(7))?;
-    match MCPRepository::getInstance(&context).installMCPServerFromZip(
-        id.clone(),
-        zipPath,
-        metadata,
-        mcpConfig,
-        |_| {},
-    ) {
+    match MCPRepository::getInstance(&context, application.toolHandler.runtimeSupport())
+        .installMCPServerFromZip(id.clone(), zipPath, metadata, mcpConfig, |_| {})
+    {
         operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Success { pluginPath } => {
             output.push_stdout_line(format!("installed={id}"));
             output.push_stdout_line(format!("path={pluginPath}"));
             Ok(())
         }
-        operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Error { message } => Err(message),
+        operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Error { message } => {
+            Err(message)
+        }
     }
 }
 
@@ -406,10 +399,11 @@ fn save_mcp_metadata(
 }
 
 fn generate_mcp_description(
-    context: HostManager,
+    application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
+    let context = application.hostManager.clone();
     let id = required_arg(args, 1, "operit2 mcp describe <id>")?;
     let metadata = mcp_local_server(&context)
         .getPluginMetadata(id)
@@ -419,7 +413,8 @@ fn generate_mcp_description(
         .build()
         .map_err(|error| error.to_string())?;
     let description = runtime.block_on(
-        MCPRepository::getInstance(&context).generatePluginDescription(id, &metadata.name),
+        MCPRepository::getInstance(&context, application.toolHandler.runtimeSupport())
+            .generatePluginDescription(id, &metadata.name),
     )?;
     mcp_local_server(&context).addOrUpdatePluginMetadata(
         id,

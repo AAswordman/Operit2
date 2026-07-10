@@ -205,7 +205,8 @@ class _ToolPkgComposeDslRouteHostState
   }
 
   Future<core_proxy.ToolPkgContainerRuntime> _loadPlugin() async {
-    final plugin = await _clients.permissionsPackToolPackageManager
+    final plugin = await _clients.application
+        .packageManager()
         .getToolPkgContainerRuntime(
           containerPackageName: widget.containerPackageName,
         );

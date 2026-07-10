@@ -12,12 +12,12 @@ use operit_host_api::{
 use serde_json::{json, Map, Value};
 use url::Url;
 
+use operit_tools::tools::ToolResultDataClasses::{
+    stringResultData, HttpResponseData, ToolResultData,
+};
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
-};
-use operit_tools::tools::ToolResultDataClasses::{
-    stringResultData, HttpResponseData, ToolResultData,
 };
 
 #[derive(Clone, Debug)]
@@ -419,13 +419,12 @@ impl ToolExecutor for HttpToolExecutor {
                     .as_str(),
             ),
             HttpToolOperation::MultipartRequest => ToolEffect::WRITE,
-            HttpToolOperation::ManageCookies => match parameterValue(tool, "action")
-                .to_lowercase()
-                .as_str()
-            {
-                "get" | "" => ToolEffect::READ,
-                _ => ToolEffect::WRITE,
-            },
+            HttpToolOperation::ManageCookies => {
+                match parameterValue(tool, "action").to_lowercase().as_str() {
+                    "get" | "" => ToolEffect::READ,
+                    _ => ToolEffect::WRITE,
+                }
+            }
         };
         Ok(ToolAccessSpec {
             effect,

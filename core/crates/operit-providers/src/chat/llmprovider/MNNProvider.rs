@@ -1,4 +1,4 @@
-use super::AIService::AIService;
+use crate::chat::llmprovider::AIService::AIService;
 
 pub struct MNNProvider;
 

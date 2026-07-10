@@ -1,17 +1,16 @@
 use std::sync::Arc;
-use std::time::Duration;
 
-use operit_model::PromptTurn::PromptTurn;
+use async_trait::async_trait;
+pub use operit_model::ChatMessage::SharedAiResponseStream;
 use operit_model::ModelParameter::ModelParameter;
 use operit_model::OpenAIModels::ModelOption;
-pub use operit_model::ChatMessage::SharedAiResponseStream;
+use operit_model::PromptTurn::PromptTurn;
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel, DelegatingRevisableSharedTextStream,
     RevisableTextStreamLike,
 };
 use operit_util::stream::Stream::VecStream;
-use async_trait::async_trait;
 use serde_json::Value;
 use thiserror::Error;
 
@@ -103,12 +102,6 @@ pub fn retry_error_text(error: &AiServiceError) -> String {
 /// Formats a retry progress message for the given retry attempt number.
 pub fn retry_message(error_text: &str, retry_number: i32) -> String {
     format!("{error_text}，正在进行第 {retry_number} 次重试...")
-}
-
-/// Waits for the retry delay configured by the shared LLM retry policy.
-pub async fn delay_retry_ms(retry_attempt: i32) {
-    let delay_ms = super::LlmRetryPolicy::LlmRetryPolicy::nextDelayMs(retry_attempt);
-    tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
 }
 
 /// Common async interface implemented by every model provider.

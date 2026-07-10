@@ -1,5 +1,5 @@
-#[allow(non_snake_case)]
 /// Builds the JavaScript bridge used while registering a tool package.
+#[allow(non_snake_case)]
 pub fn buildToolPkgRegistrationBridgeScript() -> String {
     r#"
     (function() {

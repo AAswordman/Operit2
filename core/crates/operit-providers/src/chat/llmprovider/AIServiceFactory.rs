@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use super::AIService::AiServiceError;
+use crate::chat::llmprovider::AIService::AiServiceError;
 use operit_model::ModelConfigData::{ApiProviderType, ModelBuiltinTool, ResolvedModelConfig};
 
 /// Trace metadata attached to one outbound LLM request attempt.

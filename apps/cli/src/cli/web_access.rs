@@ -273,12 +273,15 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     core.localApplicationMut().onCreate()?;
     {
         let application = core.localApplicationMut();
+        let enhanced_ai_service = EnhancedAIService::new(
+            application.toolHandler.clone(),
+            application.providerRuntimeContext.clone(),
+        );
         let mut holder = application
             .chatRuntimeHolder
             .try_lock()
             .map_err(|_| "Chat runtime holder is busy".to_string())?;
-        holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService =
-            Some(EnhancedAIService::new(ConversationService));
+        holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService = Some(enhanced_ai_service);
     }
     super::link::install_link_permission_requester(&mut core);
 

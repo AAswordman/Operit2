@@ -6,12 +6,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 use operit_host_api::{WebVisitHost, WebVisitRequest, WebVisitResult};
 use url::Url;
 
+use operit_tools::tools::ToolResultDataClasses::{
+    stringResultData, LinkData, ToolResultData, VisitWebResultData,
+};
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
-};
-use operit_tools::tools::ToolResultDataClasses::{
-    stringResultData, LinkData, ToolResultData, VisitWebResultData,
 };
 
 #[derive(Clone)]

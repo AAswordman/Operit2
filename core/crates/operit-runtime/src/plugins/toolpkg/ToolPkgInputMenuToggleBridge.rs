@@ -7,12 +7,13 @@ use serde_json::Value;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgInputMenuToggleHookRegistration,
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_INPUT_MENU_TOGGLE;
+use operit_plugin_sdk::toolpkg::ToolPkgHooks::{
+    decodeToolPkgHookResult, ToolPkgInputMenuToggleHookRegistration,
 };
-use operit_tools::tools::packTool::PackageManager::PackageManager;
-use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_INPUT_MENU_TOGGLE;
-use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_util::AppLogger::AppLogger;
 
 static INPUT_MENU_HOOKS: OnceLock<Mutex<Vec<ToolPkgInputMenuToggleHookRegistration>>> =
@@ -123,20 +124,22 @@ impl InputMenuTogglePluginRegistry {
     }
 }
 
-pub struct ToolPkgInputMenuToggleBridge;
+pub struct ToolPkgInputMenuToggleBridge {
+    runtime: ToolPkgBridgeRuntime,
+}
 
 impl ToolPkgInputMenuToggleBridge {
-    pub fn new() -> Self {
-        Self
+    /// Creates an input menu bridge for one application runtime.
+    pub fn new(runtime: ToolPkgBridgeRuntime) -> Self {
+        Self { runtime }
     }
 
-    pub fn register() {
-        static INSTALLED: AtomicBool = AtomicBool::new(false);
-        if INSTALLED.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        InputMenuTogglePluginRegistry::register(Arc::new(BridgePlugin));
-        let manager = toolPkgPackageManager();
+    /// Registers input menu hooks for one application runtime.
+    pub fn register(runtime: ToolPkgBridgeRuntime) {
+        InputMenuTogglePluginRegistry::register(Arc::new(BridgePlugin {
+            runtime: runtime.clone(),
+        }));
+        let manager = runtime.package_manager();
         manager.addToolPkgRuntimeChangeListener(Arc::new(|activeContainers| {
             ToolPkgInputMenuToggleBridge::syncToolPkgRegistrations(activeContainers);
         }));
@@ -186,6 +189,7 @@ impl ToolPkgInputMenuToggleBridge {
 
     #[allow(non_snake_case)]
     pub fn createToggleDefinitions(
+        &self,
         chatId: Option<String>,
         featureStates: BTreeMap<String, bool>,
         runtime: Option<String>,
@@ -218,11 +222,16 @@ impl ToolPkgInputMenuToggleBridge {
         featureStates: BTreeMap<String, bool>,
         runtime: Option<String>,
     ) -> Vec<InputMenuToggleDefinitionSnapshot> {
-        Self::createToggleDefinitions(chatId, featureStates, runtime)
+        self.createToggleDefinitions(chatId, featureStates, runtime)
     }
 
     #[allow(non_snake_case)]
-    pub fn triggerToggle(toggleId: &str, chatId: Option<String>, runtime: Option<String>) -> bool {
+    pub fn triggerToggle(
+        &self,
+        toggleId: &str,
+        chatId: Option<String>,
+        runtime: Option<String>,
+    ) -> bool {
         let normalizedToggleId = toggleId.trim();
         if normalizedToggleId.is_empty() {
             return false;
@@ -241,7 +250,7 @@ impl ToolPkgInputMenuToggleBridge {
         let Some(spec) = specs.into_iter().find(|spec| spec.id == normalizedToggleId) else {
             return false;
         };
-        launchToggle(spec, params);
+        launchToggle(self.runtime.clone(), spec, params);
         true
     }
 
@@ -253,7 +262,7 @@ impl ToolPkgInputMenuToggleBridge {
         chatId: Option<String>,
         runtime: Option<String>,
     ) -> bool {
-        Self::triggerToggle(&toggleId, chatId, runtime)
+        self.triggerToggle(&toggleId, chatId, runtime)
     }
 
     #[allow(non_snake_case)]
@@ -263,7 +272,9 @@ impl ToolPkgInputMenuToggleBridge {
     }
 }
 
-struct BridgePlugin;
+struct BridgePlugin {
+    runtime: ToolPkgBridgeRuntime,
+}
 
 impl InputMenuTogglePlugin for BridgePlugin {
     fn id(&self) -> &str {
@@ -299,12 +310,17 @@ impl InputMenuTogglePlugin for BridgePlugin {
             || !HAS_LOADED_ONCE.load(Ordering::SeqCst)
             || LAST_HOOK_REGISTRY_VERSION.load(Ordering::SeqCst) != registryVersion
         {
-            triggerRefresh(params, registryVersion, &paramsCacheKey);
+            triggerRefresh(
+                self.runtime.clone(),
+                params,
+                registryVersion,
+                &paramsCacheKey,
+            );
             if cachedSpecs.is_empty() {
                 return vec![createLoadingToggle()];
             }
         }
-        buildToggleDefinitions(&cachedSpecs, params)
+        buildToggleDefinitions(&self.runtime, &cachedSpecs, params)
     }
 }
 
@@ -332,6 +348,7 @@ fn buildCacheKey(params: &InputMenuToggleHookParams) -> String {
 
 #[allow(non_snake_case)]
 fn buildToggleDefinitions(
+    runtime: &ToolPkgBridgeRuntime,
     specs: &[InputMenuSpec],
     params: &InputMenuToggleHookParams,
 ) -> Vec<InputMenuToggleDefinition> {
@@ -348,6 +365,7 @@ fn buildToggleDefinitions(
                 .unwrap_or(spec.isChecked);
             let specForToggle = spec.clone();
             let paramsForToggle = params.clone();
+            let runtimeForToggle = runtime.clone();
             InputMenuToggleDefinition {
                 id: spec.id.clone(),
                 title: Some(spec.title.clone()),
@@ -364,7 +382,11 @@ fn buildToggleDefinitions(
                         (paramsForToggle.onToggleFeature)(specForToggle.id.clone());
                         return;
                     }
-                    launchToggle(specForToggle.clone(), paramsForToggle.clone());
+                    launchToggle(
+                        runtimeForToggle.clone(),
+                        specForToggle.clone(),
+                        paramsForToggle.clone(),
+                    );
                 }),
             }
         })
@@ -386,7 +408,12 @@ fn createLoadingToggle() -> InputMenuToggleDefinition {
 }
 
 #[allow(non_snake_case)]
-fn triggerRefresh(params: &InputMenuToggleHookParams, registryVersion: i64, paramsCacheKey: &str) {
+fn triggerRefresh(
+    runtime: ToolPkgBridgeRuntime,
+    params: &InputMenuToggleHookParams,
+    registryVersion: i64,
+    paramsCacheKey: &str,
+) {
     if !REFRESH_FLAG
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_ok()
@@ -396,7 +423,7 @@ fn triggerRefresh(params: &InputMenuToggleHookParams, registryVersion: i64, para
     let paramsForRefresh = params.clone();
     let paramsCacheKeyForRefresh = paramsCacheKey.to_string();
     launchTask(move || {
-        let resolved = loadSpecs(&paramsForRefresh);
+        let resolved = loadSpecs(&runtime, &paramsForRefresh);
         *INPUT_MENU_SPECS_CACHE
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
@@ -414,14 +441,17 @@ fn triggerRefresh(params: &InputMenuToggleHookParams, registryVersion: i64, para
 }
 
 #[allow(non_snake_case)]
-fn loadSpecs(params: &InputMenuToggleHookParams) -> Vec<InputMenuSpec> {
+fn loadSpecs(
+    runtime: &ToolPkgBridgeRuntime,
+    params: &InputMenuToggleHookParams,
+) -> Vec<InputMenuSpec> {
     let registeredHooks = INPUT_MENU_HOOKS
         .get_or_init(|| Mutex::new(Vec::new()))
         .lock()
         .expect("toolpkg input menu hook mutex poisoned")
         .clone();
     let mut resolved = Vec::new();
-    let manager = packageManager(params);
+    let manager = runtime.package_manager();
     for hook in registeredHooks {
         let result = manager.runToolPkgMainHook(
             &hook.containerPackageName,
@@ -555,8 +585,12 @@ fn inputMenuDefinitionArray(decoded: Option<&Value>) -> Option<Vec<Value>> {
 }
 
 #[allow(non_snake_case)]
-fn runInputMenuToggleHook(spec: &InputMenuSpec, params: &InputMenuToggleHookParams) {
-    let manager = packageManager(params);
+fn runInputMenuToggleHook(
+    runtime: &ToolPkgBridgeRuntime,
+    spec: &InputMenuSpec,
+    params: &InputMenuToggleHookParams,
+) {
+    let manager = runtime.package_manager();
     if let Err(error) = manager.runToolPkgMainHook(
         &spec.containerPackageName,
         &spec.functionName,
@@ -585,18 +619,17 @@ fn runInputMenuToggleHook(spec: &InputMenuSpec, params: &InputMenuToggleHookPara
 }
 
 #[allow(non_snake_case)]
-fn launchToggle(spec: InputMenuSpec, params: InputMenuToggleHookParams) {
+fn launchToggle(
+    runtime: ToolPkgBridgeRuntime,
+    spec: InputMenuSpec,
+    params: InputMenuToggleHookParams,
+) {
     launchTask(move || {
-        runInputMenuToggleHook(&spec, &params);
+        runInputMenuToggleHook(&runtime, &spec, &params);
         let registryVersion = HOOK_REGISTRY_VERSION.load(Ordering::SeqCst);
         let paramsCacheKey = buildCacheKey(&params);
-        triggerRefresh(&params, registryVersion, &paramsCacheKey);
+        triggerRefresh(runtime, &params, registryVersion, &paramsCacheKey);
     });
-}
-
-#[allow(non_snake_case)]
-fn packageManager(_params: &InputMenuToggleHookParams) -> PackageManager {
-    toolPkgPackageManager()
 }
 
 #[cfg(not(target_arch = "wasm32"))]

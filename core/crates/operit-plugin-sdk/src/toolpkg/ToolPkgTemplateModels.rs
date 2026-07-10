@@ -1,4 +1,4 @@
-use super::super::ToolPackage::LocalizedText;
+use crate::package::LocalizedText;
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ToolPkgManifestWorkflowTemplate {

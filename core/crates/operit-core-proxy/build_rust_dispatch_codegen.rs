@@ -340,20 +340,7 @@ fn render_string_constructible_dispatch(object: &SourceObject, mode: DispatchMod
         })
         .collect::<Vec<_>>()
         .join(" && ");
-    let dispatch = match mode {
-        DispatchMode::Call => format!(
-            "            return generated_dispatch_{}_call(&mut object, request).await;\n",
-            object.dispatch_name
-        ),
-        DispatchMode::WatchSnapshot => format!(
-            "            generated_dispatch_{}_watch_snapshot(&mut object, &request)?\n",
-            object.dispatch_name
-        ),
-        DispatchMode::Watch => format!(
-            "            return generated_dispatch_{}_watch(&mut object, request);\n",
-            object.dispatch_name
-        ),
-    };
+    let dispatch = render_constructed_dispatch(object, mode);
     format!(
         "        _ if request.targetPath.segments.len() == {} && {} => {{\n{}{}        }}\n",
         len + 1,
@@ -382,20 +369,7 @@ fn render_factory_constructible_dispatch(object: &SourceObject, mode: DispatchMo
         })
         .collect::<Vec<_>>()
         .join(" && ");
-    let dispatch = match mode {
-        DispatchMode::Call => format!(
-            "            return generated_dispatch_{}_call(&mut object, request).await;\n",
-            object.dispatch_name
-        ),
-        DispatchMode::WatchSnapshot => format!(
-            "            generated_dispatch_{}_watch_snapshot(&mut object, &request)?\n",
-            object.dispatch_name
-        ),
-        DispatchMode::Watch => format!(
-            "            return generated_dispatch_{}_watch(&mut object, request);\n",
-            object.dispatch_name
-        ),
-    };
+    let dispatch = render_constructed_dispatch(object, mode);
     format!(
         "        _ if request.targetPath.segments.len() == {} && {} => {{\n{}{}        }}\n",
         len + factory_arg_types.len(),
@@ -491,6 +465,8 @@ fn render_object_constructor(object: &SourceObject) -> String {
             parent_access,
             factory_method,
             factory_arg_types,
+            returns_result,
+            returns_arc_mutex,
             ..
         } => render_factory_object_constructor(
             object,
@@ -498,6 +474,8 @@ fn render_object_constructor(object: &SourceObject) -> String {
             parent_access,
             factory_method,
             factory_arg_types,
+            *returns_result,
+            *returns_arc_mutex,
         ),
         ObjectAccess::Application | ObjectAccess::ChatRuntimeMain => String::new(),
     }
@@ -509,6 +487,8 @@ fn render_factory_object_constructor(
     parent_access: &ObjectAccess,
     factory_method: &str,
     factory_arg_types: &[String],
+    returns_result: bool,
+    returns_arc_mutex: bool,
 ) -> String {
     let base_index = object.schema_key.split('.').count();
     let mut output = String::new();
@@ -518,7 +498,11 @@ fn render_factory_object_constructor(
             "            let __core_factory_arg_{index} = request.targetPath.segments.get({segment_index}).cloned().ok_or_else(|| operit_link::CoreLinkError::internal(\"missing object factory argument\"))?;\n"
         ));
     }
-    output.push_str("            let mut object = {\n");
+    if returns_arc_mutex {
+        output.push_str("            let object = {\n");
+    } else {
+        output.push_str("            let mut object = {\n");
+    }
     output.push_str(&render_object_constructor_for_access(
         "__core_parent_object",
         parent_full_type,
@@ -538,8 +522,13 @@ fn render_factory_object_constructor(
         output.push_str("            let mut __core_parent_object = __core_parent_object.lock().expect(\"core proxy object mutex poisoned\");\n");
     }
     output.push_str(&format!(
-        "                __core_parent_object.{factory_method}({factory_args})\n"
+        "                __core_parent_object.{factory_method}({factory_args})"
     ));
+    if returns_result {
+        output
+            .push_str(".map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?");
+    }
+    output.push('\n');
     output.push_str("            };\n");
     output
 }
@@ -550,6 +539,9 @@ fn render_object_constructor_for_access(
     access: &ObjectAccess,
 ) -> String {
     match access {
+        ObjectAccess::Application => {
+            format!("            let {variable_name} = &mut proxy.application;\n")
+        }
         ObjectAccess::DefaultConstruct => {
             format!("            let mut {variable_name} = {full_type}::default();\n")
         }
@@ -606,7 +598,6 @@ fn render_object_constructor_for_access(
         }
         ObjectAccess::StringNewConstruct
         | ObjectAccess::FactoryMethodConstruct { .. }
-        | ObjectAccess::Application
         | ObjectAccess::ChatRuntimeMain => String::new(),
     }
 }

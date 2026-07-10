@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -18,6 +19,7 @@ namespace {
 
 using BridgeHandle = void*;
 using BridgeCreate = BridgeHandle (*)();
+using BridgeCreateWithStorageRoot = BridgeHandle (*)(const char*);
 using BridgeCreateError = char* (*)();
 using BridgeDestroy = void (*)(BridgeHandle);
 using BridgeCall = char* (*)(BridgeHandle, const unsigned char*, size_t);
@@ -64,6 +66,48 @@ std::string json_string(const std::string& value) {
   return output;
 }
 
+/// Resolves the requested Linux storage root into a normalized path.
+bool resolve_linux_storage_root(const std::string& requested,
+                                std::string* storage_root,
+                                std::string* error) {
+  if (storage_root == nullptr) {
+    if (error != nullptr) {
+      *error = "storage root output is required";
+    }
+    return false;
+  }
+  if (!requested.empty()) {
+    *storage_root =
+        std::filesystem::path(requested).lexically_normal().string();
+    return true;
+  }
+  const gchar* user_data_dir = g_get_user_data_dir();
+  if (user_data_dir == nullptr || user_data_dir[0] == '\0') {
+    if (error != nullptr) {
+      *error = "Linux user data directory is required for Operit2 storage";
+    }
+    return false;
+  }
+  *storage_root =
+      (std::filesystem::path(user_data_dir) / "operit2").string();
+  return true;
+}
+
+/// Builds Flutter storage path values for a resolved Linux root.
+FlValue* linux_storage_paths(const std::string& storage_root) {
+  const std::filesystem::path root(storage_root);
+  FlValue* paths = fl_value_new_map();
+  fl_value_set_string_take(
+      paths, "storageRoot", fl_value_new_string(root.string().c_str()));
+  fl_value_set_string_take(
+      paths, "runtimeRoot",
+      fl_value_new_string((root / "runtime").string().c_str()));
+  fl_value_set_string_take(
+      paths, "workspaceRoot",
+      fl_value_new_string((root / "workspaces").string().c_str()));
+  return paths;
+}
+
 class OperitRuntimeLibrary {
  public:
   OperitRuntimeLibrary() = default;
@@ -79,6 +123,7 @@ class OperitRuntimeLibrary {
   }
 
   bool EnsureReady(std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (handle_ != nullptr) {
       return true;
     }
@@ -91,6 +136,11 @@ class OperitRuntimeLibrary {
       create_ =
           reinterpret_cast<BridgeCreate>(
               dlsym(library_, "operit_flutter_bridge_create"));
+      create_with_storage_root_ =
+          reinterpret_cast<BridgeCreateWithStorageRoot>(
+              dlsym(
+                  library_,
+                  "operit_flutter_bridge_create_with_storage_root"));
       create_error_ = reinterpret_cast<BridgeCreateError>(
           dlsym(library_, "operit_flutter_bridge_create_error"));
       destroy_ = reinterpret_cast<BridgeDestroy>(
@@ -107,7 +157,7 @@ class OperitRuntimeLibrary {
           dlsym(library_, "operit_flutter_bridge_close_watch_stream"));
       free_string_ = reinterpret_cast<BridgeFreeString>(
           dlsym(library_, "operit_flutter_bridge_free_string"));
-      if (create_ == nullptr ||
+      if (create_ == nullptr || create_with_storage_root_ == nullptr ||
           destroy_ == nullptr || call_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
           next_watch_channel_event_ == nullptr ||
@@ -116,7 +166,12 @@ class OperitRuntimeLibrary {
         return false;
       }
     }
-    handle_ = create_();
+    std::string storage_root;
+    if (!resolve_linux_storage_root(
+            configured_storage_root_, &storage_root, error)) {
+      return false;
+    }
+    handle_ = create_with_storage_root_(storage_root.c_str());
     if (handle_ == nullptr) {
       AssignError(error, ReadCreateError());
       return false;
@@ -174,6 +229,23 @@ class OperitRuntimeLibrary {
     return TakeBridgeString(raw_response, response, error);
   }
 
+  /// Sets the storage root used when the runtime handle is created.
+  bool SetStorageRoot(const std::string& storage_root, std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (handle_ != nullptr) {
+      AssignError(
+          error,
+          "Runtime storage root cannot change after runtime creation");
+      return false;
+    }
+    std::string resolved;
+    if (!resolve_linux_storage_root(storage_root, &resolved, error)) {
+      return false;
+    }
+    configured_storage_root_ = std::move(resolved);
+    return true;
+  }
+
  private:
   static void AssignError(std::string* target, const char* value) {
     if (target != nullptr) {
@@ -214,7 +286,10 @@ class OperitRuntimeLibrary {
 
   void* library_ = nullptr;
   BridgeHandle handle_ = nullptr;
+  std::string configured_storage_root_;
+  std::mutex mutex_;
   BridgeCreate create_ = nullptr;
+  BridgeCreateWithStorageRoot create_with_storage_root_ = nullptr;
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
   BridgeCall call_ = nullptr;
@@ -311,6 +386,48 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
   const gchar* method = fl_method_call_get_name(method_call);
   std::string response_text;
   std::string error;
+  if (strcmp(method, "localRuntimeStoragePaths") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    const gchar* requested_root = nullptr;
+    if (args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
+      requested_root = string_map_value(args, "storageRoot");
+    }
+    if (requested_root == nullptr) {
+      respond_error(
+          method_call, "INVALID_ARGS",
+          "localRuntimeStoragePaths expects storageRoot");
+      return;
+    }
+    std::string storage_root;
+    if (!resolve_linux_storage_root(
+            requested_root, &storage_root, &error)) {
+      respond_error(
+          method_call, "RUNTIME_STORAGE_PATHS_ERROR", error);
+      return;
+    }
+    g_autoptr(FlValue) result = linux_storage_paths(storage_root);
+    respond_success_value(method_call, result);
+    return;
+  }
+  if (strcmp(method, "setLocalRuntimeStorage") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    const gchar* storage_root = nullptr;
+    if (args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
+      storage_root = string_map_value(args, "storageRoot");
+    }
+    if (storage_root == nullptr) {
+      respond_error(
+          method_call, "INVALID_ARGS",
+          "setLocalRuntimeStorage expects storageRoot");
+      return;
+    }
+    if (!g_operit_runtime_library->SetStorageRoot(storage_root, &error)) {
+      respond_error(method_call, "RUNTIME_STORAGE_SET_ERROR", error);
+      return;
+    }
+    respond_success_value(method_call, nullptr);
+    return;
+  }
   if (strcmp(method, "call") == 0) {
     FlValue* args = fl_method_call_get_args(method_call);
     if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {

@@ -3,14 +3,14 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use operit_tools::ConversationMarkupManager::{ConversationMarkupManager, ToolResult};
+use crate::runtime_support::ResolvedCharacterCardToolAccess;
 use operit_tools::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
 };
-use operit_tools::tools::packTool::PackageManager::PackageManager;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::ToolResultDataClasses::stringResultData;
-use crate::runtime_support::{toolRuntimeSupport, ResolvedCharacterCardToolAccess};
+use operit_tools::ConversationMarkupManager::{ConversationMarkupManager, ToolResult};
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 
@@ -196,7 +196,7 @@ impl ToolExecutionManager {
     pub fn executeInvocations(
         invocations: &[ToolInvocation],
         toolHandler: &mut AIToolHandler,
-        packageManager: &PackageManager,
+        packageManager: &RuntimePackageManager,
         callerName: Option<String>,
         callerChatId: Option<String>,
         callerCardId: Option<String>,
@@ -223,7 +223,8 @@ impl ToolExecutionManager {
             ),
         );
         toolHandler.registerDefaultTools();
-        let roleCardToolAccess = toolRuntimeSupport().resolveCharacterCardToolAccess(
+        let runtimeSupport = toolHandler.runtimeSupport();
+        let roleCardToolAccess = runtimeSupport.resolveCharacterCardToolAccess(
             callerCardId.as_deref(),
             packageManager,
             None,
@@ -759,7 +760,9 @@ pub enum ToolEffect {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolBoundary {
     None,
-    FilePath { effect: ToolEffect },
+    FilePath {
+        effect: ToolEffect,
+    },
     FilePair {
         source: ToolEffect,
         destination: ToolEffect,

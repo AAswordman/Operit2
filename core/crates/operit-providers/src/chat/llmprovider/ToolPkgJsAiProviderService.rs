@@ -3,19 +3,17 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::AIService::{
+use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
 };
-use operit_model::PromptTurn::PromptTurn;
-use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::{
-    TOOLPKG_EVENT_AI_PROVIDER_CALCULATE_INPUT_TOKENS, TOOLPKG_EVENT_AI_PROVIDER_LIST_MODELS,
-    TOOLPKG_EVENT_AI_PROVIDER_SEND_MESSAGE, TOOLPKG_EVENT_AI_PROVIDER_TEST_CONNECTION,
-};
+use crate::runtime_support::{ProviderRuntimeContext, ProviderToolPkgAiProviderRegistration};
 use operit_model::ModelConfigData::ResolvedModelConfig;
 use operit_model::OpenAIModels::ModelOption;
+use operit_model::PromptTurn::PromptTurn;
 use operit_model::ToolPrompt::ToolPrompt;
-use crate::runtime_support::{
-    providerRuntimeSupport, ProviderToolPkgAiProviderRegistration,
+use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::{
+    TOOLPKG_EVENT_AI_PROVIDER_CALCULATE_INPUT_TOKENS, TOOLPKG_EVENT_AI_PROVIDER_LIST_MODELS,
+    TOOLPKG_EVENT_AI_PROVIDER_SEND_MESSAGE, TOOLPKG_EVENT_AI_PROVIDER_TEST_CONNECTION,
 };
 use operit_util::stream::RevisableTextStream::RevisableTextStreamLike;
 use operit_util::stream::RevisableTextStream::{
@@ -29,6 +27,7 @@ pub struct ToolPkgJsAiProviderService {
     tokenCounts: Arc<Mutex<ToolPkgProviderTokenCounts>>,
     executionChatId: String,
     providerRuntimeContextKey: String,
+    runtimeContext: ProviderRuntimeContext,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -39,9 +38,11 @@ struct ToolPkgProviderTokenCounts {
 }
 
 impl ToolPkgJsAiProviderService {
+    /// Creates a ToolPkg-backed provider bound to one provider runtime context.
     pub fn new(
         config: ResolvedModelConfig,
         provider: ProviderToolPkgAiProviderRegistration,
+        runtimeContext: ProviderRuntimeContext,
     ) -> Self {
         let normalizedProviderId = provider.providerId.trim().to_ascii_lowercase();
         Self {
@@ -57,6 +58,7 @@ impl ToolPkgJsAiProviderService {
             config,
             provider,
             tokenCounts: Arc::new(Mutex::new(ToolPkgProviderTokenCounts::default())),
+            runtimeContext,
         }
     }
 
@@ -77,7 +79,9 @@ impl ToolPkgJsAiProviderService {
             );
         }
         let sourceKey = format!("{}:{}", self.provider.providerId, event);
-        let raw = providerRuntimeSupport()?
+        let raw = self
+            .runtimeContext
+            .support()
             .runToolPkgAiProviderHook(
                 &self.provider.containerPackageName,
                 functionName,
@@ -91,12 +95,11 @@ impl ToolPkgJsAiProviderService {
                 onIntermediateResult,
             )
             .map_err(AiServiceError::RequestFailed)?;
-        providerRuntimeSupport()?
+        self.runtimeContext
+            .support()
             .decodeToolPkgHookResult(raw)
             .ok_or_else(|| {
-                AiServiceError::RequestFailed(
-                    "ToolPkg AI provider call returned null".to_string(),
-                )
+                AiServiceError::RequestFailed("ToolPkg AI provider call returned null".to_string())
             })
     }
 
@@ -263,7 +266,7 @@ impl AIService for ToolPkgJsAiProviderService {
         let has_intermediate_text_chunk_for_callback = has_intermediate_text_chunk.clone();
         let token_counts = self.tokenCounts.clone();
         let on_non_fatal_error = request.on_non_fatal_error.clone();
-        let runtime_support = providerRuntimeSupport()?;
+        let runtime_support = self.runtimeContext.shared_support();
         let decoded = self.invokeProviderFunction(
             &self.provider.sendMessageFunctionName,
             self.provider.sendMessageFunctionSource.as_deref(),

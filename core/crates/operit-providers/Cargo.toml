@@ -3,18 +3,24 @@ name = "operit-providers"
 version = "2.0.0-preview.3"
 edition.workspace = true
 license.workspace = true
-publish.workspace = true
+publish = true
+description = "Provider contracts and built-in provider implementations for Operit."
+readme = "README.md"
+repository = "https://github.com/AAswordman/Operit2"
+documentation = "https://docs.rs/operit-providers"
 
 [dependencies]
 async-trait.workspace = true
 base64.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
-operit-host-api = { path = "../operit-host-api" }
-operit-model = { path = "../operit-model" }
-operit-store = { path = "../operit-store" }
-operit-tools = { path = "../operit-tools" }
-operit-util = { path = "../operit-util" }
+json5.workspace = true
+operit-host-api = { version = "0.1.0", path = "../operit-host-api" }
+operit-model = { version = "2.0.0-preview.3", path = "../operit-model" }
+operit-plugin-sdk = { version = "2.0.0-preview.3", path = "../operit-plugin-sdk" }
+operit-store = { version = "0.1.0", path = "../operit-store" }
+operit-tools = { version = "2.0.0-preview.3", path = "../operit-tools", default-features = false }
+operit-util = { version = "2.0.0-preview.3", path = "../operit-util" }
 regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -25,4 +31,3 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 url = "2"
 uuid.workspace = true
 zip.workspace = true
-json5.workspace = true

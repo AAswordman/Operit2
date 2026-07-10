@@ -63,7 +63,8 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
   String? _progressMessage;
   ArtifactPublishClusterContext? _publishContext;
   _PendingMarketRegistration? _pendingMarketRegistration;
-  List<core_proxy.MarketCategoryInfo> _categories = <core_proxy.MarketCategoryInfo>[];
+  List<core_proxy.MarketCategoryInfo> _categories =
+      <core_proxy.MarketCategoryInfo>[];
   String? _selectedCategoryId;
   List<core_proxy.PublishablePackageSource> _sources =
       <core_proxy.PublishablePackageSource>[];
@@ -93,7 +94,8 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
       _errorMessage = null;
     });
     try {
-      final manifest = await widget.clients.providersMarketStatsApiService.getManifest();
+      final manifest = await widget.clients.providersMarketStatsApiService
+          .getManifest();
       final loadedSources = await _loadPublishablePackageSources(
         widget.clients,
       );
@@ -113,7 +115,8 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
       }
       setState(() {
         _categories = manifest.categories;
-        _selectedCategoryId = _selectedCategoryId ?? _defaultCategoryId(manifest.categories);
+        _selectedCategoryId =
+            _selectedCategoryId ?? _defaultCategoryId(manifest.categories);
         _sources = sources;
         if (sources.isEmpty) {
           _selectedSource = null;
@@ -589,18 +592,24 @@ class _PublishContinuationPanel extends StatelessWidget {
           children: <Widget>[
             Text(
               '为现有 Artifact 发布新版本',
-              style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              style: textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 6),
             Text(
               'Entry ID: ${contextInfo.entryId}',
-              style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+              style: textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
             ),
             if (contextInfo.lockedDisplayName.trim().isNotEmpty) ...<Widget>[
               const SizedBox(height: 4),
               Text(
                 '插件名字将沿用 ${contextInfo.lockedDisplayName.trim()}',
-                style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                style: textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
           ],
@@ -733,8 +742,7 @@ class _RegistrationRetryRequired implements Exception {
 
 Future<List<core_proxy.PublishablePackageSource>>
 _loadPublishablePackageSources(GeneratedCoreProxyClients clients) async {
-  return clients.permissionsPackToolPackageManager
-      .getPublishablePackageSources();
+  return clients.application.packageManager().getPublishablePackageSources();
 }
 
 Future<_PublishResult> _publishArtifact({
@@ -778,7 +786,8 @@ Future<_PublishResult> _publishArtifact({
   _validateAppVersionRange(normalizedMinVersion, normalizedMaxVersion);
 
   onProgress('正在读取 GitHub 账号');
-  final currentUser = await clients.providersMarketStatsApiService.getCurrentGithubUser();
+  final currentUser = await clients.providersMarketStatsApiService
+      .getCurrentGithubUser();
   final normalizedRuntimePackageId = _normalizeMarketArtifactId(
     source.packageName,
   );
@@ -802,7 +811,6 @@ Future<_PublishResult> _publishArtifact({
         "Continuation publish must keep runtime package id '$contextRuntimePackageId'",
       );
     }
-
   }
 
   onProgress('正在准备 OperitForge');
@@ -1144,7 +1152,9 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
       entryDescription: canPatchEntry ? description : null,
       entryDetail: canPatchEntry ? detail : null,
       entryCategoryId: canPatchEntry ? categoryId : null,
-      entryAllowPublicUpdates: canPatchEntry ? payload['allowPublicUpdates'] == true : null,
+      entryAllowPublicUpdates: canPatchEntry
+          ? payload['allowPublicUpdates'] == true
+          : null,
     );
   }
   return clients.providersMarketStatsApiService.publishArtifact(

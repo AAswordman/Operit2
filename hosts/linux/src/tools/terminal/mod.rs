@@ -85,15 +85,17 @@ impl TerminalHost for LinuxTerminalHost {
     fn startPtySession(
         &self,
         sessionName: &str,
+        terminalType: &str,
         workingDir: &str,
         rows: u16,
         cols: u16,
     ) -> HostResult<String> {
         let normalizedSessionName = nonBlank(sessionName, "session_name")?;
+        let normalizedTerminalType = normalizeTerminalType(terminalType)?;
         let workDir = nonBlank(workingDir, "working_directory")?;
         let session = createPtySession(
             normalizedSessionName,
-            "linux".to_string(),
+            normalizedTerminalType,
             workDir,
             rows,
             cols,
@@ -1174,7 +1176,7 @@ fn toHostError(error: impl std::fmt::Display) -> HostError {
 #[allow(non_snake_case)]
 fn normalizeTerminalType(terminalType: &str) -> HostResult<String> {
     match terminalType.trim() {
-        "" | "linux" => Ok("linux".to_string()),
+        "linux" => Ok("linux".to_string()),
         value => Err(HostError::new(format!(
             "Unsupported terminal type for linux host: {value}"
         ))),
@@ -1406,6 +1408,7 @@ mod tests {
         let manual = host
             .startPtySession(
                 "linux_visible_manual",
+                "linux",
                 &std::env::current_dir().unwrap().display().to_string(),
                 24,
                 80,

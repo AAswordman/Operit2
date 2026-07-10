@@ -24,7 +24,9 @@ impl TtsConfigManager {
     /// Creates a text-to-speech configuration manager backed by runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(paths.tts_configs_preferences_path()),
+            dataStore: PreferencesDataStore::newEncryptedSynced(
+                paths.tts_configs_preferences_path(),
+            ),
             paths,
         }
     }

@@ -1,0 +1,12 @@
+[package]
+name = "operit-plugin-sdk-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Third-party embedding example for operit-plugin-sdk"
+
+[workspace]
+
+[dependencies]
+operit-plugin-sdk = { path = "../../crates/operit-plugin-sdk" }
+serde_json = "1"

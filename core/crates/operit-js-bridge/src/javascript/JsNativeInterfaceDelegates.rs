@@ -1,10 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::sync::{Mutex, OnceLock};
 
-use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
-use operit_tools::tools::AIToolHandler::AIToolHandler;
-use operit_tools::tools::ToolResultDataClasses::ToolResultData;
 use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit};
 use aes::{Aes128, Aes192, Aes256};
 use base64::Engine;
@@ -12,6 +9,9 @@ use flate2::read::DeflateDecoder;
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgba};
 use md5::{Digest, Md5};
+use operit_plugin_sdk::javascript::{
+    JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolCallResultData,
+};
 
 const BINARY_HANDLE_PREFIX: &str = "@binary_handle:";
 const BINARY_DATA_THRESHOLD: usize = 32 * 1024;
@@ -22,13 +22,7 @@ struct SerializedToolResultData {
     dataType: Option<&'static str>,
 }
 
-#[derive(Clone, Debug)]
-struct ParsedToolCall {
-    params: BTreeMap<String, String>,
-    fullToolName: String,
-    aiTool: AITool,
-}
-
+/// Builds the stable JavaScript error envelope for a rejected tool call.
 #[allow(non_snake_case)]
 fn buildToolErrorJson(message: &str) -> String {
     serde_json::json!({
@@ -38,12 +32,13 @@ fn buildToolErrorJson(message: &str) -> String {
     .to_string()
 }
 
+/// Parses fixed JavaScript tool-call arguments into the public SDK request.
 #[allow(non_snake_case)]
 fn parseToolCall(
     toolType: &str,
     toolName: &str,
     paramsJson: &str,
-) -> Result<ParsedToolCall, String> {
+) -> Result<JsToolCallRequest, String> {
     let normalizedToolName = toolName.trim();
     if normalizedToolName.is_empty() {
         return Err("Tool name cannot be empty".to_string());
@@ -54,37 +49,13 @@ fn parseToolCall(
     let object = value
         .as_object()
         .ok_or_else(|| "Tool params must be a JSON object".to_string())?;
-
-    let mut params = BTreeMap::new();
-    for (key, value) in object {
-        let text = match value {
-            serde_json::Value::Null => String::new(),
-            serde_json::Value::String(value) => value.clone(),
-            _ => value.to_string(),
-        };
-        params.insert(key.clone(), text);
-    }
-
-    let fullToolName = if !toolType.is_empty() && toolType != "default" {
-        format!("{toolType}:{normalizedToolName}")
-    } else {
-        normalizedToolName.to_string()
-    };
-    let toolParameters = params
-        .iter()
-        .map(|(name, value)| ToolParameter {
-            name: name.clone(),
-            value: value.clone(),
-        })
-        .collect();
-
-    Ok(ParsedToolCall {
-        params,
-        fullToolName: fullToolName.clone(),
-        aiTool: AITool {
-            name: fullToolName,
-            parameters: toolParameters,
-        },
+    Ok(JsToolCallRequest {
+        tool_type: toolType.trim().to_string(),
+        tool_name: normalizedToolName.to_string(),
+        parameters: object
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect(),
     })
 }
 
@@ -375,11 +346,10 @@ fn jsonIntArg(args: &[serde_json::Value], index: usize) -> Result<u32, String> {
     u32::try_from(value).map_err(|_| format!("Argument {index} must be an integer"))
 }
 
+/// Serializes one SDK tool result into the fixed JavaScript result envelope.
 #[allow(non_snake_case)]
-fn serializeToolExecutionResult(
-    result: &operit_tools::ConversationMarkupManager::ToolResult,
-) -> String {
-    let serializedData = serializeToolResultData(&result.result);
+fn serializeToolExecutionResult(result: &JsToolCallResult) -> String {
+    let serializedData = serializeToolResultData(&result.data);
     let mut object = serde_json::Map::new();
     object.insert(
         "success".to_string(),
@@ -401,50 +371,37 @@ fn serializeToolExecutionResult(
     serde_json::Value::Object(object).to_string()
 }
 
+/// Encodes generic SDK result data for JavaScript consumption.
 #[allow(non_snake_case)]
-fn serializeToolResultData(result: &ToolResultData) -> SerializedToolResultData {
+fn serializeToolResultData(result: &JsToolCallResultData) -> SerializedToolResultData {
     match result {
-        ToolResultData::BinaryResultData(data) => {
-            let encodedData = if data.value.len() > BINARY_DATA_THRESHOLD {
+        JsToolCallResultData::Binary(data) => {
+            let encodedData = if data.len() > BINARY_DATA_THRESHOLD {
                 let handle = uuid::Uuid::new_v4().to_string();
                 binaryDataRegistry()
                     .lock()
                     .expect("binary data registry mutex poisoned")
-                    .insert(handle.clone(), data.value.clone());
+                    .insert(handle.clone(), data.clone());
                 format!("{BINARY_HANDLE_PREFIX}{handle}")
             } else {
-                base64::engine::general_purpose::STANDARD.encode(&data.value)
+                base64::engine::general_purpose::STANDARD.encode(data)
             };
             SerializedToolResultData {
                 data: serde_json::Value::String(encodedData),
                 dataType: Some("base64"),
             }
         }
-        ToolResultData::StringResultData(data) => SerializedToolResultData {
-            data: serde_json::Value::String(data.value.clone()),
+        JsToolCallResultData::Value(data) => SerializedToolResultData {
+            data: data.clone(),
             dataType: None,
         },
-        ToolResultData::BooleanResultData(data) => SerializedToolResultData {
-            data: serde_json::Value::Bool(data.value),
-            dataType: None,
-        },
-        ToolResultData::IntResultData(data) => SerializedToolResultData {
-            data: serde_json::Value::Number(serde_json::Number::from(data.value)),
-            dataType: None,
-        },
-        _ => {
-            let jsonString = result.toJson();
-            SerializedToolResultData {
-                data: serde_json::from_str(&jsonString).expect("ToolResultData JSON parse failed"),
-                dataType: None,
-            }
-        }
     }
 }
 
+/// Executes one JavaScript tool call through the Rust runtime supplied by the caller.
 #[allow(non_snake_case)]
 pub fn callToolSync(
-    toolHandler: &AIToolHandler,
+    toolRuntime: &dyn JsExecutionHost,
     toolType: &str,
     toolName: &str,
     paramsJson: &str,
@@ -457,28 +414,21 @@ pub fn callToolSync(
         Ok(value) => value,
         Err(error) => return buildToolErrorJson(&error),
     };
-    let _ = parsed.params.len();
-    let _ = parsed.fullToolName.as_str();
-
-    let mut handler = toolHandler.clone();
-    let result = handler.executeTool(parsed.aiTool);
+    let result = toolRuntime.execute_tool_call(parsed);
     serializeToolExecutionResult(&result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{serializeToolExecutionResult, BINARY_DATA_THRESHOLD, BINARY_HANDLE_PREFIX};
-    use operit_tools::ConversationMarkupManager::ToolResult;
-    use operit_tools::tools::ToolResultDataClasses::{
-        BinaryResultData, StringResultData, TerminalCommandResultData, ToolResultData,
-    };
+    use operit_plugin_sdk::javascript::{JsToolCallResult, JsToolCallResultData};
     use serde_json::Value;
 
-    fn successResult(result: ToolResultData) -> ToolResult {
-        ToolResult {
-            toolName: "test_tool".to_string(),
+    /// Builds a successful SDK tool result for serialization tests.
+    fn successResult(data: JsToolCallResultData) -> JsToolCallResult {
+        JsToolCallResult {
             success: true,
-            result,
+            data,
             error: None,
         }
     }
@@ -486,9 +436,9 @@ mod tests {
     #[test]
     fn string_result_data_stays_literal_string_for_js_tool_result() {
         let payload = r#"{"__type":"PackageOwnedType","value":"plain package json"}"#;
-        let result = successResult(ToolResultData::StringResultData(StringResultData {
-            value: payload.to_string(),
-        }));
+        let result = successResult(JsToolCallResultData::Value(Value::String(
+            payload.to_string(),
+        )));
 
         let serialized: Value =
             serde_json::from_str(&serializeToolExecutionResult(&result)).expect("tool result JSON");
@@ -500,15 +450,15 @@ mod tests {
 
     #[test]
     fn structured_result_data_serializes_json_object_for_js_tool_result() {
-        let result = successResult(ToolResultData::TerminalCommandResultData(
-            TerminalCommandResultData {
-                command: "Write-Output ok".to_string(),
-                output: "ok\n".to_string(),
-                exitCode: 0,
-                sessionId: "session-1".to_string(),
-                timedOut: false,
-            },
-        ));
+        let result = successResult(JsToolCallResultData::Value(serde_json::json!({
+            "__type": "TerminalCommandResultData",
+            "command": "Write-Output ok",
+            "output": "ok\n",
+            "exitCode": 0,
+            "sessionId": "session-1",
+            "terminalType": "powershell",
+            "timedOut": false
+        })));
 
         let serialized: Value =
             serde_json::from_str(&serializeToolExecutionResult(&result)).expect("tool result JSON");
@@ -521,9 +471,7 @@ mod tests {
 
     #[test]
     fn binary_result_data_serializes_base64_metadata_for_js_tool_result() {
-        let result = successResult(ToolResultData::BinaryResultData(BinaryResultData {
-            value: b"hello".to_vec(),
-        }));
+        let result = successResult(JsToolCallResultData::Binary(b"hello".to_vec()));
 
         let serialized: Value =
             serde_json::from_str(&serializeToolExecutionResult(&result)).expect("tool result JSON");
@@ -534,9 +482,10 @@ mod tests {
 
     #[test]
     fn large_binary_result_data_serializes_handle_for_js_tool_result() {
-        let result = successResult(ToolResultData::BinaryResultData(BinaryResultData {
-            value: vec![7; BINARY_DATA_THRESHOLD + 1],
-        }));
+        let result = successResult(JsToolCallResultData::Binary(vec![
+            7;
+            BINARY_DATA_THRESHOLD + 1
+        ]));
 
         let serialized: Value =
             serde_json::from_str(&serializeToolExecutionResult(&result)).expect("tool result JSON");

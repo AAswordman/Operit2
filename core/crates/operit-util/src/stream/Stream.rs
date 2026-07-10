@@ -6,38 +6,45 @@ use crate::AppLogger::AppLogger;
 pub struct StreamLogger;
 
 impl StreamLogger {
+    /// Enables or disables stream diagnostics.
     pub fn set_enabled(enabled: bool) {
         ENABLED.store(enabled, Ordering::Relaxed);
     }
 
+    /// Enables or disables verbose stream diagnostics.
     pub fn set_verbose_enabled(enabled: bool) {
         VERBOSE_ENABLED.store(enabled, Ordering::Relaxed);
     }
 
+    /// Writes a debug-level stream diagnostic.
     pub fn d(component: &str, message: &str) {
         if ENABLED.load(Ordering::Relaxed) {
             AppLogger::d("StreamFramework", &format!("[{component}] {message}"));
         }
     }
 
+    /// Writes an info-level stream diagnostic.
     pub fn i(component: &str, message: &str) {
         if ENABLED.load(Ordering::Relaxed) {
             AppLogger::i("StreamFramework", &format!("[{component}] {message}"));
         }
     }
 
+    /// Writes a verbose stream diagnostic.
     pub fn v(component: &str, message: &str) {
         if ENABLED.load(Ordering::Relaxed) && VERBOSE_ENABLED.load(Ordering::Relaxed) {
             AppLogger::v("StreamFramework", &format!("[{component}] {message}"));
         }
     }
 
+    /// Writes a warning-level stream diagnostic.
     pub fn w(component: &str, message: &str) {
         if ENABLED.load(Ordering::Relaxed) {
             AppLogger::w("StreamFramework", &format!("[{component}] {message}"));
         }
     }
 
+    /// Writes an error-level stream diagnostic.
     pub fn e(component: &str, message: &str) {
         if ENABLED.load(Ordering::Relaxed) {
             AppLogger::e("StreamFramework", &format!("[{component}] {message}"));

@@ -1,7 +1,5 @@
 use crate::sqliteParams;
-use crate::SqliteStore::{
-    SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteValue,
-};
+use crate::SqliteStore::{SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteValue};
 
 use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use operit_model::MessageEntity::{ChatMessageCount, MessageEntity};

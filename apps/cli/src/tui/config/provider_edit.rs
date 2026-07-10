@@ -135,9 +135,7 @@ impl FormState {
         }
     }
 
-    pub(crate) fn new_edit(
-        profile: &operit_model::ModelConfigData::ProviderProfile,
-    ) -> Self {
+    pub(crate) fn new_edit(profile: &operit_model::ModelConfigData::ProviderProfile) -> Self {
         Self {
             fields: vec![
                 FormField {

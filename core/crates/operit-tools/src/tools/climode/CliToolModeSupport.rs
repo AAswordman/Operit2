@@ -2,16 +2,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use operit_host_api::HostEnvironmentDescriptor;
 
-use operit_host_api::HostManager::HostManager;
 use crate::runtime_support::{
-    toolRuntimeSupport, CachedMcpToolInfo, ResolvedCharacterCardToolAccess,
+    CachedMcpToolInfo, ResolvedCharacterCardToolAccess, ToolRuntimeSupport,
 };
-use crate::tools::packTool::PackageManager::PackageManager;
-use crate::tools::ToolPackage::{PackageTool, PackageToolParameter, ToolPackage};
 use crate::tools::mcp_runtime::MCPLocalServer::MCPLocalServer;
+use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
+use crate::tools::skill_runtime::SkillRepository::SkillRepository;
+use operit_host_api::HostManager::HostManager;
 use operit_model::ModelConfigData::ApiProviderType;
 use operit_model::ToolPrompt::{SystemToolPromptCategory, ToolParameterSchema, ToolPrompt};
-use crate::tools::skill_runtime::SkillRepository::SkillRepository;
+use operit_plugin_sdk::package::{PackageTool, PackageToolParameter, ToolPackage};
 
 pub const SEARCH_TOOL_NAME: &str = "search";
 pub const PROXY_TOOL_NAME: &str = "proxy";
@@ -233,13 +233,16 @@ impl CliToolModeSupport {
     #[allow(non_snake_case)]
     pub fn buildHiddenToolCatalog(
         context: &HostManager,
-        packageManager: &PackageManager,
+        packageManager: &RuntimePackageManager,
         useEnglish: bool,
         roleCardToolAccess: &ResolvedCharacterCardToolAccess,
         hostEnvironment: &HostEnvironmentDescriptor,
+        runtimeSupport: &dyn ToolRuntimeSupport,
     ) -> Vec<HiddenToolCatalogEntry> {
-        let categories = Self::buildBuiltinAndInternalCategories(useEnglish, hostEnvironment);
-        let builtinToolNames = Self::buildBuiltinToolNameSet(useEnglish, hostEnvironment);
+        let categories =
+            Self::buildBuiltinAndInternalCategories(useEnglish, hostEnvironment, runtimeSupport);
+        let builtinToolNames =
+            Self::buildBuiltinToolNameSet(useEnglish, hostEnvironment, runtimeSupport);
         let mut entries = BTreeMap::new();
 
         for category in categories {
@@ -305,7 +308,7 @@ impl CliToolModeSupport {
             }
         }
 
-        let skillPackages = toolRuntimeSupport().aiVisibleSkillPackages();
+        let skillPackages = runtimeSupport.aiVisibleSkillPackages();
         for skillPackage in skillPackages {
             if !roleCardToolAccess.isExternalSourceAllowed(&skillPackage.name) {
                 continue;
@@ -325,7 +328,7 @@ impl CliToolModeSupport {
             if !roleCardToolAccess.isExternalSourceAllowed(&serverName) {
                 continue;
             }
-            let cachedTools = toolRuntimeSupport().cachedMcpTools(&serverName);
+            let cachedTools = runtimeSupport.cachedMcpTools(&serverName);
             if cachedTools.is_empty() {
                 Self::addActivationEntry(
                     &mut entries,
@@ -547,16 +550,18 @@ impl CliToolModeSupport {
     fn buildBuiltinAndInternalCategories(
         useEnglish: bool,
         hostEnvironment: &HostEnvironmentDescriptor,
+        runtimeSupport: &dyn ToolRuntimeSupport,
     ) -> Vec<SystemToolPromptCategory> {
-        toolRuntimeSupport().buildBuiltinAndInternalCategories(useEnglish, hostEnvironment)
+        runtimeSupport.buildBuiltinAndInternalCategories(useEnglish, hostEnvironment)
     }
 
     #[allow(non_snake_case)]
     fn buildBuiltinToolNameSet(
         useEnglish: bool,
         hostEnvironment: &HostEnvironmentDescriptor,
+        runtimeSupport: &dyn ToolRuntimeSupport,
     ) -> BTreeSet<String> {
-        toolRuntimeSupport().buildBuiltinToolNameSet(useEnglish, hostEnvironment)
+        runtimeSupport.buildBuiltinToolNameSet(useEnglish, hostEnvironment)
     }
 
     #[allow(non_snake_case)]

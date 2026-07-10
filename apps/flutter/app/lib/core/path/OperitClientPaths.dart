@@ -40,6 +40,12 @@ class OperitClientPaths {
     return File(_join(<String>[directory.path, 'runtime_connection.json']));
   }
 
+  /// Returns the persisted local runtime storage configuration file.
+  static Future<File> localRuntimeStorageConfigFile() async {
+    final directory = await linkDir();
+    return File(_join(<String>[directory.path, 'local_runtime_storage.json']));
+  }
+
   static Future<Directory> linkHostDir() {
     return linkDir();
   }

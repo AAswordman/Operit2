@@ -1226,6 +1226,24 @@
   "settingsAppearanceLanguageDescription": "语言跟随应用启动时的本地化配置。",
   "settingsDataRuntimeSection": "数据概览",
   "settingsDataCoreVersion": "当前版本",
+  "settingsDataStorageSection": "储存路径",
+  "settingsDataStorageDescription": "把 runtime 和 workspace 数据迁移到新的本地文件夹。",
+  "settingsDataStorageRoot": "储存根目录",
+  "settingsDataRuntimeRoot": "运行时目录",
+  "settingsDataWorkspaceRoot": "工作区目录",
+  "settingsDataChooseStorageRoot": "选择位置",
+  "settingsDataStorageConfirmTitle": "更改储存路径",
+  "settingsDataStorageConfirmMessage": "runtime 和 workspace 数据会复制到所选文件夹，重启应用后使用新位置。",
+  "settingsDataStorageConfirmAction": "更改位置",
+  "settingsDataStorageChanged": "储存路径已更改，重启应用后生效。",
+  "settingsDataStorageChangeError": "储存路径更改失败：{error}",
+  "@settingsDataStorageChangeError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsDataTokenSection": "使用统计",
   "settingsDataInputTokens": "输入",
   "settingsDataOutputTokens": "输出",

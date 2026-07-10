@@ -2,14 +2,15 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::util::{parse_bool_arg, read_content_arg};
 use crate::output::CoreCommandOutput;
-use operit_host_api::HostManager::HostManager;
+use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 
 pub fn run_skill_command(
-    context: HostManager,
+    application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
+    let repository = skill_repository(application);
     if args.is_empty() {
         print_skill_usage(output);
         return Ok(());
@@ -17,22 +18,22 @@ pub fn run_skill_command(
 
     match args[0].as_str() {
         "dir" => {
-            output.push_stdout_line(skill_repository(&context).getSkillsDirectoryPath());
+            output.push_stdout_line(repository.getSkillsDirectoryPath());
             Ok(())
         }
-        "list" => list_skills(context, output),
-        "more" => list_more_skills(context, output),
+        "list" => list_skills(&repository, output),
+        "more" => list_more_skills(&repository, output),
         "load" => {
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 skill load <name>".to_string())?;
-            load_more_skill(context, name, output)
+            load_more_skill(&repository, name, output)
         }
         "show" => {
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 skill show <name>".to_string())?;
-            show_skill(context, name, output)
+            show_skill(&repository, name, output)
         }
         "create" => {
             let skillId = args.get(1).ok_or_else(|| {
@@ -46,7 +47,7 @@ pub fn run_skill_command(
             })?;
             let content = read_content_arg(contentArg)?;
             let attachmentPaths = args[4..].iter().map(PathBuf::from).collect::<Vec<_>>();
-            output.push_stdout_line(skill_repository(&context).importSkillFromDirectInput(
+            output.push_stdout_line(repository.importSkillFromDirectInput(
                 skillId,
                 description,
                 &content,
@@ -58,7 +59,6 @@ pub fn run_skill_command(
             let zipPath = args.get(1).ok_or_else(|| {
                 "usage: operit2 skill import-zip <zip-path> [sub-dir-in-zip]".to_string()
             })?;
-            let repository = skill_repository(&context);
             let result = match args.get(2) {
                 Some(subDir) => {
                     repository.importSkillFromZipWithSubDir(Path::new(zipPath), Some(subDir))
@@ -72,7 +72,7 @@ pub fn run_skill_command(
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 skill delete <name>".to_string())?;
-            if skill_repository(&context).deleteSkill(name) {
+            if repository.deleteSkill(name) {
                 output.push_stdout_line(format!("deleted: {name}"));
                 Ok(())
             } else {
@@ -83,7 +83,6 @@ pub fn run_skill_command(
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 skill visible <name> [true|false]".to_string())?;
-            let repository = skill_repository(&context);
             if args.len() == 2 {
                 output.push_stdout_line(repository.isSkillVisibleToAi(name).to_string());
             } else {
@@ -99,7 +98,7 @@ pub fn run_skill_command(
             Ok(())
         }
         "errors" => {
-            for (name, error) in skill_repository(&context).getSkillLoadErrors() {
+            for (name, error) in repository.getSkillLoadErrors() {
                 output.push_stdout_line(format!("{name}\t{error}"));
             }
             Ok(())
@@ -112,10 +111,9 @@ pub fn run_skill_command(
 }
 
 fn list_more_skills(
-    context: HostManager,
+    repository: &SkillRepository,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let repository = skill_repository(&context);
     for candidate in repository.getBundledExternalSkillCandidates() {
         output.push_stdout_line(format!("{}\t{}", candidate.name, candidate.description));
     }
@@ -123,21 +121,16 @@ fn list_more_skills(
 }
 
 fn load_more_skill(
-    context: HostManager,
+    repository: &SkillRepository,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let repository = skill_repository(&context);
     let skill = repository.importBundledExternalSkill(name)?;
     output.push_stdout_line(format!("loaded: {}", skill.name));
     Ok(())
 }
 
-fn list_skills(
-    context: HostManager,
-    output: &mut CoreCommandOutput,
-) -> Result<(), String> {
-    let repository = skill_repository(&context);
+fn list_skills(repository: &SkillRepository, output: &mut CoreCommandOutput) -> Result<(), String> {
     for (name, skill) in repository.getAvailableSkillPackages() {
         let visible = repository.isSkillVisibleToAi(&name);
         output.push_stdout_line(format!(
@@ -156,11 +149,10 @@ fn list_skills(
 }
 
 fn show_skill(
-    context: HostManager,
+    repository: &SkillRepository,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let repository = skill_repository(&context);
     let skills = repository.getAvailableSkillPackages();
     let skill = skills
         .get(name)
@@ -177,8 +169,11 @@ fn show_skill(
     Ok(())
 }
 
-fn skill_repository(context: &HostManager) -> SkillRepository {
-    SkillRepository::getInstance(context)
+fn skill_repository(application: &OperitApplication) -> SkillRepository {
+    SkillRepository::getInstance(
+        &application.hostManager,
+        application.toolHandler.runtimeSupport(),
+    )
 }
 
 fn print_skill_usage(output: &mut CoreCommandOutput) {

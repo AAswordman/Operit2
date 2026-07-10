@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::AIService::{AIService, AiServiceError, SendMessageRequest};
 use super::OpenAIProvider::OpenAIProvider;
+use crate::chat::llmprovider::AIService::{AIService, AiServiceError, SendMessageRequest};
 use operit_util::stream::RevisableTextStream::RevisableTextStreamLike;
 use operit_util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 

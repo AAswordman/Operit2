@@ -31,10 +31,14 @@ fn main() {
     let runtime_root =
         SourceRoot::new(manifest_dir.join("../operit-runtime/src"), "operit_runtime");
     let model_root = SourceRoot::new(manifest_dir.join("../operit-model/src"), "operit_model");
+    let plugin_sdk_root = SourceRoot::new(
+        manifest_dir.join("../operit-plugin-sdk/src"),
+        "operit_plugin_sdk",
+    );
     let store_root = SourceRoot::new(manifest_dir.join("../operit-store/src"), "operit_store");
     let util_root = SourceRoot::new(manifest_dir.join("../operit-util/src"), "operit_util");
     let tools_root = SourceRoot::new(manifest_dir.join("../operit-tools/src"), "operit_tools");
-    let providers_root = SourceRoot::new(
+    let provider_root = SourceRoot::new(
         manifest_dir.join("../operit-providers/src"),
         "operit_providers",
     );
@@ -45,10 +49,11 @@ fn main() {
     let source_roots = vec![
         runtime_root.clone(),
         model_root,
+        plugin_sdk_root,
         store_root.clone(),
         util_root,
         tools_root.clone(),
-        providers_root.clone(),
+        provider_root.clone(),
         host_api_root,
     ];
     let serializable_type_definitions = collect_serializable_type_definitions(&source_roots);
@@ -70,7 +75,7 @@ fn main() {
         .map(|(name, _)| name.clone())
         .collect::<HashSet<_>>();
     let type_registry = collect_type_registry(&source_roots);
-    let object_specs = object_specs(&runtime_root, &store_root, &tools_root, &providers_root);
+    let object_specs = object_specs(&runtime_root, &store_root, &tools_root, &provider_root);
     let public_object_types = collect_public_object_types(&source_roots);
     for spec in &object_specs {
         println!("cargo:rerun-if-changed={}", spec.source_path.display());

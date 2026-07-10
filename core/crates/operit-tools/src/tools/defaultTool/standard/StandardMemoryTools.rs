@@ -1,21 +1,21 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::{Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 
+use crate::runtime_support::ToolRuntimeSupport;
+use operit_model::CharacterCard::CharacterCardMemoryBindingMode;
+use operit_store::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepository};
+use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
+use operit_tools::tools::ToolResultDataClasses::{
+    stringResultData, LinkInfo, MemoryInfo, MemoryLinkQueryResultData, MemoryLinkResultData,
+    MemoryQueryResultData, ToolResultData,
+};
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutionManager, ToolExecutor,
     ToolValidationResult,
 };
-use operit_tools::tools::ToolResultDataClasses::{
-    stringResultData, LinkInfo, MemoryInfo, MemoryLinkQueryResultData, MemoryLinkResultData,
-    MemoryQueryResultData, ToolResultData,
-};
-use operit_model::CharacterCard::CharacterCardMemoryBindingMode;
-use crate::runtime_support::toolRuntimeSupport;
-use operit_store::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepository};
-use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_util::OperitPaths::{
     characterMemoryOwnerKey, parseMemoryOwnerKey, sharedMemoryOwnerKey,
 };
@@ -38,9 +38,10 @@ pub enum MemoryToolOperation {
     DeleteMemoryLink,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MemoryToolExecutor {
     pub operation: MemoryToolOperation,
+    pub runtimeSupport: Arc<dyn ToolRuntimeSupport>,
 }
 
 #[derive(Clone, Debug)]
@@ -95,7 +96,9 @@ impl ToolExecutor for MemoryToolExecutor {
 
     fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
         let result = match self.operation {
-            MemoryToolOperation::QueryMemory => executeQueryMemory(tool),
+            MemoryToolOperation::QueryMemory => {
+                executeQueryMemory(tool, self.runtimeSupport.as_ref())
+            }
             MemoryToolOperation::GetMemoryByTitle => executeGetMemoryByTitle(tool),
             MemoryToolOperation::CreateMemory => executeCreateMemory(tool),
             MemoryToolOperation::UpdateMemory => executeUpdateMemory(tool),
@@ -111,8 +114,8 @@ impl ToolExecutor for MemoryToolExecutor {
     }
 }
 
-fn executeQueryMemory(tool: &AITool) -> ToolResult {
-    let ownerKeys = match resolveReadableOwnerKeys(tool) {
+fn executeQueryMemory(tool: &AITool, runtimeSupport: &dyn ToolRuntimeSupport) -> ToolResult {
+    let ownerKeys = match resolveReadableOwnerKeys(tool, runtimeSupport) {
         Ok(ownerKeys) => ownerKeys,
         Err(error) => return errorResult(tool, &error),
     };
@@ -158,7 +161,7 @@ fn executeQueryMemory(tool: &AITool) -> ToolResult {
         .filter(|value| !value.is_empty());
     let snapshotScope = ownerKeys.join("|");
     let (snapshotId, snapshotCreated) = resolveSnapshot(&snapshotScope, snapshotIdParam);
-    if let Err(error) = toolRuntimeSupport().loadMemorySearchSettings(&snapshotScope) {
+    if let Err(error) = runtimeSupport.loadMemorySearchSettings(&snapshotScope) {
         return errorResult(
             tool,
             &format!("Failed to load memory search settings: {error}"),
@@ -677,14 +680,17 @@ fn resolveTargetOwnerKey(tool: &AITool) -> Result<String, String> {
     Ok(ownerKey)
 }
 
-fn resolveReadableOwnerKeys(tool: &AITool) -> Result<Vec<String>, String> {
+fn resolveReadableOwnerKeys(
+    tool: &AITool,
+    runtimeSupport: &dyn ToolRuntimeSupport,
+) -> Result<Vec<String>, String> {
     if let Some(ownerKey) = explicitTargetOwnerKey(tool) {
         parseMemoryOwnerKey(&ownerKey)?;
         return Ok(vec![ownerKey]);
     }
     let callerCardId = resolveCallerCardId(tool)
         .ok_or_else(|| "caller_card_id or target_owner_key parameter is required".to_string())?;
-    let characterCard = toolRuntimeSupport().characterMemoryBinding(&callerCardId)?;
+    let characterCard = runtimeSupport.characterMemoryBinding(&callerCardId)?;
     if characterCard.memoryBindingMode == CharacterCardMemoryBindingMode::SHARED {
         let sharedMemoryId = characterCard
             .sharedMemoryId

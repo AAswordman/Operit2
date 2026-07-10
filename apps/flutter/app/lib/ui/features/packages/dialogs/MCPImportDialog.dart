@@ -236,9 +236,8 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
     }
     await _run(() async {
       final lifecycles = _serverLifecyclesFromConfig(jsonConfig);
-      final count = await widget.clients.permissionsMcpRuntimeMcpLocalServer.mergeConfigFromJson(
-        jsonConfig: jsonConfig,
-      );
+      final count = await widget.clients.permissionsMcpRuntimeMcpLocalServer
+          .mergeConfigFromJson(jsonConfig: jsonConfig);
       await _applyImportedServerLifecycles(lifecycles);
       return '已导入 $count 个 MCP 服务';
     });
@@ -247,9 +246,8 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
   Future<void> _mergeFormConfig(String jsonConfig) async {
     await _run(() async {
       final lifecycles = _serverLifecyclesFromConfig(jsonConfig);
-      final count = await widget.clients.permissionsMcpRuntimeMcpLocalServer.mergeConfigFromJson(
-        jsonConfig: jsonConfig,
-      );
+      final count = await widget.clients.permissionsMcpRuntimeMcpLocalServer
+          .mergeConfigFromJson(jsonConfig: jsonConfig);
       await _applyImportedServerLifecycles(lifecycles);
       return '已导入 $count 个 MCP 服务';
     });
@@ -276,7 +274,8 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
       final pluginId = _pluginIdController.text.trim();
       final name = _nameController.text.trim();
       if (_mode == _MCPImportMode.zip) {
-        return widget.clients.permissionsMcpRuntimeMcpRepository
+        return widget.clients.application
+            .mcpRepository()
             .installMcpServerFromZipForFlutter(
               pluginId: pluginId,
               zipPath: _zipFile!.path,
@@ -289,7 +288,8 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
               return path;
             });
       }
-      return widget.clients.permissionsMcpRuntimeMcpRepository
+      return widget.clients.application
+          .mcpRepository()
           .installMcpServerWithObjectForFlutter(
             pluginId: pluginId,
             repoUrl: _repoUrlController.text.trim(),

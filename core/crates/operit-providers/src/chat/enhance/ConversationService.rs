@@ -3,16 +3,16 @@ use std::collections::{BTreeMap, HashMap};
 use regex::Regex;
 use serde_json::{json, Value};
 
+use crate::chat::config::FunctionalPrompts::FunctionalPrompts;
 use crate::chat::enhance::MultiServiceManager::MultiServiceManager;
+use crate::chat::hooks::SummaryHookRegistry::{SummaryHookContext, SummaryHookRegistry};
 use crate::chat::llmprovider::AIService::{
     collect_stream_chunks, AiServiceError, SendMessageRequest,
 };
-use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
-use crate::chat::hooks::SummaryHookRegistry::{SummaryHookContext, SummaryHookRegistry};
-use crate::chat::config::FunctionalPrompts::FunctionalPrompts;
+use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::FunctionType::FunctionType;
 use operit_model::ModelParameter::ModelParameter;
-use crate::runtime_support::providerRuntimeSupport;
+use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
 
@@ -87,10 +87,17 @@ pub trait SystemPromptComposer {
 }
 
 /// Converts stored chat turns into provider-facing conversation history.
-#[derive(Clone, Debug, Default)]
-pub struct ConversationService;
+#[derive(Clone)]
+pub struct ConversationService {
+    runtime_context: ProviderRuntimeContext,
+}
 
 impl ConversationService {
+    /// Creates a conversation service bound to one provider runtime context.
+    pub fn new(runtime_context: ProviderRuntimeContext) -> Self {
+        Self { runtime_context }
+    }
+
     /// Prepares chat history by injecting system prompts, normalizing tool turns, and running hooks.
     pub fn prepare_conversation_history(
         &self,
@@ -523,7 +530,8 @@ impl ConversationService {
         if summaryContent.trim().is_empty() {
             return Ok("Conversation Summary: Unable to generate valid summary.".to_string());
         }
-        providerRuntimeSupport()?
+        self.runtime_context
+            .support()
             .updateTokensForProviderModel(
                 &providerModel,
                 summaryInputTokens,

@@ -80,6 +80,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
 
   @override
   void dispose() {
+    _exited = true;
     _outputSubscription?.cancel();
     _pty?.kill();
     _pendingTerminalOutput.clear();
@@ -225,12 +226,17 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
           .transform(const convert.Utf8Decoder())
           .listen(_queueTerminalWrite);
       unawaited(
-        pty.exitCode.then((code) {
-          if (!_exited) {
-            _queueTerminalWrite('\r\n[process exited with code $code]\r\n');
-          }
-          _exited = true;
-        }),
+        pty.exitCode.then(
+          (code) {
+            if (!_exited) {
+              _queueTerminalWrite('\r\n[process exited with code $code]\r\n');
+            }
+            _exited = true;
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            _exited = true;
+          },
+        ),
       );
       if (mounted) {
         setState(() {});

@@ -573,12 +573,15 @@ export interface ADBResultData {
     toString(): string;
 }
 
+export type TerminalType = 'powershell' | 'bash' | 'linux' | 'shell';
+export type TerminalCreateType = TerminalType;
+
 /**
  * Terminal type availability entry
  */
 export interface TerminalTypeInfoData {
-    /** Terminal type id, such as powershell, bash, linux, or android */
-    terminalType: string;
+    /** Terminal type id supported by a terminal host */
+    terminalType: TerminalType;
     /** Whether this terminal type is available on the current platform */
     available: boolean;
     /** Human-readable terminal type description */
@@ -592,7 +595,7 @@ export interface TerminalInfoResultData {
     /** Current runtime platform, such as windows, linux, or android */
     platform: string;
     /** Default terminal type for this platform */
-    defaultType: string;
+    defaultType: TerminalType;
     /** Terminal types known to this host */
     types: TerminalTypeInfoData[];
     /** Returns a formatted string representation */
@@ -614,6 +617,9 @@ export interface TerminalCommandResultData {
 
     /** ID of the terminal session used for execution */
     sessionId: string;
+
+    /** Actual terminal type used for execution */
+    terminalType: TerminalType;
 
     /** Whether this execution ended due to timeout. On timeout, the current command is cancelled and the terminal session is kept. */
     timedOut?: boolean;
@@ -664,6 +670,9 @@ export interface HiddenTerminalCommandResultData {
     /** Hidden executor key used for execution */
     executorKey: string;
 
+    /** Actual terminal type used for execution */
+    terminalType: TerminalType;
+
     /** Whether this execution ended due to timeout. On timeout, the current command is cancelled and the hidden executor session is kept. */
     timedOut?: boolean;
 
@@ -711,6 +720,8 @@ export interface TerminalSessionCreationResultData {
     sessionId: string;
     /** Name of the session */
     sessionName: string;
+    /** Actual terminal type for the session */
+    terminalType: TerminalType;
     /** Whether a new session was created */
     isNewSession: boolean;
 }
@@ -733,12 +744,16 @@ export interface TerminalSessionCloseResultData {
 export interface TerminalSessionScreenResultData {
     /** ID of the session */
     sessionId: string;
+    /** Actual terminal type for the session */
+    terminalType: TerminalType;
     /** Screen row count */
     rows: number;
     /** Screen column count */
     cols: number;
     /** Current visible screen text content */
     content: string;
+    /** Whether a command is currently running in this session */
+    commandRunning: boolean;
     /** Returns a formatted string representation */
     toString(): string;
 }

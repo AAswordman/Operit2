@@ -5,6 +5,7 @@ use serde_json::Value;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[allow(non_snake_case)]
+/// Represents one rendered node in a ToolPkg Compose DSL tree.
 pub struct ToolPkgComposeDslNode {
     #[serde(rename = "type")]
     pub r#type: String,
@@ -16,15 +17,18 @@ pub struct ToolPkgComposeDslNode {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[allow(non_snake_case)]
+/// Contains the rendered Compose DSL tree and its persistent runtime state.
 pub struct ToolPkgComposeDslRenderResult {
     pub tree: ToolPkgComposeDslNode,
     pub state: BTreeMap<String, Value>,
     pub memo: BTreeMap<String, Value>,
 }
 
+/// Parses ToolPkg Compose DSL render values and action references.
 pub struct ToolPkgComposeDslParser;
 
 impl ToolPkgComposeDslParser {
+    /// Parses a JavaScript render result into the public Compose DSL model.
     #[allow(non_snake_case)]
     pub fn parseRenderResult(rawResult: Option<Value>) -> Option<ToolPkgComposeDslRenderResult> {
         let root = parseRootObject(rawResult)?;
@@ -36,6 +40,7 @@ impl ToolPkgComposeDslParser {
         })
     }
 
+    /// Extracts an action identifier from an encoded action value.
     #[allow(non_snake_case)]
     pub fn extractActionId(value: Option<Value>) -> Option<String> {
         match value? {
@@ -66,6 +71,7 @@ impl ToolPkgComposeDslParser {
     }
 }
 
+/// Converts a JSON value to the string representation used by the DSL bridge.
 #[allow(non_snake_case)]
 fn kotlinOptString(value: &Value) -> Option<String> {
     match value {
@@ -75,6 +81,7 @@ fn kotlinOptString(value: &Value) -> Option<String> {
     }
 }
 
+/// Decodes the outer render result object from direct or string-encoded JSON.
 #[allow(non_snake_case)]
 fn parseRootObject(rawResult: Option<Value>) -> Option<serde_json::Map<String, Value>> {
     match rawResult? {
@@ -84,6 +91,7 @@ fn parseRootObject(rawResult: Option<Value>) -> Option<serde_json::Map<String, V
     }
 }
 
+/// Decodes a string containing the outer render result object.
 #[allow(non_snake_case)]
 fn parseRootObjectFromString(raw: &str) -> Option<serde_json::Map<String, Value>> {
     let trimmed = raw.trim();
@@ -110,6 +118,7 @@ fn parseRootObjectFromString(raw: &str) -> Option<serde_json::Map<String, Value>
     }
 }
 
+/// Recursively parses one Compose DSL node and its named slots.
 #[allow(non_snake_case)]
 fn parseNode(value: Option<Value>) -> Option<ToolPkgComposeDslNode> {
     let Value::Object(nodeObj) = value? else {
@@ -173,6 +182,7 @@ fn parseNode(value: Option<Value>) -> Option<ToolPkgComposeDslNode> {
     })
 }
 
+/// Converts an optional JSON object into a stable ordered property map.
 #[allow(non_snake_case)]
 fn asMap(value: Option<Value>) -> BTreeMap<String, Value> {
     match value {

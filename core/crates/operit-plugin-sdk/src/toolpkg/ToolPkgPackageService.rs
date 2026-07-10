@@ -1,32 +1,109 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use operit_tools::tools::packTool::PackageManager::{
-    PackageManager, ToolPkgContainerDetails, ToolPkgDesktopWidget, ToolPkgNavigationActionHook,
+use crate::toolpkg::ToolPkgCommonPluginConstants::{
+    TOOLPKG_NAV_SURFACE_TOOLBOX, TOOLPKG_RUNTIME_COMPOSE_DSL,
+};
+use crate::toolpkg::ToolPkgPackageModels::{
+    ToolPkgContainerDetails, ToolPkgDesktopWidget, ToolPkgNavigationActionHook,
     ToolPkgNavigationEntry, ToolPkgSubpackageInfo, ToolPkgToolboxUiModule, ToolPkgUiRoute,
     ToolPkgWorkspaceTemplate, ToolPkgWorkspaceTemplateImportResult,
 };
-use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::{
-    TOOLPKG_EVENT_NAVIGATION_ENTRY_ACTION, TOOLPKG_NAV_SURFACE_TOOLBOX, TOOLPKG_RUNTIME_COMPOSE_DSL,
-};
-use operit_tools::tools::packTool::ToolPkgParser::{
-    ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgSubpackageRuntime,
+use crate::toolpkg::ToolPkgParser::{
+    ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgResourceRuntime, ToolPkgSubpackageRuntime,
 };
 
-pub struct PackageManagerToolPkgFacade<'a> {
-    packageManager: &'a PackageManager,
+/// Supplies host-owned state, persistence, and resource access to ToolPkg package services.
+pub trait ToolPkgPackageHost: Send + Sync {
+    /// Ensures package state has been loaded before a public query.
+    #[allow(non_snake_case)]
+    fn ensureInitialized(&self);
+
+    /// Normalizes a package name using the embedding application's naming rules.
+    #[allow(non_snake_case)]
+    fn normalizePackageName(&self, packageName: &str) -> String;
+
+    /// Returns all registered ToolPkg container runtimes.
+    #[allow(non_snake_case)]
+    fn toolPkgContainersInternal(&self) -> BTreeMap<String, ToolPkgContainerRuntime>;
+
+    /// Returns all registered ToolPkg subpackage runtimes keyed by package name.
+    #[allow(non_snake_case)]
+    fn toolPkgSubpackageByPackageNameInternal(&self) -> BTreeMap<String, ToolPkgSubpackageRuntime>;
+
+    /// Resolves one ToolPkg subpackage runtime from a package name.
+    #[allow(non_snake_case)]
+    fn resolveToolPkgSubpackageRuntimeInternal(
+        &self,
+        packageName: &str,
+    ) -> Option<ToolPkgSubpackageRuntime>;
+
+    /// Returns the complete enabled package name set.
+    #[allow(non_snake_case)]
+    fn getEnabledPackageNameSetInternal(&self) -> BTreeSet<String>;
+
+    /// Returns enabled package names in stable order.
+    #[allow(non_snake_case)]
+    fn getEnabledPackageNames(&self) -> Vec<String>;
+
+    /// Returns persisted ToolPkg subpackage enabled states.
+    #[allow(non_snake_case)]
+    fn getToolPkgSubpackageStatesInternal(&self) -> BTreeMap<String, bool>;
+
+    /// Persists the complete enabled package name list.
+    #[allow(non_snake_case)]
+    fn saveEnabledPackageNames(&self, packageNames: &[String]) -> Result<(), String>;
+
+    /// Persists the complete ToolPkg subpackage state map.
+    #[allow(non_snake_case)]
+    fn saveToolPkgSubpackageStates(&self, states: &BTreeMap<String, bool>) -> Result<(), String>;
+
+    /// Returns whether one package is currently enabled.
+    #[allow(non_snake_case)]
+    fn isPackageEnabled(&self, packageName: &str) -> bool;
+
+    /// Resolves one ToolPkg resource to a host-readable file.
+    #[allow(non_snake_case)]
+    fn resolveToolPkgResourceFile(
+        &self,
+        runtime: &ToolPkgContainerRuntime,
+        resourcePath: &str,
+    ) -> Option<PathBuf>;
+
+    /// Exports one ToolPkg resource to a destination file.
+    #[allow(non_snake_case)]
+    fn exportToolPkgResource(
+        &self,
+        runtime: &ToolPkgContainerRuntime,
+        resource: &ToolPkgResourceRuntime,
+        destinationFile: &Path,
+    ) -> bool;
+
+    /// Reads one ToolPkg resource as raw bytes.
+    #[allow(non_snake_case)]
+    fn readToolPkgResourceBytes(
+        &self,
+        runtime: &ToolPkgContainerRuntime,
+        resourcePath: &str,
+    ) -> Option<Vec<u8>>;
 }
 
-impl<'a> PackageManagerToolPkgFacade<'a> {
+/// Provides SDK-owned ToolPkg package queries and resource workflows.
+pub struct ToolPkgPackageService<'a> {
+    packageManager: &'a dyn ToolPkgPackageHost,
+}
+
+impl<'a> ToolPkgPackageService<'a> {
+    /// Creates a ToolPkg package service backed by an embedding application host.
     #[allow(non_snake_case)]
-    pub fn new(packageManager: &'a PackageManager) -> Self {
+    pub fn new(packageManager: &'a dyn ToolPkgPackageHost) -> Self {
         Self { packageManager }
     }
 
+    /// Builds the serializable module specification consumed by ToolPkg UI hosts.
     #[allow(non_snake_case)]
     fn buildModuleSpec(
         id: &str,
@@ -51,6 +128,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         ])
     }
 
+    /// Builds toolbox modules for routes registered on the toolbox navigation surface.
     #[allow(non_snake_case)]
     fn buildToolPkgToolboxUiModules(
         &self,
@@ -116,6 +194,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         modules
     }
 
+    /// Builds localized UI route descriptors for one ToolPkg runtime kind.
     #[allow(non_snake_case)]
     fn buildToolPkgUiRoutes(
         &self,
@@ -168,6 +247,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         routes
     }
 
+    /// Builds localized navigation entries declared by one ToolPkg container.
     #[allow(non_snake_case)]
     fn buildToolPkgNavigationEntries(
         &self,
@@ -206,6 +286,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         entries
     }
 
+    /// Builds localized desktop widget descriptors declared by one ToolPkg container.
     #[allow(non_snake_case)]
     fn buildToolPkgDesktopWidgets(
         &self,
@@ -237,6 +318,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         widgets
     }
 
+    /// Builds localized workspace template descriptors declared by one ToolPkg container.
     #[allow(non_snake_case)]
     fn buildToolPkgWorkspaceTemplates(
         &self,
@@ -267,6 +349,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         templates
     }
 
+    /// Returns whether a package name identifies a registered ToolPkg container.
     #[allow(non_snake_case)]
     pub fn isToolPkgContainer(&self, packageName: &str) -> bool {
         self.packageManager.ensureInitialized();
@@ -276,6 +359,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
             .contains_key(&normalizedPackageName)
     }
 
+    /// Returns whether a package name identifies a registered ToolPkg subpackage.
     #[allow(non_snake_case)]
     pub fn isToolPkgSubpackage(&self, packageName: &str) -> bool {
         self.packageManager.ensureInitialized();
@@ -284,6 +368,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
             .is_some()
     }
 
+    /// Returns localized public details for one ToolPkg container.
     #[allow(non_snake_case)]
     pub fn getToolPkgContainerDetails(
         &self,
@@ -333,6 +418,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         })
     }
 
+    /// Returns localized UI routes exposed by enabled containers for one runtime kind.
     #[allow(non_snake_case)]
     pub fn getToolPkgUiRoutes(&self, runtime: &str, useEnglish: bool) -> Vec<ToolPkgUiRoute> {
         self.packageManager.ensureInitialized();
@@ -345,6 +431,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
             .collect()
     }
 
+    /// Returns localized navigation entries exposed by enabled ToolPkg containers.
     #[allow(non_snake_case)]
     pub fn getToolPkgNavigationEntries(&self, useEnglish: bool) -> Vec<ToolPkgNavigationEntry> {
         self.packageManager.ensureInitialized();
@@ -357,6 +444,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
             .collect()
     }
 
+    /// Returns localized desktop widgets exposed by enabled ToolPkg containers.
     #[allow(non_snake_case)]
     pub fn getToolPkgDesktopWidgets(&self, useEnglish: bool) -> Vec<ToolPkgDesktopWidget> {
         self.packageManager.ensureInitialized();
@@ -378,6 +466,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         widgets
     }
 
+    /// Returns localized workspace templates exposed by enabled ToolPkg containers.
     #[allow(non_snake_case)]
     pub fn getToolPkgWorkspaceTemplates(&self, useEnglish: bool) -> Vec<ToolPkgWorkspaceTemplate> {
         self.packageManager.ensureInitialized();
@@ -390,6 +479,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
             .collect()
     }
 
+    /// Imports one directory-backed ToolPkg workspace template into an empty destination.
     #[allow(non_snake_case)]
     pub fn importToolPkgWorkspaceTemplate(
         &self,
@@ -502,6 +592,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         })
     }
 
+    /// Updates and persists the enabled state of one ToolPkg subpackage.
     #[allow(non_snake_case)]
     pub fn setToolPkgSubpackageEnabled(&self, subpackagePackageName: &str, enabled: bool) -> bool {
         self.packageManager.ensureInitialized();
@@ -558,6 +649,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         stateSaved && importedMatches
     }
 
+    /// Resolves a subpackage id to a concrete package name.
     #[allow(non_snake_case)]
     pub fn findPreferredPackageNameForSubpackageId(
         &self,
@@ -604,6 +696,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
             .map(|subpackage| subpackage.packageName.clone())
     }
 
+    /// Copies a ToolPkg resource selected by subpackage id to a host file.
     #[allow(non_snake_case)]
     pub fn copyToolPkgResourceToFileBySubpackageId(
         &self,
@@ -660,6 +753,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         false
     }
 
+    /// Copies a resource from one enabled ToolPkg container to a host file.
     #[allow(non_snake_case)]
     pub fn copyToolPkgResourceToFile(
         &self,
@@ -691,6 +785,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
             .exportToolPkgResource(runtime, resource, destinationFile)
     }
 
+    /// Returns the output file name declared by a ToolPkg resource.
     #[allow(non_snake_case)]
     pub fn getToolPkgResourceOutputFileName(
         &self,
@@ -784,6 +879,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         None
     }
 
+    /// Reads a Compose DSL script selected by ToolPkg subpackage id.
     #[allow(non_snake_case)]
     pub fn getToolPkgComposeDslScriptBySubpackageId(
         &self,
@@ -835,6 +931,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         None
     }
 
+    /// Reads the Compose DSL script for one enabled ToolPkg UI module.
     #[allow(non_snake_case)]
     pub fn getToolPkgComposeDslScript(
         &self,
@@ -881,6 +978,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         String::from_utf8(bytes).ok()
     }
 
+    /// Returns the Compose DSL screen path for one enabled ToolPkg UI module.
     #[allow(non_snake_case)]
     pub fn getToolPkgComposeDslScreenPath(
         &self,
@@ -924,163 +1022,7 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
         Some(screen)
     }
 
-    #[allow(non_snake_case)]
-    pub fn runToolPkgMainHook(
-        &self,
-        containerPackageName: &str,
-        functionName: &str,
-        event: &str,
-        eventName: Option<&str>,
-        pluginId: Option<&str>,
-        inlineFunctionSource: Option<&str>,
-        eventPayload: Value,
-        executionContextKey: Option<&str>,
-        runtimeKind: Option<&str>,
-        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    ) -> Result<Option<String>, String> {
-        let normalizedContainerPackageName = self
-            .packageManager
-            .normalizePackageName(containerPackageName);
-        let runtime = self
-            .packageManager
-            .toolPkgContainersInternal()
-            .get(&normalizedContainerPackageName)
-            .cloned()
-            .ok_or_else(|| {
-                format!("ToolPkg container not found: {normalizedContainerPackageName}")
-            })?;
-        let script = self
-            .packageManager
-            .getToolPkgMainScriptInternal(&runtime.packageName)
-            .ok_or_else(|| {
-                format!(
-                    "ToolPkg main script is unavailable: {}",
-                    runtime.packageName
-                )
-            })?;
-
-        let resolvedEventName = eventName
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(event);
-        let mut params = BTreeMap::<String, Value>::new();
-        params.insert(
-            "event".to_string(),
-            Value::String(resolvedEventName.to_string()),
-        );
-        params.insert(
-            "eventName".to_string(),
-            Value::String(resolvedEventName.to_string()),
-        );
-        params.insert("eventPayload".to_string(), eventPayload.clone());
-        params.insert(
-            "timestampMs".to_string(),
-            Value::Number(serde_json::Number::from(
-                operit_host_api::TimeUtils::currentTimeMillis(),
-            )),
-        );
-        params.insert(
-            "functionName".to_string(),
-            Value::String(functionName.to_string()),
-        );
-        params.insert(
-            "toolPkgId".to_string(),
-            Value::String(runtime.packageName.clone()),
-        );
-        params.insert(
-            "containerPackageName".to_string(),
-            Value::String(runtime.packageName.clone()),
-        );
-        params.insert(
-            "__operit_ui_package_name".to_string(),
-            Value::String(runtime.packageName.clone()),
-        );
-        params.insert(
-            "__operit_script_screen".to_string(),
-            Value::String(runtime.mainEntry),
-        );
-        if let Some(pluginId) = pluginId.map(str::trim).filter(|value| !value.is_empty()) {
-            params.insert("pluginId".to_string(), Value::String(pluginId.to_string()));
-        }
-        if let Some(chatId) = eventPayload
-            .get("chatId")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            params.insert(
-                "__operit_package_chat_id".to_string(),
-                Value::String(chatId.to_string()),
-            );
-        }
-        if let Some(functionSource) = inlineFunctionSource
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            params.insert(
-                "__operit_inline_function_name".to_string(),
-                Value::String(functionName.to_string()),
-            );
-            params.insert(
-                "__operit_inline_function_source".to_string(),
-                Value::String(functionSource.to_string()),
-            );
-        }
-        if let Some(contextKey) = executionContextKey
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            params.insert(
-                "__operit_execution_context_key".to_string(),
-                Value::String(contextKey.to_string()),
-            );
-        }
-        if let Some(kind) = runtimeKind.map(str::trim).filter(|value| !value.is_empty()) {
-            params.insert(
-                "__operit_toolpkg_runtime_kind".to_string(),
-                Value::String(kind.to_ascii_lowercase()),
-            );
-        }
-
-        let resolvedContextKey = resolveToolPkgExecutionContextKey(&runtime.packageName, &params);
-        let engine = self
-            .packageManager
-            .getToolPkgExecutionEngine(&resolvedContextKey);
-        let output = engine.executeScriptFunction(
-            &script,
-            functionName,
-            &params,
-            &BTreeMap::new(),
-            onIntermediateResult,
-            true,
-            60,
-        );
-        Ok(output)
-    }
-
-    #[allow(non_snake_case)]
-    pub fn runToolPkgNavigationEntryAction(
-        &self,
-        containerPackageName: &str,
-        entryId: &str,
-        functionName: &str,
-        inlineFunctionSource: Option<&str>,
-        eventPayload: Value,
-    ) -> Result<Option<String>, String> {
-        self.runToolPkgMainHook(
-            containerPackageName,
-            functionName,
-            TOOLPKG_EVENT_NAVIGATION_ENTRY_ACTION,
-            Some("navigation_entry_action"),
-            Some(entryId),
-            inlineFunctionSource,
-            eventPayload,
-            None,
-            None,
-            None,
-        )
-    }
-
+    /// Reads a UTF-8 text resource from an enabled ToolPkg container or subpackage.
     #[allow(non_snake_case)]
     pub fn readToolPkgTextResource(
         &self,
@@ -1170,34 +1112,24 @@ impl<'a> PackageManagerToolPkgFacade<'a> {
     }
 }
 
+/// Returns distinct container package names while preserving subpackage iteration order.
 #[allow(non_snake_case)]
 fn distinctContainerNames<'a, I>(subpackages: I) -> Vec<String>
 where
     I: IntoIterator<Item = &'a ToolPkgSubpackageRuntime>,
 {
-    let mut names = Vec::<String>::new();
-    for subpackage in subpackages {
-        if !names.contains(&subpackage.containerPackageName) {
-            names.push(subpackage.containerPackageName.clone());
-        }
-    }
-    names
+    let mut seen = BTreeSet::new();
+    subpackages
+        .into_iter()
+        .filter_map(|subpackage| {
+            let container_name = subpackage.containerPackageName.clone();
+            seen.insert(container_name.clone())
+                .then_some(container_name)
+        })
+        .collect()
 }
 
-#[allow(non_snake_case)]
-fn resolveToolPkgExecutionContextKey(
-    containerPackageName: &str,
-    params: &BTreeMap<String, Value>,
-) -> String {
-    params
-        .get("__operit_execution_context_key")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| format!("toolpkg_main:{containerPackageName}"))
-}
-
+/// Returns a trimmed string or the supplied default when it is blank.
 #[allow(non_snake_case)]
 fn nonBlankOr(value: &str, defaultValue: &str) -> String {
     let trimmed = value.trim();
@@ -1208,6 +1140,7 @@ fn nonBlankOr(value: &str, defaultValue: &str) -> String {
     }
 }
 
+/// Copies one file or directory tree into a workspace template destination.
 #[allow(non_snake_case)]
 fn copyRecursively(source: &Path, destination: &Path) -> Result<(), String> {
     if source.is_dir() {
@@ -1231,201 +1164,4 @@ fn copyRecursively(source: &Path, destination: &Path) -> Result<(), String> {
         "Workspace template source is invalid: {}",
         source.display()
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::PackageManagerToolPkgFacade;
-    use operit_tools::tools::packTool::PackageManager::PackageManager;
-    use operit_tools::tools::packTool::ToolPkgParser::{
-        ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSourceType,
-    };
-    use operit_tools::tools::ToolPackage::ToolPackage;
-    use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorageHost};
-    use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
-    use operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRoot;
-    use operit_store::RuntimeStorePaths::RuntimeStorePaths;
-    use serde_json::json;
-    use std::path::{Component, Path, PathBuf};
-    use std::sync::Arc;
-
-    #[derive(Clone, Debug)]
-    struct TestRuntimeStorageHost {
-        root: PathBuf,
-    }
-
-    impl TestRuntimeStorageHost {
-        fn new(root: PathBuf) -> Self {
-            Self { root }
-        }
-
-        fn resolve(&self, path: &str) -> HostResult<PathBuf> {
-            let path = Path::new(path);
-            if path.is_absolute() {
-                return Err(HostError::new(format!(
-                    "Runtime storage path must be relative: {}",
-                    path.display()
-                )));
-            }
-            let mut resolved = self.root.clone();
-            for component in path.components() {
-                match component {
-                    Component::Normal(segment) => resolved.push(segment),
-                    Component::CurDir => {}
-                    _ => {
-                        return Err(HostError::new(format!(
-                            "Invalid runtime storage path: {}",
-                            path.display()
-                        )))
-                    }
-                }
-            }
-            Ok(resolved)
-        }
-    }
-
-    impl RuntimeStorageHost for TestRuntimeStorageHost {
-        fn rootDir(&self) -> Option<PathBuf> {
-            Some(self.root.clone())
-        }
-
-        fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
-            Ok(std::fs::read(self.resolve(path)?)?)
-        }
-
-        fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-            let path = self.resolve(path)?;
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(path, content)?;
-            Ok(())
-        }
-
-        fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
-            let path = self.resolve(path)?;
-            if !path.exists() {
-                return Ok(());
-            }
-            if path.is_dir() {
-                if recursive {
-                    std::fs::remove_dir_all(path)?;
-                } else {
-                    std::fs::remove_dir(path)?;
-                }
-            } else {
-                std::fs::remove_file(path)?;
-            }
-            Ok(())
-        }
-
-        fn exists(&self, path: &str) -> HostResult<bool> {
-            Ok(self.resolve(path)?.exists())
-        }
-
-        fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
-            let directory = self.resolve(prefix)?;
-            let mut entries = Vec::new();
-            if !directory.exists() {
-                return Ok(entries);
-            }
-            for entry in std::fs::read_dir(directory)? {
-                let entry = entry?;
-                let metadata = entry.metadata()?;
-                let path = entry
-                    .path()
-                    .strip_prefix(&self.root)
-                    .map_err(|error| HostError::new(error.to_string()))?
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                entries.push(RuntimeStorageEntry {
-                    path,
-                    isDirectory: metadata.is_dir(),
-                    size: metadata.len() as i64,
-                });
-            }
-            Ok(entries)
-        }
-    }
-
-    fn test_runtime_root(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "operit-toolpkg-facade-tests-{}-{name}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&root).expect("test runtime root");
-        let host = Arc::new(TestRuntimeStorageHost::new(root.clone()));
-        setDefaultRuntimeStoreRoot(root.clone());
-        setDefaultRuntimeStorageHost(host);
-        root
-    }
-
-    #[test]
-    fn run_toolpkg_main_hook_executes_inline_function_source() {
-        let root = test_runtime_root("inline-hook");
-        let sourceDir = root.join("toolpkg");
-        let distDir = sourceDir.join("dist");
-        std::fs::create_dir_all(&distDir).expect("toolpkg dist dir");
-        std::fs::write(
-            distDir.join("main.js"),
-            r#"
-                exports.registeredOnly = function(_params) {
-                    return "registered";
-                };
-            "#,
-        )
-        .expect("toolpkg main script");
-        let mut packageManager = PackageManager::new(RuntimeStorePaths::new(root.clone()));
-        let loadResult = ToolPkgLoadResult {
-            containerPackage: ToolPackage {
-                name: "inline_hook_pkg".to_string(),
-                ..ToolPackage::default()
-            },
-            subpackagePackages: Vec::new(),
-            containerRuntime: ToolPkgContainerRuntime {
-                packageName: "inline_hook_pkg".to_string(),
-                mainEntry: "dist/main.js".to_string(),
-                sourceType: ToolPkgSourceType::EXTERNAL,
-                sourcePath: sourceDir.to_string_lossy().to_string(),
-                ..ToolPkgContainerRuntime::default()
-            },
-        };
-        assert!(packageManager.registerToolPkg(loadResult));
-        packageManager
-            .setEnabledPackageNames(&["inline_hook_pkg".to_string()])
-            .expect("enabled package names");
-
-        let output = PackageManagerToolPkgFacade::new(&packageManager)
-            .runToolPkgMainHook(
-                "inline_hook_pkg",
-                "inlinePromptHook",
-                "system_prompt_compose",
-                Some("system_prompt_compose"),
-                Some("hook-id"),
-                Some(
-                    r#"function(params) {
-                    return {
-                        systemPrompt: [
-                            params.eventName,
-                            params.eventPayload.chatId,
-                            params.toolPkgId,
-                            params.__operit_script_screen,
-                            params.pluginId
-                        ].join('|')
-                    };
-                }"#,
-                ),
-                json!({ "chatId": "chat-1" }),
-                None,
-                Some("sandbox"),
-                None,
-            )
-            .expect("toolpkg main hook")
-            .expect("hook result");
-
-        assert_eq!(
-            output,
-            r#"{"systemPrompt":"system_prompt_compose|chat-1|inline_hook_pkg|dist/main.js|hook-id"}"#
-        );
-    }
 }

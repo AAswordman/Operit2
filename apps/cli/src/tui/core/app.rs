@@ -16,7 +16,6 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, PermissionRequestResult};
 use operit_model::ActivePrompt::ActivePrompt;
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::CharacterCard::CharacterCardChatModelBindingMode;
@@ -27,6 +26,7 @@ use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
+use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, PermissionRequestResult};
 use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_util::AppLogger::AppLogger;
 use operit_util::GithubReleaseUtil::{
@@ -1381,7 +1381,10 @@ impl OperitTui {
                 self.status_message = self.text().approval_master(level.name());
             }
             Some("tool") => {
-                return Err("per-tool permission overrides are not supported by AiPermissionMode".to_string());
+                return Err(
+                    "per-tool permission overrides are not supported by AiPermissionMode"
+                        .to_string(),
+                );
             }
             Some("list") => {
                 self.status_message = self.text().approval_overrides_none().to_string();
@@ -2385,8 +2388,8 @@ impl OperitTui {
         }
         let names = self
             .core
-            .permissions_pack_tool_package_manager()
-            .getActivePackageNames()
+            .application()
+            .active_package_names()
             .await
             .map_err(|error| error.to_string())?;
         if names.is_empty() {

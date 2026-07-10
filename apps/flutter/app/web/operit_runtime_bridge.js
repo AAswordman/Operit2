@@ -4,6 +4,7 @@
   const runtimePrefix = "operit2.runtime.";
   const filePrefix = "operit2.files.";
   const sqlitePrefix = "operit2.sqlite.";
+  const secretPrefix = "operit2.secrets.";
   const sqliteConnections = new Map();
   const sqliteTransactions = new Map();
   let sqliteConnectionIndex = 0;
@@ -1140,6 +1141,21 @@
       },
       list(prefix) {
         return storageList(runtimePrefix, prefix);
+      },
+    },
+    hostSecretStore: {
+      // Reads a host-owned secret from browser-local protected storage.
+      readSecret(key) {
+        const value = localStorage.getItem(`${secretPrefix}${key}`);
+        return value === null ? null : base64ToBytes(value);
+      },
+      // Writes a host-owned secret into browser-local protected storage.
+      writeSecret(key, content) {
+        localStorage.setItem(`${secretPrefix}${key}`, bytesToBase64(new Uint8Array(content)));
+      },
+      // Deletes a host-owned secret from browser-local protected storage.
+      deleteSecret(key) {
+        localStorage.removeItem(`${secretPrefix}${key}`);
       },
     },
     sqlite: {

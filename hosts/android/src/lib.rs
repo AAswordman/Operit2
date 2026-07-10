@@ -7,6 +7,8 @@ mod http;
 mod managed_runtime;
 mod runtime_common;
 mod runtime_storage;
+#[cfg(target_os = "android")]
+mod secret_store;
 mod system_operation;
 mod terminal;
 mod tts_playback;
@@ -19,6 +21,8 @@ pub use filesystem::AndroidFileSystemHost;
 pub use http::AndroidHttpHost;
 pub use managed_runtime::AndroidManagedRuntimeHost;
 pub use runtime_storage::AndroidRuntimeStorageHost;
+#[cfg(target_os = "android")]
+pub use secret_store::{clearAndroidHostSecretStoreBridge, setAndroidHostSecretStoreBridge};
 pub use system_operation::AndroidSystemOperationHost;
 pub use terminal::AndroidTerminalHost;
 pub use tts_playback::{AndroidTtsPlaybackCommand, AndroidTtsPlaybackHost};

@@ -104,7 +104,10 @@ impl LocaleUtils {
     }
 
     #[allow(non_snake_case)]
-    pub fn getCurrentLanguage(context: &HostManager, savedLanguage: &str) -> Result<String, String> {
+    pub fn getCurrentLanguage(
+        context: &HostManager,
+        savedLanguage: &str,
+    ) -> Result<String, String> {
         if !savedLanguage.trim().is_empty() && savedLanguage.trim() != LanguageCodes::AUTO {
             return Ok(Self::resolve_supported_language_code(&savedLanguage));
         }

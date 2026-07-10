@@ -13,3 +13,6 @@ operit-host-linux-native = { path = "../linux" }
 serde = "1"
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"

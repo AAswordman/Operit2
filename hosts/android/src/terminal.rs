@@ -108,15 +108,17 @@ impl AndroidTerminalHost {
     pub fn startPtySession(
         &self,
         sessionName: &str,
+        terminalType: &str,
         workingDir: &str,
         rows: u16,
         cols: u16,
     ) -> HostResult<String> {
         let normalizedSessionName = nonBlank(sessionName, "session_name")?;
+        let normalizedTerminalType = normalizeAndroidTerminalType(terminalType)?;
         let workDir = nonBlank(workingDir, "working_directory")?;
         let session = createAndroidPtySession(
             normalizedSessionName,
-            "android".to_string(),
+            normalizedTerminalType,
             workDir,
             rows,
             cols,
@@ -198,23 +200,38 @@ impl TerminalHost for AndroidTerminalHost {
     fn terminalInfo(&self) -> HostResult<TerminalInfo> {
         Ok(TerminalInfo {
             platform: "android".to_string(),
-            defaultType: "android".to_string(),
-            types: vec![TerminalTypeInfo {
-                terminalType: "android".to_string(),
-                available: true,
-                description: "Android proot terminal".to_string(),
-            }],
+            defaultType: "bash".to_string(),
+            types: vec![
+                TerminalTypeInfo {
+                    terminalType: "bash".to_string(),
+                    available: true,
+                    description: "Android proot Linux bash terminal".to_string(),
+                },
+                TerminalTypeInfo {
+                    terminalType: "shell".to_string(),
+                    available: true,
+                    description: "Android system shell terminal".to_string(),
+                },
+            ],
         })
     }
 
     fn startPtySession(
         &self,
         sessionName: &str,
+        terminalType: &str,
         workingDir: &str,
         rows: u16,
         cols: u16,
     ) -> HostResult<String> {
-        AndroidTerminalHost::startPtySession(self, sessionName, workingDir, rows, cols)
+        AndroidTerminalHost::startPtySession(
+            self,
+            sessionName,
+            terminalType,
+            workingDir,
+            rows,
+            cols,
+        )
     }
 
     fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>> {
@@ -284,10 +301,11 @@ impl TerminalHost for AndroidTerminalHost {
             }
         }
 
+        let workingDir = initialAndroidWorkingDir(&normalizedTerminalType)?;
         let session = createAndroidPtySession(
             normalizedSessionName.clone(),
             normalizedTerminalType.clone(),
-            "/root".to_string(),
+            workingDir,
             24,
             80,
         )?;
@@ -484,7 +502,7 @@ fn hiddenAndroidPtySessionId(
     let session = createAndroidPtySession(
         format!("hidden:{executorLabel}"),
         terminalType.to_string(),
-        "/root".to_string(),
+        initialAndroidWorkingDir(terminalType)?,
         24,
         80,
     )?;
@@ -507,7 +525,7 @@ fn createAndroidPtySession(
     androidLogInfo(&format!(
         "createAndroidPtySession start name={sessionName} type={terminalType} workingDir={workingDir} size={rows}x{cols}"
     ));
-    let command = buildAndroidPtyCommand(&workingDir)?;
+    let command = buildAndroidPtyCommand(&terminalType, &workingDir)?;
     let (pid, masterFd) = forkPtyExecve(&command, rows, cols)?;
     androidLogInfo(&format!(
         "createAndroidPtySession forked pid={pid} masterFd={masterFd} name={sessionName}"
@@ -1346,9 +1364,23 @@ fn normalizeControl(rawControl: &str) -> Option<&'static str> {
     }
 }
 
+/// Normalizes Android terminal type names accepted by the host.
 fn normalizeAndroidTerminalType(terminalType: &str) -> HostResult<String> {
     match terminalType.trim() {
-        "" | "android" => Ok("android".to_string()),
+        "bash" => Ok("bash".to_string()),
+        "shell" => Ok("shell".to_string()),
+        value => Err(HostError::new(format!(
+            "Unsupported terminal type for android host: {value}"
+        ))),
+    }
+}
+
+/// Returns the initial working directory for an Android terminal type.
+fn initialAndroidWorkingDir(terminalType: &str) -> HostResult<String> {
+    match terminalType {
+        "bash" => Ok("/root".to_string()),
+        "shell" => requiredAndroidRuntimePath("OPERIT_ANDROID_INTERNAL_ROOT")
+            .map(|path| path.to_string_lossy().to_string()),
         value => Err(HostError::new(format!(
             "Unsupported terminal type for android host: {value}"
         ))),
@@ -1410,7 +1442,19 @@ struct AndroidPtyCommand {
     cwd: CString,
 }
 
-fn buildAndroidPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
+/// Builds the PTY startup command for an Android terminal type.
+fn buildAndroidPtyCommand(terminalType: &str, workingDir: &str) -> HostResult<AndroidPtyCommand> {
+    match terminalType {
+        "bash" => buildAndroidBashPtyCommand(workingDir),
+        "shell" => buildAndroidShellPtyCommand(workingDir),
+        value => Err(HostError::new(format!(
+            "Unsupported terminal type for android host: {value}"
+        ))),
+    }
+}
+
+/// Builds the PTY startup command for Android proot Linux bash.
+fn buildAndroidBashPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
     let runtimeDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_DIR")?;
     let internalRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_INTERNAL_ROOT")?;
     let tmpDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_TMP")?;
@@ -1429,11 +1473,8 @@ fn buildAndroidPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
     let systemPath = env::var("PATH")
         .map_err(|error| HostError::new(format!("Android terminal PATH is required: {error}")))?;
     let promptCommand = androidPtyPromptCommand();
-    let argv = vec![
-        cstringPath(&bash)?,
-        cstring("-c")?,
-        cstring("source $HOME/common.sh && start_shell")?,
-    ];
+    let commandText = "source $HOME/common.sh && start_shell";
+    let argv = vec![cstringPath(&bash)?, cstring("-c")?, cstring(commandText)?];
     let envp = vec![
         cstring(&format!(
             "PATH={}:{}",
@@ -1454,7 +1495,7 @@ fn buildAndroidPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
         cstring(&format!("PROMPT_COMMAND={promptCommand}"))?,
     ];
     androidLogInfo(&format!(
-        "buildAndroidPtyCommand workingDir={workDir} runtimeDir={} internalRoot={} tmpDir={} bash={} loader={} nativeLibraryDir={}",
+        "buildAndroidPtyCommand type=bash workingDir={workDir} runtimeDir={} internalRoot={} tmpDir={} bash={} loader={} nativeLibraryDir={}",
         runtimeDir.to_string_lossy(),
         internalRoot.to_string_lossy(),
         tmpDir.to_string_lossy(),
@@ -1464,6 +1505,54 @@ fn buildAndroidPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
     ));
     Ok(AndroidPtyCommand {
         executable: cstringPath(&bash)?,
+        argv,
+        envp,
+        cwd: cstringPath(&internalRoot)?,
+    })
+}
+
+/// Builds the PTY startup command for Android system shell.
+fn buildAndroidShellPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
+    let runtimeDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_DIR")?;
+    let internalRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_INTERNAL_ROOT")?;
+    let tmpDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_TMP")?;
+    let nativeLibraryDir = requiredAndroidRuntimePath("OPERIT_ANDROID_NATIVE_LIBRARY_DIR")?;
+
+    std::fs::create_dir_all(&tmpDir)?;
+
+    let workDir = nonBlank(workingDir, "working_directory")?;
+    let systemPath = env::var("PATH")
+        .map_err(|error| HostError::new(format!("Android terminal PATH is required: {error}")))?;
+    let ldLibraryPath = format!(
+        "{}:{}",
+        nativeLibraryDir.to_string_lossy(),
+        runtimeDir.to_string_lossy()
+    );
+    let commandText = r#"cd "$OPERIT_WORKING_DIR" && while true; do __operit_status=$?; printf '\033]133;OperitPrompt=%s:%s\007' "$(printf '%s' "$PWD" | base64 | tr -d '\n')" "$__operit_status"; IFS= read -r __operit_command || exit 0; eval "$__operit_command"; done"#;
+    let shell = Path::new("/system/bin/sh");
+    let argv = vec![cstringPath(shell)?, cstring("-c")?, cstring(commandText)?];
+    let envp = vec![
+        cstring(&format!(
+            "PATH={}:{}",
+            runtimeDir.to_string_lossy(),
+            systemPath
+        ))?,
+        cstring(&format!("HOME={}", internalRoot.to_string_lossy()))?,
+        cstring(&format!("LD_LIBRARY_PATH={ldLibraryPath}"))?,
+        cstring(&format!("TMPDIR={}", tmpDir.to_string_lossy()))?,
+        cstring(&format!("OPERIT_WORKING_DIR={workDir}"))?,
+        cstring("TERM=xterm-256color")?,
+        cstring("LANG=en_US.UTF-8")?,
+    ];
+    androidLogInfo(&format!(
+        "buildAndroidPtyCommand type=shell workingDir={workDir} runtimeDir={} internalRoot={} tmpDir={} nativeLibraryDir={}",
+        runtimeDir.to_string_lossy(),
+        internalRoot.to_string_lossy(),
+        tmpDir.to_string_lossy(),
+        nativeLibraryDir.to_string_lossy()
+    ));
+    Ok(AndroidPtyCommand {
+        executable: cstringPath(shell)?,
         argv,
         envp,
         cwd: cstringPath(&internalRoot)?,
@@ -1501,6 +1590,8 @@ fn androidTerminalDebugInfo(workingDir: &str) -> HostResult<BTreeMap<String, Str
     insertPathDebug(&mut info, "rootfsBash", &rootfsBash);
     info.insert("workingDirectory".to_string(), workDir.clone());
     info.insert("promptCommand".to_string(), androidPtyPromptCommand());
+    info.insert("bashTerminalType".to_string(), "bash".to_string());
+    info.insert("shellTerminalType".to_string(), "shell".to_string());
     info.insert(
         "argv".to_string(),
         [

@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use crate::runtime_support::toolRuntimeSupport;
+use crate::runtime_support::ToolRuntimeSupport;
 use crate::tools::skill::SkillManager::{BundledExternalSkillCandidate, SkillManager};
 use crate::tools::skill::SkillPackage::SkillPackage;
 use operit_host_api::HostManager::defaultHttpHost;
@@ -12,6 +13,7 @@ use url::Url;
 
 pub struct SkillRepository {
     skillManager: SkillManager,
+    runtimeSupport: Arc<dyn ToolRuntimeSupport>,
 }
 
 #[derive(Clone, Debug)]
@@ -25,9 +27,13 @@ struct GitHubSkillTarget {
 impl SkillRepository {
     /// Creates a repository facade for managing installed and imported skills.
     #[allow(non_snake_case)]
-    pub fn getInstance(_context: &HostManager) -> Self {
+    pub fn getInstance(
+        _context: &HostManager,
+        runtimeSupport: Arc<dyn ToolRuntimeSupport>,
+    ) -> Self {
         Self {
-            skillManager: SkillManager::getInstance(),
+            skillManager: SkillManager::fromDefaultPaths(),
+            runtimeSupport,
         }
     }
 
@@ -60,13 +66,15 @@ impl SkillRepository {
     /// Lists bundled external skills that are available for installation.
     #[allow(non_snake_case)]
     pub fn getBundledExternalSkillCandidates(&self) -> Vec<BundledExternalSkillCandidate> {
-        self.skillManager.getBundledExternalSkillCandidates()
+        self.skillManager
+            .getBundledExternalSkillCandidates(self.runtimeSupport.as_ref())
     }
 
     /// Installs one bundled external skill.
     #[allow(non_snake_case)]
     pub fn importBundledExternalSkill(&self, skillName: &str) -> Result<SkillPackage, String> {
-        self.skillManager.importBundledExternalSkill(skillName)
+        self.skillManager
+            .importBundledExternalSkill(skillName, self.runtimeSupport.as_ref())
     }
 
     /// Returns installed skill packages that are visible to AI package activation.
@@ -75,7 +83,7 @@ impl SkillRepository {
         self.skillManager
             .getAvailableSkills()
             .into_iter()
-            .filter(|(skillName, _)| toolRuntimeSupport().isSkillVisibleToAi(skillName))
+            .filter(|(skillName, _)| self.runtimeSupport.isSkillVisibleToAi(skillName))
             .collect()
     }
 
@@ -94,20 +102,22 @@ impl SkillRepository {
     /// Returns whether one skill is visible to AI package activation.
     #[allow(non_snake_case)]
     pub fn isSkillVisibleToAi(&self, skillName: &str) -> bool {
-        toolRuntimeSupport().isSkillVisibleToAi(skillName)
+        self.runtimeSupport.isSkillVisibleToAi(skillName)
     }
 
     /// Sets whether one skill is visible to AI package activation.
     #[allow(non_snake_case)]
     pub fn setSkillVisibleToAi(&self, skillName: &str, visible: bool) -> Result<(), String> {
-        toolRuntimeSupport().setSkillVisibleToAi(skillName, visible)
+        self.runtimeSupport.setSkillVisibleToAi(skillName, visible)
     }
 
     /// Installs the quick plugin creator skill and marks it visible to AI.
     #[allow(non_snake_case)]
     pub fn ensureQuickPluginCreatorSkillVisible(&self) -> Result<SkillPackage, String> {
-        let skill = self.skillManager.ensureQuickPluginCreatorBundledSkill()?;
-        toolRuntimeSupport().setSkillVisibleToAi(&skill.name, true)?;
+        let skill = self
+            .skillManager
+            .ensureQuickPluginCreatorBundledSkill(self.runtimeSupport.as_ref())?;
+        self.runtimeSupport.setSkillVisibleToAi(&skill.name, true)?;
         Ok(skill)
     }
 

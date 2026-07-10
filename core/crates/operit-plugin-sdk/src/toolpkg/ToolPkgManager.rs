@@ -4,41 +4,67 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use operit_host_api::HostManager::HostManager;
-use operit_tools::tools::javascript::{jsBridgeSupport, JsExecutionEngine};
-use operit_tools::tools::packTool::ToolPkgParser::{
+use serde_json::Value;
+
+use crate::javascript::JsExecutionEngine;
+use crate::package::ToolPackage;
+use crate::toolpkg::ToolPkgHooks::{ToolPkgHookDispatcher, ToolPkgHookInvocation};
+use crate::toolpkg::ToolPkgParser::{
     ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSourceType, ToolPkgSubpackageRuntime,
 };
-use operit_tools::tools::ToolPackage::ToolPackage;
-use crate::runtime_support::{toolRuntimeSupport, RuntimePluginAsset};
 
+/// Listener notified when the set of active ToolPkg containers changes.
 pub type ToolPkgRuntimeChangeListener = Arc<dyn Fn(Vec<ToolPkgContainerRuntime>) + Send + Sync>;
 
+/// Creates JavaScript engines used to execute ToolPkg hooks and UI scripts.
+pub trait ToolPkgExecutionEngineFactory: Send + Sync {
+    /// Creates one isolated JavaScript engine for a ToolPkg execution context.
+    #[allow(non_snake_case)]
+    fn createToolPkgExecutionEngine(&self) -> Arc<dyn JsExecutionEngine>;
+}
+
+/// Resolves embedded ToolPkg archive bytes owned by the embedding application.
+pub trait ToolPkgAssetSource: Send + Sync {
+    /// Returns the bytes of one embedded ToolPkg archive by asset name.
+    #[allow(non_snake_case)]
+    fn toolPkgAssetBytes(&self, assetName: &str) -> Option<Vec<u8>>;
+}
+
+/// Manages loaded ToolPkg runtimes, resources, listeners, and execution engines.
 #[derive(Clone)]
 pub struct ToolPkgManager {
-    context: HostManager,
     containers: BTreeMap<String, ToolPkgContainerRuntime>,
     subpackageByPackageName: BTreeMap<String, ToolPkgSubpackageRuntime>,
     runtimeChangeListeners: Arc<Mutex<Vec<ToolPkgRuntimeChangeListener>>>,
     toolPkgExecutionEngines: Arc<Mutex<BTreeMap<String, Arc<dyn JsExecutionEngine>>>>,
-}
-
-impl Default for ToolPkgManager {
-    fn default() -> Self {
-        Self::new(HostManager::new())
-    }
+    executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
+    assetSource: Arc<dyn ToolPkgAssetSource>,
 }
 
 impl ToolPkgManager {
-    /// Creates a ToolPkg manager for an application context.
-    pub fn new(context: HostManager) -> Self {
+    /// Creates a ToolPkg manager from application-supplied execution and asset interfaces.
+    pub fn new(
+        executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
+        assetSource: Arc<dyn ToolPkgAssetSource>,
+    ) -> Self {
         Self {
-            context,
             containers: BTreeMap::new(),
             subpackageByPackageName: BTreeMap::new(),
             runtimeChangeListeners: Arc::new(Mutex::new(Vec::new())),
             toolPkgExecutionEngines: Arc::new(Mutex::new(BTreeMap::new())),
+            executionEngineFactory,
+            assetSource,
         }
+    }
+
+    /// Replaces the JavaScript engine factory and destroys cached engines.
+    #[allow(non_snake_case)]
+    pub fn updateExecutionEngineFactory(
+        &mut self,
+        executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
+    ) {
+        self.destroy();
+        self.executionEngineFactory = executionEngineFactory;
     }
 
     /// Returns whether a package name belongs to a registered ToolPkg container.
@@ -62,20 +88,19 @@ impl ToolPkgManager {
         runtimes
     }
 
+    /// Returns the registered ToolPkg container map keyed by package name.
     #[allow(non_snake_case)]
-    pub(crate) fn getToolPkgContainerRuntimeMap(
-        &self,
-    ) -> BTreeMap<String, ToolPkgContainerRuntime> {
+    pub fn getToolPkgContainerRuntimeMap(&self) -> BTreeMap<String, ToolPkgContainerRuntime> {
         self.containers.clone()
     }
 
+    /// Returns the registered ToolPkg subpackage map keyed by package name.
     #[allow(non_snake_case)]
-    pub(crate) fn getToolPkgSubpackageRuntimeMap(
-        &self,
-    ) -> BTreeMap<String, ToolPkgSubpackageRuntime> {
+    pub fn getToolPkgSubpackageRuntimeMap(&self) -> BTreeMap<String, ToolPkgSubpackageRuntime> {
         self.subpackageByPackageName.clone()
     }
 
+    /// Returns one registered ToolPkg container runtime by package name.
     #[allow(non_snake_case)]
     pub fn getToolPkgContainerRuntime(
         &self,
@@ -84,6 +109,7 @@ impl ToolPkgManager {
         self.containers.get(containerPackageName.trim()).cloned()
     }
 
+    /// Resolves one ToolPkg subpackage runtime by package name.
     #[allow(non_snake_case)]
     pub fn resolveToolPkgSubpackageRuntimeInternal(
         &self,
@@ -149,8 +175,9 @@ impl ToolPkgManager {
         Some(runtime)
     }
 
+    /// Replaces all registered container and subpackage runtime maps.
     #[allow(non_snake_case)]
-    pub(crate) fn replaceRuntimeMaps(
+    pub fn replaceRuntimeMaps(
         &mut self,
         containers: BTreeMap<String, ToolPkgContainerRuntime>,
         subpackageByPackageName: BTreeMap<String, ToolPkgSubpackageRuntime>,
@@ -159,6 +186,7 @@ impl ToolPkgManager {
         self.subpackageByPackageName = subpackageByPackageName;
     }
 
+    /// Returns the ToolPkg containers enabled directly or through a subpackage.
     #[allow(non_snake_case)]
     pub fn getEnabledToolPkgContainerRuntimes(
         &self,
@@ -181,6 +209,7 @@ impl ToolPkgManager {
         runtimes
     }
 
+    /// Registers a listener and immediately sends the current active containers.
     #[allow(non_snake_case)]
     pub fn addToolPkgRuntimeChangeListener(
         &self,
@@ -197,6 +226,7 @@ impl ToolPkgManager {
         listener(activeContainers);
     }
 
+    /// Notifies every registered runtime change listener.
     #[allow(non_snake_case)]
     pub fn notifyToolPkgRuntimeChangeListeners(
         &self,
@@ -212,6 +242,7 @@ impl ToolPkgManager {
         }
     }
 
+    /// Returns the main script of an enabled ToolPkg container.
     #[allow(non_snake_case)]
     pub fn getToolPkgMainScriptInternal(
         &self,
@@ -258,11 +289,9 @@ impl ToolPkgManager {
         self.readToolPkgResourceText(runtime, resourcePath)
     }
 
+    /// Returns a cached execution engine or creates one for the supplied context key.
     #[allow(non_snake_case)]
-    pub(crate) fn getToolPkgExecutionEngine(
-        &self,
-        contextKey: &str,
-    ) -> Arc<dyn JsExecutionEngine> {
+    pub fn getToolPkgExecutionEngine(&self, contextKey: &str) -> Arc<dyn JsExecutionEngine> {
         let normalizedKey = match contextKey.trim() {
             "" => "toolpkg_main:default",
             value => value,
@@ -274,15 +303,14 @@ impl ToolPkgManager {
         if let Some(engine) = engines.get(normalizedKey) {
             return engine.clone();
         }
-        let toolHandler =
-            operit_tools::tools::AIToolHandler::AIToolHandler::getInstance(self.context.clone());
-        let engine = jsBridgeSupport().newToolPkgExecutionEngine(toolHandler);
+        let engine = self.executionEngineFactory.createToolPkgExecutionEngine();
         engines.insert(normalizedKey.to_string(), engine.clone());
         engine
     }
 
+    /// Finds a cached ToolPkg execution engine without creating one.
     #[allow(non_snake_case)]
-    pub(crate) fn findToolPkgExecutionEngine(
+    pub fn findToolPkgExecutionEngine(
         &self,
         contextKey: &str,
     ) -> Option<Arc<dyn JsExecutionEngine>> {
@@ -314,6 +342,7 @@ impl ToolPkgManager {
         }
     }
 
+    /// Destroys main and provider execution engines associated with one ToolPkg container.
     #[allow(non_snake_case)]
     pub fn destroyDefaultToolPkgExecutionEngine(&self, packageName: &str) {
         let normalizedPackageName = packageName.trim();
@@ -338,6 +367,7 @@ impl ToolPkgManager {
         }
     }
 
+    /// Removes every registered ToolPkg runtime while preserving listeners.
     #[allow(non_snake_case)]
     pub fn clear(&mut self) {
         self.containers.clear();
@@ -358,6 +388,7 @@ impl ToolPkgManager {
         }
     }
 
+    /// Reads one ToolPkg resource as UTF-8 text.
     #[allow(non_snake_case)]
     fn readToolPkgResourceText(
         &self,
@@ -368,8 +399,9 @@ impl ToolPkgManager {
         String::from_utf8(bytes).ok()
     }
 
+    /// Reads one ToolPkg resource as raw bytes.
     #[allow(non_snake_case)]
-    pub(crate) fn readToolPkgResourceBytes(
+    pub fn readToolPkgResourceBytes(
         &self,
         runtime: &ToolPkgContainerRuntime,
         resourcePath: &str,
@@ -397,8 +429,8 @@ impl ToolPkgManager {
                 None
             }
             ToolPkgSourceType::ASSET => {
-                let asset = bundledPluginAssetByName(&runtime.sourcePath)?;
-                let cursor = std::io::Cursor::new(asset.bytes);
+                let assetBytes = self.assetSource.toolPkgAssetBytes(&runtime.sourcePath)?;
+                let cursor = std::io::Cursor::new(assetBytes);
                 let mut archive = zip::ZipArchive::new(cursor).ok()?;
                 let mut entry = archive.by_name(&normalizedResourcePath).ok()?;
                 let mut bytes = Vec::new();
@@ -409,15 +441,156 @@ impl ToolPkgManager {
     }
 }
 
-#[allow(non_snake_case)]
-fn bundledPluginAssetByName(assetName: &str) -> Option<&'static RuntimePluginAsset> {
-    toolRuntimeSupport()
-        .builtinPluginAssets()
-        .iter()
-        .chain(toolRuntimeSupport().bundledExternalPluginAssets().iter())
-        .find(|asset| asset.name == assetName)
+impl ToolPkgHookDispatcher for ToolPkgManager {
+    /// Invokes one ToolPkg hook using its container main script and execution context.
+    #[allow(non_snake_case)]
+    fn dispatchToolPkgHook(
+        &self,
+        enabledPackageNames: &[String],
+        invocation: ToolPkgHookInvocation,
+    ) -> Result<Option<String>, String> {
+        let containerPackageName = invocation.containerPackageName.trim();
+        let runtime = self
+            .containers
+            .get(containerPackageName)
+            .cloned()
+            .ok_or_else(|| format!("ToolPkg container not found: {containerPackageName}"))?;
+        let script = self
+            .getToolPkgMainScriptInternal(&runtime.packageName, enabledPackageNames)
+            .ok_or_else(|| {
+                format!(
+                    "ToolPkg main script is unavailable: {}",
+                    runtime.packageName
+                )
+            })?;
+
+        let eventName = invocation
+            .eventName
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(invocation.event.as_str());
+        let mut params = BTreeMap::<String, Value>::new();
+        params.insert("event".to_string(), Value::String(eventName.to_string()));
+        params.insert(
+            "eventName".to_string(),
+            Value::String(eventName.to_string()),
+        );
+        params.insert("eventPayload".to_string(), invocation.eventPayload.clone());
+        params.insert(
+            "timestampMs".to_string(),
+            Value::Number(serde_json::Number::from(invocation.timestampMs)),
+        );
+        params.insert(
+            "functionName".to_string(),
+            Value::String(invocation.functionName.clone()),
+        );
+        params.insert(
+            "toolPkgId".to_string(),
+            Value::String(runtime.packageName.clone()),
+        );
+        params.insert(
+            "containerPackageName".to_string(),
+            Value::String(runtime.packageName.clone()),
+        );
+        params.insert(
+            "__operit_ui_package_name".to_string(),
+            Value::String(runtime.packageName.clone()),
+        );
+        params.insert(
+            "__operit_script_screen".to_string(),
+            Value::String(runtime.mainEntry),
+        );
+        if let Some(pluginId) = invocation
+            .pluginId
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            params.insert("pluginId".to_string(), Value::String(pluginId.to_string()));
+        }
+        if let Some(chatId) = invocation
+            .eventPayload
+            .get("chatId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            params.insert(
+                "__operit_package_chat_id".to_string(),
+                Value::String(chatId.to_string()),
+            );
+        }
+        if let Some(functionSource) = invocation
+            .inlineFunctionSource
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            params.insert(
+                "__operit_inline_function_name".to_string(),
+                Value::String(invocation.functionName.clone()),
+            );
+            params.insert(
+                "__operit_inline_function_source".to_string(),
+                Value::String(functionSource.to_string()),
+            );
+        }
+        if let Some(contextKey) = invocation
+            .executionContextKey
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            params.insert(
+                "__operit_execution_context_key".to_string(),
+                Value::String(contextKey.to_string()),
+            );
+        }
+        if let Some(runtimeKind) = invocation
+            .runtimeKind
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            params.insert(
+                "__operit_toolpkg_runtime_kind".to_string(),
+                Value::String(runtimeKind.to_ascii_lowercase()),
+            );
+        }
+
+        let contextKey = resolveToolPkgExecutionContextKey(&runtime.packageName, &params);
+        let engine = self.getToolPkgExecutionEngine(&contextKey);
+        engine
+            .execute_script_function(
+                &script,
+                &invocation.functionName,
+                &params,
+                &invocation.envOverrides,
+                invocation.onIntermediateResult,
+                invocation.dispatchIntermediateOnMain,
+                invocation.timeoutSec,
+            )
+            .map_err(|error| error.to_string())
+    }
 }
 
+/// Resolves the execution context key encoded in hook parameters.
+#[allow(non_snake_case)]
+fn resolveToolPkgExecutionContextKey(
+    containerPackageName: &str,
+    params: &BTreeMap<String, Value>,
+) -> String {
+    params
+        .get("__operit_execution_context_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("toolpkg_main:{containerPackageName}"))
+}
+
+/// Normalizes a ToolPkg entry path and rejects parent-directory traversal.
 #[allow(non_snake_case)]
 fn normalizeToolPkgEntryPath(rawPath: &str) -> Option<String> {
     let normalized = rawPath

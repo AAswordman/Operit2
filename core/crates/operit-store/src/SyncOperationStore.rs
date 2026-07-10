@@ -5,10 +5,14 @@ use std::sync::Arc;
 
 use operit_host_api::RuntimeStorageHost;
 use operit_host_api::TimeUtils::tryCurrentTimeMillis;
+use operit_util::RuntimeStorageLayout::{
+    MODEL_CONFIGS_PREFERENCES_PATH, TTS_CONFIGS_PREFERENCES_PATH,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::PreferencesEncryption::PreferencesEncryption;
 use crate::RuntimeStorageHost::{defaultRuntimeStorageHost, runtimeStoragePath};
 use crate::RuntimeStorePaths::RuntimeStorePaths;
 
@@ -172,7 +176,8 @@ impl SyncOperationStore {
         operations.sort_by(|left, right| left.sequence.cmp(&right.sequence));
         let mut content = String::new();
         for operation in operations {
-            content.push_str(&serde_json::to_string(&operation)?);
+            let storedOperation = self.encodeOperationPayload(&operation)?;
+            content.push_str(&serde_json::to_string(&storedOperation)?);
             content.push('\n');
         }
         self.storageHost.writeBytes(
@@ -255,9 +260,51 @@ impl SyncOperationStore {
             if trimmed.is_empty() {
                 continue;
             }
-            operations.push(serde_json::from_str(trimmed)?);
+            let operation: SyncOperation = serde_json::from_str(trimmed)?;
+            operations.push(self.decodeOperationPayload(operation)?);
         }
         Ok(operations)
+    }
+
+    /// Encodes operation payloads that are stored encrypted in the sync log.
+    fn encodeOperationPayload(
+        &self,
+        operation: &SyncOperation,
+    ) -> Result<SyncOperation, SyncOperationStoreError> {
+        if !encryptedPreferenceSyncOperation(operation) {
+            return Ok(operation.clone());
+        }
+        let encryption = PreferencesEncryption::load_or_create(self.storageHost.as_ref())
+            .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?;
+        let payloadBytes = serde_json::to_vec(&operation.payload)?;
+        let encryptedPayload = encryption
+            .encrypt(&encryptedPreferenceSyncPayloadAad(operation), &payloadBytes)
+            .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?;
+        let mut storedOperation = operation.clone();
+        storedOperation.payload = serde_json::from_slice(&encryptedPayload)?;
+        Ok(storedOperation)
+    }
+
+    /// Decodes operation payloads that are stored encrypted in the sync log.
+    fn decodeOperationPayload(
+        &self,
+        operation: SyncOperation,
+    ) -> Result<SyncOperation, SyncOperationStoreError> {
+        if !encryptedPreferenceSyncOperation(&operation) {
+            return Ok(operation);
+        }
+        let encryption = PreferencesEncryption::load_or_create(self.storageHost.as_ref())
+            .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?;
+        let payloadBytes = serde_json::to_vec(&operation.payload)?;
+        let decryptedPayload = encryption
+            .decrypt(
+                &encryptedPreferenceSyncPayloadAad(&operation),
+                &payloadBytes,
+            )
+            .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?;
+        let mut decodedOperation = operation;
+        decodedOperation.payload = serde_json::from_slice(&decryptedPayload)?;
+        Ok(decodedOperation)
     }
 
     fn devices(&self) -> Result<Vec<String>, SyncOperationStoreError> {
@@ -340,6 +387,21 @@ fn storageSafeId(value: &str) -> String {
             }
         })
         .collect()
+}
+
+#[allow(non_snake_case)]
+/// Reports whether this operation stores an encrypted preferences payload.
+fn encryptedPreferenceSyncOperation(operation: &SyncOperation) -> bool {
+    operation.domain == "preferences"
+        && operation.operation == "upsert"
+        && (operation.entityId == MODEL_CONFIGS_PREFERENCES_PATH
+            || operation.entityId == TTS_CONFIGS_PREFERENCES_PATH)
+}
+
+#[allow(non_snake_case)]
+/// Builds authenticated data for an encrypted preferences sync payload.
+fn encryptedPreferenceSyncPayloadAad(operation: &SyncOperation) -> String {
+    format!("runtime/sync/preferences_payloads/{}", operation.entityId)
 }
 
 /// Compacts operation streams while preserving delete boundaries and latest entity state.

@@ -28,6 +28,10 @@ pub mod NetworkUtils;
 pub mod OCRUtils;
 pub mod OperitPaths;
 pub mod PortProcessKiller;
+#[path = "RuntimeStorageLayout.rs"]
+pub mod RuntimeStorageLayout;
+#[path = "RuntimeStoreRoot.rs"]
+pub mod RuntimeStoreRoot;
 pub mod SerializationSetup;
 pub mod SkillRepoZipPoolManager;
 pub mod StreamingJsonXmlConverter;
@@ -41,7 +45,3 @@ pub mod WaifuMessageProcessor;
 pub mod exceptions;
 pub mod stream;
 pub mod streamnative;
-#[path = "RuntimeStorageLayout.rs"]
-pub mod RuntimeStorageLayout;
-#[path = "RuntimeStoreRoot.rs"]
-pub mod RuntimeStoreRoot;

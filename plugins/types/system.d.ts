@@ -8,7 +8,7 @@ import {
     BluetoothStateData, BluetoothBondedDevicesData, BluetoothScanResultData, BluetoothSessionData,
     BluetoothTransferData, BluetoothReadData, BluetoothBleServicesData, BluetoothBleNotificationData,
     TerminalInfoResultData, TerminalCommandResultData, TerminalStreamEventData, HiddenTerminalCommandResultData,
-    TerminalSessionCreationResultData, TerminalSessionCloseResultData, TerminalSessionScreenResultData,
+    TerminalSessionCreationResultData, TerminalSessionCloseResultData, TerminalSessionScreenResultData, TerminalCreateType,
     MusicPlaybackResultData
 } from './results';
 
@@ -240,10 +240,10 @@ export namespace System {
         /**
          * Create or get a terminal session.
          * @param sessionName The name for the session.
-         * @param type Optional terminal type, such as powershell, bash, linux, or android.
+         * @param type Terminal type. Windows supports powershell and bash; Linux supports linux; Android supports bash and shell.
          * @returns Promise resolving to the session creation result.
          */
-        function create(sessionName?: string, type?: string): Promise<TerminalSessionCreationResultData>;
+        function create(sessionName: string, type: TerminalCreateType): Promise<TerminalSessionCreationResultData>;
 
         /**
          * Execute a command in a terminal session.
@@ -271,11 +271,12 @@ export namespace System {
          * Execute a command in a hidden non-PTY executor.
          * Commands using the same executorKey reuse the same hidden login context and are not shown in the visible terminal UI.
          * @param command The command to execute.
-         * @param options Optional hidden executor options.
+         * @param options Hidden executor options.
          * @returns Promise resolving to the hidden command execution result. On timeout, the current command is cancelled, the hidden executor session is kept, and the returned result has `timedOut === true`.
          */
-        function hiddenExec(command: string, options?: {
+        function hiddenExec(command: string, options: {
             executorKey?: string;
+            type: TerminalCreateType;
             timeoutMs?: number | string;
         }): Promise<HiddenTerminalCommandResultData>;
 

@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use operit_host_api::HostManager::HostManager;
 use crate::tools::mcp_runtime::plugins::MCPBridge::{MCPBridge, ServiceInfo};
+use operit_host_api::HostManager::HostManager;
 
 pub struct MCPBridgeClient {
     context: HostManager,

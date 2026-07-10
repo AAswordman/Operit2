@@ -1,15 +1,19 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::runtime_support::ToolRuntimeSupport;
+use crate::tools::mcp_runtime::plugins::MCPBridge::MCPBridge;
+use crate::tools::mcp_runtime::plugins::MCPBridgeClient::MCPBridgeClient;
+use crate::tools::mcp_runtime::MCPLocalServer::{
+    CachedToolInfo, MCPConfig, MCPLocalServer, PluginMetadata,
+};
+use crate::tools::mcp_runtime::MCPRepository::MCPRepository;
 use operit_host_api::HostManager::HostManager;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
 use operit_tools::tools::mcp::MCPServerConfig::MCPServerConfig;
-use crate::tools::mcp_runtime::plugins::MCPBridge::MCPBridge;
-use crate::tools::mcp_runtime::plugins::MCPBridgeClient::MCPBridgeClient;
-use crate::tools::mcp_runtime::MCPLocalServer::{CachedToolInfo, MCPConfig, MCPLocalServer, PluginMetadata};
-use crate::tools::mcp_runtime::MCPRepository::MCPRepository;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PluginInitStatus {
@@ -42,11 +46,16 @@ pub struct VerificationResult {
 #[derive(Clone)]
 pub struct MCPStarter {
     context: HostManager,
+    runtimeSupport: Arc<dyn ToolRuntimeSupport>,
 }
 
 impl MCPStarter {
-    pub fn new(context: HostManager) -> Self {
-        Self { context }
+    /// Creates an MCP starter bound to one tool runtime.
+    pub fn new(context: HostManager, runtimeSupport: Arc<dyn ToolRuntimeSupport>) -> Self {
+        Self {
+            context,
+            runtimeSupport,
+        }
     }
 
     #[allow(non_snake_case)]
@@ -239,7 +248,12 @@ impl MCPStarter {
         }
 
         let pluginInfo = if pluginInfo.description.trim().is_empty() {
-            match generateMissingDescription(&self.context, pluginId, &pluginInfo) {
+            match generateMissingDescription(
+                &self.context,
+                self.runtimeSupport.clone(),
+                pluginId,
+                &pluginInfo,
+            ) {
                 Some(updated) => updated,
                 None => pluginInfo,
             }
@@ -305,6 +319,7 @@ fn currentTimeMillis() -> i64 {
 #[allow(non_snake_case)]
 fn generateMissingDescription(
     context: &HostManager,
+    runtimeSupport: Arc<dyn ToolRuntimeSupport>,
     pluginId: &str,
     pluginInfo: &PluginMetadata,
 ) -> Option<PluginMetadata> {
@@ -312,7 +327,7 @@ fn generateMissingDescription(
         .enable_all()
         .build()
         .ok()?;
-    let repository = MCPRepository::getInstance(context);
+    let repository = MCPRepository::getInstance(context, runtimeSupport);
     let generatedDescription = runtime
         .block_on(repository.generatePluginDescription(pluginId, &pluginInfo.name))
         .ok()?;

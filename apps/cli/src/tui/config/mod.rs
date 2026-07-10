@@ -62,8 +62,7 @@ pub(crate) struct ConfigUi {
     pub(crate) add_model_search: String,
     pub(crate) add_model_filtered: Vec<usize>,
     pub(crate) add_model_index: usize,
-    pub(crate) available_models:
-        Vec<operit_model::ModelConfigData::AvailableProviderModel>,
+    pub(crate) available_models: Vec<operit_model::ModelConfigData::AvailableProviderModel>,
 }
 
 pub(crate) enum ConfirmAction {
@@ -165,9 +164,7 @@ impl ConfigUi {
         }
     }
 
-    pub(crate) fn selected_model(
-        &self,
-    ) -> Option<&operit_model::ModelConfigData::ModelProfile> {
+    pub(crate) fn selected_model(&self) -> Option<&operit_model::ModelConfigData::ModelProfile> {
         match &self.state {
             ConfigState::ModelList { provider_index, .. } => {
                 let provider = self.providers.get(*provider_index)?;
@@ -773,12 +770,13 @@ impl ConfigUi {
                     };
                     self.status_message = Some(text.config_testing_connection().to_string());
                     match core
-                        .preferences_model_config_manager()
-                        .testModelConnection(&pid, &model.id)
+                        .application()
+                        .test_model_connection(pid, model.id)
                         .await
                     {
                         Ok(report) => {
-                            let success_count = report.items.iter().filter(|i| i.success).count();
+                            let success_count =
+                                report.items.iter().filter(|item| item.success).count();
                             let total = report.items.len();
                             self.status_message =
                                 Some(text.config_test_result(success_count, total));
@@ -1155,12 +1153,13 @@ impl ConfigUi {
                 if matches!(editor.level, model_editor::EditorLevel::Main) {
                     editor.testing = true;
                     match core
-                        .preferences_model_config_manager()
-                        .testModelConnection(&editor.provider_id, &editor.model_id)
+                        .application()
+                        .test_model_connection(editor.provider_id.clone(), editor.model_id.clone())
                         .await
                     {
                         Ok(report) => {
-                            let success_count = report.items.iter().filter(|i| i.success).count();
+                            let success_count =
+                                report.items.iter().filter(|item| item.success).count();
                             let total = report.items.len();
                             editor.test_result =
                                 Some(text.config_test_result(success_count, total));

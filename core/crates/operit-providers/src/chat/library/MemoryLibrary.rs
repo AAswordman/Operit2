@@ -6,13 +6,13 @@ use chrono::Utc;
 use regex::Regex;
 use serde_json::Value;
 
+use crate::chat::config::FunctionalPrompts::FunctionalPrompts;
 use crate::chat::enhance::MultiServiceManager::SharedAIServiceHandle;
 use crate::chat::llmprovider::AIService::SendMessageRequest;
-use operit_model::PromptTurn::{toPromptTurns, PromptTurn, PromptTurnKind};
-use crate::chat::config::FunctionalPrompts::FunctionalPrompts;
+use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::FunctionType::FunctionType;
 use operit_model::Memory::{Memory, MemoryTag};
-use crate::runtime_support::providerRuntimeSupport;
+use operit_model::PromptTurn::{toPromptTurns, PromptTurn, PromptTurnKind};
 use operit_store::repository::MemoryRepository::MemoryRepository;
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
@@ -87,12 +87,14 @@ impl ParsedAnalysis {
 }
 
 impl MemoryLibrary {
+    /// Starts memory persistence with an explicit provider runtime context.
     #[allow(non_snake_case)]
     pub fn saveMemoryAsync(
         conversationHistory: Vec<(String, String)>,
         content: String,
         aiService: SharedAIServiceHandle,
         characterCardId: Option<String>,
+        runtimeContext: ProviderRuntimeContext,
     ) {
         thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -104,6 +106,7 @@ impl MemoryLibrary {
                 content,
                 aiService,
                 characterCardId,
+                runtimeContext,
             ));
             if let Err(error) = result {
                 AppLogger::e(TAG, &format!("保存记忆失败: {error}"));
@@ -111,14 +114,23 @@ impl MemoryLibrary {
         });
     }
 
+    /// Persists memory immediately with an explicit provider runtime context.
     #[allow(non_snake_case)]
     pub async fn saveMemoryNow(
         conversationHistory: Vec<(String, String)>,
         content: String,
         aiService: SharedAIServiceHandle,
         characterCardId: Option<String>,
+        runtimeContext: ProviderRuntimeContext,
     ) -> Result<(), String> {
-        Self::saveMemory(conversationHistory, content, aiService, characterCardId).await
+        Self::saveMemory(
+            conversationHistory,
+            content,
+            aiService,
+            characterCardId,
+            runtimeContext,
+        )
+        .await
     }
 
     #[allow(non_snake_case)]
@@ -127,6 +139,7 @@ impl MemoryLibrary {
         content: String,
         aiService: SharedAIServiceHandle,
         characterCardId: Option<String>,
+        runtimeContext: ProviderRuntimeContext,
     ) -> Result<(), String> {
         let mutex = memoryMutex();
         let _guard = mutex.lock().await;
@@ -178,6 +191,7 @@ impl MemoryLibrary {
             &processedHistory,
             &memoryRepository,
             &ownerKey,
+            &runtimeContext,
         )
         .await?;
 
@@ -321,13 +335,12 @@ impl MemoryLibrary {
         conversationHistory: &[(String, String)],
         memoryRepository: &MemoryRepository,
         ownerKey: &str,
+        runtimeContext: &ProviderRuntimeContext,
     ) -> Result<ParsedAnalysis, String> {
         let useEnglish = false;
         let currentPreferences = UserMarkdownRepository::new(ownerKey).readUserMarkdown()?;
         let contextQuery = buildCandidateSearchQuery(query, solution);
-        let searchConfig = providerRuntimeSupport()
-            .map_err(|error| error.to_string())?
-            .memorySearchConfig(ownerKey)?;
+        let searchConfig = runtimeContext.support().memorySearchConfig(ownerKey)?;
         let candidateMemories = memoryRepository
             .searchMemories(&contextQuery, None, 0.0, None, None)?
             .into_iter()
@@ -404,8 +417,8 @@ impl MemoryLibrary {
                 service.output_token_count(),
             )
         };
-        providerRuntimeSupport()
-            .map_err(|error| error.to_string())?
+        runtimeContext
+            .support()
             .updateTokensForProviderModel(
                 &providerModel,
                 inputTokens,

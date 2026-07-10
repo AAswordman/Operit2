@@ -1,15 +1,18 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use zip::ZipArchive;
 
-use operit_host_api::HostManager::defaultHttpHost;
-use operit_host_api::HostManager::HostManager;
-use crate::runtime_support::toolRuntimeSupport;
+use crate::runtime_support::ToolRuntimeSupport;
 use crate::tools::mcp_runtime::plugins::MCPBridgeClient::MCPBridgeClient;
 use crate::tools::mcp_runtime::plugins::MCPConfigGenerator::MCPConfigGenerator;
 use crate::tools::mcp_runtime::plugins::MCPProjectAnalyzer::MCPProjectAnalyzer;
-use crate::tools::mcp_runtime::MCPLocalServer::{MCPConfig, MCPLocalServer, PluginMetadata, ServerConfig};
+use crate::tools::mcp_runtime::MCPLocalServer::{
+    MCPConfig, MCPLocalServer, PluginMetadata, ServerConfig,
+};
+use operit_host_api::HostManager::defaultHttpHost;
+use operit_host_api::HostManager::HostManager;
 use operit_host_api::HttpRequestData;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use url::Url;
@@ -23,6 +26,7 @@ pub struct MCPRepository {
     context: HostManager,
     mcpLocalServer: MCPLocalServer,
     pluginsBaseDir: PathBuf,
+    runtimeSupport: Arc<dyn ToolRuntimeSupport>,
 }
 
 /// Result of an MCP plugin install request.
@@ -50,13 +54,14 @@ pub enum InstallProgress {
 impl MCPRepository {
     /// Creates an MCP repository from the current application context.
     #[allow(non_snake_case)]
-    pub fn getInstance(context: &HostManager) -> Self {
+    pub fn getInstance(context: &HostManager, runtimeSupport: Arc<dyn ToolRuntimeSupport>) -> Self {
         let paths = RuntimeStorePaths::default();
         let _ = paths.ensure_mcp_plugins_dir();
         Self {
             context: context.clone(),
             mcpLocalServer: MCPLocalServer::getInstance(context),
             pluginsBaseDir: paths.mcp_plugins_dir(),
+            runtimeSupport,
         }
     }
 
@@ -365,7 +370,8 @@ impl MCPRepository {
         } else {
             pluginName.trim().to_string()
         };
-        let generatedDescription = toolRuntimeSupport()
+        let generatedDescription = self
+            .runtimeSupport
             .generateMcpPluginDescription(&targetPluginName, &toolDescriptions)
             .await?;
         if generatedDescription.trim().is_empty() {

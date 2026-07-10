@@ -424,8 +424,10 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
       _testingModelKey = testKey;
     });
     try {
-      final report = await widget.clients.preferencesModelConfigManager
-          .testModelConnection(providerId: provider.id, modelId: model.id);
+      final report = await widget.clients.application.testModelConnection(
+        providerId: provider.id,
+        modelId: model.id,
+      );
       if (!mounted) {
         return report;
       }

@@ -1,6 +1,6 @@
 use crate::output::CoreCommandOutput;
-use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_host_api::HostManager::HostManager;
+use operit_runtime::core::application::OperitApplication::OperitApplication;
 
 pub fn run_host_command(
     context: HostManager,

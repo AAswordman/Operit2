@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use operit_host_api::{AudioPlaybackHost, HostError, MusicPlaybackRequest};
 
+use operit_tools::tools::ToolResultDataClasses::{
+    stringResultData, MusicPlaybackResultData, ToolResultData,
+};
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
-};
-use operit_tools::tools::ToolResultDataClasses::{
-    MusicPlaybackResultData, ToolResultData, stringResultData,
 };
 
 #[derive(Clone)]
@@ -117,7 +117,10 @@ impl StandardMusicTools {
                 tool,
                 ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from(data)),
             ),
-            Err(error) => toolError(tool, format!("Error setting music volume: {}", error.message)),
+            Err(error) => toolError(
+                tool,
+                format!("Error setting music volume: {}", error.message),
+            ),
         }
     }
 
@@ -128,7 +131,10 @@ impl StandardMusicTools {
                 tool,
                 ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from(data)),
             ),
-            Err(error) => toolError(tool, format!("Error getting music status: {}", error.message)),
+            Err(error) => toolError(
+                tool,
+                format!("Error getting music status: {}", error.message),
+            ),
         }
     }
 }
@@ -249,7 +255,11 @@ fn booleanParameterValue(tool: &AITool, name: &str, defaultValue: bool) -> bool 
 fn integerParameterValue(tool: &AITool, name: &str, defaultValue: i64) -> i64 {
     optionalParameterValue(tool, name)
         .filter(|value| !value.is_empty())
-        .map(|value| value.parse::<i64>().expect("integer parameter must be validated"))
+        .map(|value| {
+            value
+                .parse::<i64>()
+                .expect("integer parameter must be validated")
+        })
         .unwrap_or(defaultValue)
 }
 
@@ -257,7 +267,11 @@ fn integerParameterValue(tool: &AITool, name: &str, defaultValue: i64) -> i64 {
 fn numberParameterValue(tool: &AITool, name: &str, defaultValue: f64) -> f64 {
     optionalParameterValue(tool, name)
         .filter(|value| !value.is_empty())
-        .map(|value| value.parse::<f64>().expect("number parameter must be validated"))
+        .map(|value| {
+            value
+                .parse::<f64>()
+                .expect("number parameter must be validated")
+        })
         .unwrap_or(defaultValue)
 }
 

@@ -269,22 +269,26 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
     try {
       final result = await switch (_mode) {
         _SkillImportMode.github =>
-          widget.clients.permissionsSkillRuntimeSkillRepository.importSkillFromGitHubRepo(
-            repoUrl: _repoUrlController.text.trim(),
-          ),
+          widget.clients.application
+              .skillRepository()
+              .importSkillFromGitHubRepo(
+                repoUrl: _repoUrlController.text.trim(),
+              ),
         _SkillImportMode.zip =>
-          widget.clients.permissionsSkillRuntimeSkillRepository.importSkillFromZip(
+          widget.clients.application.skillRepository().importSkillFromZip(
             zipFile: _zipFile!.path,
           ),
         _SkillImportMode.direct =>
-          widget.clients.permissionsSkillRuntimeSkillRepository.importSkillFromDirectInput(
-            skillId: _skillIdController.text.trim(),
-            description: _descriptionController.text.trim(),
-            content: _contentController.text.trim(),
-            attachmentPaths: _attachments
-                .map((file) => file.path)
-                .toList(growable: false),
-          ),
+          widget.clients.application
+              .skillRepository()
+              .importSkillFromDirectInput(
+                skillId: _skillIdController.text.trim(),
+                description: _descriptionController.text.trim(),
+                content: _contentController.text.trim(),
+                attachmentPaths: _attachments
+                    .map((file) => file.path)
+                    .toList(growable: false),
+              ),
       };
       if (!mounted) {
         return;

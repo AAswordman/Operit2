@@ -1360,6 +1360,7 @@ dependencies = [
  "operit-host-api",
  "operit-link",
  "operit-model",
+ "operit-plugin-sdk",
  "operit-providers",
  "operit-runtime",
  "operit-store",
@@ -1392,8 +1393,8 @@ dependencies = [
  "image",
  "md-5",
  "operit-host-api",
+ "operit-plugin-sdk",
  "operit-store",
- "operit-tools",
  "operit-util",
  "quickjs-wasm-rs",
  "rquickjs",
@@ -1429,6 +1430,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-plugin-sdk"
+version = "2.0.0-preview.3"
+dependencies = [
+ "json5",
+ "regex",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "operit-providers"
 version = "2.0.0-preview.3"
 dependencies = [
@@ -1439,6 +1451,7 @@ dependencies = [
  "json5",
  "operit-host-api",
  "operit-model",
+ "operit-plugin-sdk",
  "operit-store",
  "operit-tools",
  "operit-util",
@@ -1473,11 +1486,11 @@ dependencies = [
  "operit-host-api",
  "operit-js-bridge",
  "operit-model",
+ "operit-plugin-sdk",
  "operit-providers",
  "operit-store",
  "operit-tools",
  "operit-util",
- "quickjs-wasm-rs",
  "regex",
  "reqwest",
  "rquickjs",
@@ -1506,6 +1519,7 @@ dependencies = [
  "operit-host-api",
  "operit-model",
  "operit-util",
+ "rusqlite",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -1527,6 +1541,7 @@ dependencies = [
  "md-5",
  "operit-host-api",
  "operit-model",
+ "operit-plugin-sdk",
  "operit-store",
  "operit-util",
  "quickjs-wasm-rs",

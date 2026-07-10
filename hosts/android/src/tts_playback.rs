@@ -21,7 +21,11 @@ impl AndroidTtsPlaybackHost {
         Self { controller }
     }
 
-    fn call(&self, command: &str, request: Option<TtsPlaybackRequest>) -> HostResult<TtsPlaybackStatus> {
+    fn call(
+        &self,
+        command: &str,
+        request: Option<TtsPlaybackRequest>,
+    ) -> HostResult<TtsPlaybackStatus> {
         (self.controller)(AndroidTtsPlaybackCommand {
             command: command.to_string(),
             request,

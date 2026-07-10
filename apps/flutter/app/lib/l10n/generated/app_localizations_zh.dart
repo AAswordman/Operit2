@@ -2455,6 +2455,43 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsDataCoreVersion => '当前版本';
 
   @override
+  String get settingsDataStorageSection => '储存路径';
+
+  @override
+  String get settingsDataStorageDescription =>
+      '把 runtime 和 workspace 数据迁移到新的本地文件夹。';
+
+  @override
+  String get settingsDataStorageRoot => '储存根目录';
+
+  @override
+  String get settingsDataRuntimeRoot => '运行时目录';
+
+  @override
+  String get settingsDataWorkspaceRoot => '工作区目录';
+
+  @override
+  String get settingsDataChooseStorageRoot => '选择位置';
+
+  @override
+  String get settingsDataStorageConfirmTitle => '更改储存路径';
+
+  @override
+  String get settingsDataStorageConfirmMessage =>
+      'runtime 和 workspace 数据会复制到所选文件夹，重启应用后使用新位置。';
+
+  @override
+  String get settingsDataStorageConfirmAction => '更改位置';
+
+  @override
+  String get settingsDataStorageChanged => '储存路径已更改，重启应用后生效。';
+
+  @override
+  String settingsDataStorageChangeError(String error) {
+    return '储存路径更改失败：$error';
+  }
+
+  @override
   String get settingsDataTokenSection => '使用统计';
 
   @override

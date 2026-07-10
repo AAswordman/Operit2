@@ -1,11 +1,11 @@
 use crate::output::CoreCommandOutput;
+use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_tools::tools::AIToolHandler::{AIToolHandler, ToolRegistrationVisibility};
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
-use operit_host_api::HostManager::HostManager;
-use operit_tools::tools::AIToolHandler::{AIToolHandler, ToolRegistrationVisibility};
 
 pub fn run_tool_command(
-    context: HostManager,
+    application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -19,13 +19,13 @@ pub fn run_tool_command(
             let scope = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 tool list <public|internal|all>".to_string())?;
-            list_tools(context, scope, output)
+            list_tools(&application.toolHandler, scope, output)
         }
         "show" => {
             let tool_name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 tool show <tool-name>".to_string())?;
-            show_tool(context, tool_name, output)
+            show_tool(&application.toolHandler, tool_name, output)
         }
         "exec" => {
             let tool_name = args
@@ -34,7 +34,12 @@ pub fn run_tool_command(
             let params_json = args
                 .get(2)
                 .ok_or_else(|| "usage: operit2 tool exec <tool-name> <params-json>".to_string())?;
-            exec_tool(context, tool_name, params_json, output)
+            exec_tool(
+                application.toolHandler.clone(),
+                tool_name,
+                params_json,
+                output,
+            )
         }
         _ => {
             print_tool_usage(output);
@@ -44,11 +49,10 @@ pub fn run_tool_command(
 }
 
 fn list_tools(
-    context: HostManager,
+    handler: &AIToolHandler,
     scope: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let handler = tool_handler(&context);
     let names = match scope {
         "public" => handler.getPublicToolNames(),
         "internal" => handler.getInternalToolNames(),
@@ -67,11 +71,10 @@ fn list_tools(
 }
 
 fn show_tool(
-    context: HostManager,
+    handler: &AIToolHandler,
     tool_name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let handler = tool_handler(&context);
     output.push_stdout_line(format!("name={tool_name}"));
     output.push_stdout_line(format!("registered={}", handler.hasToolExecutor(tool_name)));
     let visibility: Option<ToolRegistrationVisibility> = handler.getToolVisibility(tool_name);
@@ -87,12 +90,11 @@ fn format_tool_visibility(visibility: Option<ToolRegistrationVisibility>) -> Str
 }
 
 pub fn exec_tool(
-    context: HostManager,
+    mut handler: AIToolHandler,
     tool_name: &str,
     params_json: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let mut handler = tool_handler(&context);
     let tool = AITool {
         name: tool_name.to_string(),
         parameters: parse_tool_parameters_json(params_json)?,
@@ -135,10 +137,6 @@ fn print_tool_execution_result(
             None => Err("tool execution failed without error message".to_string()),
         }
     }
-}
-
-fn tool_handler(context: &HostManager) -> AIToolHandler {
-    AIToolHandler::getInstance(context.clone())
 }
 
 fn print_tool_usage(output: &mut CoreCommandOutput) {

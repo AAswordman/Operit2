@@ -1,13 +1,11 @@
 use serde_json::Value;
 
+use crate::tools::mcp_runtime::plugins::MCPBridgeClient::MCPBridgeClient;
 use operit_host_api::HostManager::HostManager;
+use operit_plugin_sdk::package::{LocalizedText, PackageTool, PackageToolParameter, ToolPackage};
 use operit_tools::tools::mcp::MCPServerConfig::MCPServerConfig;
 use operit_tools::tools::mcp::MCPTool::MCPTool;
 use operit_tools::tools::mcp::MCPToolParameter::MCPToolParameter;
-use operit_tools::tools::ToolPackage::{
-    LocalizedText, PackageTool, PackageToolParameter, ToolPackage,
-};
-use crate::tools::mcp_runtime::plugins::MCPBridgeClient::MCPBridgeClient;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MCPPackage {
@@ -23,18 +21,12 @@ pub struct LoadResult {
 
 impl MCPPackage {
     #[allow(non_snake_case)]
-    pub fn fromServer(
-        context: &HostManager,
-        serverConfig: MCPServerConfig,
-    ) -> Option<MCPPackage> {
+    pub fn fromServer(context: &HostManager, serverConfig: MCPServerConfig) -> Option<MCPPackage> {
         Self::loadFromServer(context, serverConfig).mcpPackage
     }
 
     #[allow(non_snake_case)]
-    pub fn loadFromServer(
-        context: &HostManager,
-        serverConfig: MCPServerConfig,
-    ) -> LoadResult {
+    pub fn loadFromServer(context: &HostManager, serverConfig: MCPServerConfig) -> LoadResult {
         let bridgeClient = MCPBridgeClient::new(context.clone(), serverConfig.name.clone());
         if !bridgeClient.connect() {
             return LoadResult {

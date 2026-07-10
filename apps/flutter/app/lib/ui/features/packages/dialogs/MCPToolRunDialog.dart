@@ -148,15 +148,16 @@ class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
         .toList(growable: false);
     if (missing.isNotEmpty) {
       setState(() {
-        _result =
-            core_proxy.CoreOperitToolsConversationMarkupManagerToolResult(
-              toolName: '${widget.serverId}:${widget.tool.name}',
-              success: false,
-              result: core_proxy.CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
+        _result = core_proxy.CoreOperitToolsConversationMarkupManagerToolResult(
+          toolName: '${widget.serverId}:${widget.tool.name}',
+          success: false,
+          result:
+              core_proxy
+                  .CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
                 value: const core_proxy.StringResultData(value: ''),
               ),
-              error: '缺少必填参数：${missing.join(", ")}',
-            );
+          error: '缺少必填参数：${missing.join(", ")}',
+        );
       });
       return;
     }
@@ -181,12 +182,14 @@ class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
                 ),
           )
           .toList(growable: false);
-      final result = await widget.clients.permissionsAiToolHandler.executeTool(
-        tool: core_proxy.CoreOperitToolsToolExecutionManagerAiTool(
-          name: '${widget.serverId}:${widget.tool.name}',
-          parameters: parameters,
-        ),
-      );
+      final result = await widget.clients.application
+          .aiToolHandler()
+          .executeTool(
+            tool: core_proxy.CoreOperitToolsToolExecutionManagerAiTool(
+              name: '${widget.serverId}:${widget.tool.name}',
+              parameters: parameters,
+            ),
+          );
       if (!mounted) {
         return;
       }
@@ -198,15 +201,16 @@ class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
         return;
       }
       setState(() {
-        _result =
-            core_proxy.CoreOperitToolsConversationMarkupManagerToolResult(
-              toolName: '${widget.serverId}:${widget.tool.name}',
-              success: false,
-              result: core_proxy.CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
+        _result = core_proxy.CoreOperitToolsConversationMarkupManagerToolResult(
+          toolName: '${widget.serverId}:${widget.tool.name}',
+          success: false,
+          result:
+              core_proxy
+                  .CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
                 value: const core_proxy.StringResultData(value: ''),
               ),
-              error: error.toString(),
-            );
+          error: error.toString(),
+        );
       });
     } finally {
       if (mounted) {

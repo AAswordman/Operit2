@@ -38,8 +38,8 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
   List<core_proxy.BundledExternalSkillCandidate> _moreSkills =
       <core_proxy.BundledExternalSkillCandidate>[];
 
-  GeneratedPermissionsSkillRuntimeSkillRepositoryCoreProxy get _repository =>
-      widget.clients.permissionsSkillRuntimeSkillRepository;
+  GeneratedApplicationSkillRepositoryCoreProxy get _repository =>
+      widget.clients.application.skillRepository();
 
   @override
   void initState() {
@@ -242,9 +242,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
                 EmptyState(
                   icon: Icons.build_outlined,
                   title: '没有技能',
-                  message: searchActive
-                      ? '没有匹配的技能。'
-                      : '当前没有可显示的技能。',
+                  message: searchActive ? '没有匹配的技能。' : '当前没有可显示的技能。',
                   scrollable: false,
                 )
               else ...<Widget>[

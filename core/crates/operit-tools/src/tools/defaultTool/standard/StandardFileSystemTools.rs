@@ -8,14 +8,8 @@ use operit_host_api::{
     HttpRequestData, SystemOperationHost,
 };
 
-use operit_tools::ConversationMarkupManager::ToolResult;
 use crate::runtime_support::{
-    toolRuntimeSupport, RuntimeStructuredEditAction, RuntimeStructuredEditOperation,
-};
-use operit_tools::ToolExecutionManager::ToolExecutionManager;
-use operit_tools::ToolExecutionManager::{
-    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolParameter,
-    ToolValidationResult,
+    RuntimeStructuredEditAction, RuntimeStructuredEditOperation, ToolRuntimeSupport,
 };
 use operit_host_api::HostManager::HostManager;
 use operit_tools::files::PathMapper::PathMapper;
@@ -26,6 +20,12 @@ use operit_tools::tools::ToolResultDataClasses::{
     FileContentData, FileEntry as ToolFileEntry, FileExistsData, FileInfoData, FileOperationData,
     FilePartContentData, FindFilesResultData, GrepFileMatch, GrepLineMatch, GrepResultData,
     ToolResultData,
+};
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::ToolExecutionManager;
+use operit_tools::ToolExecutionManager::{
+    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolParameter,
+    ToolValidationResult,
 };
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};
 
@@ -40,6 +40,7 @@ pub struct StandardFileSystemTools {
     runtimeStoreRoot: PathBuf,
     appFilesRoot: Option<PathBuf>,
     workspaceCollectionRoot: PathBuf,
+    runtimeSupport: Arc<dyn ToolRuntimeSupport>,
 }
 
 impl StandardFileSystemTools {
@@ -51,6 +52,7 @@ impl StandardFileSystemTools {
         runtimeStoreRoot: PathBuf,
         appFilesRoot: Option<PathBuf>,
         workspaceCollectionRoot: PathBuf,
+        runtimeSupport: Arc<dyn ToolRuntimeSupport>,
     ) -> Self {
         Self {
             host,
@@ -59,6 +61,7 @@ impl StandardFileSystemTools {
             runtimeStoreRoot,
             appFilesRoot,
             workspaceCollectionRoot,
+            runtimeSupport,
         }
     }
 
@@ -897,7 +900,7 @@ impl StandardFileSystemTools {
             }
             return vec![match vfs.writeFile(&path, &newContent, false) {
                 Ok(()) => {
-                    let diffContent = toolRuntimeSupport().generateUnifiedDiff("", &newContent);
+                    let diffContent = self.runtimeSupport.generateUnifiedDiff("", &newContent);
                     let details = format!("Successfully created new file: {path}");
                     successData(
                         tool,
@@ -986,8 +989,9 @@ impl StandardFileSystemTools {
             }
         };
 
-        let (mergedContent, aiInstructions) =
-            toolRuntimeSupport().processFileBindingOperations(&originalContent, &editOperations);
+        let (mergedContent, aiInstructions) = self
+            .runtimeSupport
+            .processFileBindingOperations(&originalContent, &editOperations);
         if aiInstructions.to_ascii_lowercase().starts_with("error") {
             return vec![toolError(
                 tool,
@@ -998,8 +1002,9 @@ impl StandardFileSystemTools {
         vec![match vfs.writeFile(&path, &mergedContent, false) {
             Ok(()) => {
                 let details = format!("Successfully applied AI code to file: {path}");
-                let diffContent =
-                    toolRuntimeSupport().generateUnifiedDiff(&originalContent, &mergedContent);
+                let diffContent = self
+                    .runtimeSupport
+                    .generateUnifiedDiff(&originalContent, &mergedContent);
                 successData(
                     tool,
                     ToolResultData::FileApplyResultData(FileApplyResultData {

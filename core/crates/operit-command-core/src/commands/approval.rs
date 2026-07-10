@@ -37,9 +37,7 @@ pub fn run_approval_command(
 
 fn parse_ai_permission_mode_arg(value: Option<&str>) -> Result<AiPermissionMode, String> {
     match value {
-        Some("read-only") | Some("READ_ONLY") | Some("ReadOnly") => {
-            Ok(AiPermissionMode::ReadOnly)
-        }
+        Some("read-only") | Some("READ_ONLY") | Some("ReadOnly") => Ok(AiPermissionMode::ReadOnly),
         Some("workspace-write") | Some("WORKSPACE_WRITE") | Some("WorkspaceWrite") => {
             Ok(AiPermissionMode::WorkspaceWrite)
         }

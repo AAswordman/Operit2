@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 
-use crate::runtime_support::toolRuntimeSupport;
+use crate::runtime_support::ToolRuntimeSupport;
 use crate::tools::skill::SkillPackage::SkillPackage;
 
 const QUICK_PLUGIN_CREATOR_SKILL_NAME: &str = "PackageBuilder";
@@ -25,7 +25,7 @@ pub struct BundledExternalSkillCandidate {
 impl SkillManager {
     /// Creates a skill manager using the default runtime store paths.
     #[allow(non_snake_case)]
-    pub fn getInstance() -> Self {
+    pub fn fromDefaultPaths() -> Self {
         Self::new(RuntimeStorePaths::default())
     }
 
@@ -163,14 +163,17 @@ impl SkillManager {
 
     /// Lists bundled external skills that have not been installed yet.
     #[allow(non_snake_case)]
-    pub fn getBundledExternalSkillCandidates(&self) -> Vec<BundledExternalSkillCandidate> {
+    pub fn getBundledExternalSkillCandidates(
+        &self,
+        runtimeSupport: &dyn ToolRuntimeSupport,
+    ) -> Vec<BundledExternalSkillCandidate> {
         let loadedSkillNames = self
             .getAvailableSkills()
             .keys()
             .cloned()
             .collect::<BTreeSet<_>>();
         let mut grouped = BTreeMap::<String, Vec<_>>::new();
-        for asset in toolRuntimeSupport().bundledExternalSkillAssets() {
+        for asset in runtimeSupport.bundledExternalSkillAssets() {
             grouped
                 .entry(asset.skillName.to_string())
                 .or_default()
@@ -206,8 +209,12 @@ impl SkillManager {
 
     /// Installs one bundled external skill into the skills directory.
     #[allow(non_snake_case)]
-    pub fn importBundledExternalSkill(&self, skillName: &str) -> Result<SkillPackage, String> {
-        let skillAssets = toolRuntimeSupport()
+    pub fn importBundledExternalSkill(
+        &self,
+        skillName: &str,
+        runtimeSupport: &dyn ToolRuntimeSupport,
+    ) -> Result<SkillPackage, String> {
+        let skillAssets = runtimeSupport
             .bundledExternalSkillAssets()
             .iter()
             .filter(|asset| asset.skillName == skillName)
@@ -254,8 +261,11 @@ impl SkillManager {
 
     /// Installs the bundled package-builder skill used by quick plugin creation.
     #[allow(non_snake_case)]
-    pub fn ensureQuickPluginCreatorBundledSkill(&self) -> Result<SkillPackage, String> {
-        self.importBundledExternalSkill(QUICK_PLUGIN_CREATOR_SKILL_NAME)
+    pub fn ensureQuickPluginCreatorBundledSkill(
+        &self,
+        runtimeSupport: &dyn ToolRuntimeSupport,
+    ) -> Result<SkillPackage, String> {
+        self.importBundledExternalSkill(QUICK_PLUGIN_CREATOR_SKILL_NAME, runtimeSupport)
     }
 
     /// Reads the SKILL.md content for one installed skill.

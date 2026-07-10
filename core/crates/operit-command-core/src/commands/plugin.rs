@@ -1,14 +1,15 @@
 use crate::output::CoreCommandOutput;
-use operit_host_api::HostManager::HostManager;
-use operit_tools::tools::packTool::PackageManager::BundledExternalPackageCandidate;
+use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_tools::tools::packTool::RuntimePackageManager::BundledExternalPackageCandidate;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use std::collections::BTreeSet;
 
 pub fn run_plugin_command(
-    context: HostManager,
+    application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
+    let tool_handler = application.toolHandler.clone();
     if args.is_empty() {
         print_plugin_usage(output);
         return Ok(());
@@ -19,19 +20,19 @@ pub fn run_plugin_command(
             print_plugin_usage(output);
             Ok(())
         }
-        "list" => list_plugins(context, output),
-        "more" => list_more_plugins(context, output),
+        "list" => list_plugins(tool_handler, output),
+        "more" => list_more_plugins(tool_handler, output),
         "show" => {
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 plugin show <name>".to_string())?;
-            show_plugin(context, name, output)
+            show_plugin(tool_handler, name, output)
         }
         "import" => {
             let path = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 plugin import <toolpkg-path>".to_string())?;
-            let package_manager = package_manager(&context);
+            let package_manager = package_manager(&tool_handler);
             let mut guard = package_manager
                 .lock()
                 .expect("package manager mutex poisoned");
@@ -42,16 +43,16 @@ pub fn run_plugin_command(
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 plugin load <name>".to_string())?;
-            load_more_plugin(context, name, output)
+            load_more_plugin(tool_handler, name, output)
         }
         "delete" | "remove" => {
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 plugin delete <name>".to_string())?;
-            delete_plugin(context, name, output)
+            delete_plugin(tool_handler, name, output)
         }
-        "enable" => set_plugin_enabled(context, args.get(1), true, output),
-        "disable" => set_plugin_enabled(context, args.get(1), false, output),
+        "enable" => set_plugin_enabled(tool_handler, args.get(1), true, output),
+        "disable" => set_plugin_enabled(tool_handler, args.get(1), false, output),
         _ => {
             print_plugin_usage(output);
             Ok(())
@@ -59,11 +60,8 @@ pub fn run_plugin_command(
     }
 }
 
-fn list_plugins(
-    context: HostManager,
-    output: &mut CoreCommandOutput,
-) -> Result<(), String> {
-    let package_manager = package_manager(&context);
+fn list_plugins(tool_handler: AIToolHandler, output: &mut CoreCommandOutput) -> Result<(), String> {
+    let package_manager = package_manager(&tool_handler);
     let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
@@ -81,10 +79,10 @@ fn list_plugins(
 }
 
 fn list_more_plugins(
-    context: HostManager,
+    tool_handler: AIToolHandler,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let package_manager = package_manager(&context);
+    let package_manager = package_manager(&tool_handler);
     let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
@@ -95,11 +93,11 @@ fn list_more_plugins(
 }
 
 fn show_plugin(
-    context: HostManager,
+    tool_handler: AIToolHandler,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let package_manager = package_manager(&context);
+    let package_manager = package_manager(&tool_handler);
     let guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
@@ -187,11 +185,11 @@ fn show_plugin(
 }
 
 fn load_more_plugin(
-    context: HostManager,
+    tool_handler: AIToolHandler,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let package_manager = package_manager(&context);
+    let package_manager = package_manager(&tool_handler);
     let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
@@ -200,11 +198,11 @@ fn load_more_plugin(
 }
 
 fn delete_plugin(
-    context: HostManager,
+    tool_handler: AIToolHandler,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let package_manager = package_manager(&context);
+    let package_manager = package_manager(&tool_handler);
     let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
@@ -227,7 +225,7 @@ fn format_bundled_external_candidate(candidate: &BundledExternalPackageCandidate
 }
 
 fn set_plugin_enabled(
-    context: HostManager,
+    tool_handler: AIToolHandler,
     name: Option<&String>,
     enabled: bool,
     output: &mut CoreCommandOutput,
@@ -239,7 +237,7 @@ fn set_plugin_enabled(
             "usage: operit2 plugin disable <name>".to_string()
         }
     })?;
-    let package_manager = package_manager(&context);
+    let package_manager = package_manager(&tool_handler);
     let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
@@ -253,7 +251,7 @@ fn set_plugin_enabled(
 }
 
 fn enabled_plugin_names_from_manager(
-    manager: &operit_tools::tools::packTool::PackageManager::PackageManager,
+    manager: &operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager,
 ) -> BTreeSet<String> {
     manager
         .getEnabledToolPkgContainerRuntimes()
@@ -263,11 +261,11 @@ fn enabled_plugin_names_from_manager(
 }
 
 fn package_manager(
-    context: &HostManager,
+    tool_handler: &AIToolHandler,
 ) -> std::sync::Arc<
-    std::sync::Mutex<operit_tools::tools::packTool::PackageManager::PackageManager>,
+    std::sync::Mutex<operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager>,
 > {
-    AIToolHandler::getInstance(context.clone()).getOrCreatePackageManager()
+    tool_handler.getOrCreatePackageManager()
 }
 
 fn print_plugin_usage(output: &mut CoreCommandOutput) {

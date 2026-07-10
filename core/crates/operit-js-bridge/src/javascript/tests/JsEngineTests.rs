@@ -1,12 +1,100 @@
 use super::JsEngineState;
-use operit_tools::runtime_support::EnvPreferences::EnvPreferences;
 use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorageHost};
+use operit_plugin_sdk::javascript::{
+    JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolNameResolutionRequest,
+    JsToolPkgIpcRequest, JsToolPkgResourceRequest,
+};
 use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
+use operit_util::OperitPaths;
 use operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRoot;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+
+struct TestPluginConfigExecutionHost;
+
+impl JsExecutionHost for TestPluginConfigExecutionHost {
+    /// Rejects unexpected tool execution.
+    fn execute_tool_call(&self, _request: JsToolCallRequest) -> JsToolCallResult {
+        panic!("Tool execution is not part of the plugin config test")
+    }
+
+    /// Returns the language used by the plugin config test.
+    fn package_language(&self) -> Result<String, String> {
+        Ok("zh-CN".to_string())
+    }
+
+    /// Rejects unexpected environment access.
+    fn read_environment_variable(&self, _key: &str) -> Result<Option<String>, String> {
+        panic!("Environment access is not part of the plugin config test")
+    }
+
+    /// Resolves plugin configuration through the real runtime path contract.
+    fn plugin_config_dir(&self, plugin_id: &str) -> Result<String, String> {
+        OperitPaths::pluginConfigDir(plugin_id).map(|path| path.to_string_lossy().to_string())
+    }
+
+    /// Rejects unexpected ToolPkg text resource access.
+    fn read_toolpkg_text_resource(
+        &self,
+        _package_name_or_subpackage_id: &str,
+        _resource_path: &str,
+    ) -> Result<String, String> {
+        panic!("ToolPkg text resources are not part of the plugin config test")
+    }
+
+    /// Rejects unexpected ToolPkg resource materialization.
+    fn materialize_toolpkg_resource(
+        &self,
+        _request: JsToolPkgResourceRequest,
+    ) -> Result<String, String> {
+        panic!("ToolPkg resources are not part of the plugin config test")
+    }
+
+    /// Rejects unexpected Compose DSL controller commands.
+    fn handle_compose_webview_controller_command(
+        &self,
+        _payload_json: &str,
+    ) -> Result<String, String> {
+        panic!("Compose DSL WebView control is not part of the plugin config test")
+    }
+
+    /// Rejects unexpected package state access.
+    fn is_package_imported(&self, _package_name: &str) -> Result<bool, String> {
+        panic!("Package state is not part of the plugin config test")
+    }
+
+    /// Rejects unexpected package import.
+    fn import_package(&self, _package_name: &str) -> Result<String, String> {
+        panic!("Package import is not part of the plugin config test")
+    }
+
+    /// Rejects unexpected package removal.
+    fn remove_package(&self, _package_name: &str) -> Result<String, String> {
+        panic!("Package removal is not part of the plugin config test")
+    }
+
+    /// Rejects unexpected package activation.
+    fn use_package(&self, _package_name: &str) -> Result<String, String> {
+        panic!("Package activation is not part of the plugin config test")
+    }
+
+    /// Rejects unexpected package listing.
+    fn list_imported_packages(&self) -> Result<Vec<String>, String> {
+        panic!("Package listing is not part of the plugin config test")
+    }
+
+    /// Rejects unexpected tool name resolution.
+    fn resolve_tool_name(&self, _request: JsToolNameResolutionRequest) -> Result<String, String> {
+        panic!("Tool name resolution is not part of the plugin config test")
+    }
+
+    /// Rejects unexpected ToolPkg IPC.
+    fn invoke_toolpkg_ipc(&self, _request: JsToolPkgIpcRequest) -> Result<Value, String> {
+        panic!("ToolPkg IPC is not part of the plugin config test")
+    }
+}
 
 #[allow(non_snake_case)]
 fn testParams() -> BTreeMap<String, Value> {
@@ -141,7 +229,7 @@ fn execute_promise_script_repeatedly_on_same_engine() {
             "text".to_string(),
             Value::String(format!("same-engine-{index}")),
         );
-        let output = state.executeScriptFunctionOnCurrentThread(
+        let output = state.execute_script_function_on_current_thread(
             script,
             "async_echo",
             &params,
@@ -169,7 +257,7 @@ fn execute_complete_finishes_call_before_return_value() {
     "#;
     let params = testParams();
 
-    let output = state.executeScriptFunctionOnCurrentThread(
+    let output = state.execute_script_function_on_current_thread(
         script,
         "complete_first",
         &params,
@@ -198,7 +286,7 @@ fn execute_function_with_active_module_context() {
     "#;
     let params = testParams();
 
-    let output = state.executeScriptFunctionOnCurrentThread(
+    let output = state.execute_script_function_on_current_thread(
         script,
         "inspect_context",
         &params,
@@ -239,7 +327,7 @@ fn bootstrap_exposes_ui_android_okhttp_api() {
     "#;
     let params = testParams();
 
-    let output = state.executeScriptFunctionOnCurrentThread(
+    let output = state.execute_script_function_on_current_thread(
         script,
         "inspect_bootstrap_api",
         &params,
@@ -273,7 +361,7 @@ fn toolpkg_ipc_local_call_returns_handler_result() {
     "#;
     let params = testParams();
 
-    let output = state.executeScriptFunctionOnCurrentThread(
+    let output = state.execute_script_function_on_current_thread(
         script,
         "local_ipc",
         &params,
@@ -306,7 +394,7 @@ fn runtime_context_with_context_runs_local_main_runner() {
     "#;
     let params = testParams();
 
-    let output = state.executeScriptFunctionOnCurrentThread(
+    let output = state.execute_script_function_on_current_thread(
         script,
         "context_runner",
         &params,
@@ -339,7 +427,7 @@ fn execute_inline_hook_function_source() {
         ),
     );
 
-    let output = state.executeScriptFunctionOnCurrentThread(
+    let output = state.execute_script_function_on_current_thread(
         script,
         "__operit_inline_test",
         &params,
@@ -355,7 +443,7 @@ fn execute_inline_hook_function_source() {
 
 #[test]
 fn compose_dsl_action_uses_rendered_runtime() {
-    let engine = super::JsEngine::newToolPkgRegistrationEngine();
+    let engine = super::JsEngine::new_toolpkg_registration_engine();
     let script = r#"
         exports.default = function(ctx) {
             var pair = ctx.useState('count', 0);
@@ -378,7 +466,7 @@ fn compose_dsl_action_uses_rendered_runtime() {
         Value::String("compose_route".to_string()),
     );
     let raw = engine
-        .executeComposeDslScript(script, &params, &BTreeMap::new())
+        .execute_compose_dsl_script(script, &params, &BTreeMap::new())
         .expect("compose render result");
     let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
     let actionId = parsed["tree"]["props"]["onClick"]["__actionId"]
@@ -386,7 +474,7 @@ fn compose_dsl_action_uses_rendered_runtime() {
         .expect("action id");
 
     let actionRaw = engine
-        .executeComposeDslAction(actionId, None, &params, &BTreeMap::new(), None)
+        .execute_compose_dsl_action(actionId, None, &params, &BTreeMap::new(), None)
         .expect("compose action result");
     let actionParsed = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
     assert_eq!(actionParsed["actionResult"], 1);
@@ -394,7 +482,7 @@ fn compose_dsl_action_uses_rendered_runtime() {
 
 #[test]
 fn compose_dsl_action_updates_runtime_options_state_store() {
-    let engine = super::JsEngine::newToolPkgRegistrationEngine();
+    let engine = super::JsEngine::new_toolpkg_registration_engine();
     let script = r#"
         exports.default = function(ctx) {
             var pair = ctx.useState('enabled', false);
@@ -416,7 +504,7 @@ fn compose_dsl_action_updates_runtime_options_state_store() {
         Value::String("compose_route".to_string()),
     );
     let raw = engine
-        .executeComposeDslScript(script, &params, &BTreeMap::new())
+        .execute_compose_dsl_script(script, &params, &BTreeMap::new())
         .expect("compose render result");
     let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
     let actionId = parsed["tree"]["props"]["onCheckedChange"]["__actionId"]
@@ -427,7 +515,7 @@ fn compose_dsl_action_updates_runtime_options_state_store() {
     params.insert("memo".to_string(), parsed["memo"].clone());
 
     let actionRaw = engine
-        .executeComposeDslAction(
+        .execute_compose_dsl_action(
             &actionId,
             Some(Value::Bool(true)),
             &params,
@@ -443,7 +531,7 @@ fn compose_dsl_action_updates_runtime_options_state_store() {
 
 #[test]
 fn compose_dsl_action_can_access_bootstrap_globals() {
-    let engine = super::JsEngine::newToolPkgRegistrationEngine();
+    let engine = super::JsEngine::new_toolpkg_registration_engine();
     let script = r#"
         exports.default = function(ctx) {
             return ctx.h('Box', {
@@ -466,7 +554,7 @@ fn compose_dsl_action_can_access_bootstrap_globals() {
         Value::String("compose_route".to_string()),
     );
     let raw = engine
-        .executeComposeDslScript(script, &params, &BTreeMap::new())
+        .execute_compose_dsl_script(script, &params, &BTreeMap::new())
         .expect("compose render result");
     let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
     let actionId = parsed["tree"]["props"]["onLoad"]["__actionId"]
@@ -474,7 +562,7 @@ fn compose_dsl_action_can_access_bootstrap_globals() {
         .expect("action id");
 
     let actionRaw = engine
-        .executeComposeDslAction(actionId, None, &params, &BTreeMap::new(), None)
+        .execute_compose_dsl_action(actionId, None, &params, &BTreeMap::new(), None)
         .expect("compose action result");
     let actionParsed = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
 
@@ -495,7 +583,7 @@ fn execute_function_from_module_exports() {
     let mut params = testParams();
     params.insert("text".to_string(), Value::String("exports".to_string()));
 
-    let output = state.executeScriptFunctionOnCurrentThread(
+    let output = state.execute_script_function_on_current_thread(
         script,
         "module_only",
         &params,
@@ -511,7 +599,7 @@ fn execute_function_from_module_exports() {
 
 #[test]
 fn register_thinking_guidance_toolpkg_main() {
-    let engine = super::JsEngine::newToolPkgRegistrationEngine();
+    let engine = super::JsEngine::new_toolpkg_registration_engine();
     let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
@@ -525,7 +613,7 @@ fn register_thinking_guidance_toolpkg_main() {
     );
 
     let capture = engine
-        .executeToolPkgMainRegistrationFunction(&script, "registerToolPkg", &params)
+        .execute_toolpkg_main_registration_function(&script, "registerToolPkg", &params)
         .expect("thinking_guidance registration");
 
     assert_eq!(capture.inputMenuTogglePlugins.len(), 1);
@@ -538,7 +626,7 @@ fn register_thinking_guidance_toolpkg_main() {
 
 #[test]
 fn register_message_insert_toolpkg_main() {
-    let engine = super::JsEngine::newToolPkgRegistrationEngine();
+    let engine = super::JsEngine::new_toolpkg_registration_engine();
     let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
@@ -576,7 +664,7 @@ fn register_message_insert_toolpkg_main() {
     );
 
     let capture = engine
-        .executeToolPkgMainRegistrationFunctionWithTextResources(
+        .execute_toolpkg_main_registration_function_with_text_resources(
             &script,
             "registerToolPkg",
             &params,
@@ -602,7 +690,7 @@ fn execute_script_can_require_axios_and_uuid() {
     "#;
     let params = testParams();
 
-    let output = state.executeScriptFunctionOnCurrentThread(
+    let output = state.execute_script_function_on_current_thread(
         script,
         "inspect_require",
         &params,
@@ -618,7 +706,7 @@ fn execute_script_can_require_axios_and_uuid() {
 
 #[test]
 fn registration_mode_uses_ui_module_placeholder() {
-    let engine = super::JsEngine::newToolPkgRegistrationEngine();
+    let engine = super::JsEngine::new_toolpkg_registration_engine();
     let script = r#"
         var Screen = require('./screens/main.ui.js');
         exports.registerToolPkg = function(_params) {
@@ -634,7 +722,7 @@ fn registration_mode_uses_ui_module_placeholder() {
     params.insert("toolPkgId".to_string(), Value::String("ui_pkg".to_string()));
 
     let capture = engine
-        .executeToolPkgMainRegistrationFunction(script, "registerToolPkg", &params)
+        .execute_toolpkg_main_registration_function(script, "registerToolPkg", &params)
         .expect("ui registration");
 
     assert_eq!(capture.uiRoutes.len(), 1);
@@ -642,14 +730,11 @@ fn registration_mode_uses_ui_module_placeholder() {
     assert_eq!(route["screen"], "screens/main.ui.js");
 }
 
+/// Verifies call-scoped environment overrides are visible through `getEnv`.
 #[test]
-fn native_interface_reads_env_for_call() {
+fn native_interface_reads_env_override_for_call() {
     ensure_test_runtime_root();
     let key = "OPERIT_JS_NATIVE_ENV_TEST";
-    std::env::set_var(key, "enabled");
-    EnvPreferences::getInstance()
-        .setEnv(key, "enabled")
-        .expect("set env");
     let mut state = JsEngineState::new(None);
     let script = r#"
         exports.read_env = function(_params) {
@@ -657,12 +742,13 @@ fn native_interface_reads_env_for_call() {
         };
     "#;
     let params = testParams();
+    let envOverrides = BTreeMap::from([(key.to_string(), "enabled".to_string())]);
 
-    let output = state.executeScriptFunctionOnCurrentThread(
+    let output = state.execute_script_function_on_current_thread(
         script,
         "read_env",
         &params,
-        &BTreeMap::new(),
+        &envOverrides,
         None,
         true,
         60,
@@ -670,16 +756,13 @@ fn native_interface_reads_env_for_call() {
     );
 
     assert_eq!(output.as_deref(), Some("\"enabled\""));
-    EnvPreferences::getInstance()
-        .removeEnv(key)
-        .expect("remove env");
-    std::env::remove_var(key);
 }
 
+/// Verifies plugin configuration directories use the runtime storage layout.
 #[test]
 fn native_interface_resolves_plugin_config_dir() {
     ensure_test_runtime_root();
-    let mut state = JsEngineState::new(None);
+    let mut state = JsEngineState::new(Some(Arc::new(TestPluginConfigExecutionHost)));
     let script = r#"
         exports.config_dir = function(_params) {
             return getPluginConfigDir('plugin:name');
@@ -687,7 +770,7 @@ fn native_interface_resolves_plugin_config_dir() {
     "#;
     let params = testParams();
 
-    let output = state.executeScriptFunctionOnCurrentThread(
+    let output = state.execute_script_function_on_current_thread(
         script,
         "config_dir",
         &params,
@@ -700,9 +783,34 @@ fn native_interface_resolves_plugin_config_dir() {
     let path = serde_json::from_str::<String>(&output.expect("config dir"))
         .expect("serialized config dir");
 
-    let normalized = path.replace('\\', "/");
-    assert!(normalized.contains("/plugins/plugin_name-"));
-    assert!(std::path::Path::new(&path).is_dir());
+    let configDir = Path::new(&path);
+    let configDirName = configDir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("plugin config directory name");
+    assert!(configDirName.starts_with("plugin_name-"));
+
+    let configsDir = configDir.parent().expect("plugin configs directory");
+    assert_eq!(
+        configsDir.file_name().and_then(|name| name.to_str()),
+        Some("configs")
+    );
+    let pluginsDir = configsDir.parent().expect("plugins directory");
+    assert_eq!(
+        pluginsDir.file_name().and_then(|name| name.to_str()),
+        Some("plugins")
+    );
+    let extensionsDir = pluginsDir.parent().expect("extensions directory");
+    assert_eq!(
+        extensionsDir.file_name().and_then(|name| name.to_str()),
+        Some("extensions")
+    );
+    let runtimeDir = extensionsDir.parent().expect("runtime directory");
+    assert_eq!(
+        runtimeDir.file_name().and_then(|name| name.to_str()),
+        Some("runtime")
+    );
+    assert!(configDir.is_dir());
 }
 
 #[test]
@@ -726,7 +834,7 @@ fn probe_async_function_declaration_inside_iife() {
     "#;
     let params = testParams();
 
-    let output = state.executeScriptFunctionOnCurrentThread(
+    let output = state.execute_script_function_on_current_thread(
         script,
         "get_device_info",
         &params,

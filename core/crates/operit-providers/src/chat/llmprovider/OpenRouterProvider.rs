@@ -1,16 +1,18 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::AIService::{AIService, AiServiceError, SendMessageRequest};
 use super::OpenAIProvider::OpenAIProvider;
-use crate::runtime_support::providerRuntimeSupport;
+use crate::chat::llmprovider::AIService::{AIService, AiServiceError, SendMessageRequest};
+use crate::runtime_support::ProviderRuntimeContext;
 use operit_util::stream::RevisableTextStream::RevisableTextStreamLike;
 
 pub struct OpenRouterProvider {
     inner: OpenAIProvider,
+    runtime_context: ProviderRuntimeContext,
 }
 
 impl OpenRouterProvider {
+    /// Creates an OpenRouter provider bound to one provider runtime context.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_endpoint: String,
@@ -22,6 +24,7 @@ impl OpenRouterProvider {
         supports_audio: bool,
         supports_video: bool,
         enable_tool_call: bool,
+        runtime_context: ProviderRuntimeContext,
     ) -> Self {
         let has_referer = custom_headers
             .iter()
@@ -52,6 +55,7 @@ impl OpenRouterProvider {
                 supports_video,
                 enable_tool_call,
             ),
+            runtime_context,
         }
     }
 
@@ -77,7 +81,9 @@ impl OpenRouterProvider {
     }
 
     fn resolve_reasoning_budget(&self, requestJson: &Value) -> Result<Option<i32>, AiServiceError> {
-        let qualityLevel = providerRuntimeSupport()?
+        let qualityLevel = self
+            .runtime_context
+            .support()
             .thinkingQualityLevel()
             .map_err(AiServiceError::RequestFailed)?;
         let requestedBudget = match qualityLevel.clamp(1, 4) {

@@ -1,27 +1,34 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use operit_host_api::HostEnvironmentDescriptor;
 use operit_host_api::HostManager::HostManager;
+use operit_plugin_sdk::javascript::{
+    JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolCallResultData,
+    JsToolNameResolutionRequest, JsToolPkgIpcRequest, JsToolPkgResourceRequest,
+};
+use operit_plugin_sdk::package::ToolPackage;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
 use operit_tools::tools::mcp::MCPToolExecutor::MCPToolExecutor;
-use operit_tools::tools::packTool::PackageManager::PackageManager;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::AIToolHook::AIToolHook;
-use operit_tools::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
+use operit_tools::tools::PackageToolExecutor::PackageToolExecutor;
 use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, ToolPermissionSystem};
 use operit_tools::tools::ToolRegistration::registerAllTools;
-use operit_tools::tools::ToolResultDataClasses::stringResultData;
+use operit_tools::tools::ToolResultDataClasses::{stringResultData, ToolResultData};
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutionManager, ToolExecutor,
-    ToolValidationResult,
+    ToolParameter, ToolValidationResult,
 };
 use operit_util::ChainLogger::{self, TOOL_CHAIN};
+use operit_util::LocaleUtils::LocaleUtils;
+use operit_util::OperitPaths;
 use serde::{Deserialize, Serialize};
 
-static INSTANCE: OnceLock<Arc<Mutex<AIToolHandlerState>>> = OnceLock::new();
+use crate::runtime_support::{ToolRuntimeDependencies, ToolRuntimeSupport};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolRegistrationVisibility {
@@ -39,9 +46,10 @@ pub struct AIToolHandlerState {
     toolVisibility: BTreeMap<String, ToolRegistrationVisibility>,
     defaultToolsRegistered: bool,
     context: HostManager,
+    runtimeDependencies: ToolRuntimeDependencies,
     hooks: Vec<Arc<dyn AIToolHook>>,
     toolPermissionSystem: ToolPermissionSystem,
-    packageManager: Option<Arc<Mutex<PackageManager>>>,
+    packageManager: Option<Arc<Mutex<RuntimePackageManager>>>,
 }
 
 impl AIToolHandler {
@@ -75,38 +83,20 @@ impl AIToolHandler {
         Self::truncateLogValue(&summary, 320)
     }
 
-    /// Creates an isolated tool handler with an empty registry.
-    pub fn new() -> Self {
+    /// Creates an isolated tool handler with explicit runtime dependencies.
+    pub fn new(context: HostManager, runtimeDependencies: ToolRuntimeDependencies) -> Self {
         Self {
             inner: Arc::new(Mutex::new(AIToolHandlerState {
                 availableTools: BTreeMap::new(),
                 toolVisibility: BTreeMap::new(),
                 defaultToolsRegistered: false,
-                context: HostManager::new(),
+                context,
+                runtimeDependencies,
                 hooks: Vec::new(),
                 toolPermissionSystem: ToolPermissionSystem::getInstance(),
                 packageManager: None,
             })),
         }
-    }
-
-    /// Returns the shared tool handler for the active application context.
-    #[allow(non_snake_case)]
-    pub fn getInstance(context: HostManager) -> Self {
-        let inner = INSTANCE
-            .get_or_init(|| {
-                Arc::new(Mutex::new(AIToolHandlerState {
-                    availableTools: BTreeMap::new(),
-                    toolVisibility: BTreeMap::new(),
-                    defaultToolsRegistered: false,
-                    context: context.clone(),
-                    hooks: Vec::new(),
-                    toolPermissionSystem: ToolPermissionSystem::getInstance(),
-                    packageManager: None,
-                }))
-            })
-            .clone();
-        Self { inner }
     }
 
     /// Removes one registered tool and its visibility metadata.
@@ -283,19 +273,34 @@ impl AIToolHandler {
             .clone()
     }
 
+    /// Returns the dependency set associated with this handler.
+    #[allow(non_snake_case)]
+    pub fn runtimeDependencies(&self) -> ToolRuntimeDependencies {
+        self.inner
+            .lock()
+            .expect("AIToolHandler mutex poisoned")
+            .runtimeDependencies
+            .clone()
+    }
+
+    /// Returns the runtime support implementation associated with this handler.
+    #[allow(non_snake_case)]
+    pub fn runtimeSupport(&self) -> Arc<dyn ToolRuntimeSupport> {
+        self.runtimeDependencies().shared_runtime_support()
+    }
+
     /// Returns the shared package manager, creating it with this handler context.
     #[allow(non_snake_case)]
-    pub fn getOrCreatePackageManager(&self) -> Arc<Mutex<PackageManager>> {
-        let context = {
+    pub fn getOrCreatePackageManager(&self) -> Arc<Mutex<RuntimePackageManager>> {
+        {
             let guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
             if let Some(packageManager) = &guard.packageManager {
                 return packageManager.clone();
             }
-            guard.context.clone()
-        };
-        let packageManager = Arc::new(Mutex::new(PackageManager::newWithContext(
+        }
+        let packageManager = Arc::new(Mutex::new(RuntimePackageManager::new(
             RuntimeStorePaths::default(),
-            context,
+            self.clone(),
         )));
         let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
         if let Some(existingPackageManager) = &guard.packageManager {
@@ -479,7 +484,7 @@ impl AIToolHandler {
     #[allow(non_snake_case)]
     fn registerPackageTools(
         &mut self,
-        packageManager: Arc<Mutex<PackageManager>>,
+        packageManager: Arc<Mutex<RuntimePackageManager>>,
         toolPackage: ToolPackage,
     ) {
         let isMcpPackage = toolPackage.category == "MCP"
@@ -985,6 +990,7 @@ impl AIToolHandler {
     }
 
     #[allow(non_snake_case)]
+    /// Removes all registered executors and returns their ownership to the caller.
     pub fn takeExecutors(&mut self) -> BTreeMap<String, Box<dyn ToolExecutor>> {
         let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
         if !guard.defaultToolsRegistered {
@@ -996,6 +1002,7 @@ impl AIToolHandler {
     }
 
     #[allow(non_snake_case)]
+    /// Restores a previously removed executor registry.
     pub fn restoreExecutors(&mut self, executors: BTreeMap<String, Box<dyn ToolExecutor>>) {
         self.inner
             .lock()
@@ -1013,20 +1020,159 @@ impl AIToolHandler {
 }
 
 impl AIToolHandlerState {
+    /// Returns the host manager associated with this handler state.
     #[allow(non_snake_case)]
     pub fn getContext(&self) -> &HostManager {
         &self.context
     }
 }
 
-impl Default for AIToolHandler {
-    fn default() -> Self {
-        if let Some(inner) = INSTANCE.get() {
-            return Self {
-                inner: inner.clone(),
-            };
+impl JsExecutionHost for AIToolHandler {
+    /// Executes an SDK JavaScript tool request through the registered Operit tool chain.
+    fn execute_tool_call(&self, request: JsToolCallRequest) -> JsToolCallResult {
+        let tool = AITool {
+            name: request.qualified_tool_name(),
+            parameters: request
+                .parameters
+                .into_iter()
+                .map(|(name, value)| ToolParameter {
+                    name,
+                    value: match value {
+                        serde_json::Value::Null => String::new(),
+                        serde_json::Value::String(value) => value,
+                        value => value.to_string(),
+                    },
+                })
+                .collect(),
+        };
+        let mut handler = self.clone();
+        let result = handler.executeTool(tool);
+        let data = match result.result {
+            ToolResultData::BinaryResultData(data) => JsToolCallResultData::Binary(data.value),
+            ToolResultData::StringResultData(data) => {
+                JsToolCallResultData::Value(serde_json::Value::String(data.value))
+            }
+            ToolResultData::BooleanResultData(data) => {
+                JsToolCallResultData::Value(serde_json::Value::Bool(data.value))
+            }
+            ToolResultData::IntResultData(data) => JsToolCallResultData::Value(
+                serde_json::Value::Number(serde_json::Number::from(data.value)),
+            ),
+            data => JsToolCallResultData::Value(
+                serde_json::from_str(&data.toJson())
+                    .expect("ToolResultData JSON conversion must succeed"),
+            ),
+        };
+        JsToolCallResult {
+            success: result.success,
+            data,
+            error: result.error,
         }
-        Self::new()
+    }
+
+    /// Returns the current host language.
+    fn package_language(&self) -> Result<String, String> {
+        LocaleUtils::getCurrentLanguage(&self.getContext(), "")
+    }
+
+    /// Reads one runtime environment variable.
+    fn read_environment_variable(&self, key: &str) -> Result<Option<String>, String> {
+        self.runtimeDependencies()
+            .runtime_support()
+            .readEnvironmentVariable(key)
+    }
+
+    /// Returns the plugin configuration directory.
+    fn plugin_config_dir(&self, plugin_id: &str) -> Result<String, String> {
+        OperitPaths::pluginConfigDir(plugin_id).map(|path| path.to_string_lossy().to_string())
+    }
+
+    /// Reads one ToolPkg text resource.
+    fn read_toolpkg_text_resource(&self, target: &str, path: &str) -> Result<String, String> {
+        self.getOrCreatePackageManager()
+            .lock()
+            .expect("package manager mutex poisoned")
+            .readToolPkgTextResource(target, path, true)
+            .ok_or_else(|| format!("ToolPkg text resource not found: {target}/{path}"))
+    }
+
+    /// Materializes one ToolPkg binary resource.
+    fn materialize_toolpkg_resource(
+        &self,
+        request: JsToolPkgResourceRequest,
+    ) -> Result<String, String> {
+        crate::tools::ToolJsRuntime::materializeToolPkgResource(self, request)
+    }
+
+    /// Dispatches one Compose DSL controller command.
+    fn handle_compose_webview_controller_command(
+        &self,
+        payload_json: &str,
+    ) -> Result<String, String> {
+        self.getContext()
+            .composeDslWebViewHost
+            .as_ref()
+            .ok_or_else(|| "ComposeDslWebViewHost is not registered".to_string())?
+            .handleControllerCommand(payload_json)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Returns whether one package is imported.
+    fn is_package_imported(&self, package_name: &str) -> Result<bool, String> {
+        Ok(self
+            .getOrCreatePackageManager()
+            .lock()
+            .expect("package manager mutex poisoned")
+            .isPackageEnabled(package_name))
+    }
+
+    /// Imports one package.
+    fn import_package(&self, package_name: &str) -> Result<String, String> {
+        Ok(self
+            .getOrCreatePackageManager()
+            .lock()
+            .expect("package manager mutex poisoned")
+            .enablePackage(package_name))
+    }
+
+    /// Removes one package.
+    fn remove_package(&self, package_name: &str) -> Result<String, String> {
+        Ok(self
+            .getOrCreatePackageManager()
+            .lock()
+            .expect("package manager mutex poisoned")
+            .disablePackage(package_name))
+    }
+
+    /// Activates one package.
+    fn use_package(&self, package_name: &str) -> Result<String, String> {
+        Ok(self
+            .getOrCreatePackageManager()
+            .lock()
+            .expect("package manager mutex poisoned")
+            .usePackage(package_name))
+    }
+
+    /// Lists imported packages.
+    fn list_imported_packages(&self) -> Result<Vec<String>, String> {
+        Ok(self
+            .getOrCreatePackageManager()
+            .lock()
+            .expect("package manager mutex poisoned")
+            .getEnabledPackageNames())
+    }
+
+    /// Resolves one package-aware tool name.
+    fn resolve_tool_name(&self, request: JsToolNameResolutionRequest) -> Result<String, String> {
+        crate::tools::ToolJsRuntime::resolveJsToolName(self, request)
+    }
+
+    /// Invokes one ToolPkg IPC request.
+    fn invoke_toolpkg_ipc(
+        &self,
+        request: JsToolPkgIpcRequest,
+    ) -> Result<serde_json::Value, String> {
+        crate::tools::ToolJsRuntime::invokeToolPkgIpc(self, request)
     }
 }
 

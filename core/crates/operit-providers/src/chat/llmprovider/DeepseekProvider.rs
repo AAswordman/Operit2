@@ -4,16 +4,16 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT
 use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 
-use super::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
-};
 use super::OpenAIProvider::OpenAIProvider;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
-use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
+use crate::chat::llmprovider::AIService::{
+    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
+};
+use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::ModelParameter::ModelParameter;
 use operit_model::ModelParameter::ParameterValueType;
+use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
-use crate::runtime_support::providerRuntimeSupport;
 use operit_util::stream::RevisableTextStream::{
     with_event_channel, RevisableTextStreamLike, TextStreamEventCarrier,
 };
@@ -32,6 +32,7 @@ pub struct DeepseekProvider {
     pub supports_video: bool,
     pub enable_tool_call: bool,
     pub custom_headers: Vec<(String, String)>,
+    runtime_context: ProviderRuntimeContext,
     state: Arc<Mutex<DeepseekProviderState>>,
 }
 
@@ -47,6 +48,7 @@ struct DeepseekProviderState {
 }
 
 impl DeepseekProvider {
+    /// Creates a DeepSeek provider bound to one provider runtime context.
     pub fn new(
         api_endpoint: String,
         api_key: String,
@@ -54,6 +56,7 @@ impl DeepseekProvider {
         provider_type: String,
         custom_headers: Vec<(String, String)>,
         enable_tool_call: bool,
+        runtime_context: ProviderRuntimeContext,
     ) -> Self {
         Self {
             api_endpoint,
@@ -65,6 +68,7 @@ impl DeepseekProvider {
             supports_video: false,
             enable_tool_call,
             custom_headers,
+            runtime_context,
             state: Arc::new(Mutex::new(DeepseekProviderState::default())),
         }
     }
@@ -236,7 +240,9 @@ impl DeepseekProvider {
     }
 
     pub fn resolve_deepseek_thinking_effort(&self) -> Result<Option<&'static str>, AiServiceError> {
-        let qualityLevel = providerRuntimeSupport()?
+        let qualityLevel = self
+            .runtime_context
+            .support()
             .thinkingQualityLevel()
             .map_err(AiServiceError::RequestFailed)?;
         Ok(match qualityLevel.clamp(1, 4) {

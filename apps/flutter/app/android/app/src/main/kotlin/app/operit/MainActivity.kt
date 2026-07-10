@@ -88,6 +88,21 @@ class MainActivity : FlutterActivity() {
         return ensureOwnerSystem(ensureRuntimeHost()).handleRuntimeHostRequest(methodName, payloadJson)
     }
 
+    /** Reads host secret bytes for native runtime calls. */
+    fun readHostSecret(key: String): ByteArray? {
+        return AndroidHostSecretStore.read(applicationContext, key)
+    }
+
+    /** Writes host secret bytes for native runtime calls. */
+    fun writeHostSecret(key: String, content: ByteArray) {
+        AndroidHostSecretStore.write(applicationContext, key, content)
+    }
+
+    /** Deletes host secret bytes for native runtime calls. */
+    fun deleteHostSecret(key: String) {
+        AndroidHostSecretStore.delete(applicationContext, key)
+    }
+
     private fun ensureRuntimeHost(): AndroidRuntimeHost {
         if (!::runtimeHost.isInitialized) {
             runtimeHost = AndroidRuntimeHost(this)

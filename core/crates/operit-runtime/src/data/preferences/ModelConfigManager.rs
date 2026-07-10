@@ -15,6 +15,7 @@ use operit_providers::chat::llmprovider::ModelConfigConnectionTester::{
     ModelConfigConnectionTester, ModelConnectionTestReport,
 };
 use operit_providers::chat::llmprovider::ModelListFetcher::ModelListFetcher;
+use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
@@ -76,7 +77,7 @@ impl ModelConfigManager {
     pub fn new(root_dir: PathBuf) -> Self {
         let paths = RuntimeStorePaths::new(root_dir);
         let modelConfigDataStore =
-            PreferencesDataStore::new(paths.model_configs_preferences_path());
+            PreferencesDataStore::newEncryptedSynced(paths.model_configs_preferences_path());
         Self {
             paths,
             modelConfigDataStore,
@@ -460,10 +461,16 @@ impl ModelConfigManager {
         &self,
         providerId: &str,
         modelId: &str,
+        providerRuntimeContext: ProviderRuntimeContext,
     ) -> Result<ModelConnectionTestReport, ModelConfigError> {
-        ModelConfigConnectionTester::run(self.paths.root_dir().to_path_buf(), providerId, modelId)
-            .await
-            .map_err(ModelConfigError::ConnectionTest)
+        ModelConfigConnectionTester::run(
+            self.paths.root_dir().to_path_buf(),
+            providerId,
+            modelId,
+            providerRuntimeContext,
+        )
+        .await
+        .map_err(ModelConfigError::ConnectionTest)
     }
 
     /// Exports all provider profiles as formatted JSON.

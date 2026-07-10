@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::AIService::{AIService, AiServiceError, SendMessageRequest};
 use super::OpenAIProvider::OpenAIProvider;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
+use crate::chat::llmprovider::AIService::{AIService, AiServiceError, SendMessageRequest};
 use operit_util::stream::RevisableTextStream::RevisableTextStreamLike;
 
 pub struct KimiProvider {

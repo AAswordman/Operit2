@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
 /// Runtime plugin contract for registering feature modules.
@@ -38,7 +39,7 @@ impl PluginRegistry {
 
     #[allow(non_snake_case)]
     /// Registers and installs all built-in plugins exactly once.
-    pub fn initializeBuiltins() {
+    pub fn initializeBuiltins(toolpkg_runtime: ToolPkgBridgeRuntime) {
         let initialized = BUILTINS_INITIALIZED.get_or_init(|| Mutex::new(false));
         {
             let mut guard = initialized
@@ -54,7 +55,9 @@ impl PluginRegistry {
             crate::plugins::toolbox::ToolboxPlugin::ToolboxPlugin,
         ));
         Self::register(Arc::new(
-            crate::plugins::toolpkg::ToolPkgCommonBridgePlugin::ToolPkgCommonBridgePlugin,
+            crate::plugins::toolpkg::ToolPkgCommonBridgePlugin::ToolPkgCommonBridgePlugin::new(
+                toolpkg_runtime,
+            ),
         ));
         Self::installAll();
     }

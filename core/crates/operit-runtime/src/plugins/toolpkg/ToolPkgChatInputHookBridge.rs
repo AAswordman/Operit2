@@ -1,13 +1,13 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde_json::Value;
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgChatInputHookRegistration,
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_INPUT;
+use operit_plugin_sdk::toolpkg::ToolPkgHooks::{
+    decodeToolPkgHookResult, ToolPkgChatInputHookRegistration,
 };
-use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_INPUT;
-use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static CHAT_INPUT_HOOKS: OnceLock<Mutex<Vec<ToolPkgChatInputHookRegistration>>> = OnceLock::new();
@@ -45,12 +45,9 @@ pub struct ChatInputHookResult {
 pub struct ToolPkgChatInputHookBridge;
 
 impl ToolPkgChatInputHookBridge {
-    pub fn register() {
-        static INSTALLED: AtomicBool = AtomicBool::new(false);
-        if INSTALLED.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        let manager = toolPkgPackageManager();
+    /// Registers chat input hooks for one application runtime.
+    pub fn register(runtime: ToolPkgBridgeRuntime) {
+        let manager = runtime.package_manager();
         manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(|activeContainers| {
             ToolPkgChatInputHookBridge::syncToolPkgRegistrations(activeContainers);
         }));
@@ -84,7 +81,10 @@ impl ToolPkgChatInputHookBridge {
     }
 
     #[allow(non_snake_case)]
-    pub fn dispatchChatInputHooks(context: ChatInputHookContext) -> Option<ChatInputHookResult> {
+    pub fn dispatchChatInputHooks(
+        runtime: &ToolPkgBridgeRuntime,
+        context: ChatInputHookContext,
+    ) -> Option<ChatInputHookResult> {
         let activeHooks = CHAT_INPUT_HOOKS
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
@@ -105,7 +105,7 @@ impl ToolPkgChatInputHookBridge {
                 ("textChars", ChainLogger::lenField(&current.text)),
             ],
         );
-        let manager = toolPkgPackageManager();
+        let manager = runtime.package_manager();
         for hook in activeHooks {
             ChainLogger::info(
                 PLUGIN_CHAIN,

@@ -20,9 +20,11 @@ Future<QuickPluginCreatorSetupResult> runQuickPluginCreatorSetup(
   GeneratedCoreProxyClients clients,
 ) async {
   try {
-    final skill = await clients.permissionsSkillRuntimeSkillRepository
+    final skill = await clients.application
+        .skillRepository()
         .ensureQuickPluginCreatorSkillVisible();
-    final packageResult = await clients.permissionsPackToolPackageManager
+    final packageResult = await clients.application
+        .packageManager()
         .enablePackage(packageName: 'operit_editor');
     return QuickPluginCreatorSetupResult(
       success: true,

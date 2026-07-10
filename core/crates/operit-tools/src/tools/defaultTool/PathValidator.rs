@@ -1,7 +1,7 @@
 use operit_host_api::FileSystemHost;
 
-use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::tools::ToolResultDataClasses::stringResultData;
+use operit_tools::ConversationMarkupManager::ToolResult;
 
 /// Converts host path validation errors into tool results.
 pub struct PathValidator;

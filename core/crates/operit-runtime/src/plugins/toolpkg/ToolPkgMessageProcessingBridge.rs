@@ -8,12 +8,13 @@ use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
     MessageProcessingController, MessageProcessingExecution, MessageProcessingHookParams,
     MessageProcessingPlugin, MessageProcessingPluginRegistry,
 };
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgMessageProcessingHookRegistration,
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_MESSAGE_PROCESSING;
+use operit_plugin_sdk::toolpkg::ToolPkgHooks::{
+    decodeToolPkgHookResult, ToolPkgMessageProcessingHookRegistration,
 };
-use operit_tools::tools::packTool::PackageManager::PackageManager;
-use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_MESSAGE_PROCESSING;
-use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_util::stream::HotStream::MutableSharedStreamImpl;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
@@ -23,8 +24,9 @@ static MESSAGE_PROCESSING_HOOKS: OnceLock<Mutex<Vec<ToolPkgMessageProcessingHook
 pub struct ToolPkgMessageProcessingBridge;
 
 impl ToolPkgMessageProcessingBridge {
-    pub fn register() {
-        MessageProcessingPluginRegistry::register(Arc::new(MessageProcessingBridge));
+    /// Registers message processing hooks for one application runtime.
+    pub fn register(runtime: ToolPkgBridgeRuntime) {
+        MessageProcessingPluginRegistry::register(Arc::new(MessageProcessingBridge { runtime }));
     }
 
     #[allow(non_snake_case)]
@@ -60,7 +62,9 @@ impl ToolPkgMessageProcessingBridge {
     }
 }
 
-struct MessageProcessingBridge;
+struct MessageProcessingBridge {
+    runtime: ToolPkgBridgeRuntime,
+}
 
 impl MessageProcessingPlugin for MessageProcessingBridge {
     fn id(&self) -> &str {
@@ -91,7 +95,7 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
             ],
         );
         let probeEventPayload = buildMessageEventPayload(params, true);
-        let manager = toolPkgPackageManager();
+        let manager = self.runtime.package_manager();
         for hook in hooks {
             ChainLogger::info(
                 PLUGIN_CHAIN,
@@ -225,7 +229,7 @@ fn buildMessageEventPayload(params: &MessageProcessingHookParams, probeOnly: boo
 
 #[allow(non_snake_case)]
 fn runMessageProcessingHook(
-    manager: &PackageManager,
+    manager: &RuntimePackageManager,
     hook: &ToolPkgMessageProcessingHookRegistration,
     eventPayload: Value,
     onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,

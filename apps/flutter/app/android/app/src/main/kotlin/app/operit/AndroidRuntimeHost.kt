@@ -1,6 +1,7 @@
 package app.operit
 
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -13,6 +14,20 @@ class AndroidRuntimeHost(private val activity: MainActivity) {
             Thread(runnable, "operit-runtime-${runtimeThreadIndex.incrementAndGet()}")
         }
     private var runtimeHandle: Long = 0
+    private var configuredStorageRoot: File? = null
+
+    /** Applies a storage root before the runtime handle is created. */
+    fun setStorageRoot(path: String?) {
+        synchronized(runtimeLock) {
+            if (runtimeHandle != 0L) {
+                throw IllegalStateException("Runtime storage root cannot change after runtime creation")
+            }
+            configuredStorageRoot = path
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let(::File)
+        }
+    }
 
     fun ensureRuntimeHandle(): Long {
         synchronized(runtimeLock) {
@@ -46,9 +61,23 @@ class AndroidRuntimeHost(private val activity: MainActivity) {
     }
 
     fun prepareAndroidRuntimePaths(): AndroidRuntimePaths {
-        val root = activity.applicationContext.filesDir
+        val root = configuredStorageRoot ?: activity.applicationContext.filesDir
         root.mkdirs()
         return AndroidRuntimeAssets.prepare(activity.applicationContext, root)
+    }
+
+    /** Returns storage paths for a proposed storage root without creating the runtime. */
+    fun storagePathsMap(path: String?): Map<String, String> {
+        val root = path
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let(::File)
+            ?: activity.applicationContext.filesDir
+        return mapOf(
+            "storageRoot" to root.absolutePath,
+            "runtimeRoot" to File(root, "runtime").absolutePath,
+            "workspaceRoot" to File(root, "workspaces").absolutePath,
+        )
     }
 
     fun androidRuntimePathsMap(): Map<String, String> {

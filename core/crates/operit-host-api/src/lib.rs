@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
-pub mod TimeUtils;
 pub mod HostManager;
+pub mod TimeUtils;
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -147,7 +147,8 @@ impl HostEnvironmentDescriptor {
             onboardingRequirements: vec![HostOnboardingRequirement {
                 id: "windows.admin".to_string(),
                 title: "管理员权限".to_string(),
-                description: "显示当前 Host 是否以管理员身份运行；提升权限必须由系统启动边界决定。".to_string(),
+                description: "显示当前 Host 是否以管理员身份运行；提升权限必须由系统启动边界决定。"
+                    .to_string(),
                 capabilityIds: vec!["host.privilege".to_string()],
                 status: HostRequirementStatus::Missing,
                 action: HostRequirementAction::HostManaged,
@@ -196,7 +197,8 @@ impl HostEnvironmentDescriptor {
             onboardingRequirements: vec![HostOnboardingRequirement {
                 id: "linux.root".to_string(),
                 title: "root / service account".to_string(),
-                description: "显示当前 Host 的系统账号权限；提权必须由系统或部署器完成。".to_string(),
+                description: "显示当前 Host 的系统账号权限；提权必须由系统或部署器完成。"
+                    .to_string(),
                 capabilityIds: vec!["host.privilege".to_string()],
                 status: HostRequirementStatus::Missing,
                 action: HostRequirementAction::HostManaged,
@@ -736,6 +738,7 @@ pub trait TerminalHost: Send + Sync {
     fn startPtySession(
         &self,
         sessionName: &str,
+        terminalType: &str,
         workingDir: &str,
         rows: u16,
         cols: u16,
@@ -783,11 +786,25 @@ pub struct RuntimeStorageEntry {
 
 pub trait RuntimeStorageHost: Send + Sync {
     fn rootDir(&self) -> Option<PathBuf>;
+    /// Returns the physical root used for runtime storage entries.
+    fn runtimeRootDir(&self) -> Option<PathBuf> {
+        self.rootDir().map(|root| root.join("runtime"))
+    }
+    /// Returns the physical root used for workspace storage entries.
+    fn workspaceRootDir(&self) -> Option<PathBuf> {
+        self.rootDir().map(|root| root.join("workspaces"))
+    }
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>>;
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()>;
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()>;
     fn exists(&self, path: &str) -> HostResult<bool>;
     fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>>;
+}
+
+pub trait HostSecretStore: Send + Sync {
+    fn readSecret(&self, key: &str) -> HostResult<Option<Vec<u8>>>;
+    fn writeSecret(&self, key: &str, content: &[u8]) -> HostResult<()>;
+    fn deleteSecret(&self, key: &str) -> HostResult<()>;
 }
 
 #[derive(Clone, Debug, PartialEq)]

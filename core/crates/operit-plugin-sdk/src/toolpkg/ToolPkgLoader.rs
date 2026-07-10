@@ -3,26 +3,26 @@ use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
-use operit_tools::tools::javascript::JsExecutionEngine;
-use operit_tools::tools::packTool::ToolPkgParser::{
+use crate::javascript::JsExecutionEngine;
+use crate::package::ToolPackage;
+use crate::toolpkg::ToolPkgParser::{
     ToolPkgArchiveParser, ToolPkgLoadResult, ToolPkgMainRegistrationParseResult, ToolPkgSourceType,
 };
-use operit_tools::tools::ToolPackage::ToolPackage;
-use operit_util::AppLogger::AppLogger;
+use crate::JsPackageLoader::JsPackageLoader;
 
-const TAG: &str = "ToolPkg";
-
+/// Loads ToolPkg archives and executes their main registration scripts.
 pub struct ToolPkgLoader;
 
 impl ToolPkgLoader {
+    /// Loads a ToolPkg archive from an external file.
     #[allow(non_snake_case)]
-    pub fn loadToolPkgFromExternalFile<FParseJsPackage>(
+    pub fn loadToolPkgFromExternalFile<FReportPackageLoadError>(
         file: &Path,
         jsEngine: &dyn JsExecutionEngine,
-        parseJsPackage: FParseJsPackage,
+        reportPackageLoadError: FReportPackageLoadError,
     ) -> Result<ToolPkgLoadResult, String>
     where
-        FParseJsPackage: Fn(&str) -> Result<ToolPackage, String>,
+        FReportPackageLoadError: Fn(&str, &str),
     {
         let zipFile = fs::File::open(file).map_err(|error| error.to_string())?;
         let mut archive = zip::ZipArchive::new(zipFile).map_err(|error| error.to_string())?;
@@ -34,7 +34,7 @@ impl ToolPkgLoader {
             ToolPkgSourceType::EXTERNAL,
             &file.to_string_lossy(),
             false,
-            |jsContent, reportPackageLoadError| match parseJsPackage(jsContent) {
+            |jsContent, reportPackageLoadError| match JsPackageLoader::parse(jsContent) {
                 Ok(package) => Some(package),
                 Err(error) => {
                     reportPackageLoadError(String::new(), error);
@@ -50,24 +50,20 @@ impl ToolPkgLoader {
                     textResources.clone(),
                 )
             },
-            |packageName, error| {
-                AppLogger::e(
-                    TAG,
-                    &format!("ToolPkg package load error [{packageName}]: {error}"),
-                );
-            },
+            |packageName, error| reportPackageLoadError(&packageName, &error),
         )
     }
 
+    /// Loads a ToolPkg archive from embedded application asset bytes.
     #[allow(non_snake_case)]
-    pub fn loadToolPkgFromBuiltInAsset<FParseJsPackage>(
+    pub fn loadToolPkgFromBuiltInAsset<FReportPackageLoadError>(
         assetName: &str,
         bytes: &'static [u8],
         jsEngine: &dyn JsExecutionEngine,
-        parseJsPackage: FParseJsPackage,
+        reportPackageLoadError: FReportPackageLoadError,
     ) -> Result<ToolPkgLoadResult, String>
     where
-        FParseJsPackage: Fn(&str) -> Result<ToolPackage, String>,
+        FReportPackageLoadError: Fn(&str, &str),
     {
         let cursor = Cursor::new(bytes);
         let mut archive = zip::ZipArchive::new(cursor).map_err(|error| error.to_string())?;
@@ -79,7 +75,7 @@ impl ToolPkgLoader {
             ToolPkgSourceType::ASSET,
             assetName,
             true,
-            |jsContent, reportPackageLoadError| match parseJsPackage(jsContent) {
+            |jsContent, reportPackageLoadError| match JsPackageLoader::parse(jsContent) {
                 Ok(package) => Some(package),
                 Err(error) => {
                     reportPackageLoadError(String::new(), error);
@@ -95,17 +91,12 @@ impl ToolPkgLoader {
                     textResources.clone(),
                 )
             },
-            |packageName, error| {
-                AppLogger::e(
-                    TAG,
-                    &format!("Built-in ToolPkg package load error [{packageName}]: {error}"),
-                );
-            },
+            |packageName, error| reportPackageLoadError(&packageName, &error),
         )
     }
-
 }
 
+/// Parses declarations exported by a ToolPkg main registration script.
 #[allow(non_snake_case)]
 fn parseMainRegistration(
     mainScriptText: &str,
@@ -114,7 +105,7 @@ fn parseMainRegistration(
     jsEngine: &dyn JsExecutionEngine,
     textResources: Arc<std::collections::BTreeMap<String, String>>,
 ) -> ToolPkgMainRegistrationParseResult {
-    operit_tools::tools::packTool::ToolPkgMainRegistrationScriptParser::ToolPkgMainRegistrationScriptParser::parseWithTextResources(
+    crate::toolpkg::ToolPkgMainRegistrationScriptParser::ToolPkgMainRegistrationScriptParser::parseWithTextResources(
         mainScriptText,
         toolPkgId,
         mainScriptPath,
@@ -123,10 +114,11 @@ fn parseMainRegistration(
     )
 }
 
+/// Reads every UTF-8 archive entry for registration-time resource access.
 #[allow(non_snake_case)]
 fn readToolPkgTextResources<R: std::io::Read + std::io::Seek>(
     archive: &mut zip::ZipArchive<R>,
-    entryIndex: &operit_tools::tools::packTool::ToolPkgParser::ToolPkgEntryIndex,
+    entryIndex: &crate::toolpkg::ToolPkgParser::ToolPkgEntryIndex,
 ) -> std::collections::BTreeMap<String, String> {
     let mut resources = std::collections::BTreeMap::new();
     for entryName in &entryIndex.entryNames {
@@ -137,10 +129,11 @@ fn readToolPkgTextResources<R: std::io::Read + std::io::Seek>(
     resources
 }
 
+/// Resolves and reads one normalized text resource from the registration cache.
 #[allow(non_snake_case)]
 fn readIndexedTextResource(
     textResources: &std::collections::BTreeMap<String, String>,
-    entryIndex: &operit_tools::tools::packTool::ToolPkgParser::ToolPkgEntryIndex,
+    entryIndex: &crate::toolpkg::ToolPkgParser::ToolPkgEntryIndex,
     rawPath: &str,
 ) -> Option<String> {
     let entryName = entryIndex.resolveEntryName(rawPath)?;

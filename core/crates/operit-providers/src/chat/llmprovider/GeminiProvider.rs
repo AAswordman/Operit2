@@ -5,17 +5,18 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 
-use super::AIService::{
-    delay_retry_ms, response_stream_from_chunks, retry_error_text, retry_message, AIService,
-    AiServiceError, SendMessageRequest, TokenCounts,
-};
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
-use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
+use crate::chat::llmprovider::AIService::{
+    response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
+    SendMessageRequest, TokenCounts,
+};
+use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
 use operit_model::ModelConfigData::{
     BuiltinToolExclusivity, BuiltinToolRequestFormat, ModelBuiltinTool,
 };
 use operit_model::ModelParameter::{ModelParameter, ParameterCategory};
+use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike,
@@ -1209,9 +1210,7 @@ fn queue_function_calls(
     queued_function_calls.extend(function_calls);
 }
 
-fn build_schema_from_structured(
-    params: &[operit_model::ToolPrompt::ToolParameterSchema],
-) -> Value {
+fn build_schema_from_structured(params: &[operit_model::ToolPrompt::ToolParameterSchema]) -> Value {
     let mut properties = Map::new();
     let mut required = Vec::new();
     for param in params {

@@ -1,14 +1,15 @@
 use crate::commands::tool;
 use crate::output::CoreCommandOutput;
-use operit_host_api::HostManager::HostManager;
-use operit_tools::tools::packTool::PackageManager::BundledExternalPackageCandidate;
+use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_tools::tools::packTool::RuntimePackageManager::BundledExternalPackageCandidate;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 
 pub fn run_package_command(
-    context: HostManager,
+    application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
+    let tool_handler = application.toolHandler.clone();
     if args.is_empty() {
         print_package_usage(output);
         return Ok(());
@@ -20,26 +21,26 @@ pub fn run_package_command(
             Ok(())
         }
         "dir" => {
-            let package_manager = package_manager(&context);
+            let package_manager = package_manager(&tool_handler);
             let guard = package_manager
                 .lock()
                 .expect("package manager mutex poisoned");
             output.push_stdout_line(guard.getExternalPackagesPath());
             Ok(())
         }
-        "list" => list_packages(context, output),
-        "more" => list_more_packages(context, output),
+        "list" => list_packages(tool_handler, output),
+        "more" => list_more_packages(tool_handler, output),
         "show" => {
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 package show <name>".to_string())?;
-            show_package(context, name, output)
+            show_package(tool_handler, name, output)
         }
         "import" => {
             let path = args.get(1).ok_or_else(|| {
                 "usage: operit2 package import <js-ts-hjson-toolpkg-path>".to_string()
             })?;
-            let package_manager = package_manager(&context);
+            let package_manager = package_manager(&tool_handler);
             let mut guard = package_manager
                 .lock()
                 .expect("package manager mutex poisoned");
@@ -50,21 +51,21 @@ pub fn run_package_command(
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 package load <name>".to_string())?;
-            load_more_package(context, name, output)
+            load_more_package(tool_handler, name, output)
         }
         "delete" | "remove" => {
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 package delete <name>".to_string())?;
-            delete_package(context, name, output)
+            delete_package(tool_handler, name, output)
         }
-        "enable" => set_package_enabled(context, args.get(1), true, output),
-        "disable" => set_package_enabled(context, args.get(1), false, output),
+        "enable" => set_package_enabled(tool_handler, args.get(1), true, output),
+        "disable" => set_package_enabled(tool_handler, args.get(1), false, output),
         "use" => {
             let name = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 package use <name>".to_string())?;
-            let package_manager = package_manager(&context);
+            let package_manager = package_manager(&tool_handler);
             let mut guard = package_manager
                 .lock()
                 .expect("package manager mutex poisoned");
@@ -83,13 +84,13 @@ pub fn run_package_command(
                 .map(|(package_name, _)| package_name.to_string())
                 .ok_or_else(|| "package exec tool name must use package:tool format".to_string())?;
             {
-                let package_manager = package_manager(&context);
+                let package_manager = package_manager(&tool_handler);
                 let mut guard = package_manager
                     .lock()
                     .expect("package manager mutex poisoned");
                 guard.usePackage(&package_name);
             }
-            tool::exec_tool(context, tool_name, params_json, output)
+            tool::exec_tool(tool_handler, tool_name, params_json, output)
         }
         _ => {
             print_package_usage(output);
@@ -99,10 +100,10 @@ pub fn run_package_command(
 }
 
 fn list_packages(
-    context: HostManager,
+    tool_handler: AIToolHandler,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let package_manager = package_manager(&context);
+    let package_manager = package_manager(&tool_handler);
     let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
@@ -121,10 +122,10 @@ fn list_packages(
 }
 
 fn list_more_packages(
-    context: HostManager,
+    tool_handler: AIToolHandler,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let package_manager = package_manager(&context);
+    let package_manager = package_manager(&tool_handler);
     let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
@@ -135,11 +136,11 @@ fn list_more_packages(
 }
 
 fn show_package(
-    context: HostManager,
+    tool_handler: AIToolHandler,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let package_manager = package_manager(&context);
+    let package_manager = package_manager(&tool_handler);
     let guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
@@ -180,11 +181,11 @@ fn show_package(
 }
 
 fn load_more_package(
-    context: HostManager,
+    tool_handler: AIToolHandler,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let package_manager = package_manager(&context);
+    let package_manager = package_manager(&tool_handler);
     let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
@@ -193,11 +194,11 @@ fn load_more_package(
 }
 
 fn delete_package(
-    context: HostManager,
+    tool_handler: AIToolHandler,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let package_manager = package_manager(&context);
+    let package_manager = package_manager(&tool_handler);
     let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
@@ -209,7 +210,7 @@ fn delete_package(
 }
 
 fn set_package_enabled(
-    context: HostManager,
+    tool_handler: AIToolHandler,
     name: Option<&String>,
     enabled: bool,
     output: &mut CoreCommandOutput,
@@ -221,7 +222,7 @@ fn set_package_enabled(
             "usage: operit2 package disable <name>".to_string()
         }
     })?;
-    let package_manager = package_manager(&context);
+    let package_manager = package_manager(&tool_handler);
     let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
@@ -235,11 +236,11 @@ fn set_package_enabled(
 }
 
 fn package_manager(
-    context: &HostManager,
+    tool_handler: &AIToolHandler,
 ) -> std::sync::Arc<
-    std::sync::Mutex<operit_tools::tools::packTool::PackageManager::PackageManager>,
+    std::sync::Mutex<operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager>,
 > {
-    AIToolHandler::getInstance(context.clone()).getOrCreatePackageManager()
+    tool_handler.getOrCreatePackageManager()
 }
 
 fn format_bundled_external_candidate(candidate: &BundledExternalPackageCandidate) -> String {

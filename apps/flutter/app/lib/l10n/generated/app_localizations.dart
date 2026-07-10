@@ -4681,6 +4681,72 @@ abstract class AppLocalizations {
   /// **'Current version'**
   String get settingsDataCoreVersion;
 
+  /// No description provided for @settingsDataStorageSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage location'**
+  String get settingsDataStorageSection;
+
+  /// No description provided for @settingsDataStorageDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Move runtime and workspace data into a different local folder.'**
+  String get settingsDataStorageDescription;
+
+  /// No description provided for @settingsDataStorageRoot.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage root'**
+  String get settingsDataStorageRoot;
+
+  /// No description provided for @settingsDataRuntimeRoot.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime root'**
+  String get settingsDataRuntimeRoot;
+
+  /// No description provided for @settingsDataWorkspaceRoot.
+  ///
+  /// In en, this message translates to:
+  /// **'Workspace root'**
+  String get settingsDataWorkspaceRoot;
+
+  /// No description provided for @settingsDataChooseStorageRoot.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose location'**
+  String get settingsDataChooseStorageRoot;
+
+  /// No description provided for @settingsDataStorageConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Change storage location'**
+  String get settingsDataStorageConfirmTitle;
+
+  /// No description provided for @settingsDataStorageConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime and workspace data will be copied into the selected folder, and the app will use it after restart.'**
+  String get settingsDataStorageConfirmMessage;
+
+  /// No description provided for @settingsDataStorageConfirmAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Change location'**
+  String get settingsDataStorageConfirmAction;
+
+  /// No description provided for @settingsDataStorageChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage location changed. Restart the app to use it.'**
+  String get settingsDataStorageChanged;
+
+  /// No description provided for @settingsDataStorageChangeError.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage location change failed: {error}'**
+  String settingsDataStorageChangeError(String error);
+
   /// No description provided for @settingsDataTokenSection.
   ///
   /// In en, this message translates to:

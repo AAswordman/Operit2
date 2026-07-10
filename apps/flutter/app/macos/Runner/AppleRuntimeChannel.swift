@@ -27,6 +27,7 @@ final class AppleRuntimeChannel: NSObject {
   private let speechSynthesizer = AVSpeechSynthesizer()
   private var ttsPath = ""
   private var ttsPaused = false
+  private var configuredStorageRoot: URL?
   private lazy var bluetooth = AppleBluetoothController()
 
   static func register(binaryMessenger: FlutterBinaryMessenger) {
@@ -59,6 +60,10 @@ final class AppleRuntimeChannel: NSObject {
       closeWatchStream(call: call, result: result)
     case "startWebAccessServer":
       startWebAccessServer(call: call, result: result)
+    case "localRuntimeStoragePaths":
+      localRuntimeStoragePaths(call: call, result: result)
+    case "setLocalRuntimeStorage":
+      setLocalRuntimeStorage(call: call, result: result)
     case "stopWebAccessServer":
       runRuntime(result: result) { handle in
         self.takeString(operit_flutter_bridge_stop_web_access_server(handle))
@@ -101,8 +106,48 @@ final class AppleRuntimeChannel: NSObject {
   }
 
   private func storageRoot() -> URL {
+    if let configuredStorageRoot = configuredStorageRoot {
+      return configuredStorageRoot
+    }
     FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("Operit2", isDirectory: true)
+  }
+
+  /// Resolves a Flutter-provided storage root into an Apple file URL.
+  private func storageRoot(from value: Any?) -> URL {
+    guard let value = value as? String, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Operit2", isDirectory: true)
+    }
+    return URL(fileURLWithPath: value)
+  }
+
+  /// Returns local runtime storage paths for the requested root.
+  private func localRuntimeStoragePaths(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard let arguments = call.arguments as? [String: Any?] else {
+      result(FlutterError(code: "INVALID_ARGS", message: "localRuntimeStoragePaths expects arguments", details: nil))
+      return
+    }
+    let root = storageRoot(from: arguments["storageRoot"] ?? nil)
+    result([
+      "storageRoot": root.path,
+      "runtimeRoot": root.appendingPathComponent("runtime", isDirectory: true).path,
+      "workspaceRoot": root.appendingPathComponent("workspaces", isDirectory: true).path,
+    ])
+  }
+
+  /// Applies the local runtime storage root before runtime creation.
+  private func setLocalRuntimeStorage(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    if handle != nil {
+      result(FlutterError(code: "RUNTIME_ALREADY_CREATED", message: "Runtime storage root cannot change after runtime creation", details: nil))
+      return
+    }
+    guard let arguments = call.arguments as? [String: Any?] else {
+      result(FlutterError(code: "INVALID_ARGS", message: "setLocalRuntimeStorage expects arguments", details: nil))
+      return
+    }
+    configuredStorageRoot = storageRoot(from: arguments["storageRoot"] ?? nil)
+    result(nil)
   }
 
   private func runRuntime(result: @escaping FlutterResult, _ body: @escaping (UnsafeMutableRawPointer) throws -> String) {

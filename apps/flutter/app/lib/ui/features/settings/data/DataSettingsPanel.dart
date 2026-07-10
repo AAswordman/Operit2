@@ -1,12 +1,15 @@
 // ignore_for_file: file_names
 
 import 'package:file_selector/file_selector.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
+import '../../../../core/runtime/RuntimeConnectionManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
@@ -48,8 +51,11 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     await characterCardManager.initializeIfNeeded();
     await characterGroupCardManager.initializeIfNeeded();
     await modelConfigManager.initializeIfNeeded();
+    final storagePaths = await RuntimeConnectionManager.instance
+        .localRuntimeStoragePaths();
     return _DataSettingsData(
       coreVersion: await widget.clients.application.coreVersion(),
+      storagePaths: storagePaths,
       inputTokens: await widget.clients.chatRuntimeHolderMain
           .inputTokenCountFlowSnapshot(),
       outputTokens: await widget.clients.chatRuntimeHolderMain
@@ -92,6 +98,79 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
       context: context,
       clients: widget.clients,
     );
+  }
+
+  /// Lets the user select and migrate the local storage location.
+  Future<void> _changeStorageLocation() async {
+    final l10n = AppLocalizations.of(context)!;
+    final storageRoot = await FilePicker.getDirectoryPath();
+    if (storageRoot == null || storageRoot.trim().isEmpty) {
+      return;
+    }
+    final paths = await RuntimeConnectionManager.instance
+        .localRuntimeStoragePathsForRoot(storageRoot);
+    if (!mounted) {
+      return;
+    }
+    final confirmed = await _StorageLocationConfirmDialog.show(
+      context: context,
+      paths: paths,
+    );
+    if (confirmed != true) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await _runStorageMigrate(paths);
+      await RuntimeConnectionManager.instance
+          .persistMigratedLocalRuntimeStorage(storageRoot);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.settingsDataStorageChanged)));
+      _reload();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.settingsDataStorageChangeError('$error'))),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  /// Runs the core storage migration command for the selected roots.
+  Future<void> _runStorageMigrate(RuntimeStoragePaths paths) async {
+    final value = await widget.clients.bridge.call(
+      CoreCallRequest(
+        requestId: 'flutter-storage-${DateTime.now().microsecondsSinceEpoch}',
+        targetPath: CoreObjectPath.parse('application'),
+        methodName: 'runCoreCommand',
+        args: <String, Object?>{
+          'args': <String>[
+            'storage',
+            'migrate',
+            '--runtime',
+            paths.runtimeRoot,
+            '--workspace',
+            paths.workspaceRoot,
+          ],
+        },
+      ),
+    );
+    if (value is! Map<Object?, Object?>) {
+      throw StateError('Invalid core command output');
+    }
+    final stderr = value['stderr']?.toString().trim() ?? '';
+    if (stderr.isNotEmpty) {
+      throw StateError(stderr);
+    }
   }
 
   Future<void> _exportRawSnapshot() async {
@@ -544,6 +623,11 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
                   label: l10n.settingsDataCoreVersion,
                   value: data.coreVersion,
                 ),
+                const Divider(height: 20),
+                _StorageLocationLine(
+                  paths: data.storagePaths,
+                  onChange: _busy ? null : _changeStorageLocation,
+                ),
               ],
             ),
             _SectionCard(
@@ -591,6 +675,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
 class _DataSettingsData {
   const _DataSettingsData({
     required this.coreVersion,
+    required this.storagePaths,
     required this.inputTokens,
     required this.outputTokens,
     required this.chatHistoryCount,
@@ -600,12 +685,60 @@ class _DataSettingsData {
   });
 
   final String coreVersion;
+  final RuntimeStoragePaths storagePaths;
   final int inputTokens;
   final int outputTokens;
   final int chatHistoryCount;
   final int characterCardCount;
   final int characterGroupCount;
   final int modelConfigCount;
+}
+
+class _StorageLocationLine extends StatelessWidget {
+  const _StorageLocationLine({required this.paths, required this.onChange});
+
+  final RuntimeStoragePaths paths;
+  final VoidCallback? onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.folder_copy_outlined, color: colorScheme.primary),
+          title: Text(
+            l10n.settingsDataStorageSection,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(l10n.settingsDataStorageDescription),
+          ),
+          trailing: FilledButton.tonalIcon(
+            onPressed: onChange,
+            icon: const Icon(Icons.drive_folder_upload_outlined),
+            label: Text(l10n.settingsDataChooseStorageRoot),
+          ),
+        ),
+        _InfoLine(
+          label: l10n.settingsDataStorageRoot,
+          value: paths.storageRoot,
+        ),
+        _InfoLine(
+          label: l10n.settingsDataRuntimeRoot,
+          value: paths.runtimeRoot,
+        ),
+        _InfoLine(
+          label: l10n.settingsDataWorkspaceRoot,
+          value: paths.workspaceRoot,
+        ),
+      ],
+    );
+  }
 }
 
 class _SnapshotBackupLine extends StatelessWidget {
@@ -801,6 +934,64 @@ class _InfoLine extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _StorageLocationConfirmDialog extends StatelessWidget {
+  const _StorageLocationConfirmDialog({required this.paths});
+
+  final RuntimeStoragePaths paths;
+
+  /// Shows a confirmation dialog for the storage migration targets.
+  static Future<bool?> show({
+    required BuildContext context,
+    required RuntimeStoragePaths paths,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => _StorageLocationConfirmDialog(paths: paths),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return AlertDialog(
+      title: Text(l10n.settingsDataStorageConfirmTitle),
+      content: SizedBox(
+        width: 560,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Text(l10n.settingsDataStorageConfirmMessage),
+            const SizedBox(height: 16),
+            _InfoLine(
+              label: l10n.settingsDataStorageRoot,
+              value: paths.storageRoot,
+            ),
+            _InfoLine(
+              label: l10n.settingsDataRuntimeRoot,
+              value: paths.runtimeRoot,
+            ),
+            _InfoLine(
+              label: l10n.settingsDataWorkspaceRoot,
+              value: paths.workspaceRoot,
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: Text(l10n.settingsDataStorageConfirmAction),
+        ),
+      ],
     );
   }
 }

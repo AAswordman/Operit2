@@ -12,12 +12,13 @@ use operit_host_api::HostManager::HostManager;
 use operit_providers::market::MarketStatsApiService::{
     MarketComment, MarketEntrySummary, MarketListPage, MarketNotification, MarketStatsApiService,
 };
-use operit_tools::tools::packTool::PackageManager::PackageManager;
-use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_runtime::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
 use operit_tools::tools::mcp_runtime::MCPLocalServer::MCPLocalServer;
 use operit_tools::tools::mcp_runtime::MCPRepository::MCPRepository;
-use operit_runtime::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -48,11 +49,15 @@ fn market_stdout_line(line: impl AsRef<str>) {
 
 struct MarketCommand {
     context: HostManager,
+    tool_handler: AIToolHandler,
 }
 
 impl MarketCommand {
-    fn new(context: HostManager) -> Self {
-        Self { context }
+    fn new(application: &OperitApplication) -> Self {
+        Self {
+            context: application.hostManager.clone(),
+            tool_handler: application.toolHandler.clone(),
+        }
     }
 
     fn api(&self) -> MarketStatsApiService {
@@ -66,7 +71,7 @@ impl MarketCommand {
     }
 
     fn skill_repo(&self) -> SkillRepository {
-        SkillRepository::getInstance(&self.context)
+        SkillRepository::getInstance(&self.context, self.tool_handler.runtimeSupport())
     }
 
     fn mcp_local(&self) -> MCPLocalServer {
@@ -74,18 +79,18 @@ impl MarketCommand {
     }
 
     fn mcp_repo(&self) -> MCPRepository {
-        MCPRepository::getInstance(&self.context)
+        MCPRepository::getInstance(&self.context, self.tool_handler.runtimeSupport())
     }
 
     fn package_manager(&self) -> PackageManagerCommand {
         PackageManagerCommand {
-            manager: AIToolHandler::getInstance(self.context.clone()).getOrCreatePackageManager(),
+            manager: self.tool_handler.getOrCreatePackageManager(),
         }
     }
 }
 
 struct PackageManagerCommand {
-    manager: Arc<Mutex<PackageManager>>,
+    manager: Arc<Mutex<RuntimePackageManager>>,
 }
 
 impl PackageManagerCommand {
@@ -100,12 +105,12 @@ impl PackageManagerCommand {
 // ── Entry point ──────────────────────────────────────────────
 
 pub fn run_market_command(
-    context: HostManager,
+    application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     set_market_output(output);
-    let core = &mut MarketCommand::new(context);
+    let core = &mut MarketCommand::new(application);
     if args.is_empty() {
         print_usage();
         return Ok(());
@@ -920,7 +925,9 @@ fn install_mcp_from_entry(
             println!("path={pluginPath}");
             Ok(())
         }
-        operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Error { message } => Err(message),
+        operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Error { message } => {
+            Err(message)
+        }
     }
 }
 
@@ -1112,11 +1119,11 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
+    use operit_host_api::HostManager::{setDefaultHttpHost, HostManager};
     use operit_host_api::{
         HostError, HostResult, HttpHost, HttpRequestData, HttpResponseData, RuntimeStorageEntry,
         RuntimeStorageHost,
     };
-    use operit_host_api::HostManager::{setDefaultHttpHost, HostManager};
     use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
 
     #[derive(Clone, Default)]

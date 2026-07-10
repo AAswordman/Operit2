@@ -7,37 +7,38 @@ use operit_model::FunctionType::FunctionType;
 use operit_model::MemorySearchConfig::MemorySearchConfig;
 use operit_model::ModelConfigData::{ProviderProfile, ResolvedModelConfig};
 use operit_model::PromptFunctionType::PromptFunctionType;
+use operit_plugin_sdk::toolpkg::ToolPkgHooks::{
+    decodeToolPkgHookResult, ToolPkgAiProviderRegistration,
+};
 use operit_providers::runtime_support::{
-    setProviderRuntimeSupport, ProviderCharacterPromptContext, ProviderFunctionModelBinding,
-    ProviderMessageTiming, ProviderPackageInfo, ProviderRuntimeSupport,
+    ProviderCharacterPromptContext, ProviderFunctionModelBinding, ProviderMessageTiming,
+    ProviderPackageInfo, ProviderRuntimeContext, ProviderRuntimeSupport,
     ProviderToolPkgAiProviderRegistration,
 };
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
 
-use crate::core::application::OperitApplication::OperitApplication;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::plugins::toolpkg::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry;
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgAiProviderRegistration,
-};
 
-/// Installs runtime-backed services required by provider crates.
+/// Creates runtime-backed services required by provider crates.
 pub struct ProviderRuntimeSupportService;
 
 impl ProviderRuntimeSupportService {
-    /// Installs provider runtime support for this process.
-    pub fn install() -> Result<(), String> {
-        setProviderRuntimeSupport(Arc::new(RuntimeProviderSupport))
-            .map_err(|error| error.to_string())
+    /// Creates provider runtime support bound to one tool handler instance.
+    pub fn create(tool_handler: AIToolHandler) -> ProviderRuntimeContext {
+        ProviderRuntimeContext::new(Arc::new(RuntimeProviderSupport { tool_handler }))
     }
 }
 
 /// Bridges provider-owned interfaces to runtime-owned managers and registries.
-struct RuntimeProviderSupport;
+struct RuntimeProviderSupport {
+    tool_handler: AIToolHandler,
+}
 
 impl ProviderRuntimeSupport for RuntimeProviderSupport {
     /// Returns the root directory used by runtime data.
@@ -105,15 +106,16 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
 
     /// Returns skill package descriptions visible to AI prompt composition.
     fn aiVisibleSkillPackages(&self) -> Result<Vec<ProviderPackageInfo>, String> {
-        let hostManager = OperitApplication::hostManager();
-        let packages = SkillRepository::getInstance(&hostManager)
-            .getAiVisibleSkillPackages()
-            .into_iter()
-            .map(|(name, skill)| ProviderPackageInfo {
-                name,
-                description: skill.description,
-            })
-            .collect();
+        let hostManager = self.tool_handler.getContext();
+        let packages =
+            SkillRepository::getInstance(&hostManager, self.tool_handler.runtimeSupport())
+                .getAiVisibleSkillPackages()
+                .into_iter()
+                .map(|(name, skill)| ProviderPackageInfo {
+                    name,
+                    description: skill.description,
+                })
+                .collect();
         Ok(packages)
     }
 
@@ -189,7 +191,12 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
         executionKind: Option<String>,
         onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
     ) -> Result<Option<String>, String> {
-        toolPkgPackageManager().runToolPkgMainHook(
+        let package_manager = self.tool_handler.getOrCreatePackageManager();
+        let manager = package_manager
+            .lock()
+            .expect("package manager mutex poisoned")
+            .clone();
+        manager.runToolPkgMainHook(
             containerPackageName,
             functionName,
             event,

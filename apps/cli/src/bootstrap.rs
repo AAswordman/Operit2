@@ -1,10 +1,13 @@
+use std::env;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use operit_core_proxy::LocalCoreProxy;
+use operit_host_api::HostManager::HostManager;
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
-    LinuxAudioPlaybackHost as NativeAudioPlaybackHost,
-    LinuxBluetoothHost as NativeBluetoothHost,
+    LinuxAudioPlaybackHost as NativeAudioPlaybackHost, LinuxBluetoothHost as NativeBluetoothHost,
     LinuxBrowserAutomationHost as NativeBrowserAutomationHost,
     LinuxFileSystemHost as NativeFileSystemHost,
     LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost, LinuxHttpHost as NativeHttpHost,
@@ -26,26 +29,30 @@ use operit_host_windows_native::{
     WindowsTerminalHost as NativeTerminalHost, WindowsWebVisitHost as NativeWebVisitHost,
 };
 use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_host_api::HostManager::HostManager;
+use serde::{Deserialize, Serialize};
 
 #[cfg(not(any(windows, target_os = "linux")))]
 compile_error!("operit2 CLI host is implemented for Windows and Linux.");
 
 pub(crate) fn create_cli_application() -> OperitApplication {
-    let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(
-        NativeRuntimeStorageHost::defaultRoot(),
+    let storageConfig = CliStorageConfig::read();
+    let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::newWithRoots(
+        storageConfig.dataRoot,
+        storageConfig.runtimeRoot,
+        storageConfig.workspaceRoot,
     ));
     let runtimeSqliteHost = runtimeStorageHost.clone();
-    let mut context =
-        HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
-            Arc::new(NativeFileSystemHost::new()),
-            Arc::new(NativeWebVisitHost::new()),
-            Arc::new(NativeHttpHost::new()),
-            Arc::new(NativeSystemOperationHost::new()),
-            Arc::new(NativeManagedRuntimeHost::new()),
-            runtimeStorageHost,
-            runtimeSqliteHost,
-        );
+    let hostSecretStore = runtimeStorageHost.clone();
+    let mut context = HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
+        Arc::new(NativeFileSystemHost::new()),
+        Arc::new(NativeWebVisitHost::new()),
+        Arc::new(NativeHttpHost::new()),
+        Arc::new(NativeSystemOperationHost::new()),
+        Arc::new(NativeManagedRuntimeHost::new()),
+        runtimeStorageHost,
+        runtimeSqliteHost,
+    )
+    .withHostSecretStore(hostSecretStore);
     #[cfg(any(target_os = "linux", windows))]
     {
         context = context.withTerminalHost(Arc::new(NativeTerminalHost::new()));
@@ -55,28 +62,142 @@ pub(crate) fn create_cli_application() -> OperitApplication {
     context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
     context = context.withBrowserAutomationHost(Arc::new(NativeBrowserAutomationHost::new()));
     let commandContext = context.clone();
-    OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(move |args: Vec<String>| {
-        let output =
-            operit_command_core::run_core_command_with_context(commandContext.clone(), &args)?;
-        Ok(output.stdout)
-    })))
+    OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(
+        move |args: Vec<String>| {
+            let output =
+                operit_command_core::run_core_command_with_context(commandContext.clone(), &args)?;
+            persist_cli_storage_config(&output.stdout)?;
+            Ok(output.stdout)
+        },
+    )))
 }
 
 pub(crate) fn create_local_core() -> LocalCoreProxy {
     LocalCoreProxy::new(create_cli_application())
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct CliStorageConfig {
+    dataRoot: PathBuf,
+    runtimeRoot: PathBuf,
+    workspaceRoot: PathBuf,
+}
+
+impl CliStorageConfig {
+    /// Reads the CLI storage configuration used for local runtime startup.
+    fn read() -> Self {
+        let path = cli_storage_config_path();
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Self::current(),
+            Err(error) => {
+                panic!(
+                    "read CLI storage config failed at {}: {error}",
+                    path.display()
+                )
+            }
+        };
+        serde_json::from_str(&content).unwrap_or_else(|error| {
+            panic!(
+                "parse CLI storage config failed at {}: {error}",
+                path.display()
+            )
+        })
+    }
+
+    /// Builds the current platform storage root configuration.
+    fn current() -> Self {
+        let dataRoot = NativeRuntimeStorageHost::defaultRoot();
+        Self {
+            runtimeRoot: dataRoot.join("runtime"),
+            workspaceRoot: dataRoot.join("workspaces"),
+            dataRoot,
+        }
+    }
+}
+
+/// Persists storage roots emitted by the core storage migrate command.
+pub(crate) fn persist_cli_storage_config(stdout: &str) -> Result<(), String> {
+    let Some(config) = parse_storage_migration_output(stdout)? else {
+        return Ok(());
+    };
+    write_cli_storage_config(&config)
+}
+
+/// Parses storage command output into a startup storage configuration.
+fn parse_storage_migration_output(stdout: &str) -> Result<Option<CliStorageConfig>, String> {
+    let mut dataRoot = None;
+    let mut runtimeRoot = None;
+    let mut workspaceRoot = None;
+    let mut changed = false;
+    for line in stdout.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key {
+            "dataRoot" => dataRoot = Some(PathBuf::from(value)),
+            "runtimeRoot" => runtimeRoot = Some(PathBuf::from(value)),
+            "workspaceRoot" => workspaceRoot = Some(PathBuf::from(value)),
+            "storageConfig" if value == "updated" => changed = true,
+            _ => {}
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    Ok(Some(CliStorageConfig {
+        dataRoot: dataRoot.ok_or_else(|| "storage migrate output missed dataRoot".to_string())?,
+        runtimeRoot: runtimeRoot
+            .ok_or_else(|| "storage migrate output missed runtimeRoot".to_string())?,
+        workspaceRoot: workspaceRoot
+            .ok_or_else(|| "storage migrate output missed workspaceRoot".to_string())?,
+    }))
+}
+
+/// Writes the CLI storage configuration file.
+fn write_cli_storage_config(config: &CliStorageConfig) -> Result<(), String> {
+    let path = cli_storage_config_path();
+    let parent = path
+        .parent()
+        .expect("CLI storage config path must include parent directory");
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let content = serde_json::to_string_pretty(config).map_err(|error| error.to_string())?;
+    fs::write(path, content).map_err(|error| error.to_string())
+}
+
+/// Returns the CLI storage configuration file path.
+fn cli_storage_config_path() -> PathBuf {
+    cli_config_dir().join("storage.json")
+}
+
+/// Returns the CLI configuration directory.
+fn cli_config_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        let appdata = env::var_os("APPDATA").expect("APPDATA is required for Operit2 CLI config");
+        return PathBuf::from(appdata).join("Operit2").join("cli");
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(xdg_config_home) = env::var_os("XDG_CONFIG_HOME") {
+            return PathBuf::from(xdg_config_home).join("operit2");
+        }
+        let home = env::var_os("HOME").expect("HOME is required for Operit2 CLI config");
+        return PathBuf::from(home).join(".config").join("operit2");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
     use operit_tools::tools::AIToolHandler::AIToolHandler;
     use operit_tools::tools::ToolResultDataClasses::ToolResultData;
+    use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
 
     #[test]
     fn direct_terminal_tool_chain_executes_visible_terminal() {
         let application = create_cli_application();
-        let mut handler = AIToolHandler::getInstance(application.hostManager.clone());
+        let mut handler = application.toolHandler.clone();
         handler.registerDefaultTools();
 
         #[cfg(windows)]

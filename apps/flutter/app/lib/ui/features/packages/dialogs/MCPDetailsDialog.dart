@@ -265,7 +265,8 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
     });
     try {
       final metadata = _metadata;
-      final generated = await widget.clients.permissionsMcpRuntimeMcpRepository
+      final generated = await widget.clients.application
+          .mcpRepository()
           .generatePluginDescription(
             pluginId: widget.serverId,
             pluginName: metadata.name,
@@ -276,10 +277,11 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
         author: metadata.author,
         version: metadata.version,
       );
-      await widget.clients.permissionsMcpRuntimeMcpLocalServer.addOrUpdatePluginMetadata(
-        pluginId: widget.serverId,
-        metadata: updatedMetadata,
-      );
+      await widget.clients.permissionsMcpRuntimeMcpLocalServer
+          .addOrUpdatePluginMetadata(
+            pluginId: widget.serverId,
+            metadata: updatedMetadata,
+          );
       await widget.onConfigSaved();
       if (!mounted) {
         return;
@@ -565,15 +567,16 @@ class _MCPMetadataEditDialogState extends State<_MCPMetadataEditDialog> {
       _error = null;
     });
     try {
-      await widget.clients.permissionsMcpRuntimeMcpLocalServer.addOrUpdatePluginMetadata(
-        pluginId: widget.serverId,
-        metadata: core_proxy.PluginMetadata(
-          name: _nameController.text.trim(),
-          description: _descriptionController.text.trim(),
-          author: _authorController.text.trim(),
-          version: _versionController.text.trim(),
-        ),
-      );
+      await widget.clients.permissionsMcpRuntimeMcpLocalServer
+          .addOrUpdatePluginMetadata(
+            pluginId: widget.serverId,
+            metadata: core_proxy.PluginMetadata(
+              name: _nameController.text.trim(),
+              description: _descriptionController.text.trim(),
+              author: _authorController.text.trim(),
+              version: _versionController.text.trim(),
+            ),
+          );
       await widget.onSaved();
       if (!mounted) {
         return;
@@ -836,12 +839,13 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
         autoApprove: _lineList(_autoApproveController.text),
         env: _remote ? <String, String>{} : env,
       );
-      final saved = await widget.clients.permissionsMcpRuntimeMcpLocalServer.savePluginConfig(
-        pluginId: widget.serverId,
-        configJson: jsonEncode(<String, Object?>{
-          'mcpServers': <String, Object?>{widget.serverId: server.toJson()},
-        }),
-      );
+      final saved = await widget.clients.permissionsMcpRuntimeMcpLocalServer
+          .savePluginConfig(
+            pluginId: widget.serverId,
+            configJson: jsonEncode(<String, Object?>{
+              'mcpServers': <String, Object?>{widget.serverId: server.toJson()},
+            }),
+          );
       if (!mounted) {
         return;
       }

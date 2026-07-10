@@ -157,7 +157,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
 
   Future<void> _refreshToolPkgNavigationModel() async {
     final useEnglish = _useEnglishForToolPkgText(context);
-    final packageManager = _clients.permissionsPackToolPackageManager;
+    final packageManager = _clients.application.packageManager();
     final results = await Future.wait<Object>(<Future<Object>>[
       packageManager.getToolPkgUiRoutes(
         runtime: 'compose_dsl',
@@ -379,7 +379,8 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     required String ownerPackageName,
   }) async {
     try {
-      await _clients.permissionsPackToolPackageManager
+      await _clients.application
+          .packageManager()
           .runToolPkgNavigationEntryAction(
             containerPackageName: ownerPackageName,
             entryId: entry.entryId,

@@ -2,14 +2,15 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgPromptHookRegistration,
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_SUMMARY_GENERATE;
+use operit_plugin_sdk::toolpkg::ToolPkgHooks::{
+    decodeToolPkgHookResult, ToolPkgPromptHookRegistration,
 };
+use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_providers::chat::hooks::SummaryHookRegistry::{
     SummaryGenerateHook, SummaryHookContext, SummaryHookMutation, SummaryHookRegistry,
 };
-use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_SUMMARY_GENERATE;
-use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static SUMMARY_GENERATE_HOOKS: OnceLock<Mutex<Vec<ToolPkgPromptHookRegistration>>> =
@@ -18,8 +19,11 @@ static SUMMARY_GENERATE_HOOKS: OnceLock<Mutex<Vec<ToolPkgPromptHookRegistration>
 pub struct ToolPkgSummaryHookBridge;
 
 impl ToolPkgSummaryHookBridge {
-    pub fn register() {
-        SummaryHookRegistry::registerSummaryGenerateHook(Arc::new(SummaryGenerateBridge));
+    /// Registers summary hooks for one application runtime.
+    pub fn register(runtime: ToolPkgBridgeRuntime) {
+        SummaryHookRegistry::registerSummaryGenerateHook(Arc::new(SummaryGenerateBridge {
+            runtime,
+        }));
     }
 
     #[allow(non_snake_case)]
@@ -45,7 +49,9 @@ impl ToolPkgSummaryHookBridge {
     }
 }
 
-struct SummaryGenerateBridge;
+struct SummaryGenerateBridge {
+    runtime: ToolPkgBridgeRuntime,
+}
 
 impl SummaryGenerateHook for SummaryGenerateBridge {
     fn id(&self) -> &str {
@@ -68,7 +74,7 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
         );
         let mut mutation = SummaryHookMutation::default();
         let mut changed = false;
-        let manager = toolPkgPackageManager();
+        let manager = self.runtime.package_manager();
         for hook in snapshot {
             ChainLogger::info(
                 PLUGIN_CHAIN,

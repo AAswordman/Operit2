@@ -59,8 +59,8 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
   PackageManagerSnapshot _snapshot = PackageManagerSnapshot.empty();
   Timer? _searchDebounce;
 
-  GeneratedPermissionsPackToolPackageManagerCoreProxy get _packageManager =>
-      widget.clients.permissionsPackToolPackageManager;
+  GeneratedApplicationPackageManagerCoreProxy get _packageManager =>
+      widget.clients.application.packageManager();
 
   @override
   void initState() {

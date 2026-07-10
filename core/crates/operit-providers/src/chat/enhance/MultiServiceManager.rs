@@ -31,10 +31,10 @@ use crate::chat::llmprovider::RateLimitedAIService::RateLimitedAIService;
 use crate::chat::llmprovider::RateLimiterRegistry::RateLimiterRegistry;
 use crate::chat::llmprovider::RequestConcurrencyRegistry::RequestConcurrencyRegistry;
 use crate::chat::llmprovider::ToolPkgJsAiProviderService::ToolPkgJsAiProviderService;
+use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::FunctionType::FunctionType;
 use operit_model::ModelConfigData::{ApiProviderType, ResolvedModelConfig};
 use operit_model::ModelParameter::ModelParameter;
-use crate::runtime_support::providerRuntimeSupport;
 
 /// Shared, asynchronously locked handle around a concrete model provider service.
 pub type SharedAIServiceHandle = Arc<AsyncMutex<Box<dyn AIService>>>;
@@ -55,6 +55,7 @@ struct FunctionServiceInstance {
 /// Mutable service registry state protected by the manager mutex.
 struct MultiServiceManagerState {
     pub rootDir: PathBuf,
+    runtime_context: ProviderRuntimeContext,
     serviceInstances: HashMap<FunctionType, FunctionServiceInstance>,
     modelServiceInstances: HashMap<String, SharedAIServiceHandle>,
     isInitialized: bool,
@@ -63,10 +64,11 @@ struct MultiServiceManagerState {
 
 impl MultiServiceManager {
     /// Creates a manager rooted at the supplied runtime data directory.
-    pub fn new(root_dir: PathBuf) -> Self {
+    pub fn new(root_dir: PathBuf, runtime_context: ProviderRuntimeContext) -> Self {
         Self {
             inner: Arc::new(Mutex::new(MultiServiceManagerState {
                 rootDir: root_dir,
+                runtime_context,
                 serviceInstances: HashMap::new(),
                 modelServiceInstances: HashMap::new(),
                 isInitialized: false,
@@ -75,16 +77,15 @@ impl MultiServiceManager {
         }
     }
 
-    /// Creates a manager rooted at the default API preferences data directory.
-    pub fn default() -> Self {
-        let rootDir = providerRuntimeSupport()
-            .and_then(|support| {
-                support
-                    .dataDir()
-                    .map_err(AiServiceError::RequestFailed)
-            })
-            .expect("provider runtime support must provide a data directory");
-        Self::new(rootDir)
+    /// Creates a manager rooted at the runtime support data directory.
+    pub fn from_runtime_context(
+        runtime_context: ProviderRuntimeContext,
+    ) -> Result<Self, AiServiceError> {
+        let root_dir = runtime_context
+            .support()
+            .dataDir()
+            .map_err(AiServiceError::RequestFailed)?;
+        Ok(Self::new(root_dir, runtime_context))
     }
 
     /// Initializes preference-backed model bindings before service lookup.
@@ -106,7 +107,9 @@ impl MultiServiceManager {
         if inner.isInitialized {
             return Ok(());
         }
-        providerRuntimeSupport()?
+        inner
+            .runtime_context
+            .support()
             .initializeFunctionModelBindings(inner.rootDir.clone())
             .map_err(AiServiceError::RequestFailed)?;
         inner.isInitialized = true;
@@ -123,7 +126,9 @@ impl MultiServiceManager {
             .lock()
             .expect("MultiServiceManager mutex poisoned");
         Self::ensureInitializedLocked(&mut inner)?;
-        let binding = providerRuntimeSupport()?
+        let binding = inner
+            .runtime_context
+            .support()
             .modelBindingForFunction(inner.rootDir.clone(), functionType.clone())
             .map_err(AiServiceError::RequestFailed)?;
         if !Self::functionServiceMatchesBinding(
@@ -131,7 +136,9 @@ impl MultiServiceManager {
             &binding.providerId,
             &binding.modelId,
         ) {
-            let config = providerRuntimeSupport()?
+            let config = inner
+                .runtime_context
+                .support()
                 .resolvedModelConfig(inner.rootDir.clone(), &binding.providerId, &binding.modelId)
                 .map_err(AiServiceError::RequestFailed)?;
             let service = Self::createServiceFromResolvedConfigLocked(&inner, config)?;
@@ -169,7 +176,9 @@ impl MultiServiceManager {
         Self::ensureInitializedLocked(&mut inner)?;
         let serviceKey = Self::modelServiceKey(&providerId, &modelId);
         if !inner.modelServiceInstances.contains_key(&serviceKey) {
-            let config = providerRuntimeSupport()?
+            let config = inner
+                .runtime_context
+                .support()
                 .resolvedModelConfig(inner.rootDir.clone(), &providerId, &modelId)
                 .map_err(AiServiceError::RequestFailed)?;
             let service = Self::createServiceFromResolvedConfigLocked(&inner, config)?;
@@ -207,10 +216,14 @@ impl MultiServiceManager {
             .lock()
             .expect("MultiServiceManager mutex poisoned");
         Self::ensureInitializedLocked(&mut inner)?;
-        let binding = providerRuntimeSupport()?
+        let binding = inner
+            .runtime_context
+            .support()
             .modelBindingForFunction(inner.rootDir.clone(), functionType.clone())
             .map_err(AiServiceError::RequestFailed)?;
-        let config = providerRuntimeSupport()?
+        let config = inner
+            .runtime_context
+            .support()
             .resolvedModelConfig(inner.rootDir.clone(), &binding.providerId, &binding.modelId)
             .map_err(AiServiceError::RequestFailed)?;
         let modelParameters = config.parameters.clone();
@@ -260,7 +273,9 @@ impl MultiServiceManager {
             .expect("MultiServiceManager mutex poisoned");
         Self::ensureInitializedLocked(&mut inner)?;
         let serviceKey = Self::modelServiceKey(&providerId, &modelId);
-        let config = providerRuntimeSupport()?
+        let config = inner
+            .runtime_context
+            .support()
             .resolvedModelConfig(inner.rootDir.clone(), &providerId, &modelId)
             .map_err(AiServiceError::RequestFailed)?;
         let modelParameters = config.parameters.clone();
@@ -296,7 +311,9 @@ impl MultiServiceManager {
             .lock()
             .expect("MultiServiceManager mutex poisoned");
         Self::ensureInitializedLocked(&mut inner)?;
-        let config = providerRuntimeSupport()?
+        let config = inner
+            .runtime_context
+            .support()
             .resolvedModelConfig(inner.rootDir.clone(), &providerId, &modelId)
             .map_err(AiServiceError::RequestFailed)?;
         let modelParameters = config.parameters.clone();
@@ -475,8 +492,10 @@ impl MultiServiceManager {
         config: ResolvedModelConfig,
     ) -> Result<Box<dyn AIService>, AiServiceError> {
         let providerTypeId = config.apiProviderTypeId.trim().to_string();
-        let toolPkgProviderRegistered =
-            providerRuntimeSupport()?.hasToolPkgAiProvider(&providerTypeId);
+        let toolPkgProviderRegistered = inner
+            .runtime_context
+            .support()
+            .hasToolPkgAiProvider(&providerTypeId);
         let providerType = match toolPkgProviderRegistered {
             true => config.apiProviderType.clone(),
             false => ApiProviderType::fromProviderTypeId(&providerTypeId)
@@ -564,6 +583,7 @@ impl MultiServiceManager {
                 provider_type.name().to_string(),
                 custom_headers.into_iter().collect(),
                 enable_tool_call,
+                inner.runtime_context.clone(),
             ))),
             ProviderCreateParams::OpenAIResponsesProvider {
                 responses_api_endpoint,
@@ -585,6 +605,7 @@ impl MultiServiceManager {
                 supports_audio,
                 supports_video,
                 enable_tool_call,
+                inner.runtime_context.clone(),
             ))),
             ProviderCreateParams::ClaudeProvider {
                 api_endpoint,
@@ -727,6 +748,7 @@ impl MultiServiceManager {
                 supports_audio,
                 supports_video,
                 enable_tool_call,
+                inner.runtime_context.clone(),
             ))),
             ProviderCreateParams::FourRouterProvider {
                 api_endpoint,
@@ -771,6 +793,7 @@ impl MultiServiceManager {
                 supports_audio,
                 supports_video,
                 enable_tool_call,
+                inner.runtime_context.clone(),
             ))),
             ProviderCreateParams::DoubaoAIProvider {
                 api_endpoint,
@@ -837,6 +860,7 @@ impl MultiServiceManager {
                 supports_audio,
                 supports_video,
                 enable_tool_call,
+                inner.runtime_context.clone(),
             ))),
             ProviderCreateParams::MNNProvider { .. } => Ok(Box::new(MNNProvider)),
             ProviderCreateParams::LlamaProvider { .. } => Ok(Box::new(LlamaProvider)),
@@ -845,13 +869,23 @@ impl MultiServiceManager {
                 provider_id,
                 model_id,
             } => {
-                let provider = providerRuntimeSupport()?
+                let provider = inner
+                    .runtime_context
+                    .support()
                     .toolPkgAiProvider(&provider_type_id)
-                    .ok_or_else(|| AiServiceError::ProviderNotImplemented(provider_type_id.clone()))?;
-                let config = providerRuntimeSupport()?
+                    .ok_or_else(|| {
+                        AiServiceError::ProviderNotImplemented(provider_type_id.clone())
+                    })?;
+                let config = inner
+                    .runtime_context
+                    .support()
                     .resolvedModelConfig(inner.rootDir.clone(), &provider_id, &model_id)
                     .map_err(AiServiceError::RequestFailed)?;
-                Ok(Box::new(ToolPkgJsAiProviderService::new(config, provider)))
+                Ok(Box::new(ToolPkgJsAiProviderService::new(
+                    config,
+                    provider,
+                    inner.runtime_context.clone(),
+                )))
             }
         }
     }
@@ -864,7 +898,9 @@ impl MultiServiceManager {
         match apiKeyProvider {
             ApiKeyProviderSpec::SingleApiKeyProvider { api_key } => Ok(api_key),
             ApiKeyProviderSpec::MultiApiKeyProvider { provider_id } => {
-                let provider = providerRuntimeSupport()?
+                let provider = inner
+                    .runtime_context
+                    .support()
                     .providerProfile(inner.rootDir.clone(), &provider_id)
                     .map_err(AiServiceError::RequestFailed)?;
                 let index = usize::try_from(provider.currentKeyIndex)
@@ -903,10 +939,14 @@ impl MultiServiceManager {
             .lock()
             .expect("MultiServiceManager mutex poisoned");
         Self::ensureInitializedLocked(&mut inner)?;
-        let binding = providerRuntimeSupport()?
+        let binding = inner
+            .runtime_context
+            .support()
             .modelBindingForFunction(inner.rootDir.clone(), functionType)
             .map_err(AiServiceError::RequestFailed)?;
-        providerRuntimeSupport()?
+        inner
+            .runtime_context
+            .support()
             .resolvedModelConfig(inner.rootDir.clone(), &binding.providerId, &binding.modelId)
             .map_err(AiServiceError::RequestFailed)
     }
@@ -922,7 +962,9 @@ impl MultiServiceManager {
             .lock()
             .expect("MultiServiceManager mutex poisoned");
         Self::ensureInitializedLocked(&mut inner)?;
-        providerRuntimeSupport()?
+        inner
+            .runtime_context
+            .support()
             .resolvedModelConfig(inner.rootDir.clone(), &providerId, &modelId)
             .map_err(AiServiceError::RequestFailed)
     }

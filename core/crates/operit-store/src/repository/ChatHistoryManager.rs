@@ -13,6 +13,7 @@ use crate::dao::ChatDao::ChatDao;
 use crate::dao::MessageDao::MessageDao;
 use crate::dao::MessageVariantDao::MessageVariantDao;
 use crate::db::AppDatabase::{AppDatabase, AppDatabaseError};
+use crate::sync::SqlChatSyncStore::{SqlChatSyncStore, SqlChatSyncStoreError};
 use operit_model::CharacterCardChatStats::CharacterCardChatStats;
 use operit_model::CharacterGroupChatStats::CharacterGroupChatStats;
 use operit_model::ChatEntity::ChatEntity;
@@ -25,7 +26,6 @@ use operit_model::OperitChatArchive::{
     OperitArchivedChat, OperitArchivedMessage, OperitArchivedMessageVariant, OperitChatArchive,
     ARCHIVE_TYPE, CURRENT_FORMAT_VERSION,
 };
-use crate::sync::SqlChatSyncStore::{SqlChatSyncStore, SqlChatSyncStoreError};
 use serde::{Deserialize, Serialize};
 
 const LOCATOR_PREVIEW_CHAR_COUNT: i32 = 48;

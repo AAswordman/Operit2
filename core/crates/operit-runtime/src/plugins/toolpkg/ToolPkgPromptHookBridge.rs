@@ -2,21 +2,22 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    decodeToolPkgHookResult, toolPkgPackageManager, ToolPkgPromptHookRegistration,
-};
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
+use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::{
+    TOOLPKG_EVENT_PROMPT_ESTIMATE_FINALIZE, TOOLPKG_EVENT_PROMPT_ESTIMATE_HISTORY,
+    TOOLPKG_EVENT_PROMPT_FINALIZE, TOOLPKG_EVENT_PROMPT_HISTORY, TOOLPKG_EVENT_PROMPT_INPUT,
+    TOOLPKG_EVENT_SYSTEM_PROMPT_COMPOSE, TOOLPKG_EVENT_TOOL_PROMPT_COMPOSE,
+};
+use operit_plugin_sdk::toolpkg::ToolPkgHooks::{
+    decodeToolPkgHookResult, ToolPkgPromptHookRegistration,
+};
+use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_providers::chat::hooks::PromptHookRegistry::{
     PromptEstimateFinalizeHook, PromptEstimateHistoryHook, PromptFinalizeHook, PromptHistoryHook,
     PromptHookContext, PromptHookMutation, PromptHookRegistry, PromptInputHook,
     SystemPromptComposeHook, ToolPromptComposeHook,
 };
-use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::{
-    TOOLPKG_EVENT_PROMPT_ESTIMATE_FINALIZE, TOOLPKG_EVENT_PROMPT_ESTIMATE_HISTORY,
-    TOOLPKG_EVENT_PROMPT_FINALIZE, TOOLPKG_EVENT_PROMPT_HISTORY, TOOLPKG_EVENT_PROMPT_INPUT,
-    TOOLPKG_EVENT_SYSTEM_PROMPT_COMPOSE, TOOLPKG_EVENT_TOOL_PROMPT_COMPOSE,
-};
-use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
@@ -37,17 +38,30 @@ static PROMPT_ESTIMATE_FINALIZE_HOOKS: OnceLock<Mutex<Vec<ToolPkgPromptHookRegis
 pub struct ToolPkgPromptHookBridge;
 
 impl ToolPkgPromptHookBridge {
-    pub fn register() {
-        PromptHookRegistry::registerPromptInputHook(Arc::new(PromptInputBridge));
-        PromptHookRegistry::registerPromptHistoryHook(Arc::new(PromptHistoryBridge));
+    /// Registers prompt hooks for one application runtime.
+    pub fn register(runtime: ToolPkgBridgeRuntime) {
+        PromptHookRegistry::registerPromptInputHook(Arc::new(PromptInputBridge {
+            runtime: runtime.clone(),
+        }));
+        PromptHookRegistry::registerPromptHistoryHook(Arc::new(PromptHistoryBridge {
+            runtime: runtime.clone(),
+        }));
         PromptHookRegistry::registerPromptEstimateHistoryHook(Arc::new(
-            PromptEstimateHistoryBridge,
+            PromptEstimateHistoryBridge {
+                runtime: runtime.clone(),
+            },
         ));
-        PromptHookRegistry::registerSystemPromptComposeHook(Arc::new(SystemPromptComposeBridge));
-        PromptHookRegistry::registerToolPromptComposeHook(Arc::new(ToolPromptComposeBridge));
-        PromptHookRegistry::registerPromptFinalizeHook(Arc::new(PromptFinalizeBridge));
+        PromptHookRegistry::registerSystemPromptComposeHook(Arc::new(SystemPromptComposeBridge {
+            runtime: runtime.clone(),
+        }));
+        PromptHookRegistry::registerToolPromptComposeHook(Arc::new(ToolPromptComposeBridge {
+            runtime: runtime.clone(),
+        }));
+        PromptHookRegistry::registerPromptFinalizeHook(Arc::new(PromptFinalizeBridge {
+            runtime: runtime.clone(),
+        }));
         PromptHookRegistry::registerPromptEstimateFinalizeHook(Arc::new(
-            PromptEstimateFinalizeBridge,
+            PromptEstimateFinalizeBridge { runtime },
         ));
     }
 
@@ -123,7 +137,7 @@ fn replace_hooks(
 
 fn registrations(
     container: &ToolPkgContainerRuntime,
-    hooks: &[operit_tools::tools::packTool::ToolPkgParser::ToolPkgFunctionHookRuntime],
+    hooks: &[operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgFunctionHookRuntime],
 ) -> Vec<ToolPkgPromptHookRegistration> {
     hooks
         .iter()
@@ -136,13 +150,27 @@ fn registrations(
         .collect()
 }
 
-struct PromptInputBridge;
-struct PromptHistoryBridge;
-struct PromptEstimateHistoryBridge;
-struct SystemPromptComposeBridge;
-struct ToolPromptComposeBridge;
-struct PromptFinalizeBridge;
-struct PromptEstimateFinalizeBridge;
+struct PromptInputBridge {
+    runtime: ToolPkgBridgeRuntime,
+}
+struct PromptHistoryBridge {
+    runtime: ToolPkgBridgeRuntime,
+}
+struct PromptEstimateHistoryBridge {
+    runtime: ToolPkgBridgeRuntime,
+}
+struct SystemPromptComposeBridge {
+    runtime: ToolPkgBridgeRuntime,
+}
+struct ToolPromptComposeBridge {
+    runtime: ToolPkgBridgeRuntime,
+}
+struct PromptFinalizeBridge {
+    runtime: ToolPkgBridgeRuntime,
+}
+struct PromptEstimateFinalizeBridge {
+    runtime: ToolPkgBridgeRuntime,
+}
 
 macro_rules! prompt_bridge {
     ($bridge:ident, $trait_name:ident, $id:literal, $hooks:ident, $event:expr) => {
@@ -153,6 +181,7 @@ macro_rules! prompt_bridge {
 
             fn on_event(&self, context: &PromptHookContext) -> Option<PromptHookMutation> {
                 dispatch_prompt_hooks(
+                    &self.runtime,
                     $hooks.get_or_init(|| Mutex::new(Vec::new())),
                     $event,
                     context,
@@ -213,6 +242,7 @@ prompt_bridge!(
 );
 
 fn dispatch_prompt_hooks(
+    runtime: &ToolPkgBridgeRuntime,
     hooks: &Mutex<Vec<ToolPkgPromptHookRegistration>>,
     event: &str,
     context: &PromptHookContext,
@@ -233,7 +263,7 @@ fn dispatch_prompt_hooks(
     let mut current = context.clone();
     let mut mutation = PromptHookMutation::default();
     let mut changed = false;
-    let package_manager = toolPkgPackageManager();
+    let package_manager = runtime.package_manager();
     for hook in snapshot {
         ChainLogger::info(
             PLUGIN_CHAIN,

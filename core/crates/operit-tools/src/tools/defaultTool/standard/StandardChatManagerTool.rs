@@ -1,18 +1,17 @@
 use operit_host_api::TimeUtils::currentTimeMillis;
 use regex::Regex;
+use std::sync::Arc;
 
-use crate::ConversationMarkupManager::ToolResult;
-use crate::runtime_support::{
-    toolRuntimeSupport, RuntimeChatSendRequest, RuntimeChatSlot,
-};
-use crate::ToolExecutionManager::{
-    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
-};
+use crate::runtime_support::{RuntimeChatSendRequest, RuntimeChatSlot, ToolRuntimeSupport};
 use crate::tools::ToolResultDataClasses::{
     stringResultData, AgentStatusResultData, CharacterCardInfo, CharacterCardListResultData,
     ChatCreationResultData, ChatDeleteResultData, ChatFindResultData, ChatInfo, ChatListResultData,
     ChatMessageInfo, ChatMessagesResultData, ChatServiceStartResultData, ChatSwitchResultData,
     ChatTitleUpdateResultData, MessageSendResultData, ToolResultData,
+};
+use crate::ConversationMarkupManager::ToolResult;
+use crate::ToolExecutionManager::{
+    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
 };
 use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
@@ -20,7 +19,9 @@ use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 
 #[derive(Clone)]
 /// Defines built-in chat management tool names and runtime holder state.
-pub struct StandardChatManagerTool;
+pub struct StandardChatManagerTool {
+    runtimeSupport: Arc<dyn ToolRuntimeSupport>,
+}
 
 #[derive(Clone, Copy)]
 /// Operations supported by the standard chat manager tool.
@@ -48,24 +49,22 @@ pub struct ChatManagerToolExecutor {
 }
 
 impl StandardChatManagerTool {
-    /// Creates a chat manager tool set with a fresh runtime holder.
-    pub fn new() -> Self {
-        Self
+    /// Creates a chat manager tool set bound to one tool runtime.
+    pub fn new(runtimeSupport: Arc<dyn ToolRuntimeSupport>) -> Self {
+        Self { runtimeSupport }
     }
 
     #[allow(non_snake_case)]
     /// Starts chat service processing for the main and floating runtime slots.
     pub fn startChatService(&self, tool: &AITool) -> ToolResult {
-        match toolRuntimeSupport().startChatServices() {
-            Ok(()) => {
-                successData(
-                    tool,
-                    ToolResultData::ChatServiceStartResultData(ChatServiceStartResultData {
-                        isConnected: true,
-                        connectionTime: currentTimeMillis(),
-                    }),
-                )
-            }
+        match self.runtimeSupport.startChatServices() {
+            Ok(()) => successData(
+                tool,
+                ToolResultData::ChatServiceStartResultData(ChatServiceStartResultData {
+                    isConnected: true,
+                    connectionTime: currentTimeMillis(),
+                }),
+            ),
             Err(error) => toolError(tool, error),
         }
     }
@@ -73,16 +72,14 @@ impl StandardChatManagerTool {
     #[allow(non_snake_case)]
     /// Stops chat service processing by clearing active runtime cores.
     pub fn stopChatService(&self, tool: &AITool) -> ToolResult {
-        match toolRuntimeSupport().stopChatServices() {
-            Ok(()) => {
-                successData(
-                    tool,
-                    ToolResultData::ChatServiceStartResultData(ChatServiceStartResultData {
-                        isConnected: false,
-                        connectionTime: currentTimeMillis(),
-                    }),
-                )
-            }
+        match self.runtimeSupport.stopChatServices() {
+            Ok(()) => successData(
+                tool,
+                ToolResultData::ChatServiceStartResultData(ChatServiceStartResultData {
+                    isConnected: false,
+                    connectionTime: currentTimeMillis(),
+                }),
+            ),
             Err(error) => toolError(tool, error),
         }
     }
@@ -97,7 +94,10 @@ impl StandardChatManagerTool {
         };
         let characterCardId = optionalParameterValue(tool, "character_card_id")
             .filter(|value| !value.trim().is_empty());
-        let characterCardName = match resolveCharacterCardName(characterCardId.as_deref()) {
+        let characterCardName = match resolveCharacterCardName(
+            self.runtimeSupport.as_ref(),
+            characterCardId.as_deref(),
+        ) {
             Ok(value) => value,
             Err(error) => return toolError(tool, error),
         };
@@ -113,8 +113,9 @@ impl StandardChatManagerTool {
             Err(error) => return toolError(tool, format!("Error opening chat history: {error}")),
         };
 
-        if let Err(error) = toolRuntimeSupport()
-            .createChatRuntime(characterCardName, group, setAsCurrentChat)
+        if let Err(error) =
+            self.runtimeSupport
+                .createChatRuntime(characterCardName, group, setAsCurrentChat)
         {
             return toolError(tool, error);
         }
@@ -242,7 +243,7 @@ impl StandardChatManagerTool {
         if chatId.trim().is_empty() {
             return toolError(tool, "Invalid parameter: missing chat_id".to_string());
         }
-        let isProcessing = match toolRuntimeSupport().isChatProcessing(&chatId) {
+        let isProcessing = match self.runtimeSupport.isChatProcessing(&chatId) {
             Ok(value) => value,
             Err(error) => return toolError(tool, error),
         };
@@ -274,7 +275,7 @@ impl StandardChatManagerTool {
             Ok(None) => return toolError(tool, format!("Chat does not exist: {chatId}")),
             Err(error) => return toolError(tool, format!("Error loading chat: {error}")),
         };
-        if let Err(error) = toolRuntimeSupport().switchMainChat(&chatId) {
+        if let Err(error) = self.runtimeSupport.switchMainChat(&chatId) {
             return toolError(tool, error);
         }
         successData(
@@ -359,7 +360,9 @@ impl StandardChatManagerTool {
         let roleCardId =
             optionalParameterValue(tool, "role_card_id").filter(|value| !value.trim().is_empty());
         if let Some(roleCardId) = roleCardId.as_deref() {
-            if let Err(error) = resolveCharacterCardName(Some(roleCardId)) {
+            if let Err(error) =
+                resolveCharacterCardName(self.runtimeSupport.as_ref(), Some(roleCardId))
+            {
                 return toolError(tool, error);
             }
         }
@@ -395,7 +398,7 @@ impl StandardChatManagerTool {
             .enable_all()
             .build()
             .map_err(|error| error.to_string())
-            .and_then(|runtime| runtime.block_on(toolRuntimeSupport().sendChatMessage(request)));
+            .and_then(|runtime| runtime.block_on(self.runtimeSupport.sendChatMessage(request)));
         if let Err(error) = result {
             return toolError(tool, format!("Error sending message: {error}"));
         }
@@ -427,7 +430,7 @@ impl StandardChatManagerTool {
     #[allow(non_snake_case)]
     /// Lists character cards available to chat sessions.
     pub fn listCharacterCards(&self, tool: &AITool) -> ToolResult {
-        match toolRuntimeSupport().listCharacterCards() {
+        match self.runtimeSupport.listCharacterCards() {
             Ok(cards) => successData(
                 tool,
                 ToolResultData::CharacterCardListResultData(CharacterCardListResultData {
@@ -773,9 +776,12 @@ fn buildChatInfo(
     }
 }
 
-fn resolveCharacterCardName(cardId: Option<&str>) -> Result<Option<String>, String> {
+fn resolveCharacterCardName(
+    runtimeSupport: &dyn ToolRuntimeSupport,
+    cardId: Option<&str>,
+) -> Result<Option<String>, String> {
     match cardId {
-        Some(cardId) => toolRuntimeSupport()
+        Some(cardId) => runtimeSupport
             .characterCardName(cardId)
             .map(Some)
             .map_err(|_| "Invalid parameter: character_card_id not found".to_string()),

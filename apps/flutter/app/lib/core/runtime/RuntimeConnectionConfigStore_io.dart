@@ -11,21 +11,49 @@ class RuntimeConnectionConfigStore {
 
   static Future<RuntimeConnectionConfig> read() async {
     final remoteSessions = await OutboundLinkSessionStore.read();
+    final storageConfig = await LocalRuntimeStorageConfigStore.read();
     final file = await OperitClientPaths.runtimeConnectionConfigFile();
     if (!await file.exists()) {
       return RuntimeConnectionConfig.local().copyWith(
         remoteSessions: remoteSessions,
+        localStorage: storageConfig,
       );
     }
     final content = await file.readAsString();
     return RuntimeConnectionConfig.fromJson(
       jsonDecode(content) as Map<String, Object?>,
       remoteSessions: remoteSessions,
-    );
+    ).copyWith(localStorage: storageConfig);
   }
 
   static Future<void> write(RuntimeConnectionConfig config) async {
     final file = await OperitClientPaths.runtimeConnectionConfigFile();
+    await file.parent.create(recursive: true);
+    await file.writeAsString(
+      const JsonEncoder.withIndent('  ').convert(config),
+    );
+    await LocalRuntimeStorageConfigStore.write(config.localStorage);
+  }
+}
+
+class LocalRuntimeStorageConfigStore {
+  const LocalRuntimeStorageConfigStore._();
+
+  /// Reads persisted local runtime storage config.
+  static Future<LocalRuntimeStorageConfig> read() async {
+    final file = await OperitClientPaths.localRuntimeStorageConfigFile();
+    if (!await file.exists()) {
+      return LocalRuntimeStorageConfig.platformDefault();
+    }
+    final content = await file.readAsString();
+    return LocalRuntimeStorageConfig.fromJson(
+      jsonDecode(content) as Map<String, Object?>,
+    );
+  }
+
+  /// Writes persisted local runtime storage config.
+  static Future<void> write(LocalRuntimeStorageConfig config) async {
+    final file = await OperitClientPaths.localRuntimeStorageConfigFile();
     await file.parent.create(recursive: true);
     await file.writeAsString(
       const JsonEncoder.withIndent('  ').convert(config),

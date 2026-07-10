@@ -7,25 +7,24 @@ use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::ToolPrompt::{SystemToolPromptCategory, ToolParameterSchema, ToolPrompt};
 use operit_providers::chat::config::FunctionalPrompts::FunctionalPrompts;
 use operit_providers::chat::config::SystemToolPrompts as ProviderToolPrompts;
-use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::enhance::FileBindingService::{
     FileBindingService, StructuredEditAction, StructuredEditOperation,
 };
 use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
+use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_tools::runtime_support::{
-    setToolRuntimeSupport, CachedMcpToolInfo, ResolvedCharacterCardToolAccess,
-    RuntimeBundledExternalSkillAsset, RuntimeCharacterCardInfo, RuntimeCharacterMemoryBinding,
-    RuntimeChatSendRequest, RuntimeChatSlot, RuntimePluginAsset, RuntimeSkillCatalogEntry,
-    RuntimeStructuredEditAction, RuntimeStructuredEditOperation, ToolRuntimeSupport,
-    ToolRuntimeSupportFuture,
+    CachedMcpToolInfo, ResolvedCharacterCardToolAccess, RuntimeBundledExternalSkillAsset,
+    RuntimeCharacterCardInfo, RuntimeCharacterMemoryBinding, RuntimeChatSendRequest,
+    RuntimeChatSlot, RuntimePluginAsset, RuntimeSkillCatalogEntry, RuntimeStructuredEditAction,
+    RuntimeStructuredEditOperation, ToolRuntimeSupport, ToolRuntimeSupportFuture,
 };
 use operit_tools::tools::mcp_runtime::MCPLocalServer::MCPLocalServer;
-use operit_tools::tools::packTool::PackageManager::PackageManager;
-use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
+use operit_tools::tools::skill::SkillManager::SkillManager;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_util::stream::Stream::Stream;
 use tokio::sync::Mutex as AsyncMutex;
 
-use crate::core::application::OperitApplication::OperitApplication;
 use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use crate::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
@@ -36,20 +35,57 @@ use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPrefere
 use crate::plugins::BuiltinPluginAssets::{BUILTIN_PLUGIN_ASSETS, BUNDLED_EXTERNAL_PLUGIN_ASSETS};
 use crate::plugins::BundledExternalSkillAssets::BUNDLED_EXTERNAL_SKILL_ASSETS;
 
-/// Installs runtime-backed services required by the tools crate.
+/// Creates runtime-backed services required by the tools crate.
 pub struct ToolRuntimeSupportService;
 
 impl ToolRuntimeSupportService {
-    /// Installs tool runtime support for this process.
-    #[allow(non_snake_case)]
-    pub fn install(chatRuntimeHolder: Arc<AsyncMutex<ChatRuntimeHolder>>) -> Result<(), String> {
-        setToolRuntimeSupport(Arc::new(RuntimeToolSupport { chatRuntimeHolder }))
+    /// Creates tool runtime support for one application instance.
+    pub fn create(
+        hostManager: operit_host_api::HostManager::HostManager,
+        chatRuntimeHolder: Arc<AsyncMutex<ChatRuntimeHolder>>,
+    ) -> Arc<RuntimeToolSupport> {
+        Arc::new(RuntimeToolSupport {
+            hostManager,
+            chatRuntimeHolder,
+            runtimeBindings: OnceLock::new(),
+        })
     }
 }
 
+#[derive(Clone)]
+struct RuntimeToolBindings {
+    toolHandler: AIToolHandler,
+    providerRuntimeContext: ProviderRuntimeContext,
+}
+
 /// Bridges tool-owned interfaces to runtime-owned managers and registries.
-struct RuntimeToolSupport {
+pub struct RuntimeToolSupport {
+    hostManager: operit_host_api::HostManager::HostManager,
     chatRuntimeHolder: Arc<AsyncMutex<ChatRuntimeHolder>>,
+    runtimeBindings: OnceLock<RuntimeToolBindings>,
+}
+
+impl RuntimeToolSupport {
+    /// Binds services that depend on the tool runtime support instance itself.
+    pub fn bindRuntimeServices(
+        &self,
+        toolHandler: AIToolHandler,
+        providerRuntimeContext: ProviderRuntimeContext,
+    ) -> Result<(), String> {
+        self.runtimeBindings
+            .set(RuntimeToolBindings {
+                toolHandler,
+                providerRuntimeContext,
+            })
+            .map_err(|_| "Tool runtime services are already bound".to_string())
+    }
+
+    /// Returns services bound to this runtime support instance.
+    fn runtimeBindings(&self) -> Result<&RuntimeToolBindings, String> {
+        self.runtimeBindings
+            .get()
+            .ok_or_else(|| "Tool runtime services are not bound".to_string())
+    }
 }
 
 impl ToolRuntimeSupport for RuntimeToolSupport {
@@ -58,7 +94,7 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
     fn resolveCharacterCardToolAccess(
         &self,
         roleCardId: Option<&str>,
-        packageManager: &PackageManager,
+        packageManager: &RuntimePackageManager,
         globalToolVisibility: Option<HashMap<String, bool>>,
     ) -> ResolvedCharacterCardToolAccess {
         CharacterCardToolAccessResolver::getInstance().resolve(
@@ -168,10 +204,10 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
     /// Returns AI-visible skill package metadata.
     #[allow(non_snake_case)]
     fn aiVisibleSkillPackages(&self) -> Vec<RuntimeSkillCatalogEntry> {
-        let hostManager = OperitApplication::hostManager();
-        SkillRepository::getInstance(&hostManager)
-            .getAiVisibleSkillPackages()
+        SkillManager::fromDefaultPaths()
+            .getAvailableSkills()
             .into_iter()
+            .filter(|(name, _)| SkillVisibilityPreferences::getInstance().isSkillVisibleToAi(name))
             .map(|(name, skill)| RuntimeSkillCatalogEntry {
                 name,
                 description: skill.description,
@@ -182,8 +218,7 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
     /// Returns cached MCP tool descriptions for a server.
     #[allow(non_snake_case)]
     fn cachedMcpTools(&self, serverName: &str) -> Vec<CachedMcpToolInfo> {
-        let hostManager = OperitApplication::hostManager();
-        MCPLocalServer::getInstance(&hostManager)
+        MCPLocalServer::getInstance(&self.hostManager)
             .getCachedTools(serverName)
             .unwrap_or_default()
             .into_iter()
@@ -236,7 +271,9 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         toolDescriptions: &'a [String],
     ) -> ToolRuntimeSupportFuture<'a, Result<String, String>> {
         Box::pin(async move {
-            let mut service = EnhancedAIService::new(ConversationService);
+            let bindings = self.runtimeBindings()?.clone();
+            let mut service =
+                EnhancedAIService::new(bindings.toolHandler, bindings.providerRuntimeContext);
             let mut options = SendMessageOptions::new();
             options.message = FunctionalPrompts::packageDescriptionUserPrompt(
                 pluginName,

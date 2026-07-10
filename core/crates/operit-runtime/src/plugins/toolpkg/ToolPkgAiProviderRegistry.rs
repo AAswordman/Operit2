@@ -1,28 +1,23 @@
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    toolPkgPackageManager, ToolPkgAiProviderRegistration,
-};
-use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use operit_plugin_sdk::toolpkg::ToolPkgHooks::ToolPkgAiProviderRegistration;
+use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 
 pub struct ToolPkgAiProviderRegistry;
 
 impl ToolPkgAiProviderRegistry {
-    pub fn register() {
-        static INSTALLED: AtomicBool = AtomicBool::new(false);
-        if INSTALLED.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        let manager = toolPkgPackageManager();
+    /// Registers package runtime updates for one application runtime.
+    pub fn register(runtime: ToolPkgBridgeRuntime) {
+        let manager = runtime.package_manager();
         manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(|activeContainers| {
             ToolPkgAiProviderRegistry::syncToolPkgRegistrations(activeContainers);
         }));
     }
 
+    /// Returns a registered ToolPkg AI provider by identifier.
     pub fn get(providerId: &str) -> Option<ToolPkgAiProviderRegistration> {
-        Self::register();
         providersById()
             .lock()
             .expect("toolpkg ai provider registry mutex poisoned")
@@ -30,8 +25,8 @@ impl ToolPkgAiProviderRegistry {
             .cloned()
     }
 
+    /// Lists all registered ToolPkg AI providers.
     pub fn list() -> Vec<ToolPkgAiProviderRegistration> {
-        Self::register();
         let mut providers = providersById()
             .lock()
             .expect("toolpkg ai provider registry mutex poisoned")

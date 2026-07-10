@@ -35,7 +35,14 @@ mod ios {
             })
         }
 
-        fn startPtySession(&self, _: &str, _: &str, _: u16, _: u16) -> HostResult<String> {
+        fn startPtySession(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: u16,
+            _: u16,
+        ) -> HostResult<String> {
             Err(HostError::new("iOS does not expose a local PTY host"))
         }
 
@@ -128,33 +135,53 @@ mod non_apple_target {
                 types: vec![TerminalTypeInfo {
                     terminalType: "apple".to_string(),
                     available: false,
-                    description: "Apple terminal host is available only on iOS or macOS".to_string(),
+                    description: "Apple terminal host is available only on iOS or macOS"
+                        .to_string(),
                 }],
             })
         }
 
-        fn startPtySession(&self, _: &str, _: &str, _: u16, _: u16) -> HostResult<String> {
-            Err(HostError::new("Apple terminal host is available only on iOS or macOS"))
+        fn startPtySession(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: u16,
+            _: u16,
+        ) -> HostResult<String> {
+            Err(HostError::new(
+                "Apple terminal host is available only on iOS or macOS",
+            ))
         }
 
         fn readPtySession(&self, _: &str) -> HostResult<Vec<u8>> {
-            Err(HostError::new("Apple terminal host is available only on iOS or macOS"))
+            Err(HostError::new(
+                "Apple terminal host is available only on iOS or macOS",
+            ))
         }
 
         fn writePtySession(&self, _: &str, _: &[u8]) -> HostResult<usize> {
-            Err(HostError::new("Apple terminal host is available only on iOS or macOS"))
+            Err(HostError::new(
+                "Apple terminal host is available only on iOS or macOS",
+            ))
         }
 
         fn resizePtySession(&self, _: &str, _: u16, _: u16) -> HostResult<()> {
-            Err(HostError::new("Apple terminal host is available only on iOS or macOS"))
+            Err(HostError::new(
+                "Apple terminal host is available only on iOS or macOS",
+            ))
         }
 
         fn pollPtyExitCode(&self, _: &str) -> HostResult<Option<i32>> {
-            Err(HostError::new("Apple terminal host is available only on iOS or macOS"))
+            Err(HostError::new(
+                "Apple terminal host is available only on iOS or macOS",
+            ))
         }
 
         fn closePtySession(&self, _: &str) -> HostResult<()> {
-            Err(HostError::new("Apple terminal host is available only on iOS or macOS"))
+            Err(HostError::new(
+                "Apple terminal host is available only on iOS or macOS",
+            ))
         }
 
         fn listSessions(&self) -> HostResult<Vec<TerminalSessionListEntry>> {
@@ -162,11 +189,15 @@ mod non_apple_target {
         }
 
         fn createOrGetSession(&self, _: &str, _: &str) -> HostResult<TerminalSessionInfo> {
-            Err(HostError::new("Apple terminal host is available only on iOS or macOS"))
+            Err(HostError::new(
+                "Apple terminal host is available only on iOS or macOS",
+            ))
         }
 
         fn executeInSession(&self, _: &str, _: &str, _: u64) -> HostResult<TerminalCommandOutput> {
-            Err(HostError::new("Apple terminal host is available only on iOS or macOS"))
+            Err(HostError::new(
+                "Apple terminal host is available only on iOS or macOS",
+            ))
         }
 
         fn executeHiddenCommand(
@@ -176,7 +207,9 @@ mod non_apple_target {
             _: &str,
             _: u64,
         ) -> HostResult<HiddenTerminalCommandOutput> {
-            Err(HostError::new("Apple terminal host is available only on iOS or macOS"))
+            Err(HostError::new(
+                "Apple terminal host is available only on iOS or macOS",
+            ))
         }
 
         fn inputInSession(
@@ -185,15 +218,21 @@ mod non_apple_target {
             _: Option<&str>,
             _: Option<&str>,
         ) -> HostResult<TerminalInputOutput> {
-            Err(HostError::new("Apple terminal host is available only on iOS or macOS"))
+            Err(HostError::new(
+                "Apple terminal host is available only on iOS or macOS",
+            ))
         }
 
         fn closeSession(&self, _: &str) -> HostResult<TerminalCloseOutput> {
-            Err(HostError::new("Apple terminal host is available only on iOS or macOS"))
+            Err(HostError::new(
+                "Apple terminal host is available only on iOS or macOS",
+            ))
         }
 
         fn getSessionScreen(&self, _: &str) -> HostResult<TerminalScreenOutput> {
-            Err(HostError::new("Apple terminal host is available only on iOS or macOS"))
+            Err(HostError::new(
+                "Apple terminal host is available only on iOS or macOS",
+            ))
         }
     }
 }

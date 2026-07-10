@@ -3,7 +3,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::{
     AudioPlaybackHost, BluetoothHost, BrowserAutomationHost, ComposeDslWebViewHost, FileSystemHost,
-    HostEnvironmentDescriptor, HostRuntimeEventHost, HttpHost, ManagedRuntimeHost,
+    HostEnvironmentDescriptor, HostRuntimeEventHost, HostSecretStore, HttpHost, ManagedRuntimeHost,
     RuntimeSqliteHost, RuntimeStorageHost, SystemOperationHost, TerminalHost, TtsPlaybackHost,
     TtsSynthesisHost, WebVisitHost,
 };
@@ -45,6 +45,7 @@ pub struct HostManager {
     pub terminalHost: Option<Arc<dyn TerminalHost>>,
     pub runtimeStorageHost: Option<Arc<dyn RuntimeStorageHost>>,
     pub runtimeSqliteHost: Option<Arc<dyn RuntimeSqliteHost>>,
+    pub hostSecretStore: Option<Arc<dyn HostSecretStore>>,
     pub hostRuntimeEventHost: Option<Arc<dyn HostRuntimeEventHost>>,
     pub hostEnvironment: HostEnvironmentDescriptor,
     pub coreCommandExecutor: Option<CoreCommandExecutor>,
@@ -69,6 +70,7 @@ impl HostManager {
             terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
+            hostSecretStore: None,
             hostRuntimeEventHost: None,
             hostEnvironment: HostEnvironmentDescriptor::android(),
             coreCommandExecutor: None,
@@ -95,6 +97,7 @@ impl HostManager {
             terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
+            hostSecretStore: None,
             hostRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
@@ -124,6 +127,7 @@ impl HostManager {
             terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
+            hostSecretStore: None,
             hostRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
@@ -154,6 +158,7 @@ impl HostManager {
             terminalHost: None,
             runtimeStorageHost: None,
             runtimeSqliteHost: None,
+            hostSecretStore: None,
             hostRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
@@ -188,6 +193,7 @@ impl HostManager {
             terminalHost: None,
             runtimeStorageHost: Some(runtimeStorageHost),
             runtimeSqliteHost: Some(runtimeSqliteHost),
+            hostSecretStore: None,
             hostRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
@@ -206,6 +212,13 @@ impl HostManager {
     #[allow(non_snake_case)]
     pub fn withAppFilesRoot(mut self, appFilesRoot: PathBuf) -> Self {
         self.appFilesRoot = Some(appFilesRoot);
+        self
+    }
+
+    /// Adds host-owned secret storage for runtime encryption keys.
+    #[allow(non_snake_case)]
+    pub fn withHostSecretStore(mut self, hostSecretStore: Arc<dyn HostSecretStore>) -> Self {
+        self.hostSecretStore = Some(hostSecretStore);
         self
     }
 

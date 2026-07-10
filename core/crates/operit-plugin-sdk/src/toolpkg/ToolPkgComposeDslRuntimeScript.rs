@@ -1,3 +1,4 @@
+/// Wraps a Compose DSL screen script with render, rerender, and action entry points.
 #[allow(non_snake_case)]
 pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
     format!(

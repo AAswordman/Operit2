@@ -2546,6 +2546,44 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsDataCoreVersion => 'Current version';
 
   @override
+  String get settingsDataStorageSection => 'Storage location';
+
+  @override
+  String get settingsDataStorageDescription =>
+      'Move runtime and workspace data into a different local folder.';
+
+  @override
+  String get settingsDataStorageRoot => 'Storage root';
+
+  @override
+  String get settingsDataRuntimeRoot => 'Runtime root';
+
+  @override
+  String get settingsDataWorkspaceRoot => 'Workspace root';
+
+  @override
+  String get settingsDataChooseStorageRoot => 'Choose location';
+
+  @override
+  String get settingsDataStorageConfirmTitle => 'Change storage location';
+
+  @override
+  String get settingsDataStorageConfirmMessage =>
+      'Runtime and workspace data will be copied into the selected folder, and the app will use it after restart.';
+
+  @override
+  String get settingsDataStorageConfirmAction => 'Change location';
+
+  @override
+  String get settingsDataStorageChanged =>
+      'Storage location changed. Restart the app to use it.';
+
+  @override
+  String settingsDataStorageChangeError(String error) {
+    return 'Storage location change failed: $error';
+  }
+
+  @override
   String get settingsDataTokenSection => 'Usage statistics';
 
   @override

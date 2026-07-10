@@ -12,9 +12,9 @@ crate-type = ["cdylib", "staticlib"]
 operit-core-proxy = { path = "../../../../core/crates/operit-core-proxy" }
 operit-host-api = { path = "../../../../core/crates/operit-host-api" }
 operit-link = { path = "../../../../core/crates/operit-link" }
-operit-runtime = { path = "../../../../core/crates/operit-runtime" }
+operit-runtime = { path = "../../../../core/crates/operit-runtime", default-features = false }
 operit-store = { path = "../../../../core/crates/operit-store" }
-operit-tools = { path = "../../../../core/crates/operit-tools" }
+operit-tools = { path = "../../../../core/crates/operit-tools", default-features = false }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

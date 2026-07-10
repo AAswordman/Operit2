@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::AIService::{AIService, AiServiceError, SendMessageRequest};
 use super::OpenRouterProvider::OpenRouterProvider;
+use crate::chat::llmprovider::AIService::{AIService, AiServiceError, SendMessageRequest};
+use crate::runtime_support::ProviderRuntimeContext;
 use operit_util::stream::RevisableTextStream::RevisableTextStreamLike;
 
 pub struct NousPortalProvider {
@@ -10,6 +11,7 @@ pub struct NousPortalProvider {
 }
 
 impl NousPortalProvider {
+    /// Creates a Nous Portal provider bound to one provider runtime context.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_endpoint: String,
@@ -21,6 +23,7 @@ impl NousPortalProvider {
         supports_audio: bool,
         supports_video: bool,
         enable_tool_call: bool,
+        runtime_context: ProviderRuntimeContext,
     ) -> Self {
         Self {
             inner: OpenRouterProvider::new(
@@ -33,6 +36,7 @@ impl NousPortalProvider {
                 supports_audio,
                 supports_video,
                 enable_tool_call,
+                runtime_context,
             ),
         }
     }

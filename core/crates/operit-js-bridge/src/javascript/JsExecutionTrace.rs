@@ -4,16 +4,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Listener for observable events emitted by JavaScript execution.
 pub trait JsExecutionListener {
     /// Records a log message for a running JavaScript call.
-    fn onCallLog(&mut self, _callId: &str, _level: &str, _message: &str) {}
+    fn on_call_log(&mut self, _callId: &str, _level: &str, _message: &str) {}
 
     /// Records an intermediate result emitted by a running JavaScript call.
-    fn onIntermediateResult(&mut self, _callId: &str, _value: &Value) {}
+    fn on_intermediate_result(&mut self, _callId: &str, _value: &Value) {}
 
     /// Records successful completion for a JavaScript call.
-    fn onCompleted(&mut self, _callId: &str, _result: &str) {}
+    fn on_completed(&mut self, _callId: &str, _result: &str) {}
 
     /// Records failure for a JavaScript call.
-    fn onFailed(&mut self, _callId: &str, _error: &str) {}
+    fn on_failed(&mut self, _callId: &str, _error: &str) {}
 }
 
 #[derive(Clone, Debug)]
@@ -81,7 +81,7 @@ impl JsExecutionTraceRecorder {
 }
 
 impl JsExecutionListener for JsExecutionTraceRecorder {
-    fn onCallLog(&mut self, _callId: &str, level: &str, message: &str) {
+    fn on_call_log(&mut self, _callId: &str, level: &str, message: &str) {
         let normalizedLevel = level.trim().to_ascii_uppercase();
         let normalizedMessage = collapseWhitespace(message);
         if normalizedMessage.is_empty() {
@@ -95,14 +95,14 @@ impl JsExecutionListener for JsExecutionTraceRecorder {
         }
     }
 
-    fn onIntermediateResult(&mut self, _callId: &str, value: &Value) {
+    fn on_intermediate_result(&mut self, _callId: &str, value: &Value) {
         let summary = summarizeValue(value, 240, 0);
         if !summary.is_empty() {
             self.events.push(format!("intermediate: {summary}"));
         }
     }
 
-    fn onCompleted(&mut self, _callId: &str, result: &str) {
+    fn on_completed(&mut self, _callId: &str, result: &str) {
         let summary = collapseWhitespace(result);
         if !summary.is_empty() {
             self.events
@@ -110,7 +110,7 @@ impl JsExecutionListener for JsExecutionTraceRecorder {
         }
     }
 
-    fn onFailed(&mut self, _callId: &str, error: &str) {
+    fn on_failed(&mut self, _callId: &str, error: &str) {
         let normalizedError = collapseWhitespace(error);
         if !normalizedError.is_empty() {
             self.events.push(format!("failed: {normalizedError}"));

@@ -132,11 +132,11 @@ impl ConversationMarkupManager {
 
 #[cfg(test)]
 mod tests {
-    use operit_tools::ConversationMarkupManager::{ConversationMarkupManager, ToolResult};
     use operit_tools::tools::ToolResultDataClasses::{
         DirectoryListingData, FileEntry, StringResultData, TerminalCommandResultData,
         ToolResultData,
     };
+    use operit_tools::ConversationMarkupManager::{ConversationMarkupManager, ToolResult};
 
     #[test]
     fn formats_runtime_tool_result_data_with_to_string() {
@@ -148,6 +148,7 @@ mod tests {
                 output: "direct-package-ok\n".to_string(),
                 exitCode: 0,
                 sessionId: "session-1".to_string(),
+                terminalType: "powershell".to_string(),
                 timedOut: false,
             }),
             error: None,

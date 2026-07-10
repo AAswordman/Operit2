@@ -5,6 +5,10 @@ pub(crate) fn object_uses_arc_mutex_instance(access: &ObjectAccess) -> bool {
         access,
         ObjectAccess::ContextGetInstanceArcMutexConstruct
             | ObjectAccess::ContextRefGetInstanceArcMutexConstruct
+            | ObjectAccess::FactoryMethodConstruct {
+                returns_arc_mutex: true,
+                ..
+            }
     )
 }
 

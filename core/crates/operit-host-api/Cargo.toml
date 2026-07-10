@@ -3,7 +3,11 @@ name = "operit-host-api"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-publish.workspace = true
+publish = true
+description = "Host capability contracts and host management for Operit."
+readme = "README.md"
+repository = "https://github.com/AAswordman/Operit2"
+documentation = "https://docs.rs/operit-host-api"
 
 [dependencies]
 serde.workspace = true

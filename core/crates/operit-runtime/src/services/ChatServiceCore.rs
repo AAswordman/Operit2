@@ -187,6 +187,15 @@ impl ChatServiceCore {
         core
     }
 
+    /// Returns the tool handler bound to this chat runtime core.
+    fn runtimeToolHandler(&self) -> AIToolHandler {
+        self.enhancedAiService
+            .as_ref()
+            .expect("ChatServiceCore requires an enhanced AI service for runtime tool access")
+            .tool_handler
+            .clone()
+    }
+
     fn initializeDelegates(&mut self) {
         self.chatHistoryDelegate = ChatHistoryDelegate::new(self.selectionMode.clone());
         self.chatHistoryDelegate.initialize();
@@ -665,7 +674,7 @@ impl ChatServiceCore {
         else {
             return Vec::new();
         };
-        WorkspaceBackupManager::getInstance(AIToolHandler::default().getContext())
+        WorkspaceBackupManager::getInstance(self.runtimeToolHandler().getContext())
             .previewChangesForRewind(workspacePath, rewindTimestamp, Some(chatId))
     }
 
@@ -677,7 +686,7 @@ impl ChatServiceCore {
         else {
             return false;
         };
-        WorkspaceBackupManager::getInstance(AIToolHandler::default().getContext()).syncState(
+        WorkspaceBackupManager::getInstance(self.runtimeToolHandler().getContext()).syncState(
             workspacePath,
             rewindTimestamp,
             Some(chatId),
@@ -838,7 +847,7 @@ impl ChatServiceCore {
 
     #[allow(non_snake_case)]
     fn captureScreenContent(&mut self) {
-        let mut toolHandler = AIToolHandler::default();
+        let mut toolHandler = self.runtimeToolHandler();
         let result = toolHandler.executeTool(AITool {
             name: "capture_screenshot".to_string(),
             parameters: Vec::new(),
@@ -889,7 +898,7 @@ impl ChatServiceCore {
 
     #[allow(non_snake_case)]
     fn captureNotifications(&mut self, limit: i32) {
-        let mut toolHandler = AIToolHandler::default();
+        let mut toolHandler = self.runtimeToolHandler();
         let result = toolHandler.executeTool(AITool {
             name: "get_notifications".to_string(),
             parameters: vec![
@@ -924,7 +933,7 @@ impl ChatServiceCore {
 
     #[allow(non_snake_case)]
     fn captureLocation(&mut self, highAccuracy: bool) {
-        let mut toolHandler = AIToolHandler::default();
+        let mut toolHandler = self.runtimeToolHandler();
         let result = toolHandler.executeTool(AITool {
             name: "get_device_location".to_string(),
             parameters: vec![
@@ -965,7 +974,7 @@ impl ChatServiceCore {
             return;
         }
 
-        let toolHandler = AIToolHandler::default();
+        let toolHandler = self.runtimeToolHandler();
         let packageManager = toolHandler.getOrCreatePackageManager();
         let isStandardPackage;
         let isSkillPackage;
@@ -982,9 +991,10 @@ impl ChatServiceCore {
                 .getAvailableServerPackages()
                 .contains_key(packageName);
         }
-        isSkillPackage = SkillRepository::getInstance(&toolHandler.getContext())
-            .getAiVisibleSkillPackages()
-            .contains_key(packageName);
+        isSkillPackage =
+            SkillRepository::getInstance(&toolHandler.getContext(), toolHandler.runtimeSupport())
+                .getAiVisibleSkillPackages()
+                .contains_key(packageName);
 
         if !isStandardPackage && !isSkillPackage && !isMcpPackage {
             self.messageProcessingDelegate

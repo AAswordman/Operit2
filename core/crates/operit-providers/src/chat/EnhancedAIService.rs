@@ -8,44 +8,44 @@ use operit_store::PreferencesDataStore::MutableStateFlow;
 use regex::Regex;
 use serde_json::{json, Value};
 
-use operit_tools::ConversationMarkupManager::{
-    ConversationMarkupManager, ENHANCED_PURE_THINKING_ONLY_WARNING,
-    ENHANCED_TRUNCATED_TOOL_CALL_WARNING,
-};
-use crate::chat::enhance::ConversationService::{
-    ConversationService, HistoryHookContext, PrepareConversationHistoryRequest,
-    PromptHistoryHookDispatcher, SystemPromptComposer, ToolExposureMode,
-};
-use crate::chat::enhance::MultiServiceManager::{MultiServiceManager, SharedAIServiceHandle};
-use operit_tools::ToolExecutionManager::{
-    AITool as RuntimeAITool, ToolExecutionManager, ToolExposureMode as RuntimeToolExposureMode,
-};
-use crate::chat::library::MemoryLibrary::{promptTurnsToMemoryPairs, MemoryLibrary};
-use crate::chat::llmprovider::AIService::{
-    response_stream_from_chunks, AiServiceError, SendMessageRequest, SharedAiResponseStream,
-    TokenCounts,
-};
-use crate::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
-use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use crate::chat::config::SystemPromptConfig::{
     PackageInfo, SystemPromptConfig, SystemPromptOptions, SystemPromptWithCustomOptions,
     ToolExposureMode as SystemToolExposureMode,
 };
 use crate::chat::config::SystemToolPrompts::SystemToolPrompts;
-use operit_tools::tools::climode::CliToolModeSupport::{
-    CliToolModeSupport, ToolExposureMode as ResolvedToolExposureMode,
+use crate::chat::enhance::ConversationService::{
+    ConversationService, HistoryHookContext, PrepareConversationHistoryRequest,
+    PromptHistoryHookDispatcher, SystemPromptComposer, ToolExposureMode,
 };
-use operit_tools::tools::AIToolHandler::AIToolHandler;
+use crate::chat::enhance::MultiServiceManager::{MultiServiceManager, SharedAIServiceHandle};
+use crate::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
+use crate::chat::library::MemoryLibrary::{promptTurnsToMemoryPairs, MemoryLibrary};
+use crate::chat::llmprovider::AIService::{
+    response_stream_from_chunks, AiServiceError, SendMessageRequest, SharedAiResponseStream,
+    TokenCounts,
+};
+use crate::runtime_support::{ProviderRuntimeContext, ProviderRuntimeSupport};
 use operit_model::CharacterCard::CharacterCardMemoryBindingMode;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::ModelConfigData::ResolvedModelConfig;
 use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptFunctionType::PromptFunctionType;
+use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
-use crate::runtime_support::providerRuntimeSupport;
+use operit_tools::tools::climode::CliToolModeSupport::{
+    CliToolModeSupport, ToolExposureMode as ResolvedToolExposureMode,
+};
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::ConversationMarkupManager::{
+    ConversationMarkupManager, ENHANCED_PURE_THINKING_ONLY_WARNING,
+    ENHANCED_TRUNCATED_TOOL_CALL_WARNING,
+};
+use operit_tools::ToolExecutionManager::{
+    AITool as RuntimeAITool, ToolExecutionManager, ToolExposureMode as RuntimeToolExposureMode,
+};
 use operit_util::stream::RevisableTextStream::RevisableTextStreamLike;
 use operit_util::stream::RevisableTextStream::{with_event_channel_shared, TextStreamEventCarrier};
 use operit_util::stream::Stream::{FnStream, Stream};
@@ -69,6 +69,7 @@ pub struct EnhancedAIService {
     pub character_card_tool_access_resolver: CharacterCardToolAccessResolverMirror,
     pub tool_processing_scope: ToolProcessingScopeMirror,
     pub package_manager: PackageManagerMirror,
+    pub provider_runtime_context: ProviderRuntimeContext,
     pub shared_state: Arc<Mutex<EnhancedAISharedState>>,
 }
 
@@ -390,7 +391,10 @@ impl PromptHistoryHookDispatcher for RuntimePromptHistoryHooks {
     }
 }
 
-pub struct RuntimeSystemPromptComposer;
+pub struct RuntimeSystemPromptComposer {
+    tool_handler: AIToolHandler,
+    provider_runtime_context: ProviderRuntimeContext,
+}
 
 impl SystemPromptComposer for RuntimeSystemPromptComposer {
     fn get_system_prompt_with_custom_prompts(
@@ -406,9 +410,8 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
             Some(value) => value.clone(),
             None => String::new(),
         };
-        let tool_handler = AIToolHandler::default();
-        let host_environment = tool_handler.getHostEnvironmentDescriptor();
-        let package_manager = tool_handler.getOrCreatePackageManager();
+        let host_environment = self.tool_handler.getHostEnvironmentDescriptor();
+        let package_manager = self.tool_handler.getOrCreatePackageManager();
         let package_manager_guard = package_manager
             .lock()
             .expect("package manager mutex poisoned");
@@ -434,8 +437,9 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
             })
             .collect::<Vec<_>>();
         drop(package_manager_guard);
-        let skill_packages = providerRuntimeSupport()
-            .expect("provider runtime support must be installed before prompt composition")
+        let skill_packages = self
+            .provider_runtime_context
+            .support()
             .aiVisibleSkillPackages()
             .expect("provider runtime support must provide skill packages")
             .into_iter()
@@ -478,19 +482,17 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
 }
 
 impl EnhancedAIService {
-    /// Creates the enhanced AI service with a default tool handler.
-    pub fn new(conversation_service: ConversationService) -> Self {
-        Self::newWithToolHandler(conversation_service, AIToolHandler::default())
-    }
-
-    /// Creates the enhanced AI service with an explicit tool handler.
-    #[allow(non_snake_case)]
-    pub fn newWithToolHandler(
-        conversation_service: ConversationService,
+    /// Creates the enhanced AI service with explicit runtime dependencies.
+    pub fn new(
         tool_handler: AIToolHandler,
+        provider_runtime_context: ProviderRuntimeContext,
     ) -> Self {
+        let conversation_service = ConversationService::new(provider_runtime_context.clone());
         Self {
-            multi_service_manager: MultiServiceManager::default(),
+            multi_service_manager: MultiServiceManager::from_runtime_context(
+                provider_runtime_context.clone(),
+            )
+            .expect("provider runtime support must provide a data directory"),
             init_scope: InitScopeMirror,
             init_mutex: InitMutexMirror,
             conversation_service,
@@ -502,6 +504,7 @@ impl EnhancedAIService {
             character_card_tool_access_resolver: CharacterCardToolAccessResolverMirror,
             tool_processing_scope: ToolProcessingScopeMirror,
             package_manager: PackageManagerMirror,
+            provider_runtime_context,
             shared_state: Arc::new(Mutex::new(EnhancedAISharedState {
                 is_service_manager_initialized: false,
                 per_request_token_counts: None,
@@ -700,7 +703,10 @@ impl EnhancedAIService {
         let chatModelHasDirectVideo = config.capabilities.directVideo;
 
         let history_hooks = RuntimePromptHistoryHooks;
-        let system_prompt_composer = RuntimeSystemPromptComposer;
+        let system_prompt_composer = RuntimeSystemPromptComposer {
+            tool_handler: self.tool_handler.clone(),
+            provider_runtime_context: self.provider_runtime_context.clone(),
+        };
         self.conversation_service.prepare_conversation_history(
             PrepareConversationHistoryRequest {
                 chat_history: chatHistory,
@@ -1006,13 +1012,12 @@ impl EnhancedAIService {
                 ));
             }
         };
-        let roleCardId = options
-            .roleCardId
-            .as_ref()
-            .ok_or_else(|| {
-                AiServiceError::RequestFailed("roleCardId is required to resolve USER.md".to_string())
-            })?;
-        let characterPromptContext = providerRuntimeSupport()?
+        let roleCardId = options.roleCardId.as_ref().ok_or_else(|| {
+            AiServiceError::RequestFailed("roleCardId is required to resolve USER.md".to_string())
+        })?;
+        let characterPromptContext = self
+            .provider_runtime_context
+            .support()
             .characterPromptContext(roleCardId, options.promptFunctionType.clone())
             .map_err(AiServiceError::RequestFailed)?;
         let activeCard = &characterPromptContext.activeCard;
@@ -1176,8 +1181,12 @@ impl EnhancedAIService {
             shared.next_execution_context_id += 1;
             shared.next_execution_context_id
         };
-        let mut execContext =
-            MessageExecutionContext::new(executionId, chatHistory, workspacePath.clone(), eventChannel);
+        let mut execContext = MessageExecutionContext::new(
+            executionId,
+            chatHistory,
+            workspacePath.clone(),
+            eventChannel,
+        );
         self.registerExecutionContext(execContext.clone());
         lifecycle.push(SendMessageLifecycleStage::EnsureInitialized);
         self.ensureInitialized();
@@ -1194,7 +1203,7 @@ impl EnhancedAIService {
             });
         }
 
-        let runtimeSupport = providerRuntimeSupport()?;
+        let runtimeSupport = self.provider_runtime_context.shared_support();
         let startTime = runtimeSupport.messageTimingNow();
         lifecycle.push(SendMessageLifecycleStage::PrepareConversationHistory);
         let preparedHistory = self.prepareConversationHistory(
@@ -1547,6 +1556,7 @@ impl EnhancedAIService {
             shared.per_request_token_counts = Some((inputTokens, outputTokens));
         }
         persistProviderModelTokenUsage(
+            self.provider_runtime_context.support(),
             &providerModel,
             functionType.clone(),
             UsageRequestSource::CHAT_RESPONSE,
@@ -1647,6 +1657,7 @@ impl EnhancedAIService {
                     memoryContent,
                     runtime.aiService.clone(),
                     memoryAutoUpdateCharacterCardId.clone(),
+                    self.provider_runtime_context.clone(),
                 );
             }
         }
@@ -1980,6 +1991,7 @@ impl EnhancedAIService {
             shared.per_request_token_counts = Some((inputTokens, outputTokens));
         }
         persistProviderModelTokenUsage(
+            self.provider_runtime_context.support(),
             &providerModel,
             functionType.clone(),
             UsageRequestSource::TOOL_RESULT_RESPONSE,
@@ -2895,6 +2907,7 @@ impl Clone for EnhancedAIService {
             character_card_tool_access_resolver: self.character_card_tool_access_resolver.clone(),
             tool_processing_scope: self.tool_processing_scope.clone(),
             package_manager: self.package_manager.clone(),
+            provider_runtime_context: self.provider_runtime_context.clone(),
             shared_state: self.shared_state.clone(),
         }
     }
@@ -2931,6 +2944,7 @@ fn apply_finalized_current_user_turn(
 
 #[allow(non_snake_case)]
 fn persistProviderModelTokenUsage(
+    runtimeSupport: &dyn ProviderRuntimeSupport,
     providerModel: &str,
     functionType: FunctionType,
     source: UsageRequestSource,
@@ -2939,7 +2953,7 @@ fn persistProviderModelTokenUsage(
     outputTokens: i32,
     cachedInputTokens: i32,
 ) -> Result<(), AiServiceError> {
-    providerRuntimeSupport()?
+    runtimeSupport
         .updateTokensForProviderModel(providerModel, inputTokens, outputTokens, cachedInputTokens)
         .map_err(AiServiceError::RequestFailed)?;
     UsageStatisticsStore::new()

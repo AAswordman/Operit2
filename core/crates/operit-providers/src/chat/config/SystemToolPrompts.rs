@@ -5,8 +5,8 @@ use operit_host_api::HostEnvironmentDescriptor;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use crate::chat::config::SystemToolPromptsInternal::SystemToolPromptsInternal;
+use crate::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolParameterSchema {

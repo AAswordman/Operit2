@@ -1,15 +1,13 @@
 use crate::javascript::JsAssetLoader::{
     loadAndroidUtilsJs, loadOkHttp3Js, loadPluginConfigJs, loadRuntimeContextJs, loadUINodeJs,
 };
-use crate::javascript::JsComposeDslBridge::buildComposeDslContextBridgeDefinition;
-use crate::javascript::JsEmbeddedLibraryLoader::{
-    loadCryptoJs, loadJimpJs, loadPakoJs,
-};
-use crate::javascript::JsExecutionScriptBuilder;
+use crate::javascript::JsEmbeddedLibraryLoader::{loadCryptoJs, loadJimpJs, loadPakoJs};
 use crate::javascript::JsInitRuntimeScriptBuilder;
 use crate::javascript::JsJavaBridge::buildJavaClassBridgeDefinition;
-use crate::javascript::JsToolPkgRegistration::buildToolPkgRegistrationBridgeScript;
-use crate::javascript::JsTools::getJsToolsDefinition;
+use operit_plugin_sdk::toolpkg::ToolPkgComposeDslBridge::buildComposeDslContextBridgeDefinition;
+use operit_plugin_sdk::toolpkg::ToolPkgRegistrationBridge::buildToolPkgRegistrationBridgeScript;
+use operit_plugin_sdk::JsExecutionScriptBuilder;
+use operit_plugin_sdk::JsTools::getJsToolsDefinition;
 use operit_util::OperitPaths;
 
 /// JavaScript bootstrap module loaded into the QuickJS runtime.

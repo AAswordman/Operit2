@@ -314,7 +314,9 @@ impl GithubReleaseUtil {
         target: FullUpdateTarget,
         channel: FullUpdateChannel,
     ) -> Result<ReleaseInfo, String> {
-        Self::fetchLatestReleaseInfoBlockingWithAuthHeader(repoOwner, repoName, target, channel, None)
+        Self::fetchLatestReleaseInfoBlockingWithAuthHeader(
+            repoOwner, repoName, target, channel, None,
+        )
     }
 
     /// Fetches the latest release info synchronously with an explicit authorization header.

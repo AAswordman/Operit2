@@ -44,7 +44,7 @@ MNN|MNN||
 LLAMA_CPP|llama.cpp||
 PPINFRA|PPInfra|https://api.ppinfra.com/openai/v1/chat/completions|list_models:GET:/openai/v1/models:$.data:$.id:::::::::::::true
 NOVITA|Novita AI|https://api.novita.ai/openai/v1/chat/completions|list_models:GET:/openai/v1/models:$.data:$.id:::::::::::::true
-OTHER|Other||
+OTHER|Other||list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 "#;
 
 impl ModelCatalog {
@@ -339,5 +339,22 @@ mod tests {
         assert!(model.context.is_some());
         assert!(model.capabilities.is_some());
         assert!(model.request.is_some());
+    }
+
+    /// Verifies the generic provider can fetch OpenAI-compatible model lists.
+    #[test]
+    fn other_provider_has_model_list_operation() {
+        let provider = ModelCatalog::provider("OTHER").expect("OTHER catalog entry");
+
+        let operation = provider
+            .operations
+            .iter()
+            .find(|operation| operation.operationType == "list_models")
+            .expect("OTHER list_models operation");
+        assert_eq!(operation.method, "GET");
+        assert_eq!(operation.path, "/v1/models");
+        assert!(operation.requiresApiKey);
+        assert_eq!(operation.result.itemsJsonPath.as_deref(), Some("$.data"));
+        assert_eq!(operation.result.itemIdJsonPath.as_deref(), Some("$.id"));
     }
 }

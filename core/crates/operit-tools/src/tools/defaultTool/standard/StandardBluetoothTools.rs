@@ -7,14 +7,14 @@ use operit_host_api::{
     BluetoothReadRequest, BluetoothScanRequest, HostError,
 };
 
+use operit_tools::tools::ToolResultDataClasses::{
+    stringResultData, BluetoothBleNotificationData, BluetoothBleServicesData,
+    BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData,
+    BluetoothStateData, BluetoothTransferData, ToolResultData,
+};
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
-};
-use operit_tools::tools::ToolResultDataClasses::{
-    BluetoothBleNotificationData, BluetoothBleServicesData, BluetoothBondedDevicesData,
-    BluetoothReadData, BluetoothScanResultData, BluetoothSessionData, BluetoothStateData,
-    BluetoothTransferData, ToolResultData, stringResultData,
 };
 
 const DEFAULT_CLASSIC_UUID: &str = "00001101-0000-1000-8000-00805f9b34fb";
@@ -67,17 +67,29 @@ impl StandardBluetoothTools {
 
     #[allow(non_snake_case)]
     fn requestPermission(&self, tool: &AITool) -> ToolResult {
-        match self.host().and_then(|host| host.requestBluetoothPermission()) {
+        match self
+            .host()
+            .and_then(|host| host.requestBluetoothPermission())
+        {
             Ok(value) => toolSuccessString(tool, value),
-            Err(error) => toolError(tool, format!("Error requesting Bluetooth permission: {}", error.message)),
+            Err(error) => toolError(
+                tool,
+                format!("Error requesting Bluetooth permission: {}", error.message),
+            ),
         }
     }
 
     #[allow(non_snake_case)]
     fn getState(&self, tool: &AITool) -> ToolResult {
         match self.host().and_then(|host| host.bluetoothState()) {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothStateData(BluetoothStateData::from(data))),
-            Err(error) => toolError(tool, format!("Error getting Bluetooth state: {}", error.message)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothStateData(BluetoothStateData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!("Error getting Bluetooth state: {}", error.message),
+            ),
         }
     }
 
@@ -85,20 +97,29 @@ impl StandardBluetoothTools {
     fn requestEnable(&self, tool: &AITool) -> ToolResult {
         match self.host().and_then(|host| host.requestEnableBluetooth()) {
             Ok(value) => toolSuccessString(tool, value),
-            Err(error) => toolError(tool, format!("Error requesting Bluetooth enable: {}", error.message)),
+            Err(error) => toolError(
+                tool,
+                format!("Error requesting Bluetooth enable: {}", error.message),
+            ),
         }
     }
 
     #[allow(non_snake_case)]
     fn listBondedDevices(&self, tool: &AITool) -> ToolResult {
-        match self.host().and_then(|host| host.listBluetoothBondedDevices()) {
+        match self
+            .host()
+            .and_then(|host| host.listBluetoothBondedDevices())
+        {
             Ok(data) => toolSuccessData(
                 tool,
                 ToolResultData::BluetoothBondedDevicesData(BluetoothBondedDevicesData {
                     devices: data.devices.into_iter().map(Into::into).collect(),
                 }),
             ),
-            Err(error) => toolError(tool, format!("Error listing bonded Bluetooth devices: {}", error.message)),
+            Err(error) => toolError(
+                tool,
+                format!("Error listing bonded Bluetooth devices: {}", error.message),
+            ),
         }
     }
 
@@ -108,9 +129,18 @@ impl StandardBluetoothTools {
             durationMs: integerParameterValue(tool, "duration_ms", 10000),
             includeBle: booleanParameterValue(tool, "include_ble", true),
         };
-        match self.host().and_then(|host| host.scanBluetoothDevices(request)) {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothScanResultData(BluetoothScanResultData::from(data))),
-            Err(error) => toolError(tool, format!("Error scanning Bluetooth devices: {}", error.message)),
+        match self
+            .host()
+            .and_then(|host| host.scanBluetoothDevices(request))
+        {
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothScanResultData(BluetoothScanResultData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!("Error scanning Bluetooth devices: {}", error.message),
+            ),
         }
     }
 
@@ -121,8 +151,14 @@ impl StandardBluetoothTools {
             uuid: nonEmptyParameterValue(tool, "uuid", DEFAULT_CLASSIC_UUID),
         };
         match self.host().and_then(|host| host.bluetoothConnect(request)) {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothSessionData(BluetoothSessionData::from(data))),
-            Err(error) => toolError(tool, format!("Error connecting Bluetooth session: {}", error.message)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothSessionData(BluetoothSessionData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!("Error connecting Bluetooth session: {}", error.message),
+            ),
         }
     }
 
@@ -133,8 +169,14 @@ impl StandardBluetoothTools {
             uuid: nonEmptyParameterValue(tool, "uuid", DEFAULT_CLASSIC_UUID),
         };
         match self.host().and_then(|host| host.bluetoothListen(request)) {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothSessionData(BluetoothSessionData::from(data))),
-            Err(error) => toolError(tool, format!("Error creating Bluetooth listener: {}", error.message)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothSessionData(BluetoothSessionData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!("Error creating Bluetooth listener: {}", error.message),
+            ),
         }
     }
 
@@ -145,8 +187,14 @@ impl StandardBluetoothTools {
             timeoutMs: integerParameterValue(tool, "timeout_ms", 30000),
         };
         match self.host().and_then(|host| host.bluetoothAccept(request)) {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothSessionData(BluetoothSessionData::from(data))),
-            Err(error) => toolError(tool, format!("Error accepting Bluetooth session: {}", error.message)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothSessionData(BluetoothSessionData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!("Error accepting Bluetooth session: {}", error.message),
+            ),
         }
     }
 
@@ -154,9 +202,18 @@ impl StandardBluetoothTools {
     fn send(&self, tool: &AITool) -> ToolResult {
         let sessionId = parameterValue(tool, "session_id");
         let payload = bluetoothPayload(tool);
-        match self.host().and_then(|host| host.bluetoothSend(&sessionId, payload)) {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothTransferData(BluetoothTransferData::from(data))),
-            Err(error) => toolError(tool, format!("Error sending Bluetooth data: {}", error.message)),
+        match self
+            .host()
+            .and_then(|host| host.bluetoothSend(&sessionId, payload))
+        {
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothTransferData(BluetoothTransferData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!("Error sending Bluetooth data: {}", error.message),
+            ),
         }
     }
 
@@ -164,8 +221,14 @@ impl StandardBluetoothTools {
     fn read(&self, tool: &AITool) -> ToolResult {
         let request = bluetoothReadRequest(tool);
         match self.host().and_then(|host| host.bluetoothRead(request)) {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothReadData(BluetoothReadData::from(data))),
-            Err(error) => toolError(tool, format!("Error reading Bluetooth data: {}", error.message)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothReadData(BluetoothReadData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!("Error reading Bluetooth data: {}", error.message),
+            ),
         }
     }
 
@@ -178,8 +241,17 @@ impl StandardBluetoothTools {
             .host()
             .and_then(|host| host.bluetoothSendAndRead(&sessionId, payload, read))
         {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothReadData(BluetoothReadData::from(data))),
-            Err(error) => toolError(tool, format!("Error sending and reading Bluetooth data: {}", error.message)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothReadData(BluetoothReadData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!(
+                    "Error sending and reading Bluetooth data: {}",
+                    error.message
+                ),
+            ),
         }
     }
 
@@ -188,7 +260,10 @@ impl StandardBluetoothTools {
         let sessionId = parameterValue(tool, "session_id");
         match self.host().and_then(|host| host.bluetoothClose(&sessionId)) {
             Ok(value) => toolSuccessString(tool, value),
-            Err(error) => toolError(tool, format!("Error closing Bluetooth session: {}", error.message)),
+            Err(error) => toolError(
+                tool,
+                format!("Error closing Bluetooth session: {}", error.message),
+            ),
         }
     }
 
@@ -198,9 +273,18 @@ impl StandardBluetoothTools {
             address: parameterValue(tool, "address"),
             autoConnect: booleanParameterValue(tool, "auto_connect", false),
         };
-        match self.host().and_then(|host| host.bluetoothBleConnect(request)) {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothSessionData(BluetoothSessionData::from(data))),
-            Err(error) => toolError(tool, format!("Error connecting BLE session: {}", error.message)),
+        match self
+            .host()
+            .and_then(|host| host.bluetoothBleConnect(request))
+        {
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothSessionData(BluetoothSessionData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!("Error connecting BLE session: {}", error.message),
+            ),
         }
     }
 
@@ -212,17 +296,32 @@ impl StandardBluetoothTools {
             .host()
             .and_then(|host| host.bluetoothBleDiscoverServices(&sessionId, timeoutMs))
         {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothBleServicesData(BluetoothBleServicesData::from(data))),
-            Err(error) => toolError(tool, format!("Error discovering BLE services: {}", error.message)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothBleServicesData(BluetoothBleServicesData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!("Error discovering BLE services: {}", error.message),
+            ),
         }
     }
 
     #[allow(non_snake_case)]
     fn bleReadCharacteristic(&self, tool: &AITool) -> ToolResult {
         let address = bleCharacteristicAddress(tool);
-        match self.host().and_then(|host| host.bluetoothBleReadCharacteristic(address)) {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothReadData(BluetoothReadData::from(data))),
-            Err(error) => toolError(tool, format!("Error reading BLE characteristic: {}", error.message)),
+        match self
+            .host()
+            .and_then(|host| host.bluetoothBleReadCharacteristic(address))
+        {
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothReadData(BluetoothReadData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!("Error reading BLE characteristic: {}", error.message),
+            ),
         }
     }
 
@@ -235,9 +334,18 @@ impl StandardBluetoothTools {
             text: optionalNonEmptyParameterValue(tool, "text"),
             dataBase64: optionalNonEmptyParameterValue(tool, "data_base64"),
         };
-        match self.host().and_then(|host| host.bluetoothBleWriteCharacteristic(request)) {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothTransferData(BluetoothTransferData::from(data))),
-            Err(error) => toolError(tool, format!("Error writing BLE characteristic: {}", error.message)),
+        match self
+            .host()
+            .and_then(|host| host.bluetoothBleWriteCharacteristic(request))
+        {
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothTransferData(BluetoothTransferData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!("Error writing BLE characteristic: {}", error.message),
+            ),
         }
     }
 
@@ -257,8 +365,17 @@ impl StandardBluetoothTools {
             .host()
             .and_then(|host| host.bluetoothBleWriteAndReadCharacteristic(request))
         {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothReadData(BluetoothReadData::from(data))),
-            Err(error) => toolError(tool, format!("Error writing and reading BLE characteristic: {}", error.message)),
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothReadData(BluetoothReadData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!(
+                    "Error writing and reading BLE characteristic: {}",
+                    error.message
+                ),
+            ),
         }
     }
 
@@ -270,9 +387,18 @@ impl StandardBluetoothTools {
             characteristicUuid: parameterValue(tool, "characteristic_uuid"),
             enable: booleanParameterValue(tool, "enable", true),
         };
-        match self.host().and_then(|host| host.bluetoothBleSubscribeCharacteristic(request)) {
-            Ok(data) => toolSuccessData(tool, ToolResultData::BluetoothTransferData(BluetoothTransferData::from(data))),
-            Err(error) => toolError(tool, format!("Error subscribing BLE characteristic: {}", error.message)),
+        match self
+            .host()
+            .and_then(|host| host.bluetoothBleSubscribeCharacteristic(request))
+        {
+            Ok(data) => toolSuccessData(
+                tool,
+                ToolResultData::BluetoothTransferData(BluetoothTransferData::from(data)),
+            ),
+            Err(error) => toolError(
+                tool,
+                format!("Error subscribing BLE characteristic: {}", error.message),
+            ),
         }
     }
 
@@ -286,9 +412,14 @@ impl StandardBluetoothTools {
         {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothBleNotificationData(BluetoothBleNotificationData::from(data)),
+                ToolResultData::BluetoothBleNotificationData(BluetoothBleNotificationData::from(
+                    data,
+                )),
             ),
-            Err(error) => toolError(tool, format!("Error reading BLE notifications: {}", error.message)),
+            Err(error) => toolError(
+                tool,
+                format!("Error reading BLE notifications: {}", error.message),
+            ),
         }
     }
 }
@@ -343,7 +474,9 @@ impl ToolExecutor for BluetoothToolExecutor {
             BluetoothToolOperation::BleConnect => self.tools.bleConnect(tool),
             BluetoothToolOperation::BleDiscoverServices => self.tools.bleDiscoverServices(tool),
             BluetoothToolOperation::BleReadCharacteristic => self.tools.bleReadCharacteristic(tool),
-            BluetoothToolOperation::BleWriteCharacteristic => self.tools.bleWriteCharacteristic(tool),
+            BluetoothToolOperation::BleWriteCharacteristic => {
+                self.tools.bleWriteCharacteristic(tool)
+            }
             BluetoothToolOperation::BleWriteAndReadCharacteristic => {
                 self.tools.bleWriteAndReadCharacteristic(tool)
             }
@@ -502,7 +635,10 @@ fn booleanParameterValue(tool: &AITool, name: &str, value: bool) -> bool {
 fn integerParameterValue(tool: &AITool, name: &str, value: i64) -> i64 {
     optionalParameterValue(tool, name)
         .filter(|raw| !raw.is_empty())
-        .map(|raw| raw.parse::<i64>().expect("integer parameter must be validated"))
+        .map(|raw| {
+            raw.parse::<i64>()
+                .expect("integer parameter must be validated")
+        })
         .unwrap_or(value)
 }
 

@@ -124,8 +124,7 @@ pub(super) async fn run_backup_command(core: &mut CliCore, args: &[String]) -> R
         }
         "inspect-operit1-snapshot" => {
             let path = args.get(1).ok_or_else(|| {
-                "usage: operit2 backup inspect-operit1-snapshot <snapshot-zip-path>"
-                    .to_string()
+                "usage: operit2 backup inspect-operit1-snapshot <snapshot-zip-path>".to_string()
             })?;
             let bytes = fs::read(path).map_err(|error| error.to_string())?;
             let preview = core
@@ -140,7 +139,10 @@ pub(super) async fn run_backup_command(core: &mut CliCore, args: &[String]) -> R
             println!("messageCount={}", preview.messageCount);
             println!("datastoreFileCount={}", preview.datastoreFiles.len());
             println!("importedFileCount={}", preview.importedFileCount);
-            println!("importedExternalFileCount={}", preview.importedExternalFileCount);
+            println!(
+                "importedExternalFileCount={}",
+                preview.importedExternalFileCount
+            );
             println!("detectedDomains={}", preview.detectedDomains.join(","));
             println!(
                 "chatConfigId={}",
@@ -152,7 +154,8 @@ pub(super) async fn run_backup_command(core: &mut CliCore, args: &[String]) -> R
             );
             println!(
                 "chatModelIndex={}",
-                preview.modelConfig
+                preview
+                    .modelConfig
                     .chatModelIndex
                     .map(|value| value.to_string())
                     .unwrap_or_default()
@@ -178,7 +181,10 @@ pub(super) async fn run_backup_command(core: &mut CliCore, args: &[String]) -> R
                 println!("  modelIds={}", config.modelIds.join(","));
             }
             for datastoreFile in preview.datastoreFiles {
-                println!("datastore={}:{}", datastoreFile.fileName, datastoreFile.keyCount);
+                println!(
+                    "datastore={}:{}",
+                    datastoreFile.fileName, datastoreFile.keyCount
+                );
             }
             Ok(())
         }
@@ -213,10 +219,7 @@ async fn import_snapshot(core: &mut CliCore, path: Option<&String>) -> Result<()
     Ok(())
 }
 
-async fn import_operit1_snapshot(
-    core: &mut CliCore,
-    path: Option<&String>,
-) -> Result<(), String> {
+async fn import_operit1_snapshot(core: &mut CliCore, path: Option<&String>) -> Result<(), String> {
     let path = path
         .ok_or_else(|| "usage: operit2 import operit1-snapshot <snapshot-zip-path>".to_string())?;
     let bytes = fs::read(path).map_err(|error| error.to_string())?;
@@ -229,8 +232,14 @@ async fn import_operit1_snapshot(
     println!("providerTypeId={}", result.modelConfig.providerTypeId);
     println!("providerName={}", result.modelConfig.providerName);
     println!("modelId={}", result.modelConfig.modelId);
-    println!("importedModelCount={}", result.modelConfig.importedModelCount);
-    println!("chatBindingUpdated={}", result.modelConfig.chatBindingUpdated);
+    println!(
+        "importedModelCount={}",
+        result.modelConfig.importedModelCount
+    );
+    println!(
+        "chatBindingUpdated={}",
+        result.modelConfig.chatBindingUpdated
+    );
     println!("importedDatastoreFiles={}", result.importedDatastoreFiles);
     println!("importedDatastoreKeys={}", result.importedDatastoreKeys);
     println!("importedChats={}", result.importedChats);
@@ -240,12 +249,12 @@ async fn import_operit1_snapshot(
     println!("importedFiles={}", result.importedFiles);
     println!("importedExternalFiles={}", result.importedExternalFiles);
     println!("importedWorkspaces={}", result.importedWorkspaces);
-    println!(
-        "importedWorkspaceFiles={}",
-        result.importedWorkspaceFiles
-    );
+    println!("importedWorkspaceFiles={}", result.importedWorkspaceFiles);
     if !result.modelConfig.skippedFields.is_empty() {
-        println!("skippedFields={}", result.modelConfig.skippedFields.join(","));
+        println!(
+            "skippedFields={}",
+            result.modelConfig.skippedFields.join(",")
+        );
     }
     Ok(())
 }

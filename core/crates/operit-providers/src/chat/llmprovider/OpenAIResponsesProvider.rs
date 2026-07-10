@@ -4,12 +4,12 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 
-use super::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
-};
 use super::OpenAIProvider::OpenAIProvider;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
-use crate::runtime_support::providerRuntimeSupport;
+use crate::chat::llmprovider::AIService::{
+    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
+};
+use crate::runtime_support::ProviderRuntimeContext;
 use operit_util::stream::RevisableTextStream::{
     with_event_channel, RevisableTextStreamLike, TextStreamEventCarrier,
 };
@@ -26,6 +26,7 @@ pub struct OpenAIResponsesProvider {
     pub supportsVideo: bool,
     pub enableToolCall: bool,
     pub customHeaders: Vec<(String, String)>,
+    runtimeContext: ProviderRuntimeContext,
     state: Arc<Mutex<OpenAIResponsesProviderState>>,
 }
 
@@ -58,6 +59,7 @@ pub struct ParsedResponseOutput {
 pub struct OpenAIResponsesPayloadAdapter;
 
 impl OpenAIResponsesProvider {
+    /// Creates a Responses API provider bound to one provider runtime context.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         responsesApiEndpoint: String,
@@ -69,6 +71,7 @@ impl OpenAIResponsesProvider {
         supportsAudio: bool,
         supportsVideo: bool,
         enableToolCall: bool,
+        runtimeContext: ProviderRuntimeContext,
     ) -> Self {
         Self {
             responsesApiEndpoint,
@@ -80,6 +83,7 @@ impl OpenAIResponsesProvider {
             supportsVideo,
             enableToolCall,
             customHeaders,
+            runtimeContext,
             state: Arc::new(Mutex::new(OpenAIResponsesProviderState::default())),
         }
     }
@@ -211,7 +215,9 @@ impl OpenAIResponsesProvider {
     }
 
     fn resolve_responses_reasoning_effort(&self) -> Result<Option<&'static str>, AiServiceError> {
-        let qualityLevel = providerRuntimeSupport()?
+        let qualityLevel = self
+            .runtimeContext
+            .support()
             .thinkingQualityLevel()
             .map_err(AiServiceError::RequestFailed)?;
         Ok(match qualityLevel.clamp(1, 4) {

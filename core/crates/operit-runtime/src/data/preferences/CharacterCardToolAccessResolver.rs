@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
-use operit_host_api::HostManager::HostManager;
+use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
 use operit_tools::runtime_support::ResolvedCharacterCardToolAccess;
-use operit_tools::tools::packTool::PackageManager::PackageManager;
-use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
+use operit_tools::tools::skill::SkillManager::SkillManager;
 
 pub struct CharacterCardToolAccessResolver;
 
@@ -18,7 +18,7 @@ impl CharacterCardToolAccessResolver {
     pub fn resolve(
         &self,
         roleCardId: Option<&str>,
-        packageManager: &PackageManager,
+        packageManager: &RuntimePackageManager,
         globalToolVisibility: Option<HashMap<String, bool>>,
     ) -> ResolvedCharacterCardToolAccess {
         let effectiveGlobalToolVisibility = globalToolVisibility.unwrap_or_default();
@@ -28,10 +28,10 @@ impl CharacterCardToolAccessResolver {
             .into_iter()
             .filter(|packageName| !packageManager.isToolPkgContainer(packageName))
             .collect::<HashSet<_>>();
-        let globalSkillNames = SkillRepository::getInstance(&HostManager::new())
-            .getAiVisibleSkillPackages()
-            .keys()
-            .cloned()
+        let globalSkillNames = SkillManager::fromDefaultPaths()
+            .getAvailableSkills()
+            .into_keys()
+            .filter(|name| SkillVisibilityPreferences::getInstance().isSkillVisibleToAi(name))
             .collect::<HashSet<_>>();
         let globalMcpServerNames = packageManager
             .getAvailableServerPackages()

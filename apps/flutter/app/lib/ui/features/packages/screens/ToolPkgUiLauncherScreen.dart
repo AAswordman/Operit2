@@ -44,8 +44,8 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   String _currentLanguageTag = 'en';
   String? _error;
 
-  GeneratedPermissionsPackToolPackageManagerCoreProxy get _packageManager =>
-      widget.clients.permissionsPackToolPackageManager;
+  GeneratedApplicationPackageManagerCoreProxy get _packageManager =>
+      widget.clients.application.packageManager();
 
   @override
   void initState() {
@@ -194,17 +194,18 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     );
     Object? latestActionResult;
     try {
-      final events = await _packageManager.dispatchToolPkgComposeDslActionEvents(
-        contextKey: executionContextKey,
-        actionId: actionId,
-        payload: payload,
-        runtimeOptions: _runtimeOptions(
-          uiModuleId: uiModuleId,
-          routeInstanceId: routeInstanceId,
-          executionContextKey: executionContextKey,
-        ),
-        envOverrides: const <String, String>{},
-      );
+      final events = await _packageManager
+          .dispatchToolPkgComposeDslActionEvents(
+            contextKey: executionContextKey,
+            actionId: actionId,
+            payload: payload,
+            runtimeOptions: _runtimeOptions(
+              uiModuleId: uiModuleId,
+              routeInstanceId: routeInstanceId,
+              executionContextKey: executionContextKey,
+            ),
+            envOverrides: const <String, String>{},
+          );
       for (final event in events) {
         if (!mounted) {
           return latestActionResult;

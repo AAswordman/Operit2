@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../core/runtime/RuntimeConnectionManager.dart';
 import '../../common/OperitLogoMark.dart';
 import '../../common/components/CommonNetworkErrorView.dart';
 import '../../main/navigation/StartupRouteStrategy.dart';
@@ -30,6 +31,16 @@ class OnboardingStartupRouteStrategy extends StartupRouteStrategy {
 
   @override
   Future<StartupRouteDecision?> resolve() async {
+    final localStorage = RuntimeConnectionManager.instance.config.localStorage;
+    if (!localStorage.confirmed) {
+      return StartupRouteDecision(
+        builder: (context, complete) => _AiSetupGuidePage(
+          clients: _clients,
+          onComplete: () => _finishGuide(complete),
+          onSkip: () => _finishGuide(complete),
+        ),
+      );
+    }
     final configured = await _hasConfiguredChatModel();
     final guideSeen = await _readGuideSeen();
     if (configured || guideSeen) {
@@ -44,7 +55,9 @@ class OnboardingStartupRouteStrategy extends StartupRouteStrategy {
     );
   }
 
-  static Future<void> _finishGuide(StartupRouteCompleteCallback complete) async {
+  static Future<void> _finishGuide(
+    StartupRouteCompleteCallback complete,
+  ) async {
     await _markGuideSeen();
     complete();
   }
@@ -146,13 +159,17 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   final TextEditingController _endpointController = TextEditingController();
   final TextEditingController _apiKeyController = TextEditingController();
   int _currentPage = 0;
+  bool _coreSetupStarted = false;
+  bool _storageConfirmed = false;
+  bool _loadingStoragePaths = false;
+  bool _savingStorage = false;
   bool _savingModel = false;
   bool _loadingModels = false;
   bool _readingOperit1Snapshot = false;
   bool _importingOperit1Snapshot = false;
   bool _requestingPermission = false;
   StreamSubscription<core_proxy.Operit1SnapshotImportProgress>?
-      _operit1ImportProgressSubscription;
+  _operit1ImportProgressSubscription;
   String? _selectedProviderTypeId;
   String? _configuredProviderId;
   String? _selectedModelId;
@@ -167,20 +184,23 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       const <core_proxy.AvailableProviderModel>[];
   String? _setupError;
   bool _providerConfirmed = false;
-  List<_OnboardingRequirement> _requirements =
-      const <_OnboardingRequirement>[];
+  List<_OnboardingRequirement> _requirements = const <_OnboardingRequirement>[];
+  RuntimeStoragePaths? _storagePaths;
+  String _selectedStorageRoot = '';
 
   late final AnimationController _introAnimationController;
   late final AnimationController _introExitController;
 
   static const int _introPageIndex = 0;
-  static const int _modePageIndex = 1;
-  static const int _modelPageIndex = 2;
-  static const int _importPageIndex = 3;
-  static const int _permissionPageIndex = 4;
+  static const int _storagePageIndex = 1;
+  static const int _modePageIndex = 2;
+  static const int _modelPageIndex = 3;
+  static const int _importPageIndex = 4;
+  static const int _permissionPageIndex = 5;
   static const String _defaultProviderId = 'DEEPSEEK';
 
-  int get _pageCount => 5;
+  int get _pageCount => 6;
+  bool get _isStoragePage => _currentPage == _storagePageIndex;
   bool get _isModePage => _currentPage == _modePageIndex;
   bool get _isModelPage => _currentPage == _modelPageIndex;
   bool get _isImportPage => _currentPage == _importPageIndex;
@@ -218,8 +238,13 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       vsync: this,
       duration: const Duration(milliseconds: 760),
     );
-    _subscribeOperit1ImportProgress();
-    _loadSetupData();
+    final localStorage = RuntimeConnectionManager.instance.config.localStorage;
+    _storageConfirmed = localStorage.confirmed;
+    _selectedStorageRoot = localStorage.storageRoot;
+    unawaited(_loadStoragePaths(_selectedStorageRoot));
+    if (_storageConfirmed) {
+      _startCoreSetup();
+    }
   }
 
   @override
@@ -238,6 +263,47 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _isPermissionPage) {
       _refreshPermissionSnapshot();
+    }
+  }
+
+  /// Starts runtime-backed setup loading after storage is confirmed.
+  void _startCoreSetup() {
+    if (_coreSetupStarted) {
+      return;
+    }
+    _coreSetupStarted = true;
+    _subscribeOperit1ImportProgress();
+    unawaited(_loadSetupData());
+  }
+
+  /// Loads native storage paths for the selected root.
+  Future<void> _loadStoragePaths(String storageRoot) async {
+    setState(() {
+      _loadingStoragePaths = true;
+      _setupError = null;
+    });
+    try {
+      final paths = await RuntimeConnectionManager.instance
+          .localRuntimeStoragePathsForRoot(storageRoot);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _storagePaths = paths;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _setupError = '$error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingStoragePaths = false;
+        });
+      }
     }
   }
 
@@ -267,24 +333,26 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   void _subscribeOperit1ImportProgress() {
-    _operit1ImportProgressSubscription = widget
-        .clients.application
+    _operit1ImportProgressSubscription = widget.clients.application
         .operit1SnapshotImportProgressFlowChanges()
-        .listen((progress) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _operit1ImportProgress = progress;
-      });
-    }, onError: (Object error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _setupError = '$error';
-      });
-    });
+        .listen(
+          (progress) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _operit1ImportProgress = progress;
+            });
+          },
+          onError: (Object error) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _setupError = '$error';
+            });
+          },
+        );
   }
 
   void _applyCatalogDefaults(core_proxy.ProviderCatalogEntry entry) {
@@ -314,8 +382,12 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     if (_currentPage == 0) {
       return;
     }
-    if (_currentPage == _modePageIndex) {
+    if (_currentPage == _storagePageIndex) {
       await _returnToIntro();
+      return;
+    }
+    if (_currentPage == _modePageIndex) {
+      await _animateToPage(_storagePageIndex);
       return;
     }
     if (_currentPage == _importPageIndex) {
@@ -343,6 +415,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       await _advanceFromIntro();
       return;
     }
+    if (_isStoragePage) {
+      await _confirmStorageLocation();
+      return;
+    }
     if (_isModePage) {
       if (_selectedStartMode == _AiSetupStartMode.quickStart) {
         await _animateToPage(_modelPageIndex);
@@ -367,6 +443,66 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       duration: const Duration(milliseconds: 460),
       curve: Curves.easeOutQuart,
     );
+  }
+
+  /// Selects the platform default storage location.
+  Future<void> _selectDefaultStorageLocation() async {
+    _selectedStorageRoot = '';
+    await _loadStoragePaths(_selectedStorageRoot);
+  }
+
+  /// Lets the user select a custom storage location.
+  Future<void> _selectCustomStorageLocation() async {
+    final path = await FilePicker.getDirectoryPath();
+    if (path == null || path.trim().isEmpty) {
+      return;
+    }
+    _selectedStorageRoot = path.trim();
+    await _loadStoragePaths(_selectedStorageRoot);
+  }
+
+  /// Persists the selected storage location and enters runtime-backed setup.
+  Future<void> _confirmStorageLocation() async {
+    setState(() {
+      _savingStorage = true;
+      _setupError = null;
+    });
+    try {
+      await RuntimeConnectionManager.instance.confirmLocalRuntimeStorage(
+        _selectedStorageRoot,
+      );
+      final paths = await RuntimeConnectionManager.instance
+          .localRuntimeStoragePaths();
+      final configured =
+          await OnboardingStartupRouteStrategy._hasConfiguredChatModel();
+      final guideSeen = await OnboardingStartupRouteStrategy._readGuideSeen();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _storageConfirmed = true;
+        _storagePaths = paths;
+      });
+      if (configured || guideSeen) {
+        await widget.onComplete();
+        return;
+      }
+      _startCoreSetup();
+      await _animateToPage(_modePageIndex);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _setupError = '$error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingStorage = false;
+        });
+      }
+    }
   }
 
   Future<void> _animateToPage(int pageIndex) {
@@ -560,9 +696,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       if (picked == null) {
         return;
       }
-      final snapshot = await widget.clients.application.inspectOperit1SnapshotFile(
-        path: picked.path,
-      );
+      final snapshot = await widget.clients.application
+          .inspectOperit1SnapshotFile(path: picked.path);
       if (!mounted) {
         return;
       }
@@ -639,8 +774,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _refreshPermissionSnapshot() async {
-    final requirements =
-        await _OnboardingPermissionBridge.requirements(widget.clients);
+    final requirements = await _OnboardingPermissionBridge.requirements(
+      widget.clients,
+    );
     if (!mounted) {
       return;
     }
@@ -676,19 +812,26 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final storageReady =
+        !_isStoragePage ||
+        (!_loadingStoragePaths && !_savingStorage && _storagePaths != null);
     final modeReady = !_isModePage || _selectedStartMode != null;
-    final modelReady = !_isModelPage ||
+    final modelReady =
+        !_isModelPage ||
         (_providerConfirmed &&
             _configuredProviderId != null &&
             _configuredProviderId!.isNotEmpty &&
             _selectedModelId != null &&
             _selectedModelId!.isNotEmpty);
     final importReady = !_isImportPage || _operit1Snapshot != null;
-    final canGoForward = !_savingModel &&
+    final canGoForward =
+        !_savingModel &&
         !_loadingModels &&
         !_readingOperit1Snapshot &&
         !_importingOperit1Snapshot &&
         !_requestingPermission &&
+        !_savingStorage &&
+        storageReady &&
         modeReady &&
         modelReady &&
         importReady;
@@ -706,8 +849,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final chromeReserved =
-                    introActive ? _introExitController.value : 1.0;
+                final chromeReserved = introActive
+                    ? _introExitController.value
+                    : 1.0;
                 return Stack(
                   clipBehavior: Clip.none,
                   children: <Widget>[
@@ -730,6 +874,19 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
                                 return _AiSetupIntroPage(
                                   animation: _introAnimationController,
                                   exitAnimation: _introExitController,
+                                );
+                              }
+                              if (index == _storagePageIndex) {
+                                return _AiSetupStoragePage(
+                                  paths: _storagePaths,
+                                  usingDefault: _selectedStorageRoot
+                                      .trim()
+                                      .isEmpty,
+                                  loading: _loadingStoragePaths,
+                                  saving: _savingStorage,
+                                  onUseDefault: _selectDefaultStorageLocation,
+                                  onChooseCustom: _selectCustomStorageLocation,
+                                  errorText: _setupError,
                                 );
                               }
                               if (index == _modePageIndex) {
@@ -823,6 +980,12 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   String get _primaryActionLabel {
+    if (_isStoragePage) {
+      if (_savingStorage) {
+        return '保存中';
+      }
+      return '确认';
+    }
     if (_isModePage) {
       return '继续';
     }
@@ -845,6 +1008,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   String get _progressLabel {
+    if (_isStoragePage) {
+      return '存储位置';
+    }
     if (_isModePage) {
       return '启动方式';
     }
@@ -1021,8 +1187,8 @@ class _AiSetupSharedChrome extends StatelessWidget {
         ).value;
         final loadingOpacity = introActive
             ? (math.sin(loadingProgress * math.pi) * (1 - exitProgress))
-                .clamp(0.0, 1.0)
-                .toDouble()
+                  .clamp(0.0, 1.0)
+                  .toDouble()
             : 0.0;
         final introLift = CurvedAnimation(
           parent: introAnimation,
@@ -1067,8 +1233,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
         )!;
         final chromeTitleLeft = logoLeft + logoSize + 10;
         final introTitleTop = introBrandTop + scaledIntroLogoSize + 18;
-        final chromeTitleTop =
-            (chromeBarHeight - titleFontSize) * 0.5 - 1;
+        final chromeTitleTop = (chromeBarHeight - titleFontSize) * 0.5 - 1;
         final titleTop = lerpDouble(
           introTitleTop,
           chromeTitleTop,
@@ -1087,10 +1252,12 @@ class _AiSetupSharedChrome extends StatelessWidget {
           constraints.maxHeight - buttonHeight,
           chromeProgress,
         )!;
-        final progressOpacity =
-            introActive ? Curves.easeOutCubic.transform(exitProgress) : 1.0;
-        final skipOpacity =
-            introActive ? Curves.easeOutCubic.transform(exitProgress) : 1.0;
+        final progressOpacity = introActive
+            ? Curves.easeOutCubic.transform(exitProgress)
+            : 1.0;
+        final skipOpacity = introActive
+            ? Curves.easeOutCubic.transform(exitProgress)
+            : 1.0;
         return Stack(
           clipBehavior: Clip.none,
           children: <Widget>[
@@ -1101,8 +1268,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
                 child: OperitLogoMark(
                   size: logoSize,
                   color: colorScheme.primary.withValues(
-                    alpha:
-                    logoTextOpacity.clamp(0.0, 1.0).toDouble(),
+                    alpha: logoTextOpacity.clamp(0.0, 1.0).toDouble(),
                   ),
                 ),
               ),
@@ -1118,10 +1284,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
                     0,
                   ),
                   child: Align(
-                    alignment: Alignment(
-                      titleAlignmentX,
-                      0,
-                    ),
+                    alignment: Alignment(titleAlignmentX, 0),
                     child: _AiSetupBrandText(
                       opacity: logoTextOpacity,
                       fontSize: titleFontSize,
@@ -1346,7 +1509,8 @@ class _AiSetupLiquidProgressPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
     final wave = Path();
     for (var x = 0.0; x <= size.width; x += 4) {
-      final y = size.height * 0.5 +
+      final y =
+          size.height * 0.5 +
           math.sin((x / size.width * math.pi * 2) + phase) * 2.2;
       if (x == 0) {
         wave.moveTo(x, y);
@@ -1411,11 +1575,7 @@ class _AiSetupBrandText extends StatelessWidget {
           stops: const <double>[0, 0.56, 1],
         ).createShader(bounds);
       },
-      child: Text(
-        'Operit',
-        textAlign: TextAlign.center,
-        style: textStyle,
-      ),
+      child: Text('Operit', textAlign: TextAlign.center, style: textStyle),
     );
   }
 }
@@ -1469,14 +1629,16 @@ class _AiSetupIntroPage extends StatelessWidget {
                               18 * (1 - bodyProgress) - 22 * exitProgress,
                             ),
                             child: Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 12),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.center,
                                 children: <Widget>[
                                   ConstrainedBox(
-                                    constraints:
-                                        const BoxConstraints(maxWidth: 420),
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 420,
+                                    ),
                                     child: Text(
                                       '让日常任务，从这里变得简单',
                                       textAlign: TextAlign.center,
@@ -1625,6 +1787,167 @@ class _AiSetupModePage extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _AiSetupStoragePage extends StatelessWidget {
+  const _AiSetupStoragePage({
+    required this.paths,
+    required this.usingDefault,
+    required this.loading,
+    required this.saving,
+    required this.onUseDefault,
+    required this.onChooseCustom,
+    required this.errorText,
+  });
+
+  final RuntimeStoragePaths? paths;
+  final bool usingDefault;
+  final bool loading;
+  final bool saving;
+  final VoidCallback onUseDefault;
+  final VoidCallback onChooseCustom;
+  final String? errorText;
+
+  /// Builds the storage-location confirmation page.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final storagePaths = paths;
+    return Align(
+      alignment: Alignment.topCenter,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const _SetupSectionHeader(
+                icon: Icons.folder_copy_rounded,
+                eyebrow: '存储位置',
+                title: '确认本地存储位置',
+                description: '默认位置会沿用当前设备的应用数据目录；也可以选择自定义目录保存运行时和工作区数据。',
+              ),
+              const SizedBox(height: 22),
+              _SetupModeTile(
+                icon: Icons.check_circle_rounded,
+                title: '使用默认位置',
+                subtitle: '沿用当前平台的应用数据目录',
+                selected: usingDefault,
+                onTap: loading || saving ? () {} : onUseDefault,
+              ),
+              const SizedBox(height: 10),
+              _SetupModeTile(
+                icon: Icons.folder_open_rounded,
+                title: '自定义位置',
+                subtitle: storagePaths == null || usingDefault
+                    ? '选择一个目录保存本地数据'
+                    : storagePaths.storageRoot,
+                selected: !usingDefault,
+                onTap: loading || saving ? () {} : onChooseCustom,
+              ),
+              const SizedBox(height: 18),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.48,
+                  ),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    child: loading
+                        ? Row(
+                            key: const ValueKey<String>('storage-loading'),
+                            children: <Widget>[
+                              const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                '正在读取存储路径',
+                                style: textTheme.bodyMedium?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          )
+                        : Column(
+                            key: const ValueKey<String>('storage-paths'),
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: <Widget>[
+                              _StoragePathLine(
+                                label: '数据根目录',
+                                value: storagePaths?.storageRoot ?? '',
+                              ),
+                              const SizedBox(height: 10),
+                              _StoragePathLine(
+                                label: '运行时目录',
+                                value: storagePaths?.runtimeRoot ?? '',
+                              ),
+                              const SizedBox(height: 10),
+                              _StoragePathLine(
+                                label: '工作区目录',
+                                value: storagePaths?.workspaceRoot ?? '',
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+              ),
+              if (errorText != null) ...<Widget>[
+                const SizedBox(height: 12),
+                CommonNetworkErrorView(errorText: errorText!),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StoragePathLine extends StatelessWidget {
+  const _StoragePathLine({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  /// Builds one labeled storage path row.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          label,
+          style: textTheme.labelMedium?.copyWith(
+            color: colorScheme.primary,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          value.isEmpty ? '尚未读取' : value,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: textTheme.bodySmall?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+            height: 1.32,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1832,8 +2155,9 @@ class _Operit1ImportProgressPanel extends StatelessWidget {
           child: LinearProgressIndicator(
             value: value,
             minHeight: 6,
-            backgroundColor:
-                colorScheme.surfaceContainerHighest.withValues(alpha: 0.72),
+            backgroundColor: colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.72,
+            ),
           ),
         ),
         const SizedBox(height: 8),
@@ -1856,10 +2180,7 @@ class _Operit1ImportProgressPanel extends StatelessWidget {
 }
 
 class _SnapshotMetricChip extends StatelessWidget {
-  const _SnapshotMetricChip({
-    required this.label,
-    required this.value,
-  });
+  const _SnapshotMetricChip({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -2087,16 +2408,18 @@ class _AiSetupModelPage extends StatelessWidget {
                             const SizedBox(height: 12),
                             TextFormField(
                               controller: endpointController,
-                              decoration:
-                                  const InputDecoration(labelText: '服务地址'),
+                              decoration: const InputDecoration(
+                                labelText: '服务地址',
+                              ),
                               keyboardType: TextInputType.url,
                               validator: _requiredField,
                             ),
                             const SizedBox(height: 12),
                             TextFormField(
                               controller: apiKeyController,
-                              decoration:
-                                  const InputDecoration(labelText: 'API Key'),
+                              decoration: const InputDecoration(
+                                labelText: 'API Key',
+                              ),
                               validator: _requiredField,
                             ),
                             const SizedBox(height: 16),
@@ -2122,7 +2445,7 @@ class _AiSetupModelPage extends StatelessWidget {
                       : const SizedBox.shrink(
                           key: ValueKey<String>('model-credentials-empty'),
                         ),
-                  ),
+                ),
                 if (availableModels.isNotEmpty) ...<Widget>[
                   const SizedBox(height: 16),
                   DropdownButtonFormField<String>(
@@ -2239,7 +2562,8 @@ class _PermissionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final granted = requirement.status == 'Satisfied';
-    final canRequest = requirement.action == 'RuntimePermission' ||
+    final canRequest =
+        requirement.action == 'RuntimePermission' ||
         requirement.action == 'OpenSystemSettings' ||
         requirement.action == 'HostManaged';
     return Card(
@@ -2271,10 +2595,7 @@ String? _requiredField(String? value) {
   return null;
 }
 
-enum _AiSetupStartMode {
-  quickStart,
-  operit1Import,
-}
+enum _AiSetupStartMode { quickStart, operit1Import }
 
 class _OnboardingRequirement {
   const _OnboardingRequirement({
@@ -2324,13 +2645,15 @@ class _OnboardingPermissionBridge {
       return const <_OnboardingRequirement>[];
     }
     final statusById = await _requirementStatus(host.id);
-    return host.onboardingRequirements.map((item) {
-      final requirement = _OnboardingRequirement.fromJson(
-        Map<Object?, Object?>.from(item as Map),
-      );
-      final status = statusById[requirement.id] as String;
-      return requirement.withStatus(status);
-    }).toList(growable: false);
+    return host.onboardingRequirements
+        .map((item) {
+          final requirement = _OnboardingRequirement.fromJson(
+            Map<Object?, Object?>.from(item as Map),
+          );
+          final status = statusById[requirement.id] as String;
+          return requirement.withStatus(status);
+        })
+        .toList(growable: false);
   }
 
   static Future<Map<String, String>> _requirementStatus(String hostId) async {
@@ -2374,12 +2697,8 @@ String _requirementButtonLabel(_OnboardingRequirement requirement) {
 }
 
 class _PickedOperit1SnapshotFile {
-  const _PickedOperit1SnapshotFile({
-    required this.path,
-    required this.name,
-  });
+  const _PickedOperit1SnapshotFile({required this.path, required this.name});
 
   final String path;
   final String name;
 }
-

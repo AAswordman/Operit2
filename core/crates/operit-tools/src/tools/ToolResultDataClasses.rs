@@ -6,12 +6,10 @@ use operit_host_api::{
     BluetoothBleNotificationEntry as HostBluetoothBleNotificationEntry,
     BluetoothBleServiceData as HostBluetoothBleServiceData,
     BluetoothBleServicesData as HostBluetoothBleServicesData,
-    BluetoothDeviceData as HostBluetoothDeviceData,
-    BluetoothReadData as HostBluetoothReadData,
+    BluetoothDeviceData as HostBluetoothDeviceData, BluetoothReadData as HostBluetoothReadData,
     BluetoothScanResultData as HostBluetoothScanResultData,
     BluetoothScannedDeviceData as HostBluetoothScannedDeviceData,
-    BluetoothSessionData as HostBluetoothSessionData,
-    BluetoothStateData as HostBluetoothStateData,
+    BluetoothSessionData as HostBluetoothSessionData, BluetoothStateData as HostBluetoothStateData,
     BluetoothTransferData as HostBluetoothTransferData,
     MusicPlaybackStatus as HostMusicPlaybackStatus, WebVisitLinkData,
 };
@@ -560,6 +558,7 @@ pub struct TerminalCommandResultData {
     pub output: String,
     pub exitCode: i32,
     pub sessionId: String,
+    pub terminalType: String,
     pub timedOut: bool,
 }
 
@@ -579,6 +578,7 @@ pub struct HiddenTerminalCommandResultData {
     pub output: String,
     pub exitCode: i32,
     pub executorKey: String,
+    pub terminalType: String,
     pub timedOut: bool,
 }
 
@@ -586,6 +586,7 @@ pub struct HiddenTerminalCommandResultData {
 pub struct TerminalSessionCreationResultData {
     pub sessionId: String,
     pub sessionName: String,
+    pub terminalType: String,
     pub isNewSession: bool,
 }
 
@@ -599,9 +600,11 @@ pub struct TerminalSessionCloseResultData {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TerminalSessionScreenResultData {
     pub sessionId: String,
+    pub terminalType: String,
     pub rows: usize,
     pub cols: usize,
     pub content: String,
+    pub commandRunning: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -889,12 +892,14 @@ impl From<HostBluetoothBleServiceData> for BluetoothBleServiceData {
     fn from(value: HostBluetoothBleServiceData) -> Self {
         Self {
             uuid: value.uuid,
-            characteristics: value.characteristics.into_iter().map(|item| {
-                BluetoothBleCharacteristicData {
+            characteristics: value
+                .characteristics
+                .into_iter()
+                .map(|item| BluetoothBleCharacteristicData {
                     uuid: item.uuid,
                     properties: item.properties,
-                }
-            }).collect(),
+                })
+                .collect(),
         }
     }
 }
@@ -1527,6 +1532,7 @@ impl TerminalCommandResultData {
         sb.push_str("Terminal Command Execution Result:\n");
         sb.push_str(&format!("Command: {}\n", self.command));
         sb.push_str(&format!("Session: {}\n", self.sessionId));
+        sb.push_str(&format!("Terminal Type: {}\n", self.terminalType));
         sb.push_str(&format!("Exit Code: {}\n", self.exitCode));
         if self.timedOut {
             sb.push_str("Timed Out: true\n");
@@ -1556,6 +1562,7 @@ impl HiddenTerminalCommandResultData {
         sb.push_str("Hidden Terminal Command Execution Result:\n");
         sb.push_str(&format!("Command: {}\n", self.command));
         sb.push_str(&format!("Executor Key: {}\n", self.executorKey));
+        sb.push_str(&format!("Terminal Type: {}\n", self.terminalType));
         sb.push_str(&format!("Exit Code: {}\n", self.exitCode));
         if self.timedOut {
             sb.push_str("Timed Out: true\n");
@@ -1590,7 +1597,9 @@ impl TerminalSessionScreenResultData {
         let mut sb = String::new();
         sb.push_str("Terminal Session Screen Snapshot:\n");
         sb.push_str(&format!("Session: {}\n", self.sessionId));
+        sb.push_str(&format!("Terminal Type: {}\n", self.terminalType));
         sb.push_str(&format!("Size: {}x{}\n", self.cols, self.rows));
+        sb.push_str(&format!("Command Running: {}\n", self.commandRunning));
         sb.push('\n');
         sb.push_str(&self.content);
         sb
@@ -1627,7 +1636,10 @@ impl MusicPlaybackResultData {
         if let Some(durationMs) = self.durationMs {
             sb.push_str(&format!("Duration: {durationMs}ms\n"));
         }
-        sb.push_str(&format!("Buffered Position: {}ms\n", self.bufferedPositionMs));
+        sb.push_str(&format!(
+            "Buffered Position: {}ms\n",
+            self.bufferedPositionMs
+        ));
         sb.push_str(&format!("Volume: {:.2}\n", self.volume));
         sb.push_str(&format!("Loop: {}\n", self.r#loop));
         if !self.message.trim().is_empty() {

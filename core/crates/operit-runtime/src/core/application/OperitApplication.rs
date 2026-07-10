@@ -15,29 +15,39 @@ use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::data::preferences::UserPreferencesManager::UserPreferencesManager;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge;
 use crate::plugins::PluginRegistry::PluginRegistry;
 use crate::services::ProviderRuntimeSupportService::ProviderRuntimeSupportService;
 use crate::services::ToolRuntimeSupportService::ToolRuntimeSupportService;
 use operit_host_api::HostManager::{setDefaultHttpHost, HostManager};
 use operit_host_api::HostRuntimeEventRegistration;
 use operit_host_api::TimeUtils::currentTimeMillis;
-use operit_js_bridge::javascript::JsBridgeSupportService::JsBridgeSupportService;
+#[cfg(feature = "javascript")]
+use operit_js_bridge::javascript::JsExecutionProvider::QuickJsExecutionProvider;
 use operit_model::Memory::{Memory, MemoryLink};
+use operit_providers::chat::llmprovider::ModelConfigConnectionTester::ModelConnectionTestReport;
+use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_store::db::AppDatabase::AppDatabase;
 use operit_store::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
 use operit_store::PreferencesDataStore::PreferencesDataStore;
 use operit_store::PreferencesDataStore::StateFlow;
 use operit_store::RuntimeStorageHost::{
-    defaultRuntimeStorageHost, setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost,
+    defaultRuntimeStorageHost, setDefaultHostSecretStore, setDefaultRuntimeSqliteHost,
+    setDefaultRuntimeStorageHost,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_store::SyncOperationStore::{
     compactSyncOperations, SyncClock, SyncOperation, SyncOperationStore,
 };
+use operit_tools::runtime_support::ToolRuntimeDependencies;
 use operit_tools::tools::mcp_runtime::plugins::MCPStarter::MCPStarter;
+use operit_tools::tools::mcp_runtime::MCPRepository::MCPRepository;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
+use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
-use operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRoot;
+use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
 use std::fs;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::Mutex as AsyncMutex;
@@ -52,8 +62,12 @@ pub struct OperitApplication {
     pub appStartupTimeMs: i64,
     pub hostManager: HostManager,
     pub chatRuntimeHolder: Arc<AsyncMutex<ChatRuntimeHolder>>,
+    pub toolRuntimeDependencies: ToolRuntimeDependencies,
+    pub toolHandler: AIToolHandler,
+    pub toolPkgBridgeRuntime: ToolPkgBridgeRuntime,
+    pub providerRuntimeContext: ProviderRuntimeContext,
     pub initialized: bool,
-    hostRuntimeEventRegistration: Option<Box<dyn HostRuntimeEventRegistration>>,
+    hostRuntimeEventRegistration: Option<Arc<Mutex<Box<dyn HostRuntimeEventRegistration>>>>,
 }
 
 impl OperitApplication {
@@ -68,20 +82,56 @@ impl OperitApplication {
         if let Some(runtimeStorageHost) = hostManager.runtimeStorageHost.clone() {
             if let Some(rootDir) = runtimeStorageHost.rootDir() {
                 AppLogger::configure_log_files(&rootDir);
-                setDefaultRuntimeStoreRoot(rootDir);
+                setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
+                    rootDir,
+                    runtimeStorageHost
+                        .runtimeRootDir()
+                        .expect("runtime storage host must provide a runtime root directory"),
+                    runtimeStorageHost
+                        .workspaceRootDir()
+                        .expect("runtime storage host must provide a workspace root directory"),
+                ));
             }
             setDefaultRuntimeStorageHost(runtimeStorageHost);
         }
         if let Some(runtimeSqliteHost) = hostManager.runtimeSqliteHost.clone() {
             setDefaultRuntimeSqliteHost(runtimeSqliteHost);
         }
+        if let Some(hostSecretStore) = hostManager.hostSecretStore.clone() {
+            setDefaultHostSecretStore(hostSecretStore);
+        }
         if let Some(httpHost) = hostManager.httpHost.clone() {
             setDefaultHttpHost(httpHost);
         }
+        let chatRuntimeHolder = Arc::new(AsyncMutex::new(ChatRuntimeHolder::new()));
+        let runtimeToolSupport =
+            ToolRuntimeSupportService::create(hostManager.clone(), chatRuntimeHolder.clone());
+        #[cfg(feature = "javascript")]
+        let toolRuntimeDependencies = ToolRuntimeDependencies::new(
+            runtimeToolSupport.clone(),
+            Arc::new(QuickJsExecutionProvider::new()),
+        );
+        let toolHandler = AIToolHandler::new(hostManager.clone(), toolRuntimeDependencies.clone());
+        let toolPkgBridgeRuntime = ToolPkgBridgeRuntime::new(toolHandler.clone());
+        let providerRuntimeContext = ProviderRuntimeSupportService::create(toolHandler.clone());
+        runtimeToolSupport
+            .bindRuntimeServices(toolHandler.clone(), providerRuntimeContext.clone())
+            .expect("tool runtime services must bind exactly once");
+        *chatRuntimeHolder
+            .try_lock()
+            .expect("new chat runtime holder must be unlocked") =
+            ChatRuntimeHolder::newWithRuntimeDependencies(
+                toolHandler.clone(),
+                providerRuntimeContext.clone(),
+            );
         Self {
             appStartupTimeMs: 0,
             hostManager,
-            chatRuntimeHolder: Arc::new(AsyncMutex::new(ChatRuntimeHolder::new())),
+            chatRuntimeHolder,
+            toolRuntimeDependencies,
+            toolHandler,
+            toolPkgBridgeRuntime,
+            providerRuntimeContext,
             initialized: false,
             hostRuntimeEventRegistration: None,
         }
@@ -92,9 +142,6 @@ impl OperitApplication {
     pub fn onCreate(&mut self) -> Result<(), String> {
         self.appStartupTimeMs = currentTimeMillis();
         setHostManager(self.hostManager.clone());
-        JsBridgeSupportService::install()?;
-        ProviderRuntimeSupportService::install()?;
-        ToolRuntimeSupportService::install(self.chatRuntimeHolder.clone())?;
         self.configureOpenMpEnvironment();
         OperitPaths::cleanOnExitCleanup()?;
         self.ensureWorkManagerInitialized();
@@ -105,18 +152,16 @@ impl OperitApplication {
         self.initAndroidPermissionPreferences();
         self.initializeFunctionalPromptManager()?;
         self.preloadDatabase();
-        let mut toolHandler = AIToolHandler::getInstance(self.hostManager.clone());
+        let mut toolHandler = self.toolHandler.clone();
         toolHandler.registerDefaultTools();
-        PluginRegistry::initializeBuiltins();
+        PluginRegistry::initializeBuiltins(self.toolPkgBridgeRuntime.clone());
         self.initMcpPlugins();
-        *self
-            .chatRuntimeHolder
-            .try_lock()
-            .map_err(|_| "Chat runtime holder is busy during application startup".to_string())? =
-            ChatRuntimeHolder::newWithHostManager(self.hostManager.clone());
-        self.hostRuntimeEventRegistration = crate::services::RuntimeEventIngressService::RuntimeEventIngressService::startHostRuntimeEventSupport(
-            self.hostManager.clone(),
-        )?;
+        self.hostRuntimeEventRegistration =
+            crate::services::RuntimeEventIngressService::RuntimeEventIngressService::startHostRuntimeEventSupport(
+                self.hostManager.clone(),
+                self.toolPkgBridgeRuntime.clone(),
+            )?
+            .map(|registration| Arc::new(Mutex::new(registration)));
         self.initialized = true;
         Ok(())
     }
@@ -171,11 +216,62 @@ impl OperitApplication {
     /// Starts deployed MCP plugins according to the configured startup timeout.
     #[allow(non_snake_case)]
     pub fn initMcpPlugins(&self) {
-        let starter = MCPStarter::new(self.hostManager.clone());
+        let starter = MCPStarter::new(self.hostManager.clone(), self.toolHandler.runtimeSupport());
         let timeoutSeconds = ApiPreferences::getInstance()
             .getMcpStartupTimeoutSeconds()
             .expect("api preferences must provide mcp startup timeout seconds");
         let _ = starter.startAllDeployedPluginsWithTimeout(timeoutSeconds);
+    }
+
+    /// Returns the initialized tool handler owned by this runtime.
+    #[allow(non_snake_case)]
+    pub fn aiToolHandler(&self) -> AIToolHandler {
+        self.toolHandler.clone()
+    }
+
+    /// Creates an MCP repository with this runtime's host and tool support.
+    #[allow(non_snake_case)]
+    pub fn mcpRepository(&self) -> MCPRepository {
+        MCPRepository::getInstance(&self.hostManager, self.toolHandler.runtimeSupport())
+    }
+
+    /// Creates a skill repository with this runtime's host and tool support.
+    #[allow(non_snake_case)]
+    pub fn skillRepository(&self) -> SkillRepository {
+        SkillRepository::getInstance(&self.hostManager, self.toolHandler.runtimeSupport())
+    }
+
+    /// Creates an input menu bridge backed by this application's tool package runtime.
+    #[allow(non_snake_case)]
+    pub fn inputMenuToggleBridge(&self) -> ToolPkgInputMenuToggleBridge {
+        ToolPkgInputMenuToggleBridge::new(self.toolPkgBridgeRuntime.clone())
+    }
+
+    /// Returns the shared package manager owned by the initialized tool handler.
+    #[allow(non_snake_case)]
+    pub fn packageManager(&self) -> Arc<Mutex<RuntimePackageManager>> {
+        self.toolHandler.getOrCreatePackageManager()
+    }
+
+    /// Returns package names enabled in this application runtime.
+    pub fn active_package_names(&self) -> Vec<String> {
+        self.toolHandler
+            .getOrCreatePackageManager()
+            .lock()
+            .expect("package manager mutex poisoned")
+            .getActivePackageNames()
+    }
+
+    /// Tests one model connection using this application's provider runtime.
+    pub async fn test_model_connection(
+        &self,
+        provider_id: String,
+        model_id: String,
+    ) -> Result<ModelConnectionTestReport, String> {
+        ModelConfigManager::default()
+            .testModelConnection(&provider_id, &model_id, self.providerRuntimeContext.clone())
+            .await
+            .map_err(|error| error.to_string())
     }
 
     /// Returns the Cargo package version compiled into the runtime crate.

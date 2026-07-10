@@ -1,7 +1,7 @@
 use operit_host_api::{
-    HiddenTerminalCommandOutput, HostResult, TerminalCloseOutput, TerminalCommandOutput,
-    TerminalHost, TerminalInfo, TerminalInputOutput, TerminalScreenOutput, TerminalSessionInfo,
-    TerminalSessionListEntry, TerminalTypeInfo,
+    HiddenTerminalCommandOutput, HostError, HostResult, TerminalCloseOutput,
+    TerminalCommandOutput, TerminalHost, TerminalInfo, TerminalInputOutput, TerminalScreenOutput,
+    TerminalSessionInfo, TerminalSessionListEntry, TerminalTypeInfo,
 };
 use operit_host_linux_native::LinuxTerminalHost;
 
@@ -17,10 +17,13 @@ impl AppleTerminalHost {
         }
     }
 
-    fn nativeTerminalType(terminalType: &str) -> &str {
+    /// Resolves the public macOS terminal type to the Linux-backed host type.
+    fn nativeTerminalType(terminalType: &str) -> HostResult<&'static str> {
         match terminalType.trim() {
-            "" | "macos" | "linux" => "linux",
-            value => value,
+            "macos" => Ok("linux"),
+            value => Err(HostError::new(format!(
+                "Unsupported terminal type for macos host: {value}"
+            ))),
         }
     }
 
@@ -49,12 +52,18 @@ impl TerminalHost for AppleTerminalHost {
     fn startPtySession(
         &self,
         sessionName: &str,
+        terminalType: &str,
         workingDir: &str,
         rows: u16,
         cols: u16,
     ) -> HostResult<String> {
-        self.inner
-            .startPtySession(sessionName, workingDir, rows, cols)
+        self.inner.startPtySession(
+            sessionName,
+            Self::nativeTerminalType(terminalType)?,
+            workingDir,
+            rows,
+            cols,
+        )
     }
 
     fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>> {
@@ -95,7 +104,7 @@ impl TerminalHost for AppleTerminalHost {
         terminalType: &str,
     ) -> HostResult<TerminalSessionInfo> {
         self.inner
-            .createOrGetSession(sessionName, Self::nativeTerminalType(terminalType))
+            .createOrGetSession(sessionName, Self::nativeTerminalType(terminalType)?)
             .map(|mut info| {
                 info.terminalType = Self::rewriteType(info.terminalType);
                 info
@@ -126,7 +135,7 @@ impl TerminalHost for AppleTerminalHost {
         self.inner
             .executeHiddenCommand(
                 command,
-                Self::nativeTerminalType(terminalType),
+                Self::nativeTerminalType(terminalType)?,
                 executorKey,
                 timeoutMs,
             )

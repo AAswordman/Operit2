@@ -8,14 +8,15 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use super::AIService::{
-    delay_retry_ms, response_stream_from_chunks, retry_error_text, retry_message, AIService,
-    AiServiceError, SendMessageRequest, TokenCounts,
-};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
-use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
+use crate::chat::llmprovider::AIService::{
+    response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
+    SendMessageRequest, TokenCounts,
+};
+use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
 use operit_model::ModelParameter::ModelParameter;
 use operit_model::ModelParameter::ParameterValueType;
+use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike, TextStreamEvent,

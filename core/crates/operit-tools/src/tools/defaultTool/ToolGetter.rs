@@ -1,4 +1,8 @@
 use operit_host_api::HostManager::HostManager;
+use std::sync::Arc;
+
+use crate::runtime_support::ToolRuntimeSupport;
+use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_tools::tools::defaultTool::standard::StandardBluetoothTools::StandardBluetoothTools;
 use operit_tools::tools::defaultTool::standard::StandardBrowserAutomationTools::StandardBrowserAutomationTools;
 use operit_tools::tools::defaultTool::standard::StandardFileSystemTools::StandardFileSystemTools;
@@ -7,7 +11,6 @@ use operit_tools::tools::defaultTool::standard::StandardMusicTools::StandardMusi
 use operit_tools::tools::defaultTool::standard::StandardSystemOperationTools::StandardSystemOperationTools;
 use operit_tools::tools::defaultTool::standard::StandardTerminalTools::StandardTerminalTools;
 use operit_tools::tools::defaultTool::standard::StandardWebVisitTool::StandardWebVisitTool;
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 /// Builds standard tool groups from the host capabilities present in an application context.
 pub struct ToolGetter;
@@ -17,6 +20,7 @@ impl ToolGetter {
     #[allow(non_snake_case)]
     pub fn getFileSystemTools(
         context: &HostManager,
+        runtimeSupport: Arc<dyn ToolRuntimeSupport>,
     ) -> Option<StandardFileSystemTools> {
         context.fileSystemHost.clone().and_then(|fileSystemHost| {
             let runtimeStoreRoot = context.runtimeStorageHost.as_ref()?.rootDir()?;
@@ -31,6 +35,7 @@ impl ToolGetter {
                 runtimeStoreRoot,
                 context.appFilesRoot.clone(),
                 runtimeStorePaths.workspace_dir(),
+                runtimeSupport,
             ))
         })
     }
@@ -66,9 +71,7 @@ impl ToolGetter {
 
     /// Creates system-operation tools from the optional platform operation host.
     #[allow(non_snake_case)]
-    pub fn getSystemOperationTools(
-        context: &HostManager,
-    ) -> StandardSystemOperationTools {
+    pub fn getSystemOperationTools(context: &HostManager) -> StandardSystemOperationTools {
         StandardSystemOperationTools::new(context.systemOperationHost.clone())
     }
 

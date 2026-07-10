@@ -4,20 +4,22 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use operit_tools::tools::javascript::{JsExecutionEngine, ToolPkgMainRegistrationCapture};
-use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::*;
-use operit_tools::tools::packTool::ToolPkgParser::{
+use crate::javascript::{JsExecutionEngine, ToolPkgMainRegistrationCapture};
+use crate::package::LocalizedText;
+use crate::toolpkg::ToolPkgCommonPluginConstants::*;
+use crate::toolpkg::ToolPkgParser::{
     ToolPkgMainRegistration, ToolPkgMainRegistrationParseResult, ToolPkgRegisteredAiProvider,
     ToolPkgRegisteredAppLifecycleHook, ToolPkgRegisteredDesktopWidget,
     ToolPkgRegisteredFunctionHook, ToolPkgRegisteredHostEventHook,
     ToolPkgRegisteredNavigationEntry, ToolPkgRegisteredTagFunctionHook, ToolPkgRegisteredUiModule,
     ToolPkgRegisteredUiRoute,
 };
-use operit_tools::tools::ToolPackage::LocalizedText;
 
+/// Executes and validates the `registerToolPkg` declaration exported by a main script.
 pub struct ToolPkgMainRegistrationScriptParser;
 
 impl ToolPkgMainRegistrationScriptParser {
+    /// Parses ToolPkg main-script registrations without preloaded text resources.
     pub fn parse(
         script: &str,
         toolPkgId: &str,
@@ -27,6 +29,7 @@ impl ToolPkgMainRegistrationScriptParser {
         Self::parseWithTextResources(script, toolPkgId, mainScriptPath, jsEngine, None)
     }
 
+    /// Parses ToolPkg main-script registrations with archive text resources available to JavaScript.
     #[allow(non_snake_case)]
     pub(crate) fn parseWithTextResources(
         script: &str,
@@ -54,18 +57,18 @@ impl ToolPkgMainRegistrationScriptParser {
             Value::String(mainScriptPath.to_string()),
         );
 
-        let capturedResult: Result<ToolPkgMainRegistrationCapture, String> =
-            jsEngine.executeToolPkgMainRegistrationFunctionWithTextResources(
-            script,
-            "registerToolPkg",
-            &params,
-            textResources,
-        );
+        let capturedResult = jsEngine
+            .execute_toolpkg_main_registration_function_with_text_resources(
+                script,
+                "registerToolPkg",
+                &params,
+                textResources,
+            );
         let captured = match capturedResult {
             std::result::Result::Ok(captured) => captured,
             std::result::Result::Err(ref error) => {
                 return ToolPkgMainRegistrationParseResult::Failure {
-                    message: buildDeveloperFacingFailureMessage(mainScriptPath, error.as_str()),
+                    message: buildDeveloperFacingFailureMessage(mainScriptPath, &error.to_string()),
                 }
             }
         };
@@ -80,6 +83,7 @@ impl ToolPkgMainRegistrationScriptParser {
     }
 }
 
+/// Builds a compact error that points developers to the failing main script.
 #[allow(non_snake_case)]
 fn buildDeveloperFacingFailureMessage(mainScriptPath: &str, error: &str) -> String {
     let compactMessage = error
@@ -92,6 +96,7 @@ fn buildDeveloperFacingFailureMessage(mainScriptPath: &str, error: &str) -> Stri
     )
 }
 
+/// Converts captured JSON registration payloads into validated runtime models.
 #[allow(non_snake_case)]
 fn parseCapturedRegistration(
     captured: ToolPkgMainRegistrationCapture,
@@ -206,6 +211,7 @@ fn parseCapturedRegistration(
     })
 }
 
+/// Deserializes, normalizes, and validates one registration collection.
 #[allow(non_snake_case)]
 fn parseRegisteredItems<T>(
     registrations: &[String],
@@ -229,11 +235,16 @@ where
         .collect()
 }
 
+/// Defines normalization and validation required by captured registration records.
 trait ValidateToolPkgRegistration {
+    /// Applies registry-specific defaults before validation.
     fn normalize(&mut self, registryName: &str, index: usize, toolPkgId: &str);
+
+    /// Validates required fields after normalization.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String>;
 }
 
+/// Rejects a blank required registration field with its registry position.
 fn requireNotBlank(
     value: &str,
     fieldName: &str,
@@ -246,10 +257,12 @@ fn requireNotBlank(
     Ok(())
 }
 
+/// Returns whether a localized text value contains visible content.
 fn hasLocalizedTextContent(text: &LocalizedText) -> bool {
     text.values.values().any(|value| !value.trim().is_empty())
 }
 
+/// Creates a default-language localized text value.
 fn localizedTextOf(value: &str) -> LocalizedText {
     LocalizedText {
         values: HashMap::from([("default".to_string(), value.to_string())]),
@@ -257,6 +270,7 @@ fn localizedTextOf(value: &str) -> LocalizedText {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredUiModule {
+    /// Applies default runtime and title values to a UI module registration.
     fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {
         if self.runtime.trim().is_empty() {
             self.runtime = TOOLPKG_RUNTIME_COMPOSE_DSL.to_string();
@@ -266,6 +280,7 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredUiModule {
         }
     }
 
+    /// Validates the identifier and screen path of a UI module registration.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.screen, "screen", registryName, index)
@@ -273,6 +288,7 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredUiModule {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredUiRoute {
+    /// Generates missing route, runtime, and title values for a UI route registration.
     fn normalize(&mut self, _registryName: &str, _index: usize, toolPkgId: &str) {
         if self.routeId.trim().is_empty() {
             self.routeId = buildToolPkgRouteId(toolPkgId, self.id.trim());
@@ -285,6 +301,7 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredUiRoute {
         }
     }
 
+    /// Validates the identifier, screen path, and route id of a UI route registration.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.screen, "screen", registryName, index)?;
@@ -293,12 +310,14 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredUiRoute {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredNavigationEntry {
+    /// Generates a title from the navigation entry identifier when omitted.
     fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {
         if !hasLocalizedTextContent(&self.title) {
             self.title = localizedTextOf(self.id.trim());
         }
     }
 
+    /// Validates that a navigation entry has an id and a route or action.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         if self
@@ -318,6 +337,7 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredNavigationEntry {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredDesktopWidget {
+    /// Generates missing render route and title values for a desktop widget.
     fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {
         if self.renderRouteId.trim().is_empty() {
             self.renderRouteId = self.routeId.trim().to_string();
@@ -327,6 +347,7 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredDesktopWidget {
         }
     }
 
+    /// Validates the identifier and route references of a desktop widget.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.routeId, "route", registryName, index)?;
@@ -335,8 +356,10 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredDesktopWidget {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredAppLifecycleHook {
+    /// Leaves an application lifecycle hook unchanged before validation.
     fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {}
 
+    /// Validates the id, event, and function of an application lifecycle hook.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.event, "event", registryName, index)?;
@@ -345,8 +368,10 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredAppLifecycleHook {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredFunctionHook {
+    /// Leaves a function hook unchanged before validation.
     fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {}
 
+    /// Validates the id and function of a generic function hook.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.function, "function", registryName, index)
@@ -354,8 +379,10 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredFunctionHook {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredHostEventHook {
+    /// Leaves a host event hook unchanged before validation.
     fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {}
 
+    /// Validates the id, source, and function of a host event hook.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.source, "source", registryName, index)?;
@@ -364,8 +391,10 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredHostEventHook {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredTagFunctionHook {
+    /// Leaves a tag function hook unchanged before validation.
     fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {}
 
+    /// Validates the id, tag, and function of a tag function hook.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.tag, "tag", registryName, index)?;
@@ -374,12 +403,14 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredTagFunctionHook {
 }
 
 impl ValidateToolPkgRegistration for ToolPkgRegisteredAiProvider {
+    /// Generates a provider display name from its identifier when omitted.
     fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {
         if self.displayName.trim().is_empty() {
             self.displayName = self.id.trim().to_string();
         }
     }
 
+    /// Validates all required handler functions of a ToolPkg AI provider.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(
@@ -412,8 +443,9 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredAiProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use operit_tools::tools::javascript::ToolPkgMainRegistrationCapture;
+    use crate::javascript::ToolPkgMainRegistrationCapture;
 
+    /// Verifies Kotlin-style registration aliases normalize into runtime records.
     #[test]
     fn parses_kotlin_style_registration_fields() {
         let captured = ToolPkgMainRegistrationCapture {

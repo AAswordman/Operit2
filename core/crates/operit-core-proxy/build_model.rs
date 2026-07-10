@@ -55,6 +55,8 @@ pub(crate) enum ObjectAccess {
         parent_access: Box<ObjectAccess>,
         factory_method: String,
         factory_arg_types: Vec<String>,
+        returns_result: bool,
+        returns_arc_mutex: bool,
     },
 }
 
@@ -77,6 +79,11 @@ impl ObjectAccess {
                 | ObjectAccess::ResultStorePathsConstruct
                 | ObjectAccess::FactoryMethodConstruct { .. }
         )
+    }
+
+    /// Returns whether this object can create child proxy objects through methods.
+    pub(crate) fn supports_factory_methods(&self) -> bool {
+        matches!(self, ObjectAccess::Application) || self.is_constructible()
     }
 }
 

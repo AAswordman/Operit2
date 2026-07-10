@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -93,8 +94,8 @@ impl TerminalHost for WindowsTerminalHost {
                 },
                 TerminalTypeInfo {
                     terminalType: "bash".to_string(),
-                    available: commandStarts("bash", &["--version"]),
-                    description: "Windows bash terminal".to_string(),
+                    available: gitBashExecutable().is_ok(),
+                    description: "Windows Git Bash terminal".to_string(),
                 },
             ],
         })
@@ -103,16 +104,18 @@ impl TerminalHost for WindowsTerminalHost {
     fn startPtySession(
         &self,
         sessionName: &str,
+        terminalType: &str,
         workingDir: &str,
         rows: u16,
         cols: u16,
     ) -> HostResult<String> {
         let normalizedSessionName = nonBlank(sessionName, "session_name")?;
+        let (normalizedTerminalType, kind) = normalizeTerminalType(terminalType)?;
         let workDir = nonBlank(workingDir, "working_directory")?;
         let session = createPtySession(
             normalizedSessionName,
-            "powershell".to_string(),
-            TerminalKind::PowerShell,
+            normalizedTerminalType,
+            kind,
             workDir,
             rows,
             cols,
@@ -272,7 +275,7 @@ impl TerminalHost for WindowsTerminalHost {
     ) -> HostResult<TerminalCommandOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let normalizedCommand = nonBlank(command, "command")?;
-        let (terminalType, commandOutput) = {
+        let (terminalType, kind, commandOutput) = {
             let mut state = self.lockState()?;
             let session = state
                 .ptySessions
@@ -289,10 +292,15 @@ impl TerminalHost for WindowsTerminalHost {
                 .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
             writer.write_all(commandInput.as_bytes())?;
             writer.flush()?;
-            (session.terminalType.clone(), session.commandOutput.clone())
+            (
+                session.terminalType.clone(),
+                session.kind,
+                session.commandOutput.clone(),
+            )
         };
 
-        let result = executePtyCommandInSession(commandOutput, &normalizedCommand, timeoutMs)?;
+        let result =
+            executePtyCommandInSession(commandOutput, kind, &normalizedCommand, timeoutMs)?;
         {
             let mut state = self.lockState()?;
             if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
@@ -484,7 +492,7 @@ fn createPtySession(
     let pair = ptySystem
         .openpty(ptySize(rows, cols))
         .map_err(toHostError)?;
-    let command = ptyCommand(kind, &workingDir);
+    let command = ptyCommand(kind, &workingDir)?;
     let mut child = pair.slave.spawn_command(command).map_err(toHostError)?;
     let mut reader = pair.master.try_clone_reader().map_err(toHostError)?;
     let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(toHostError)?));
@@ -538,21 +546,71 @@ fn createPtySession(
 }
 
 #[allow(non_snake_case)]
-fn ptyCommand(kind: TerminalKind, workingDir: &str) -> CommandBuilder {
+/// Builds the PTY command for the selected Windows terminal type.
+fn ptyCommand(kind: TerminalKind, workingDir: &str) -> HostResult<CommandBuilder> {
     match kind {
-        TerminalKind::PowerShell => windowsPtyCommand(workingDir),
+        TerminalKind::PowerShell => Ok(windowsPtyCommand(workingDir)),
         TerminalKind::Bash => {
-            let mut command = CommandBuilder::new("bash");
+            let mut command = CommandBuilder::new(gitBashExecutable()?);
+            command.arg("--noprofile");
+            command.arg("--norc");
+            command.arg("-i");
             command.cwd(workingDir);
             command.env("TERM", "xterm-256color");
             command.env("COLORTERM", "truecolor");
             command.env("LANG", "C.UTF-8");
-            command
+            command.env("PS1", "$PWD $ ");
+            command.env(
+                "PROMPT_COMMAND",
+                r#"__operit_status=$?; printf '\033]133;OperitPrompt=%s:%s\007' "$(printf '%s' "$PWD" | base64 | tr -d '\n')" "$__operit_status""#,
+            );
+            Ok(command)
         }
     }
 }
 
 #[allow(non_snake_case)]
+/// Resolves the Bash executable from the active Git for Windows installation.
+fn gitBashExecutable() -> HostResult<PathBuf> {
+    let output = Command::new("git")
+        .arg("--exec-path")
+        .output()
+        .map_err(|error| {
+            HostError::new(format!(
+                "Failed to resolve Git for Windows exec path: {error}"
+            ))
+        })?;
+    if !output.status.success() {
+        return Err(HostError::new(format!(
+            "git --exec-path failed with status {}",
+            output.status
+        )));
+    }
+    let execPathText = String::from_utf8(output.stdout)
+        .map_err(|error| HostError::new(format!("Git exec path is not UTF-8: {error}")))?;
+    let execPath = PathBuf::from(execPathText.trim());
+    let gitRoot = execPath
+        .parent()
+        .and_then(|path| path.parent())
+        .and_then(|path| path.parent())
+        .ok_or_else(|| {
+            HostError::new(format!(
+                "Unexpected Git for Windows exec path: {}",
+                execPath.display()
+            ))
+        })?;
+    let bashExecutable = gitRoot.join("bin").join("bash.exe");
+    if !bashExecutable.is_file() {
+        return Err(HostError::new(format!(
+            "Git Bash executable does not exist: {}",
+            bashExecutable.display()
+        )));
+    }
+    Ok(bashExecutable)
+}
+
+#[allow(non_snake_case)]
+/// Builds the Windows PowerShell PTY command.
 fn windowsPtyCommand(workingDir: &str) -> CommandBuilder {
     let mut command = CommandBuilder::new("powershell.exe");
     command.arg("-NoLogo");
@@ -718,8 +776,10 @@ fn waitForInitialPtyPrompt(output: PtyCommandOutput, timeout: Duration) -> HostR
 }
 
 #[allow(non_snake_case)]
+/// Waits for a typed PTY command to complete and extracts its output.
 fn executePtyCommandInSession(
     output: PtyCommandOutput,
+    kind: TerminalKind,
     command: &str,
     timeoutMs: u64,
 ) -> HostResult<SessionCommandResult> {
@@ -741,7 +801,7 @@ fn executePtyCommandInSession(
                     continue;
                 }
             }
-            let output = ptyCommandOutputText(&collected, command, Some(&marker.workingDir));
+            let output = ptyCommandOutputText(&collected, kind, command, Some(&marker.workingDir))?;
             return Ok(SessionCommandResult {
                 output,
                 exitCode: marker.exitCode,
@@ -750,7 +810,7 @@ fn executePtyCommandInSession(
             });
         }
         if Instant::now() >= deadline {
-            let output = ptyCommandOutputText(&collected, command, None);
+            let output = ptyCommandOutputText(&collected, kind, command, None)?;
             return Ok(SessionCommandResult {
                 output,
                 exitCode: -1,
@@ -873,12 +933,24 @@ fn findBytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 #[allow(non_snake_case)]
-fn ptyCommandOutputText(raw: &[u8], command: &str, workingDir: Option<&str>) -> String {
+/// Converts raw PTY output into terminal-specific command output text.
+fn ptyCommandOutputText(
+    raw: &[u8],
+    kind: TerminalKind,
+    command: &str,
+    workingDir: Option<&str>,
+) -> HostResult<String> {
     let visibleBytes = stripPtyPromptMarkers(raw);
     let text = String::from_utf8_lossy(&visibleBytes);
     let clean = renderTerminalText(&text);
     let withoutEcho = dropCommandEcho(clean, command);
-    dropTrailingPowerShellPrompt(withoutEcho, workingDir)
+    let Some(workingDir) = workingDir else {
+        return Ok(withoutEcho.trim().to_string());
+    };
+    match kind {
+        TerminalKind::PowerShell => dropTrailingPowerShellPrompt(&withoutEcho, workingDir),
+        TerminalKind::Bash => dropTrailingBashPrompt(&withoutEcho, workingDir),
+    }
 }
 
 #[allow(non_snake_case)]
@@ -1205,22 +1277,25 @@ fn dropCommandEcho(value: String, command: &str) -> String {
 }
 
 #[allow(non_snake_case)]
-fn dropTrailingPowerShellPrompt(value: String, workingDir: Option<&str>) -> String {
-    let Some(workingDir) = workingDir else {
-        return value.trim().to_string();
-    };
+/// Removes the trailing PowerShell prompt from command output.
+fn dropTrailingPowerShellPrompt(value: &str, workingDir: &str) -> HostResult<String> {
     let prompt = format!("PS {workingDir}>");
-    let mut lines = value.lines().map(str::to_string).collect::<Vec<_>>();
-    while lines.last().is_some_and(|line| line.trim().is_empty()) {
-        lines.pop();
-    }
-    if lines
-        .last()
-        .is_some_and(|line| line.trim_end() == prompt.as_str())
-    {
-        lines.pop();
-    }
-    lines.join("\n").trim().to_string()
+    let output = value
+        .trim_end()
+        .strip_suffix(&prompt)
+        .ok_or_else(|| HostError::new(format!("Missing PowerShell prompt suffix: {prompt}")))?;
+    Ok(output.trim().to_string())
+}
+
+#[allow(non_snake_case)]
+/// Removes the trailing Git Bash prompt from command output.
+fn dropTrailingBashPrompt(value: &str, workingDir: &str) -> HostResult<String> {
+    let prompt = format!("{workingDir} $");
+    let output = value
+        .trim_end()
+        .strip_suffix(&prompt)
+        .ok_or_else(|| HostError::new(format!("Missing Git Bash prompt suffix: {prompt}")))?;
+    Ok(output.trim().to_string())
 }
 
 #[allow(non_snake_case)]
@@ -1360,8 +1435,8 @@ fn normalizeControl(rawControl: &str) -> Option<&'static str> {
 
 #[allow(non_snake_case)]
 fn normalizeTerminalType(terminalType: &str) -> HostResult<(String, TerminalKind)> {
-    match terminalType.trim().to_ascii_lowercase().as_str() {
-        "" | "powershell" | "pwsh" => Ok(("powershell".to_string(), TerminalKind::PowerShell)),
+    match terminalType.trim() {
+        "powershell" => Ok(("powershell".to_string(), TerminalKind::PowerShell)),
         "bash" => Ok(("bash".to_string(), TerminalKind::Bash)),
         value => Err(HostError::new(format!(
             "Unsupported terminal type for windows host: {value}"
@@ -1472,11 +1547,24 @@ mod tests {
         let host = WindowsTerminalHost::new();
         let info = host.terminalInfo().expect("terminal info");
         assert_eq!(info.defaultType, "powershell");
+    }
 
+    /// Verifies that Windows Git Bash sessions execute through the typed host path.
+    #[test]
+    fn git_bash_command_block_completes() {
+        let host = WindowsTerminalHost::new();
         let session = host
-            .createOrGetSession("terminal_default_type", "")
-            .expect("create terminal session");
-        assert_eq!(session.terminalType, "powershell");
+            .createOrGetSession("terminal_git_bash_marker", "bash")
+            .expect("create Git Bash terminal session");
+        let result = host
+            .executeInSession(&session.sessionId, "printf git-bash-ok", 3000)
+            .expect("execute Git Bash terminal command");
+
+        assert_eq!(session.terminalType, "bash");
+        assert_eq!(result.terminalType, "bash");
+        assert!(!result.timedOut);
+        assert_eq!(result.exitCode, 0);
+        assert_eq!(result.output, "git-bash-ok");
     }
 
     #[test]
@@ -1488,6 +1576,7 @@ mod tests {
         let manual = host
             .startPtySession(
                 "terminal_visible_manual",
+                "powershell",
                 &std::env::current_dir().unwrap().display().to_string(),
                 24,
                 80,

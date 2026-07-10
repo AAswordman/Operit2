@@ -2,11 +2,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    toolPkgPackageManager, toolPkgToolHandler, ToolPkgToolLifecycleHookRegistration,
-};
-use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_TOOL_LIFECYCLE;
-use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_TOOL_LIFECYCLE;
+use operit_plugin_sdk::toolpkg::ToolPkgHooks::ToolPkgToolLifecycleHookRegistration;
+use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_tools::tools::AIToolHook::AIToolHook;
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::AITool;
@@ -18,9 +17,10 @@ static TOOL_LIFECYCLE_HOOKS: OnceLock<Mutex<Vec<ToolPkgToolLifecycleHookRegistra
 pub struct ToolPkgToolLifecycleBridge;
 
 impl ToolPkgToolLifecycleBridge {
-    pub fn register() {
-        let mut handler = toolPkgToolHandler();
-        handler.addToolHook(Arc::new(ToolLifecycleBridge));
+    /// Registers tool lifecycle hooks for one application runtime.
+    pub fn register(runtime: ToolPkgBridgeRuntime) {
+        let mut handler = runtime.tool_handler();
+        handler.addToolHook(Arc::new(ToolLifecycleBridge { runtime }));
     }
 
     #[allow(non_snake_case)]
@@ -45,7 +45,9 @@ impl ToolPkgToolLifecycleBridge {
     }
 }
 
-struct ToolLifecycleBridge;
+struct ToolLifecycleBridge {
+    runtime: ToolPkgBridgeRuntime,
+}
 
 impl AIToolHook for ToolLifecycleBridge {
     fn id(&self) -> &str {
@@ -53,7 +55,11 @@ impl AIToolHook for ToolLifecycleBridge {
     }
 
     fn onToolCallRequested(&self, tool: &AITool) {
-        deliver("tool_call_requested", build_base_payload(tool));
+        deliver(
+            &self.runtime,
+            "tool_call_requested",
+            build_base_payload(tool),
+        );
     }
 
     fn onToolPermissionChecked(&self, tool: &AITool, granted: bool, reason: Option<&str>) {
@@ -62,11 +68,15 @@ impl AIToolHook for ToolLifecycleBridge {
         payload["reason"] = reason
             .map(|value| Value::String(value.to_string()))
             .unwrap_or(Value::Null);
-        deliver("tool_permission_checked", payload);
+        deliver(&self.runtime, "tool_permission_checked", payload);
     }
 
     fn onToolExecutionStarted(&self, tool: &AITool) {
-        deliver("tool_execution_started", build_base_payload(tool));
+        deliver(
+            &self.runtime,
+            "tool_execution_started",
+            build_base_payload(tool),
+        );
     }
 
     fn onToolExecutionResult(&self, tool: &AITool, result: &ToolResult) {
@@ -80,18 +90,22 @@ impl AIToolHook for ToolLifecycleBridge {
         payload["resultText"] = Value::String(result.result.toString());
         payload["resultJson"] =
             serde_json::from_str::<Value>(&result.result.toJson()).unwrap_or(Value::Null);
-        deliver("tool_execution_result", payload);
+        deliver(&self.runtime, "tool_execution_result", payload);
     }
 
     fn onToolExecutionError(&self, tool: &AITool, message: &str) {
         let mut payload = build_base_payload(tool);
         payload["success"] = Value::Bool(false);
         payload["errorMessage"] = Value::String(message.to_string());
-        deliver("tool_execution_error", payload);
+        deliver(&self.runtime, "tool_execution_error", payload);
     }
 
     fn onToolExecutionFinished(&self, tool: &AITool) {
-        deliver("tool_execution_finished", build_base_payload(tool));
+        deliver(
+            &self.runtime,
+            "tool_execution_finished",
+            build_base_payload(tool),
+        );
     }
 }
 
@@ -113,7 +127,7 @@ fn build_base_payload(tool: &AITool) -> Value {
     })
 }
 
-fn deliver(eventName: &str, eventPayload: Value) {
+fn deliver(runtime: &ToolPkgBridgeRuntime, eventName: &str, eventPayload: Value) {
     let snapshot = TOOL_LIFECYCLE_HOOKS
         .get_or_init(|| Mutex::new(Vec::new()))
         .lock()
@@ -127,7 +141,7 @@ fn deliver(eventName: &str, eventPayload: Value) {
             ("hookCount", snapshot.len().to_string()),
         ],
     );
-    let manager = toolPkgPackageManager();
+    let manager = runtime.package_manager();
     for hook in snapshot {
         ChainLogger::info(
             PLUGIN_CHAIN,

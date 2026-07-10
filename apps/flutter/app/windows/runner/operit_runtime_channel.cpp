@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -23,6 +24,7 @@ namespace {
 
 using BridgeHandle = void*;
 using BridgeCreate = BridgeHandle (*)();
+using BridgeCreateWithStorageRoot = BridgeHandle (*)(const char*);
 using BridgeCreateError = char* (*)();
 using BridgeDestroy = void (*)(BridgeHandle);
 using BridgeCall = char* (*)(BridgeHandle, const unsigned char*, size_t);
@@ -49,6 +51,76 @@ DWORD g_operit_runtime_platform_thread_id = 0;
 std::atomic_bool g_watch_channel_pump_running{false};
 
 constexpr UINT kOperitRuntimePlatformTaskMessage = WM_APP + 0x520;
+
+/// Builds a filesystem path from UTF-8 bytes under C++20 char8_t rules.
+std::filesystem::path PathFromUtf8(const std::string& value) {
+  std::u8string utf8;
+  utf8.reserve(value.size());
+  for (const unsigned char byte : value) {
+    utf8.push_back(static_cast<char8_t>(byte));
+  }
+  return std::filesystem::path(utf8);
+}
+
+/// Converts a filesystem path into UTF-8 bytes under C++20 char8_t rules.
+std::string PathToUtf8(const std::filesystem::path& value) {
+  const std::u8string utf8 = value.u8string();
+  std::string result;
+  result.reserve(utf8.size());
+  for (const char8_t byte : utf8) {
+    result.push_back(static_cast<char>(byte));
+  }
+  return result;
+}
+
+/// Resolves the requested Windows storage root into a UTF-8 absolute path.
+bool ResolveWindowsStorageRoot(const std::string& requested,
+                               std::string* storage_root,
+                               std::string* error) {
+  if (storage_root == nullptr) {
+    if (error != nullptr) {
+      *error = "storage root output is required";
+    }
+    return false;
+  }
+  if (!requested.empty()) {
+    *storage_root = PathToUtf8(PathFromUtf8(requested).lexically_normal());
+    return true;
+  }
+  const DWORD required =
+      ::GetEnvironmentVariableW(L"APPDATA", nullptr, 0);
+  if (required == 0) {
+    if (error != nullptr) {
+      *error = "APPDATA is required for Operit2 runtime storage";
+    }
+    return false;
+  }
+  std::wstring app_data(required, L'\0');
+  const DWORD written =
+      ::GetEnvironmentVariableW(L"APPDATA", app_data.data(), required);
+  if (written == 0 || written >= required) {
+    if (error != nullptr) {
+      *error = "Unable to read APPDATA for Operit2 runtime storage";
+    }
+    return false;
+  }
+  app_data.resize(written);
+  *storage_root = PathToUtf8(std::filesystem::path(app_data) / L"Operit2");
+  return true;
+}
+
+/// Builds Flutter storage path values for a resolved Windows root.
+flutter::EncodableValue WindowsStoragePaths(const std::string& storage_root) {
+  const std::filesystem::path root = PathFromUtf8(storage_root);
+  flutter::EncodableMap paths;
+  paths[flutter::EncodableValue("storageRoot")] =
+      flutter::EncodableValue(PathToUtf8(root));
+  paths[flutter::EncodableValue("runtimeRoot")] =
+      flutter::EncodableValue(PathToUtf8(root / "runtime"));
+  paths[flutter::EncodableValue("workspaceRoot")] =
+      flutter::EncodableValue(PathToUtf8(root / "workspaces"));
+  return flutter::EncodableValue(paths);
+}
 
 class OperitRuntimePlatformTask {
  public:
@@ -111,6 +183,11 @@ class OperitRuntimeLibrary {
       }
       create_ = reinterpret_cast<BridgeCreate>(
           GetProcAddress(library_, "operit_flutter_bridge_create"));
+      create_with_storage_root_ =
+          reinterpret_cast<BridgeCreateWithStorageRoot>(
+              GetProcAddress(
+                  library_,
+                  "operit_flutter_bridge_create_with_storage_root"));
       create_error_ = reinterpret_cast<BridgeCreateError>(
           GetProcAddress(library_, "operit_flutter_bridge_create_error"));
       destroy_ = reinterpret_cast<BridgeDestroy>(
@@ -139,7 +216,7 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_remote_pair_finish"));
       free_string_ = reinterpret_cast<BridgeFreeString>(
           GetProcAddress(library_, "operit_flutter_bridge_free_string"));
-      if (create_ == nullptr ||
+      if (create_ == nullptr || create_with_storage_root_ == nullptr ||
           destroy_ == nullptr || call_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
           next_watch_channel_event_ == nullptr ||
@@ -151,7 +228,12 @@ class OperitRuntimeLibrary {
         return false;
       }
     }
-    handle_ = create_();
+    std::string storage_root;
+    if (!ResolveWindowsStorageRoot(
+            configured_storage_root_, &storage_root, error)) {
+      return false;
+    }
+    handle_ = create_with_storage_root_(storage_root.c_str());
     if (handle_ == nullptr) {
       AssignError(error, ReadCreateError());
       return false;
@@ -273,6 +355,23 @@ class OperitRuntimeLibrary {
     return TakeBridgeString(raw_response, response, error);
   }
 
+  /// Sets the storage root used when the runtime handle is created.
+  bool SetStorageRoot(const std::string& storage_root, std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (handle_ != nullptr) {
+      AssignError(
+          error,
+          "Runtime storage root cannot change after runtime creation");
+      return false;
+    }
+    std::string resolved;
+    if (!ResolveWindowsStorageRoot(storage_root, &resolved, error)) {
+      return false;
+    }
+    configured_storage_root_ = std::move(resolved);
+    return true;
+  }
+
  private:
   bool EnsureReadyThreadSafe(std::string* error) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -312,8 +411,10 @@ class OperitRuntimeLibrary {
 
   HMODULE library_ = nullptr;
   BridgeHandle handle_ = nullptr;
+  std::string configured_storage_root_;
   std::mutex mutex_;
   BridgeCreate create_ = nullptr;
+  BridgeCreateWithStorageRoot create_with_storage_root_ = nullptr;
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
   BridgeCall call_ = nullptr;
@@ -527,6 +628,42 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
              result) {
         std::string response;
         std::string error;
+        if (method_call.method_name().compare(
+                "localRuntimeStoragePaths") == 0) {
+          const std::string* requested_root =
+              StringMapValue(method_call, "storageRoot");
+          if (requested_root == nullptr) {
+            result->Error(
+                "INVALID_ARGS",
+                "localRuntimeStoragePaths expects storageRoot");
+            return;
+          }
+          std::string storage_root;
+          if (!ResolveWindowsStorageRoot(
+                  *requested_root, &storage_root, &error)) {
+            result->Error("RUNTIME_STORAGE_PATHS_ERROR", error);
+            return;
+          }
+          result->Success(WindowsStoragePaths(storage_root));
+          return;
+        }
+        if (method_call.method_name().compare(
+                "setLocalRuntimeStorage") == 0) {
+          const std::string* storage_root =
+              StringMapValue(method_call, "storageRoot");
+          if (storage_root == nullptr) {
+            result->Error(
+                "INVALID_ARGS",
+                "setLocalRuntimeStorage expects storageRoot");
+            return;
+          }
+          if (!runtime_library->SetStorageRoot(*storage_root, &error)) {
+            result->Error("RUNTIME_STORAGE_SET_ERROR", error);
+            return;
+          }
+          result->Success();
+          return;
+        }
         if (method_call.method_name().compare("call") == 0) {
           const std::string* request = StringArgument(method_call);
           if (request == nullptr) {

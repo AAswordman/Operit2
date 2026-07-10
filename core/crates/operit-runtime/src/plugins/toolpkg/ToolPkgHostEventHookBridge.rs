@@ -7,11 +7,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    toolPkgPackageManager, ToolPkgHostEventRegistration,
-};
-use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_HOST_EVENT;
-use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_HOST_EVENT;
+use operit_plugin_sdk::toolpkg::ToolPkgHooks::ToolPkgHostEventRegistration;
+use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static HOST_EVENT_HOOKS: OnceLock<Mutex<Vec<ToolPkgHostEventRegistration>>> = OnceLock::new();
@@ -20,10 +19,14 @@ static HOST_EVENT_SCHEDULE_GENERATION: OnceLock<Arc<AtomicU64>> = OnceLock::new(
 pub struct ToolPkgHostEventHookBridge;
 
 impl ToolPkgHostEventHookBridge {
-    pub fn register() {}
+    /// Registers host event hook support for one application runtime.
+    pub fn register(_runtime: ToolPkgBridgeRuntime) {}
 
     #[allow(non_snake_case)]
-    pub fn syncToolPkgRegistrations(activeContainers: Vec<ToolPkgContainerRuntime>) {
+    pub fn syncToolPkgRegistrations(
+        runtime: &ToolPkgBridgeRuntime,
+        activeContainers: Vec<ToolPkgContainerRuntime>,
+    ) {
         let hooks = activeContainers
             .iter()
             .flat_map(|container| {
@@ -51,7 +54,7 @@ impl ToolPkgHostEventHookBridge {
             "plugin.toolpkg.host_event.sync",
             &[("hookCount", hookCount.to_string())],
         );
-        syncHostEventSchedules();
+        syncHostEventSchedules(runtime);
     }
 
     /// Dispatch a host event to all matching ToolPkg hooks.
@@ -60,7 +63,7 @@ impl ToolPkgHostEventHookBridge {
     ///
     /// `eventPayload` is the JSON payload delivered to the handler function.
     #[allow(non_snake_case)]
-    pub fn dispatchHostEvent(source: &str, eventPayload: Value) {
+    pub fn dispatchHostEvent(runtime: &ToolPkgBridgeRuntime, source: &str, eventPayload: Value) {
         let hooks = HOST_EVENT_HOOKS
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
@@ -76,7 +79,7 @@ impl ToolPkgHostEventHookBridge {
             ],
         );
 
-        let manager = toolPkgPackageManager();
+        let manager = runtime.package_manager();
         for hook in hooks {
             if !hook.enabled {
                 continue;
@@ -152,7 +155,7 @@ fn hostEventHookMatchesPayload(hook: &ToolPkgHostEventRegistration, payload: &Va
 }
 
 #[allow(non_snake_case)]
-fn syncHostEventSchedules() {
+fn syncHostEventSchedules(runtime: &ToolPkgBridgeRuntime) {
     let generation = hostEventScheduleGeneration();
     let currentGeneration = generation.fetch_add(1, Ordering::SeqCst) + 1;
     let hooks = HOST_EVENT_HOOKS
@@ -166,10 +169,18 @@ fn syncHostEventSchedules() {
             continue;
         }
         match hook.source.as_str() {
-            "timer" => scheduleTimerHostEvent(hook, currentGeneration, Arc::clone(&generation)),
-            "interval" => {
-                scheduleIntervalHostEvent(hook, currentGeneration, Arc::clone(&generation))
-            }
+            "timer" => scheduleTimerHostEvent(
+                runtime.clone(),
+                hook,
+                currentGeneration,
+                Arc::clone(&generation),
+            ),
+            "interval" => scheduleIntervalHostEvent(
+                runtime.clone(),
+                hook,
+                currentGeneration,
+                Arc::clone(&generation),
+            ),
             _ => {}
         }
     }
@@ -177,6 +188,7 @@ fn syncHostEventSchedules() {
 
 #[allow(non_snake_case)]
 fn scheduleTimerHostEvent(
+    runtime: ToolPkgBridgeRuntime,
     hook: ToolPkgHostEventRegistration,
     generation: u64,
     generationState: Arc<AtomicU64>,
@@ -190,6 +202,7 @@ fn scheduleTimerHostEvent(
             return;
         }
         ToolPkgHostEventHookBridge::dispatchHostEvent(
+            &runtime,
             "timer",
             timerHostEventPayload(&hook, delayMs),
         );
@@ -198,6 +211,7 @@ fn scheduleTimerHostEvent(
 
 #[allow(non_snake_case)]
 fn scheduleIntervalHostEvent(
+    runtime: ToolPkgBridgeRuntime,
     hook: ToolPkgHostEventRegistration,
     generation: u64,
     generationState: Arc<AtomicU64>,
@@ -211,6 +225,7 @@ fn scheduleIntervalHostEvent(
             return;
         }
         ToolPkgHostEventHookBridge::dispatchHostEvent(
+            &runtime,
             "interval",
             intervalHostEventPayload(&hook, intervalMs),
         );

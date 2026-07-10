@@ -4,6 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 
 use operit_host_api::RuntimeStorageHost;
+use operit_util::RuntimeStorageLayout::{
+    MODEL_CONFIGS_PREFERENCES_PATH, TTS_CONFIGS_PREFERENCES_PATH,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -1576,6 +1579,22 @@ impl PreferencesSyncDescriptor {
             .to_string();
         Self::new("preferences", entityType, entityId, "upsert")
     }
+
+    #[allow(non_snake_case)]
+    /// Builds the standard sync descriptor for a host-relative storage path.
+    pub fn forStoragePath(storagePath: &str) -> Self {
+        let path = Path::new(storagePath);
+        let fileName = path
+            .file_name()
+            .expect("preferences storage path must include a file name")
+            .to_string_lossy()
+            .to_string();
+        let entityType = fileName
+            .trim_end_matches(".preferences.json")
+            .trim_end_matches(".json")
+            .to_string();
+        Self::new("preferences", entityType, storagePath.to_string(), "upsert")
+    }
 }
 
 struct PreferencesDataStoreChangeSignal {
@@ -1623,19 +1642,34 @@ impl PreferencesDataStore {
     pub fn new(path: PathBuf) -> Self {
         let changeSignal = preferencesDataStoreChangeSignal(&path);
         let sharedState = preferencesDataStoreSharedState(&path);
-        let rootDir = path
-            .parent()
-            .map(Path::to_path_buf)
-            .expect("preferences path must include a parent directory");
         Self {
             storagePath: runtimeStoragePath(&path),
             storageHost: defaultRuntimeStorageHost(),
             encryption: None,
-            syncOperationStore: Some(SyncOperationStore::adjacentTo(RuntimeStorePaths::new(
-                rootDir,
-            ))),
+            syncOperationStore: Some(SyncOperationStore::native(RuntimeStorePaths::default())),
             syncDescriptor: Some(PreferencesSyncDescriptor::forPreferencesPath(&path)),
             path,
+            changeSignal,
+            sharedState,
+        }
+    }
+
+    #[allow(non_snake_case)]
+    /// Creates an encrypted and synced preferences store backed by the default runtime storage host.
+    pub fn newEncryptedSynced(path: PathBuf) -> Self {
+        let storageHost = defaultRuntimeStorageHost();
+        let storagePath = runtimeStoragePath(&path);
+        let changeSignal = preferencesDataStoreChangeSignal(&path);
+        let sharedState = preferencesDataStoreSharedState(&path);
+        let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
+            .expect("preferences encryption key must be available");
+        Self {
+            path: path.clone(),
+            storagePath,
+            storageHost,
+            encryption: Some(encryption),
+            syncOperationStore: Some(SyncOperationStore::native(RuntimeStorePaths::default())),
+            syncDescriptor: Some(PreferencesSyncDescriptor::forPreferencesPath(&path)),
             changeSignal,
             sharedState,
         }
@@ -1685,6 +1719,30 @@ impl PreferencesDataStore {
     }
 
     #[allow(non_snake_case)]
+    /// Creates a synced preferences store backed by an explicit storage host and path.
+    pub fn newSyncedWithStorage(
+        storageHost: Arc<dyn RuntimeStorageHost>,
+        storagePath: impl Into<String>,
+        syncRootPath: impl Into<String>,
+    ) -> Self {
+        let storagePath = storagePath.into();
+        let path = PathBuf::from(&storagePath);
+        let changeSignal = preferencesDataStoreChangeSignal(&path);
+        let sharedState = preferencesDataStoreSharedState(&path);
+        let syncDescriptor = PreferencesSyncDescriptor::forStoragePath(&storagePath);
+        Self {
+            path: path.clone(),
+            storagePath,
+            storageHost: storageHost.clone(),
+            encryption: None,
+            syncOperationStore: Some(SyncOperationStore::new(storageHost, syncRootPath)),
+            syncDescriptor: Some(syncDescriptor),
+            changeSignal,
+            sharedState,
+        }
+    }
+
+    #[allow(non_snake_case)]
     /// Creates an encrypted preferences store backed by an explicit storage host and path.
     pub fn newEncryptedWithStorage(
         storageHost: Arc<dyn RuntimeStorageHost>,
@@ -1708,6 +1766,32 @@ impl PreferencesDataStore {
         }
     }
 
+    #[allow(non_snake_case)]
+    /// Creates an encrypted and synced preferences store backed by an explicit storage host and path.
+    pub fn newEncryptedSyncedWithStorage(
+        storageHost: Arc<dyn RuntimeStorageHost>,
+        storagePath: impl Into<String>,
+        syncRootPath: impl Into<String>,
+    ) -> Self {
+        let storagePath = storagePath.into();
+        let path = PathBuf::from(&storagePath);
+        let changeSignal = preferencesDataStoreChangeSignal(&path);
+        let sharedState = preferencesDataStoreSharedState(&path);
+        let syncDescriptor = PreferencesSyncDescriptor::forStoragePath(&storagePath);
+        let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
+            .expect("preferences encryption key must be available");
+        Self {
+            path: path.clone(),
+            storagePath,
+            storageHost: storageHost.clone(),
+            encryption: Some(encryption),
+            syncOperationStore: Some(SyncOperationStore::new(storageHost, syncRootPath)),
+            syncDescriptor: Some(syncDescriptor),
+            changeSignal,
+            sharedState,
+        }
+    }
+
     /// Returns the logical path associated with this preferences store.
     pub fn path(&self) -> &Path {
         &self.path
@@ -1719,9 +1803,20 @@ impl PreferencesDataStore {
         entityId: &str,
         payload: serde_json::Value,
     ) -> Result<(), PreferencesDataStoreError> {
+        Self::applySyncedPreferencesWithStorage(defaultRuntimeStorageHost(), entityId, payload)
+    }
+
+    #[allow(non_snake_case)]
+    /// Applies a synced preferences payload with an explicit storage host.
+    pub fn applySyncedPreferencesWithStorage(
+        storageHost: Arc<dyn RuntimeStorageHost>,
+        entityId: &str,
+        payload: serde_json::Value,
+    ) -> Result<(), PreferencesDataStoreError> {
         let preferences: Preferences = serde_json::from_value(payload)?;
         let content = serde_json::to_string_pretty(&preferences)?;
-        defaultRuntimeStorageHost().writeBytes(entityId, content.as_bytes())?;
+        let contentBytes = preferencesSyncStorageContent(storageHost.as_ref(), entityId, content)?;
+        storageHost.writeBytes(entityId, &contentBytes)?;
         let path = RuntimeStorePaths::default().root_dir().join(entityId);
         {
             let sharedState = preferencesDataStoreSharedState(&path);
@@ -1907,6 +2002,28 @@ impl PreferencesDataStore {
         *version += 1;
         self.changeSignal.changed.notify_all();
     }
+}
+
+#[allow(non_snake_case)]
+/// Returns stored bytes for a synced preferences payload.
+fn preferencesSyncStorageContent(
+    storageHost: &dyn RuntimeStorageHost,
+    storagePath: &str,
+    content: String,
+) -> Result<Vec<u8>, PreferencesDataStoreError> {
+    if encryptedSyncedPreferencesPath(storagePath) {
+        let encryption = PreferencesEncryption::load_or_create(storageHost)
+            .expect("preferences encryption key must be available");
+        encryption.encrypt(storagePath, content.as_bytes())
+    } else {
+        Ok(content.into_bytes())
+    }
+}
+
+#[allow(non_snake_case)]
+/// Reports whether a synced preferences path is stored encrypted.
+fn encryptedSyncedPreferencesPath(storagePath: &str) -> bool {
+    storagePath == MODEL_CONFIGS_PREFERENCES_PATH || storagePath == TTS_CONFIGS_PREFERENCES_PATH
 }
 
 #[allow(non_snake_case)]

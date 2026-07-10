@@ -10,13 +10,13 @@ use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequ
 use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_tools::tools::AIToolHandler::AIToolHandler;
-use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
-use operit_tools::ToolExecutionManager::AITool;
 use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerToolPermission, RuntimeHostInteractionToolPermissionPayload,
     RuntimeHostInteractionToolPermissionTool, RuntimeHostInteractionToolPermissionToolParameter,
 };
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
+use operit_tools::ToolExecutionManager::AITool;
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -94,12 +94,15 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
     core.localApplicationMut().onCreate()?;
     {
         let application = core.localApplicationMut();
+        let enhanced_ai_service = EnhancedAIService::new(
+            application.toolHandler.clone(),
+            application.providerRuntimeContext.clone(),
+        );
         let mut holder = application
             .chatRuntimeHolder
             .try_lock()
             .map_err(|_| "Chat runtime holder is busy".to_string())?;
-        holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService =
-            Some(EnhancedAIService::new(ConversationService));
+        holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService = Some(enhanced_ai_service);
     }
     install_link_permission_requester(&mut core);
     let accepted_sessions = load_link_server_sessions()?;
@@ -146,8 +149,7 @@ pub(crate) fn load_link_host_device_id() -> Result<String, String> {
 }
 
 pub(crate) fn install_link_permission_requester(core: &mut operit_core_proxy::LocalCoreProxy) {
-    let context = core.localApplicationMut().hostManager.clone();
-    let handler = AIToolHandler::getInstance(context);
+    let handler = core.localApplicationMut().toolHandler.clone();
     handler
         .getToolPermissionSystem()
         .setPermissionRequester(move |tool, description| {

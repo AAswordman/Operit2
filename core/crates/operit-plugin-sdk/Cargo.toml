@@ -1,0 +1,17 @@
+[package]
+name = "operit-plugin-sdk"
+version = "2.0.0-preview.3"
+edition.workspace = true
+license.workspace = true
+publish = true
+description = "Public plugin package models, ToolPkg parsers, and JavaScript execution contracts for Operit."
+readme = "README.md"
+repository = "https://github.com/AAswordman/Operit2"
+documentation = "https://docs.rs/operit-plugin-sdk"
+
+[dependencies]
+json5.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zip.workspace = true

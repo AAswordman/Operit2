@@ -1,5 +1,5 @@
-use operit_host_api::HostManager::HostManager;
 use crate::AppLogger::AppLogger;
+use operit_host_api::HostManager::HostManager;
 use operit_host_api::{OCRLanguage, OCRQuality};
 
 const TAG: &str = "OCRUtils";
@@ -102,11 +102,7 @@ impl OCRUtils {
     }
 
     #[allow(non_snake_case)]
-    pub fn recognizeText(
-        context: &HostManager,
-        imagePath: &str,
-        quality: Quality,
-    ) -> String {
+    pub fn recognizeText(context: &HostManager, imagePath: &str, quality: Quality) -> String {
         let latinResult = Self::recognizeTextFromPathInternal(
             context,
             imagePath,

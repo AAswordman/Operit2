@@ -1,8 +1,14 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use operit_host_api::{HostError, RuntimeStorageEntry, RuntimeStorageHost};
+use operit_host_api::{HostError, HostSecretStore, RuntimeStorageEntry, RuntimeStorageHost};
 use serde_json::Value;
+
+use crate::PreferencesEncryption::tests::{
+    loadOrCreateWithSecretStoreForTest, ENCRYPTION_HOST_SECRET_KEY_FOR_TEST,
+};
+use crate::SyncOperationStore::{SyncClock, SyncOperationStore};
+use operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH;
 
 use super::{
     combine2, combine5, mutableStateFlow, stringPreferencesKey, Preferences, PreferencesDataStore,
@@ -111,6 +117,11 @@ struct MemoryStorageHost {
     files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
 }
 
+#[derive(Clone, Default)]
+struct MemorySecretStore {
+    secrets: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+}
+
 impl RuntimeStorageHost for MemoryStorageHost {
     fn rootDir(&self) -> Option<std::path::PathBuf> {
         None
@@ -172,6 +183,79 @@ impl RuntimeStorageHost for MemoryStorageHost {
     }
 }
 
+impl HostSecretStore for MemorySecretStore {
+    /// Reads secret bytes from the in-memory test secret store.
+    fn readSecret(&self, key: &str) -> operit_host_api::HostResult<Option<Vec<u8>>> {
+        let secrets = self
+            .secrets
+            .lock()
+            .map_err(|error| HostError::new(error.to_string()))?;
+        Ok(secrets.get(key).cloned())
+    }
+
+    /// Writes secret bytes into the in-memory test secret store.
+    fn writeSecret(&self, key: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+        let mut secrets = self
+            .secrets
+            .lock()
+            .map_err(|error| HostError::new(error.to_string()))?;
+        secrets.insert(key.to_string(), content.to_vec());
+        Ok(())
+    }
+
+    /// Deletes secret bytes from the in-memory test secret store.
+    fn deleteSecret(&self, key: &str) -> operit_host_api::HostResult<()> {
+        let mut secrets = self
+            .secrets
+            .lock()
+            .map_err(|error| HostError::new(error.to_string()))?;
+        secrets.remove(key);
+        Ok(())
+    }
+}
+
+#[test]
+/// Verifies that legacy encrypted preferences keys move into host secrets.
+fn preferences_encryption_migrates_old_secure_key_into_host_secret_store() {
+    let host = MemoryStorageHost::default();
+    let secretStore = MemorySecretStore::default();
+    let legacyKey = br#"{
+  "format": "operit.preferences.encryption.key",
+  "version": 1,
+  "algorithm": "XChaCha20Poly1305",
+  "keyId": "legacy-key-id",
+  "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+}"#;
+
+    host.writeBytes("secure/preferences_encryption_key.json", legacyKey)
+        .expect("legacy key write");
+
+    let encryption = loadOrCreateWithSecretStoreForTest(&host, Some(&secretStore))
+        .expect("migrated encryption key");
+    let encrypted = encryption
+        .encrypt(
+            "runtime/config/preferences/migration_test.json",
+            b"secret preferences",
+        )
+        .expect("encrypted bytes");
+    let decrypted = encryption
+        .decrypt("runtime/config/preferences/migration_test.json", &encrypted)
+        .expect("decrypted bytes");
+
+    assert_eq!(decrypted, b"secret preferences");
+    assert_eq!(
+        secretStore
+            .readSecret(ENCRYPTION_HOST_SECRET_KEY_FOR_TEST)
+            .expect("host secret read"),
+        Some(legacyKey.to_vec())
+    );
+    assert_eq!(
+        host.exists("secure/preferences_encryption_key.json")
+            .expect("legacy key exists check"),
+        false
+    );
+}
+
 #[test]
 fn encrypted_store_round_trips_without_plaintext_file() {
     let host = Arc::new(MemoryStorageHost::default());
@@ -220,6 +304,87 @@ fn encrypted_store_round_trips_without_plaintext_file() {
         roundTrip.get(&stringPreferencesKey("user_info")),
         Some(&"{\"login\":\"codex\"}".to_string())
     );
+}
+
+#[test]
+/// Verifies encrypted-only stores write no sync operations.
+fn encrypted_store_does_not_record_sync_operations() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let store = PreferencesDataStore::newEncryptedWithStorage(
+        host.clone(),
+        "runtime/config/preferences/github_auth_preferences.json",
+    );
+
+    let mut preferences = Preferences::default();
+    preferences.set(
+        &stringPreferencesKey("access_token"),
+        "github-secret-token".to_string(),
+    );
+
+    store.replace(preferences).expect("store write");
+
+    assert_eq!(
+        host.list("runtime/sync")
+            .expect("sync directory list")
+            .len(),
+        0
+    );
+}
+
+#[test]
+/// Verifies encrypted synced stores hide secrets in files and sync logs.
+fn encrypted_synced_store_records_decryptable_operation_without_plaintext_log() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let store = PreferencesDataStore::newEncryptedSyncedWithStorage(
+        host.clone(),
+        MODEL_CONFIGS_PREFERENCES_PATH,
+        "runtime/sync",
+    );
+
+    let mut preferences = Preferences::default();
+    preferences.set(
+        &stringPreferencesKey("api_key"),
+        "sk-model-secret".to_string(),
+    );
+    preferences.set(
+        &stringPreferencesKey("provider_list"),
+        "[\"DEEPSEEK\"]".to_string(),
+    );
+
+    store.replace(preferences).expect("store write");
+
+    let storedPreferences = host
+        .readBytes(MODEL_CONFIGS_PREFERENCES_PATH)
+        .expect("encrypted preferences file");
+    let storedPreferencesJson: Value =
+        serde_json::from_slice(&storedPreferences).expect("encrypted preferences envelope");
+    assert_eq!(
+        storedPreferencesJson["format"],
+        "operit.preferences.encrypted"
+    );
+    assert!(String::from_utf8(storedPreferences)
+        .expect("encrypted preferences utf8")
+        .find("sk-model-secret")
+        .is_none());
+
+    let operationEntries = host
+        .list("runtime/sync/operations")
+        .expect("operation directory list");
+    assert_eq!(operationEntries.len(), 1);
+    let operationLog = String::from_utf8(
+        host.readBytes(&operationEntries[0].path)
+            .expect("operation log"),
+    )
+    .expect("operation log utf8");
+    assert!(operationLog.find("sk-model-secret").is_none());
+    assert!(operationLog.find("operit.preferences.encrypted").is_some());
+
+    let operations = SyncOperationStore::new(host, "runtime/sync")
+        .operationsSince(&SyncClock::empty(), &["preferences".to_string()], 10)
+        .expect("decoded operations");
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0].entityId, MODEL_CONFIGS_PREFERENCES_PATH);
+    assert_eq!(operations[0].payload["api_key"], "sk-model-secret");
 }
 
 #[test]

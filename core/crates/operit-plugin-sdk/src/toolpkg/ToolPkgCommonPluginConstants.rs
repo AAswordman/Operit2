@@ -65,6 +65,7 @@ pub const TOOLPKG_REGISTRATION_AI_PROVIDER: &str = "registerToolPkgAiProvider";
 pub const TOOLPKG_NAV_SURFACE_TOOLBOX: &str = "toolbox";
 pub const TOOLPKG_NAV_SURFACE_MAIN_SIDEBAR_PLUGINS: &str = "main_sidebar_plugins";
 
+/// Builds the globally unique route id used by a ToolPkg UI route.
 #[allow(non_snake_case)]
 pub fn buildToolPkgRouteId(containerPackageName: &str, uiRouteId: &str) -> String {
     format!("toolpkg:{containerPackageName}:ui:{uiRouteId}")

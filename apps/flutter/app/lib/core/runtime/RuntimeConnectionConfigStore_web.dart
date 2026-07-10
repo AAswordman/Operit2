@@ -10,26 +10,51 @@ const String _runtimeConnectionStorageKey =
     'operit2.client.link.runtime_connection';
 const String _outboundSessionsStorageKey =
     'operit2.client.link.outbound_sessions';
+const String _localRuntimeStorageKey = 'operit2.client.runtime.local_storage';
 
 class RuntimeConnectionConfigStore {
   const RuntimeConnectionConfigStore._();
 
   static Future<RuntimeConnectionConfig> read() async {
     final remoteSessions = await OutboundLinkSessionStore.read();
+    final storageConfig = await LocalRuntimeStorageConfigStore.read();
     final content = html.window.localStorage[_runtimeConnectionStorageKey];
     if (content == null) {
       return RuntimeConnectionConfig.local().copyWith(
         remoteSessions: remoteSessions,
+        localStorage: storageConfig,
       );
     }
     return RuntimeConnectionConfig.fromJson(
       jsonDecode(content) as Map<String, Object?>,
       remoteSessions: remoteSessions,
-    );
+    ).copyWith(localStorage: storageConfig);
   }
 
   static Future<void> write(RuntimeConnectionConfig config) async {
     html.window.localStorage[_runtimeConnectionStorageKey] =
+        const JsonEncoder.withIndent('  ').convert(config);
+    await LocalRuntimeStorageConfigStore.write(config.localStorage);
+  }
+}
+
+class LocalRuntimeStorageConfigStore {
+  const LocalRuntimeStorageConfigStore._();
+
+  /// Reads persisted local runtime storage config.
+  static Future<LocalRuntimeStorageConfig> read() async {
+    final content = html.window.localStorage[_localRuntimeStorageKey];
+    if (content == null) {
+      return LocalRuntimeStorageConfig.platformDefault();
+    }
+    return LocalRuntimeStorageConfig.fromJson(
+      jsonDecode(content) as Map<String, Object?>,
+    );
+  }
+
+  /// Writes persisted local runtime storage config.
+  static Future<void> write(LocalRuntimeStorageConfig config) async {
+    html.window.localStorage[_localRuntimeStorageKey] =
         const JsonEncoder.withIndent('  ').convert(config);
   }
 }

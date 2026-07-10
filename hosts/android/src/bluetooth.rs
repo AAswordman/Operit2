@@ -4,16 +4,14 @@ use operit_host_api::{
     BluetoothBleCharacteristicAddress, BluetoothBleConnectRequest, BluetoothBleNotificationData,
     BluetoothBleServicesData, BluetoothBleSubscribeRequest, BluetoothBleWriteAndReadRequest,
     BluetoothBleWriteRequest, BluetoothBondedDevicesData, BluetoothClassicAcceptRequest,
-    BluetoothClassicConnectRequest, BluetoothClassicListenRequest, BluetoothHost,
-    BluetoothPayload, BluetoothReadData, BluetoothReadRequest, BluetoothScanRequest,
-    BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData,
-    HostError, HostResult,
+    BluetoothClassicConnectRequest, BluetoothClassicListenRequest, BluetoothHost, BluetoothPayload,
+    BluetoothReadData, BluetoothReadRequest, BluetoothScanRequest, BluetoothScanResultData,
+    BluetoothSessionData, BluetoothStateData, BluetoothTransferData, HostError, HostResult,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
-pub type AndroidBluetoothController =
-    Arc<dyn Fn(&str, Value) -> HostResult<Value> + Send + Sync>;
+pub type AndroidBluetoothController = Arc<dyn Fn(&str, Value) -> HostResult<Value> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct AndroidBluetoothHost {
@@ -30,13 +28,15 @@ impl AndroidBluetoothHost {
         T: DeserializeOwned,
     {
         let value = (self.controller)(command, params)?;
-        serde_json::from_value(value)
-            .map_err(|error| HostError::new(format!("Android Bluetooth response decode failed: {error}")))
+        serde_json::from_value(value).map_err(|error| {
+            HostError::new(format!("Android Bluetooth response decode failed: {error}"))
+        })
     }
 
     fn requestParams<T: serde::Serialize>(request: T) -> HostResult<Value> {
-        serde_json::to_value(request)
-            .map_err(|error| HostError::new(format!("Android Bluetooth request encode failed: {error}")))
+        serde_json::to_value(request).map_err(|error| {
+            HostError::new(format!("Android Bluetooth request encode failed: {error}"))
+        })
     }
 }
 
@@ -165,14 +165,20 @@ impl BluetoothHost for AndroidBluetoothHost {
         &self,
         request: BluetoothBleWriteAndReadRequest,
     ) -> HostResult<BluetoothReadData> {
-        self.execute("ble_write_and_read_characteristic", Self::requestParams(request)?)
+        self.execute(
+            "ble_write_and_read_characteristic",
+            Self::requestParams(request)?,
+        )
     }
 
     fn bluetoothBleSubscribeCharacteristic(
         &self,
         request: BluetoothBleSubscribeRequest,
     ) -> HostResult<BluetoothTransferData> {
-        self.execute("ble_subscribe_characteristic", Self::requestParams(request)?)
+        self.execute(
+            "ble_subscribe_characteristic",
+            Self::requestParams(request)?,
+        )
     }
 
     fn bluetoothBleReadNotifications(

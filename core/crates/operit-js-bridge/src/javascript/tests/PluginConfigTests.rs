@@ -49,7 +49,7 @@ fn plugin_config_proxy_persists_and_reads_values() {
         serde_json::Value::String("zh-CN".to_string()),
     );
 
-    let output = state.executeScriptFunctionOnCurrentThread(
+    let output = state.execute_script_function_on_current_thread(
         script,
         "plugin_config_roundtrip",
         &params,

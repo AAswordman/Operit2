@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::AIService::{AIService, AiServiceError, SendMessageRequest};
+use crate::chat::llmprovider::AIService::{AIService, AiServiceError, SendMessageRequest};
 use crate::chat::llmprovider::RequestConcurrencyRegistry::RequestSemaphore;
 use crate::chat::llmprovider::SlidingWindowRateLimiter::SlidingWindowRateLimiter;
-use operit_model::PromptTurn::PromptTurn;
 use operit_model::OpenAIModels::ModelOption;
+use operit_model::PromptTurn::PromptTurn;
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::RevisableTextStreamLike;
 

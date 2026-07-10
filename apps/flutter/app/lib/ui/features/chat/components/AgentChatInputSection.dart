@@ -103,7 +103,9 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
   OverlayEntry? _modelPopupEntry;
   OverlayEntry? _inputMenuPopupEntry;
   OverlayEntry? _attachmentPopupEntry;
-  StreamSubscription<Map<core_proxy.FunctionType, core_proxy.FunctionModelBinding>>?
+  StreamSubscription<
+    Map<core_proxy.FunctionType, core_proxy.FunctionModelBinding>
+  >?
   _modelBindingSubscription;
   bool _draggingFiles = false;
   String _modelLabel = '';
@@ -1304,9 +1306,10 @@ class _AttachmentPackageOptionTile extends StatelessWidget {
 Future<List<_AttachmentPackageOption>> _loadAttachmentPackageOptions(
   ChatViewModel viewModel,
 ) async {
-  final packageManager = viewModel.clients.permissionsPackToolPackageManager;
-  final permissionsSkillRuntimeSkillRepository = viewModel.clients.permissionsSkillRuntimeSkillRepository;
-  final permissionsMcpRuntimeMcpLocalServer = viewModel.clients.permissionsMcpRuntimeMcpLocalServer;
+  final packageManager = viewModel.clients.application.packageManager();
+  final skillRepository = viewModel.clients.application.skillRepository();
+  final permissionsMcpRuntimeMcpLocalServer =
+      viewModel.clients.permissionsMcpRuntimeMcpLocalServer;
   final options = <String, _AttachmentPackageOption>{};
 
   final availablePackages = await packageManager.getAvailablePackages();
@@ -1331,7 +1334,7 @@ Future<List<_AttachmentPackageOption>> _loadAttachmentPackageOptions(
     );
   }
 
-  final skillPackages = await permissionsSkillRuntimeSkillRepository.getAiVisibleSkillPackages();
+  final skillPackages = await skillRepository.getAiVisibleSkillPackages();
   final skillEntries = skillPackages.entries.toList()
     ..sort((left, right) => left.key.compareTo(right.key));
   for (final entry in skillEntries) {
@@ -1346,8 +1349,10 @@ Future<List<_AttachmentPackageOption>> _loadAttachmentPackageOptions(
     );
   }
 
-  final mcpServers = await permissionsMcpRuntimeMcpLocalServer.getAllMcpServers();
-  final mcpMetadata = await permissionsMcpRuntimeMcpLocalServer.getAllPluginMetadata();
+  final mcpServers = await permissionsMcpRuntimeMcpLocalServer
+      .getAllMcpServers();
+  final mcpMetadata = await permissionsMcpRuntimeMcpLocalServer
+      .getAllPluginMetadata();
   final mcpEntries = mcpServers.entries.toList()
     ..sort((left, right) => left.key.compareTo(right.key));
   for (final entry in mcpEntries) {

@@ -1,0 +1,13 @@
+[package]
+name = "operit-provider-api-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Third-party provider implementation example for operit-providers"
+
+[workspace]
+
+[dependencies]
+operit-providers = { path = "../../crates/operit-providers" }
+async-trait = "0.1"
+tokio = { version = "1", features = ["macros", "rt"] }

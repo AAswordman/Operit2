@@ -98,14 +98,22 @@ class WorkspaceTerminalSessions {
     );
   }
 
+  /// Returns the host-declared terminal type for manual PTY creation.
+  Future<String> defaultTerminalType() {
+    return _terminal.defaultTerminalType();
+  }
+
+  /// Starts a typed PTY session.
   Future<String> startPtySession({
     required String sessionName,
+    required String terminalType,
     required String workingDirectory,
     required int rows,
     required int columns,
   }) {
     return _terminal.startTerminalPty(
       sessionName: sessionName,
+      terminalType: terminalType,
       workingDir: workingDirectory,
       rows: rows,
       cols: columns,

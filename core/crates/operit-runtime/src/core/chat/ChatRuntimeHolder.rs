@@ -3,26 +3,36 @@ use std::collections::HashMap;
 use crate::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use crate::services::core::ChatHistoryDelegate::ChatSelectionMode;
 use crate::services::ChatServiceCore::ChatServiceCore;
-use operit_host_api::HostManager::HostManager;
-use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
+use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
+
+#[derive(Clone)]
+struct ChatRuntimeDependencies {
+    toolHandler: AIToolHandler,
+    providerRuntimeContext: ProviderRuntimeContext,
+}
 
 /// Builds chat service cores for each runtime slot.
 pub struct ChatRuntimeCoreFactory {
-    hostManager: Option<HostManager>,
+    runtimeDependencies: Option<ChatRuntimeDependencies>,
 }
 
 impl ChatRuntimeCoreFactory {
     /// Creates a factory used before host capabilities have been installed.
     pub fn bootstrap() -> Self {
-        Self { hostManager: None }
+        Self {
+            runtimeDependencies: None,
+        }
     }
 
-    /// Creates a factory that wires chat cores to host-backed tools and services.
-    pub fn new(hostManager: HostManager) -> Self {
+    /// Creates a factory that wires chat cores to runtime dependencies.
+    pub fn new(toolHandler: AIToolHandler, providerRuntimeContext: ProviderRuntimeContext) -> Self {
         Self {
-            hostManager: Some(hostManager),
+            runtimeDependencies: Some(ChatRuntimeDependencies {
+                toolHandler,
+                providerRuntimeContext,
+            }),
         }
     }
 
@@ -34,10 +44,10 @@ impl ChatRuntimeCoreFactory {
                 ChatSelectionMode::LOCAL_ONLY
             }
         });
-        if let Some(hostManager) = &self.hostManager {
-            core.enhancedAiService = Some(EnhancedAIService::newWithToolHandler(
-                ConversationService,
-                AIToolHandler::getInstance(hostManager.clone()),
+        if let Some(runtimeDependencies) = &self.runtimeDependencies {
+            core.enhancedAiService = Some(EnhancedAIService::new(
+                runtimeDependencies.toolHandler.clone(),
+                runtimeDependencies.providerRuntimeContext.clone(),
             ));
         }
         core
@@ -58,10 +68,16 @@ impl ChatRuntimeHolder {
         Self::newWithFactory(ChatRuntimeCoreFactory::bootstrap())
     }
 
-    /// Creates a holder that injects host capabilities into newly created cores.
+    /// Creates a holder that injects runtime dependencies into newly created cores.
     #[allow(non_snake_case)]
-    pub fn newWithHostManager(hostManager: HostManager) -> Self {
-        Self::newWithFactory(ChatRuntimeCoreFactory::new(hostManager))
+    pub fn newWithRuntimeDependencies(
+        toolHandler: AIToolHandler,
+        providerRuntimeContext: ProviderRuntimeContext,
+    ) -> Self {
+        Self::newWithFactory(ChatRuntimeCoreFactory::new(
+            toolHandler,
+            providerRuntimeContext,
+        ))
     }
 
     /// Creates a holder with a custom core factory and eager main/floating cores.

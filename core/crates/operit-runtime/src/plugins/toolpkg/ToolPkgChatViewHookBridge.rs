@@ -1,13 +1,11 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde_json::Value;
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
-    toolPkgPackageManager, ToolPkgChatViewHookRegistration,
-};
-use operit_tools::tools::packTool::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_VIEW;
-use operit_tools::tools::packTool::ToolPkgParser::ToolPkgContainerRuntime;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_VIEW;
+use operit_plugin_sdk::toolpkg::ToolPkgHooks::ToolPkgChatViewHookRegistration;
+use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static CHAT_VIEW_HOOKS: OnceLock<Mutex<Vec<ToolPkgChatViewHookRegistration>>> = OnceLock::new();
@@ -46,19 +44,23 @@ pub struct ChatViewHookParams {
 pub struct ToolPkgChatViewHookBridge;
 
 impl ToolPkgChatViewHookBridge {
-    pub fn register() {
-        static INSTALLED: AtomicBool = AtomicBool::new(false);
-        if INSTALLED.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        let manager = toolPkgPackageManager();
-        manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(|activeContainers| {
-            ToolPkgChatViewHookBridge::syncAndReplayToolPkgRegistrations(activeContainers);
+    /// Registers chat view hooks for one application runtime.
+    pub fn register(runtime: ToolPkgBridgeRuntime) {
+        let manager = runtime.package_manager();
+        manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(move |activeContainers| {
+            ToolPkgChatViewHookBridge::syncAndReplayToolPkgRegistrations(
+                &runtime,
+                activeContainers,
+            );
         }));
     }
 
     #[allow(non_snake_case)]
-    pub fn onEvent(event: ChatViewEvent, params: ChatViewHookParams) {
+    pub fn onEvent(
+        runtime: &ToolPkgBridgeRuntime,
+        event: ChatViewEvent,
+        params: ChatViewHookParams,
+    ) {
         updateReplayableOpenViewParams(&event, &params);
         let activeHooks = CHAT_VIEW_HOOKS
             .get_or_init(|| Mutex::new(Vec::new()))
@@ -81,12 +83,15 @@ impl ToolPkgChatViewHookBridge {
         );
         let eventPayload = buildChatViewEventPayload(&params);
         for hook in activeHooks {
-            runChatViewHook(&hook, event.wireName(), eventPayload.clone());
+            runChatViewHook(runtime, &hook, event.wireName(), eventPayload.clone());
         }
     }
 
     #[allow(non_snake_case)]
-    pub fn syncAndReplayToolPkgRegistrations(activeContainers: Vec<ToolPkgContainerRuntime>) {
+    pub fn syncAndReplayToolPkgRegistrations(
+        runtime: &ToolPkgBridgeRuntime,
+        activeContainers: Vec<ToolPkgContainerRuntime>,
+    ) {
         let previousHooks = CHAT_VIEW_HOOKS
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
@@ -135,7 +140,7 @@ impl ToolPkgChatViewHookBridge {
         if replayParams.is_empty() {
             return;
         }
-        replayOpenViews(hooksToReplay, replayParams);
+        replayOpenViews(runtime, hooksToReplay, replayParams);
     }
 }
 
@@ -159,6 +164,7 @@ fn updateReplayableOpenViewParams(event: &ChatViewEvent, params: &ChatViewHookPa
 
 #[allow(non_snake_case)]
 fn replayOpenViews(
+    runtime: &ToolPkgBridgeRuntime,
     hooksToReplay: Vec<ToolPkgChatViewHookRegistration>,
     replayParams: Vec<ChatViewHookParams>,
 ) {
@@ -166,6 +172,7 @@ fn replayOpenViews(
         let eventPayload = buildChatViewEventPayload(&params);
         for hook in &hooksToReplay {
             runChatViewHook(
+                runtime,
                 hook,
                 ChatViewEvent::ViewOpened.wireName(),
                 eventPayload.clone(),
@@ -175,8 +182,13 @@ fn replayOpenViews(
 }
 
 #[allow(non_snake_case)]
-fn runChatViewHook(hook: &ToolPkgChatViewHookRegistration, eventName: &str, eventPayload: Value) {
-    let manager = toolPkgPackageManager();
+fn runChatViewHook(
+    runtime: &ToolPkgBridgeRuntime,
+    hook: &ToolPkgChatViewHookRegistration,
+    eventName: &str,
+    eventPayload: Value,
+) {
+    let manager = runtime.package_manager();
     ChainLogger::info(
         PLUGIN_CHAIN,
         "plugin.toolpkg.chat_view.run.start",

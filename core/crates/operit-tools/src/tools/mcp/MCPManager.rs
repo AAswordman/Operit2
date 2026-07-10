@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::tools::mcp_runtime::plugins::MCPBridgeClient::MCPBridgeClient;
 use operit_host_api::HostManager::HostManager;
 use operit_tools::tools::mcp::MCPServerConfig::MCPServerConfig;
-use crate::tools::mcp_runtime::plugins::MCPBridgeClient::MCPBridgeClient;
 
 #[derive(Clone)]
 pub struct MCPManager {

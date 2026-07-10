@@ -22,7 +22,7 @@ class PluginDetailsDialog extends StatefulWidget {
 
   final core_proxy.ToolPkgContainerRuntime plugin;
   final bool enabled;
-  final GeneratedPermissionsPackToolPackageManagerCoreProxy packageManager;
+  final GeneratedApplicationPackageManagerCoreProxy packageManager;
   final ValueChanged<bool> onEnabledChanged;
   final ValueChanged<String?> onOpenUi;
   final VoidCallback? onDeletePackage;

@@ -35,7 +35,8 @@ surfaces live here.
   support.
 - `src/tools/mcp/` and `src/tools/mcp_runtime/`: MCP tool and runtime support.
 - `src/tools/skill/` and `src/tools/skill_runtime/`: skill package support.
-- `src/tools/javascript.rs`: JS execution trait consumed by ToolPkg.
+- `src/tools/javascript.rs`: `JsExecutionHost` support, package runtime adapters,
+  and the parent-injected `JsExecutionProvider` binding.
 
 ## Runtime Support
 
@@ -49,6 +50,7 @@ edits.
 
 MCP and skill are part of this crate. Provider APIs are not tools and belong in
 `operit-providers`. The concrete JavaScript engine belongs in
-`operit-js-bridge`.
+`operit-js-bridge`. This crate implements the SDK `JsExecutionHost` contract;
+the top-level runtime injects an SDK `JsExecutionProvider`.
 
 See `core/CRATE_BOUNDARIES.md` for the full dependency direction.

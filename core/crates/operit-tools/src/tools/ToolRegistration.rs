@@ -1,11 +1,8 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use operit_tools::ConversationMarkupManager::ToolResult;
-use operit_tools::ToolExecutionManager::{
-    AITool, ToolEffect, ToolExecutionManager, ToolParameter, ToolValidationResult,
-};
 use operit_host_api::HostManager::HostManager;
+use operit_plugin_sdk::package::ToolPackage;
 use operit_tools::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, PACKAGE_PROXY_TOOL_NAME, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
 };
@@ -39,14 +36,17 @@ use operit_tools::tools::defaultTool::standard::StandardTerminalTools::{
 use operit_tools::tools::defaultTool::ToolGetter::ToolGetter;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
 use operit_tools::tools::mcp::MCPToolExecutor::MCPToolExecutor;
-use operit_tools::tools::packTool::PackageManager::PackageManager;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::AIToolHandler::{AIToolHandler, FnToolExecutor};
-use operit_tools::tools::ToolPackage::{PackageToolExecutor, ToolPackage};
+use operit_tools::tools::PackageToolExecutor::PackageToolExecutor;
 use operit_tools::tools::ToolResultDataClasses::{
     stringResultData, EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData,
     SleepResultData, ToolResultData,
 };
-use crate::runtime_support::toolRuntimeSupport;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{
+    AITool, ToolEffect, ToolExecutionManager, ToolParameter, ToolValidationResult,
+};
 
 /// Registers every built-in public and internal tool on the handler.
 #[allow(non_snake_case)]
@@ -87,7 +87,8 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
             }),
         }),
     );
-    if let Some(fileSystemTools) = ToolGetter::getFileSystemTools(context) {
+    if let Some(fileSystemTools) = ToolGetter::getFileSystemTools(context, handler.runtimeSupport())
+    {
         registerFileSystemTools(handler, fileSystemTools);
     }
     handler.registerTool(
@@ -98,7 +99,10 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
     registerMusicTools(handler, ToolGetter::getMusicTools(context));
     registerBluetoothTools(handler, ToolGetter::getBluetoothTools(context));
     registerMemoryPublicTools(handler);
-    registerChatTools(handler, StandardChatManagerTool::new());
+    registerChatTools(
+        handler,
+        StandardChatManagerTool::new(handler.runtimeSupport()),
+    );
 
     let packageManager = handler.getOrCreatePackageManager();
     let usePackageManager = packageManager.clone();
@@ -141,6 +145,7 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
     );
     let searchContext = context.clone();
     let searchPackageManager = packageManager.clone();
+    let searchRuntimeSupport = handler.runtimeSupport();
     handler.registerTool(
         SEARCH_TOOL_NAME.to_string(),
         Box::new(FnToolExecutor {
@@ -181,29 +186,27 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
                 let packageManagerGuard = searchPackageManager
                     .lock()
                     .expect("package manager mutex poisoned");
-                let roleCardToolAccess =
-                    toolRuntimeSupport().resolveCharacterCardToolAccess(
-                        runtimeContext
-                            .as_ref()
-                            .and_then(|context| context.callerCardId.as_deref()),
-                        &packageManagerGuard,
-                        None,
-                    );
+                let roleCardToolAccess = searchRuntimeSupport.resolveCharacterCardToolAccess(
+                    runtimeContext
+                        .as_ref()
+                        .and_then(|context| context.callerCardId.as_deref()),
+                    &packageManagerGuard,
+                    None,
+                );
                 let catalog = CliToolModeSupport::buildHiddenToolCatalog(
                     &searchContext,
                     &packageManagerGuard,
                     useEnglish,
                     &roleCardToolAccess,
                     &hostEnvironment,
+                    searchRuntimeSupport.as_ref(),
                 );
                 let results = CliToolModeSupport::searchHiddenToolCatalog(&catalog, &query, limit);
                 ToolResult {
                     toolName: tool.name.clone(),
                     success: true,
                     result: stringResultData(CliToolModeSupport::formatSearchResults(
-                        &query,
-                        &results,
-                        useEnglish,
+                        &query, &results, useEnglish,
                     )),
                     error: None,
                 }
@@ -239,7 +242,10 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
                     return error;
                 }
                 let Some(resolvedInvocation) = parsedInvocation else {
-                    return toolErrorResult(tool, "Missing required parameter: tool_name".to_string());
+                    return toolErrorResult(
+                        tool,
+                        "Missing required parameter: tool_name".to_string(),
+                    );
                 };
 
                 if CliToolModeSupport::isReservedProxyTarget(&resolvedInvocation.targetToolName) {
@@ -256,14 +262,14 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
                 let packageManagerGuard = packageManager
                     .lock()
                     .expect("package manager mutex poisoned");
-                let roleCardToolAccess =
-                    toolRuntimeSupport().resolveCharacterCardToolAccess(
-                        runtimeContext
-                            .as_ref()
-                            .and_then(|context| context.callerCardId.as_deref()),
-                        &packageManagerGuard,
-                        None,
-                    );
+                let proxyRuntimeSupport = proxyHandler.runtimeSupport();
+                let roleCardToolAccess = proxyRuntimeSupport.resolveCharacterCardToolAccess(
+                    runtimeContext
+                        .as_ref()
+                        .and_then(|context| context.callerCardId.as_deref()),
+                    &packageManagerGuard,
+                    None,
+                );
                 drop(packageManagerGuard);
 
                 let usePackageSourceName = if resolvedInvocation.targetToolName == "use_package" {
@@ -763,13 +769,15 @@ fn registerBluetoothTool(
 
 #[allow(non_snake_case)]
 fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
+    let readEnvironmentRuntimeSupport = handler.runtimeSupport();
     registerHttpTools(handler, ToolGetter::getHttpTools(context));
     if let Some(browserTools) = ToolGetter::getBrowserAutomationTools(context) {
         registerBrowserAutomationTools(handler, browserTools);
     }
     registerMemoryInternalTools(handler);
 
-    if let Some(fileSystemTools) = ToolGetter::getFileSystemTools(context) {
+    if let Some(fileSystemTools) = ToolGetter::getFileSystemTools(context, handler.runtimeSupport())
+    {
         handler.registerInternalTool(
             "apply_file".to_string(),
             Box::new(FileSystemToolExecutor {
@@ -868,7 +876,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                 valid: true,
                 errorMessage: String::new(),
             }),
-            invoke: Arc::new(|tool| {
+            invoke: Arc::new(move |tool| {
                 let key = requiredParameterValue(tool, "key");
                 if key.trim().is_empty() {
                     return ToolResult {
@@ -884,7 +892,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                         error: Some("Missing required parameter: key".to_string()),
                     };
                 }
-                match toolRuntimeSupport().readEnvironmentVariable(&key) {
+                match readEnvironmentRuntimeSupport.readEnvironmentVariable(&key) {
                     Ok(value) => ToolResult {
                         toolName: tool.name.clone(),
                         success: true,
@@ -913,6 +921,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
             }),
         }),
     );
+    let writeEnvironmentRuntimeSupport = handler.runtimeSupport();
     handler.registerInternalTool(
         "write_environment_variable".to_string(),
         Box::new(FnToolExecutor {
@@ -922,7 +931,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                 valid: true,
                 errorMessage: String::new(),
             }),
-            invoke: Arc::new(|tool| {
+            invoke: Arc::new(move |tool| {
                 let key = requiredParameterValue(tool, "key");
                 let value = tool
                     .parameters
@@ -948,9 +957,9 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                     };
                 }
                 let writeResult = if cleared {
-                    toolRuntimeSupport().removeEnvironmentVariable(&key)
+                    writeEnvironmentRuntimeSupport.removeEnvironmentVariable(&key)
                 } else {
-                    toolRuntimeSupport().writeEnvironmentVariable(&key, value.trim())
+                    writeEnvironmentRuntimeSupport.writeEnvironmentVariable(&key, value.trim())
                 };
                 if let Err(error) = writeResult {
                     return ToolResult {
@@ -969,7 +978,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                     };
                 }
 
-                match toolRuntimeSupport().readEnvironmentVariable(&key) {
+                match writeEnvironmentRuntimeSupport.readEnvironmentVariable(&key) {
                     Ok(current) => ToolResult {
                         toolName: tool.name.clone(),
                         success: true,
@@ -1123,7 +1132,10 @@ fn registerMemoryTool(
     operation: MemoryToolOperation,
     internal: bool,
 ) {
-    let executor = Box::new(MemoryToolExecutor { operation });
+    let executor = Box::new(MemoryToolExecutor {
+        operation,
+        runtimeSupport: handler.runtimeSupport(),
+    });
     if internal {
         handler.registerInternalTool(name.to_string(), executor);
     } else {
@@ -1338,7 +1350,7 @@ fn requiredParameterValue(tool: &AITool, name: &str) -> String {
 #[allow(non_snake_case)]
 fn registerPackageTools(
     handler: &AIToolHandler,
-    packageManager: Arc<Mutex<PackageManager>>,
+    packageManager: Arc<Mutex<RuntimePackageManager>>,
     toolPackage: ToolPackage,
 ) {
     let isMcpPackage = toolPackage.category == "MCP"
