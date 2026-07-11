@@ -10,7 +10,6 @@ use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::ModelConfigData::ResolvedModelConfig;
 use operit_model::PromptTurn::{toPromptTurns, PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ImagePoolManager::ImagePoolManager;
 use operit_util::MediaPoolManager::MediaPoolManager;
@@ -322,7 +321,7 @@ impl ModelConfigConnectionTester {
         fileName: &str,
         bytes: &[u8],
     ) -> Result<PathBuf, std::io::Error> {
-        let dir = RuntimeStorePaths::new(rootDir.to_path_buf()).model_connection_test_cache_dir();
+        let dir = rootDir.join("cache").join("model_connection_test");
         std::fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{}_{}", uuid::Uuid::new_v4(), fileName));
         std::fs::write(&path, bytes)?;

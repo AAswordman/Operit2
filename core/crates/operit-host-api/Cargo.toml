@@ -10,6 +10,7 @@ repository = "https://github.com/AAswordman/Operit2"
 documentation = "https://docs.rs/operit-host-api"
 
 [dependencies]
+async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

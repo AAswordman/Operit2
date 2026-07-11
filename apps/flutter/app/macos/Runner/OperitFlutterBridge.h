@@ -5,7 +5,9 @@
 #include <stddef.h>
 
 void *operit_flutter_bridge_create(void);
-void *operit_flutter_bridge_create_with_storage_root(const char *storage_root);
+void *operit_flutter_bridge_create_with_storage_roots(
+    const char *runtime_root,
+    const char *workspace_root);
 char *operit_flutter_bridge_create_error(void);
 void operit_flutter_bridge_destroy(void *handle);
 char *operit_flutter_bridge_call(void *handle, const uint8_t *request_ptr, uintptr_t request_len);

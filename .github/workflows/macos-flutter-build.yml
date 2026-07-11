@@ -11,18 +11,6 @@ on:
         options:
           - "false"
           - "true"
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/macos-flutter-build.yml"
-      - "tools/build_scripts/**"
-      - "apps/flutter/app/**"
-      - "apps/flutter/native/**"
-      - "core/**"
-      - "hosts/**"
-      - "plugins/**"
-
 jobs:
   build-macos:
     runs-on: macos-15

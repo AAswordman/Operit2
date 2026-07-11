@@ -33,11 +33,12 @@ use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
 use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerAudioPlay, requestOwnerBluetooth, requestOwnerBrowserAutomation,
-    requestOwnerComposeWebViewController, requestOwnerMusicPlayback,
+    requestOwnerBrowserSession, requestOwnerComposeWebViewController, requestOwnerMusicPlayback,
     requestOwnerSystemCaptureScreenshot, requestOwnerSystemLanguageCode,
     requestOwnerSystemRecognizeText, requestOwnerToolPermission, requestOwnerTtsPlayback,
     requestOwnerTtsSynthesis, requestOwnerWebVisit, RuntimeHostInteractionAudioPlayPayload,
     RuntimeHostInteractionBluetoothPayload, RuntimeHostInteractionBrowserAutomationPayload,
+    RuntimeHostInteractionBrowserSessionPayload,
     RuntimeHostInteractionComposeWebViewControllerPayload,
     RuntimeHostInteractionMusicPlaybackPayload, RuntimeHostInteractionSystemRecognizeTextPayload,
     RuntimeHostInteractionToolPermissionPayload, RuntimeHostInteractionToolPermissionTool,
@@ -298,6 +299,135 @@ impl operit_host_api::BrowserAutomationHost for FlutterBrowserAutomationBridge {
 }
 
 #[derive(Clone)]
+struct FlutterBrowserSessionBridge {}
+
+impl FlutterBrowserSessionBridge {
+    /// Creates a browser session bridge that delegates to the owner app.
+    fn new() -> Self {
+        Self {}
+    }
+
+    /// Sends one browser session command to the owner app.
+    fn requestCommand(
+        &self,
+        command: operit_host_api::BrowserSessionCommand,
+    ) -> operit_host_api::HostResult<operit_host_api::BrowserSessionCommandResult> {
+        let commandJson = serde_json::to_string(&command).map_err(|error| {
+            operit_host_api::HostError::new(format!(
+                "browser session command encode failed: {error}"
+            ))
+        })?;
+        let response = requestOwnerBrowserSession(
+            RuntimeHostInteractionBrowserSessionPayload { commandJson },
+            Duration::from_secs(60),
+        )
+        .map_err(operit_host_api::HostError::new)?;
+        serde_json::from_str(&response.resultJson).map_err(|error| {
+            operit_host_api::HostError::new(format!(
+                "browser session response decode failed: {error}"
+            ))
+        })
+    }
+
+    /// Builds a browser session command envelope.
+    fn command(action: &str) -> operit_host_api::BrowserSessionCommand {
+        operit_host_api::BrowserSessionCommand {
+            action: action.to_string(),
+            sessionId: None,
+            url: None,
+            script: None,
+            userAgent: None,
+            headers: BTreeMap::new(),
+            reveal: false,
+        }
+    }
+
+    /// Requires the command result to include a browser session.
+    fn requireSession(
+        result: operit_host_api::BrowserSessionCommandResult,
+        operation: &str,
+    ) -> operit_host_api::HostResult<operit_host_api::BrowserSessionInfo> {
+        result.session.ok_or_else(|| {
+            operit_host_api::HostError::new(format!(
+                "browser session {operation} result is missing session"
+            ))
+        })
+    }
+}
+
+impl operit_host_api::BrowserSessionHost for FlutterBrowserSessionBridge {
+    /// Lists interactive browser sessions owned by the Flutter app.
+    fn listBrowserSessions(
+        &self,
+    ) -> operit_host_api::HostResult<Vec<operit_host_api::BrowserSessionInfo>> {
+        let result = self.requestCommand(Self::command("list"))?;
+        Ok(result.sessions)
+    }
+
+    /// Creates an interactive browser session in the Flutter app.
+    fn createBrowserSession(
+        &self,
+        initialUrl: &str,
+        userAgent: Option<&str>,
+        headers: BTreeMap<String, String>,
+    ) -> operit_host_api::HostResult<operit_host_api::BrowserSessionInfo> {
+        let mut command = Self::command("create");
+        command.url = Some(initialUrl.to_string());
+        command.userAgent = userAgent.map(str::to_string);
+        command.headers = headers;
+        command.reveal = true;
+        Self::requireSession(self.requestCommand(command)?, "create")
+    }
+
+    /// Updates a browser session owned by the Flutter app.
+    fn updateBrowserSession(
+        &self,
+        sessionId: &str,
+        userAgent: Option<&str>,
+        headers: BTreeMap<String, String>,
+    ) -> operit_host_api::HostResult<operit_host_api::BrowserSessionInfo> {
+        let mut command = Self::command("update");
+        command.sessionId = Some(sessionId.to_string());
+        command.userAgent = userAgent.map(str::to_string);
+        command.headers = headers;
+        Self::requireSession(self.requestCommand(command)?, "update")
+    }
+
+    /// Submits a semantic browser command to the Flutter app.
+    fn submitBrowserCommand(
+        &self,
+        command: operit_host_api::BrowserSessionCommand,
+    ) -> operit_host_api::HostResult<operit_host_api::BrowserSessionCommandResult> {
+        self.requestCommand(command)
+    }
+
+    /// Reads a browser session snapshot from the Flutter app.
+    fn getBrowserSessionSnapshot(
+        &self,
+        sessionId: &str,
+    ) -> operit_host_api::HostResult<operit_host_api::BrowserSessionSnapshot> {
+        let mut command = Self::command("snapshot");
+        command.sessionId = Some(sessionId.to_string());
+        let result = self.requestCommand(command)?;
+        let session = Self::requireSession(result.clone(), "snapshot")?;
+        Ok(operit_host_api::BrowserSessionSnapshot {
+            session,
+            resultJson: result.resultJson,
+        })
+    }
+
+    /// Closes a browser session owned by the Flutter app.
+    fn closeBrowserSession(
+        &self,
+        sessionId: &str,
+    ) -> operit_host_api::HostResult<operit_host_api::BrowserSessionCommandResult> {
+        let mut command = Self::command("close");
+        command.sessionId = Some(sessionId.to_string());
+        self.requestCommand(command)
+    }
+}
+
+#[derive(Clone)]
 struct FlutterWebVisitBridge {}
 
 impl FlutterWebVisitBridge {
@@ -534,11 +664,17 @@ impl operit_host_api::SystemOperationHost for FlutterSystemOperationBridge {
 }
 
 impl OperitFlutterBridge {
+    /// Creates a bridge using the platform's explicit runtime and workspace roots.
     fn new() -> Result<Self, String> {
-        Self::new_with_storage_root(None)
+        let (runtime_root, workspace_root) = default_native_storage_roots()?;
+        Self::new_with_storage_roots(runtime_root, workspace_root)
     }
 
-    fn new_with_storage_root(storage_root: Option<PathBuf>) -> Result<Self, String> {
+    /// Creates a bridge using caller-supplied runtime and workspace roots.
+    fn new_with_storage_roots(
+        runtime_root: PathBuf,
+        workspace_root: PathBuf,
+    ) -> Result<Self, String> {
         #[cfg(not(target_arch = "wasm32"))]
         let runtime = {
             let mut runtimeBuilder = tokio::runtime::Builder::new_multi_thread();
@@ -548,6 +684,7 @@ impl OperitFlutterBridge {
                 .map_err(|error| error.to_string())?
         };
         let browserAutomationBridge = FlutterBrowserAutomationBridge::new();
+        let browserSessionBridge = FlutterBrowserSessionBridge::new();
         let webVisitBridge = FlutterWebVisitBridge::new();
         let composeDslWebViewBridge = FlutterComposeDslWebViewBridge::new();
         #[cfg(any(
@@ -558,9 +695,11 @@ impl OperitFlutterBridge {
         ))]
         let terminalHost = Arc::new(NativeTerminalHost::new());
         let mut core = create_local_core(
-            storage_root,
+            runtime_root,
+            workspace_root,
             Arc::new(webVisitBridge),
             Some(Arc::new(browserAutomationBridge)),
+            Some(Arc::new(browserSessionBridge)),
             Some(Arc::new(composeDslWebViewBridge)),
             #[cfg(any(
                 windows,
@@ -1101,18 +1240,15 @@ fn musicCommandPayload(command: &str) -> RuntimeHostInteractionMusicPlaybackPayl
     target_os = "macos"
 ))]
 fn create_local_core(
-    storage_root: Option<PathBuf>,
+    runtime_root: PathBuf,
+    workspace_root: PathBuf,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
+    browserSessionHost: Option<Arc<dyn operit_host_api::BrowserSessionHost>>,
     composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
     terminalHost: Arc<NativeTerminalHost>,
 ) -> Result<LocalCoreProxy, String> {
-    let root_dir = match storage_root {
-        Some(root_dir) => root_dir,
-        None => default_native_storage_root()?,
-    };
-    let appFilesRoot = root_dir.clone();
-    let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(root_dir));
+    let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(runtime_root, workspace_root));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
     #[cfg(target_os = "android")]
@@ -1130,10 +1266,12 @@ fn create_local_core(
         runtimeStorageHost,
         runtimeSqliteHost,
     )
-    .withHostSecretStore(hostSecretStore)
-    .withAppFilesRoot(appFilesRoot);
+    .withHostSecretStore(hostSecretStore);
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
+    }
+    if let Some(host) = browserSessionHost {
+        context = context.withBrowserSessionHost(host);
     }
     if let Some(host) = composeDslWebViewHost {
         context = context.withComposeDslWebViewHost(host);
@@ -1316,28 +1454,36 @@ fn create_local_core(
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "ios", target_os = "macos"))]
-fn default_native_storage_root() -> Result<PathBuf, String> {
-    Ok(NativeRuntimeStorageHost::defaultRoot())
+fn default_native_storage_roots() -> Result<(PathBuf, PathBuf), String> {
+    Ok((
+        NativeRuntimeStorageHost::defaultRuntimeRoot(),
+        NativeRuntimeStorageHost::defaultWorkspaceRoot(),
+    ))
 }
 
 #[cfg(target_os = "android")]
-fn default_native_storage_root() -> Result<PathBuf, String> {
-    Err("Android runtime storage root must be provided by the Android host".to_string())
+fn default_native_storage_roots() -> Result<(PathBuf, PathBuf), String> {
+    Err("Android runtime and workspace roots must be provided by the Android host".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn default_native_storage_roots() -> Result<(PathBuf, PathBuf), String> {
+    Ok((
+        NativeRuntimeStorageHost::defaultRuntimeRoot(),
+        NativeRuntimeStorageHost::defaultWorkspaceRoot(),
+    ))
 }
 
 #[cfg(target_os = "ios")]
 fn create_local_core(
-    storage_root: Option<PathBuf>,
+    runtime_root: PathBuf,
+    workspace_root: PathBuf,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
+    browserSessionHost: Option<Arc<dyn operit_host_api::BrowserSessionHost>>,
     composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
 ) -> Result<LocalCoreProxy, String> {
-    let root_dir = match storage_root {
-        Some(root_dir) => root_dir,
-        None => default_native_storage_root()?,
-    };
-    let appFilesRoot = root_dir.clone();
-    let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(root_dir));
+    let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(runtime_root, workspace_root));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
     let mut context = HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
@@ -1349,10 +1495,12 @@ fn create_local_core(
         runtimeStorageHost,
         runtimeSqliteHost,
     )
-    .withHostSecretStore(hostSecretStore)
-    .withAppFilesRoot(appFilesRoot);
+    .withHostSecretStore(hostSecretStore);
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
+    }
+    if let Some(host) = browserSessionHost {
+        context = context.withBrowserSessionHost(host);
     }
     if let Some(host) = composeDslWebViewHost {
         context = context.withComposeDslWebViewHost(host);
@@ -1510,9 +1658,11 @@ fn create_local_core(
 
 #[cfg(target_arch = "wasm32")]
 fn create_local_core(
-    _storage_root: Option<PathBuf>,
+    _runtime_root: PathBuf,
+    _workspace_root: PathBuf,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
+    browserSessionHost: Option<Arc<dyn operit_host_api::BrowserSessionHost>>,
     composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
 ) -> Result<LocalCoreProxy, String> {
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new());
@@ -1527,10 +1677,12 @@ fn create_local_core(
         runtimeStorageHost,
         runtimeSqliteHost,
     )
-    .withHostSecretStore(hostSecretStore)
-    .withAppFilesRoot(NativeRuntimeStorageHost::defaultRoot());
+    .withHostSecretStore(hostSecretStore);
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
+    }
+    if let Some(host) = browserSessionHost {
+        context = context.withBrowserSessionHost(host);
     }
     if let Some(host) = composeDslWebViewHost {
         context = context.withComposeDslWebViewHost(host);
@@ -1551,9 +1703,11 @@ fn create_local_core(
     target_arch = "wasm32"
 )))]
 fn create_local_core(
-    _storage_root: Option<PathBuf>,
+    _runtime_root: PathBuf,
+    _workspace_root: PathBuf,
     _webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     _browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
+    _browserSessionHost: Option<Arc<dyn operit_host_api::BrowserSessionHost>>,
     _composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
     #[cfg(any(windows, target_os = "linux", target_os = "android"))] _terminalHost: Arc<
         NativeTerminalHost,
@@ -1574,21 +1728,35 @@ pub extern "C" fn operit_flutter_bridge_create() -> *mut OperitFlutterBridge {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn operit_flutter_bridge_create_with_storage_root(
-    storage_root: *const c_char,
+pub unsafe extern "C" fn operit_flutter_bridge_create_with_storage_roots(
+    runtime_root: *const c_char,
+    workspace_root: *const c_char,
 ) -> *mut OperitFlutterBridge {
-    if storage_root.is_null() {
+    if runtime_root.is_null() {
         set_last_create_error("runtime storage root pointer is null".to_string());
         return std::ptr::null_mut();
     }
-    let storage_root = match CStr::from_ptr(storage_root).to_str() {
+    if workspace_root.is_null() {
+        set_last_create_error("workspace storage root pointer is null".to_string());
+        return std::ptr::null_mut();
+    }
+    let runtime_root = match CStr::from_ptr(runtime_root).to_str() {
         Ok(value) => PathBuf::from(value),
         Err(error) => {
             set_last_create_error(format!("runtime storage root is not valid UTF-8: {error}"));
             return std::ptr::null_mut();
         }
     };
-    match OperitFlutterBridge::new_with_storage_root(Some(storage_root)) {
+    let workspace_root = match CStr::from_ptr(workspace_root).to_str() {
+        Ok(value) => PathBuf::from(value),
+        Err(error) => {
+            set_last_create_error(format!(
+                "workspace storage root is not valid UTF-8: {error}"
+            ));
+            return std::ptr::null_mut();
+        }
+    };
+    match OperitFlutterBridge::new_with_storage_roots(runtime_root, workspace_root) {
         Ok(bridge) => Box::into_raw(Box::new(bridge)),
         Err(error) => {
             set_last_create_error(error);
@@ -2282,13 +2450,21 @@ mod android_jni {
     pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_create(
         mut env: JNIEnv,
         _class: JClass,
-        storage_root: JString,
+        runtime_root: JString,
+        workspace_root: JString,
         host: JObject,
     ) -> jlong {
-        let storage_root = match env.get_string(&storage_root) {
+        let runtime_root = match env.get_string(&runtime_root) {
             Ok(value) => PathBuf::from(String::from(value)),
             Err(error) => {
                 set_last_create_error(format!("runtime storage root is invalid: {error}"));
+                return 0;
+            }
+        };
+        let workspace_root = match env.get_string(&workspace_root) {
+            Ok(value) => PathBuf::from(String::from(value)),
+            Err(error) => {
+                set_last_create_error(format!("workspace storage root is invalid: {error}"));
                 return 0;
             }
         };
@@ -2312,7 +2488,7 @@ mod android_jni {
             set_last_create_error(error.to_string());
             return 0;
         }
-        match OperitFlutterBridge::new_with_storage_root(Some(storage_root)) {
+        match OperitFlutterBridge::new_with_storage_roots(runtime_root, workspace_root) {
             Ok(bridge) => Box::into_raw(Box::new(bridge)) as jlong,
             Err(error) => {
                 operit_host_android_native::clearAndroidHostSecretStoreBridge();

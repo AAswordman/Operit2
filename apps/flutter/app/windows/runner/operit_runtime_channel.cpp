@@ -24,7 +24,7 @@ namespace {
 
 using BridgeHandle = void*;
 using BridgeCreate = BridgeHandle (*)();
-using BridgeCreateWithStorageRoot = BridgeHandle (*)(const char*);
+using BridgeCreateWithStorageRoots = BridgeHandle (*)(const char*, const char*);
 using BridgeCreateError = char* (*)();
 using BridgeDestroy = void (*)(BridgeHandle);
 using BridgeCall = char* (*)(BridgeHandle, const unsigned char*, size_t);
@@ -73,19 +73,43 @@ std::string PathToUtf8(const std::filesystem::path& value) {
   return result;
 }
 
-/// Resolves the requested Windows storage root into a UTF-8 absolute path.
-bool ResolveWindowsStorageRoot(const std::string& requested,
-                               std::string* storage_root,
-                               std::string* error) {
-  if (storage_root == nullptr) {
+/// Normalizes one caller-supplied Windows storage root.
+bool NormalizeWindowsStorageRoot(const std::string& requested,
+                                 const char* label,
+                                 std::string* storage_root,
+                                 std::string* error) {
+  if (storage_root == nullptr || label == nullptr) {
     if (error != nullptr) {
-      *error = "storage root output is required";
+      *error = "storage root output and label are required";
     }
     return false;
   }
-  if (!requested.empty()) {
-    *storage_root = PathToUtf8(PathFromUtf8(requested).lexically_normal());
-    return true;
+  if (requested.empty()) {
+    if (error != nullptr) {
+      *error = std::string(label) + " is required";
+    }
+    return false;
+  }
+  const std::filesystem::path path = PathFromUtf8(requested).lexically_normal();
+  if (!path.is_absolute()) {
+    if (error != nullptr) {
+      *error = std::string(label) + " must be an absolute path";
+    }
+    return false;
+  }
+  *storage_root = PathToUtf8(path);
+  return true;
+}
+
+/// Resolves the default Windows runtime and workspace roots.
+bool ResolveWindowsDefaultStorageRoots(std::string* runtime_root,
+                                       std::string* workspace_root,
+                                       std::string* error) {
+  if (runtime_root == nullptr || workspace_root == nullptr) {
+    if (error != nullptr) {
+      *error = "runtime and workspace root outputs are required";
+    }
+    return false;
   }
   const DWORD required =
       ::GetEnvironmentVariableW(L"APPDATA", nullptr, 0);
@@ -105,20 +129,21 @@ bool ResolveWindowsStorageRoot(const std::string& requested,
     return false;
   }
   app_data.resize(written);
-  *storage_root = PathToUtf8(std::filesystem::path(app_data) / L"Operit2");
+  const std::filesystem::path base =
+      std::filesystem::path(app_data) / L"Operit2";
+  *runtime_root = PathToUtf8(base / L"runtime");
+  *workspace_root = PathToUtf8(base / L"workspaces");
   return true;
 }
 
-/// Builds Flutter storage path values for a resolved Windows root.
-flutter::EncodableValue WindowsStoragePaths(const std::string& storage_root) {
-  const std::filesystem::path root = PathFromUtf8(storage_root);
+/// Builds Flutter storage path values for resolved Windows roots.
+flutter::EncodableValue WindowsStoragePaths(const std::string& runtime_root,
+                                            const std::string& workspace_root) {
   flutter::EncodableMap paths;
-  paths[flutter::EncodableValue("storageRoot")] =
-      flutter::EncodableValue(PathToUtf8(root));
   paths[flutter::EncodableValue("runtimeRoot")] =
-      flutter::EncodableValue(PathToUtf8(root / "runtime"));
+      flutter::EncodableValue(runtime_root);
   paths[flutter::EncodableValue("workspaceRoot")] =
-      flutter::EncodableValue(PathToUtf8(root / "workspaces"));
+      flutter::EncodableValue(workspace_root);
   return flutter::EncodableValue(paths);
 }
 
@@ -183,11 +208,11 @@ class OperitRuntimeLibrary {
       }
       create_ = reinterpret_cast<BridgeCreate>(
           GetProcAddress(library_, "operit_flutter_bridge_create"));
-      create_with_storage_root_ =
-          reinterpret_cast<BridgeCreateWithStorageRoot>(
+      create_with_storage_roots_ =
+          reinterpret_cast<BridgeCreateWithStorageRoots>(
               GetProcAddress(
                   library_,
-                  "operit_flutter_bridge_create_with_storage_root"));
+                  "operit_flutter_bridge_create_with_storage_roots"));
       create_error_ = reinterpret_cast<BridgeCreateError>(
           GetProcAddress(library_, "operit_flutter_bridge_create_error"));
       destroy_ = reinterpret_cast<BridgeDestroy>(
@@ -216,7 +241,7 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_remote_pair_finish"));
       free_string_ = reinterpret_cast<BridgeFreeString>(
           GetProcAddress(library_, "operit_flutter_bridge_free_string"));
-      if (create_ == nullptr || create_with_storage_root_ == nullptr ||
+      if (create_ == nullptr || create_with_storage_roots_ == nullptr ||
           destroy_ == nullptr || call_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
           next_watch_channel_event_ == nullptr ||
@@ -228,12 +253,13 @@ class OperitRuntimeLibrary {
         return false;
       }
     }
-    std::string storage_root;
-    if (!ResolveWindowsStorageRoot(
-            configured_storage_root_, &storage_root, error)) {
+    if (configured_runtime_root_.empty() || configured_workspace_root_.empty()) {
+      AssignError(error, "Runtime and workspace roots must be configured before runtime creation");
       return false;
     }
-    handle_ = create_with_storage_root_(storage_root.c_str());
+    handle_ = create_with_storage_roots_(
+        configured_runtime_root_.c_str(),
+        configured_workspace_root_.c_str());
     if (handle_ == nullptr) {
       AssignError(error, ReadCreateError());
       return false;
@@ -355,20 +381,33 @@ class OperitRuntimeLibrary {
     return TakeBridgeString(raw_response, response, error);
   }
 
-  /// Sets the storage root used when the runtime handle is created.
-  bool SetStorageRoot(const std::string& storage_root, std::string* error) {
+  /// Sets the runtime and workspace roots used when the runtime handle is created.
+  bool SetStorageRoots(const std::string& runtime_root,
+                       const std::string& workspace_root,
+                       std::string* error) {
     std::lock_guard<std::mutex> lock(mutex_);
+    std::string resolved_runtime_root;
+    std::string resolved_workspace_root;
+    if (!NormalizeWindowsStorageRoot(
+            runtime_root, "runtimeRoot", &resolved_runtime_root, error)) {
+      return false;
+    }
+    if (!NormalizeWindowsStorageRoot(
+            workspace_root, "workspaceRoot", &resolved_workspace_root, error)) {
+      return false;
+    }
     if (handle_ != nullptr) {
+      if (configured_runtime_root_ == resolved_runtime_root &&
+          configured_workspace_root_ == resolved_workspace_root) {
+        return true;
+      }
       AssignError(
           error,
-          "Runtime storage root cannot change after runtime creation");
+          "Runtime and workspace roots cannot change after runtime creation");
       return false;
     }
-    std::string resolved;
-    if (!ResolveWindowsStorageRoot(storage_root, &resolved, error)) {
-      return false;
-    }
-    configured_storage_root_ = std::move(resolved);
+    configured_runtime_root_ = std::move(resolved_runtime_root);
+    configured_workspace_root_ = std::move(resolved_workspace_root);
     return true;
   }
 
@@ -411,10 +450,11 @@ class OperitRuntimeLibrary {
 
   HMODULE library_ = nullptr;
   BridgeHandle handle_ = nullptr;
-  std::string configured_storage_root_;
+  std::string configured_runtime_root_;
+  std::string configured_workspace_root_;
   std::mutex mutex_;
   BridgeCreate create_ = nullptr;
-  BridgeCreateWithStorageRoot create_with_storage_root_ = nullptr;
+  BridgeCreateWithStorageRoots create_with_storage_roots_ = nullptr;
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
   BridgeCall call_ = nullptr;
@@ -567,15 +607,16 @@ void EnsureWatchChannelPump(std::shared_ptr<OperitRuntimeLibrary> library) {
   }).detach();
 }
 
-void RespondRuntimeCallAsync(
-    std::string request,
+/// Runs one Rust bridge operation off the Windows platform thread.
+template <typename Operation>
+void RespondRuntimeStringAsync(
+    Operation operation,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  auto library = g_operit_runtime_library;
-  std::thread([library, request = std::move(request),
+  std::thread([operation = std::move(operation),
                result = std::move(result)]() mutable {
     std::string response;
     std::string error;
-    const bool ok = library->Call(request, &response, &error);
+    const bool ok = operation(&response, &error);
     PostOperitRuntimePlatformTask(
         [result = std::move(result), ok, response = std::move(response),
          error = std::move(error)]() mutable {
@@ -586,6 +627,19 @@ void RespondRuntimeCallAsync(
           }
         });
   }).detach();
+}
+
+/// Runs a core proxy call off the Windows platform thread.
+void RespondRuntimeCallAsync(
+    std::string request,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  auto library = g_operit_runtime_library;
+  RespondRuntimeStringAsync(
+      [library, request = std::move(request)](
+          std::string* response, std::string* error) {
+        return library->Call(request, response, error);
+      },
+      std::move(result));
 }
 
 }  // namespace
@@ -626,38 +680,61 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
       [runtime_library](const flutter::MethodCall<flutter::EncodableValue>& method_call,
          std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
              result) {
-        std::string response;
         std::string error;
         if (method_call.method_name().compare(
-                "localRuntimeStoragePaths") == 0) {
-          const std::string* requested_root =
-              StringMapValue(method_call, "storageRoot");
-          if (requested_root == nullptr) {
-            result->Error(
-                "INVALID_ARGS",
-                "localRuntimeStoragePaths expects storageRoot");
+                "localRuntimeStorageDefaults") == 0) {
+          std::string runtime_root;
+          std::string workspace_root;
+          if (!ResolveWindowsDefaultStorageRoots(
+                  &runtime_root, &workspace_root, &error)) {
+            result->Error("RUNTIME_STORAGE_DEFAULTS_ERROR", error);
             return;
           }
-          std::string storage_root;
-          if (!ResolveWindowsStorageRoot(
-                  *requested_root, &storage_root, &error)) {
+          result->Success(WindowsStoragePaths(runtime_root, workspace_root));
+          return;
+        }
+        if (method_call.method_name().compare(
+                "localRuntimeStoragePaths") == 0) {
+          const std::string* requested_runtime_root =
+              StringMapValue(method_call, "runtimeRoot");
+          const std::string* requested_workspace_root =
+              StringMapValue(method_call, "workspaceRoot");
+          if (requested_runtime_root == nullptr ||
+              requested_workspace_root == nullptr) {
+            result->Error(
+                "INVALID_ARGS",
+                "localRuntimeStoragePaths expects runtimeRoot and workspaceRoot");
+            return;
+          }
+          std::string runtime_root;
+          std::string workspace_root;
+          if (!NormalizeWindowsStorageRoot(
+                  *requested_runtime_root, "runtimeRoot", &runtime_root, &error) ||
+              !NormalizeWindowsStorageRoot(
+                  *requested_workspace_root,
+                  "workspaceRoot",
+                  &workspace_root,
+                  &error)) {
             result->Error("RUNTIME_STORAGE_PATHS_ERROR", error);
             return;
           }
-          result->Success(WindowsStoragePaths(storage_root));
+          result->Success(WindowsStoragePaths(runtime_root, workspace_root));
           return;
         }
         if (method_call.method_name().compare(
                 "setLocalRuntimeStorage") == 0) {
-          const std::string* storage_root =
-              StringMapValue(method_call, "storageRoot");
-          if (storage_root == nullptr) {
+          const std::string* runtime_root =
+              StringMapValue(method_call, "runtimeRoot");
+          const std::string* workspace_root =
+              StringMapValue(method_call, "workspaceRoot");
+          if (runtime_root == nullptr || workspace_root == nullptr) {
             result->Error(
                 "INVALID_ARGS",
-                "setLocalRuntimeStorage expects storageRoot");
+                "setLocalRuntimeStorage expects runtimeRoot and workspaceRoot");
             return;
           }
-          if (!runtime_library->SetStorageRoot(*storage_root, &error)) {
+          if (!runtime_library->SetStorageRoots(
+                  *runtime_root, *workspace_root, &error)) {
             result->Error("RUNTIME_STORAGE_SET_ERROR", error);
             return;
           }
@@ -679,12 +756,13 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
             result->Error("INVALID_ARGS", "watchSnapshot expects a JSON string");
             return;
           }
-          if (runtime_library->WatchSnapshot(*request, &response,
-                                                      &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
+          RespondRuntimeStringAsync(
+              [runtime_library, request = *request](
+                  std::string* response, std::string* operation_error) {
+                return runtime_library->WatchSnapshot(
+                    request, response, operation_error);
+              },
+              std::move(result));
           return;
         }
         if (method_call.method_name().compare("watchStream") == 0) {
@@ -693,13 +771,17 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
             result->Error("INVALID_ARGS", "watchStream expects a JSON string");
             return;
           }
-          if (runtime_library->WatchStream(*request, &response,
-                                                    &error)) {
-            EnsureWatchChannelPump(runtime_library);
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
+          RespondRuntimeStringAsync(
+              [runtime_library, request = *request](
+                  std::string* response, std::string* operation_error) {
+                if (!runtime_library->WatchStream(
+                        request, response, operation_error)) {
+                  return false;
+                }
+                EnsureWatchChannelPump(runtime_library);
+                return true;
+              },
+              std::move(result));
           return;
         }
         if (method_call.method_name().compare("closeWatchStream") == 0) {
@@ -709,12 +791,13 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                           "closeWatchStream expects a subscription id");
             return;
           }
-          if (runtime_library->CloseWatchStream(
-                  *subscription, &response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
+          RespondRuntimeStringAsync(
+              [runtime_library, subscription = *subscription](
+                  std::string* response, std::string* operation_error) {
+                return runtime_library->CloseWatchStream(
+                    subscription, response, operation_error);
+              },
+              std::move(result));
           return;
         }
         if (method_call.method_name().compare("startWebAccessServer") == 0) {
@@ -749,15 +832,27 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                            "startWebAccessServer expects bindAddress, token, shutdownToken, webRoot, deviceId, acceptedSessions, acceptedSessionStorePath, pairingCodePath, deviceInfo, enableWebAccess and enableDiscovery");
               return;
             }
-            if (runtime_library->StartWebAccessServer(
-                    *bind_address, *token, *shutdown_token, *web_root,
-                    *device_id, *accepted_sessions, *accepted_session_store_path,
-                    *pairing_code_path, *device_info, *enable_web_access,
-                    *enable_discovery, &response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
+          RespondRuntimeStringAsync(
+              [runtime_library,
+               bind_address = *bind_address,
+               token = *token,
+               shutdown_token = *shutdown_token,
+               web_root = *web_root,
+               device_id = *device_id,
+               accepted_sessions = *accepted_sessions,
+               accepted_session_store_path = *accepted_session_store_path,
+               pairing_code_path = *pairing_code_path,
+               device_info = *device_info,
+               enable_web_access = *enable_web_access,
+               enable_discovery = *enable_discovery](
+                  std::string* response, std::string* operation_error) {
+                return runtime_library->StartWebAccessServer(
+                    bind_address, token, shutdown_token, web_root, device_id,
+                    accepted_sessions, accepted_session_store_path,
+                    pairing_code_path, device_info, enable_web_access,
+                    enable_discovery, response, operation_error);
+              },
+              std::move(result));
           return;
         }
         if (method_call.method_name().compare("discoverDevices") == 0) {
@@ -768,22 +863,13 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
             return;
           }
           std::string timeout = std::to_string(timeout_ms);
-          auto library = runtime_library;
-          std::thread([library, timeout = std::move(timeout),
-                       result = std::move(result)]() mutable {
-            std::string response;
-            std::string error;
-            const bool ok = library->DiscoverDevices(timeout, &response, &error);
-            PostOperitRuntimePlatformTask(
-                [result = std::move(result), ok, response = std::move(response),
-                 error = std::move(error)]() mutable {
-                  if (ok) {
-                    result->Success(flutter::EncodableValue(response));
-                  } else {
-                    result->Error("RUNTIME_BRIDGE_ERROR", error);
-                  }
-                });
-          }).detach();
+          RespondRuntimeStringAsync(
+              [runtime_library, timeout = std::move(timeout)](
+                  std::string* response, std::string* operation_error) {
+                return runtime_library->DiscoverDevices(
+                    timeout, response, operation_error);
+              },
+              std::move(result));
           return;
         }
         if (method_call.method_name().compare(
@@ -815,11 +901,13 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
           return;
         }
         if (method_call.method_name().compare("stopWebAccessServer") == 0) {
-          if (runtime_library->StopWebAccessServer(&response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
+          RespondRuntimeStringAsync(
+              [runtime_library](
+                  std::string* response, std::string* operation_error) {
+                return runtime_library->StopWebAccessServer(
+                    response, operation_error);
+              },
+              std::move(result));
           return;
         }
         if (method_call.method_name().compare("remotePairStart") == 0) {
@@ -834,12 +922,17 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                           "remotePairStart expects baseUrl, tokenHash and clientDeviceInfo");
             return;
           }
-          if (runtime_library->RemotePairStart(
-                  *base_url, *token_hash, *client_device_info, &response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
+          RespondRuntimeStringAsync(
+              [runtime_library,
+               base_url = *base_url,
+               token_hash = *token_hash,
+               client_device_info = *client_device_info](
+                  std::string* response, std::string* operation_error) {
+                return runtime_library->RemotePairStart(
+                    base_url, token_hash, client_device_info, response,
+                    operation_error);
+              },
+              std::move(result));
           return;
         }
         if (method_call.method_name().compare("remotePairFinish") == 0) {
@@ -852,12 +945,15 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                           "remotePairFinish expects pairingId and pairingCode");
             return;
           }
-          if (runtime_library->RemotePairFinish(
-                  *pairing_id, *pairing_code, &response, &error)) {
-            result->Success(flutter::EncodableValue(response));
-          } else {
-            result->Error("RUNTIME_BRIDGE_ERROR", error);
-          }
+          RespondRuntimeStringAsync(
+              [runtime_library,
+               pairing_id = *pairing_id,
+               pairing_code = *pairing_code](
+                  std::string* response, std::string* operation_error) {
+                return runtime_library->RemotePairFinish(
+                    pairing_id, pairing_code, response, operation_error);
+              },
+              std::move(result));
           return;
         }
         result->NotImplemented();

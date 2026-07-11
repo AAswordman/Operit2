@@ -103,12 +103,23 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
   /// Lets the user select and migrate the local storage location.
   Future<void> _changeStorageLocation() async {
     final l10n = AppLocalizations.of(context)!;
-    final storageRoot = await FilePicker.getDirectoryPath();
-    if (storageRoot == null || storageRoot.trim().isEmpty) {
+    final currentPaths = await RuntimeConnectionManager.instance
+        .localRuntimeStoragePaths();
+    if (!mounted) {
+      return;
+    }
+    final selection = await _StorageLocationEditDialog.show(
+      context: context,
+      initialPaths: currentPaths,
+    );
+    if (selection == null) {
       return;
     }
     final paths = await RuntimeConnectionManager.instance
-        .localRuntimeStoragePathsForRoot(storageRoot);
+        .localRuntimeStoragePathsForRoots(
+          selection.runtimeRoot,
+          selection.workspaceRoot,
+        );
     if (!mounted) {
       return;
     }
@@ -123,7 +134,10 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     try {
       await _runStorageMigrate(paths);
       await RuntimeConnectionManager.instance
-          .persistMigratedLocalRuntimeStorage(storageRoot);
+          .persistMigratedLocalRuntimeStorage(
+            paths.runtimeRoot,
+            paths.workspaceRoot,
+          );
       if (!mounted) {
         return;
       }
@@ -721,12 +735,8 @@ class _StorageLocationLine extends StatelessWidget {
           trailing: FilledButton.tonalIcon(
             onPressed: onChange,
             icon: const Icon(Icons.drive_folder_upload_outlined),
-            label: Text(l10n.settingsDataChooseStorageRoot),
+            label: Text(l10n.settingsDataChooseStorageRoots),
           ),
-        ),
-        _InfoLine(
-          label: l10n.settingsDataStorageRoot,
-          value: paths.storageRoot,
         ),
         _InfoLine(
           label: l10n.settingsDataRuntimeRoot,
@@ -968,10 +978,6 @@ class _StorageLocationConfirmDialog extends StatelessWidget {
             Text(l10n.settingsDataStorageConfirmMessage),
             const SizedBox(height: 16),
             _InfoLine(
-              label: l10n.settingsDataStorageRoot,
-              value: paths.storageRoot,
-            ),
-            _InfoLine(
               label: l10n.settingsDataRuntimeRoot,
               value: paths.runtimeRoot,
             ),
@@ -992,6 +998,188 @@ class _StorageLocationConfirmDialog extends StatelessWidget {
           child: Text(l10n.settingsDataStorageConfirmAction),
         ),
       ],
+    );
+  }
+}
+
+class _StorageRootSelection {
+  const _StorageRootSelection({
+    required this.runtimeRoot,
+    required this.workspaceRoot,
+  });
+
+  final String runtimeRoot;
+  final String workspaceRoot;
+}
+
+class _StorageLocationEditDialog extends StatefulWidget {
+  const _StorageLocationEditDialog({required this.initialPaths});
+
+  final RuntimeStoragePaths initialPaths;
+
+  /// Shows the editable runtime and workspace root dialog.
+  static Future<_StorageRootSelection?> show({
+    required BuildContext context,
+    required RuntimeStoragePaths initialPaths,
+  }) {
+    return showDialog<_StorageRootSelection>(
+      context: context,
+      builder: (context) =>
+          _StorageLocationEditDialog(initialPaths: initialPaths),
+    );
+  }
+
+  /// Creates the state for the editable storage root dialog.
+  @override
+  State<_StorageLocationEditDialog> createState() =>
+      _StorageLocationEditDialogState();
+}
+
+class _StorageLocationEditDialogState
+    extends State<_StorageLocationEditDialog> {
+  late final TextEditingController _runtimeRootController;
+  late final TextEditingController _workspaceRootController;
+  String? _errorText;
+
+  /// Initializes the editable roots from the active configuration.
+  @override
+  void initState() {
+    super.initState();
+    _runtimeRootController = TextEditingController(
+      text: widget.initialPaths.runtimeRoot,
+    );
+    _workspaceRootController = TextEditingController(
+      text: widget.initialPaths.workspaceRoot,
+    );
+  }
+
+  /// Releases the storage path text controllers.
+  @override
+  void dispose() {
+    _runtimeRootController.dispose();
+    _workspaceRootController.dispose();
+    super.dispose();
+  }
+
+  /// Selects a new runtime root directory.
+  Future<void> _selectRuntimeRoot() async {
+    final path = await FilePicker.getDirectoryPath();
+    if (path == null || path.trim().isEmpty) {
+      return;
+    }
+    setState(() {
+      _runtimeRootController.text = path.trim();
+      _errorText = null;
+    });
+  }
+
+  /// Selects a new workspace root directory.
+  Future<void> _selectWorkspaceRoot() async {
+    final path = await FilePicker.getDirectoryPath();
+    if (path == null || path.trim().isEmpty) {
+      return;
+    }
+    setState(() {
+      _workspaceRootController.text = path.trim();
+      _errorText = null;
+    });
+  }
+
+  /// Returns the explicitly entered runtime and workspace roots.
+  void _submit() {
+    final l10n = AppLocalizations.of(context)!;
+    final runtimeRoot = _runtimeRootController.text.trim();
+    final workspaceRoot = _workspaceRootController.text.trim();
+    if (runtimeRoot.isEmpty || workspaceRoot.isEmpty) {
+      setState(() {
+        _errorText = l10n.settingsDataStorageRootsRequired;
+      });
+      return;
+    }
+    Navigator.of(context).pop(
+      _StorageRootSelection(
+        runtimeRoot: runtimeRoot,
+        workspaceRoot: workspaceRoot,
+      ),
+    );
+  }
+
+  /// Builds the editable runtime and workspace root dialog.
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return AlertDialog(
+      title: Text(l10n.settingsDataEditStorageRootsTitle),
+      content: SizedBox(
+        width: 620,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _StorageRootEditField(
+              controller: _runtimeRootController,
+              label: l10n.settingsDataRuntimeRoot,
+              onBrowse: _selectRuntimeRoot,
+            ),
+            const SizedBox(height: 14),
+            _StorageRootEditField(
+              controller: _workspaceRootController,
+              label: l10n.settingsDataWorkspaceRoot,
+              onBrowse: _selectWorkspaceRoot,
+            ),
+            if (_errorText != null) ...<Widget>[
+              const SizedBox(height: 12),
+              Text(
+                _errorText!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(onPressed: _submit, child: Text(l10n.ok)),
+      ],
+    );
+  }
+}
+
+class _StorageRootEditField extends StatelessWidget {
+  const _StorageRootEditField({
+    required this.controller,
+    required this.label,
+    required this.onBrowse,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final VoidCallback onBrowse;
+
+  /// Builds one editable storage root with a directory picker.
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        suffixIcon: IconButton(
+          onPressed: onBrowse,
+          tooltip: label,
+          icon: const Icon(Icons.folder_open_outlined),
+        ),
+      ),
+      autocorrect: false,
+      enableSuggestions: false,
+      style: const TextStyle(
+        fontFamily: 'monospace',
+        fontSize: 13,
+        letterSpacing: 0,
+      ),
     );
   }
 }

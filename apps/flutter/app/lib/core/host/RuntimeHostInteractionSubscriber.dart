@@ -5,7 +5,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-import '../../ui/features/packages/screens/ToolPkgComposeDslWebView.dart';
 import '../bridge/PlatformCoreProxy.dart';
 import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../browser/BrowserAutomationBridge.dart';
@@ -14,6 +13,8 @@ import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart';
 import '../web_visit/WebVisitBridge.dart';
 import '../web_visit/WebVisitModels.dart';
+import 'ComposeWebViewControllerBridge.dart';
+import '../../ui/features/chat/components/workspace/browser/automation/WorkspaceBrowserSessionRegistry.dart';
 
 class RuntimeHostInteractionSubscriber {
   RuntimeHostInteractionSubscriber._();
@@ -25,6 +26,7 @@ class RuntimeHostInteractionSubscriber {
   static const List<RuntimeHostInteractionKind> _ownerKinds =
       <RuntimeHostInteractionKind>[
         RuntimeHostInteractionKind.browserAutomation,
+        RuntimeHostInteractionKind.browserSession,
         RuntimeHostInteractionKind.webVisit,
         RuntimeHostInteractionKind.composeWebViewController,
         RuntimeHostInteractionKind.systemCaptureScreenshot,
@@ -91,6 +93,9 @@ class RuntimeHostInteractionSubscriber {
       RuntimeHostInteractionKind.browserAutomation => _handleBrowserAutomation(
         _requirePayload(request.browserAutomation, request.kind),
       ),
+      RuntimeHostInteractionKind.browserSession => _handleBrowserSession(
+        _requirePayload(request.browserSession, request.kind),
+      ),
       RuntimeHostInteractionKind.webVisit => _handleWebVisit(
         _requirePayload(request.webVisit, request.kind),
       ),
@@ -153,6 +158,18 @@ class RuntimeHostInteractionSubscriber {
     }
   }
 
+  static Future<RuntimeHostInteractionResponse> _handleBrowserSession(
+    RuntimeHostInteractionBrowserSessionPayload payload,
+  ) async {
+    final resultJson = await WorkspaceBrowserSessionRegistry.instance
+        .handleRuntimeBrowserCommandJson(payload.commandJson);
+    return _response(
+      browserSession: RuntimeHostInteractionBrowserSessionResponse(
+        resultJson: resultJson,
+      ),
+    );
+  }
+
   static Future<RuntimeHostInteractionResponse> _handleWebVisit(
     RuntimeHostInteractionWebVisitPayload payload,
   ) async {
@@ -175,7 +192,7 @@ class RuntimeHostInteractionSubscriber {
   static Future<RuntimeHostInteractionResponse> _handleComposeWebViewController(
     RuntimeHostInteractionComposeWebViewControllerPayload payload,
   ) async {
-    final result = await ComposeDslWebViewHostRegistry.handleControllerCommand(
+    final result = await ComposeWebViewControllerBridge.handle(
       payload.commandJson,
     );
     return _response(
@@ -354,6 +371,7 @@ class RuntimeHostInteractionSubscriber {
 
   static RuntimeHostInteractionResponse _response({
     RuntimeHostInteractionBrowserAutomationResponse? browserAutomation,
+    RuntimeHostInteractionBrowserSessionResponse? browserSession,
     RuntimeHostInteractionWebVisitResponse? webVisit,
     RuntimeHostInteractionComposeWebViewControllerResponse?
     composeWebViewController,
@@ -370,6 +388,7 @@ class RuntimeHostInteractionSubscriber {
   }) {
     return RuntimeHostInteractionResponse(
       browserAutomation: browserAutomation,
+      browserSession: browserSession,
       webVisit: webVisit,
       composeWebViewController: composeWebViewController,
       systemCaptureScreenshot: systemCaptureScreenshot,

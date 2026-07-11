@@ -1,0 +1,16 @@
+{
+  "request": {
+    "requestId": "bench-large-call",
+    "targetPath": {
+      "segments": ["runtime", "chat"]
+    },
+    "methodName": "send",
+    "args": {
+      "messageSize": 65536,
+      "metadata": {
+        "source": "criterion",
+        "payloadShape": "large-json-call"
+      }
+    }
+  }
+}

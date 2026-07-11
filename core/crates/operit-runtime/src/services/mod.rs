@@ -2,6 +2,8 @@
 pub mod ChatServiceCore;
 #[path = "ProviderRuntimeSupportService.rs"]
 pub mod ProviderRuntimeSupportService;
+#[path = "RuntimeBrowserService.rs"]
+pub mod RuntimeBrowserService;
 #[path = "RuntimeEventIngressService.rs"]
 pub mod RuntimeEventIngressService;
 #[path = "RuntimeHostInfoService.rs"]
@@ -22,6 +24,7 @@ pub mod WorkspaceService;
 pub mod core;
 
 pub use ProviderRuntimeSupportService::*;
+pub use RuntimeBrowserService::*;
 pub use RuntimeEventIngressService::*;
 pub use RuntimeHostInfoService::*;
 pub use RuntimeHostInteractionService::*;

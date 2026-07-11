@@ -13,6 +13,7 @@ import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../core/runtime/RuntimeConnectionManager.dart';
 import '../../common/OperitLogoMark.dart';
+import '../../common/RuntimeBootstrapScreen.dart';
 import '../../common/components/CommonNetworkErrorView.dart';
 import '../../main/navigation/StartupRouteStrategy.dart';
 
@@ -158,6 +159,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   final GlobalKey<FormState> _modelFormKey = GlobalKey<FormState>();
   final TextEditingController _endpointController = TextEditingController();
   final TextEditingController _apiKeyController = TextEditingController();
+  final TextEditingController _runtimeRootController = TextEditingController();
+  final TextEditingController _workspaceRootController =
+      TextEditingController();
   int _currentPage = 0;
   bool _coreSetupStarted = false;
   bool _storageConfirmed = false;
@@ -186,7 +190,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   bool _providerConfirmed = false;
   List<_OnboardingRequirement> _requirements = const <_OnboardingRequirement>[];
   RuntimeStoragePaths? _storagePaths;
-  String _selectedStorageRoot = '';
 
   late final AnimationController _introAnimationController;
   late final AnimationController _introExitController;
@@ -240,8 +243,15 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     );
     final localStorage = RuntimeConnectionManager.instance.config.localStorage;
     _storageConfirmed = localStorage.confirmed;
-    _selectedStorageRoot = localStorage.storageRoot;
-    unawaited(_loadStoragePaths(_selectedStorageRoot));
+    if (_storageConfirmed) {
+      _runtimeRootController.text = localStorage.runtimeRoot;
+      _workspaceRootController.text = localStorage.workspaceRoot;
+      unawaited(
+        _loadStoragePaths(localStorage.runtimeRoot, localStorage.workspaceRoot),
+      );
+    } else {
+      unawaited(_loadDefaultStoragePaths());
+    }
     if (_storageConfirmed) {
       _startCoreSetup();
     }
@@ -256,6 +266,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     _pageController.dispose();
     _endpointController.dispose();
     _apiKeyController.dispose();
+    _runtimeRootController.dispose();
+    _workspaceRootController.dispose();
     super.dispose();
   }
 
@@ -276,15 +288,51 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     unawaited(_loadSetupData());
   }
 
-  /// Loads native storage paths for the selected root.
-  Future<void> _loadStoragePaths(String storageRoot) async {
+  /// Loads the platform default runtime and workspace roots.
+  Future<void> _loadDefaultStoragePaths() async {
     setState(() {
       _loadingStoragePaths = true;
       _setupError = null;
     });
     try {
       final paths = await RuntimeConnectionManager.instance
-          .localRuntimeStoragePathsForRoot(storageRoot);
+          .localRuntimeStorageDefaultPaths();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _storagePaths = paths;
+        _runtimeRootController.text = paths.runtimeRoot;
+        _workspaceRootController.text = paths.workspaceRoot;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _setupError = '$error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingStoragePaths = false;
+        });
+      }
+    }
+  }
+
+  /// Validates explicit runtime and workspace roots with the platform host.
+  Future<void> _loadStoragePaths(
+    String runtimeRoot,
+    String workspaceRoot,
+  ) async {
+    setState(() {
+      _loadingStoragePaths = true;
+      _setupError = null;
+    });
+    try {
+      final paths = await RuntimeConnectionManager.instance
+          .localRuntimeStoragePathsForRoots(runtimeRoot, workspaceRoot);
       if (!mounted) {
         return;
       }
@@ -445,34 +493,61 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     );
   }
 
-  /// Selects the platform default storage location.
-  Future<void> _selectDefaultStorageLocation() async {
-    _selectedStorageRoot = '';
-    await _loadStoragePaths(_selectedStorageRoot);
-  }
-
-  /// Lets the user select a custom storage location.
-  Future<void> _selectCustomStorageLocation() async {
+  /// Lets the user select the runtime data directory.
+  Future<void> _selectRuntimeRoot() async {
     final path = await FilePicker.getDirectoryPath();
     if (path == null || path.trim().isEmpty) {
       return;
     }
-    _selectedStorageRoot = path.trim();
-    await _loadStoragePaths(_selectedStorageRoot);
+    _runtimeRootController.text = path.trim();
+    setState(() {
+      _storagePaths = null;
+      _setupError = null;
+    });
+  }
+
+  /// Lets the user select the workspace data directory.
+  Future<void> _selectWorkspaceRoot() async {
+    final path = await FilePicker.getDirectoryPath();
+    if (path == null || path.trim().isEmpty) {
+      return;
+    }
+    _workspaceRootController.text = path.trim();
+    setState(() {
+      _storagePaths = null;
+      _setupError = null;
+    });
+  }
+
+  /// Clears validated paths after either editable path changes.
+  void _handleStoragePathChanged(String _) {
+    setState(() {
+      _storagePaths = null;
+      _setupError = null;
+    });
   }
 
   /// Persists the selected storage location and enters runtime-backed setup.
   Future<void> _confirmStorageLocation() async {
+    final runtimeRoot = _runtimeRootController.text.trim();
+    final workspaceRoot = _workspaceRootController.text.trim();
+    if (runtimeRoot.isEmpty || workspaceRoot.isEmpty) {
+      setState(() {
+        _setupError = '运行时目录和工作区目录都不能为空';
+      });
+      return;
+    }
     setState(() {
       _savingStorage = true;
       _setupError = null;
     });
     try {
-      await RuntimeConnectionManager.instance.confirmLocalRuntimeStorage(
-        _selectedStorageRoot,
-      );
       final paths = await RuntimeConnectionManager.instance
-          .localRuntimeStoragePaths();
+          .localRuntimeStoragePathsForRoots(runtimeRoot, workspaceRoot);
+      await RuntimeConnectionManager.instance.confirmLocalRuntimeStorage(
+        runtimeRoot,
+        workspaceRoot,
+      );
       final configured =
           await OnboardingStartupRouteStrategy._hasConfiguredChatModel();
       final guideSeen = await OnboardingStartupRouteStrategy._readGuideSeen();
@@ -878,14 +953,14 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
                               }
                               if (index == _storagePageIndex) {
                                 return _AiSetupStoragePage(
-                                  paths: _storagePaths,
-                                  usingDefault: _selectedStorageRoot
-                                      .trim()
-                                      .isEmpty,
+                                  runtimeRootController: _runtimeRootController,
+                                  workspaceRootController:
+                                      _workspaceRootController,
                                   loading: _loadingStoragePaths,
                                   saving: _savingStorage,
-                                  onUseDefault: _selectDefaultStorageLocation,
-                                  onChooseCustom: _selectCustomStorageLocation,
+                                  onChooseRuntimeRoot: _selectRuntimeRoot,
+                                  onChooseWorkspaceRoot: _selectWorkspaceRoot,
+                                  onPathChanged: _handleStoragePathChanged,
                                   errorText: _setupError,
                                 );
                               }
@@ -1285,7 +1360,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
                   ),
                   child: Align(
                     alignment: Alignment(titleAlignmentX, 0),
-                    child: _AiSetupBrandText(
+                    child: RuntimeBootstrapBrandText(
                       opacity: logoTextOpacity,
                       fontSize: titleFontSize,
                       height: lerpDouble(1.18, 1.0, chromeProgress),
@@ -1306,7 +1381,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
-                        _AiSetupLiquidProgress(
+                        RuntimeBootstrapLiquidProgress(
                           color: colorScheme.primary,
                           trackColor: colorScheme.surfaceContainerHighest,
                           progress: introAnimation.value,
@@ -1432,150 +1507,6 @@ class _AiSetupSharedChrome extends StatelessWidget {
           ],
         );
       },
-    );
-  }
-}
-
-class _AiSetupLiquidProgress extends StatelessWidget {
-  const _AiSetupLiquidProgress({
-    required this.color,
-    required this.trackColor,
-    required this.progress,
-  });
-
-  final Color color;
-  final Color trackColor;
-  final double progress;
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: const Size(168, 16),
-      painter: _AiSetupLiquidProgressPainter(
-        color: color,
-        trackColor: trackColor,
-        progress: progress,
-      ),
-    );
-  }
-}
-
-class _AiSetupLiquidProgressPainter extends CustomPainter {
-  const _AiSetupLiquidProgressPainter({
-    required this.color,
-    required this.trackColor,
-    required this.progress,
-  });
-
-  final Color color;
-  final Color trackColor;
-  final double progress;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final radius = Radius.circular(size.height / 2);
-    final rect = Offset.zero & size;
-    final rrect = RRect.fromRectAndRadius(rect, radius);
-    canvas.drawRRect(
-      rrect,
-      Paint()..color = trackColor.withValues(alpha: 0.58),
-    );
-
-    canvas.save();
-    canvas.clipRRect(rrect);
-
-    final phase = progress * math.pi * 2;
-    final fillWidth = size.width * (0.42 + 0.18 * math.sin(progress * math.pi));
-    final fillLeft = ((size.width + fillWidth) * progress - fillWidth)
-        .clamp(-fillWidth, size.width)
-        .toDouble();
-    final fillRect = Rect.fromLTWH(fillLeft, 0, fillWidth, size.height);
-    final fillPaint = Paint()
-      ..shader = LinearGradient(
-        colors: <Color>[
-          color.withValues(alpha: 0.16),
-          color.withValues(alpha: 0.92),
-          Color.lerp(color, Colors.white, 0.28)!.withValues(alpha: 0.82),
-          color.withValues(alpha: 0.24),
-        ],
-        stops: const <double>[0, 0.42, 0.68, 1],
-      ).createShader(fillRect);
-    canvas.drawRect(fillRect, fillPaint);
-
-    final wavePaint = Paint()
-      ..color = Color.lerp(color, Colors.white, 0.46)!.withValues(alpha: 0.38)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2
-      ..strokeCap = StrokeCap.round;
-    final wave = Path();
-    for (var x = 0.0; x <= size.width; x += 4) {
-      final y =
-          size.height * 0.5 +
-          math.sin((x / size.width * math.pi * 2) + phase) * 2.2;
-      if (x == 0) {
-        wave.moveTo(x, y);
-      } else {
-        wave.lineTo(x, y);
-      }
-    }
-    canvas.drawPath(wave, wavePaint);
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(_AiSetupLiquidProgressPainter oldDelegate) {
-    return color != oldDelegate.color ||
-        trackColor != oldDelegate.trackColor ||
-        progress != oldDelegate.progress;
-  }
-}
-
-class _AiSetupBrandText extends StatelessWidget {
-  const _AiSetupBrandText({
-    required this.opacity,
-    required this.fontSize,
-    required this.height,
-  });
-
-  final double opacity;
-  final double fontSize;
-  final double? height;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final textOpacity = opacity.clamp(0.0, 1.0).toDouble();
-    final textStyle = (textTheme.headlineMedium ?? const TextStyle()).copyWith(
-      color: Colors.white.withValues(alpha: textOpacity),
-      fontSize: fontSize,
-      fontWeight: FontWeight.w900,
-      height: height,
-      letterSpacing: 0,
-      shadows: <Shadow>[
-        Shadow(
-          color: colorScheme.primary.withValues(alpha: 0.18 * textOpacity),
-          blurRadius: 18,
-          offset: const Offset(0, 8),
-        ),
-      ],
-    );
-
-    return ShaderMask(
-      blendMode: BlendMode.srcIn,
-      shaderCallback: (bounds) {
-        return LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[
-            Color.lerp(colorScheme.primary, colorScheme.onSurface, 0.22)!,
-            colorScheme.onSurface,
-            Color.lerp(colorScheme.tertiary, colorScheme.primary, 0.32)!,
-          ],
-          stops: const <double>[0, 0.56, 1],
-        ).createShader(bounds);
-      },
-      child: Text('Operit', textAlign: TextAlign.center, style: textStyle),
     );
   }
 }
@@ -1793,21 +1724,23 @@ class _AiSetupModePage extends StatelessWidget {
 
 class _AiSetupStoragePage extends StatelessWidget {
   const _AiSetupStoragePage({
-    required this.paths,
-    required this.usingDefault,
+    required this.runtimeRootController,
+    required this.workspaceRootController,
     required this.loading,
     required this.saving,
-    required this.onUseDefault,
-    required this.onChooseCustom,
+    required this.onChooseRuntimeRoot,
+    required this.onChooseWorkspaceRoot,
+    required this.onPathChanged,
     required this.errorText,
   });
 
-  final RuntimeStoragePaths? paths;
-  final bool usingDefault;
+  final TextEditingController runtimeRootController;
+  final TextEditingController workspaceRootController;
   final bool loading;
   final bool saving;
-  final VoidCallback onUseDefault;
-  final VoidCallback onChooseCustom;
+  final VoidCallback onChooseRuntimeRoot;
+  final VoidCallback onChooseWorkspaceRoot;
+  final ValueChanged<String> onPathChanged;
   final String? errorText;
 
   /// Builds the storage-location confirmation page.
@@ -1815,7 +1748,6 @@ class _AiSetupStoragePage extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final storagePaths = paths;
     return Align(
       alignment: Alignment.topCenter,
       child: SingleChildScrollView(
@@ -1829,80 +1761,54 @@ class _AiSetupStoragePage extends StatelessWidget {
                 icon: Icons.folder_copy_rounded,
                 eyebrow: '存储位置',
                 title: '确认本地存储位置',
-                description: '默认位置会沿用当前设备的应用数据目录；也可以选择自定义目录保存运行时和工作区数据。',
+                description: '运行时数据和工作区数据相互独立，可以直接输入路径或分别选择目录。',
               ),
               const SizedBox(height: 22),
-              _SetupModeTile(
-                icon: Icons.check_circle_rounded,
-                title: '使用默认位置',
-                subtitle: '沿用当前平台的应用数据目录',
-                selected: usingDefault,
-                onTap: loading || saving ? () {} : onUseDefault,
+              _StoragePathField(
+                controller: runtimeRootController,
+                label: '运行时目录',
+                icon: Icons.memory_rounded,
+                enabled: !loading && !saving,
+                onChanged: onPathChanged,
+                onBrowse: onChooseRuntimeRoot,
               ),
-              const SizedBox(height: 10),
-              _SetupModeTile(
-                icon: Icons.folder_open_rounded,
-                title: '自定义位置',
-                subtitle: storagePaths == null || usingDefault
-                    ? '选择一个目录保存本地数据'
-                    : storagePaths.storageRoot,
-                selected: !usingDefault,
-                onTap: loading || saving ? () {} : onChooseCustom,
+              const SizedBox(height: 14),
+              _StoragePathField(
+                controller: workspaceRootController,
+                label: '工作区目录',
+                icon: Icons.workspaces_outline,
+                enabled: !loading && !saving,
+                onChanged: onPathChanged,
+                onBrowse: onChooseWorkspaceRoot,
               ),
-              const SizedBox(height: 18),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.48,
-                  ),
-                  borderRadius: BorderRadius.circular(18),
+              if (loading) ...<Widget>[
+                const SizedBox(height: 18),
+                Row(
+                  children: <Widget>[
+                    const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      '正在读取存储路径',
+                      style: textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    child: loading
-                        ? Row(
-                            key: const ValueKey<String>('storage-loading'),
-                            children: <Widget>[
-                              const SizedBox.square(
-                                dimension: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Text(
-                                '正在读取存储路径',
-                                style: textTheme.bodyMedium?.copyWith(
-                                  color: colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          )
-                        : Column(
-                            key: const ValueKey<String>('storage-paths'),
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: <Widget>[
-                              _StoragePathLine(
-                                label: '数据根目录',
-                                value: storagePaths?.storageRoot ?? '',
-                              ),
-                              const SizedBox(height: 10),
-                              _StoragePathLine(
-                                label: '运行时目录',
-                                value: storagePaths?.runtimeRoot ?? '',
-                              ),
-                              const SizedBox(height: 10),
-                              _StoragePathLine(
-                                label: '工作区目录',
-                                value: storagePaths?.workspaceRoot ?? '',
-                              ),
-                            ],
-                          ),
+              ],
+              if (!loading) ...<Widget>[
+                const SizedBox(height: 18),
+                Text(
+                  '这两个目录会分别保存运行时状态和用户工作区，确认后由本机 Host 直接挂载。',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                    height: 1.4,
                   ),
                 ),
-              ),
+              ],
               if (errorText != null) ...<Widget>[
                 const SizedBox(height: 12),
                 CommonNetworkErrorView(errorText: errorText!),
@@ -1915,39 +1821,49 @@ class _AiSetupStoragePage extends StatelessWidget {
   }
 }
 
-class _StoragePathLine extends StatelessWidget {
-  const _StoragePathLine({required this.label, required this.value});
+class _StoragePathField extends StatelessWidget {
+  const _StoragePathField({
+    required this.controller,
+    required this.label,
+    required this.icon,
+    required this.enabled,
+    required this.onChanged,
+    required this.onBrowse,
+  });
 
+  final TextEditingController controller;
   final String label;
-  final String value;
+  final IconData icon;
+  final bool enabled;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onBrowse;
 
-  /// Builds one labeled storage path row.
+  /// Builds one editable storage path field with a directory picker.
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          label,
-          style: textTheme.labelMedium?.copyWith(
-            color: colorScheme.primary,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0,
-          ),
+    return TextField(
+      controller: controller,
+      enabled: enabled,
+      onChanged: onChanged,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+        suffixIcon: IconButton(
+          onPressed: enabled ? onBrowse : null,
+          tooltip: '选择$label',
+          icon: const Icon(Icons.folder_open_rounded),
         ),
-        const SizedBox(height: 3),
-        Text(
-          value.isEmpty ? '尚未读取' : value,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: textTheme.bodySmall?.copyWith(
-            color: colorScheme.onSurfaceVariant,
-            height: 1.32,
-          ),
-        ),
-      ],
+        border: const OutlineInputBorder(),
+      ),
+      autocorrect: false,
+      enableSuggestions: false,
+      keyboardType: TextInputType.text,
+      textInputAction: TextInputAction.done,
+      style: const TextStyle(
+        fontFamily: 'monospace',
+        fontSize: 13,
+        letterSpacing: 0,
+      ),
     );
   }
 }

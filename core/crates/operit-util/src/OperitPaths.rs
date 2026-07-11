@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::RuntimeStorageLayout as Layout;
-use crate::RuntimeStoreRoot::default_data_dir;
+use crate::RuntimeStoreRoot::{default_runtime_dir, default_workspace_dir};
 
 #[derive(Debug, Clone, Default)]
 pub struct OperitPaths;
@@ -56,7 +56,20 @@ const MEMORY_SEARCH_SETTINGS_FILE_PATH: &str = "settings/memory_search_settings.
 
 #[allow(non_snake_case)]
 pub fn operitRootDir() -> Result<PathBuf, String> {
-    ensureDir(default_data_dir())
+    ensureDir(default_runtime_dir())
+}
+
+/// Maps a virtual runtime storage path into a supplied physical runtime root.
+#[allow(non_snake_case)]
+pub fn runtimePathFromRoot(
+    runtimeRoot: &std::path::Path,
+    storagePath: &str,
+) -> Result<PathBuf, String> {
+    let runtimePrefix = format!("{}/", Layout::RUNTIME_ROOT_DIR_PATH);
+    let relativePath = storagePath.strip_prefix(&runtimePrefix).ok_or_else(|| {
+        format!("runtime storage path must start with {runtimePrefix}: {storagePath}")
+    })?;
+    Ok(runtimeRoot.join(relativePath))
 }
 
 #[allow(non_snake_case)]
@@ -120,7 +133,7 @@ pub fn exportsDir() -> Result<PathBuf, String> {
 
 #[allow(non_snake_case)]
 pub fn workspaceDir() -> Result<PathBuf, String> {
-    relativeDir(WORKSPACE_DIR_PATH)
+    ensureDir(default_workspace_dir())
 }
 
 #[allow(non_snake_case)]
@@ -363,12 +376,12 @@ pub fn cleanOnExitCleanup() -> Result<(), String> {
 
 #[allow(non_snake_case)]
 fn relativeDir(relativePath: &str) -> Result<PathBuf, String> {
-    ensureDir(operitRootDir()?.join(relativePath))
+    ensureDir(runtimePathFromRoot(&default_runtime_dir(), relativePath)?)
 }
 
 #[allow(non_snake_case)]
 fn relativeFile(relativePath: &str) -> Result<PathBuf, String> {
-    let path = operitRootDir()?.join(relativePath);
+    let path = runtimePathFromRoot(&default_runtime_dir(), relativePath)?;
     ensureParentDir(&path)?;
     Ok(path)
 }

@@ -60,7 +60,7 @@ pub enum ModelConfigError {
 /// Stores provider profiles, model profiles, and resolved model configuration.
 #[derive(Clone)]
 pub struct ModelConfigManager {
-    paths: RuntimeStorePaths,
+    runtimeRoot: PathBuf,
     modelConfigDataStore: PreferencesDataStore,
 }
 
@@ -75,11 +75,13 @@ impl ModelConfigManager {
 
     /// Creates a manager rooted at a runtime data directory.
     pub fn new(root_dir: PathBuf) -> Self {
-        let paths = RuntimeStorePaths::new(root_dir);
-        let modelConfigDataStore =
-            PreferencesDataStore::newEncryptedSynced(paths.model_configs_preferences_path());
+        let path = RuntimeStorePaths::runtime_storage_path_from_root(
+            &root_dir,
+            operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH,
+        );
+        let modelConfigDataStore = PreferencesDataStore::newEncryptedSynced(path);
         Self {
-            paths,
+            runtimeRoot: root_dir,
             modelConfigDataStore,
         }
     }
@@ -464,7 +466,7 @@ impl ModelConfigManager {
         providerRuntimeContext: ProviderRuntimeContext,
     ) -> Result<ModelConnectionTestReport, ModelConfigError> {
         ModelConfigConnectionTester::run(
-            self.paths.root_dir().to_path_buf(),
+            self.runtimeRoot.clone(),
             providerId,
             modelId,
             providerRuntimeContext,

@@ -4,13 +4,13 @@ use operit_host_api::{HostError, HostResult, HttpHost, HttpRequestData, HttpResp
 
 #[derive(Clone, Debug, Default)]
 pub struct AndroidHttpHost {
-    inner: operit_host_linux_native::LinuxHttpHost,
+    inner: operit_host_native_common::NativeHttpHost,
 }
 
 impl AndroidHttpHost {
     pub fn new() -> Self {
         Self {
-            inner: operit_host_linux_native::LinuxHttpHost::new(),
+            inner: operit_host_native_common::NativeHttpHost::new(),
         }
     }
 }

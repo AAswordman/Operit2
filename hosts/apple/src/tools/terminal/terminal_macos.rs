@@ -1,34 +1,36 @@
 use operit_host_api::{
-    HiddenTerminalCommandOutput, HostError, HostResult, TerminalCloseOutput,
-    TerminalCommandOutput, TerminalHost, TerminalInfo, TerminalInputOutput, TerminalScreenOutput,
-    TerminalSessionInfo, TerminalSessionListEntry, TerminalTypeInfo,
+    HiddenTerminalCommandOutput, HostError, HostResult, TerminalCloseOutput, TerminalCommandOutput,
+    TerminalHost, TerminalInfo, TerminalInputOutput, TerminalScreenOutput, TerminalSessionInfo,
+    TerminalSessionListEntry, TerminalTypeInfo,
 };
-use operit_host_linux_native::LinuxTerminalHost;
+use operit_host_native_common::NativePtyTerminalHost;
 
 #[derive(Clone, Default)]
 pub struct AppleTerminalHost {
-    inner: LinuxTerminalHost,
+    inner: NativePtyTerminalHost,
 }
 
 impl AppleTerminalHost {
+    /// Creates the macOS terminal host backed by the shared POSIX PTY engine.
     pub fn new() -> Self {
         Self {
-            inner: LinuxTerminalHost::new(),
+            inner: NativePtyTerminalHost::new(),
         }
     }
 
-    /// Resolves the public macOS terminal type to the Linux-backed host type.
+    /// Resolves the public macOS terminal type to the shared POSIX PTY type.
     fn nativeTerminalType(terminalType: &str) -> HostResult<&'static str> {
         match terminalType.trim() {
-            "macos" => Ok("linux"),
+            "macos" => Ok("posix"),
             value => Err(HostError::new(format!(
                 "Unsupported terminal type for macos host: {value}"
             ))),
         }
     }
 
+    /// Rewrites the shared POSIX PTY type back to the public macOS type.
     fn rewriteType(value: String) -> String {
-        if value == "linux" {
+        if value == "posix" {
             "macos".to_string()
         } else {
             value

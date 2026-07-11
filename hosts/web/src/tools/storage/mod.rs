@@ -18,19 +18,31 @@ unsafe impl Send for WebRuntimeStorageHost {}
 unsafe impl Sync for WebRuntimeStorageHost {}
 
 impl WebRuntimeStorageHost {
+    /// Returns the browser runtime data root.
     #[allow(non_snake_case)]
-    pub fn defaultRoot() -> PathBuf {
-        PathBuf::from("operit2")
+    pub fn defaultRuntimeRoot() -> PathBuf {
+        PathBuf::from("runtime")
     }
 
+    /// Returns the browser workspace collection root.
+    #[allow(non_snake_case)]
+    pub fn defaultWorkspaceRoot() -> PathBuf {
+        PathBuf::from("workspaces")
+    }
+
+    /// Creates a browser runtime storage host.
     pub fn new() -> Self {
         Self
     }
 }
 
 impl RuntimeStorageHost for WebRuntimeStorageHost {
-    fn rootDir(&self) -> Option<PathBuf> {
-        Some(Self::defaultRoot())
+    fn runtimeRootDir(&self) -> Option<PathBuf> {
+        Some(Self::defaultRuntimeRoot())
+    }
+
+    fn workspaceRootDir(&self) -> Option<PathBuf> {
+        Some(Self::defaultWorkspaceRoot())
     }
 
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {

@@ -1360,6 +1360,7 @@
     },
     managedRuntimeProcess: {
       writeLine() {},
+      writeLines() {},
       readStdoutLine() {
         return null;
       },

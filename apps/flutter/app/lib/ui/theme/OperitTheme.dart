@@ -11,10 +11,12 @@ import 'package:video_player/video_player.dart';
 
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../core/errors/UnhandledErrorReporter.dart';
-import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../core/runtime/RuntimeConnectionManager.dart';
 import '../../data/preferences/UserPreferencesManager.dart';
 import '../../l10n/generated/app_localizations.dart';
+import '../common/RuntimeBootstrapScreen.dart';
 import '../features/chat/components/workspace/browser/automation/WorkspaceBrowserAutomationHost.dart';
 import '../features/chat/components/workspace/browser/automation/WorkspaceWebVisitHost.dart';
 import '../permissions/ToolApprovalHost.dart';
@@ -24,10 +26,12 @@ class OperitTheme extends StatefulWidget {
     super.key,
     required this.child,
     this.hostInteractionHostsEnabled = true,
+    this.unconfiguredChildEnabled = false,
   });
 
   final Widget child;
   final bool hostInteractionHostsEnabled;
+  final bool unconfiguredChildEnabled;
 
   static OperitThemeController of(BuildContext context) {
     final scope = context
@@ -43,31 +47,135 @@ class OperitTheme extends StatefulWidget {
 }
 
 class _OperitThemeState extends State<OperitTheme> {
+  final RuntimeConnectionManager _runtimeManager =
+      RuntimeConnectionManager.instance;
   late final OperitThemeController _controller = OperitThemeController(
-    onChanged: () => setState(() {}),
+    onChanged: () {
+      if (mounted) {
+        setState(() {});
+      }
+    },
   );
+  Future<void>? _runtimeStartFuture;
+  Object? _runtimeStartupError;
+  bool _runtimeUiReady = false;
+  bool _preserveUnconfiguredChild = false;
+  int _runtimeGeneration = 0;
 
+  /// Subscribes to runtime readiness and starts theme services when configured.
   @override
   void initState() {
     super.initState();
-    unawaited(_controller.start());
+    _runtimeManager.addListener(_handleRuntimeConnectionChanged);
+    _preserveUnconfiguredChild =
+        widget.unconfiguredChildEnabled && !_runtimeManager.runtimeConfigured;
+    if (_runtimeManager.runtimeConfigured) {
+      unawaited(_startRuntimeUi());
+    }
   }
 
+  /// Releases runtime readiness and theme subscriptions.
   @override
   void dispose() {
+    _runtimeManager.removeListener(_handleRuntimeConnectionChanged);
     _controller.dispose();
     super.dispose();
   }
 
+  /// Synchronizes the theme lifecycle with runtime configuration changes.
+  void _handleRuntimeConnectionChanged() {
+    if (!_runtimeManager.runtimeConfigured) {
+      _runtimeGeneration++;
+      _controller.dispose();
+      setState(() {
+        _runtimeUiReady = false;
+        _runtimeStartupError = null;
+        _runtimeStartFuture = null;
+        _preserveUnconfiguredChild = widget.unconfiguredChildEnabled;
+      });
+      return;
+    }
+    unawaited(_startRuntimeUi());
+  }
+
+  /// Starts core-backed theme state after the runtime is configured.
+  Future<void> _startRuntimeUi() async {
+    if (_runtimeUiReady ||
+        _runtimeStartFuture != null ||
+        !_runtimeManager.runtimeConfigured) {
+      return;
+    }
+    final generation = ++_runtimeGeneration;
+    final startFuture = _controller.start();
+    _runtimeStartFuture = startFuture;
+    try {
+      await startFuture;
+      if (!mounted ||
+          generation != _runtimeGeneration ||
+          !_runtimeManager.runtimeConfigured) {
+        return;
+      }
+      setState(() {
+        _runtimeUiReady = true;
+        _runtimeStartupError = null;
+      });
+    } catch (error, stackTrace) {
+      if (!mounted || generation != _runtimeGeneration) {
+        return;
+      }
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'operit runtime bootstrap',
+          context: ErrorDescription('while starting core-backed theme state'),
+        ),
+      );
+      setState(() {
+        _runtimeStartupError = error;
+      });
+    } finally {
+      if (generation == _runtimeGeneration) {
+        _runtimeStartFuture = null;
+      }
+    }
+  }
+
+  /// Builds the bootstrap or fully initialized application theme.
   @override
   Widget build(BuildContext context) {
+    final runtimeConfigured = _runtimeManager.runtimeConfigured;
+    final runtimeReady = runtimeConfigured && _runtimeUiReady;
+    final themeSnapshot = runtimeReady
+        ? _controller.themePreferenceSnapshot
+        : UserPreferencesManager.defaultThemePreferenceSnapshot;
+    final themeMode = runtimeReady ? _controller.themeMode : ThemeMode.system;
+    final Widget appChild;
+    if (!runtimeConfigured) {
+      appChild = widget.unconfiguredChildEnabled
+          ? widget.child
+          : const RuntimeBootstrapScreen(message: '请先在主窗口配置运行时目录和工作区目录');
+    } else if (!runtimeReady) {
+      final bootstrap = RuntimeBootstrapScreen(
+        errorText: _runtimeStartupError?.toString(),
+      );
+      appChild = _preserveUnconfiguredChild
+          ? Stack(
+              fit: StackFit.expand,
+              children: <Widget>[widget.child, bootstrap],
+            )
+          : bootstrap;
+    } else {
+      appChild = widget.child;
+    }
     return _OperitThemeScope(
       controller: _controller,
       child: _OperitMaterialApp(
-        themeMode: _controller.themeMode,
-        themePreferenceSnapshot: _controller.themePreferenceSnapshot,
-        hostInteractionHostsEnabled: widget.hostInteractionHostsEnabled,
-        child: widget.child,
+        themeMode: themeMode,
+        themePreferenceSnapshot: themeSnapshot,
+        hostInteractionHostsEnabled:
+            runtimeReady && widget.hostInteractionHostsEnabled,
+        child: appChild,
       ),
     );
   }
@@ -114,13 +222,10 @@ class _OperitMaterialApp extends StatelessWidget {
           ),
         );
       },
-      home: hostInteractionHostsEnabled
-          ? WorkspaceBrowserAutomationHost(
-              child: WorkspaceWebVisitHost(
-                child: ToolApprovalHost(child: child),
-              ),
-            )
-          : child,
+      home: WorkspaceBrowserAutomationHost(
+        enabled: hostInteractionHostsEnabled,
+        child: WorkspaceWebVisitHost(child: ToolApprovalHost(child: child)),
+      ),
     );
   }
 }
@@ -162,7 +267,10 @@ class OperitThemeController {
       _activeCharacterGroupId != null || _activeCharacterCardId != null;
   bool get isActiveThemeTargetGroup => _activeCharacterGroupId != null;
 
+  /// Starts core-backed theme preferences and active prompt subscriptions.
   Future<void> start() async {
+    await _activePromptSubscription?.cancel();
+    _activePromptSubscription = null;
     final activePrompt = await _clients.preferencesActivePromptManager
         .getActivePrompt();
     _applyActivePrompt(activePrompt);
@@ -175,8 +283,10 @@ class OperitThemeController {
     await loadThemeMode();
   }
 
+  /// Cancels the active prompt subscription.
   void dispose() {
     unawaited(_activePromptSubscription?.cancel());
+    _activePromptSubscription = null;
   }
 
   Future<void> loadThemeMode() async {
@@ -412,7 +522,9 @@ class OperitThemeController {
     );
   }
 
-  Future<void> _handleActivePromptChange(core_proxy.ActivePrompt? activePrompt) async {
+  Future<void> _handleActivePromptChange(
+    core_proxy.ActivePrompt? activePrompt,
+  ) async {
     if (_applyActivePrompt(activePrompt)) {
       await _loadActiveThemeTargetName();
       await _reloadThemePreferenceSnapshot();
@@ -489,9 +601,11 @@ class OperitThemeController {
     String? nextCardId;
     String? nextGroupId;
     if (activePrompt != null) {
-      if (activePrompt.tag == 'CharacterCard' && activePrompt.id.trim().isNotEmpty) {
+      if (activePrompt.tag == 'CharacterCard' &&
+          activePrompt.id.trim().isNotEmpty) {
         nextCardId = activePrompt.id.trim();
-      } else if (activePrompt.tag == 'CharacterGroup' && activePrompt.id.trim().isNotEmpty) {
+      } else if (activePrompt.tag == 'CharacterGroup' &&
+          activePrompt.id.trim().isNotEmpty) {
         nextGroupId = activePrompt.id.trim();
       }
     }

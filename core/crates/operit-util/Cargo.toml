@@ -11,6 +11,7 @@ documentation = "https://docs.rs/operit-util"
 
 [dependencies]
 operit-host-api = { version = "0.1.0", path = "../operit-host-api" }
+chrono.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true

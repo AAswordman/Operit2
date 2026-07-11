@@ -1,0 +1,8 @@
+{
+  "name": "cli_to_host_call",
+  "kind": "call",
+  "description": "Measures CLI to host Link call latency across the accepted app access path.",
+  "samples": 300,
+  "payload": "../../core/crates/operit-link/benches_data/call_small.json",
+  "command": "cargo run -p operit-cli -- cli link perf"
+}

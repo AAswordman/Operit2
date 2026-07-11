@@ -1460,7 +1460,7 @@ class OwnerSystemCapabilityChannel(
         val localeTag = (payload["locale"] as? String).orEmpty().trim()
         val speed = (payload["speed"] as? Number)?.toFloat() ?: throw IllegalArgumentException("speed is required")
         val pitch = (payload["pitch"] as? Number)?.toFloat() ?: throw IllegalArgumentException("pitch is required")
-        val outputDir = File(runtimeHost.prepareAndroidRuntimePaths().storageRoot, "runtime/temp/tts")
+        val outputDir = File(runtimeHost.prepareAndroidRuntimePaths().runtimeRoot, "temp/tts")
         outputDir.mkdirs()
         val outputFile = File(outputDir, "${java.util.UUID.randomUUID()}.wav")
         val initLatch = CountDownLatch(1)
@@ -1549,7 +1549,7 @@ class OwnerSystemCapabilityChannel(
     }
 
     private fun captureScreenshotToFile(): String {
-        val screenshotDir = File(runtimeHost.prepareAndroidRuntimePaths().storageRoot, "runtime/temp/clean_on_exit")
+        val screenshotDir = File(runtimeHost.prepareAndroidRuntimePaths().runtimeRoot, "temp/clean_on_exit")
         screenshotDir.mkdirs()
 
         val shortName = System.currentTimeMillis().toString().takeLast(4)

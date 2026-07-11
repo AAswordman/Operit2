@@ -624,7 +624,7 @@ fn hostHeaderVfsPaths(host_environment: &HostEnvironmentDescriptor) -> Vec<&'sta
 
 #[allow(non_snake_case)]
 fn hostToolPathExamples(host_environment: &HostEnvironmentDescriptor) -> Vec<&'static str> {
-    let mut paths = vec!["/app/workspaces/<workspace-id>", "/app/files"];
+    let mut paths = vec!["/app/workspaces/<workspace-id>"];
     match host_environment.id.as_str() {
         "windows" => paths.push("/mnt/windows/d"),
         "android" => paths.push("/mnt/android/sdcard"),

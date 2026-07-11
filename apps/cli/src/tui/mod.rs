@@ -252,6 +252,7 @@ async fn handle_remote_tool_permission_interaction(
             request.requestId,
             RuntimeHostInteractionResponse {
                 browserAutomation: None,
+                browserSession: None,
                 webVisit: None,
                 composeWebViewController: None,
                 systemCaptureScreenshot: None,

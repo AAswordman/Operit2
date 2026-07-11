@@ -127,7 +127,7 @@ impl TtsSynthesisService {
             storageHost
                 .writeBytes(&storagePath, &bytes)
                 .map_err(|error| error.message)?;
-            let path = self.paths.root_dir().join(&storagePath);
+            let path = self.paths.runtime_storage_path(&storagePath);
             audioPaths.push(path.to_string_lossy().to_string());
             audioStoragePaths.push(storagePath);
         }

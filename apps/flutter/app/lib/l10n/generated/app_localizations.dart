@@ -4690,14 +4690,8 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDataStorageDescription.
   ///
   /// In en, this message translates to:
-  /// **'Move runtime and workspace data into a different local folder.'**
+  /// **'Move runtime and workspace data into independently selected local folders.'**
   String get settingsDataStorageDescription;
-
-  /// No description provided for @settingsDataStorageRoot.
-  ///
-  /// In en, this message translates to:
-  /// **'Storage root'**
-  String get settingsDataStorageRoot;
 
   /// No description provided for @settingsDataRuntimeRoot.
   ///
@@ -4711,11 +4705,23 @@ abstract class AppLocalizations {
   /// **'Workspace root'**
   String get settingsDataWorkspaceRoot;
 
-  /// No description provided for @settingsDataChooseStorageRoot.
+  /// No description provided for @settingsDataChooseStorageRoots.
   ///
   /// In en, this message translates to:
-  /// **'Choose location'**
-  String get settingsDataChooseStorageRoot;
+  /// **'Edit locations'**
+  String get settingsDataChooseStorageRoots;
+
+  /// No description provided for @settingsDataEditStorageRootsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit storage locations'**
+  String get settingsDataEditStorageRootsTitle;
+
+  /// No description provided for @settingsDataStorageRootsRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime root and workspace root are required.'**
+  String get settingsDataStorageRootsRequired;
 
   /// No description provided for @settingsDataStorageConfirmTitle.
   ///
@@ -4726,7 +4732,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDataStorageConfirmMessage.
   ///
   /// In en, this message translates to:
-  /// **'Runtime and workspace data will be copied into the selected folder, and the app will use it after restart.'**
+  /// **'Runtime and workspace data will be copied into the selected directories, and the app will use them after restart.'**
   String get settingsDataStorageConfirmMessage;
 
   /// No description provided for @settingsDataStorageConfirmAction.

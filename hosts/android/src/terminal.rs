@@ -1566,7 +1566,8 @@ fn androidPtyPromptCommand() -> String {
 fn androidTerminalDebugInfo(workingDir: &str) -> HostResult<BTreeMap<String, String>> {
     let runtimeDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_DIR")?;
     let rootfsDir = requiredAndroidRuntimePath("OPERIT_ANDROID_ROOTFS_DIR")?;
-    let storageRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_STORAGE_ROOT")?;
+    let runtimeRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_ROOT")?;
+    let workspaceRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_WORKSPACE_ROOT")?;
     let internalRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_INTERNAL_ROOT")?;
     let tmpDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_TMP")?;
     let proot = requiredAndroidRuntimePath("OPERIT_ANDROID_PROOT")?;
@@ -1579,7 +1580,8 @@ fn androidTerminalDebugInfo(workingDir: &str) -> HostResult<BTreeMap<String, Str
     let mut info = BTreeMap::new();
     insertPathDebug(&mut info, "runtimeDir", &runtimeDir);
     insertPathDebug(&mut info, "rootfsDir", &rootfsDir);
-    insertPathDebug(&mut info, "storageRoot", &storageRoot);
+    insertPathDebug(&mut info, "runtimeRoot", &runtimeRoot);
+    insertPathDebug(&mut info, "workspaceRoot", &workspaceRoot);
     insertPathDebug(&mut info, "internalRoot", &internalRoot);
     insertPathDebug(&mut info, "tmpDir", &tmpDir);
     insertPathDebug(&mut info, "proot", &proot);

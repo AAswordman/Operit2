@@ -20,6 +20,8 @@ tokio::task_local! {
 pub enum RuntimeHostInteractionKind {
     #[serde(rename = "browser_automation")]
     BrowserAutomation,
+    #[serde(rename = "browser_session")]
+    BrowserSession,
     #[serde(rename = "web_visit")]
     WebVisit,
     #[serde(rename = "compose_webview_controller")]
@@ -50,6 +52,7 @@ pub struct RuntimeHostInteractionRequest {
     pub requestId: String,
     pub kind: RuntimeHostInteractionKind,
     pub browserAutomation: Option<RuntimeHostInteractionBrowserAutomationPayload>,
+    pub browserSession: Option<RuntimeHostInteractionBrowserSessionPayload>,
     pub webVisit: Option<RuntimeHostInteractionWebVisitPayload>,
     pub composeWebViewController: Option<RuntimeHostInteractionComposeWebViewControllerPayload>,
     pub systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotPayload>,
@@ -86,6 +89,12 @@ impl RuntimeHostInteractionRequest {
     fn browserAutomation(payload: RuntimeHostInteractionBrowserAutomationPayload) -> Self {
         let mut request = Self::empty(RuntimeHostInteractionKind::BrowserAutomation);
         request.browserAutomation = Some(payload);
+        request
+    }
+
+    fn browserSession(payload: RuntimeHostInteractionBrowserSessionPayload) -> Self {
+        let mut request = Self::empty(RuntimeHostInteractionKind::BrowserSession);
+        request.browserSession = Some(payload);
         request
     }
 
@@ -164,6 +173,7 @@ impl RuntimeHostInteractionRequest {
             requestId: Uuid::new_v4().to_string(),
             kind,
             browserAutomation: None,
+            browserSession: None,
             webVisit: None,
             composeWebViewController: None,
             systemCaptureScreenshot: None,
@@ -186,6 +196,12 @@ pub struct RuntimeHostInteractionBrowserAutomationPayload {
     pub toolName: String,
     pub parametersJson: String,
     pub requestedAtMillis: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Browser session command payload sent to the owner host.
+pub struct RuntimeHostInteractionBrowserSessionPayload {
+    pub commandJson: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -324,6 +340,7 @@ pub struct RuntimeHostInteractionToolPermissionPayload {
 /// Response envelope returned for one host interaction request.
 pub struct RuntimeHostInteractionResponse {
     pub browserAutomation: Option<RuntimeHostInteractionBrowserAutomationResponse>,
+    pub browserSession: Option<RuntimeHostInteractionBrowserSessionResponse>,
     pub webVisit: Option<RuntimeHostInteractionWebVisitResponse>,
     pub composeWebViewController: Option<RuntimeHostInteractionComposeWebViewControllerResponse>,
     pub systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotResponse>,
@@ -342,6 +359,13 @@ impl RuntimeHostInteractionResponse {
     pub fn browserAutomation(response: RuntimeHostInteractionBrowserAutomationResponse) -> Self {
         let mut value = Self::empty();
         value.browserAutomation = Some(response);
+        value
+    }
+
+    /// Builds a browser session response envelope.
+    pub fn browserSession(response: RuntimeHostInteractionBrowserSessionResponse) -> Self {
+        let mut value = Self::empty();
+        value.browserSession = Some(response);
         value
     }
 
@@ -431,6 +455,7 @@ impl RuntimeHostInteractionResponse {
     fn empty() -> Self {
         Self {
             browserAutomation: None,
+            browserSession: None,
             webVisit: None,
             composeWebViewController: None,
             systemCaptureScreenshot: None,
@@ -453,6 +478,12 @@ pub struct RuntimeHostInteractionBrowserAutomationResponse {
     pub success: bool,
     pub result: String,
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Browser session command response payload.
+pub struct RuntimeHostInteractionBrowserSessionResponse {
+    pub resultJson: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -652,6 +683,21 @@ pub fn requestOwnerBrowserAutomation(
     response
         .browserAutomation
         .ok_or_else(|| "browser automation response payload is missing".to_string())
+}
+
+/// Requests a browser session command from the owner host and waits for a response.
+pub fn requestOwnerBrowserSession(
+    payload: RuntimeHostInteractionBrowserSessionPayload,
+    timeout: Duration,
+) -> Result<RuntimeHostInteractionBrowserSessionResponse, String> {
+    let response = runtimeHostInteractionBroker().request(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::browserSession(payload),
+        timeout,
+    )?;
+    response
+        .browserSession
+        .ok_or_else(|| "browser session response payload is missing".to_string())
 }
 
 /// Requests a web visit from the owner host and waits for a response.

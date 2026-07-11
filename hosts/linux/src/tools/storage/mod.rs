@@ -16,31 +16,43 @@ use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value as ZbusValue};
 
 #[derive(Clone, Debug)]
 pub struct LinuxRuntimeStorageHost {
-    root: PathBuf,
     runtimeRoot: PathBuf,
     workspaceRoot: PathBuf,
 }
 
 impl LinuxRuntimeStorageHost {
+    /// Returns the default Linux runtime data root.
     #[allow(non_snake_case)]
-    pub fn defaultRoot() -> PathBuf {
+    pub fn defaultRuntimeRoot() -> PathBuf {
         if let Some(xdg_data_home) = env::var_os("XDG_DATA_HOME") {
-            return PathBuf::from(xdg_data_home).join("operit2");
+            return PathBuf::from(xdg_data_home).join("operit2").join("runtime");
         }
         let home = env::var_os("HOME").expect("HOME is required for Operit2 runtime storage");
-        PathBuf::from(home).join(".local").join("share").join("operit2")
+        PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("operit2")
+            .join("runtime")
     }
 
-    pub fn new(root: PathBuf) -> Self {
-        let runtimeRoot = root.join("runtime");
-        let workspaceRoot = root.join("workspaces");
-        Self::newWithRoots(root, runtimeRoot, workspaceRoot)
-    }
-
+    /// Returns the default Linux workspace collection root.
     #[allow(non_snake_case)]
-    pub fn newWithRoots(root: PathBuf, runtimeRoot: PathBuf, workspaceRoot: PathBuf) -> Self {
+    pub fn defaultWorkspaceRoot() -> PathBuf {
+        if let Some(xdg_data_home) = env::var_os("XDG_DATA_HOME") {
+            return PathBuf::from(xdg_data_home).join("operit2").join("workspaces");
+        }
+        let home = env::var_os("HOME").expect("HOME is required for Operit2 runtime storage");
+        PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("operit2")
+            .join("workspaces")
+    }
+
+    /// Creates a Linux runtime storage host with explicit roots.
+    #[allow(non_snake_case)]
+    pub fn new(runtimeRoot: PathBuf, workspaceRoot: PathBuf) -> Self {
         Self {
-            root,
             runtimeRoot,
             workspaceRoot,
         }
@@ -52,7 +64,9 @@ impl LinuxRuntimeStorageHost {
         match segments.as_slice() {
             ["runtime", rest @ ..] => Ok(joinSegments(&self.runtimeRoot, rest)),
             ["workspaces", rest @ ..] => Ok(joinSegments(&self.workspaceRoot, rest)),
-            _ => Ok(joinSegments(&self.root, &segments)),
+            _ => Err(HostError::new(format!(
+                "Runtime storage path must start with runtime/ or workspaces/: {path}"
+            ))),
         }
     }
 
@@ -63,19 +77,14 @@ impl LinuxRuntimeStorageHost {
         if let Ok(relative) = path.strip_prefix(&self.workspaceRoot) {
             return Ok(prefixedPath("workspaces", relative));
         }
-        Ok(path
-            .strip_prefix(&self.root)
-            .map_err(|error| HostError::new(error.to_string()))?
-            .to_string_lossy()
-            .replace('\\', "/"))
+        Err(HostError::new(format!(
+            "Physical path is outside configured runtime and workspace roots: {}",
+            path.display()
+        )))
     }
 }
 
 impl RuntimeStorageHost for LinuxRuntimeStorageHost {
-    fn rootDir(&self) -> Option<PathBuf> {
-        Some(self.root.clone())
-    }
-
     fn runtimeRootDir(&self) -> Option<PathBuf> {
         Some(self.runtimeRoot.clone())
     }

@@ -12,7 +12,11 @@ Future<void> initialize() async {
   _initialized = true;
 }
 
+/// Returns whether the browser logger has been initialized.
 bool isInitialized() => _initialized;
+
+/// Returns whether this backend already mirrors writes to a live console.
+bool writesToConsole() => true;
 
 Future<String> logFilePath() async {
   return 'localStorage:$_logStorageKey';
@@ -34,13 +38,7 @@ void write(
   Object? error,
   StackTrace? stackTrace,
 }) {
-  final timestamp = DateTime.now().toIso8601String();
-  final buffer = StringBuffer()
-    ..write(timestamp)
-    ..write(' ')
-    ..write(level.name.toUpperCase())
-    ..write('/')
-    ..write(message);
+  final buffer = StringBuffer(message);
   if (error != null) {
     buffer
       ..write(' error=')

@@ -12,6 +12,7 @@ val localProperties = Properties()
 val localPropertiesFile = rootProject.file("local.properties")
 localProperties.load(FileInputStream(localPropertiesFile))
 
+// Reads a required signing property from local.properties.
 fun requiredLocalProperty(name: String): String =
     localProperties.getProperty(name)
         ?: throw GradleException("Missing Android release signing property: $name")
@@ -92,12 +93,47 @@ val operitPluginSyncPython = if (System.getProperty("os.name").lowercase().conta
 val operitBridgeJniLibs = project.layout.projectDirectory.dir("src/main/jniLibs").asFile
 val operitLibclangDir = operitRepoRoot
     .resolve("target/operit-build-tools/libclang.runtime.win-x64.21.1.8/runtimes/win-x64/native")
+// Converts a file path into the clang-compatible slash format.
 fun File.clangPath(): String = absolutePath.replace('\\', '/')
-val operitRustTargets = listOf(
-    Triple("arm64-v8a", "aarch64-linux-android", "AARCH64_LINUX_ANDROID"),
-    Triple("armeabi-v7a", "armv7-linux-androideabi", "ARMV7_LINUX_ANDROIDEABI"),
-    Triple("x86_64", "x86_64-linux-android", "X86_64_LINUX_ANDROID"),
+
+data class OperitRustTarget(
+    val flutterPlatform: String,
+    val abi: String,
+    val rustTarget: String,
+    val envTarget: String,
 )
+
+// Reads Flutter's requested Android target platforms from Gradle properties.
+fun requestedFlutterTargetPlatforms(): Set<String> {
+    val raw = providers.gradleProperty("target-platform").orNull
+        ?: throw GradleException("Missing Flutter target-platform Gradle property")
+    return raw.split(',')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .toSet()
+}
+
+// Selects only the Rust targets required by Flutter's Android build.
+fun selectedOperitRustTargets(targets: List<OperitRustTarget>): List<OperitRustTarget> {
+    val requestedPlatforms = requestedFlutterTargetPlatforms()
+    val selectedTargets = targets.filter { requestedPlatforms.contains(it.flutterPlatform) }
+    val selectedPlatforms = selectedTargets.map { it.flutterPlatform }.toSet()
+    val unsupportedPlatforms = requestedPlatforms.subtract(selectedPlatforms)
+    if (unsupportedPlatforms.isNotEmpty()) {
+        throw GradleException("Unsupported Android Rust target-platform values: $unsupportedPlatforms")
+    }
+    if (selectedTargets.isEmpty()) {
+        throw GradleException("No Android Rust targets selected for target-platform=$requestedPlatforms")
+    }
+    return selectedTargets
+}
+
+val operitRustTargets = listOf(
+    OperitRustTarget("android-arm64", "arm64-v8a", "aarch64-linux-android", "AARCH64_LINUX_ANDROID"),
+    OperitRustTarget("android-arm", "armeabi-v7a", "armv7-linux-androideabi", "ARMV7_LINUX_ANDROIDEABI"),
+    OperitRustTarget("android-x64", "x86_64", "x86_64-linux-android", "X86_64_LINUX_ANDROID"),
+)
+val selectedOperitRustTargets = selectedOperitRustTargets(operitRustTargets)
 
 val syncOperitPlugins = tasks.register<Exec>("syncOperitPlugins") {
     workingDir = operitRepoRoot
@@ -109,10 +145,10 @@ val syncOperitPlugins = tasks.register<Exec>("syncOperitPlugins") {
     )
 }
 
-val cargoBuildOperitFlutterBridgeTasks = operitRustTargets.map { (abi, rustTarget, envTarget) ->
-    tasks.register<Exec>("cargoBuildOperitFlutterBridge${abi.replace("-", "").replace("_", "")}") {
+val cargoBuildOperitFlutterBridgeTasks = selectedOperitRustTargets.map { target ->
+    tasks.register<Exec>("cargoBuildOperitFlutterBridge${target.abi.replace("-", "").replace("_", "")}") {
         dependsOn(syncOperitPlugins)
-        val clangPrefix = rustTarget
+        val clangPrefix = target.rustTarget
         val apiLevel = 23
         val ndkToolchain = android.ndkDirectory
             .resolve("toolchains")
@@ -120,7 +156,7 @@ val cargoBuildOperitFlutterBridgeTasks = operitRustTargets.map { (abi, rustTarge
             .resolve("prebuilt")
             .resolve("windows-x86_64")
             .resolve("bin")
-        val linkerPrefix = if (rustTarget == "armv7-linux-androideabi") {
+        val linkerPrefix = if (target.rustTarget == "armv7-linux-androideabi") {
             "armv7a-linux-androideabi"
         } else {
             clangPrefix
@@ -135,12 +171,12 @@ val cargoBuildOperitFlutterBridgeTasks = operitRustTargets.map { (abi, rustTarge
             ?.single { it.isDirectory }
             ?: throw GradleException("Android NDK clang resource dir not found")
         val bindgenClangArgs =
-            "--target=$rustTarget --sysroot=${ndkToolchain.parentFile.resolve("sysroot").clangPath()} -resource-dir=${clangResourceDir.clangPath()}"
-        val ccEnvTarget = rustTarget.replace("-", "_")
+            "--target=${target.rustTarget} --sysroot=${ndkToolchain.parentFile.resolve("sysroot").clangPath()} -resource-dir=${clangResourceDir.clangPath()}"
+        val ccEnvTarget = target.rustTarget.replace("-", "_")
         environment("CC_$ccEnvTarget", linker.absolutePath)
         environment("AR_$ccEnvTarget", ar.absolutePath)
-        environment("CARGO_TARGET_${envTarget}_LINKER", linker.absolutePath)
-        environment("CARGO_TARGET_${envTarget}_AR", ar.absolutePath)
+        environment("CARGO_TARGET_${target.envTarget}_LINKER", linker.absolutePath)
+        environment("CARGO_TARGET_${target.envTarget}_AR", ar.absolutePath)
         environment("LIBCLANG_PATH", operitLibclangDir.absolutePath)
         environment("BINDGEN_EXTRA_CLANG_ARGS_$ccEnvTarget", bindgenClangArgs)
         commandLine(
@@ -149,12 +185,12 @@ val cargoBuildOperitFlutterBridgeTasks = operitRustTargets.map { (abi, rustTarge
             "--manifest-path",
             operitBridgeCrate.resolve("Cargo.toml").absolutePath,
             "--target",
-            rustTarget,
+            target.rustTarget,
         )
         doLast {
             copy {
-                from(operitBridgeCrate.resolve("target/$rustTarget/debug/liboperit_flutter_bridge.so"))
-                into(operitBridgeJniLibs.resolve(abi))
+                from(operitBridgeCrate.resolve("target/${target.rustTarget}/debug/liboperit_flutter_bridge.so"))
+                into(operitBridgeJniLibs.resolve(target.abi))
             }
         }
     }

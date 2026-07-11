@@ -46,7 +46,11 @@ impl GitHubAuthPreferences {
 
     /// Creates a GitHub authentication preference manager rooted at a directory.
     pub fn new(root_dir: PathBuf) -> Self {
-        let path = root_dir.join(OperitPaths::GITHUB_AUTH_PREFERENCES_PATH);
+        let path =
+            OperitPaths::runtimePathFromRoot(&root_dir, OperitPaths::GITHUB_AUTH_PREFERENCES_PATH)
+                .expect(
+                    "GitHub authentication preferences path must use the runtime storage prefix",
+                );
         Self {
             dataStore: PreferencesDataStore::newEncrypted(path),
         }

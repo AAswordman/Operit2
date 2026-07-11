@@ -21,13 +21,12 @@ pub fn run_storage_command(
     }
 }
 
-/// Prints the active data, runtime, and workspace root directories.
+/// Prints the active runtime and workspace root directories.
 fn print_storage_paths(
     application: &OperitApplication,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let config = storage_root_config(application)?;
-    output.push_stdout_line(format!("dataRoot={}", config.data_root.display()));
     output.push_stdout_line(format!("runtimeRoot={}", config.runtime_root.display()));
     output.push_stdout_line(format!("workspaceRoot={}", config.workspace_root.display()));
     Ok(())
@@ -50,7 +49,6 @@ fn migrate_storage_roots(
         output,
     )?;
 
-    output.push_stdout_line(format!("dataRoot={}", current.data_root.display()));
     output.push_stdout_line(format!("runtimeRoot={}", plan.runtime_root.display()));
     output.push_stdout_line(format!("workspaceRoot={}", plan.workspace_root.display()));
     output.push_stdout_line("storageConfig=updated");
@@ -64,20 +62,13 @@ fn storage_root_config(application: &OperitApplication) -> Result<RuntimeStoreRo
         .runtimeStorageHost
         .as_ref()
         .ok_or_else(|| "RuntimeStorageHost is not registered".to_string())?;
-    let data_root = host
-        .rootDir()
-        .ok_or_else(|| "RuntimeStorageHost data root is not configured".to_string())?;
     let runtime_root = host
         .runtimeRootDir()
         .ok_or_else(|| "RuntimeStorageHost runtime root is not configured".to_string())?;
     let workspace_root = host
         .workspaceRootDir()
         .ok_or_else(|| "RuntimeStorageHost workspace root is not configured".to_string())?;
-    Ok(RuntimeStoreRootConfig::new(
-        data_root,
-        runtime_root,
-        workspace_root,
-    ))
+    Ok(RuntimeStoreRootConfig::new(runtime_root, workspace_root))
 }
 
 #[derive(Debug)]

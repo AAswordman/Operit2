@@ -53,7 +53,6 @@ pub struct WorkspaceService {
     chatDao: ChatDao,
     fileSystemHost: Arc<dyn FileSystemHost>,
     runtimeStoreRoot: std::path::PathBuf,
-    appFilesRoot: Option<std::path::PathBuf>,
     workspaceCollectionRoot: std::path::PathBuf,
 }
 
@@ -63,13 +62,16 @@ impl WorkspaceService {
     pub fn getInstance(context: &HostManager) -> Self {
         let database = AppDatabase::getDatabase(RuntimeStorePaths::default())
             .expect("AppDatabase must initialize for WorkspaceService");
-        let runtimeStoreRoot = context
+        let runtimeStorageHost = context
             .runtimeStorageHost
             .as_ref()
-            .and_then(|host| host.rootDir())
-            .expect("RuntimeStorageHost root must be configured for WorkspaceService");
-        let workspaceCollectionRoot =
-            RuntimeStorePaths::new(runtimeStoreRoot.clone()).workspace_dir();
+            .expect("RuntimeStorageHost must be configured for WorkspaceService");
+        let runtimeStoreRoot = runtimeStorageHost
+            .runtimeRootDir()
+            .expect("RuntimeStorageHost runtime root must be configured for WorkspaceService");
+        let workspaceCollectionRoot = runtimeStorageHost
+            .workspaceRootDir()
+            .expect("RuntimeStorageHost workspace root must be configured for WorkspaceService");
         Self {
             chatDao: database.chatDao(),
             fileSystemHost: context
@@ -77,7 +79,6 @@ impl WorkspaceService {
                 .clone()
                 .expect("FileSystemHost must be configured for WorkspaceService"),
             runtimeStoreRoot,
-            appFilesRoot: context.appFilesRoot.clone(),
             workspaceCollectionRoot,
         }
     }
@@ -319,7 +320,6 @@ impl WorkspaceService {
             self.fileSystemHost.clone(),
             PathMapper::new(
                 self.runtimeStoreRoot.clone(),
-                self.appFilesRoot.clone(),
                 self.workspaceCollectionRoot.clone(),
             ),
         )

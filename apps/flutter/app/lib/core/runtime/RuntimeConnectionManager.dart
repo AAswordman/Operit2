@@ -9,6 +9,7 @@ import '../bridge/CoreProxy.dart';
 import '../bridge/PlatformCoreProxy.dart';
 import '../link/CoreLinkProtocol.dart';
 import '../link/RemoteRuntimeLinkClient.dart';
+import '../logging/ClientLogger.dart';
 import 'RuntimeConnectionConfigStore.dart';
 
 enum RuntimeConnectionMode { local, remote }
@@ -16,15 +17,17 @@ enum RuntimeConnectionMode { local, remote }
 class LocalRuntimeStorageConfig {
   const LocalRuntimeStorageConfig({
     required this.confirmed,
-    required this.storageRoot,
+    required this.runtimeRoot,
+    required this.workspaceRoot,
     required this.updatedAt,
   });
 
-  /// Creates a config that keeps the platform-provided storage root.
+  /// Creates an unconfirmed local runtime storage config.
   factory LocalRuntimeStorageConfig.platformDefault() {
     return LocalRuntimeStorageConfig(
       confirmed: false,
-      storageRoot: '',
+      runtimeRoot: '',
+      workspaceRoot: '',
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
   }
@@ -33,27 +36,28 @@ class LocalRuntimeStorageConfig {
   factory LocalRuntimeStorageConfig.fromJson(Map<String, Object?> json) {
     return LocalRuntimeStorageConfig(
       confirmed: json['confirmed'] as bool,
-      storageRoot: json['storageRoot'] as String,
+      runtimeRoot: json['runtimeRoot'] as String,
+      workspaceRoot: json['workspaceRoot'] as String,
       updatedAt: json['updatedAt'] as int,
     );
   }
 
   final bool confirmed;
-  final String storageRoot;
+  final String runtimeRoot;
+  final String workspaceRoot;
   final int updatedAt;
-
-  /// Returns true when the config names a custom storage root.
-  bool get hasCustomStorageRoot => storageRoot.trim().isNotEmpty;
 
   /// Creates a copy with updated fields.
   LocalRuntimeStorageConfig copyWith({
     bool? confirmed,
-    String? storageRoot,
+    String? runtimeRoot,
+    String? workspaceRoot,
     int? updatedAt,
   }) {
     return LocalRuntimeStorageConfig(
       confirmed: confirmed ?? this.confirmed,
-      storageRoot: storageRoot ?? this.storageRoot,
+      runtimeRoot: runtimeRoot ?? this.runtimeRoot,
+      workspaceRoot: workspaceRoot ?? this.workspaceRoot,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -62,7 +66,8 @@ class LocalRuntimeStorageConfig {
   Map<String, Object?> toJson() {
     return {
       'confirmed': confirmed,
-      'storageRoot': storageRoot,
+      'runtimeRoot': runtimeRoot,
+      'workspaceRoot': workspaceRoot,
       'updatedAt': updatedAt,
     };
   }
@@ -70,7 +75,6 @@ class LocalRuntimeStorageConfig {
 
 class RuntimeStoragePaths {
   const RuntimeStoragePaths({
-    required this.storageRoot,
     required this.runtimeRoot,
     required this.workspaceRoot,
   });
@@ -78,13 +82,11 @@ class RuntimeStoragePaths {
   /// Creates a storage path snapshot from native channel values.
   factory RuntimeStoragePaths.fromMap(Map<Object?, Object?> map) {
     return RuntimeStoragePaths(
-      storageRoot: map['storageRoot'] as String,
       runtimeRoot: map['runtimeRoot'] as String,
       workspaceRoot: map['workspaceRoot'] as String,
     );
   }
 
-  final String storageRoot;
   final String runtimeRoot;
   final String workspaceRoot;
 }
@@ -94,23 +96,45 @@ class LocalRuntimeStorageBridge {
 
   static const MethodChannel _channel = MethodChannel('operit/runtime');
 
-  /// Reads native runtime storage paths for the supplied client config.
-  static Future<RuntimeStoragePaths> pathsForConfig(
-    LocalRuntimeStorageConfig config,
-  ) async {
+  /// Reads the platform default runtime and workspace roots.
+  static Future<RuntimeStoragePaths> defaultPaths() async {
     if (kIsWeb) {
-      final root = config.storageRoot.trim().isEmpty
-          ? 'browser-storage'
-          : config.storageRoot.trim();
+      return const RuntimeStoragePaths(
+        runtimeRoot: 'browser-storage/runtime',
+        workspaceRoot: 'browser-storage/workspaces',
+      );
+    }
+    final result = await _channel.invokeMapMethod<Object?, Object?>(
+      'localRuntimeStorageDefaults',
+    );
+    if (result == null) {
+      throw StateError('local runtime storage defaults response is empty');
+    }
+    return RuntimeStoragePaths.fromMap(result);
+  }
+
+  /// Validates and resolves explicit runtime and workspace roots.
+  static Future<RuntimeStoragePaths> pathsForRoots(
+    String runtimeRoot,
+    String workspaceRoot,
+  ) async {
+    final normalizedRuntimeRoot = runtimeRoot.trim();
+    final normalizedWorkspaceRoot = workspaceRoot.trim();
+    if (normalizedRuntimeRoot.isEmpty || normalizedWorkspaceRoot.isEmpty) {
+      throw ArgumentError('runtime and workspace roots must not be empty');
+    }
+    if (kIsWeb) {
       return RuntimeStoragePaths(
-        storageRoot: root,
-        runtimeRoot: '$root/runtime',
-        workspaceRoot: '$root/workspaces',
+        runtimeRoot: normalizedRuntimeRoot,
+        workspaceRoot: normalizedWorkspaceRoot,
       );
     }
     final result = await _channel.invokeMapMethod<Object?, Object?>(
       'localRuntimeStoragePaths',
-      <String, Object?>{'storageRoot': config.storageRoot},
+      <String, Object?>{
+        'runtimeRoot': normalizedRuntimeRoot,
+        'workspaceRoot': normalizedWorkspaceRoot,
+      },
     );
     if (result == null) {
       throw StateError('local runtime storage paths response is empty');
@@ -118,14 +142,20 @@ class LocalRuntimeStorageBridge {
     return RuntimeStoragePaths.fromMap(result);
   }
 
-  /// Applies the local runtime storage config before the runtime is created.
+  /// Installs local storage roots and permits repeated identical configuration.
   static Future<void> apply(LocalRuntimeStorageConfig config) async {
+    if (!config.confirmed) {
+      throw StateError('local runtime storage config is not confirmed');
+    }
     if (kIsWeb) {
       return;
     }
     await _channel.invokeMethod<void>(
       'setLocalRuntimeStorage',
-      <String, Object?>{'storageRoot': config.storageRoot},
+      <String, Object?>{
+        'runtimeRoot': config.runtimeRoot,
+        'workspaceRoot': config.workspaceRoot,
+      },
     );
   }
 }
@@ -205,6 +235,7 @@ class RuntimeConnectionManager extends ChangeNotifier {
   RuntimeConnectionManager._();
 
   static final RuntimeConnectionManager instance = RuntimeConnectionManager._();
+  static const String _logTag = 'RuntimeConnection';
   static const Duration _remoteStartupProbeTimeout = Duration(seconds: 4);
   static const Duration _remoteIssueProbeDelay = Duration(milliseconds: 700);
   static const Duration _remoteIssueProbeTimeout = Duration(seconds: 2);
@@ -216,6 +247,12 @@ class RuntimeConnectionManager extends ChangeNotifier {
   bool _remoteIssueProbeRunning = false;
 
   RuntimeConnectionConfig get config => _config;
+
+  /// Returns whether the selected runtime can accept core calls.
+  bool get runtimeConfigured {
+    return _config.mode == RuntimeConnectionMode.remote ||
+        _config.localStorage.confirmed;
+  }
 
   CoreProxy get coreProxy {
     return switch (_config.mode) {
@@ -231,6 +268,10 @@ class RuntimeConnectionManager extends ChangeNotifier {
   }
 
   void _onRemoteLinkConnectionIssue(CoreLinkError error) {
+    ClientLogger.w(
+      'remote link issue received code=${error.code} message=${error.message}',
+      tag: _logTag,
+    );
     final linkClient = _remoteLinkClient;
     if (_config.mode != RuntimeConnectionMode.remote || linkClient == null) {
       return;
@@ -246,12 +287,21 @@ class RuntimeConnectionManager extends ChangeNotifier {
     CoreLinkError firstError,
     RemoteRuntimeLinkClient linkClient,
   ) async {
+    final stopwatch = Stopwatch()..start();
     var latestError = firstError;
     try {
       for (var attempt = 0; attempt < _remoteIssueProbeAttempts; attempt++) {
+        ClientLogger.d(
+          'remote issue probe start attempt=${attempt + 1} code=${latestError.code}',
+          tag: _logTag,
+        );
         await Future<void>.delayed(_remoteIssueProbeDelay);
         if (_config.mode != RuntimeConnectionMode.remote ||
             !identical(_remoteLinkClient, linkClient)) {
+          ClientLogger.i(
+            'remote issue probe stopped mode=${_config.mode.name} elapsedMs=${stopwatch.elapsedMilliseconds}',
+            tag: _logTag,
+          );
           return;
         }
         try {
@@ -260,9 +310,17 @@ class RuntimeConnectionManager extends ChangeNotifier {
             linkClient.session,
             _remoteIssueProbeTimeout,
           );
+          ClientLogger.i(
+            'remote issue probe recovered attempt=${attempt + 1} elapsedMs=${stopwatch.elapsedMilliseconds}',
+            tag: _logTag,
+          );
           return;
         } catch (error) {
           latestError = _asCoreLinkError(error, 'REMOTE_CONNECT_FAILED');
+          ClientLogger.w(
+            'remote issue probe failed attempt=${attempt + 1} code=${latestError.code} message=${latestError.message}',
+            tag: _logTag,
+          );
         }
       }
       if (_config.mode != RuntimeConnectionMode.remote ||
@@ -270,6 +328,10 @@ class RuntimeConnectionManager extends ChangeNotifier {
         return;
       }
       _pendingRemoteError = latestError;
+      ClientLogger.e(
+        'remote issue confirmed code=${latestError.code} message=${latestError.message} elapsedMs=${stopwatch.elapsedMilliseconds}',
+        tag: _logTag,
+      );
       await _apply(
         _config.copyWith(
           mode: RuntimeConnectionMode.local,
@@ -294,6 +356,11 @@ class RuntimeConnectionManager extends ChangeNotifier {
     PairedRemoteSessionRecord session,
     Duration timeout,
   ) async {
+    final stopwatch = Stopwatch()..start();
+    ClientLogger.d(
+      'verify remote session start session=${session.sessionId} coreDevice=${session.coreDeviceId} timeoutMs=${timeout.inMilliseconds}',
+      tag: _logTag,
+    );
     final info = await linkClient.sessionInfo().timeout(timeout);
     if (info.coreDeviceId != session.coreDeviceId) {
       throw CoreLinkError(
@@ -301,37 +368,102 @@ class RuntimeConnectionManager extends ChangeNotifier {
         message: 'remote runtime identity changed',
       );
     }
+    ClientLogger.i(
+      'verify remote session done session=${session.sessionId} coreDevice=${session.coreDeviceId} elapsedMs=${stopwatch.elapsedMilliseconds}',
+      tag: _logTag,
+    );
   }
 
+  /// Loads persisted runtime configuration and applies the selected runtime.
   Future<void> initialize() async {
-    final storedConfig = await RuntimeConnectionConfigStore.read();
-    await LocalRuntimeStorageBridge.apply(storedConfig.localStorage);
-    if (storedConfig.mode == RuntimeConnectionMode.remote) {
-      await _applyRemote(storedConfig, persist: false, verify: true);
-      return;
+    final stopwatch = Stopwatch()..start();
+    ClientLogger.i('initialize start', tag: _logTag);
+    try {
+      final readStopwatch = Stopwatch()..start();
+      final storedConfig = await RuntimeConnectionConfigStore.read();
+      ClientLogger.i(
+        'config read done mode=${storedConfig.mode.name} localConfirmed=${storedConfig.localStorage.confirmed} remoteCount=${storedConfig.remoteSessions.length} elapsedMs=${readStopwatch.elapsedMilliseconds}',
+        tag: _logTag,
+      );
+      if (storedConfig.localStorage.confirmed) {
+        final storageStopwatch = Stopwatch()..start();
+        ClientLogger.i(
+          'local storage apply start runtimeRoot=${storedConfig.localStorage.runtimeRoot} workspaceRoot=${storedConfig.localStorage.workspaceRoot}',
+          tag: _logTag,
+        );
+        await LocalRuntimeStorageBridge.apply(storedConfig.localStorage);
+        ClientLogger.i(
+          'local storage apply done elapsedMs=${storageStopwatch.elapsedMilliseconds}',
+          tag: _logTag,
+        );
+      }
+      if (storedConfig.mode == RuntimeConnectionMode.remote) {
+        final applied = await _applyRemote(
+          storedConfig,
+          persist: false,
+          verify: true,
+        );
+        ClientLogger.i(
+          'initialize done mode=${_config.mode.name} remoteApplied=$applied elapsedMs=${stopwatch.elapsedMilliseconds}',
+          tag: _logTag,
+        );
+        return;
+      }
+      await _apply(storedConfig, persist: false);
+      ClientLogger.i(
+        'initialize done mode=${_config.mode.name} elapsedMs=${stopwatch.elapsedMilliseconds}',
+        tag: _logTag,
+      );
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'initialize failed elapsedMs=${stopwatch.elapsedMilliseconds}',
+        tag: _logTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     }
-    await _apply(storedConfig, persist: false);
   }
 
   /// Returns native storage paths for the stored local runtime config.
   Future<RuntimeStoragePaths> localRuntimeStoragePaths() {
-    return LocalRuntimeStorageBridge.pathsForConfig(_config.localStorage);
-  }
-
-  /// Returns native storage paths for a candidate local runtime root.
-  Future<RuntimeStoragePaths> localRuntimeStoragePathsForRoot(
-    String storageRoot,
-  ) {
-    return LocalRuntimeStorageBridge.pathsForConfig(
-      _config.localStorage.copyWith(storageRoot: storageRoot),
+    final localStorage = _config.localStorage;
+    if (!localStorage.confirmed) {
+      throw StateError('local runtime storage config is not confirmed');
+    }
+    return LocalRuntimeStorageBridge.pathsForRoots(
+      localStorage.runtimeRoot,
+      localStorage.workspaceRoot,
     );
   }
 
-  /// Confirms and persists the local runtime storage root.
-  Future<void> confirmLocalRuntimeStorage(String storageRoot) async {
+  /// Returns the platform default runtime and workspace roots.
+  Future<RuntimeStoragePaths> localRuntimeStorageDefaultPaths() {
+    return LocalRuntimeStorageBridge.defaultPaths();
+  }
+
+  /// Returns native storage paths for candidate runtime and workspace roots.
+  Future<RuntimeStoragePaths> localRuntimeStoragePathsForRoots(
+    String runtimeRoot,
+    String workspaceRoot,
+  ) {
+    return LocalRuntimeStorageBridge.pathsForRoots(runtimeRoot, workspaceRoot);
+  }
+
+  /// Confirms and persists the local runtime and workspace roots.
+  Future<void> confirmLocalRuntimeStorage(
+    String runtimeRoot,
+    String workspaceRoot,
+  ) async {
+    final stopwatch = Stopwatch()..start();
+    ClientLogger.i(
+      'confirm local runtime storage start runtimeRoot=$runtimeRoot workspaceRoot=$workspaceRoot',
+      tag: _logTag,
+    );
     final localStorage = LocalRuntimeStorageConfig(
       confirmed: true,
-      storageRoot: storageRoot.trim(),
+      runtimeRoot: runtimeRoot.trim(),
+      workspaceRoot: workspaceRoot.trim(),
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
     await LocalRuntimeStorageBridge.apply(localStorage);
@@ -344,13 +476,26 @@ class RuntimeConnectionManager extends ChangeNotifier {
       ),
       persist: true,
     );
+    ClientLogger.i(
+      'confirm local runtime storage done elapsedMs=${stopwatch.elapsedMilliseconds}',
+      tag: _logTag,
+    );
   }
 
-  /// Persists a migrated local runtime storage root.
-  Future<void> persistMigratedLocalRuntimeStorage(String storageRoot) async {
+  /// Persists migrated local runtime and workspace roots.
+  Future<void> persistMigratedLocalRuntimeStorage(
+    String runtimeRoot,
+    String workspaceRoot,
+  ) async {
+    final stopwatch = Stopwatch()..start();
+    ClientLogger.i(
+      'persist migrated local runtime storage start runtimeRoot=$runtimeRoot workspaceRoot=$workspaceRoot',
+      tag: _logTag,
+    );
     final localStorage = LocalRuntimeStorageConfig(
       confirmed: true,
-      storageRoot: storageRoot.trim(),
+      runtimeRoot: runtimeRoot.trim(),
+      workspaceRoot: workspaceRoot.trim(),
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
     final config = _config.copyWith(
@@ -361,9 +506,15 @@ class RuntimeConnectionManager extends ChangeNotifier {
     await OutboundLinkSessionStore.write(config.remoteSessions);
     await RuntimeConnectionConfigStore.write(config);
     notifyListeners();
+    ClientLogger.i(
+      'persist migrated local runtime storage done elapsedMs=${stopwatch.elapsedMilliseconds}',
+      tag: _logTag,
+    );
   }
 
+  /// Selects the local runtime connection.
   Future<void> setLocal() async {
+    ClientLogger.i('set local start', tag: _logTag);
     await _apply(
       _config.copyWith(
         mode: RuntimeConnectionMode.local,
@@ -371,12 +522,15 @@ class RuntimeConnectionManager extends ChangeNotifier {
       ),
       persist: true,
     );
+    ClientLogger.i('set local done mode=${_config.mode.name}', tag: _logTag);
   }
 
+  /// Stores and selects a paired remote runtime.
   Future<bool> setRemote({
     required String name,
     required PairedRemoteSessionRecord session,
   }) async {
+    ClientLogger.i('set remote start name=$name', tag: _logTag);
     final remoteSessions = Map<String, PairedRemoteSessionRecord>.of(
       _config.remoteSessions,
     )..[name] = session;
@@ -389,10 +543,21 @@ class RuntimeConnectionManager extends ChangeNotifier {
       localStorage: _config.localStorage,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
-    return _applyRemote(remoteConfig, persist: true, verify: true);
+    final result = await _applyRemote(
+      remoteConfig,
+      persist: true,
+      verify: true,
+    );
+    ClientLogger.i(
+      'set remote done name=$name applied=$result mode=${_config.mode.name}',
+      tag: _logTag,
+    );
+    return result;
   }
 
+  /// Selects one existing paired remote runtime.
   Future<bool> usePairedRemote(String name) async {
+    ClientLogger.i('use paired remote start name=$name', tag: _logTag);
     if (!_config.remoteSessions.containsKey(name)) {
       throw StateError('paired remote runtime does not exist: $name');
     }
@@ -401,10 +566,21 @@ class RuntimeConnectionManager extends ChangeNotifier {
       activeRemoteName: name,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
-    return _applyRemote(remoteConfig, persist: true, verify: true);
+    final result = await _applyRemote(
+      remoteConfig,
+      persist: true,
+      verify: true,
+    );
+    ClientLogger.i(
+      'use paired remote done name=$name applied=$result mode=${_config.mode.name}',
+      tag: _logTag,
+    );
+    return result;
   }
 
+  /// Removes one paired remote runtime record.
   Future<void> removePairedRemote(String name) async {
+    ClientLogger.i('remove paired remote start name=$name', tag: _logTag);
     if (!_config.remoteSessions.containsKey(name)) {
       throw StateError('paired remote runtime does not exist: $name');
     }
@@ -424,12 +600,22 @@ class RuntimeConnectionManager extends ChangeNotifier {
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
     await _apply(next, persist: true);
+    ClientLogger.i(
+      'remove paired remote done name=$name mode=${_config.mode.name}',
+      tag: _logTag,
+    );
   }
 
+  /// Applies one runtime connection configuration.
   Future<void> _apply(
     RuntimeConnectionConfig config, {
     required bool persist,
   }) async {
+    final stopwatch = Stopwatch()..start();
+    ClientLogger.d(
+      'apply start mode=${config.mode.name} persist=$persist remoteName=${config.activeRemoteName}',
+      tag: _logTag,
+    );
     _remoteLinkClient?.dispose();
     _remoteLinkClient = null;
     if (config.mode == RuntimeConnectionMode.remote) {
@@ -448,13 +634,23 @@ class RuntimeConnectionManager extends ChangeNotifier {
       await RuntimeConnectionConfigStore.write(config);
     }
     notifyListeners();
+    ClientLogger.i(
+      'apply done mode=${_config.mode.name} persist=$persist elapsedMs=${stopwatch.elapsedMilliseconds}',
+      tag: _logTag,
+    );
   }
 
+  /// Applies and verifies one remote runtime connection configuration.
   Future<bool> _applyRemote(
     RuntimeConnectionConfig config, {
     required bool persist,
     required bool verify,
   }) async {
+    final stopwatch = Stopwatch()..start();
+    ClientLogger.i(
+      'apply remote start name=${config.activeRemoteName} persist=$persist verify=$verify',
+      tag: _logTag,
+    );
     _remoteLinkClient?.dispose();
     _remoteLinkClient = null;
     final session = config.activeRemoteSession;
@@ -478,10 +674,19 @@ class RuntimeConnectionManager extends ChangeNotifier {
         await RuntimeConnectionConfigStore.write(config);
       }
       notifyListeners();
+      ClientLogger.i(
+        'apply remote done name=${config.activeRemoteName} elapsedMs=${stopwatch.elapsedMilliseconds}',
+        tag: _logTag,
+      );
       return true;
     } catch (error) {
       linkClient.dispose();
       _pendingRemoteError = _asCoreLinkError(error, 'REMOTE_CONNECT_FAILED');
+      ClientLogger.e(
+        'apply remote failed name=${config.activeRemoteName} elapsedMs=${stopwatch.elapsedMilliseconds}',
+        tag: _logTag,
+        error: error,
+      );
       await _apply(
         RuntimeConnectionConfig(
           mode: RuntimeConnectionMode.local,

@@ -1822,7 +1822,7 @@ impl PreferencesDataStore {
         let content = serde_json::to_string_pretty(&preferences)?;
         let contentBytes = preferencesSyncStorageContent(storageHost.as_ref(), entityId, content)?;
         storageHost.writeBytes(entityId, &contentBytes)?;
-        let path = RuntimeStorePaths::default().root_dir().join(entityId);
+        let path = RuntimeStorePaths::default().runtime_storage_path(entityId);
         {
             let sharedState = preferencesDataStoreSharedState(&path);
             let mut loaded = sharedState

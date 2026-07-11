@@ -80,18 +80,17 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn newWithContext(hostManager: HostManager) -> Self {
         if let Some(runtimeStorageHost) = hostManager.runtimeStorageHost.clone() {
-            if let Some(rootDir) = runtimeStorageHost.rootDir() {
-                AppLogger::configure_log_files(&rootDir);
-                setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-                    rootDir,
-                    runtimeStorageHost
-                        .runtimeRootDir()
-                        .expect("runtime storage host must provide a runtime root directory"),
-                    runtimeStorageHost
-                        .workspaceRootDir()
-                        .expect("runtime storage host must provide a workspace root directory"),
-                ));
-            }
+            let runtimeRoot = runtimeStorageHost
+                .runtimeRootDir()
+                .expect("runtime storage host must provide a runtime root directory");
+            let workspaceRoot = runtimeStorageHost
+                .workspaceRootDir()
+                .expect("runtime storage host must provide a workspace root directory");
+            AppLogger::configure_log_files(&runtimeRoot);
+            setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
+                runtimeRoot,
+                workspaceRoot,
+            ));
             setDefaultRuntimeStorageHost(runtimeStorageHost);
         }
         if let Some(runtimeSqliteHost) = hostManager.runtimeSqliteHost.clone() {
@@ -450,7 +449,7 @@ impl OperitApplication {
         &self,
         bytes: Vec<u8>,
     ) -> Result<Operit1ModelConfigSnapshotPreview, String> {
-        Operit1SnapshotImportManager::new(RuntimeStorePaths::default().root_dir().to_path_buf())
+        Operit1SnapshotImportManager::new(RuntimeStorePaths::default())
             .inspectModelConfigSnapshot(bytes)
     }
 
@@ -458,8 +457,7 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     #[cfg(not(target_arch = "wasm32"))]
     pub fn inspectOperit1Snapshot(&self, bytes: Vec<u8>) -> Result<Operit1SnapshotPreview, String> {
-        Operit1SnapshotImportManager::new(RuntimeStorePaths::default().root_dir().to_path_buf())
-            .inspectSnapshot(bytes)
+        Operit1SnapshotImportManager::new(RuntimeStorePaths::default()).inspectSnapshot(bytes)
     }
 
     /// Reads and previews an Operit 1 snapshot file from disk.
@@ -470,8 +468,7 @@ impl OperitApplication {
         path: String,
     ) -> Result<Operit1SnapshotPreview, String> {
         let bytes = fs::read(path).map_err(|_| "无法读取 Operit1 快照文件".to_string())?;
-        Operit1SnapshotImportManager::new(RuntimeStorePaths::default().root_dir().to_path_buf())
-            .inspectSnapshot(bytes)
+        Operit1SnapshotImportManager::new(RuntimeStorePaths::default()).inspectSnapshot(bytes)
     }
 
     /// Imports a model configuration from an Operit 1 snapshot into the selected profile.
@@ -483,7 +480,7 @@ impl OperitApplication {
         configId: String,
         modelId: String,
     ) -> Result<Operit1ModelConfigImportResult, String> {
-        Operit1SnapshotImportManager::new(RuntimeStorePaths::default().root_dir().to_path_buf())
+        Operit1SnapshotImportManager::new(RuntimeStorePaths::default())
             .importModelConfigSnapshot(bytes, configId, modelId)
     }
 
@@ -501,8 +498,7 @@ impl OperitApplication {
             progress: 0.04,
             active: true,
         });
-        Operit1SnapshotImportManager::new(RuntimeStorePaths::default().root_dir().to_path_buf())
-            .importSnapshot(bytes)
+        Operit1SnapshotImportManager::new(RuntimeStorePaths::default()).importSnapshot(bytes)
     }
 
     /// Reads and imports an Operit 1 full snapshot file from disk.
@@ -520,8 +516,7 @@ impl OperitApplication {
             active: true,
         });
         let bytes = fs::read(path).map_err(|_| "无法读取 Operit1 快照文件".to_string())?;
-        Operit1SnapshotImportManager::new(RuntimeStorePaths::default().root_dir().to_path_buf())
-            .importSnapshot(bytes)
+        Operit1SnapshotImportManager::new(RuntimeStorePaths::default()).importSnapshot(bytes)
     }
 
     /// Observes the latest Operit 1 snapshot import progress state.

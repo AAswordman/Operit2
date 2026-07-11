@@ -17,28 +17,29 @@ use windows_sys::Win32::Security::Credentials::{
 
 #[derive(Clone, Debug)]
 pub struct WindowsRuntimeStorageHost {
-    root: PathBuf,
     runtimeRoot: PathBuf,
     workspaceRoot: PathBuf,
 }
 
 impl WindowsRuntimeStorageHost {
+    /// Returns the default Windows runtime data root.
     #[allow(non_snake_case)]
-    pub fn defaultRoot() -> PathBuf {
+    pub fn defaultRuntimeRoot() -> PathBuf {
         let appdata = env::var_os("APPDATA").expect("APPDATA is required for Operit2 runtime storage");
-        PathBuf::from(appdata).join("Operit2")
+        PathBuf::from(appdata).join("Operit2").join("runtime")
     }
 
-    pub fn new(root: PathBuf) -> Self {
-        let runtimeRoot = root.join("runtime");
-        let workspaceRoot = root.join("workspaces");
-        Self::newWithRoots(root, runtimeRoot, workspaceRoot)
-    }
-
+    /// Returns the default Windows workspace collection root.
     #[allow(non_snake_case)]
-    pub fn newWithRoots(root: PathBuf, runtimeRoot: PathBuf, workspaceRoot: PathBuf) -> Self {
+    pub fn defaultWorkspaceRoot() -> PathBuf {
+        let appdata = env::var_os("APPDATA").expect("APPDATA is required for Operit2 runtime storage");
+        PathBuf::from(appdata).join("Operit2").join("workspaces")
+    }
+
+    /// Creates a Windows runtime storage host with explicit roots.
+    #[allow(non_snake_case)]
+    pub fn new(runtimeRoot: PathBuf, workspaceRoot: PathBuf) -> Self {
         Self {
-            root,
             runtimeRoot,
             workspaceRoot,
         }
@@ -50,7 +51,9 @@ impl WindowsRuntimeStorageHost {
         match segments.as_slice() {
             ["runtime", rest @ ..] => Ok(joinSegments(&self.runtimeRoot, rest)),
             ["workspaces", rest @ ..] => Ok(joinSegments(&self.workspaceRoot, rest)),
-            _ => Ok(joinSegments(&self.root, &segments)),
+            _ => Err(HostError::new(format!(
+                "Runtime storage path must start with runtime/ or workspaces/: {path}"
+            ))),
         }
     }
 
@@ -61,19 +64,14 @@ impl WindowsRuntimeStorageHost {
         if let Ok(relative) = path.strip_prefix(&self.workspaceRoot) {
             return Ok(prefixedPath("workspaces", relative));
         }
-        Ok(path
-            .strip_prefix(&self.root)
-            .map_err(|error| HostError::new(error.to_string()))?
-            .to_string_lossy()
-            .replace('\\', "/"))
+        Err(HostError::new(format!(
+            "Physical path is outside configured runtime and workspace roots: {}",
+            path.display()
+        )))
     }
 }
 
 impl RuntimeStorageHost for WindowsRuntimeStorageHost {
-    fn rootDir(&self) -> Option<PathBuf> {
-        Some(self.root.clone())
-    }
-
     fn runtimeRootDir(&self) -> Option<PathBuf> {
         Some(self.runtimeRoot.clone())
     }

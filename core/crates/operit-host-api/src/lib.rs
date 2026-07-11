@@ -9,6 +9,7 @@ use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, RwLock};
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -570,6 +571,78 @@ pub trait BrowserAutomationHost: Send + Sync {
     ) -> HostResult<BrowserAutomationResponse>;
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserSessionInfo {
+    pub sessionId: String,
+    pub currentUrl: String,
+    pub title: String,
+    pub userAgent: Option<String>,
+    pub active: bool,
+    pub canGoBack: bool,
+    pub canGoForward: bool,
+    pub isLoading: bool,
+    pub progress: i32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserSessionCommand {
+    pub action: String,
+    pub sessionId: Option<String>,
+    pub url: Option<String>,
+    pub script: Option<String>,
+    pub userAgent: Option<String>,
+    pub headers: BTreeMap<String, String>,
+    pub reveal: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserSessionCommandResult {
+    pub success: bool,
+    pub session: Option<BrowserSessionInfo>,
+    pub sessions: Vec<BrowserSessionInfo>,
+    pub resultJson: String,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserSessionSnapshot {
+    pub session: BrowserSessionInfo,
+    pub resultJson: String,
+}
+
+pub trait BrowserSessionHost: Send + Sync {
+    /// Lists interactive browser sessions owned by the host.
+    fn listBrowserSessions(&self) -> HostResult<Vec<BrowserSessionInfo>>;
+
+    /// Creates an interactive browser session on the host.
+    fn createBrowserSession(
+        &self,
+        initialUrl: &str,
+        userAgent: Option<&str>,
+        headers: BTreeMap<String, String>,
+    ) -> HostResult<BrowserSessionInfo>;
+
+    /// Updates host-owned browser session request metadata.
+    fn updateBrowserSession(
+        &self,
+        sessionId: &str,
+        userAgent: Option<&str>,
+        headers: BTreeMap<String, String>,
+    ) -> HostResult<BrowserSessionInfo>;
+
+    /// Submits a semantic browser command to the host session.
+    fn submitBrowserCommand(
+        &self,
+        command: BrowserSessionCommand,
+    ) -> HostResult<BrowserSessionCommandResult>;
+
+    /// Reads the latest host-owned browser session snapshot.
+    fn getBrowserSessionSnapshot(&self, sessionId: &str) -> HostResult<BrowserSessionSnapshot>;
+
+    /// Closes a host-owned browser session.
+    fn closeBrowserSession(&self, sessionId: &str) -> HostResult<BrowserSessionCommandResult>;
+}
+
 pub trait ComposeDslWebViewHost: Send + Sync {
     fn handleControllerCommand(&self, payloadJson: &str) -> HostResult<String>;
 }
@@ -636,10 +709,17 @@ pub struct RuntimeCommandOutput {
 }
 
 pub trait ManagedRuntimeProcess: Send {
+    /// Writes one protocol line to the managed runtime process.
     fn writeLine(&self, line: &str) -> HostResult<()>;
+    /// Writes multiple protocol lines to the managed runtime process in one call.
+    fn writeLines(&self, lines: &[String]) -> HostResult<()>;
+    /// Reads one protocol line from the managed runtime process.
     fn readStdoutLine(&self, timeoutMs: u64) -> HostResult<Option<String>>;
+    /// Drains stderr text collected from the managed runtime process.
     fn drainStderr(&self) -> HostResult<String>;
+    /// Returns whether the managed runtime process is still running.
     fn isRunning(&self) -> HostResult<bool>;
+    /// Terminates the managed runtime process.
     fn kill(&self) -> HostResult<()>;
 }
 
@@ -785,19 +865,19 @@ pub struct RuntimeStorageEntry {
 }
 
 pub trait RuntimeStorageHost: Send + Sync {
-    fn rootDir(&self) -> Option<PathBuf>;
     /// Returns the physical root used for runtime storage entries.
-    fn runtimeRootDir(&self) -> Option<PathBuf> {
-        self.rootDir().map(|root| root.join("runtime"))
-    }
+    fn runtimeRootDir(&self) -> Option<PathBuf>;
     /// Returns the physical root used for workspace storage entries.
-    fn workspaceRootDir(&self) -> Option<PathBuf> {
-        self.rootDir().map(|root| root.join("workspaces"))
-    }
+    fn workspaceRootDir(&self) -> Option<PathBuf>;
+    /// Reads bytes from a virtual runtime storage path.
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>>;
+    /// Writes bytes to a virtual runtime storage path.
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()>;
+    /// Deletes a virtual runtime storage entry.
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()>;
+    /// Checks whether a virtual runtime storage entry exists.
     fn exists(&self, path: &str) -> HostResult<bool>;
+    /// Lists entries under a virtual runtime storage prefix.
     fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>>;
 }
 

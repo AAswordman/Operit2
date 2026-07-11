@@ -1,0 +1,37 @@
+name: webview_all_web
+description: A Flutter plugin that provides a WebView widget on web.
+repository: https://github.com/abandoft/webview_all
+homepage: https://github.com/abandoft/webview_all
+issue_tracker: https://github.com/abandoft/webview_all/issues
+version: 1.2.1
+
+environment:
+  sdk: ^3.9.0
+  flutter: ">=3.35.0"
+
+flutter:
+  plugin:
+    implements: webview_all
+    platforms:
+      web:
+        pluginClass: WebWebViewPlatform
+        fileName: webview_all_web.dart
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
+  web: ">=0.5.1 <2.0.0"
+  webview_flutter_platform_interface: ^2.15.1
+
+dev_dependencies:
+  build_runner: ^2.1.5
+  flutter_test:
+    sdk: flutter
+  mockito: ^5.4.4
+
+topics:
+  - html
+  - webview
+  - webview-flutter

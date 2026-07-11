@@ -16,31 +16,29 @@ use security_framework::passwords::{
 
 #[derive(Clone, Debug)]
 pub struct AppleRuntimeStorageHost {
-    root: PathBuf,
     runtimeRoot: PathBuf,
     workspaceRoot: PathBuf,
 }
 
 impl AppleRuntimeStorageHost {
-    /// Returns the default Apple application support root.
+    /// Returns the default Apple runtime data root.
     #[allow(non_snake_case)]
-    pub fn defaultRoot() -> PathBuf {
+    pub fn defaultRuntimeRoot() -> PathBuf {
         let base = appleApplicationSupportDirectory();
-        base.join("Operit2")
+        base.join("Operit2").join("runtime")
     }
 
-    /// Creates an Apple runtime storage host rooted at the supplied directory.
-    pub fn new(root: PathBuf) -> Self {
-        let runtimeRoot = root.join("runtime");
-        let workspaceRoot = root.join("workspaces");
-        Self::newWithRoots(root, runtimeRoot, workspaceRoot)
+    /// Returns the default Apple workspace collection root.
+    #[allow(non_snake_case)]
+    pub fn defaultWorkspaceRoot() -> PathBuf {
+        let base = appleApplicationSupportDirectory();
+        base.join("Operit2").join("workspaces")
     }
 
     /// Creates an Apple runtime storage host with explicit runtime and workspace roots.
     #[allow(non_snake_case)]
-    pub fn newWithRoots(root: PathBuf, runtimeRoot: PathBuf, workspaceRoot: PathBuf) -> Self {
+    pub fn new(runtimeRoot: PathBuf, workspaceRoot: PathBuf) -> Self {
         Self {
-            root,
             runtimeRoot,
             workspaceRoot,
         }
@@ -52,7 +50,9 @@ impl AppleRuntimeStorageHost {
         match segments.as_slice() {
             ["runtime", rest @ ..] => Ok(joinSegments(&self.runtimeRoot, rest)),
             ["workspaces", rest @ ..] => Ok(joinSegments(&self.workspaceRoot, rest)),
-            _ => Ok(joinSegments(&self.root, &segments)),
+            _ => Err(HostError::new(format!(
+                "Runtime storage path must start with runtime/ or workspaces/: {path}"
+            ))),
         }
     }
 
@@ -63,21 +63,14 @@ impl AppleRuntimeStorageHost {
         if let Ok(relative) = path.strip_prefix(&self.workspaceRoot) {
             return Ok(prefixedPath("workspaces", relative));
         }
-        Ok(path
-            .strip_prefix(&self.root)
-            .map_err(|error| HostError::new(error.to_string()))?
-            .to_string_lossy()
-            .replace('\\', "/"))
+        Err(HostError::new(format!(
+            "Physical path is outside configured runtime and workspace roots: {}",
+            path.display()
+        )))
     }
 }
 
 impl RuntimeStorageHost for AppleRuntimeStorageHost {
-    /// Returns the Apple runtime storage data root directory.
-    #[allow(non_snake_case)]
-    fn rootDir(&self) -> Option<PathBuf> {
-        Some(self.root.clone())
-    }
-
     /// Returns the Apple runtime files root directory.
     #[allow(non_snake_case)]
     fn runtimeRootDir(&self) -> Option<PathBuf> {

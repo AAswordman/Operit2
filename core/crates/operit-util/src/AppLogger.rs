@@ -5,6 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Once;
 
@@ -324,13 +325,21 @@ fn format_log_line(entry: &LogEntry, tag: &str) -> String {
     let _ = write!(
         out,
         "{} {}/{}: {}",
-        entry.timestamp_ms,
+        format_timestamp_ms(entry.timestamp_ms),
         priority_char(entry.priority),
         tag,
         entry.message
     );
     if let Some(throwable) = &entry.throwable {
-        let _ = write!(out, "\n{throwable}");
+        let prefix = format!(
+            "{} {}/{}: ",
+            format_timestamp_ms(entry.timestamp_ms),
+            priority_char(entry.priority),
+            tag
+        );
+        for line in throwable.lines() {
+            let _ = write!(out, "\n{prefix}{line}");
+        }
     }
     out.push('\n');
     out
@@ -341,7 +350,7 @@ fn format_package_log_line(entry: &LogEntry) -> String {
     let _ = write!(
         out,
         "{} {}/{} ",
-        entry.timestamp_ms,
+        format_timestamp_ms(entry.timestamp_ms),
         priority_char(entry.priority),
         TOOLPKG_LOG_TAG
     );
@@ -363,10 +372,27 @@ fn format_package_log_line(entry: &LogEntry) -> String {
     out.push(' ');
     out.push_str(&entry.message);
     if let Some(throwable) = &entry.throwable {
-        let _ = write!(out, "\n{throwable}");
+        let prefix = format!(
+            "{} {}/{} ",
+            format_timestamp_ms(entry.timestamp_ms),
+            priority_char(entry.priority),
+            TOOLPKG_LOG_TAG
+        );
+        for line in throwable.lines() {
+            let _ = write!(out, "\n{prefix}{line}");
+        }
     }
     out.push('\n');
     out
+}
+
+/// Formats one epoch-millis timestamp for human-readable local diagnostics.
+fn format_timestamp_ms(timestamp_ms: u128) -> String {
+    let timestamp = timestamp_ms.min(i64::MAX as u128) as i64;
+    let Some(datetime) = DateTime::<Utc>::from_timestamp_millis(timestamp) else {
+        return timestamp_ms.to_string();
+    };
+    datetime.with_timezone(&Local).format("%H:%M:%S%.3f").to_string()
 }
 
 fn priority_char(priority: i32) -> char {

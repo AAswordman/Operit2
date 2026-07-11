@@ -35,14 +35,7 @@ mod ios {
             })
         }
 
-        fn startPtySession(
-            &self,
-            _: &str,
-            _: &str,
-            _: &str,
-            _: u16,
-            _: u16,
-        ) -> HostResult<String> {
+        fn startPtySession(&self, _: &str, _: &str, _: &str, _: u16, _: u16) -> HostResult<String> {
             Err(HostError::new("iOS does not expose a local PTY host"))
         }
 
@@ -141,14 +134,7 @@ mod non_apple_target {
             })
         }
 
-        fn startPtySession(
-            &self,
-            _: &str,
-            _: &str,
-            _: &str,
-            _: u16,
-            _: u16,
-        ) -> HostResult<String> {
+        fn startPtySession(&self, _: &str, _: &str, _: &str, _: u16, _: u16) -> HostResult<String> {
             Err(HostError::new(
                 "Apple terminal host is available only on iOS or macOS",
             ))

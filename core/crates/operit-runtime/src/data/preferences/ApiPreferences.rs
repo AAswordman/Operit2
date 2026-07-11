@@ -41,7 +41,8 @@ impl ApiPreferences {
 
     /// Creates preferences rooted at the supplied directory.
     pub fn new(root_dir: PathBuf) -> Self {
-        let path = root_dir.join(OperitPaths::API_PREFERENCES_PATH);
+        let path = OperitPaths::runtimePathFromRoot(&root_dir, OperitPaths::API_PREFERENCES_PATH)
+            .expect("API preferences path must use the runtime storage prefix");
         Self {
             apiDataStore: PreferencesDataStore::new(path),
         }

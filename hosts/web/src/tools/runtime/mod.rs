@@ -24,7 +24,10 @@ impl WebManagedRuntimeHost {
 
 impl ManagedRuntimeHost for WebManagedRuntimeHost {
     fn runtimeWorkspaceDir(&self) -> HostResult<String> {
-        js_string(call_managed_runtime("runtimeWorkspaceDir", &[])?, "runtimeWorkspaceDir")
+        js_string(
+            call_managed_runtime("runtimeWorkspaceDir", &[])?,
+            "runtimeWorkspaceDir",
+        )
     }
 
     fn resolveRuntimeExecutable(
@@ -46,14 +49,23 @@ impl ManagedRuntimeHost for WebManagedRuntimeHost {
         request: RuntimeProcessRequest,
     ) -> HostResult<Box<dyn ManagedRuntimeProcess>> {
         let id = js_string(
-            call_managed_runtime("startRuntimeProcess", &[runtime_process_request_to_js(&request)])?,
+            call_managed_runtime(
+                "startRuntimeProcess",
+                &[runtime_process_request_to_js(&request)],
+            )?,
             "startRuntimeProcess",
         )?;
         Ok(Box::new(WebManagedRuntimeProcess { id }))
     }
 
-    fn runRuntimeCommand(&self, request: RuntimeProcessRequest) -> HostResult<RuntimeCommandOutput> {
-        let value = call_managed_runtime("runRuntimeCommand", &[runtime_process_request_to_js(&request)])?;
+    fn runRuntimeCommand(
+        &self,
+        request: RuntimeProcessRequest,
+    ) -> HostResult<RuntimeCommandOutput> {
+        let value = call_managed_runtime(
+            "runRuntimeCommand",
+            &[runtime_process_request_to_js(&request)],
+        )?;
         Ok(RuntimeCommandOutput {
             exitCode: read_optional_i32_property(&value, "exitCode")?,
             stdout: read_string_property(&value, "stdout")?,
@@ -70,14 +82,30 @@ unsafe impl Send for WebManagedRuntimeProcess {}
 
 impl ManagedRuntimeProcess for WebManagedRuntimeProcess {
     fn writeLine(&self, line: &str) -> HostResult<()> {
-        call_managed_runtime_process("writeLine", &[JsValue::from_str(&self.id), JsValue::from_str(line)])?;
+        call_managed_runtime_process(
+            "writeLine",
+            &[JsValue::from_str(&self.id), JsValue::from_str(line)],
+        )?;
+        Ok(())
+    }
+
+    /// Writes multiple protocol lines to the managed runtime process.
+    fn writeLines(&self, lines: &[String]) -> HostResult<()> {
+        let value = js_sys::Array::new();
+        for line in lines {
+            value.push(&JsValue::from_str(line));
+        }
+        call_managed_runtime_process("writeLines", &[JsValue::from_str(&self.id), value.into()])?;
         Ok(())
     }
 
     fn readStdoutLine(&self, timeoutMs: u64) -> HostResult<Option<String>> {
         let value = call_managed_runtime_process(
             "readStdoutLine",
-            &[JsValue::from_str(&self.id), JsValue::from_f64(timeoutMs as f64)],
+            &[
+                JsValue::from_str(&self.id),
+                JsValue::from_f64(timeoutMs as f64),
+            ],
         )?;
         js_optional_string(value, "readStdoutLine")
     }

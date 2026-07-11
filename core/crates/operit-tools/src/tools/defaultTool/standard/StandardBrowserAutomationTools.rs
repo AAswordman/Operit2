@@ -11,7 +11,7 @@ use operit_tools::ToolExecutionManager::{
 
 #[derive(Clone)]
 pub struct StandardBrowserAutomationTools {
-    browserHost: Arc<dyn BrowserAutomationHost>,
+    browserAutomationHost: Arc<dyn BrowserAutomationHost>,
 }
 
 pub struct BrowserAutomationToolExecutor {
@@ -19,8 +19,10 @@ pub struct BrowserAutomationToolExecutor {
 }
 
 impl StandardBrowserAutomationTools {
-    pub fn new(browserHost: Arc<dyn BrowserAutomationHost>) -> Self {
-        Self { browserHost }
+    pub fn new(browserAutomationHost: Arc<dyn BrowserAutomationHost>) -> Self {
+        Self {
+            browserAutomationHost,
+        }
     }
 
     #[allow(non_snake_case)]
@@ -31,7 +33,7 @@ impl StandardBrowserAutomationTools {
             toolName: tool.name.clone(),
             parametersJson,
         };
-        match self.browserHost.executeBrowserTool(request) {
+        match self.browserAutomationHost.executeBrowserTool(request) {
             Ok(response) => ToolResult {
                 toolName: tool.name.clone(),
                 success: true,

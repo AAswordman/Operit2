@@ -89,9 +89,6 @@ pub fn defaultHostSecretStoreOption() -> Option<Arc<dyn HostSecretStore>> {
 #[allow(non_snake_case)]
 pub fn runtimeStoragePath(path: &Path) -> String {
     let paths = RuntimeStorePaths::default();
-    if let Ok(relative) = path.strip_prefix(paths.root_dir()) {
-        return relative.to_string_lossy().replace('\\', "/");
-    }
     if let Ok(relative) = path.strip_prefix(paths.runtime_dir()) {
         return format!("runtime/{}", relative.to_string_lossy().replace('\\', "/"));
     }
@@ -102,8 +99,7 @@ pub fn runtimeStoragePath(path: &Path) -> String {
         );
     }
     panic!(
-        "runtime storage path must be under {}, {}, or {}",
-        paths.root_dir().display(),
+        "runtime storage path must be under {} or {}",
         paths.runtime_dir().display(),
         paths.workspace_dir().display()
     )

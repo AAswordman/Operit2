@@ -8,7 +8,6 @@ const ROOT_SDCARD: &str = "sdcard";
 const ROOT_DATA: &str = "data";
 
 const APP_DATA: &str = "data";
-const APP_FILES: &str = "files";
 const APP_WORKSPACES: &str = "workspaces";
 
 const MNT_WINDOWS: &str = "windows";
@@ -27,20 +26,14 @@ pub struct ResolvedVfsPath {
 #[derive(Debug, Clone)]
 pub struct PathMapper {
     runtimeStoreRoot: PathBuf,
-    appFilesRoot: Option<PathBuf>,
     workspaceCollectionRoot: PathBuf,
 }
 
 impl PathMapper {
-    /// Creates a mapper from runtime, app-files, and workspace collection roots.
-    pub fn new(
-        runtimeStoreRoot: PathBuf,
-        appFilesRoot: Option<PathBuf>,
-        workspaceCollectionRoot: PathBuf,
-    ) -> Self {
+    /// Creates a mapper from runtime and workspace collection roots.
+    pub fn new(runtimeStoreRoot: PathBuf, workspaceCollectionRoot: PathBuf) -> Self {
         Self {
             runtimeStoreRoot,
-            appFilesRoot,
             workspaceCollectionRoot,
         }
     }
@@ -141,7 +134,6 @@ impl PathMapper {
             }
             [ROOT_APP] => Ok(Some(vec![
                 directoryEntry(APP_DATA),
-                directoryEntry(APP_FILES),
                 directoryEntry(APP_WORKSPACES),
             ])),
             [ROOT_MNT] => {
@@ -171,15 +163,6 @@ impl PathMapper {
                 vfsPath: joinNormalizedSegments(&[ROOT_APP, APP_DATA], rest),
                 physicalPath: physicalPathString(joinPhysical(&self.runtimeStoreRoot, rest)),
             }),
-            [ROOT_APP, APP_FILES, rest @ ..] => {
-                let Some(root) = self.appFilesRoot.as_ref() else {
-                    return Err("/app/files root is not configured".to_string());
-                };
-                Ok(ResolvedVfsPath {
-                    vfsPath: joinNormalizedSegments(&[ROOT_APP, APP_FILES], rest),
-                    physicalPath: physicalPathString(joinPhysical(root, rest)),
-                })
-            }
             [ROOT_APP, APP_WORKSPACES, rest @ ..] => Ok(ResolvedVfsPath {
                 vfsPath: joinNormalizedSegments(&[ROOT_APP, APP_WORKSPACES], rest),
                 physicalPath: physicalPathString(joinPhysical(&self.workspaceCollectionRoot, rest)),
@@ -271,7 +254,6 @@ impl Default for PathMapper {
     fn default() -> Self {
         Self {
             runtimeStoreRoot: PathBuf::new(),
-            appFilesRoot: None,
             workspaceCollectionRoot: PathBuf::new(),
         }
     }
@@ -569,7 +551,6 @@ mod tests {
     fn mapper() -> PathMapper {
         PathMapper::new(
             PathBuf::from("D:/operit"),
-            Some(PathBuf::from("D:/operit/files")),
             PathBuf::from("D:/operit-workspaces"),
         )
     }

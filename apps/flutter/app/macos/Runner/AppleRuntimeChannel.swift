@@ -8,7 +8,7 @@ import Vision
 
 final class AppleRuntimeChannel: NSObject {
   private static var shared: AppleRuntimeChannel?
-  private let channel: FlutterMethodChannel
+  private var channel: FlutterMethodChannel
   private let workQueue = DispatchQueue(label: "operit.runtime.apple", qos: .userInitiated)
   private let watchQueue = DispatchQueue(label: "operit.runtime.apple.watch", qos: .utility)
   private let watchLock = NSLock()
@@ -27,16 +27,35 @@ final class AppleRuntimeChannel: NSObject {
   private let speechSynthesizer = AVSpeechSynthesizer()
   private var ttsPath = ""
   private var ttsPaused = false
-  private var configuredStorageRoot: URL?
+  private var configuredRuntimeRoot: URL?
+  private var configuredWorkspaceRoot: URL?
   private lazy var bluetooth = AppleBluetoothController()
 
+  /// Attaches the process-level Runtime channel to the current Flutter engine.
   static func register(binaryMessenger: FlutterBinaryMessenger) {
+    if let shared {
+      shared.attach(binaryMessenger: binaryMessenger)
+      return
+    }
     shared = AppleRuntimeChannel(binaryMessenger: binaryMessenger)
   }
 
+  /// Creates the process-level Runtime channel.
   private init(binaryMessenger: FlutterBinaryMessenger) {
     channel = FlutterMethodChannel(name: "operit/runtime", binaryMessenger: binaryMessenger)
     super.init()
+    installMethodHandler()
+  }
+
+  /// Rebinds the existing Runtime to a replacement Flutter engine.
+  private func attach(binaryMessenger: FlutterBinaryMessenger) {
+    channel.setMethodCallHandler(nil)
+    channel = FlutterMethodChannel(name: "operit/runtime", binaryMessenger: binaryMessenger)
+    installMethodHandler()
+  }
+
+  /// Installs method dispatch on the currently attached Flutter channel.
+  private func installMethodHandler() {
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handle(call: call, result: result)
     }
@@ -60,6 +79,8 @@ final class AppleRuntimeChannel: NSObject {
       closeWatchStream(call: call, result: result)
     case "startWebAccessServer":
       startWebAccessServer(call: call, result: result)
+    case "localRuntimeStorageDefaults":
+      localRuntimeStorageDefaults(result: result)
     case "localRuntimeStoragePaths":
       localRuntimeStoragePaths(call: call, result: result)
     case "setLocalRuntimeStorage":
@@ -97,7 +118,14 @@ final class AppleRuntimeChannel: NSObject {
     if let handle = handle {
       return handle
     }
-    guard let created = operit_flutter_bridge_create_with_storage_root(storageRoot().path) else {
+    guard let runtimeRoot = configuredRuntimeRoot,
+          let workspaceRoot = configuredWorkspaceRoot else {
+      throw RuntimeChannelError.createFailed("Runtime and workspace roots are not configured")
+    }
+    guard let created = operit_flutter_bridge_create_with_storage_roots(
+      runtimeRoot.path,
+      workspaceRoot.path
+    ) else {
       let error = takeString(operit_flutter_bridge_create_error())
       throw RuntimeChannelError.createFailed(error)
     }
@@ -105,49 +133,81 @@ final class AppleRuntimeChannel: NSObject {
     return created
   }
 
-  private func storageRoot() -> URL {
-    if let configuredStorageRoot = configuredStorageRoot {
-      return configuredStorageRoot
-    }
-    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+  /// Returns the default Apple runtime and workspace roots.
+  private func defaultStorageRoots() -> (runtime: URL, workspace: URL) {
+    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("Operit2", isDirectory: true)
+    return (
+      base.appendingPathComponent("runtime", isDirectory: true),
+      base.appendingPathComponent("workspaces", isDirectory: true)
+    )
   }
 
-  /// Resolves a Flutter-provided storage root into an Apple file URL.
-  private func storageRoot(from value: Any?) -> URL {
-    guard let value = value as? String, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Operit2", isDirectory: true)
+  /// Resolves one required Flutter-provided storage root.
+  private func absoluteDirectory(from value: Any?, label: String) throws -> URL {
+    guard let value = value as? String else {
+      throw RuntimeChannelError.createFailed("\(label) must be a string")
     }
-    return URL(fileURLWithPath: value)
+    let path = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !path.isEmpty else {
+      throw RuntimeChannelError.createFailed("\(label) is required")
+    }
+    guard NSString(string: path).isAbsolutePath else {
+      throw RuntimeChannelError.createFailed("\(label) must be an absolute path")
+    }
+    return URL(fileURLWithPath: path).standardizedFileURL
   }
 
-  /// Returns local runtime storage paths for the requested root.
+  /// Returns the platform default runtime and workspace roots.
+  private func localRuntimeStorageDefaults(result: @escaping FlutterResult) {
+    let roots = defaultStorageRoots()
+    result([
+      "runtimeRoot": roots.runtime.path,
+      "workspaceRoot": roots.workspace.path,
+    ])
+  }
+
+  /// Returns normalized local runtime storage paths for requested roots.
   private func localRuntimeStoragePaths(call: FlutterMethodCall, result: @escaping FlutterResult) {
     guard let arguments = call.arguments as? [String: Any?] else {
       result(FlutterError(code: "INVALID_ARGS", message: "localRuntimeStoragePaths expects arguments", details: nil))
       return
     }
-    let root = storageRoot(from: arguments["storageRoot"] ?? nil)
-    result([
-      "storageRoot": root.path,
-      "runtimeRoot": root.appendingPathComponent("runtime", isDirectory: true).path,
-      "workspaceRoot": root.appendingPathComponent("workspaces", isDirectory: true).path,
-    ])
+    do {
+      let runtimeRoot = try absoluteDirectory(from: arguments["runtimeRoot"] ?? nil, label: "runtimeRoot")
+      let workspaceRoot = try absoluteDirectory(from: arguments["workspaceRoot"] ?? nil, label: "workspaceRoot")
+      result([
+        "runtimeRoot": runtimeRoot.path,
+        "workspaceRoot": workspaceRoot.path,
+      ])
+    } catch {
+      result(FlutterError(code: "INVALID_ARGS", message: error.localizedDescription, details: nil))
+    }
   }
 
-  /// Applies the local runtime storage root before runtime creation.
+  /// Installs storage roots and accepts repeated identical configuration.
   private func setLocalRuntimeStorage(call: FlutterMethodCall, result: @escaping FlutterResult) {
-    if handle != nil {
-      result(FlutterError(code: "RUNTIME_ALREADY_CREATED", message: "Runtime storage root cannot change after runtime creation", details: nil))
-      return
-    }
     guard let arguments = call.arguments as? [String: Any?] else {
       result(FlutterError(code: "INVALID_ARGS", message: "setLocalRuntimeStorage expects arguments", details: nil))
       return
     }
-    configuredStorageRoot = storageRoot(from: arguments["storageRoot"] ?? nil)
-    result(nil)
+    do {
+      let runtimeRoot = try absoluteDirectory(from: arguments["runtimeRoot"] ?? nil, label: "runtimeRoot")
+      let workspaceRoot = try absoluteDirectory(from: arguments["workspaceRoot"] ?? nil, label: "workspaceRoot")
+      if handle != nil {
+        if configuredRuntimeRoot == runtimeRoot && configuredWorkspaceRoot == workspaceRoot {
+          result(nil)
+          return
+        }
+        result(FlutterError(code: "RUNTIME_ALREADY_CREATED", message: "Runtime and workspace roots cannot change after runtime creation", details: nil))
+        return
+      }
+      configuredRuntimeRoot = runtimeRoot
+      configuredWorkspaceRoot = workspaceRoot
+      result(nil)
+    } catch {
+      result(FlutterError(code: "INVALID_ARGS", message: error.localizedDescription, details: nil))
+    }
   }
 
   private func runRuntime(result: @escaping FlutterResult, _ body: @escaping (UnsafeMutableRawPointer) throws -> String) {

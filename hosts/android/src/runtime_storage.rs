@@ -7,29 +7,19 @@ use operit_host_api::{
 
 #[derive(Clone, Debug)]
 pub struct AndroidRuntimeStorageHost {
-    root: PathBuf,
     runtimeRoot: PathBuf,
     workspaceRoot: PathBuf,
-    inner: operit_host_linux_native::LinuxRuntimeStorageHost,
+    inner: operit_host_native_common::NativeRuntimeStorageHost,
 }
 
 impl AndroidRuntimeStorageHost {
-    /// Creates an Android runtime storage host rooted at the supplied directory.
-    pub fn new(root: PathBuf) -> Self {
-        let runtimeRoot = root.join("runtime");
-        let workspaceRoot = root.join("workspaces");
-        Self::newWithRoots(root, runtimeRoot, workspaceRoot)
-    }
-
     /// Creates an Android runtime storage host with explicit runtime and workspace roots.
     #[allow(non_snake_case)]
-    pub fn newWithRoots(root: PathBuf, runtimeRoot: PathBuf, workspaceRoot: PathBuf) -> Self {
+    pub fn new(runtimeRoot: PathBuf, workspaceRoot: PathBuf) -> Self {
         Self {
-            root: root.clone(),
             runtimeRoot: runtimeRoot.clone(),
             workspaceRoot: workspaceRoot.clone(),
-            inner: operit_host_linux_native::LinuxRuntimeStorageHost::newWithRoots(
-                root,
+            inner: operit_host_native_common::NativeRuntimeStorageHost::new(
                 runtimeRoot,
                 workspaceRoot,
             ),
@@ -38,11 +28,6 @@ impl AndroidRuntimeStorageHost {
 }
 
 impl RuntimeStorageHost for AndroidRuntimeStorageHost {
-    /// Returns the Android runtime storage root directory.
-    fn rootDir(&self) -> Option<PathBuf> {
-        Some(self.root.clone())
-    }
-
     /// Returns the Android runtime files root directory.
     #[allow(non_snake_case)]
     fn runtimeRootDir(&self) -> Option<PathBuf> {

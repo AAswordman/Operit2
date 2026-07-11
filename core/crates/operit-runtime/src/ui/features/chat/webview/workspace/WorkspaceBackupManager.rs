@@ -164,23 +164,23 @@ impl WorkspaceBackupManager {
 
     #[allow(non_snake_case)]
     fn vfsForWorkspace(&self, workspacePath: &str) -> VisualFileSystem {
-        let runtimeStoreRoot = self
+        let runtimeStorageHost = self
             .context
             .runtimeStorageHost
             .as_ref()
-            .and_then(|host| host.rootDir())
-            .expect("RuntimeStorageHost root must be configured for WorkspaceBackupManager");
-        let runtimeStorePaths = RuntimeStorePaths::new(runtimeStoreRoot.clone());
+            .expect("RuntimeStorageHost must be configured for WorkspaceBackupManager");
+        let runtimeStoreRoot = runtimeStorageHost.runtimeRootDir().expect(
+            "RuntimeStorageHost runtime root must be configured for WorkspaceBackupManager",
+        );
+        let workspaceCollectionRoot = runtimeStorageHost.workspaceRootDir().expect(
+            "RuntimeStorageHost workspace root must be configured for WorkspaceBackupManager",
+        );
         VisualFileSystem::new(
             self.context
                 .fileSystemHost
                 .clone()
                 .expect("FileSystemHost must be configured for WorkspaceBackupManager"),
-            PathMapper::new(
-                runtimeStoreRoot,
-                self.context.appFilesRoot.clone(),
-                runtimeStorePaths.workspace_dir(),
-            ),
+            PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot),
         )
     }
 

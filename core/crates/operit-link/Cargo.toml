@@ -7,7 +7,9 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+ciborium = "0.2"
 futures-util.workspace = true
+rmp-serde = "1"
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["sync"] }
@@ -15,3 +17,23 @@ tokio = { workspace = true, features = ["sync"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 axum = { version = "0.7", features = ["ws"] }
 tokio = { workspace = true, features = ["rt", "sync"] }
+
+[dev-dependencies]
+criterion = "0.5"
+tokio = { workspace = true, features = ["rt", "macros", "sync"] }
+
+[[bench]]
+name = "protocol_codec_bench"
+harness = false
+
+[[bench]]
+name = "dispatcher_call_bench"
+harness = false
+
+[[bench]]
+name = "watch_channel_bench"
+harness = false
+
+[[bench]]
+name = "link_stress_bench"
+harness = false

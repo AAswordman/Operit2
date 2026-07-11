@@ -730,36 +730,28 @@ fn initializeService(active: &mut ActiveService, timeoutMs: u64) -> Result<(), S
     if initializeResponse.get("error").is_some() {
         return Err(format!("MCP initialize failed: {initializeResponse}"));
     }
-    let process = active
-        .process
-        .as_ref()
-        .ok_or_else(|| "Local MCP process is not attached".to_string())?;
-    process
-        .writeLine(
-            &json!({
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized",
-                "params": {}
-            })
-            .to_string(),
-        )
-        .map_err(|error| error.to_string())?;
-
     let listId = nextRequestId(active);
+    let postInitializeMessages = vec![
+        json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {}
+        })
+        .to_string(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": listId,
+            "method": "tools/list",
+            "params": {}
+        })
+        .to_string(),
+    ];
     let process = active
         .process
         .as_ref()
         .ok_or_else(|| "Local MCP process is not attached".to_string())?;
     process
-        .writeLine(
-            &json!({
-                "jsonrpc": "2.0",
-                "id": listId,
-                "method": "tools/list",
-                "params": {}
-            })
-            .to_string(),
-        )
+        .writeLines(&postInitializeMessages)
         .map_err(|error| error.to_string())?;
     let listResponse = readJsonResponse(active, listId, timeoutMs)?;
     if listResponse.get("error").is_some() {

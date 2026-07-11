@@ -15,7 +15,8 @@ data class AndroidRuntimePaths(
     val proot: File,
     val loader: File,
     val nativeLibraryDir: File,
-    val storageRoot: File,
+    val runtimeRoot: File,
+    val workspaceRoot: File,
     val internalRoot: File,
     val tmpDir: File,
 )
@@ -25,7 +26,11 @@ object AndroidRuntimeAssets {
     private const val perUserRange = 100000
 
     @Synchronized
-    fun prepare(context: Context, storageRoot: File): AndroidRuntimePaths {
+    fun prepare(
+        context: Context,
+        runtimeRoot: File,
+        workspaceRoot: File,
+    ): AndroidRuntimePaths {
         val abi = selectPackagedAbi()
         val runtimeDir = File(context.filesDir, "android-runtime/$abi")
         val rootfsDir = File(runtimeDir, "rootfs")
@@ -76,7 +81,8 @@ object AndroidRuntimeAssets {
         ensureRootfsAbsolutePath(rootfsDir, context.applicationInfo.dataDir)
         ensureRootfsAbsolutePath(rootfsDir, "/data/data/${context.packageName}")
         ensureRootfsAbsolutePath(rootfsDir, "/data/local/tmp")
-        ensureRootfsAbsolutePath(rootfsDir, storageRoot.absolutePath)
+        ensureRootfsAbsolutePath(rootfsDir, runtimeRoot.absolutePath)
+        ensureRootfsAbsolutePath(rootfsDir, workspaceRoot.absolutePath)
         File(rootfsDir, "dev/pts").mkdirs()
         File(rootfsDir, "storage").mkdirs()
         File(rootfsDir, "sdcard").mkdirs()
@@ -84,7 +90,8 @@ object AndroidRuntimeAssets {
             target = File(context.filesDir, "common.sh"),
             runtimeDir = runtimeDir,
             rootfsDir = rootfsDir,
-            storageRoot = storageRoot,
+            runtimeRoot = runtimeRoot,
+            workspaceRoot = workspaceRoot,
             internalRoot = context.filesDir,
             appDataDir = File(context.applicationInfo.dataDir),
             packageName = context.packageName,
@@ -100,7 +107,8 @@ object AndroidRuntimeAssets {
         Os.setenv("OPERIT_ANDROID_PROOT", proot.absolutePath, true)
         Os.setenv("OPERIT_ANDROID_LOADER", loader.absolutePath, true)
         Os.setenv("OPERIT_ANDROID_ROOTFS_DIR", rootfsDir.absolutePath, true)
-        Os.setenv("OPERIT_ANDROID_STORAGE_ROOT", storageRoot.absolutePath, true)
+        Os.setenv("OPERIT_ANDROID_RUNTIME_ROOT", runtimeRoot.absolutePath, true)
+        Os.setenv("OPERIT_ANDROID_WORKSPACE_ROOT", workspaceRoot.absolutePath, true)
         Os.setenv("OPERIT_ANDROID_INTERNAL_ROOT", context.filesDir.absolutePath, true)
         Os.setenv("OPERIT_ANDROID_RUNTIME_TMP", tmpDir.absolutePath, true)
 
@@ -113,7 +121,8 @@ object AndroidRuntimeAssets {
             proot = proot,
             loader = loader,
             nativeLibraryDir = nativeLibraryDir,
-            storageRoot = storageRoot,
+            runtimeRoot = runtimeRoot,
+            workspaceRoot = workspaceRoot,
             internalRoot = context.filesDir,
             tmpDir = tmpDir,
         )
@@ -165,7 +174,8 @@ object AndroidRuntimeAssets {
         target: File,
         runtimeDir: File,
         rootfsDir: File,
-        storageRoot: File,
+        runtimeRoot: File,
+        workspaceRoot: File,
         internalRoot: File,
         appDataDir: File,
         packageName: String,
@@ -188,7 +198,8 @@ object AndroidRuntimeAssets {
             appDataDir.absolutePath to userDataPackagePath,
             appDataDir.absolutePath to legacyDataPackagePath,
             internalRoot.absolutePath to internalRoot.absolutePath,
-            storageRoot.absolutePath to storageRoot.absolutePath,
+            runtimeRoot.absolutePath to runtimeRoot.absolutePath,
+            workspaceRoot.absolutePath to workspaceRoot.absolutePath,
         ).joinToString(separator = "\n") { (source, target) ->
             "              probe_and_append_bind_arg \"$source\" \"$target\""
         }
@@ -199,7 +210,8 @@ object AndroidRuntimeAssets {
             export PROOT_TMP_DIR=${File(runtimeDir, "tmp").absolutePath}
             export PROOT_LOADER=${File(runtimeDir, "loader").absolutePath}
             export UBUNTU_PATH=${rootfsDir.absolutePath}
-            export OPERIT_STORAGE_ROOT=${storageRoot.absolutePath}
+            export OPERIT_RUNTIME_ROOT=${runtimeRoot.absolutePath}
+            export OPERIT_WORKSPACE_ROOT=${workspaceRoot.absolutePath}
             export OPERIT_INTERNAL_ROOT=${internalRoot.absolutePath}
             can_access_bind_source(){
               bind_source="${'$'}1"
@@ -360,7 +372,8 @@ object AndroidRuntimeAssets {
               mkdir -p "${'$'}UBUNTU_PATH${legacyDataPackagePath}" 2>/dev/null
               mkdir -p "${'$'}UBUNTU_PATH/data/local/tmp" 2>/dev/null
               mkdir -p "${'$'}UBUNTU_PATH${internalRoot.absolutePath}" 2>/dev/null
-              mkdir -p "${'$'}UBUNTU_PATH${storageRoot.absolutePath}" 2>/dev/null
+              mkdir -p "${'$'}UBUNTU_PATH${runtimeRoot.absolutePath}" 2>/dev/null
+              mkdir -p "${'$'}UBUNTU_PATH${workspaceRoot.absolutePath}" 2>/dev/null
               if ! resolve_proot_runtime; then
                 return 1
               fi

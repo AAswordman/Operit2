@@ -43,12 +43,23 @@ def reset_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-# Copies Web Access source assets into Flutter's web staging directory.
+# Ensures Flutter's web directory points to the Web Access source shell.
 def stage_web_access_source() -> None:
     if not WEB_ACCESS_SOURCE_DIR.is_dir():
         raise RuntimeError(f"Web Access source directory not found: {WEB_ACCESS_SOURCE_DIR}")
-    reset_dir(WEB_ACCESS_FLUTTER_STAGE_DIR)
-    shutil.copytree(WEB_ACCESS_SOURCE_DIR, WEB_ACCESS_FLUTTER_STAGE_DIR, dirs_exist_ok=True)
+    expected_target = WEB_ACCESS_SOURCE_DIR.resolve()
+    if WEB_ACCESS_FLUTTER_STAGE_DIR.exists() or WEB_ACCESS_FLUTTER_STAGE_DIR.is_symlink():
+        if not WEB_ACCESS_FLUTTER_STAGE_DIR.is_symlink():
+            raise RuntimeError(
+                "Flutter web staging path must be a directory symlink: "
+                f"{WEB_ACCESS_FLUTTER_STAGE_DIR}"
+            )
+        actual_target = WEB_ACCESS_FLUTTER_STAGE_DIR.resolve()
+        if actual_target == expected_target:
+            return
+        WEB_ACCESS_FLUTTER_STAGE_DIR.unlink()
+    WEB_ACCESS_FLUTTER_STAGE_DIR.parent.mkdir(parents=True, exist_ok=True)
+    WEB_ACCESS_FLUTTER_STAGE_DIR.symlink_to(expected_target, target_is_directory=True)
 
 
 # Verifies the shared Web Access bundle has been built.

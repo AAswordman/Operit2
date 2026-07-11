@@ -2459,10 +2459,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsDataStorageDescription =>
-      '把 runtime 和 workspace 数据迁移到新的本地文件夹。';
-
-  @override
-  String get settingsDataStorageRoot => '储存根目录';
+      '把 runtime 和 workspace 数据分别迁移到指定的本地文件夹。';
 
   @override
   String get settingsDataRuntimeRoot => '运行时目录';
@@ -2471,14 +2468,20 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsDataWorkspaceRoot => '工作区目录';
 
   @override
-  String get settingsDataChooseStorageRoot => '选择位置';
+  String get settingsDataChooseStorageRoots => '编辑位置';
+
+  @override
+  String get settingsDataEditStorageRootsTitle => '编辑储存位置';
+
+  @override
+  String get settingsDataStorageRootsRequired => '运行时目录和工作区目录都不能为空。';
 
   @override
   String get settingsDataStorageConfirmTitle => '更改储存路径';
 
   @override
   String get settingsDataStorageConfirmMessage =>
-      'runtime 和 workspace 数据会复制到所选文件夹，重启应用后使用新位置。';
+      'runtime 和 workspace 数据会分别复制到所选目录，重启应用后使用新位置。';
 
   @override
   String get settingsDataStorageConfirmAction => '更改位置';

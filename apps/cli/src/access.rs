@@ -34,7 +34,6 @@ use operit_link::{
 use operit_runtime::services::RuntimeHostInteractionService::{
     withRuntimeHostInteractionOrigin, RuntimeHostInteractionRequestOrigin,
 };
-
 type HmacSha256 = Hmac<Sha256>;
 pub const REMOTE_PAIRING_SERVICE_VERSION: i32 = 1;
 

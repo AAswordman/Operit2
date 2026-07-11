@@ -119,12 +119,11 @@ object HostEventBridge {
 }
 
 class BootReceiver : BroadcastReceiver() {
+    /** Starts the persistent Core service after boot when storage is configured. */
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-        if (launchIntent != null) {
-            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(launchIntent)
+        if (AndroidRuntimeStorageConfigStore.read(context) != null) {
+            OperitCoreService.start(context)
         }
     }
 }

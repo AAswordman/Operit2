@@ -238,13 +238,13 @@ pub struct Operit1ModelConfigImportResult {
 #[derive(Clone)]
 /// Imports Operit1 backup snapshots into the current runtime storage layout.
 pub struct Operit1SnapshotImportManager {
-    rootDir: PathBuf,
+    paths: RuntimeStorePaths,
 }
 
 impl Operit1SnapshotImportManager {
-    /// Creates an importer rooted at the target runtime data directory.
-    pub fn new(rootDir: PathBuf) -> Self {
-        Self { rootDir }
+    /// Creates an importer targeting explicit runtime and workspace roots.
+    pub fn new(paths: RuntimeStorePaths) -> Self {
+        Self { paths }
     }
 
     #[allow(non_snake_case)]
@@ -277,7 +277,7 @@ impl Operit1SnapshotImportManager {
             .ok_or_else(|| "Operit1 快照里的聊天模型索引没有对应模型".to_string())?;
         let modelConfig =
             self.importModelConfigFromParsed(&parsed, selected.configId.clone(), selectedModelId)?;
-        let fileImportPlan = SnapshotFileImportPlan::new(&self.rootDir);
+        let fileImportPlan = SnapshotFileImportPlan::new(&self.paths);
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "structured_preferences",
             "迁移角色和语音",
@@ -339,7 +339,7 @@ impl Operit1SnapshotImportManager {
         parsed: &ParsedOperit1Snapshot,
         fileImportPlan: &SnapshotFileImportPlan,
     ) -> Result<(), String> {
-        let paths = RuntimeStorePaths::new(self.rootDir.clone());
+        let paths = self.paths.clone();
         let promptTags = buildOperit2PromptTags(parsed)?;
         if !promptTags.is_empty()
             || parsed
@@ -387,7 +387,7 @@ impl Operit1SnapshotImportManager {
                 .get(&profileId)
                 .ok_or_else(|| format!("Operit1 角色卡绑定了不存在的用户偏好：{profileId}"))?;
             let markdown = buildOperit2UserMarkdown(profile)?;
-            appendSharedUserMarkdown(&self.rootDir, &profileId, &markdown)?;
+            appendSharedUserMarkdown(&self.paths, &profileId, &markdown)?;
         }
         Ok(())
     }
@@ -462,12 +462,13 @@ impl Operit1SnapshotImportManager {
             })
             .collect::<Result<Vec<_>, String>>()?;
 
-        let modelConfigManager = ModelConfigManager::new(self.rootDir.clone());
+        let modelConfigManager = ModelConfigManager::new(self.paths.runtime_dir().to_path_buf());
         modelConfigManager
             .replaceDefaultProviderProfile(provider.clone())
             .map_err(|error| error.to_string())?;
 
-        let functionalConfigManager = FunctionalConfigManager::new(self.rootDir.clone());
+        let functionalConfigManager =
+            FunctionalConfigManager::new(self.paths.runtime_dir().to_path_buf());
         functionalConfigManager
             .setModelForFunction(
                 FunctionType::CHAT,
@@ -498,7 +499,7 @@ impl Operit1SnapshotImportManager {
         parsed: &ParsedOperit1Snapshot,
         fileImportPlan: &SnapshotFileImportPlan,
     ) -> Result<(i32, i32), String> {
-        let paths = RuntimeStorePaths::new(self.rootDir.clone());
+        let paths = self.paths.clone();
         let mappings = datastorePreferenceMappings(&paths);
         let mut fileCount = 0;
         let mut keyCount = 0;
@@ -535,8 +536,8 @@ impl Operit1SnapshotImportManager {
             .get(ENTRY_DATABASE)
             .ok_or_else(|| format!("Operit1 快照缺少聊天数据库：{ENTRY_DATABASE}"))?;
         let tempPath = self
-            .rootDir
-            .join("runtime")
+            .paths
+            .runtime_dir()
             .join("temp")
             .join(SQLITE_INSPECTION_TEMP_FILE);
         writeTempFile(&tempPath, databaseBytes)?;
@@ -549,8 +550,8 @@ impl Operit1SnapshotImportManager {
                 .map(|chat| chat.messages.len() as i32)
                 .sum();
             let json = serde_json::to_string(&archive).map_err(|error| error.to_string())?;
-            let manager = ChatHistoryManager::new(RuntimeStorePaths::new(self.rootDir.clone()))
-                .map_err(|error| error.to_string())?;
+            let manager =
+                ChatHistoryManager::new(self.paths.clone()).map_err(|error| error.to_string())?;
             manager
                 .importChatHistoriesFromJson(json)
                 .map_err(|error| error.to_string())?;
@@ -569,13 +570,13 @@ impl Operit1SnapshotImportManager {
         let (importedWorkspaces, importedWorkspaceFiles) =
             copyWorkspaceEntries(&parsed.entries, fileImportPlan)?;
         let importedFiles = copyEntriesWithPrefix(
-            &self.rootDir,
+            &self.paths,
             &parsed.entries,
             ENTRY_FILES_PREFIX,
             RUNTIME_IMPORTED_OPERIT1_FILES_DIR,
         )?;
         let importedExternalFiles = copyEntriesWithPrefix(
-            &self.rootDir,
+            &self.paths,
             &parsed.entries,
             ENTRY_EXTERNAL_FILES_PREFIX,
             RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR,
@@ -594,15 +595,15 @@ impl Operit1SnapshotImportManager {
         parsed: &ParsedOperit1Snapshot,
     ) -> Result<(i32, i32), String> {
         let tempDir = self
-            .rootDir
-            .join("runtime")
+            .paths
+            .runtime_dir()
             .join("temp")
             .join(OBJECTBOX_IMPORT_TEMP_DIR);
         if tempDir.exists() {
             fs::remove_dir_all(&tempDir).map_err(|error| error.to_string())?;
         }
         let result = (|| {
-            let paths = RuntimeStorePaths::new(self.rootDir.clone());
+            let paths = self.paths.clone();
             let sharedMemoryStoreManager = SharedMemoryStoreManager::new(paths);
             let profiles = collectOperit1MemoryProfileIds(parsed)?;
             let mut totalMemoryCount = 0;
@@ -1329,7 +1330,6 @@ impl Operit1PreferenceValue {
 
 #[derive(Clone, Debug)]
 struct SnapshotFileImportPlan {
-    rootDir: PathBuf,
     importedFilesRoot: PathBuf,
     importedExternalFilesRoot: PathBuf,
     workspaceRoot: PathBuf,
@@ -1344,12 +1344,12 @@ struct Operit1SnapshotFileImportResult {
 }
 
 impl SnapshotFileImportPlan {
-    fn new(rootDir: &Path) -> Self {
-        let paths = RuntimeStorePaths::new(rootDir.to_path_buf());
+    /// Creates a file import plan from explicit runtime and workspace roots.
+    fn new(paths: &RuntimeStorePaths) -> Self {
         Self {
-            rootDir: rootDir.to_path_buf(),
-            importedFilesRoot: rootDir.join(RUNTIME_IMPORTED_OPERIT1_FILES_DIR),
-            importedExternalFilesRoot: rootDir.join(RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR),
+            importedFilesRoot: paths.runtime_storage_path(RUNTIME_IMPORTED_OPERIT1_FILES_DIR),
+            importedExternalFilesRoot: paths
+                .runtime_storage_path(RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR),
             workspaceRoot: paths.workspace_dir(),
         }
     }
@@ -1561,69 +1561,59 @@ fn datastorePreferenceMappings(paths: &RuntimeStorePaths) -> BTreeMap<String, Pa
     );
     mappings.insert(
         "payload/files/datastore/user_preferences.preferences_pb".to_string(),
-        paths
-            .root_dir()
-            .join("runtime/config/preferences/user_preferences.preferences.json"),
+        paths.runtime_storage_path("runtime/config/preferences/user_preferences.preferences.json"),
     );
     mappings.insert(
         "payload/files/datastore/api_settings.preferences_pb".to_string(),
-        paths
-            .root_dir()
-            .join("runtime/config/preferences/api_settings.json"),
+        paths.runtime_storage_path("runtime/config/preferences/api_settings.json"),
     );
     mappings.insert(
         "payload/files/datastore/display_preferences.preferences_pb".to_string(),
-        paths
-            .root_dir()
-            .join("runtime/config/preferences/display_preferences.preferences.json"),
+        paths.runtime_storage_path(
+            "runtime/config/preferences/display_preferences.preferences.json",
+        ),
     );
     mappings.insert(
         "payload/files/datastore/ui_preferences.preferences_pb".to_string(),
-        paths
-            .root_dir()
-            .join("runtime/config/preferences/ui_preferences.preferences.json"),
+        paths.runtime_storage_path("runtime/config/preferences/ui_preferences.preferences.json"),
     );
     mappings.insert(
         "payload/files/datastore/waifu_settings.preferences_pb".to_string(),
-        paths
-            .root_dir()
-            .join("runtime/config/preferences/waifu_settings.preferences.json"),
+        paths.runtime_storage_path("runtime/config/preferences/waifu_settings.preferences.json"),
     );
     mappings.insert(
         "payload/files/datastore/wake_word_preferences.preferences_pb".to_string(),
-        paths
-            .root_dir()
-            .join("runtime/config/preferences/wake_word_preferences.preferences.json"),
+        paths.runtime_storage_path(
+            "runtime/config/preferences/wake_word_preferences.preferences.json",
+        ),
     );
     mappings.insert(
         "payload/files/datastore/custom_emoji_settings.preferences_pb".to_string(),
-        paths
-            .root_dir()
-            .join("runtime/config/preferences/custom_emoji_settings.preferences.json"),
+        paths.runtime_storage_path(
+            "runtime/config/preferences/custom_emoji_settings.preferences.json",
+        ),
     );
     mappings.insert(
         "payload/files/datastore/android_permission_preferences.preferences_pb".to_string(),
-        paths
-            .root_dir()
-            .join("runtime/config/preferences/android_permission_preferences.preferences.json"),
+        paths.runtime_storage_path(
+            "runtime/config/preferences/android_permission_preferences.preferences.json",
+        ),
     );
     mappings.insert(
         "payload/files/datastore/database_backup_settings.preferences_pb".to_string(),
-        paths
-            .root_dir()
-            .join("runtime/config/preferences/database_backup_settings.preferences.json"),
+        paths.runtime_storage_path(
+            "runtime/config/preferences/database_backup_settings.preferences.json",
+        ),
     );
     mappings.insert(
         "payload/files/datastore/github_auth_preferences.preferences_pb".to_string(),
-        paths
-            .root_dir()
-            .join("runtime/config/preferences/github_auth_preferences.json"),
+        paths.runtime_storage_path("runtime/config/preferences/github_auth_preferences.json"),
     );
     mappings.insert(
         "payload/files/datastore/persona_card_chat_history.preferences_pb".to_string(),
-        paths
-            .root_dir()
-            .join("runtime/config/preferences/persona_card_chat_history.preferences.json"),
+        paths.runtime_storage_path(
+            "runtime/config/preferences/persona_card_chat_history.preferences.json",
+        ),
     );
     mappings
 }
@@ -2048,13 +2038,13 @@ fn pushMarkdownField(lines: &mut Vec<String>, label: &str, value: &str) {
 
 #[allow(non_snake_case)]
 fn appendSharedUserMarkdown(
-    rootDir: &Path,
+    paths: &RuntimeStorePaths,
     profileId: &str,
     importedMarkdown: &str,
 ) -> Result<(), String> {
     let storeId = operit1SharedMemoryStoreId(profileId);
-    let path = rootDir
-        .join(DATA_MEMORY_SHARED_DIR_PATH)
+    let path = paths
+        .runtime_storage_path(DATA_MEMORY_SHARED_DIR_PATH)
         .join(sanitizeMemoryOwnerId(&storeId))
         .join("USER.md");
     if let Some(parent) = path.parent() {
@@ -2571,7 +2561,7 @@ fn queryCount(connection: &Connection, sql: &str) -> Result<i32, String> {
 
 #[allow(non_snake_case)]
 fn copyEntriesWithPrefix(
-    rootDir: &Path,
+    paths: &RuntimeStorePaths,
     entries: &BTreeMap<String, Vec<u8>>,
     sourcePrefix: &str,
     targetPrefix: &str,
@@ -2588,7 +2578,7 @@ fn copyEntriesWithPrefix(
             .strip_prefix(sourcePrefix)
             .ok_or_else(|| format!("快照资源路径前缀不匹配：{entry}"))?;
         validateRelativePath(relative)?;
-        let target = rootDir.join(targetPrefix).join(relative);
+        let target = paths.runtime_storage_path(targetPrefix).join(relative);
         writeFile(&target, bytes)?;
         count += 1;
     }

@@ -104,8 +104,21 @@ def main() -> int:
     typescript_bin = ensure_typescript(typescript_version)
     wasm_bindgen_bin = ensure_wasm_bindgen(wasm_bindgen_version)
     wasi_sdk = ensure_wasi_sdk(wasi_sdk_version)
+    clang_resource_includes = sorted(
+        path
+        for path in (wasi_sdk / "lib" / "clang").glob("*/include")
+        if path.is_dir()
+    )
+    if len(clang_resource_includes) != 1:
+        raise RuntimeError(
+            "Expected exactly one Clang resource include directory in the WASI SDK, "
+            f"found {len(clang_resource_includes)}"
+        )
     env["PATH"] = f"{typescript_bin}{os.pathsep}{wasm_bindgen_bin}{os.pathsep}{env['PATH']}"
     env["QUICKJS_WASM_SYS_WASI_SDK_PATH"] = str(wasi_sdk)
+    env["BINDGEN_EXTRA_CLANG_ARGS_wasm32_unknown_unknown"] = (
+        f'-I"{clang_resource_includes[0].as_posix()}"'
+    )
 
     run(["rustup", "target", "add", "wasm32-unknown-unknown"])
     stage_web_access_source()

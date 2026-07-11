@@ -21,6 +21,20 @@ pub trait CoreLinkClient {
     async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError>;
 }
 
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait CoreLinkSharedClient {
+    /// Executes a one-shot core method call through a shared client.
+    async fn call(&self, request: CoreCallRequest) -> CoreCallResponse;
+
+    /// Reads the current value for a watched core path through a shared client.
+    #[allow(non_snake_case)]
+    async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError>;
+
+    /// Opens a stream of events for a watched core path through a shared client.
+    async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError>;
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl<T> CoreLinkClient for Box<T>

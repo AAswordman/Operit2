@@ -34,10 +34,10 @@ use serde::{Deserialize, Serialize};
 #[cfg(not(any(windows, target_os = "linux")))]
 compile_error!("operit2 CLI host is implemented for Windows and Linux.");
 
+/// Creates the CLI application with the configured runtime and workspace roots.
 pub(crate) fn create_cli_application() -> OperitApplication {
     let storageConfig = CliStorageConfig::read();
-    let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::newWithRoots(
-        storageConfig.dataRoot,
+    let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(
         storageConfig.runtimeRoot,
         storageConfig.workspaceRoot,
     ));
@@ -72,6 +72,7 @@ pub(crate) fn create_cli_application() -> OperitApplication {
     )))
 }
 
+/// Creates the local core proxy used by CLI commands and services.
 pub(crate) fn create_local_core() -> LocalCoreProxy {
     LocalCoreProxy::new(create_cli_application())
 }
@@ -107,10 +108,20 @@ impl CliStorageConfig {
 
     /// Builds the current platform storage root configuration.
     fn current() -> Self {
-        let dataRoot = NativeRuntimeStorageHost::defaultRoot();
+        let runtimeRoot = NativeRuntimeStorageHost::defaultRuntimeRoot();
+        let workspaceRoot = NativeRuntimeStorageHost::defaultWorkspaceRoot();
+        let dataRoot = runtimeRoot
+            .parent()
+            .expect("default runtime root must have a parent")
+            .to_path_buf();
+        assert_eq!(
+            workspaceRoot.parent(),
+            Some(dataRoot.as_path()),
+            "default runtime and workspace roots must share one data root"
+        );
         Self {
-            runtimeRoot: dataRoot.join("runtime"),
-            workspaceRoot: dataRoot.join("workspaces"),
+            runtimeRoot,
+            workspaceRoot,
             dataRoot,
         }
     }

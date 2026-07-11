@@ -96,9 +96,8 @@ apps/flutter/app/lib/core/proxy/generated/
 
 # Flutter web generated runtime bridge artifacts
 apps/flutter/app/assets/web_access/
-apps/flutter/app/web/
-apps/app/web/operit_flutter_bridge.d.ts
-apps/app/web/operit_flutter_bridge_bg.wasm.d.ts
+apps/flutter/app/build/web
+apps/flutter/app/build/web/
 
 # Local dependency extraction/package scratch
 package/

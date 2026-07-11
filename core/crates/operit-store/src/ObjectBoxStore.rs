@@ -231,9 +231,7 @@ where
         payload: serde_json::Value,
     ) -> Result<(), ObjectBoxStoreError> {
         let (databaseStoragePath, id) = parseSyncedEntityId(entityId)?;
-        let databasePath = RuntimeStorePaths::default()
-            .root_dir()
-            .join(databaseStoragePath);
+        let databasePath = RuntimeStorePaths::default().runtime_storage_path(&databaseStoragePath);
         let sqliteStore = SqliteStore::open(databasePath.clone())?;
         initializeSchema(&sqliteStore)?;
         let entityType = payload

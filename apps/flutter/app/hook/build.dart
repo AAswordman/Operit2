@@ -27,6 +27,9 @@ void main(List<String> args) async {
       input.packageRoot.resolve('../../../apps/web_access/web/'),
     );
     final webDir = Directory.fromUri(input.packageRoot.resolve('web/'));
+    final flutterWebOutputDir = Directory.fromUri(
+      input.packageRoot.resolve('build/web/'),
+    );
     final webBuildDir = Directory.fromUri(
       input.packageRoot.resolve('../../../apps/web_access/build/bundle/'),
     );
@@ -45,8 +48,9 @@ void main(List<String> args) async {
       depsDir.uri.resolve('node_modules/sql.js/dist/'),
     );
     final targetOs = _targetOs(input);
-    final shouldBuildWebAssets = targetOs == null || targetOs == 'web';
-    final shouldBundleWebAccessAssets = targetOs != null && targetOs != 'web';
+    final isWebTarget = targetOs == 'web';
+    final shouldBuildWebAssets = isWebTarget;
+    final shouldBundleWebAccessAssets = !isWebTarget;
 
     await _addDirectoryFileDependencies(output, pluginsRoot, {
       '.js',
@@ -75,6 +79,15 @@ void main(List<String> args) async {
     ], workingDirectory: repoRoot.path);
 
     if (shouldBuildWebAssets) {
+      _verifyDirectorySymlink(
+        linkDirectory: webDir,
+        targetDirectory: webSourceDir,
+      );
+      await _ensureDirectorySymlink(
+        linkDirectory: flutterWebOutputDir,
+        targetDirectory: webBuildDir,
+      );
+
       await _run(
         'cargo',
         const ['build', '--release', '--target', 'wasm32-unknown-unknown'],
@@ -86,7 +99,7 @@ void main(List<String> args) async {
         '--target',
         'web',
         '--out-dir',
-        webDir.path,
+        webBuildDir.path,
         '--out-name',
         'operit_flutter_bridge',
         wasmSource.path,
@@ -104,10 +117,10 @@ void main(List<String> args) async {
 
       await File.fromUri(
         sqlDist.uri.resolve('sql-wasm.js'),
-      ).copy(File.fromUri(webDir.uri.resolve('sql-wasm.js')).path);
+      ).copy(File.fromUri(webBuildDir.uri.resolve('sql-wasm.js')).path);
       await File.fromUri(
         sqlDist.uri.resolve('sql-wasm.wasm'),
-      ).copy(File.fromUri(webDir.uri.resolve('sql-wasm.wasm')).path);
+      ).copy(File.fromUri(webBuildDir.uri.resolve('sql-wasm.wasm')).path);
     }
     if (shouldBundleWebAccessAssets) {
       await _addDirectoryFileDependencies(output, webBuildDir, {
@@ -124,6 +137,60 @@ void main(List<String> args) async {
       await _syncDirectory(webBuildDir, webAccessAssetsDir);
     }
   });
+}
+
+/// Verifies a directory symlink points to the expected target directory.
+void _verifyDirectorySymlink({
+  required Directory linkDirectory,
+  required Directory targetDirectory,
+}) {
+  final type = FileSystemEntity.typeSync(
+    linkDirectory.path,
+    followLinks: false,
+  );
+  if (type != FileSystemEntityType.link) {
+    throw StateError(
+      'Expected directory symlink at ${linkDirectory.path}, found $type.',
+    );
+  }
+  final actualTarget = Directory(linkDirectory.path).resolveSymbolicLinksSync();
+  final expectedTarget = targetDirectory.resolveSymbolicLinksSync();
+  if (actualTarget != expectedTarget) {
+    throw StateError(
+      'Directory symlink ${linkDirectory.path} points to $actualTarget, '
+      'expected $expectedTarget.',
+    );
+  }
+}
+
+/// Ensures a generated directory path points to another directory.
+Future<void> _ensureDirectorySymlink({
+  required Directory linkDirectory,
+  required Directory targetDirectory,
+}) async {
+  await targetDirectory.create(recursive: true);
+  await linkDirectory.parent.create(recursive: true);
+
+  final link = Link(linkDirectory.path);
+  if (link.existsSync()) {
+    final actualTarget = Directory(
+      linkDirectory.path,
+    ).resolveSymbolicLinksSync();
+    final expectedTarget = targetDirectory.resolveSymbolicLinksSync();
+    if (actualTarget == expectedTarget) {
+      return;
+    }
+    await link.delete();
+  } else if (linkDirectory.existsSync()) {
+    await linkDirectory.delete(recursive: true);
+  } else {
+    final file = File(linkDirectory.path);
+    if (file.existsSync()) {
+      await file.delete();
+    }
+  }
+
+  await link.create(targetDirectory.absolute.path);
 }
 
 Future<void> _addDirectoryFileDependencies(

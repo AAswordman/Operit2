@@ -38,7 +38,6 @@ pub struct StandardFileSystemTools {
     pub httpHost: Arc<dyn HttpHost>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     runtimeStoreRoot: PathBuf,
-    appFilesRoot: Option<PathBuf>,
     workspaceCollectionRoot: PathBuf,
     runtimeSupport: Arc<dyn ToolRuntimeSupport>,
 }
@@ -50,7 +49,6 @@ impl StandardFileSystemTools {
         httpHost: Arc<dyn HttpHost>,
         systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
         runtimeStoreRoot: PathBuf,
-        appFilesRoot: Option<PathBuf>,
         workspaceCollectionRoot: PathBuf,
         runtimeSupport: Arc<dyn ToolRuntimeSupport>,
     ) -> Self {
@@ -59,7 +57,6 @@ impl StandardFileSystemTools {
             httpHost,
             systemOperationHost,
             runtimeStoreRoot,
-            appFilesRoot,
             workspaceCollectionRoot,
             runtimeSupport,
         }
@@ -70,7 +67,6 @@ impl StandardFileSystemTools {
             self.host.clone(),
             PathMapper::new(
                 self.runtimeStoreRoot.clone(),
-                self.appFilesRoot.clone(),
                 self.workspaceCollectionRoot.clone(),
             ),
         )

@@ -1,0 +1,13 @@
+{
+  "request": {
+    "requestId": "bench-small-call",
+    "targetPath": {
+      "segments": ["runtime", "chat"]
+    },
+    "methodName": "send",
+    "args": {
+      "message": "ping",
+      "stream": false
+    }
+  }
+}

@@ -15,10 +15,14 @@ use crate::runtime_common::{
     buildAndroidProotCommand, requiredAndroidRuntimePath, validateRootfsExecutable,
 };
 
+const MANAGED_RUNTIME_STDIO_BUFFER_BYTES: usize = 64 * 1024;
+const MANAGED_RUNTIME_SINGLE_FRAME_MIN_BYTES: usize = 4 * 1024;
+
 #[derive(Clone, Default)]
 pub struct AndroidManagedRuntimeHost;
 
 impl AndroidManagedRuntimeHost {
+    /// Creates an Android managed runtime host.
     pub fn new() -> Self {
         Self
     }
@@ -32,17 +36,25 @@ struct AndroidManagedRuntimeProcess {
 }
 
 impl ManagedRuntimeProcess for AndroidManagedRuntimeProcess {
+    /// Writes one protocol line to the managed runtime stdin.
     fn writeLine(&self, line: &str) -> HostResult<()> {
         let mut stdin = self
             .stdin
             .lock()
             .map_err(|_| HostError::new("stdin mutex poisoned"))?;
-        stdin.write_all(line.as_bytes())?;
-        stdin.write_all(b"\n")?;
-        stdin.flush()?;
-        Ok(())
+        writeManagedRuntimeLine(&mut stdin, line)
     }
 
+    /// Writes multiple protocol lines to the managed runtime stdin.
+    fn writeLines(&self, lines: &[String]) -> HostResult<()> {
+        let mut stdin = self
+            .stdin
+            .lock()
+            .map_err(|_| HostError::new("stdin mutex poisoned"))?;
+        writeManagedRuntimeLines(&mut stdin, lines)
+    }
+
+    /// Reads one protocol line from the managed runtime stdout queue.
     fn readStdoutLine(&self, timeoutMs: u64) -> HostResult<Option<String>> {
         let receiver = self
             .stdoutRx
@@ -55,6 +67,7 @@ impl ManagedRuntimeProcess for AndroidManagedRuntimeProcess {
         }
     }
 
+    /// Drains buffered stderr lines collected from the managed runtime.
     fn drainStderr(&self) -> HostResult<String> {
         let mut lines = self
             .stderrLines
@@ -70,6 +83,7 @@ impl ManagedRuntimeProcess for AndroidManagedRuntimeProcess {
         Ok(output)
     }
 
+    /// Returns whether the managed runtime process is still alive.
     fn isRunning(&self) -> HostResult<bool> {
         let mut child = self
             .child
@@ -78,6 +92,7 @@ impl ManagedRuntimeProcess for AndroidManagedRuntimeProcess {
         Ok(child.try_wait()?.is_none())
     }
 
+    /// Terminates the managed runtime process.
     fn kill(&self) -> HostResult<()> {
         let mut child = self
             .child
@@ -94,13 +109,15 @@ impl ManagedRuntimeProcess for AndroidManagedRuntimeProcess {
 }
 
 impl ManagedRuntimeHost for AndroidManagedRuntimeHost {
+    /// Returns the persistent Android managed runtime workspace directory.
     fn runtimeWorkspaceDir(&self) -> HostResult<String> {
-        let storageRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_STORAGE_ROOT")?;
-        let dir = storageRoot.join("managed_runtime");
+        let internalRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_INTERNAL_ROOT")?;
+        let dir = internalRoot.join("managed_runtime");
         std::fs::create_dir_all(&dir)?;
         Ok(dir.to_string_lossy().to_string())
     }
 
+    /// Resolves a managed runtime executable inside the Android rootfs.
     fn resolveRuntimeExecutable(
         &self,
         program: ManagedRuntimeProgram,
@@ -119,6 +136,7 @@ impl ManagedRuntimeHost for AndroidManagedRuntimeHost {
         Ok(executable)
     }
 
+    /// Starts a persistent Android proot managed runtime process with piped stdio.
     fn startRuntimeProcess(
         &self,
         request: RuntimeProcessRequest,
@@ -149,7 +167,10 @@ impl ManagedRuntimeHost for AndroidManagedRuntimeHost {
 
         let (stdoutTx, stdoutRx) = mpsc::channel();
         thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().flatten() {
+            for line in BufReader::with_capacity(MANAGED_RUNTIME_STDIO_BUFFER_BYTES, stdout)
+                .lines()
+                .flatten()
+            {
                 let _ = stdoutTx.send(line);
             }
         });
@@ -157,7 +178,10 @@ impl ManagedRuntimeHost for AndroidManagedRuntimeHost {
         let stderrLines = Arc::new(Mutex::new(VecDeque::new()));
         let stderrLinesForThread = stderrLines.clone();
         thread::spawn(move || {
-            for line in BufReader::new(stderr).lines().flatten() {
+            for line in BufReader::with_capacity(MANAGED_RUNTIME_STDIO_BUFFER_BYTES, stderr)
+                .lines()
+                .flatten()
+            {
                 if let Ok(mut lines) = stderrLinesForThread.lock() {
                     lines.push_back(line);
                     while lines.len() > 400 {
@@ -175,6 +199,7 @@ impl ManagedRuntimeHost for AndroidManagedRuntimeHost {
         }))
     }
 
+    /// Runs a one-shot Android proot managed runtime command and captures output.
     fn runRuntimeCommand(
         &self,
         request: RuntimeProcessRequest,
@@ -192,4 +217,48 @@ impl ManagedRuntimeHost for AndroidManagedRuntimeHost {
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         })
     }
+}
+
+/// Writes one newline-terminated managed runtime frame.
+#[allow(non_snake_case)]
+fn writeManagedRuntimeLine(stdin: &mut ChildStdin, line: &str) -> HostResult<()> {
+    let lineBytes = line.as_bytes();
+    match lineBytes.len() >= MANAGED_RUNTIME_SINGLE_FRAME_MIN_BYTES {
+        true => writeManagedRuntimeLargeLine(stdin, lineBytes),
+        false => writeManagedRuntimeSmallLine(stdin, lineBytes),
+    }
+}
+
+/// Writes a small managed runtime line without per-message heap allocation.
+#[allow(non_snake_case)]
+fn writeManagedRuntimeSmallLine(stdin: &mut ChildStdin, lineBytes: &[u8]) -> HostResult<()> {
+    stdin.write_all(lineBytes)?;
+    stdin.write_all(b"\n")?;
+    stdin.flush()?;
+    Ok(())
+}
+
+/// Writes a large managed runtime line as one contiguous pipe frame.
+#[allow(non_snake_case)]
+fn writeManagedRuntimeLargeLine(stdin: &mut ChildStdin, lineBytes: &[u8]) -> HostResult<()> {
+    let mut frame = Vec::with_capacity(lineBytes.len() + 1);
+    frame.extend_from_slice(lineBytes);
+    frame.push(b'\n');
+    stdin.write_all(&frame)?;
+    stdin.flush()?;
+    Ok(())
+}
+
+/// Writes many managed runtime lines through one contiguous pipe frame.
+#[allow(non_snake_case)]
+fn writeManagedRuntimeLines(stdin: &mut ChildStdin, lines: &[String]) -> HostResult<()> {
+    let frameBytes = lines.iter().map(|line| line.len() + 1).sum();
+    let mut frame = Vec::with_capacity(frameBytes);
+    for line in lines {
+        frame.extend_from_slice(line.as_bytes());
+        frame.push(b'\n');
+    }
+    stdin.write_all(&frame)?;
+    stdin.flush()?;
+    Ok(())
 }

@@ -13,10 +13,14 @@ use operit_host_api::{
     RuntimeCommandOutput, RuntimeProcessRequest,
 };
 
+const MANAGED_RUNTIME_STDIO_BUFFER_BYTES: usize = 64 * 1024;
+const MANAGED_RUNTIME_SINGLE_FRAME_MIN_BYTES: usize = 4 * 1024;
+
 #[derive(Clone, Default)]
 pub struct AppleManagedRuntimeHost;
 
 impl AppleManagedRuntimeHost {
+    /// Creates an Apple managed runtime host.
     pub fn new() -> Self {
         Self
     }
@@ -30,17 +34,25 @@ struct NativeManagedRuntimeProcess {
 }
 
 impl ManagedRuntimeProcess for NativeManagedRuntimeProcess {
+    /// Writes one protocol line to the managed runtime stdin.
     fn writeLine(&self, line: &str) -> HostResult<()> {
         let mut stdin = self
             .stdin
             .lock()
             .map_err(|_| HostError::new("stdin mutex poisoned"))?;
-        stdin.write_all(line.as_bytes())?;
-        stdin.write_all(b"\n")?;
-        stdin.flush()?;
-        Ok(())
+        writeManagedRuntimeLine(&mut stdin, line)
     }
 
+    /// Writes multiple protocol lines to the managed runtime stdin.
+    fn writeLines(&self, lines: &[String]) -> HostResult<()> {
+        let mut stdin = self
+            .stdin
+            .lock()
+            .map_err(|_| HostError::new("stdin mutex poisoned"))?;
+        writeManagedRuntimeLines(&mut stdin, lines)
+    }
+
+    /// Reads one protocol line from the managed runtime stdout queue.
     fn readStdoutLine(&self, timeoutMs: u64) -> HostResult<Option<String>> {
         let receiver = self
             .stdoutRx
@@ -53,6 +65,7 @@ impl ManagedRuntimeProcess for NativeManagedRuntimeProcess {
         }
     }
 
+    /// Drains buffered stderr lines collected from the managed runtime.
     fn drainStderr(&self) -> HostResult<String> {
         let mut lines = self
             .stderrLines
@@ -68,6 +81,7 @@ impl ManagedRuntimeProcess for NativeManagedRuntimeProcess {
         Ok(output)
     }
 
+    /// Returns whether the managed runtime process is still alive.
     fn isRunning(&self) -> HostResult<bool> {
         let mut child = self
             .child
@@ -76,6 +90,7 @@ impl ManagedRuntimeProcess for NativeManagedRuntimeProcess {
         Ok(child.try_wait()?.is_none())
     }
 
+    /// Terminates the managed runtime process.
     fn kill(&self) -> HostResult<()> {
         let mut child = self
             .child
@@ -92,6 +107,7 @@ impl ManagedRuntimeProcess for NativeManagedRuntimeProcess {
 }
 
 impl ManagedRuntimeHost for AppleManagedRuntimeHost {
+    /// Returns the persistent Apple managed runtime workspace directory.
     fn runtimeWorkspaceDir(&self) -> HostResult<String> {
         let dir = appleApplicationSupportDirectory()
             .join("Operit2")
@@ -100,6 +116,7 @@ impl ManagedRuntimeHost for AppleManagedRuntimeHost {
         Ok(dir.to_string_lossy().to_string())
     }
 
+    /// Resolves a managed runtime executable from explicit path or PATH.
     fn resolveRuntimeExecutable(
         &self,
         program: ManagedRuntimeProgram,
@@ -126,6 +143,7 @@ impl ManagedRuntimeHost for AppleManagedRuntimeHost {
         }
     }
 
+    /// Starts a persistent managed runtime subprocess with piped stdio.
     fn startRuntimeProcess(
         &self,
         request: RuntimeProcessRequest,
@@ -156,14 +174,20 @@ impl ManagedRuntimeHost for AppleManagedRuntimeHost {
         };
         let (stdoutTx, stdoutRx) = mpsc::channel();
         thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().flatten() {
+            for line in BufReader::with_capacity(MANAGED_RUNTIME_STDIO_BUFFER_BYTES, stdout)
+                .lines()
+                .flatten()
+            {
                 let _ = stdoutTx.send(line);
             }
         });
         let stderrLines = Arc::new(Mutex::new(VecDeque::new()));
         let stderrLinesForThread = stderrLines.clone();
         thread::spawn(move || {
-            for line in BufReader::new(stderr).lines().flatten() {
+            for line in BufReader::with_capacity(MANAGED_RUNTIME_STDIO_BUFFER_BYTES, stderr)
+                .lines()
+                .flatten()
+            {
                 if let Ok(mut lines) = stderrLinesForThread.lock() {
                     lines.push_back(line);
                     while lines.len() > 400 {
@@ -180,6 +204,7 @@ impl ManagedRuntimeHost for AppleManagedRuntimeHost {
         }))
     }
 
+    /// Runs a one-shot managed runtime command and captures output.
     fn runRuntimeCommand(
         &self,
         request: RuntimeProcessRequest,
@@ -201,6 +226,51 @@ impl ManagedRuntimeHost for AppleManagedRuntimeHost {
     }
 }
 
+/// Writes one newline-terminated managed runtime frame.
+#[allow(non_snake_case)]
+fn writeManagedRuntimeLine(stdin: &mut ChildStdin, line: &str) -> HostResult<()> {
+    let lineBytes = line.as_bytes();
+    match lineBytes.len() >= MANAGED_RUNTIME_SINGLE_FRAME_MIN_BYTES {
+        true => writeManagedRuntimeLargeLine(stdin, lineBytes),
+        false => writeManagedRuntimeSmallLine(stdin, lineBytes),
+    }
+}
+
+/// Writes a small managed runtime line without per-message heap allocation.
+#[allow(non_snake_case)]
+fn writeManagedRuntimeSmallLine(stdin: &mut ChildStdin, lineBytes: &[u8]) -> HostResult<()> {
+    stdin.write_all(lineBytes)?;
+    stdin.write_all(b"\n")?;
+    stdin.flush()?;
+    Ok(())
+}
+
+/// Writes a large managed runtime line as one contiguous pipe frame.
+#[allow(non_snake_case)]
+fn writeManagedRuntimeLargeLine(stdin: &mut ChildStdin, lineBytes: &[u8]) -> HostResult<()> {
+    let mut frame = Vec::with_capacity(lineBytes.len() + 1);
+    frame.extend_from_slice(lineBytes);
+    frame.push(b'\n');
+    stdin.write_all(&frame)?;
+    stdin.flush()?;
+    Ok(())
+}
+
+/// Writes many managed runtime lines through one contiguous pipe frame.
+#[allow(non_snake_case)]
+fn writeManagedRuntimeLines(stdin: &mut ChildStdin, lines: &[String]) -> HostResult<()> {
+    let frameBytes = lines.iter().map(|line| line.len() + 1).sum();
+    let mut frame = Vec::with_capacity(frameBytes);
+    for line in lines {
+        frame.extend_from_slice(line.as_bytes());
+        frame.push(b'\n');
+    }
+    stdin.write_all(&frame)?;
+    stdin.flush()?;
+    Ok(())
+}
+
+/// Resolves a directly supplied executable path.
 fn ensureExecutablePath(path: &str) -> HostResult<String> {
     let candidate = PathBuf::from(path);
     if candidate.exists() {
@@ -212,6 +282,7 @@ fn ensureExecutablePath(path: &str) -> HostResult<String> {
     }
 }
 
+/// Finds the first executable candidate from PATH.
 fn findExecutable(names: &[&str]) -> Option<String> {
     let pathValue = env::var_os("PATH")?;
     for dir in env::split_paths(&pathValue) {
@@ -225,10 +296,12 @@ fn findExecutable(names: &[&str]) -> Option<String> {
     None
 }
 
+/// Returns whether a path points to an executable file candidate.
 fn isExecutableCandidate(path: &Path) -> bool {
     path.is_file()
 }
 
+/// Returns the Apple application support directory for the current user.
 fn appleApplicationSupportDirectory() -> PathBuf {
     let home = env::var_os("HOME").expect("HOME is required for Apple managed runtime storage");
     PathBuf::from(home)

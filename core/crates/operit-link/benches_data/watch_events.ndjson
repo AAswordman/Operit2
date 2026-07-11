@@ -1,0 +1,3 @@
+{"subscriptionId":"bench-subscription","event":{"requestId":"bench-watch","targetPath":{"segments":["runtime","chat"]},"propertyName":"stream","kind":"Changed","value":{"delta":"hello","index":0}}}
+{"subscriptionId":"bench-subscription","event":{"requestId":"bench-watch","targetPath":{"segments":["runtime","chat"]},"propertyName":"stream","kind":"Changed","value":{"delta":" world","index":1}}}
+{"subscriptionId":"bench-subscription","event":{"requestId":"bench-watch","targetPath":{"segments":["runtime","chat"]},"propertyName":"stream","kind":"Completed","value":{}}}

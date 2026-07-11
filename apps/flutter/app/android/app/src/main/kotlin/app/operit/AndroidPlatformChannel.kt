@@ -20,8 +20,10 @@ class AndroidPlatformChannel(
     fun handle(call: MethodCall, result: MethodChannel.Result): Boolean {
         when (call.method) {
             "androidRuntimePaths" -> androidRuntimePaths(result)
+            "localRuntimeStorageDefaults" -> localRuntimeStorageDefaults(result)
             "localRuntimeStoragePaths" -> localRuntimeStoragePaths(call, result)
             "setLocalRuntimeStorage" -> setLocalRuntimeStorage(call, result)
+            "startLocalCoreService" -> startLocalCoreService(result)
             "hostOnboardingPermissionSnapshot" -> hostOnboardingPermissionSnapshot(call, result)
             "hostOnboardingRequestPermission" -> hostOnboardingRequestPermission(call, result)
             else -> return false
@@ -60,22 +62,48 @@ class AndroidPlatformChannel(
         }.start()
     }
 
-    /** Returns local runtime storage paths for the requested root. */
+    /** Returns the platform default runtime and workspace roots. */
+    private fun localRuntimeStorageDefaults(result: MethodChannel.Result) {
+        result.success(runtimeHost.defaultStoragePathsMap())
+    }
+
+    /** Returns local runtime storage paths for requested roots. */
     private fun localRuntimeStoragePaths(call: MethodCall, result: MethodChannel.Result) {
         try {
-            result.success(runtimeHost.storagePathsMap(call.argument<String>("storageRoot")))
+            result.success(
+                runtimeHost.storagePathsMap(
+                    call.argument<String>("runtimeRoot"),
+                    call.argument<String>("workspaceRoot"),
+                ),
+            )
         } catch (error: Throwable) {
             result.error("RUNTIME_STORAGE_PATHS_ERROR", error.message, null)
         }
     }
 
-    /** Applies the local runtime storage root before runtime creation. */
+    /** Installs local runtime and workspace roots. */
     private fun setLocalRuntimeStorage(call: MethodCall, result: MethodChannel.Result) {
+        val runtimeRoot = call.argument<String>("runtimeRoot")
+        val workspaceRoot = call.argument<String>("workspaceRoot")
+        runtimeHost.runBackground {
+            try {
+                runtimeHost.setStorageRoots(runtimeRoot, workspaceRoot)
+                activity.runOnUiThread { result.success(null) }
+            } catch (error: Throwable) {
+                activity.runOnUiThread {
+                    result.error("RUNTIME_STORAGE_SET_ERROR", error.message, null)
+                }
+            }
+        }
+    }
+
+    /** Starts the process-level local Core foreground service. */
+    private fun startLocalCoreService(result: MethodChannel.Result) {
         try {
-            runtimeHost.setStorageRoot(call.argument<String>("storageRoot"))
+            OperitCoreService.start(activity.applicationContext)
             result.success(null)
         } catch (error: Throwable) {
-            result.error("RUNTIME_STORAGE_SET_ERROR", error.message, null)
+            result.error("CORE_SERVICE_START_ERROR", error.message, null)
         }
     }
 

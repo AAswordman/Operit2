@@ -16,10 +16,13 @@ Future<void> initialize() async {
   await file.parent.create(recursive: true);
   await file.open(mode: FileMode.append).then((handle) => handle.close());
   _logFile = file;
-  write(ClientLogLevel.info, 'Client logger initialized path=$path');
 }
 
+/// Returns whether the file logger has an active log file.
 bool isInitialized() => _logFile != null;
+
+/// Returns whether this backend already mirrors writes to a live console.
+bool writesToConsole() => false;
 
 Future<String> logFilePath() async {
   final file = _logFile;
@@ -104,8 +107,7 @@ String _formatLogLine(
   Object? error,
   StackTrace? stackTrace,
 }) {
-  final timestampMs = DateTime.now().millisecondsSinceEpoch;
-  final buffer = StringBuffer('$timestampMs ${level.code}/Client: $message');
+  final buffer = StringBuffer(message);
   if (error != null) {
     buffer
       ..writeln()

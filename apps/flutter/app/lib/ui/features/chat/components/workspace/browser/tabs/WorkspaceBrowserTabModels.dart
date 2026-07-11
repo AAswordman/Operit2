@@ -6,11 +6,13 @@ import 'package:webview_all/webview_all.dart';
 import '../../../../../../../l10n/generated/app_localizations.dart';
 
 class WorkspaceBrowserTabState extends ChangeNotifier {
+  /// Creates a browser session state owned by the workspace browser host.
   WorkspaceBrowserTabState({
     required this.id,
     required this.initialUrl,
     required this.controller,
     required this.title,
+    required this.capabilities,
     this.localFilePath,
     this.preferredUserAgent,
   }) : url = initialUrl,
@@ -18,6 +20,7 @@ class WorkspaceBrowserTabState extends ChangeNotifier {
 
   final String id;
   final WebViewController controller;
+  final WorkspaceBrowserSessionCapabilities capabilities;
   final String? localFilePath;
   final String? preferredUserAgent;
   final TextEditingControllerHandle addressController =
@@ -119,6 +122,9 @@ class WorkspaceBrowserTabState extends ChangeNotifier {
 }
 
 class TextEditingControllerHandle {
+  /// Creates a retained address text editing controller.
+  TextEditingControllerHandle();
+
   final controller = TextEditingController();
 
   String get text => controller.text;
@@ -133,4 +139,19 @@ class TextEditingControllerHandle {
   void dispose() {
     controller.dispose();
   }
+}
+
+class WorkspaceBrowserSessionCapabilities {
+  /// Creates the capability set exposed by one browser host session.
+  const WorkspaceBrowserSessionCapabilities({
+    required this.pageJavaScript,
+    required this.pageHooks,
+    required this.permissionRequests,
+    required this.javaScriptDialogs,
+  });
+
+  final bool pageJavaScript;
+  final bool pageHooks;
+  final bool permissionRequests;
+  final bool javaScriptDialogs;
 }

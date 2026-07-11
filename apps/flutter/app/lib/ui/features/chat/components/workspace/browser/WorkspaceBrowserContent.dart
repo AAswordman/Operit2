@@ -2,7 +2,6 @@
 
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -22,6 +21,7 @@ import 'downloads/WorkspaceBrowserDownloadSheet.dart';
 import 'history/WorkspaceBrowserHistorySheet.dart';
 import 'permissions/WorkspaceBrowserPermissionDialog.dart';
 import 'permissions/WorkspaceBrowserPermissionSheet.dart';
+import 'surface/WorkspaceBrowserSurfaceHost.dart';
 import 'tabs/WorkspaceBrowserTabModels.dart';
 import 'userscripts/WorkspaceUserscriptSheet.dart';
 
@@ -151,14 +151,18 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
               autofocus: true,
               child: CallbackShortcuts(
                 bindings: <ShortcutActivator, VoidCallback>{
-                  const SingleActivator(LogicalKeyboardKey.minus, control: true):
-                      _sessionStore.zoomOut,
+                  const SingleActivator(
+                    LogicalKeyboardKey.minus,
+                    control: true,
+                  ): _sessionStore.zoomOut,
                   const SingleActivator(
                     LogicalKeyboardKey.numpadSubtract,
                     control: true,
                   ): _sessionStore.zoomOut,
-                  const SingleActivator(LogicalKeyboardKey.equal, control: true):
-                      _sessionStore.zoomIn,
+                  const SingleActivator(
+                    LogicalKeyboardKey.equal,
+                    control: true,
+                  ): _sessionStore.zoomIn,
                   const SingleActivator(
                     LogicalKeyboardKey.equal,
                     control: true,
@@ -196,15 +200,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
                       Expanded(
                         child: Stack(
                           children: <Widget>[
-                            WebViewWidget(
-                              key: ValueKey<String>(tab.id),
-                              controller: tab.controller,
-                            ),
-                            if (tab.errorText != null)
-                              _BrowserErrorOverlay(
-                                message: tab.errorText!,
-                                onRetry: () => tab.controller.reload(),
-                              ),
+                            const WorkspaceBrowserSurfaceTarget(),
                           ],
                         ),
                       ),
@@ -367,8 +363,10 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
                       onRunMenuCommand: (index) {
                         _dismissMenuPopup();
                         unawaited(
-                          _sessionStore.stores.userscriptRuntime
-                              .runMenuCommand(_currentTab.controller, index),
+                          _sessionStore.stores.userscriptRuntime.runMenuCommand(
+                            _currentTab.controller,
+                            index,
+                          ),
                         );
                       },
                       activeDownloadCount: _sessionStore.activeDownloadCount,
@@ -596,65 +594,5 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
       allowed: false,
     );
     await request.deny();
-  }
-}
-
-class _BrowserErrorOverlay extends StatelessWidget {
-  const _BrowserErrorOverlay({required this.message, required this.onRetry});
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final l10n = AppLocalizations.of(context)!;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: OperitGlassSurface(
-          color: theme.colorScheme.surfaceContainerHighest.withValues(
-            alpha: 0.42,
-          ),
-          layer: OperitGlassSurfaceLayer.card,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.2),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Icon(
-                  Icons.error_outline,
-                  size: 42,
-                  color: theme.colorScheme.error,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  l10n.pageLoadFailed,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall,
-                ),
-                const SizedBox(height: 16),
-                FilledButton.icon(
-                  onPressed: onRetry,
-                  icon: const Icon(Icons.refresh),
-                  label: Text(l10n.retry),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
   }
 }

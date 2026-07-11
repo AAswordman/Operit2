@@ -43,10 +43,6 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val runtimeHost = ensureRuntimeHost()
-        HostEventBridge.startHostEventReceivers(
-            applicationContext,
-            { runtimeHost.ensureRuntimeHandle() },
-        )
         val ownerSystem = ensureOwnerSystem(runtimeHost)
         runtimeRouter = RuntimeMethodChannelRouter(this, runtimeHost, ownerSystem)
         runtimeRouter.configure(flutterEngine.dartExecutor.binaryMessenger)
@@ -54,7 +50,6 @@ class MainActivity : FlutterActivity() {
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         try {
-            HostEventBridge.clear(applicationContext)
             if (::ownerSystem.isInitialized) {
                 ownerSystem.release()
             }
@@ -62,9 +57,6 @@ class MainActivity : FlutterActivity() {
                 runtimeRouter.clear()
             }
         } catch (_: Exception) {
-        }
-        if (::runtimeHost.isInitialized) {
-            runtimeHost.destroy()
         }
         super.cleanUpFlutterEngine(flutterEngine)
     }
@@ -88,24 +80,10 @@ class MainActivity : FlutterActivity() {
         return ensureOwnerSystem(ensureRuntimeHost()).handleRuntimeHostRequest(methodName, payloadJson)
     }
 
-    /** Reads host secret bytes for native runtime calls. */
-    fun readHostSecret(key: String): ByteArray? {
-        return AndroidHostSecretStore.read(applicationContext, key)
-    }
-
-    /** Writes host secret bytes for native runtime calls. */
-    fun writeHostSecret(key: String, content: ByteArray) {
-        AndroidHostSecretStore.write(applicationContext, key, content)
-    }
-
-    /** Deletes host secret bytes for native runtime calls. */
-    fun deleteHostSecret(key: String) {
-        AndroidHostSecretStore.delete(applicationContext, key)
-    }
-
+    /** Returns the process-level Runtime host shared with the Core service. */
     private fun ensureRuntimeHost(): AndroidRuntimeHost {
         if (!::runtimeHost.isInitialized) {
-            runtimeHost = AndroidRuntimeHost(this)
+            runtimeHost = AndroidCoreRuntime.get(applicationContext)
         }
         return runtimeHost
     }

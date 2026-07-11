@@ -1,0 +1,8 @@
+{
+  "name": "local_call",
+  "kind": "call",
+  "description": "Measures local one-shot /link/call latency through the app-owned access layer.",
+  "samples": 1000,
+  "payload": "../../core/crates/operit-link/benches_data/call_small.json",
+  "command": "cargo bench -p operit-link --bench dispatcher_call_bench"
+}

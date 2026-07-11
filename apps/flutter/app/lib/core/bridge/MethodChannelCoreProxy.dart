@@ -5,7 +5,6 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
-import '../concurrency/AppWorkers.dart';
 import '../link/CoreLinkProtocol.dart';
 import 'CoreProxy.dart';
 
@@ -118,7 +117,7 @@ class MethodChannelCoreProxy extends CoreProxy {
 }
 
 final Map<MethodChannel, _MethodChannelWatchChannel>
-    _methodChannelWatchChannels = <MethodChannel, _MethodChannelWatchChannel>{};
+_methodChannelWatchChannels = <MethodChannel, _MethodChannelWatchChannel>{};
 
 _MethodChannelWatchChannel _methodChannelWatchChannel(MethodChannel channel) {
   return _methodChannelWatchChannels.putIfAbsent(
@@ -181,10 +180,7 @@ class _MethodChannelWatchChannel {
 
   Future<void> _dispatch(String frameText) async {
     try {
-      final frame = await AppWorkers.run(
-        () => _parseMethodChannelWatchFrame(frameText),
-        debugName: 'method-channel-watch-event-parse',
-      );
+      final frame = _parseMethodChannelWatchFrame(frameText);
       final subscriptionId = frame.subscriptionId;
       final controller = _controllers[subscriptionId];
       if (controller == null) {
@@ -196,10 +192,9 @@ class _MethodChannelWatchChannel {
         _controllers.remove(subscriptionId);
         controller.onCancel = null;
         unawaited(controller.close());
-        unawaited(_channel.invokeMethod<String>(
-          'closeWatchStream',
-          subscriptionId,
-        ));
+        unawaited(
+          _channel.invokeMethod<String>('closeWatchStream', subscriptionId),
+        );
       }
     } catch (error, stackTrace) {
       _failAll(error, stackTrace);

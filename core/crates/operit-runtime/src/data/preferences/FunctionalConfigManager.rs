@@ -64,11 +64,12 @@ impl FunctionalConfigManager {
 
     /// Creates a manager rooted at the directory that owns functional configuration data.
     pub fn new(root_dir: PathBuf) -> Self {
-        let paths = RuntimeStorePaths::new(root_dir.clone());
+        let path = RuntimeStorePaths::runtime_storage_path_from_root(
+            &root_dir,
+            operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH,
+        );
         Self {
-            functionalConfigDataStore: PreferencesDataStore::new(
-                paths.functional_configs_preferences_path(),
-            ),
+            functionalConfigDataStore: PreferencesDataStore::new(path),
             modelConfigManager: ModelConfigManager::new(root_dir),
         }
     }

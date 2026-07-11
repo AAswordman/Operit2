@@ -5,13 +5,13 @@ use operit_host_api::{
 
 #[derive(Clone, Debug, Default)]
 pub struct AndroidFileSystemHost {
-    inner: operit_host_linux_native::LinuxFileSystemHost,
+    inner: operit_host_native_common::PosixFileSystemHost,
 }
 
 impl AndroidFileSystemHost {
     pub fn new() -> Self {
         Self {
-            inner: operit_host_linux_native::LinuxFileSystemHost::new(),
+            inner: operit_host_native_common::PosixFileSystemHost::new(),
         }
     }
 }

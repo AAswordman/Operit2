@@ -13,10 +13,14 @@ use operit_host_api::{
     RuntimeCommandOutput, RuntimeProcessRequest,
 };
 
+const MANAGED_RUNTIME_STDIO_BUFFER_BYTES: usize = 64 * 1024;
+const MANAGED_RUNTIME_SINGLE_FRAME_MIN_BYTES: usize = 4 * 1024;
+
 #[derive(Clone, Default)]
 pub struct LinuxManagedRuntimeHost;
 
 impl LinuxManagedRuntimeHost {
+    /// Creates a Linux managed runtime host.
     pub fn new() -> Self {
         Self
     }
@@ -30,14 +34,25 @@ struct NativeManagedRuntimeProcess {
 }
 
 impl ManagedRuntimeProcess for NativeManagedRuntimeProcess {
+    /// Writes one protocol line to the managed runtime stdin.
     fn writeLine(&self, line: &str) -> HostResult<()> {
-        let mut stdin = self.stdin.lock().map_err(|_| HostError::new("stdin mutex poisoned"))?;
-        stdin.write_all(line.as_bytes())?;
-        stdin.write_all(b"\n")?;
-        stdin.flush()?;
-        Ok(())
+        let mut stdin = self
+            .stdin
+            .lock()
+            .map_err(|_| HostError::new("stdin mutex poisoned"))?;
+        writeManagedRuntimeLine(&mut stdin, line)
     }
 
+    /// Writes multiple protocol lines to the managed runtime stdin.
+    fn writeLines(&self, lines: &[String]) -> HostResult<()> {
+        let mut stdin = self
+            .stdin
+            .lock()
+            .map_err(|_| HostError::new("stdin mutex poisoned"))?;
+        writeManagedRuntimeLines(&mut stdin, lines)
+    }
+
+    /// Reads one protocol line from the managed runtime stdout queue.
     fn readStdoutLine(&self, timeoutMs: u64) -> HostResult<Option<String>> {
         let receiver = self
             .stdoutRx
@@ -50,6 +65,7 @@ impl ManagedRuntimeProcess for NativeManagedRuntimeProcess {
         }
     }
 
+    /// Drains buffered stderr lines collected from the managed runtime.
     fn drainStderr(&self) -> HostResult<String> {
         let mut lines = self
             .stderrLines
@@ -65,13 +81,21 @@ impl ManagedRuntimeProcess for NativeManagedRuntimeProcess {
         Ok(output)
     }
 
+    /// Returns whether the managed runtime process is still alive.
     fn isRunning(&self) -> HostResult<bool> {
-        let mut child = self.child.lock().map_err(|_| HostError::new("child mutex poisoned"))?;
+        let mut child = self
+            .child
+            .lock()
+            .map_err(|_| HostError::new("child mutex poisoned"))?;
         Ok(child.try_wait()?.is_none())
     }
 
+    /// Terminates the managed runtime process.
     fn kill(&self) -> HostResult<()> {
-        let mut child = self.child.lock().map_err(|_| HostError::new("child mutex poisoned"))?;
+        let mut child = self
+            .child
+            .lock()
+            .map_err(|_| HostError::new("child mutex poisoned"))?;
         match child.try_wait()? {
             Some(_) => Ok(()),
             None => {
@@ -83,6 +107,7 @@ impl ManagedRuntimeProcess for NativeManagedRuntimeProcess {
 }
 
 impl ManagedRuntimeHost for LinuxManagedRuntimeHost {
+    /// Returns the persistent Linux managed runtime workspace directory.
     fn runtimeWorkspaceDir(&self) -> HostResult<String> {
         let home = env::var_os("HOME")
             .ok_or_else(|| HostError::new("HOME is required for managed runtime storage"))?;
@@ -95,6 +120,7 @@ impl ManagedRuntimeHost for LinuxManagedRuntimeHost {
         Ok(dir.to_string_lossy().to_string())
     }
 
+    /// Resolves a managed runtime executable from explicit path or PATH.
     fn resolveRuntimeExecutable(
         &self,
         program: ManagedRuntimeProgram,
@@ -121,12 +147,13 @@ impl ManagedRuntimeHost for LinuxManagedRuntimeHost {
         })
     }
 
+    /// Starts a persistent managed runtime subprocess with piped stdio.
     fn startRuntimeProcess(
         &self,
         request: RuntimeProcessRequest,
     ) -> HostResult<Box<dyn ManagedRuntimeProcess>> {
-        let executable =
-            self.resolveRuntimeExecutable(request.program.clone(), request.executablePath.as_deref())?;
+        let executable = self
+            .resolveRuntimeExecutable(request.program.clone(), request.executablePath.as_deref())?;
         let mut command = Command::new(executable);
         command.args(request.args);
         if let Some(cwd) = request.cwd {
@@ -153,7 +180,10 @@ impl ManagedRuntimeHost for LinuxManagedRuntimeHost {
 
         let (stdoutTx, stdoutRx) = mpsc::channel();
         thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().flatten() {
+            for line in BufReader::with_capacity(MANAGED_RUNTIME_STDIO_BUFFER_BYTES, stdout)
+                .lines()
+                .flatten()
+            {
                 let _ = stdoutTx.send(line);
             }
         });
@@ -161,7 +191,10 @@ impl ManagedRuntimeHost for LinuxManagedRuntimeHost {
         let stderrLines = Arc::new(Mutex::new(VecDeque::new()));
         let stderrLinesForThread = stderrLines.clone();
         thread::spawn(move || {
-            for line in BufReader::new(stderr).lines().flatten() {
+            for line in BufReader::with_capacity(MANAGED_RUNTIME_STDIO_BUFFER_BYTES, stderr)
+                .lines()
+                .flatten()
+            {
                 if let Ok(mut lines) = stderrLinesForThread.lock() {
                     lines.push_back(line);
                     while lines.len() > 400 {
@@ -179,9 +212,13 @@ impl ManagedRuntimeHost for LinuxManagedRuntimeHost {
         }))
     }
 
-    fn runRuntimeCommand(&self, request: RuntimeProcessRequest) -> HostResult<RuntimeCommandOutput> {
-        let executable =
-            self.resolveRuntimeExecutable(request.program.clone(), request.executablePath.as_deref())?;
+    /// Runs a one-shot managed runtime command and captures output.
+    fn runRuntimeCommand(
+        &self,
+        request: RuntimeProcessRequest,
+    ) -> HostResult<RuntimeCommandOutput> {
+        let executable = self
+            .resolveRuntimeExecutable(request.program.clone(), request.executablePath.as_deref())?;
         let mut command = Command::new(executable);
         command.args(request.args);
         if let Some(cwd) = request.cwd {
@@ -197,6 +234,51 @@ impl ManagedRuntimeHost for LinuxManagedRuntimeHost {
     }
 }
 
+/// Writes one newline-terminated managed runtime frame.
+#[allow(non_snake_case)]
+fn writeManagedRuntimeLine(stdin: &mut ChildStdin, line: &str) -> HostResult<()> {
+    let lineBytes = line.as_bytes();
+    match lineBytes.len() >= MANAGED_RUNTIME_SINGLE_FRAME_MIN_BYTES {
+        true => writeManagedRuntimeLargeLine(stdin, lineBytes),
+        false => writeManagedRuntimeSmallLine(stdin, lineBytes),
+    }
+}
+
+/// Writes a small managed runtime line without per-message heap allocation.
+#[allow(non_snake_case)]
+fn writeManagedRuntimeSmallLine(stdin: &mut ChildStdin, lineBytes: &[u8]) -> HostResult<()> {
+    stdin.write_all(lineBytes)?;
+    stdin.write_all(b"\n")?;
+    stdin.flush()?;
+    Ok(())
+}
+
+/// Writes a large managed runtime line as one contiguous pipe frame.
+#[allow(non_snake_case)]
+fn writeManagedRuntimeLargeLine(stdin: &mut ChildStdin, lineBytes: &[u8]) -> HostResult<()> {
+    let mut frame = Vec::with_capacity(lineBytes.len() + 1);
+    frame.extend_from_slice(lineBytes);
+    frame.push(b'\n');
+    stdin.write_all(&frame)?;
+    stdin.flush()?;
+    Ok(())
+}
+
+/// Writes many managed runtime lines through one contiguous pipe frame.
+#[allow(non_snake_case)]
+fn writeManagedRuntimeLines(stdin: &mut ChildStdin, lines: &[String]) -> HostResult<()> {
+    let frameBytes = lines.iter().map(|line| line.len() + 1).sum();
+    let mut frame = Vec::with_capacity(frameBytes);
+    for line in lines {
+        frame.extend_from_slice(line.as_bytes());
+        frame.push(b'\n');
+    }
+    stdin.write_all(&frame)?;
+    stdin.flush()?;
+    Ok(())
+}
+
+/// Resolves a directly supplied executable path.
 #[allow(non_snake_case)]
 fn ensureExecutablePath(path: &str) -> HostResult<String> {
     let candidate = PathBuf::from(path);
@@ -206,6 +288,7 @@ fn ensureExecutablePath(path: &str) -> HostResult<String> {
     findExecutable(&[path]).ok_or_else(|| HostError::new(format!("Executable not found: {path}")))
 }
 
+/// Finds the first executable candidate from PATH.
 #[allow(non_snake_case)]
 fn findExecutable(names: &[&str]) -> Option<String> {
     let pathValue = env::var_os("PATH")?;
@@ -220,6 +303,7 @@ fn findExecutable(names: &[&str]) -> Option<String> {
     None
 }
 
+/// Returns whether a path points to an executable file candidate.
 #[allow(non_snake_case)]
 fn isExecutableCandidate(path: &Path) -> bool {
     path.is_file()

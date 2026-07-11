@@ -2,10 +2,14 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
+import 'package:operit2/core/bridge/PlatformCoreProxy.dart';
+import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:webview_all/webview_all.dart';
 import 'package:webview_all_windows/webview_all_windows.dart';
 
@@ -59,6 +63,7 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
       WorkspaceBrowserSessionStore._();
 
   static const String _homeUrl = 'https://www.bing.com';
+  static const String _logTag = 'WorkspaceBrowser';
   static const double _defaultZoomFactor = 0.4;
   static const double _minZoomFactor = 0.1;
   static const double _maxZoomFactor = 2.0;
@@ -69,6 +74,10 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
   static const String _desktopUserAgent =
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+  static const GeneratedCoreProxyClients _coreClients =
+      GeneratedCoreProxyClients(
+        ProxyCoreRuntimeBridge(coreProxy: platformCoreProxy),
+      );
 
   final WorkspaceBrowserStores stores = WorkspaceBrowserStores();
   final WorkspaceBrowserPermissionStore permissions =
@@ -207,24 +216,43 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
     String? userAgent,
     Map<String, String>? headers,
   }) async {
+    final stopwatch = Stopwatch()..start();
     _openingTabCount += 1;
     try {
       final rawUrl = url?.trim();
       final nextUrl = rawUrl == null || rawUrl.isEmpty ? _homeUrl : rawUrl;
       await ensureLoaded();
       final normalizedUrl = normalizeWorkspaceBrowserUrl(nextUrl);
-      final tab = _createTab(normalizedUrl, userAgent: userAgent);
+      final requestHeaders = headers ?? const <String, String>{};
+      ClientLogger.i(
+        'openTab start url=$normalizedUrl headers=${requestHeaders.length} userAgentSet=${userAgent != null}',
+        tag: _logTag,
+      );
+      final tab = _createTab(
+        normalizedUrl,
+        userAgent: userAgent,
+        capabilities: _capabilitiesForUrl(normalizedUrl),
+      );
       _configureTab(tab);
       await _applyUserAgentForTab(tab);
       _tabs.add(tab);
       _selectedIndex = _tabs.length - 1;
       notifyListeners();
       _syncSessionRegistry();
-      await tab.controller.loadRequest(
-        Uri.parse(normalizedUrl),
-        headers: headers ?? const <String, String>{},
+      await tab.controller.loadRequest(Uri.parse(normalizedUrl));
+      ClientLogger.i(
+        'openTab done tab=${tab.id} elapsedMs=${stopwatch.elapsedMilliseconds}',
+        tag: _logTag,
       );
       return tab;
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'openTab failed elapsedMs=${stopwatch.elapsedMilliseconds}',
+        tag: _logTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     } finally {
       _openingTabCount -= 1;
     }
@@ -237,6 +265,7 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
       final tab = _createTab(
         'file://$absolutePath',
         localFilePath: absolutePath,
+        capabilities: _capabilitiesForUrl('file://$absolutePath'),
       );
       _configureTab(tab);
       await _applyUserAgentForTab(tab);
@@ -360,11 +389,32 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
       throw StateError('No active browser session');
     }
     if (tab.isLoading) {
-      unawaited(tab.controller.runJavaScript('window.stop();'));
-      tab.update(isLoading: false);
+      stopCurrentLoad();
       return;
     }
     unawaited(tab.controller.reload());
+  }
+
+  /// Reloads the current browser session.
+  void reloadCurrent() {
+    final tab = currentTab;
+    if (tab == null) {
+      throw StateError('No active browser session');
+    }
+    unawaited(tab.controller.reload());
+  }
+
+  /// Stops loading in the current browser session.
+  void stopCurrentLoad() {
+    final tab = currentTab;
+    if (tab == null) {
+      throw StateError('No active browser session');
+    }
+    if (_supportsPageJavaScript(tab)) {
+      unawaited(tab.controller.runJavaScript('window.stop();'));
+    }
+    tab.update(isLoading: false, progress: 100);
+    _syncSessionRegistry(eventType: 'stopped', sessionId: tab.id);
   }
 
   void toggleBookmark() {
@@ -423,20 +473,24 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
 
   WorkspaceBrowserTabState _createTab(
     String url, {
+    required WorkspaceBrowserSessionCapabilities capabilities,
     String? localFilePath,
     String? userAgent,
   }) {
     late final WorkspaceBrowserTabState tab;
-    final controller = WebViewController(
-      onPermissionRequest: (request) {
-        return _handlePermissionRequest(tab, request);
-      },
-    );
+    final controller = capabilities.permissionRequests
+        ? WebViewController(
+            onPermissionRequest: (request) {
+              return _handlePermissionRequest(tab, request);
+            },
+          )
+        : WebViewController();
     tab = WorkspaceBrowserTabState(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       initialUrl: url,
       controller: controller,
       title: _newTabTitle,
+      capabilities: capabilities,
       localFilePath: localFilePath,
       preferredUserAgent: userAgent,
     );
@@ -455,48 +509,61 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
       title: tab.title,
       url: tab.url,
       active: true,
+      userAgent: tab.preferredUserAgent,
+      canGoBack: tab.canGoBack,
+      canGoForward: tab.canGoForward,
+      isLoading: tab.isLoading,
+      progress: tab.progress,
       selectTab: selectSession,
       closeTab: closeSession,
       navigate: navigateCurrent,
       navigateBack: goBack,
+      navigateForward: goForward,
+      reload: reloadCurrent,
+      stop: stopCurrentLoad,
+      supportsPageJavaScript: () => _supportsPageJavaScript(tab),
     );
     return tab;
   }
 
+  /// Configures one owner-host browser session controller.
   void _configureTab(WorkspaceBrowserTabState tab) {
     tab.controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.transparent)
-      ..setOnConsoleMessage((message) {
-        _automation[tab.id]?.addConsoleMessage(message);
-        stores.userscripts.addLog('console', message.message);
-      })
-      ..addJavaScriptChannel(
-        'OperitUserscriptStorage',
-        onMessageReceived: (message) {
-          stores.userscripts.handleStorageMessage(message.message);
-        },
-      )
-      ..addJavaScriptChannel(
-        'OperitUserscriptRuntime',
-        onMessageReceived: (message) {
-          stores.userscripts.handleRuntimeMessage(message.message);
-          notifyListeners();
-        },
-      )
-      ..addJavaScriptChannel(
-        'OperitBrowserPopup',
-        onMessageReceived: (message) {
-          _handlePopupMessage(message.message);
-        },
-      )
-      ..addJavaScriptChannel(
-        'OperitBrowserNetwork',
-        onMessageReceived: (message) {
-          _automation[tab.id]?.addNetworkRequest(message.message);
-        },
-      );
-    if (_supportsJavaScriptDialogCallbacks) {
+      ..setBackgroundColor(Colors.transparent);
+    if (tab.capabilities.pageHooks) {
+      tab.controller
+        ..setOnConsoleMessage((message) {
+          _automation[tab.id]?.addConsoleMessage(message);
+          stores.userscripts.addLog('console', message.message);
+        })
+        ..addJavaScriptChannel(
+          'OperitUserscriptStorage',
+          onMessageReceived: (message) {
+            stores.userscripts.handleStorageMessage(message.message);
+          },
+        )
+        ..addJavaScriptChannel(
+          'OperitUserscriptRuntime',
+          onMessageReceived: (message) {
+            stores.userscripts.handleRuntimeMessage(message.message);
+            notifyListeners();
+          },
+        )
+        ..addJavaScriptChannel(
+          'OperitBrowserPopup',
+          onMessageReceived: (message) {
+            _handlePopupMessage(message.message);
+          },
+        )
+        ..addJavaScriptChannel(
+          'OperitBrowserNetwork',
+          onMessageReceived: (message) {
+            _automation[tab.id]?.addNetworkRequest(message.message);
+          },
+        );
+    }
+    if (tab.capabilities.javaScriptDialogs) {
       tab.controller
         ..setOnJavaScriptAlertDialog((request) {
           return _requiredUiDelegate.showAlertDialog(request);
@@ -511,12 +578,13 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
     tab.controller.setNavigationDelegate(
       NavigationDelegate(
         onNavigationRequest: (request) async {
-          if (_isDownloadUrl(request.url)) {
-            unawaited(stores.downloads.startDownload(request.url));
+          final logicalUrl = _logicalUrl(request.url);
+          if (_isDownloadUrl(logicalUrl)) {
+            unawaited(stores.downloads.startDownload(logicalUrl));
             return NavigationDecision.prevent;
           }
-          if (_isExternalAppUrl(request.url)) {
-            await _requiredUiDelegate.openExternalNavigation(request.url);
+          if (_isExternalAppUrl(logicalUrl)) {
+            await _requiredUiDelegate.openExternalNavigation(logicalUrl);
             return NavigationDecision.prevent;
           }
           return NavigationDecision.navigate;
@@ -525,38 +593,61 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
           if (tab.isDisposed) {
             return;
           }
+          final logicalUrl = _logicalUrl(url);
+          ClientLogger.d(
+            'page started tab=${tab.id} url=$logicalUrl',
+            tag: _logTag,
+          );
+          final hasLogicalUrl = logicalUrl.isNotEmpty;
           tab.update(
-            url: url,
-            addressText: url,
+            url: hasLogicalUrl ? logicalUrl : null,
+            addressText: hasLogicalUrl ? logicalUrl : null,
             isLoading: true,
             progress: 0,
             errorText: null,
           );
-          _syncSessionRegistry();
-          _injectUserscripts(tab, url, WorkspaceUserscriptRunAt.documentStart);
-          unawaited(_installBrowserChromeHooks(tab));
+          _syncSessionRegistry(eventType: 'started', sessionId: tab.id);
+          if (_supportsPageJavaScript(tab)) {
+            _injectUserscripts(
+              tab,
+              logicalUrl,
+              WorkspaceUserscriptRunAt.documentStart,
+            );
+            unawaited(_installBrowserChromeHooks(tab));
+          }
         },
         onProgress: (progress) {
           if (tab.isDisposed) {
             return;
           }
           tab.update(progress: progress, isLoading: progress < 100);
+          _syncSessionRegistry(eventType: 'progress', sessionId: tab.id);
         },
         onPageFinished: (url) async {
           if (tab.isDisposed) {
             return;
           }
-          if (tab.desktopMode) {
+          final logicalUrl = _logicalUrl(url);
+          ClientLogger.d(
+            'page finished tab=${tab.id} url=$logicalUrl',
+            tag: _logTag,
+          );
+          if (tab.isDisposed) {
+            return;
+          }
+          if (tab.desktopMode && _supportsPageJavaScript(tab)) {
             await _applyDesktopViewport(tab);
           }
           if (tab.isDisposed) {
             return;
           }
-          await _injectUserscripts(
-            tab,
-            url,
-            WorkspaceUserscriptRunAt.documentEnd,
-          );
+          if (_supportsPageJavaScript(tab)) {
+            await _injectUserscripts(
+              tab,
+              logicalUrl,
+              WorkspaceUserscriptRunAt.documentEnd,
+            );
+          }
           if (tab.isDisposed) {
             return;
           }
@@ -564,11 +655,13 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
           if (tab.isDisposed) {
             return;
           }
-          await _injectUserscripts(
-            tab,
-            url,
-            WorkspaceUserscriptRunAt.documentIdle,
-          );
+          if (_supportsPageJavaScript(tab)) {
+            await _injectUserscripts(
+              tab,
+              logicalUrl,
+              WorkspaceUserscriptRunAt.documentIdle,
+            );
+          }
           if (tab.isDisposed) {
             return;
           }
@@ -577,7 +670,7 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
             return;
           }
           if (!isWorkspaceHtmlPreviewUrl(tab.url)) {
-            stores.history.add(url: tab.url, title: tab.title);
+            stores.history.add(url: logicalUrl, title: tab.title);
           }
         },
         onUrlChange: (change) {
@@ -586,23 +679,44 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
           }
           final url = change.url;
           if (url != null) {
-            tab.update(url: url, addressText: url);
-            _syncSessionRegistry();
+            final logicalUrl = _logicalUrl(url);
+            if (logicalUrl.isNotEmpty) {
+              tab.update(url: logicalUrl, addressText: logicalUrl);
+              _syncSessionRegistry(eventType: 'urlChanged', sessionId: tab.id);
+            }
           }
         },
         onWebResourceError: (error) {
           if (tab.isDisposed) {
             return;
           }
+          ClientLogger.e(
+            'web resource error tab=${tab.id} url=${error.url} description=${error.description}',
+            tag: _logTag,
+          );
           tab.update(errorText: error.description, isLoading: false);
+          _syncSessionRegistry(
+            eventType: 'error',
+            sessionId: tab.id,
+            error: error.description,
+          );
         },
         onHttpError: (error) {
           if (tab.isDisposed) {
             return;
           }
+          ClientLogger.w(
+            'http error tab=${tab.id} status=${error.response?.statusCode} url=${error.request?.uri}',
+            tag: _logTag,
+          );
           tab.update(
             errorText: 'HTTP ${error.response?.statusCode ?? ''}',
             isLoading: false,
+          );
+          _syncSessionRegistry(
+            eventType: 'error',
+            sessionId: tab.id,
+            error: 'HTTP ${error.response?.statusCode ?? ''}',
           );
         },
         onSslAuthError: (request) {
@@ -617,10 +731,7 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
     unawaited(_applyZoomFactor(tab));
   }
 
-  bool get _supportsJavaScriptDialogCallbacks {
-    return kIsWeb || defaultTargetPlatform != TargetPlatform.windows;
-  }
-
+  /// Updates the owner-host browser session snapshot from the controller.
   Future<void> _updateTabState(
     WorkspaceBrowserTabState tab, {
     required bool isLoading,
@@ -628,10 +739,11 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
     if (tab.isDisposed) {
       return;
     }
-    final url = await tab.controller.currentUrl();
+    final controllerUrl = await tab.controller.currentUrl();
     if (tab.isDisposed) {
       return;
     }
+    final url = controllerUrl == null ? null : _logicalUrl(controllerUrl);
     final title = await tab.controller.getTitle();
     if (tab.isDisposed) {
       return;
@@ -664,6 +776,9 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
     if (tab.isDisposed) {
       return;
     }
+    if (!_supportsPageJavaScript(tab)) {
+      return;
+    }
     await stores.userscriptRuntime.injectForUrl(
       tab.controller,
       url,
@@ -673,6 +788,9 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
 
   Future<void> _installBrowserChromeHooks(WorkspaceBrowserTabState tab) {
     if (tab.isDisposed) {
+      return Future<void>.value();
+    }
+    if (!_supportsPageJavaScript(tab)) {
       return Future<void>.value();
     }
     return tab.controller.runJavaScript(r'''
@@ -772,9 +890,10 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
   }
 
   bool get _usesMobileUserAgentByDefault {
-    return defaultTargetPlatform == TargetPlatform.windows ||
-        defaultTargetPlatform == TargetPlatform.linux ||
-        defaultTargetPlatform == TargetPlatform.macOS;
+    return !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.windows ||
+            defaultTargetPlatform == TargetPlatform.linux ||
+            defaultTargetPlatform == TargetPlatform.macOS);
   }
 
   String? _defaultUserAgentForTab(WorkspaceBrowserTabState tab) {
@@ -785,17 +904,71 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
   }
 
   Future<void> _applyUserAgentForTab(WorkspaceBrowserTabState tab) async {
-    final preferredUserAgent = tab.preferredUserAgent?.trim();
-    final userAgent =
-        preferredUserAgent != null && preferredUserAgent.isNotEmpty
-        ? preferredUserAgent
-        : tab.desktopMode
-        ? _desktopUserAgent
-        : _defaultUserAgentForTab(tab);
+    final userAgent = _requestedUserAgent(
+      preferredUserAgent: tab.preferredUserAgent,
+      desktopMode: tab.desktopMode,
+      defaultUserAgent: _defaultUserAgentForTab(tab),
+    );
+    if (kIsWeb) {
+      return;
+    }
     if (userAgent == null || userAgent.trim().isEmpty) {
       return;
     }
     await tab.controller.setUserAgent(userAgent);
+  }
+
+  /// Resolves the user agent owned by a browser session runtime.
+  String? _requestedUserAgent({
+    required String? preferredUserAgent,
+    required bool desktopMode,
+    String? defaultUserAgent,
+  }) {
+    final preferred = preferredUserAgent?.trim();
+    if (preferred != null && preferred.isNotEmpty) {
+      return preferred;
+    }
+    if (desktopMode) {
+      return _desktopUserAgent;
+    }
+    return defaultUserAgent;
+  }
+
+  /// Returns the logical page URL shown by the browser session.
+  String _logicalUrl(String url) {
+    return url.trim();
+  }
+
+  /// Returns the browser host capabilities for one URL.
+  WorkspaceBrowserSessionCapabilities _capabilitiesForUrl(String url) {
+    final pageJavaScript = _pageJavaScriptSupportedByHost(url);
+    return WorkspaceBrowserSessionCapabilities(
+      pageJavaScript: pageJavaScript,
+      pageHooks: pageJavaScript,
+      permissionRequests: !kIsWeb,
+      javaScriptDialogs:
+          pageJavaScript &&
+          (kIsWeb || defaultTargetPlatform != TargetPlatform.windows),
+    );
+  }
+
+  /// Returns whether the owner host can execute page JavaScript for this URL.
+  bool _pageJavaScriptSupportedByHost(String url) {
+    if (kIsWeb) {
+      return false;
+    }
+    return true;
+  }
+
+  /// Returns whether the session exposes page JavaScript to host commands.
+  bool _supportsPageJavaScript(WorkspaceBrowserTabState tab) {
+    if (tab.isDisposed) {
+      return false;
+    }
+    if (!tab.capabilities.pageJavaScript) {
+      return false;
+    }
+    return _pageJavaScriptSupportedByHost(tab.url);
   }
 
   Future<void> _applyZoomFactor(WorkspaceBrowserTabState tab) async {
@@ -811,6 +984,9 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
 
   Future<void> _applyDesktopViewport(WorkspaceBrowserTabState tab) {
     if (tab.isDisposed) {
+      return Future<void>.value();
+    }
+    if (!_supportsPageJavaScript(tab)) {
       return Future<void>.value();
     }
     return tab.controller.runJavaScript(r'''
@@ -833,7 +1009,12 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
     _requiredUiDelegate.handlePermissionRequest(tab, request);
   }
 
-  void _syncSessionRegistry() {
+  /// Synchronizes browser tab state into the runtime session registry.
+  void _syncSessionRegistry({
+    String eventType = 'updated',
+    String? sessionId,
+    String? error,
+  }) {
     for (var index = 0; index < _tabs.length; index += 1) {
       final tab = _tabs[index];
       _sessionRegistry.update(
@@ -841,8 +1022,45 @@ class WorkspaceBrowserSessionStore extends ChangeNotifier {
         title: tab.title,
         url: tab.url,
         active: index == _selectedIndex,
+        userAgent: tab.preferredUserAgent,
+        canGoBack: tab.canGoBack,
+        canGoForward: tab.canGoForward,
+        isLoading: tab.isLoading,
+        progress: tab.progress,
       );
     }
+    if (sessionId != null) {
+      _publishBrowserSessionEvent(
+        sessionId: sessionId,
+        eventType: eventType,
+        error: error,
+      );
+    }
+  }
+
+  /// Publishes one browser session state event to runtime watchers.
+  void _publishBrowserSessionEvent({
+    required String sessionId,
+    required String eventType,
+    String? error,
+  }) {
+    final session = _sessionRegistry.sessions
+        .where((item) => item.sessionId == sessionId)
+        .firstOrNull;
+    if (session == null) {
+      return;
+    }
+    unawaited(
+      _coreClients.servicesRuntimeBrowserService.publishBrowserSessionEvent(
+        event: RuntimeBrowserSessionEvent(
+          sessionId: sessionId,
+          eventType: eventType,
+          session: session.toRuntimeBrowserSessionInfo(),
+          resultJson: '',
+          error: error,
+        ),
+      ),
+    );
   }
 
   bool _isDownloadUrl(String url) {

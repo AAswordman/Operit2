@@ -677,11 +677,7 @@ impl AIToolHandler {
 
         let context = self.getContext();
         let paths = RuntimeStorePaths::default();
-        let mapper = PathMapper::new(
-            paths.root_dir().to_path_buf(),
-            context.appFilesRoot.clone(),
-            paths.workspace_dir(),
-        );
+        let mapper = PathMapper::new(paths.runtime_dir().to_path_buf(), paths.workspace_dir());
         let resolvedWorkspace = mapper.resolve(workspacePath)?;
         let resolvedPath = mapper.resolve(path)?;
         let relative = PathMapper::relativePath(&resolvedWorkspace.vfsPath, &resolvedPath.vfsPath)?;

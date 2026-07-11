@@ -47,6 +47,7 @@ class ToolApprovalBridge {
           requestId: requestId,
           response: RuntimeHostInteractionResponse(
             browserAutomation: null,
+            browserSession: null,
             webVisit: null,
             composeWebViewController: null,
             systemCaptureScreenshot: null,

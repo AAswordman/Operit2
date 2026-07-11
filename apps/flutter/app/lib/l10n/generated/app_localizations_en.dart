@@ -2550,10 +2550,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsDataStorageDescription =>
-      'Move runtime and workspace data into a different local folder.';
-
-  @override
-  String get settingsDataStorageRoot => 'Storage root';
+      'Move runtime and workspace data into independently selected local folders.';
 
   @override
   String get settingsDataRuntimeRoot => 'Runtime root';
@@ -2562,14 +2559,21 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsDataWorkspaceRoot => 'Workspace root';
 
   @override
-  String get settingsDataChooseStorageRoot => 'Choose location';
+  String get settingsDataChooseStorageRoots => 'Edit locations';
+
+  @override
+  String get settingsDataEditStorageRootsTitle => 'Edit storage locations';
+
+  @override
+  String get settingsDataStorageRootsRequired =>
+      'Runtime root and workspace root are required.';
 
   @override
   String get settingsDataStorageConfirmTitle => 'Change storage location';
 
   @override
   String get settingsDataStorageConfirmMessage =>
-      'Runtime and workspace data will be copied into the selected folder, and the app will use it after restart.';
+      'Runtime and workspace data will be copied into the selected directories, and the app will use them after restart.';
 
   @override
   String get settingsDataStorageConfirmAction => 'Change location';

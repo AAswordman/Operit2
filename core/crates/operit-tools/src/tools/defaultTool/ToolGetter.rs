@@ -2,7 +2,6 @@ use operit_host_api::HostManager::HostManager;
 use std::sync::Arc;
 
 use crate::runtime_support::ToolRuntimeSupport;
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_tools::tools::defaultTool::standard::StandardBluetoothTools::StandardBluetoothTools;
 use operit_tools::tools::defaultTool::standard::StandardBrowserAutomationTools::StandardBrowserAutomationTools;
 use operit_tools::tools::defaultTool::standard::StandardFileSystemTools::StandardFileSystemTools;
@@ -23,8 +22,9 @@ impl ToolGetter {
         runtimeSupport: Arc<dyn ToolRuntimeSupport>,
     ) -> Option<StandardFileSystemTools> {
         context.fileSystemHost.clone().and_then(|fileSystemHost| {
-            let runtimeStoreRoot = context.runtimeStorageHost.as_ref()?.rootDir()?;
-            let runtimeStorePaths = RuntimeStorePaths::new(runtimeStoreRoot.clone());
+            let runtimeStorageHost = context.runtimeStorageHost.as_ref()?;
+            let runtimeStoreRoot = runtimeStorageHost.runtimeRootDir()?;
+            let workspaceCollectionRoot = runtimeStorageHost.workspaceRootDir()?;
             Some(StandardFileSystemTools::new(
                 fileSystemHost,
                 context
@@ -33,8 +33,7 @@ impl ToolGetter {
                     .expect("HTTP host must be configured before registering file download tool"),
                 context.systemOperationHost.clone(),
                 runtimeStoreRoot,
-                context.appFilesRoot.clone(),
-                runtimeStorePaths.workspace_dir(),
+                workspaceCollectionRoot,
                 runtimeSupport,
             ))
         })

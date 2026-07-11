@@ -1,11 +1,10 @@
-use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use crate::{
-    AudioPlaybackHost, BluetoothHost, BrowserAutomationHost, ComposeDslWebViewHost, FileSystemHost,
-    HostEnvironmentDescriptor, HostRuntimeEventHost, HostSecretStore, HttpHost, ManagedRuntimeHost,
-    RuntimeSqliteHost, RuntimeStorageHost, SystemOperationHost, TerminalHost, TtsPlaybackHost,
-    TtsSynthesisHost, WebVisitHost,
+    AudioPlaybackHost, BluetoothHost, BrowserAutomationHost, BrowserSessionHost,
+    ComposeDslWebViewHost, FileSystemHost, HostEnvironmentDescriptor, HostRuntimeEventHost,
+    HostSecretStore, HttpHost, ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost,
+    SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost, WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
@@ -34,6 +33,7 @@ pub struct HostManager {
     pub fileSystemHost: Option<Arc<dyn FileSystemHost>>,
     pub webVisitHost: Option<Arc<dyn WebVisitHost>>,
     pub browserAutomationHost: Option<Arc<dyn BrowserAutomationHost>>,
+    pub browserSessionHost: Option<Arc<dyn BrowserSessionHost>>,
     pub composeDslWebViewHost: Option<Arc<dyn ComposeDslWebViewHost>>,
     pub httpHost: Option<Arc<dyn HttpHost>>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
@@ -49,7 +49,6 @@ pub struct HostManager {
     pub hostRuntimeEventHost: Option<Arc<dyn HostRuntimeEventHost>>,
     pub hostEnvironment: HostEnvironmentDescriptor,
     pub coreCommandExecutor: Option<CoreCommandExecutor>,
-    pub appFilesRoot: Option<PathBuf>,
 }
 
 impl HostManager {
@@ -59,6 +58,7 @@ impl HostManager {
             fileSystemHost: None,
             webVisitHost: None,
             browserAutomationHost: None,
+            browserSessionHost: None,
             composeDslWebViewHost: None,
             httpHost: None,
             systemOperationHost: None,
@@ -74,7 +74,6 @@ impl HostManager {
             hostRuntimeEventHost: None,
             hostEnvironment: HostEnvironmentDescriptor::android(),
             coreCommandExecutor: None,
-            appFilesRoot: None,
         }
     }
 
@@ -86,6 +85,7 @@ impl HostManager {
             fileSystemHost: Some(host),
             webVisitHost: None,
             browserAutomationHost: None,
+            browserSessionHost: None,
             composeDslWebViewHost: None,
             httpHost: None,
             systemOperationHost: None,
@@ -101,7 +101,6 @@ impl HostManager {
             hostRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
-            appFilesRoot: None,
         }
     }
 
@@ -116,6 +115,7 @@ impl HostManager {
             fileSystemHost: Some(fileSystemHost),
             webVisitHost: Some(webVisitHost),
             browserAutomationHost: None,
+            browserSessionHost: None,
             composeDslWebViewHost: None,
             httpHost: None,
             systemOperationHost: None,
@@ -131,7 +131,6 @@ impl HostManager {
             hostRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
-            appFilesRoot: None,
         }
     }
 
@@ -147,6 +146,7 @@ impl HostManager {
             fileSystemHost: Some(fileSystemHost),
             webVisitHost: Some(webVisitHost),
             browserAutomationHost: None,
+            browserSessionHost: None,
             composeDslWebViewHost: None,
             httpHost: None,
             systemOperationHost: Some(systemOperationHost),
@@ -162,7 +162,6 @@ impl HostManager {
             hostRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
-            appFilesRoot: None,
         }
     }
 
@@ -182,6 +181,7 @@ impl HostManager {
             fileSystemHost: Some(fileSystemHost),
             webVisitHost: Some(webVisitHost),
             browserAutomationHost: None,
+            browserSessionHost: None,
             composeDslWebViewHost: None,
             httpHost: Some(httpHost),
             systemOperationHost: Some(systemOperationHost),
@@ -197,7 +197,6 @@ impl HostManager {
             hostRuntimeEventHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
-            appFilesRoot: None,
         }
     }
 
@@ -205,13 +204,6 @@ impl HostManager {
     #[allow(non_snake_case)]
     pub fn withCoreCommandExecutor(mut self, executor: CoreCommandExecutor) -> Self {
         self.coreCommandExecutor = Some(executor);
-        self
-    }
-
-    /// Sets the application files root used by host-backed storage paths.
-    #[allow(non_snake_case)]
-    pub fn withAppFilesRoot(mut self, appFilesRoot: PathBuf) -> Self {
-        self.appFilesRoot = Some(appFilesRoot);
         self
     }
 
@@ -264,6 +256,16 @@ impl HostManager {
         browserAutomationHost: Arc<dyn BrowserAutomationHost>,
     ) -> Self {
         self.browserAutomationHost = Some(browserAutomationHost);
+        self
+    }
+
+    /// Adds a browser session host for interactive browser sessions.
+    #[allow(non_snake_case)]
+    pub fn withBrowserSessionHost(
+        mut self,
+        browserSessionHost: Arc<dyn BrowserSessionHost>,
+    ) -> Self {
+        self.browserSessionHost = Some(browserSessionHost);
         self
     }
 

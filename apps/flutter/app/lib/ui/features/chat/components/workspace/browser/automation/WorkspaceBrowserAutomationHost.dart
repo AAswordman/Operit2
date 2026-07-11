@@ -8,6 +8,7 @@ import 'package:operit2/core/browser/BrowserAutomationBridge.dart';
 import 'package:operit2/core/browser/BrowserAutomationModels.dart';
 
 import '../WorkspaceBrowserSessionStore.dart';
+import '../surface/WorkspaceBrowserSurfaceHost.dart';
 import 'WorkspaceBrowserAutomationController.dart';
 import 'WorkspaceBrowserSessionRegistry.dart';
 
@@ -16,11 +17,14 @@ class WorkspaceBrowserAutomationHost extends StatefulWidget {
     super.key,
     required this.child,
     this.bridge = const BrowserAutomationBridge(),
+    this.enabled = true,
   });
 
   final Widget child;
   final BrowserAutomationBridge bridge;
+  final bool enabled;
 
+  /// Creates the browser automation host state.
   @override
   State<WorkspaceBrowserAutomationHost> createState() =>
       _WorkspaceBrowserAutomationHostState();
@@ -34,17 +38,49 @@ class _WorkspaceBrowserAutomationHostState
       WorkspaceBrowserSessionStore.instance;
   void Function()? _disposeBridgeHandler;
 
+  /// Enables browser automation only when runtime services are ready.
   @override
   void initState() {
     super.initState();
+    if (widget.enabled) {
+      _enable();
+    }
+  }
+
+  /// Synchronizes browser automation when runtime readiness changes.
+  @override
+  void didUpdateWidget(covariant WorkspaceBrowserAutomationHost oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.enabled == widget.enabled &&
+        oldWidget.bridge == widget.bridge) {
+      return;
+    }
+    _disable();
+    if (widget.enabled) {
+      _enable();
+    }
+  }
+
+  /// Releases the browser automation bridge handler.
+  @override
+  void dispose() {
+    _disable();
+    super.dispose();
+  }
+
+  /// Loads browser stores and registers the automation bridge handler.
+  void _enable() {
+    if (_disposeBridgeHandler != null) {
+      return;
+    }
     unawaited(_browserSessionStore.ensureLoaded());
     _disposeBridgeHandler = widget.bridge.registerHandler(_handleRequest);
   }
 
-  @override
-  void dispose() {
+  /// Unregisters the browser automation bridge handler.
+  void _disable() {
     _disposeBridgeHandler?.call();
-    super.dispose();
+    _disposeBridgeHandler = null;
   }
 
   Future<BrowserAutomationResponse> _handleRequest(
@@ -309,6 +345,6 @@ class _WorkspaceBrowserAutomationHostState
 
   @override
   Widget build(BuildContext context) {
-    return widget.child;
+    return WorkspaceBrowserSurfaceHost(child: widget.child);
   }
 }

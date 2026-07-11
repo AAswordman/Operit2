@@ -1,12 +1,17 @@
 package app.operit
 
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
-class AndroidRuntimeHost(private val activity: MainActivity) {
+class AndroidRuntimeHost(context: Context) {
+    private val applicationContext = context.applicationContext
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val runtimeLock = Any()
     private val runtimeThreadIndex = AtomicInteger(0)
     private val runtimeExecutor: ExecutorService =
@@ -14,28 +19,45 @@ class AndroidRuntimeHost(private val activity: MainActivity) {
             Thread(runnable, "operit-runtime-${runtimeThreadIndex.incrementAndGet()}")
         }
     private var runtimeHandle: Long = 0
-    private var configuredStorageRoot: File? = null
+    private var configuredRuntimeRoot: File? = null
+    private var configuredWorkspaceRoot: File? = null
 
-    /** Applies a storage root before the runtime handle is created. */
-    fun setStorageRoot(path: String?) {
+    /** Installs storage roots and accepts repeated identical configuration. */
+    fun setStorageRoots(runtimePath: String?, workspacePath: String?) {
+        val runtimeRoot = requiredAbsoluteRoot(runtimePath, "runtimeRoot")
+        val workspaceRoot = requiredAbsoluteRoot(workspacePath, "workspaceRoot")
         synchronized(runtimeLock) {
             if (runtimeHandle != 0L) {
-                throw IllegalStateException("Runtime storage root cannot change after runtime creation")
+                if (configuredRuntimeRoot != runtimeRoot ||
+                    configuredWorkspaceRoot != workspaceRoot
+                ) {
+                    throw IllegalStateException("Runtime and workspace roots cannot change after runtime creation")
+                }
             }
-            configuredStorageRoot = path
-                ?.trim()
-                ?.takeIf { it.isNotEmpty() }
-                ?.let(::File)
+            configuredRuntimeRoot = runtimeRoot
+            configuredWorkspaceRoot = workspaceRoot
         }
+        AndroidRuntimeStorageConfigStore.write(
+            applicationContext,
+            AndroidRuntimeStorageRoots(
+                runtimeRoot = runtimeRoot.absolutePath,
+                workspaceRoot = workspaceRoot.absolutePath,
+            ),
+        )
     }
 
+    /** Returns the active native runtime handle, creating it when required. */
     fun ensureRuntimeHandle(): Long {
         synchronized(runtimeLock) {
             if (runtimeHandle != 0L) {
                 return runtimeHandle
             }
-            val root = prepareAndroidRuntimePaths().storageRoot
-            runtimeHandle = OperitRuntimeNative.create(root.absolutePath, activity)
+            val paths = prepareAndroidRuntimePaths()
+            runtimeHandle = OperitRuntimeNative.create(
+                paths.runtimeRoot.absolutePath,
+                paths.workspaceRoot.absolutePath,
+                this,
+            )
             if (runtimeHandle == 0L) {
                 throw IllegalStateException(OperitRuntimeNative.createError())
             }
@@ -43,43 +65,60 @@ class AndroidRuntimeHost(private val activity: MainActivity) {
         }
     }
 
+    /** Executes a runtime bridge call on the runtime executor. */
     fun runRuntime(result: MethodChannel.Result, block: () -> String) {
         runtimeExecutor.execute {
             try {
                 val response = block()
-                activity.runOnUiThread { result.success(response) }
+                mainHandler.post { result.success(response) }
             } catch (error: Throwable) {
-                activity.runOnUiThread {
+                mainHandler.post {
                     result.error("RUNTIME_BRIDGE_ERROR", error.message, null)
                 }
             }
         }
     }
 
+    /** Executes host work on the runtime executor. */
     fun runBackground(block: () -> Unit) {
         runtimeExecutor.execute(block)
     }
 
+    /** Prepares Android runtime assets for the configured storage roots. */
     fun prepareAndroidRuntimePaths(): AndroidRuntimePaths {
-        val root = configuredStorageRoot ?: activity.applicationContext.filesDir
-        root.mkdirs()
-        return AndroidRuntimeAssets.prepare(activity.applicationContext, root)
-    }
-
-    /** Returns storage paths for a proposed storage root without creating the runtime. */
-    fun storagePathsMap(path: String?): Map<String, String> {
-        val root = path
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-            ?.let(::File)
-            ?: activity.applicationContext.filesDir
-        return mapOf(
-            "storageRoot" to root.absolutePath,
-            "runtimeRoot" to File(root, "runtime").absolutePath,
-            "workspaceRoot" to File(root, "workspaces").absolutePath,
+        val runtimeRoot = configuredRuntimeRoot
+            ?: throw IllegalStateException("runtimeRoot is not configured")
+        val workspaceRoot = configuredWorkspaceRoot
+            ?: throw IllegalStateException("workspaceRoot is not configured")
+        runtimeRoot.mkdirs()
+        workspaceRoot.mkdirs()
+        return AndroidRuntimeAssets.prepare(
+            applicationContext,
+            runtimeRoot,
+            workspaceRoot,
         )
     }
 
+    /** Returns the platform default runtime and workspace roots. */
+    fun defaultStoragePathsMap(): Map<String, String> {
+        val base = applicationContext.filesDir
+        return mapOf(
+            "runtimeRoot" to File(base, "runtime").absolutePath,
+            "workspaceRoot" to File(base, "workspaces").absolutePath,
+        )
+    }
+
+    /** Returns normalized storage paths without creating the runtime. */
+    fun storagePathsMap(runtimePath: String?, workspacePath: String?): Map<String, String> {
+        val runtimeRoot = requiredAbsoluteRoot(runtimePath, "runtimeRoot")
+        val workspaceRoot = requiredAbsoluteRoot(workspacePath, "workspaceRoot")
+        return mapOf(
+            "runtimeRoot" to runtimeRoot.absolutePath,
+            "workspaceRoot" to workspaceRoot.absolutePath,
+        )
+    }
+
+    /** Returns Android runtime asset and storage diagnostics. */
     fun androidRuntimePathsMap(): Map<String, String> {
         val paths = prepareAndroidRuntimePaths()
         return mapOf(
@@ -91,12 +130,14 @@ class AndroidRuntimeHost(private val activity: MainActivity) {
             "proot" to paths.proot.absolutePath,
             "loader" to paths.loader.absolutePath,
             "nativeLibraryDir" to paths.nativeLibraryDir.absolutePath,
-            "storageRoot" to paths.storageRoot.absolutePath,
+            "runtimeRoot" to paths.runtimeRoot.absolutePath,
+            "workspaceRoot" to paths.workspaceRoot.absolutePath,
             "internalRoot" to paths.internalRoot.absolutePath,
             "tmpDir" to paths.tmpDir.absolutePath,
         )
     }
 
+    /** Releases the native runtime and executor. */
     fun destroy() {
         runtimeExecutor.shutdownNow()
         synchronized(runtimeLock) {
@@ -105,5 +146,29 @@ class AndroidRuntimeHost(private val activity: MainActivity) {
                 runtimeHandle = 0
             }
         }
+    }
+
+    /** Reads host secret bytes for native Runtime calls. */
+    fun readHostSecret(key: String): ByteArray? {
+        return AndroidHostSecretStore.read(applicationContext, key)
+    }
+
+    /** Writes host secret bytes for native Runtime calls. */
+    fun writeHostSecret(key: String, content: ByteArray) {
+        AndroidHostSecretStore.write(applicationContext, key, content)
+    }
+
+    /** Deletes host secret bytes for native Runtime calls. */
+    fun deleteHostSecret(key: String) {
+        AndroidHostSecretStore.delete(applicationContext, key)
+    }
+
+    /** Validates one required absolute storage root. */
+    private fun requiredAbsoluteRoot(path: String?, label: String): File {
+        val value = path?.trim()
+        require(!value.isNullOrEmpty()) { "$label is required" }
+        val root = File(value)
+        require(root.isAbsolute) { "$label must be an absolute path" }
+        return root.absoluteFile.normalize()
     }
 }

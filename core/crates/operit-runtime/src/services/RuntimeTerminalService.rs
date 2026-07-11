@@ -329,22 +329,21 @@ fn resolve_terminal_working_dir(context: &HostManager, workingDir: &str) -> Resu
 }
 
 fn terminal_vfs(context: &HostManager) -> Result<VisualFileSystem, String> {
-    let runtimeStoreRoot = context
-        .runtimeStorageHost
-        .as_ref()
-        .and_then(|host| host.rootDir())
-        .ok_or_else(|| {
-            "RuntimeStorageHost root is not configured for terminal working directory".to_string()
-        })?;
-    let runtimeStorePaths = RuntimeStorePaths::new(runtimeStoreRoot.clone());
+    let runtimeStorageHost = context.runtimeStorageHost.as_ref().ok_or_else(|| {
+        "RuntimeStorageHost is not configured for terminal working directory".to_string()
+    })?;
+    let runtimeStoreRoot = runtimeStorageHost.runtimeRootDir().ok_or_else(|| {
+        "RuntimeStorageHost runtime root is not configured for terminal working directory"
+            .to_string()
+    })?;
+    let workspaceCollectionRoot = runtimeStorageHost.workspaceRootDir().ok_or_else(|| {
+        "RuntimeStorageHost workspace root is not configured for terminal working directory"
+            .to_string()
+    })?;
     Ok(VisualFileSystem::new(
         context.fileSystemHost.clone().ok_or_else(|| {
             "FileSystemHost is not registered for terminal working directory".to_string()
         })?,
-        PathMapper::new(
-            runtimeStoreRoot,
-            context.appFilesRoot.clone(),
-            runtimeStorePaths.workspace_dir(),
-        ),
+        PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot),
     ))
 }

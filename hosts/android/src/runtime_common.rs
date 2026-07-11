@@ -40,7 +40,8 @@ pub(crate) fn validateRootfsExecutable(executable: &str) -> HostResult<()> {
 pub(crate) fn buildAndroidProotCommand(executable: &str, cwd: Option<&str>) -> HostResult<Command> {
     let runtimeDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_DIR")?;
     let rootfsDir = requiredAndroidRuntimePath("OPERIT_ANDROID_ROOTFS_DIR")?;
-    let storageRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_STORAGE_ROOT")?;
+    let runtimeRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_ROOT")?;
+    let workspaceRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_WORKSPACE_ROOT")?;
     let internalRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_INTERNAL_ROOT")?;
     let tmpDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_TMP")?;
     let proot = requiredAndroidRuntimePath("OPERIT_ANDROID_PROOT")?;
@@ -67,7 +68,8 @@ pub(crate) fn buildAndroidProotCommand(executable: &str, cwd: Option<&str>) -> H
     }
 
     ensureRootfsAbsolutePath(&rootfsDir, &internalRoot)?;
-    ensureRootfsAbsolutePath(&rootfsDir, &storageRoot)?;
+    ensureRootfsAbsolutePath(&rootfsDir, &runtimeRoot)?;
+    ensureRootfsAbsolutePath(&rootfsDir, &workspaceRoot)?;
     ensureRootfsAbsolutePath(&rootfsDir, Path::new("/data/local/tmp"))?;
     ensureRootfsAbsolutePath(&rootfsDir, &workingDir)?;
     std::fs::create_dir_all(rootfsDir.join("dev/pts"))?;
@@ -95,7 +97,8 @@ pub(crate) fn buildAndroidProotCommand(executable: &str, cwd: Option<&str>) -> H
     command.arg("-b").arg("/storage");
     command.arg("-b").arg("/data/local/tmp:/data/local/tmp");
     command.arg("-b").arg(bindSamePath(&internalRoot));
-    command.arg("-b").arg(bindSamePath(&storageRoot));
+    command.arg("-b").arg(bindSamePath(&runtimeRoot));
+    command.arg("-b").arg(bindSamePath(&workspaceRoot));
     command.arg("-w").arg(&workingDir);
     command.arg(executable);
     Ok(command)

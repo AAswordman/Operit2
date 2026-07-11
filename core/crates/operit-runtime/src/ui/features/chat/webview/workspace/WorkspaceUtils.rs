@@ -57,9 +57,12 @@ fn getWorkspaceRelativePath(chatId: &str) -> String {
 fn ensureWorkspaceDirExists(workspaceRelativePath: &str) -> Result<(), String> {
     let storage = defaultRuntimeStorageHost();
     let root = storage
-        .rootDir()
-        .expect("RuntimeStorageHost root must be configured for WorkspaceUtils");
-    fs::create_dir_all(root.join(workspaceRelativePath)).map_err(|error| error.to_string())
+        .workspaceRootDir()
+        .expect("RuntimeStorageHost workspace root must be configured for WorkspaceUtils");
+    let workspaceId = workspaceRelativePath
+        .strip_prefix(&format!("{WORKSPACE_DIR_PATH}/"))
+        .expect("workspace storage path must start with workspaces/");
+    fs::create_dir_all(root.join(workspaceId)).map_err(|error| error.to_string())
 }
 
 #[allow(non_snake_case)]

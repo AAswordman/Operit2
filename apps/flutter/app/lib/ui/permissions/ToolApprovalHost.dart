@@ -127,81 +127,97 @@ class _ToolApprovalModal extends StatelessWidget {
                 1000)
             .floor()
             .clamp(0, 60);
+    final visibleParameters = request.tool.parameters
+        .where(
+          (parameter) =>
+              parameter.name != '__operit_package_caller_name' &&
+              parameter.name != '__operit_package_chat_id' &&
+              parameter.name != '__operit_package_caller_card_id',
+        )
+        .toList(growable: false);
     return Positioned.fill(
       child: Material(
         color: colorScheme.scrim.withValues(alpha: 0.36),
         child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Material(
-              color: colorScheme.surfaceContainerHigh,
-              elevation: 16,
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.verified_user_outlined,
-                          color: colorScheme.primary,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            l10n.toolApprovalTitle,
-                            style: Theme.of(context).textTheme.titleMedium,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Material(
+                color: colorScheme.surfaceContainerHigh,
+                elevation: 16,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.verified_user_outlined,
+                            color: colorScheme.primary,
                           ),
-                        ),
-                        Text(
-                          '${elapsedSeconds}s / 60s',
-                          style: Theme.of(context).textTheme.labelMedium
-                              ?.copyWith(color: colorScheme.onSurfaceVariant),
-                        ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              l10n.toolApprovalTitle,
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                          ),
+                          Text(
+                            '${elapsedSeconds}s / 60s',
+                            style: Theme.of(context).textTheme.labelMedium
+                                ?.copyWith(color: colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      _InfoLine(
+                        label: l10n.toolApprovalToolLabel,
+                        value: request.tool.name,
+                      ),
+                      const SizedBox(height: 8),
+                      _InfoLine(
+                        label: l10n.toolApprovalActionLabel,
+                        value: request.description,
+                      ),
+                      if (visibleParameters.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        _ParameterList(parameters: visibleParameters),
                       ],
-                    ),
-                    const SizedBox(height: 16),
-                    _InfoLine(
-                      label: l10n.toolApprovalToolLabel,
-                      value: request.tool.name,
-                    ),
-                    const SizedBox(height: 8),
-                    _InfoLine(
-                      label: l10n.toolApprovalActionLabel,
-                      value: request.description,
-                    ),
-                    if (request.tool.parameters.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      _ParameterList(parameters: request.tool.parameters),
+                      const SizedBox(height: 18),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Wrap(
+                          alignment: WrapAlignment.end,
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            TextButton.icon(
+                              onPressed: () =>
+                                  onResult(ToolApprovalResult.deny),
+                              icon: const Icon(Icons.close),
+                              label: Text(l10n.toolApprovalDeny),
+                            ),
+                            FilledButton.tonalIcon(
+                              onPressed: () =>
+                                  onResult(ToolApprovalResult.allow),
+                              icon: const Icon(Icons.check),
+                              label: Text(l10n.toolApprovalAllowOnce),
+                            ),
+                            FilledButton.icon(
+                              onPressed: () =>
+                                  onResult(ToolApprovalResult.allowSession),
+                              icon: const Icon(Icons.done_all),
+                              label: Text(l10n.toolApprovalAlwaysAllow),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
-                    const SizedBox(height: 18),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton.icon(
-                          onPressed: () => onResult(ToolApprovalResult.deny),
-                          icon: const Icon(Icons.close),
-                          label: Text(l10n.toolApprovalDeny),
-                        ),
-                        const SizedBox(width: 8),
-                        FilledButton.tonalIcon(
-                          onPressed: () => onResult(ToolApprovalResult.allow),
-                          icon: const Icon(Icons.check),
-                          label: Text(l10n.toolApprovalAllowOnce),
-                        ),
-                        const SizedBox(width: 8),
-                        FilledButton.icon(
-                          onPressed: () =>
-                              onResult(ToolApprovalResult.allowSession),
-                          icon: const Icon(Icons.done_all),
-                          label: Text(l10n.toolApprovalAlwaysAllow),
-                        ),
-                      ],
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),

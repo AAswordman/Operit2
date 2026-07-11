@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::client::CoreLinkClient;
+use crate::client::{CoreLinkClient, CoreLinkSharedClient};
+use crate::codec::{decodeCbor, decodeMessagePack, encodeCbor, encodeMessagePack};
 use crate::protocol::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreLinkError, CoreWatchRequest,
 };
@@ -23,8 +24,14 @@ pub struct CoreLinkHttpDispatcher {
 }
 
 struct CoreLinkHttpState {
-    core: Arc<Mutex<Box<dyn CoreLinkClient + Send>>>,
+    core: CoreLinkHttpCore,
     watchChannels: Arc<Mutex<BTreeMap<String, LinkWatchChannel>>>,
+}
+
+#[derive(Clone)]
+enum CoreLinkHttpCore {
+    Locked(Arc<Mutex<Box<dyn CoreLinkClient + Send>>>),
+    Shared(Arc<dyn CoreLinkSharedClient + Send + Sync>),
 }
 
 struct LinkWatchChannel {
@@ -126,7 +133,18 @@ impl CoreLinkHttpDispatcher {
     pub fn new(core: impl CoreLinkClient + Send + 'static) -> Self {
         Self {
             state: Arc::new(CoreLinkHttpState {
-                core: Arc::new(Mutex::new(Box::new(core))),
+                core: CoreLinkHttpCore::Locked(Arc::new(Mutex::new(Box::new(core)))),
+                watchChannels: Arc::new(Mutex::new(BTreeMap::new())),
+            }),
+        }
+    }
+
+    /// Creates an HTTP/WebSocket dispatcher around a shared core link client.
+    #[allow(non_snake_case)]
+    pub fn newShared(core: impl CoreLinkSharedClient + Send + Sync + 'static) -> Self {
+        Self {
+            state: Arc::new(CoreLinkHttpState {
+                core: CoreLinkHttpCore::Shared(Arc::new(core)),
                 watchChannels: Arc::new(Mutex::new(BTreeMap::new())),
             }),
         }
@@ -138,8 +156,45 @@ impl CoreLinkHttpDispatcher {
             Ok(value) => value,
             Err(error) => return bad_request(error.to_string()),
         };
-        let mut core = self.state.core.lock().await;
-        JsonResponse(core.call(envelope.request).await).into_response()
+        JsonResponse(self.executeCall(envelope.request).await).into_response()
+    }
+
+    /// Handles a CBOR-serialized call request body and returns a CBOR response.
+    #[allow(non_snake_case)]
+    pub async fn callCbor(&self, body: Bytes) -> Response {
+        let envelope = match decodeCbor::<LinkCallEnvelope>(&body) {
+            Ok(value) => value,
+            Err(error) => return bad_request(error.to_string()),
+        };
+        match encodeCbor(self.executeCall(envelope.request).await) {
+            Ok(bytes) => binary_response("application/cbor", bytes),
+            Err(error) => codec_error(error.to_string()),
+        }
+    }
+
+    /// Handles a MessagePack-serialized call request body and returns a MessagePack response.
+    #[allow(non_snake_case)]
+    pub async fn callMessagePack(&self, body: Bytes) -> Response {
+        let envelope = match decodeMessagePack::<LinkCallEnvelope>(&body) {
+            Ok(value) => value,
+            Err(error) => return bad_request(error.to_string()),
+        };
+        match encodeMessagePack(self.executeCall(envelope.request).await) {
+            Ok(bytes) => binary_response("application/msgpack", bytes),
+            Err(error) => codec_error(error.to_string()),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    async fn executeCall(&self, request: CoreCallRequest) -> CoreCallResponse {
+        let response = match &self.state.core {
+            CoreLinkHttpCore::Locked(core) => {
+                let mut core = core.lock().await;
+                core.call(request).await
+            }
+            CoreLinkHttpCore::Shared(core) => core.call(request).await,
+        };
+        response
     }
 
     /// Handles a serialized watch snapshot request body.
@@ -149,11 +204,57 @@ impl CoreLinkHttpDispatcher {
             Ok(value) => value,
             Err(error) => return bad_request(error.to_string()),
         };
-        let mut core = self.state.core.lock().await;
-        match core.watchSnapshot(envelope.request).await {
+        match self.executeWatchSnapshot(envelope.request).await {
             Ok(event) => JsonResponse(event).into_response(),
             Err(error) => (StatusCode::BAD_REQUEST, JsonResponse(error)).into_response(),
         }
+    }
+
+    /// Handles a CBOR-serialized watch snapshot request body and returns a CBOR response.
+    #[allow(non_snake_case)]
+    pub async fn watchSnapshotCbor(&self, body: Bytes) -> Response {
+        let envelope = match decodeCbor::<LinkWatchEnvelope>(&body) {
+            Ok(value) => value,
+            Err(error) => return bad_request(error.to_string()),
+        };
+        match self.executeWatchSnapshot(envelope.request).await {
+            Ok(event) => match encodeCbor(event) {
+                Ok(bytes) => binary_response("application/cbor", bytes),
+                Err(error) => codec_error(error.to_string()),
+            },
+            Err(error) => (StatusCode::BAD_REQUEST, JsonResponse(error)).into_response(),
+        }
+    }
+
+    /// Handles a MessagePack-serialized watch snapshot body and returns a MessagePack response.
+    #[allow(non_snake_case)]
+    pub async fn watchSnapshotMessagePack(&self, body: Bytes) -> Response {
+        let envelope = match decodeMessagePack::<LinkWatchEnvelope>(&body) {
+            Ok(value) => value,
+            Err(error) => return bad_request(error.to_string()),
+        };
+        match self.executeWatchSnapshot(envelope.request).await {
+            Ok(event) => match encodeMessagePack(event) {
+                Ok(bytes) => binary_response("application/msgpack", bytes),
+                Err(error) => codec_error(error.to_string()),
+            },
+            Err(error) => (StatusCode::BAD_REQUEST, JsonResponse(error)).into_response(),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    async fn executeWatchSnapshot(
+        &self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
+        let response = match &self.state.core {
+            CoreLinkHttpCore::Locked(core) => {
+                let mut core = core.lock().await;
+                core.watchSnapshot(request).await
+            }
+            CoreLinkHttpCore::Shared(core) => core.watchSnapshot(request).await,
+        };
+        response
     }
 
     /// Drains queued events for an opened watch channel.
@@ -249,9 +350,13 @@ impl CoreLinkHttpDispatcher {
                     CoreLinkError::new("WATCH_CHANNEL_NOT_FOUND", "watch channel not found")
                 })?
         };
-        let mut core = self.state.core.lock().await;
-        let receiver = core.watch(request).await?;
-        drop(core);
+        let receiver = match &self.state.core {
+            CoreLinkHttpCore::Locked(core) => {
+                let mut core = core.lock().await;
+                core.watch(request).await?
+            }
+            CoreLinkHttpCore::Shared(core) => core.watch(request).await?,
+        };
         let task_subscription_id = subscriptionId.clone();
         let task_channel_id = channelId.clone();
         let task_watch_channels = self.state.watchChannels.clone();
@@ -339,12 +444,24 @@ impl CoreLinkHttpDispatcher {
     async fn handleWsPayload(&self, payload: CoreLinkWsPayload) -> CoreLinkWsResponse {
         match payload {
             CoreLinkWsPayload::Call(request) => {
-                let mut core = self.state.core.lock().await;
-                CoreLinkWsResponse::Call(core.call(request.request).await)
+                let response = match &self.state.core {
+                    CoreLinkHttpCore::Locked(core) => {
+                        let mut core = core.lock().await;
+                        core.call(request.request).await
+                    }
+                    CoreLinkHttpCore::Shared(core) => core.call(request.request).await,
+                };
+                CoreLinkWsResponse::Call(response)
             }
             CoreLinkWsPayload::WatchSnapshot(request) => {
-                let mut core = self.state.core.lock().await;
-                match core.watchSnapshot(request.request).await {
+                let response = match &self.state.core {
+                    CoreLinkHttpCore::Locked(core) => {
+                        let mut core = core.lock().await;
+                        core.watchSnapshot(request.request).await
+                    }
+                    CoreLinkHttpCore::Shared(core) => core.watchSnapshot(request.request).await,
+                };
+                match response {
                     Ok(event) => CoreLinkWsResponse::WatchSnapshot(event),
                     Err(error) => CoreLinkWsResponse::Error(error),
                 }
@@ -365,6 +482,21 @@ fn bad_request(message: impl Into<String>) -> Response {
         JsonResponse(CoreLinkError::new("BAD_REQUEST", message.into())),
     )
         .into_response()
+}
+
+fn codec_error(message: impl Into<String>) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        JsonResponse(CoreLinkError::new("CODEC_ERROR", message.into())),
+    )
+        .into_response()
+}
+
+fn binary_response(content_type: &'static str, bytes: Vec<u8>) -> Response {
+    Response::builder()
+        .header("content-type", content_type)
+        .body(Body::from(bytes))
+        .expect("binary link response must build")
 }
 
 struct JsonResponse<T>(T);

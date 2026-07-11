@@ -510,25 +510,23 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
       allowBlank: _controllerDescriptor(widget.props) != null,
     );
     _currentUrl = _request.url ?? _request.baseUrl ?? 'about:blank';
-    _controller =
-        WebViewController(
-            onPermissionRequest: (request) {
-              request.grant();
-            },
-          )
-          ..setJavaScriptMode(
-            _bool(widget.props['javaScriptEnabled'], defaultValue: true)
-                ? JavaScriptMode.unrestricted
-                : JavaScriptMode.disabled,
-          )
-          ..setBackgroundColor(Colors.transparent)
-          ..setNavigationDelegate(_navigationDelegate())
-          ..addJavaScriptChannel(
-            _composeDslWebViewBridgeChannelName,
-            onMessageReceived: _handleBridgeMessage,
-          )
-          ..setOnConsoleMessage(_handleConsoleMessage);
+    _controller = _createWebViewController()
+      ..setJavaScriptMode(
+        _bool(widget.props['javaScriptEnabled'], defaultValue: true)
+            ? JavaScriptMode.unrestricted
+            : JavaScriptMode.disabled,
+      )
+      ..setBackgroundColor(Colors.transparent)
+      ..setNavigationDelegate(_navigationDelegate());
     _webViewWidget = WebViewWidget(controller: _controller);
+    if (_supportsComposeDslPageHooks) {
+      _controller
+        ..addJavaScriptChannel(
+          _composeDslWebViewBridgeChannelName,
+          onMessageReceived: _handleBridgeMessage,
+        )
+        ..setOnConsoleMessage(_handleConsoleMessage);
+    }
     if (_supportsJavaScriptDialogCallbacks) {
       _controller
         ..setOnJavaScriptAlertDialog((request) async {})
@@ -540,6 +538,26 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     _applyControllerSettingsIfNeeded(force: true);
     _bindControllerIfNeeded();
     _scheduleLoad();
+  }
+
+  /// Creates a WebView controller with platform-supported host callbacks.
+  WebViewController _createWebViewController() {
+    if (!kIsWeb) {
+      return WebViewController(
+        onPermissionRequest: (request) {
+          request.grant();
+        },
+      );
+    }
+    return WebViewController();
+  }
+
+  /// Returns whether this WebView owns a controllable Compose page.
+  bool get _supportsComposeDslPageHooks {
+    if (!kIsWeb) {
+      return true;
+    }
+    return _request.html != null || _usesResourceServer;
   }
 
   @override
@@ -560,7 +578,8 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
   }
 
   bool get _supportsJavaScriptDialogCallbacks {
-    return kIsWeb || defaultTargetPlatform != TargetPlatform.windows;
+    return _supportsComposeDslPageHooks &&
+        (kIsWeb || defaultTargetPlatform != TargetPlatform.windows);
   }
 
   @override
@@ -690,8 +709,10 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
         _loading = false;
         _progress = 100;
         await _refreshStateFromController();
-        await _installComposeDslWebViewBridgeRuntime(_controller);
-        await _refreshComposeDslJavascriptInterfaces(_controller);
+        if (_supportsComposeDslPageHooks) {
+          await _installComposeDslWebViewBridgeRuntime(_controller);
+          await _refreshComposeDslJavascriptInterfaces(_controller);
+        }
         _emit(_callbackIds.onPageFinished, <String, Object?>{
           'url': _currentUrl,
           'title': _title,
@@ -867,7 +888,9 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
           _loading = true;
         });
       }
-      await _refreshComposeDslJavascriptInterfaces(_controller);
+      if (_supportsComposeDslPageHooks) {
+        await _refreshComposeDslJavascriptInterfaces(_controller);
+      }
       if (_request.url != null) {
         final uri = await _webViewUriFor(_request.url!, isMainFrame: true);
         await _controller.loadRequest(uri, headers: _request.headers);
@@ -1088,9 +1111,10 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
           () => jsonEncode(payload),
           debugName: 'compose-webview-controller-command-encode',
         );
-        final result = await ComposeDslWebViewHostRegistry.handleControllerCommand(
-          commandPayload,
-        );
+        final result =
+            await ComposeDslWebViewHostRegistry.handleControllerCommand(
+              commandPayload,
+            );
         return AppWorkers.run(
           () => _decodePlainJsonValue(result),
           debugName: 'compose-webview-controller-command-result-decode',

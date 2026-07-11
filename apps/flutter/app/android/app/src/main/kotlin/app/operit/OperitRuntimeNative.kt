@@ -5,7 +5,11 @@ object OperitRuntimeNative {
         System.loadLibrary("operit_flutter_bridge")
     }
 
-    @JvmStatic external fun create(storageRoot: String, host: MainActivity): Long
+    @JvmStatic external fun create(
+        runtimeRoot: String,
+        workspaceRoot: String,
+        host: AndroidRuntimeHost,
+    ): Long
     @JvmStatic external fun createError(): String
     @JvmStatic external fun destroy(handle: Long)
     @JvmStatic external fun call(handle: Long, request: ByteArray): String
