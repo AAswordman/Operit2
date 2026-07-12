@@ -11,11 +11,11 @@ from common import (
     build_env_with_typescript,
     ensure_node_and_npm,
     flutter_command,
-    flutter_pub_get,
+    dart_pub_get,
     generate_dart_proxy_artifacts,
     prepare_python_command,
     require_command,
-    require_web_access_bundle,
+    prepare_web_access_embedded_assets,
     run,
 )
 
@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    require_web_access_bundle()
+    prepare_web_access_embedded_assets()
     os.environ.setdefault("RUSTFLAGS", "-Awarnings")
     typescript_version = os.environ.get("TYPESCRIPT_VERSION", "5.9.3")
 
@@ -60,9 +60,9 @@ def main() -> int:
         generate_dart_proxy_artifacts()
 
     prepare_python_command()
-    flutter_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
+    dart_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
 
-    command = [flutter, "build", "macos", "--release"]
+    command = [flutter, "build", "macos", "--release", "--no-pub"]
     if args.build_name:
         command.extend(["--build-name", args.build_name])
     if args.build_number:

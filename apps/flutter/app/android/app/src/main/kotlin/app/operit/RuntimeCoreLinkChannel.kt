@@ -2,8 +2,6 @@ package app.operit
 
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import org.json.JSONObject
-import java.nio.charset.StandardCharsets
 
 class RuntimeCoreLinkChannel(
     private val activity: MainActivity,
@@ -26,6 +24,9 @@ class RuntimeCoreLinkChannel(
     fun handle(call: MethodCall, result: MethodChannel.Result): Boolean {
         when (call.method) {
             "call" -> callRuntime(call, result, OperitRuntimeNative::call)
+            "pushOpen" -> callRuntime(call, result, OperitRuntimeNative::pushOpen)
+            "pushItem" -> callRuntime(call, result, OperitRuntimeNative::pushItem)
+            "pushClose" -> pushClose(call, result)
             "watchSnapshot" -> callRuntime(call, result, OperitRuntimeNative::watchSnapshot)
             "watchStream" -> watchStream(call, result)
             "closeWatchStream" -> closeWatchStream(call, result)
@@ -37,32 +38,30 @@ class RuntimeCoreLinkChannel(
     private fun callRuntime(
         call: MethodCall,
         result: MethodChannel.Result,
-        nativeCall: (Long, ByteArray) -> String,
+        nativeCall: (Long, ByteArray) -> ByteArray,
     ) {
-        val request = call.arguments as? String
+        val request = call.arguments as? ByteArray
         if (request == null) {
-            result.error("INVALID_ARGS", "${call.method} expects a JSON string", null)
+            result.error("INVALID_ARGS", "${call.method} expects MessagePack bytes", null)
             return
         }
         runtimeHost.runRuntime(result) {
-            nativeCall(runtimeHost.ensureRuntimeHandle(), request.toByteArray(StandardCharsets.UTF_8))
+            nativeCall(runtimeHost.ensureRuntimeHandle(), request)
         }
     }
 
     private fun watchStream(call: MethodCall, result: MethodChannel.Result) {
-        val request = call.arguments as? String
+        val request = call.arguments as? ByteArray
         if (request == null) {
-            result.error("INVALID_ARGS", "watchStream expects a JSON string", null)
+            result.error("INVALID_ARGS", "watchStream expects MessagePack bytes", null)
             return
         }
         runtimeHost.runRuntime(result) {
             val response = OperitRuntimeNative.watchStream(
                 runtimeHost.ensureRuntimeHandle(),
-                request.toByteArray(StandardCharsets.UTF_8),
+                request,
             )
-            if (JSONObject(response).has("subscriptionId")) {
-                ensureWatchPump()
-            }
+            ensureWatchPump()
             response
         }
     }
@@ -75,6 +74,18 @@ class RuntimeCoreLinkChannel(
         }
         runtimeHost.runRuntime(result) {
             OperitRuntimeNative.closeWatchStream(runtimeHost.ensureRuntimeHandle(), subscriptionId)
+        }
+    }
+
+    /** Closes one local Link push stream. */
+    private fun pushClose(call: MethodCall, result: MethodChannel.Result) {
+        val pushId = call.arguments as? String
+        if (pushId == null) {
+            result.error("INVALID_ARGS", "pushClose expects a push id", null)
+            return
+        }
+        runtimeHost.runRuntime(result) {
+            OperitRuntimeNative.pushClose(runtimeHost.ensureRuntimeHandle(), pushId)
         }
     }
 
@@ -91,11 +102,8 @@ class RuntimeCoreLinkChannel(
                     val frame = OperitRuntimeNative.nextWatchChannelEvent(
                         runtimeHost.ensureRuntimeHandle(),
                     )
-                    val frameJson = JSONObject(frame)
-                    if (frameJson.has("code") && frameJson.has("message")) {
-                        synchronized(watchPumpLock) {
-                            watchPumpRunning = false
-                        }
+                    if (frame == null) {
+                        synchronized(watchPumpLock) { watchPumpRunning = false }
                         return@runBackground
                     }
                     val channel = runtimeChannel

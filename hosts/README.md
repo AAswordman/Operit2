@@ -11,6 +11,7 @@ implementation area:
 
 ```text
 hosts/android   Android native host implementations
+hosts/ohos      OpenHarmony native host implementations
 hosts/apple     Apple native host implementations
 hosts/linux     Linux native host implementations
 hosts/windows   Windows native host implementations
@@ -59,45 +60,68 @@ core/crates/operit-host-api/README.md
 
 ## Workspace Browser
 
-Workspace browser follows the same ownership model as the interactive terminal:
-the owner app owns the real interactive capability, while remote controllers use
-CoreProxy calls and watch streams.
+Workspace browser follows the interactive terminal boundary: the controller app
+only uses CoreProxy calls, watch streams, and push input streams, Core invokes a host trait, and the
+runtime owner app supplies the concrete platform capability through Core owner
+interaction.
 
-For the current Flutter owner, the real browser capability is the workspace
-WebView session inside:
+The command path is:
+
+```text
+controller app (local workspace, remote Web, CLI, or VS Code)
+  -> CoreProxy and operit-link
+  -> RuntimeBrowserService
+  -> BrowserSessionHost
+  -> RuntimeHostInteractionService browser_session request
+  -> runtime owner app subscriber
+  -> real runtime owner app WebView session
+```
+
+The Flutter owner implementation is under:
+
+```text
+apps/flutter/app/lib/core/host/browser
+```
+
+`FlutterBrowserSessionBridge` implements the Rust `BrowserSessionHost` trait,
+then requests the concrete WebView operation through
+`RuntimeHostInteractionService`. The bridge is not a browser backend. Network,
+JavaScript, cookies, forms, media, permissions, and page lifecycle remain owned
+by the real runtime app WebView.
+
+The display path is:
+
+```text
+runtime owner app WebView
+  -> semantic DOM and session events
+  -> RuntimeBrowserService.browserSessionEvents
+  -> operit-link watch stream
+  -> controller app same-origin projection view
+```
+
+The projection never navigates its iframe to the external page. It renders an
+inert snapshot received from Core and sends click, input, submit, keyboard, and
+scroll interactions back through `RuntimeBrowserService`. This keeps the real
+WebView session alive when a workspace view is removed and keeps all app-to-app
+browser data inside Link.
+
+The workspace view implementation is under:
 
 ```text
 apps/flutter/app/lib/ui/features/chat/components/workspace/browser
 ```
 
-That layer owns WebView construction, browser chrome, permission UI, user
-interaction, tab state, JavaScript execution, navigation, and visible attach.
-It also handles owner-host browser session requests from
-`RuntimeHostInteractionService`.
-
-The runtime-facing path is:
-
-```text
-Remote controller
-  -> CoreProxy call/watch
-  -> RuntimeBrowserService
-  -> RuntimeHostInteractionService browser_session request
-  -> owner app workspace browser registry
-  -> real owner-host WebView session
-```
-
-Browser status returns through `RuntimeBrowserService.browserSessionEvents`.
-The stream carries semantic session events such as navigation start, progress,
-URL change, completion, error, and close. It does not stream pixels or replay a
-host-fetched HTML document.
+It may own browser chrome, bookmarks, history presentation, and the projection
+renderer. It must not own or import `RuntimeBrowserOwner`,
+`RuntimeBrowserSessionRegistry`, a host trait implementation, or a real external
+page WebView controller.
 
 Future product owners such as CLI service hosts, server apps, or VS Code
 extensions should implement the same owner-host browser command contract. They
-should not duplicate server code for the command protocol, and they should keep
-their concrete browser/view capability inside the product owner that can
-actually present or operate the interactive surface.
+must reuse the Core command and event contract and connect it to their real
+runtime app browser capability.
 
 For terminals, platform code such as `hosts/android/src/terminal.rs` owns PTY
 execution while Flutter owns the xterm view and attach logic. Workspace browser
-uses the same split: the owner app owns the browser session and user surface;
-runtime services expose semantic control and event streams over Link.
+uses the same split: the runtime owner app owns the executing WebView, while the
+workspace owns a renderer attached through Core session streams.

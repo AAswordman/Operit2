@@ -1,11 +1,11 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:convert';
-
 import 'package:flutter/services.dart';
 
+import '../concurrency/AppWorkers.dart';
 import '../link/CoreLinkProtocol.dart';
+import '../link/CoreLinkCodec.dart';
 import 'CoreProxy.dart';
 
 class MethodChannelCoreProxy extends CoreProxy {
@@ -17,18 +17,25 @@ class MethodChannelCoreProxy extends CoreProxy {
 
   @override
   Future<Object?> call(CoreCallRequest request) async {
-    final requestText = jsonEncode(request.toJson());
-    final responseText = await _channel.invokeMethod<String>(
-      'call',
-      requestText,
+    final requestJson = request.toJson();
+    final requestBytes = await AppWorkers.run(
+      () => encodeCoreLink(requestJson),
+      debugName: 'core-link-call-encode',
     );
-    if (responseText == null) {
+    final responseBytes = await _channel.invokeMethod<Uint8List>(
+      'call',
+      requestBytes,
+    );
+    if (responseBytes == null) {
       throw const CoreLinkError(
         code: 'EMPTY_RESPONSE',
         message: 'runtime bridge returned empty response',
       );
     }
-    final response = jsonDecode(responseText) as Map<String, Object?>;
+    final response = await AppWorkers.run(
+      () => decodeCoreLinkMap(responseBytes),
+      debugName: 'core-link-call-decode',
+    );
     final result = response['result'] as Map<String, Object?>;
     if (result.containsKey('Ok')) {
       return result['Ok'];
@@ -45,19 +52,40 @@ class MethodChannelCoreProxy extends CoreProxy {
     );
   }
 
+  /// Opens a client-owned stream on the local platform carrier.
+  @override
+  Future<CorePushSink> push(CorePushRequest request) async {
+    final responseBytes = await _channel.invokeMethod<Uint8List>(
+      'pushOpen',
+      encodeCoreLink(request.toJson()),
+    );
+    if (responseBytes == null) {
+      throw const CoreLinkError(
+        code: 'EMPTY_RESPONSE',
+        message: 'runtime push open returned empty response',
+      );
+    }
+    final response = decodeCoreLinkMap(responseBytes);
+    if (response.containsKey('code') && response.containsKey('message')) {
+      throw CoreLinkError.fromJson(response);
+    }
+    final pushId = response['pushId'] as String;
+    return _MethodChannelCorePushSink(channel: _channel, pushId: pushId);
+  }
+
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
-    final responseText = await _channel.invokeMethod<String>(
+    final responseBytes = await _channel.invokeMethod<Uint8List>(
       'watchSnapshot',
-      jsonEncode(request.toJson()),
+      encodeCoreLink(request.toJson()),
     );
-    if (responseText == null) {
+    if (responseBytes == null) {
       throw const CoreLinkError(
         code: 'EMPTY_RESPONSE',
         message: 'runtime bridge returned empty watch response',
       );
     }
-    final response = jsonDecode(responseText) as Map<String, Object?>;
+    final response = decodeCoreLinkMap(responseBytes);
     if (response.containsKey('code') && response.containsKey('message')) {
       final error = CoreLinkError.fromJson(response);
       throw error;
@@ -70,9 +98,9 @@ class MethodChannelCoreProxy extends CoreProxy {
     final watchChannel = _methodChannelWatchChannel(_channel);
     final subscriptionId = watchChannel.nextSubscriptionId();
     final events = watchChannel.attach(subscriptionId);
-    final String? subscriptionText;
+    final Uint8List? subscriptionBytes;
     try {
-      subscriptionText = await _invokeWatchStream(
+      subscriptionBytes = await _invokeWatchStream(
         _channel,
         subscriptionId,
         request,
@@ -81,7 +109,7 @@ class MethodChannelCoreProxy extends CoreProxy {
       await watchChannel.fail(subscriptionId, error, stackTrace);
       rethrow;
     }
-    if (subscriptionText == null) {
+    if (subscriptionBytes == null) {
       await watchChannel.fail(
         subscriptionId,
         const CoreLinkError(
@@ -95,8 +123,7 @@ class MethodChannelCoreProxy extends CoreProxy {
         message: 'runtime bridge returned empty stream subscription',
       );
     }
-    final subscriptionJson =
-        jsonDecode(subscriptionText) as Map<String, Object?>;
+    final subscriptionJson = decodeCoreLinkMap(subscriptionBytes);
     if (subscriptionJson.containsKey('code') &&
         subscriptionJson.containsKey('message')) {
       final error = CoreLinkError.fromJson(subscriptionJson);
@@ -113,6 +140,70 @@ class MethodChannelCoreProxy extends CoreProxy {
       throw error;
     }
     yield* events;
+  }
+}
+
+class _MethodChannelCorePushSink implements CorePushSink {
+  /// Creates one ordered local push stream.
+  _MethodChannelCorePushSink({required this.channel, required this.pushId});
+
+  final MethodChannel channel;
+  final String pushId;
+  Future<void> _tail = Future<void>.value();
+  int _sequence = 0;
+  bool _closed = false;
+
+  /// Queues one item for ordered local dispatch.
+  @override
+  void add(Object? args) {
+    if (_closed) {
+      throw StateError('Link push stream is closed');
+    }
+    final sequence = _sequence++;
+    _tail = _tail.then((_) async {
+      final responseBytes = await channel.invokeMethod<Uint8List>(
+        'pushItem',
+        encodeCoreLink(<String, Object?>{
+          'pushId': pushId,
+          'sequence': sequence,
+          'args': args,
+        }),
+      );
+      if (responseBytes == null) {
+        throw const CoreLinkError(
+          code: 'EMPTY_RESPONSE',
+          message: 'runtime push carrier returned empty response',
+        );
+      }
+      final response = decodeCoreLinkMap(responseBytes);
+      if (response.containsKey('code') && response.containsKey('message')) {
+        throw CoreLinkError.fromJson(response);
+      }
+    });
+  }
+
+  /// Waits for all local items and completes this stream.
+  @override
+  Future<void> close() async {
+    if (_closed) {
+      return;
+    }
+    _closed = true;
+    await _tail;
+    final responseBytes = await channel.invokeMethod<Uint8List>(
+      'pushClose',
+      pushId,
+    );
+    if (responseBytes == null) {
+      throw const CoreLinkError(
+        code: 'EMPTY_RESPONSE',
+        message: 'runtime push close returned empty response',
+      );
+    }
+    final response = decodeCoreLinkMap(responseBytes);
+    if (response.containsKey('code') && response.containsKey('message')) {
+      throw CoreLinkError.fromJson(response);
+    }
   }
 }
 
@@ -167,8 +258,8 @@ class _MethodChannelWatchChannel {
   Future<Object?> _handleMethodCall(MethodCall call) async {
     switch (call.method) {
       case 'watchChannelEvent':
-        final frameText = call.arguments as String;
-        _dispatchTail = _dispatchTail.then((_) => _dispatch(frameText));
+        final frameBytes = call.arguments as Uint8List;
+        _dispatchTail = _dispatchTail.then((_) => _dispatch(frameBytes));
         unawaited(_dispatchTail);
         return null;
       default:
@@ -178,9 +269,9 @@ class _MethodChannelWatchChannel {
     }
   }
 
-  Future<void> _dispatch(String frameText) async {
+  Future<void> _dispatch(Uint8List frameBytes) async {
     try {
-      final frame = _parseMethodChannelWatchFrame(frameText);
+      final frame = _parseMethodChannelWatchFrame(frameBytes);
       final subscriptionId = frame.subscriptionId;
       final controller = _controllers[subscriptionId];
       if (controller == null) {
@@ -193,7 +284,7 @@ class _MethodChannelWatchChannel {
         controller.onCancel = null;
         unawaited(controller.close());
         unawaited(
-          _channel.invokeMethod<String>('closeWatchStream', subscriptionId),
+          _channel.invokeMethod<Uint8List>('closeWatchStream', subscriptionId),
         );
       }
     } catch (error, stackTrace) {
@@ -205,7 +296,9 @@ class _MethodChannelWatchChannel {
     final entries = _controllers.entries.toList(growable: false);
     _controllers.clear();
     for (final entry in entries) {
-      unawaited(_channel.invokeMethod<String>('closeWatchStream', entry.key));
+      unawaited(
+        _channel.invokeMethod<Uint8List>('closeWatchStream', entry.key),
+      );
       final controller = entry.value;
       controller.addError(error, stackTrace);
       controller.onCancel = null;
@@ -215,7 +308,7 @@ class _MethodChannelWatchChannel {
 
   Future<void> _closeSubscription(String subscriptionId) async {
     _controllers.remove(subscriptionId);
-    await _channel.invokeMethod<String>('closeWatchStream', subscriptionId);
+    await _channel.invokeMethod<Uint8List>('closeWatchStream', subscriptionId);
   }
 }
 
@@ -229,23 +322,23 @@ class _MethodChannelWatchFrame {
   final CoreEvent event;
 }
 
-_MethodChannelWatchFrame _parseMethodChannelWatchFrame(String frameText) {
-  final frame = jsonDecode(frameText) as Map<String, Object?>;
+_MethodChannelWatchFrame _parseMethodChannelWatchFrame(Uint8List frameBytes) {
+  final frame = decodeCoreLinkMap(frameBytes);
   return _MethodChannelWatchFrame(
     subscriptionId: frame['subscriptionId'] as String,
     event: CoreEvent.fromJson(frame['event'] as Map<String, Object?>),
   );
 }
 
-Future<String?> _invokeWatchStream(
+Future<Uint8List?> _invokeWatchStream(
   MethodChannel channel,
   String subscriptionId,
   CoreWatchRequest request,
 ) async {
   try {
-    return await channel.invokeMethod<String>(
+    return await channel.invokeMethod<Uint8List>(
       'watchStream',
-      jsonEncode(<String, Object?>{
+      encodeCoreLink(<String, Object?>{
         'channelId': 'method-channel-watch',
         'subscriptionId': subscriptionId,
         'request': request.toJson(),

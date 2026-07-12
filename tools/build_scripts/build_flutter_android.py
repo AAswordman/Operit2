@@ -10,9 +10,9 @@ from common import (
     RELEASE_DIR,
     copy_required_file,
     flutter_command,
-    flutter_pub_get,
+    dart_pub_get,
     read_properties,
-    require_web_access_bundle,
+    prepare_web_access_embedded_assets,
     run,
     write_properties,
 )
@@ -49,16 +49,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    require_web_access_bundle()
+    prepare_web_access_embedded_assets()
     if not args.skip_signing:
         ensure_android_signing()
-    flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
+    dart_pub_get(enforce_lockfile=args.enforce_lockfile)
     run(
         [
             flutter_command(),
             "build",
             "apk",
             "--release",
+            "--no-pub",
             "--split-per-abi",
             "--build-name",
             args.build_name,

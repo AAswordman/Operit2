@@ -5,14 +5,13 @@ import 'package:flutter/foundation.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../theme/OperitGlassSurface.dart';
-import 'browser/automation/WorkspaceBrowserSessionRegistry.dart';
 
 class WorkspaceHomeContent extends StatelessWidget {
   const WorkspaceHomeContent({
     super.key,
     required this.workspacePath,
     required this.terminalSessionCountListenable,
-    required this.browserSessionRegistry,
+    required this.browserSessionCountListenable,
     required this.onOpenFiles,
     required this.onOpenTerminal,
     required this.onOpenTerminalSessions,
@@ -22,7 +21,7 @@ class WorkspaceHomeContent extends StatelessWidget {
 
   final String? workspacePath;
   final ValueListenable<int> terminalSessionCountListenable;
-  final WorkspaceBrowserSessionRegistry browserSessionRegistry;
+  final ValueListenable<int> browserSessionCountListenable;
   final VoidCallback onOpenFiles;
   final VoidCallback onOpenTerminal;
   final VoidCallback onOpenTerminalSessions;
@@ -39,7 +38,7 @@ class WorkspaceHomeContent extends StatelessWidget {
         _WorkspaceStatusSummary(
           workspacePath: boundWorkspacePath,
           terminalSessionCountListenable: terminalSessionCountListenable,
-          browserSessionRegistry: browserSessionRegistry,
+          browserSessionCountListenable: browserSessionCountListenable,
           onOpenTerminalSessions: onOpenTerminalSessions,
           onOpenBrowserSessions: onOpenBrowserSessions,
         ),
@@ -73,14 +72,14 @@ class _WorkspaceStatusSummary extends StatelessWidget {
   const _WorkspaceStatusSummary({
     required this.workspacePath,
     required this.terminalSessionCountListenable,
-    required this.browserSessionRegistry,
+    required this.browserSessionCountListenable,
     required this.onOpenTerminalSessions,
     required this.onOpenBrowserSessions,
   });
 
   final String? workspacePath;
   final ValueListenable<int> terminalSessionCountListenable;
-  final WorkspaceBrowserSessionRegistry browserSessionRegistry;
+  final ValueListenable<int> browserSessionCountListenable;
   final VoidCallback onOpenTerminalSessions;
   final VoidCallback onOpenBrowserSessions;
 
@@ -144,11 +143,11 @@ class _WorkspaceStatusSummary extends StatelessWidget {
             onTap: onOpenBrowserSessions,
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 2),
-              child: AnimatedBuilder(
-                animation: browserSessionRegistry,
-                builder: (context, child) {
+              child: ValueListenableBuilder<int>(
+                valueListenable: browserSessionCountListenable,
+                builder: (context, browserSessionCount, child) {
                   return Text(
-                    '当前 ${browserSessionRegistry.sessions.length} 个浏览器会话',
+                    '当前 $browserSessionCount 个浏览器会话',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(

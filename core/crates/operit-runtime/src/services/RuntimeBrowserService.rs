@@ -35,9 +35,9 @@ pub struct RuntimeBrowserCommand {
     pub sessionId: Option<String>,
     pub url: Option<String>,
     pub script: Option<String>,
+    pub payloadJson: String,
     pub userAgent: Option<String>,
     pub headers: BTreeMap<String, String>,
-    pub reveal: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +64,11 @@ pub struct RuntimeBrowserSessionEvent {
     pub eventType: String,
     pub session: Option<RuntimeBrowserSessionInfo>,
     pub resultJson: String,
+    #[serde(default, with = "serde_bytes")]
+    pub frameData: Vec<u8>,
+    pub frameCodec: Option<String>,
+    pub frameWidth: Option<i32>,
+    pub frameHeight: Option<i32>,
     pub error: Option<String>,
 }
 
@@ -75,6 +80,11 @@ pub struct RuntimeBrowserStreamEvent {
     pub eventType: String,
     pub session: Option<RuntimeBrowserSessionInfo>,
     pub resultJson: String,
+    #[serde(default, with = "serde_bytes")]
+    pub frameData: Vec<u8>,
+    pub frameCodec: Option<String>,
+    pub frameWidth: Option<i32>,
+    pub frameHeight: Option<i32>,
     pub error: Option<String>,
 }
 
@@ -86,18 +96,18 @@ pub struct RuntimeBrowserService {
 #[derive(Clone, Debug)]
 /// Stream wrapper exposing browser events to attached remote controllers.
 pub struct RuntimeBrowserEventStream {
-    upstream: MutableSharedStreamImpl<String>,
+    upstream: MutableSharedStreamImpl<RuntimeBrowserStreamEvent>,
 }
 
 impl RuntimeBrowserEventStream {
     /// Wraps a shared browser event stream.
-    pub fn new(upstream: MutableSharedStreamImpl<String>) -> Self {
+    pub fn new(upstream: MutableSharedStreamImpl<RuntimeBrowserStreamEvent>) -> Self {
         Self { upstream }
     }
 }
 
 impl Stream for RuntimeBrowserEventStream {
-    type Item = String;
+    type Item = RuntimeBrowserStreamEvent;
 
     /// Collects serialized browser events from the shared stream.
     fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
@@ -105,17 +115,19 @@ impl Stream for RuntimeBrowserEventStream {
     }
 }
 
-static BROWSER_EVENT_STREAMS: OnceLock<Mutex<HashMap<String, MutableSharedStreamImpl<String>>>> =
-    OnceLock::new();
+static BROWSER_EVENT_STREAMS: OnceLock<
+    Mutex<HashMap<String, MutableSharedStreamImpl<RuntimeBrowserStreamEvent>>>,
+> = OnceLock::new();
 static BROWSER_EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// Returns the process-wide browser event stream registry.
-fn browser_event_streams() -> &'static Mutex<HashMap<String, MutableSharedStreamImpl<String>>> {
+fn browser_event_streams(
+) -> &'static Mutex<HashMap<String, MutableSharedStreamImpl<RuntimeBrowserStreamEvent>>> {
     BROWSER_EVENT_STREAMS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Returns the shared stream for one browser session.
-fn browser_event_stream(sessionId: &str) -> MutableSharedStreamImpl<String> {
+fn browser_event_stream(sessionId: &str) -> MutableSharedStreamImpl<RuntimeBrowserStreamEvent> {
     let mut streams = browser_event_streams()
         .lock()
         .expect("browser event streams mutex poisoned");
@@ -134,10 +146,13 @@ fn publish_browser_event(event: RuntimeBrowserSessionEvent) -> Result<(), String
         eventType: event.eventType,
         session: event.session,
         resultJson: event.resultJson,
+        frameData: event.frameData,
+        frameCodec: event.frameCodec,
+        frameWidth: event.frameWidth,
+        frameHeight: event.frameHeight,
         error: event.error,
     };
-    let serialized = serde_json::to_string(&framed).map_err(|error| error.to_string())?;
-    browser_event_stream(&framed.sessionId).emit(serialized);
+    browser_event_stream(&framed.sessionId).emit(framed);
     Ok(())
 }
 
@@ -148,9 +163,9 @@ fn runtime_browser_command(action: &str) -> RuntimeBrowserCommand {
         sessionId: None,
         url: None,
         script: None,
+        payloadJson: String::new(),
         userAgent: None,
         headers: BTreeMap::new(),
-        reveal: false,
     }
 }
 
@@ -193,9 +208,9 @@ fn host_browser_session_command(command: RuntimeBrowserCommand) -> BrowserSessio
         sessionId: command.sessionId,
         url: command.url,
         script: command.script,
+        payloadJson: command.payloadJson,
         userAgent: command.userAgent,
         headers: command.headers,
-        reveal: command.reveal,
     }
 }
 
@@ -262,6 +277,10 @@ impl RuntimeBrowserService {
             eventType: "created".to_string(),
             session: Some(session.clone()),
             resultJson: String::new(),
+            frameData: Vec::new(),
+            frameCodec: None,
+            frameWidth: None,
+            frameHeight: None,
             error: None,
         })?;
         Ok(session)
@@ -351,6 +370,10 @@ impl RuntimeBrowserService {
             eventType: "closed".to_string(),
             session: result.session,
             resultJson: result.resultJson,
+            frameData: Vec::new(),
+            frameCodec: None,
+            frameWidth: None,
+            frameHeight: None,
             error: result.error,
         })?;
         let stream = browser_event_streams()

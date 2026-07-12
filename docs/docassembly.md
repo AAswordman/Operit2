@@ -353,6 +353,8 @@ CoreObjectPath
 CoreCallRequest
 CoreCallResponse
 CoreWatchRequest
+CorePushRequest
+CorePushItem
 CoreEvent
 CoreEventKind
 CoreLinkClient
@@ -362,7 +364,7 @@ CoreLinkError
 职责边界：
 
 ```text
-operit-link 只描述 core call/watch/event/error/stream 的穿透语义
+operit-link 只描述 core call/watch/push/event/error/stream 的穿透语义
 Proxy 只表示 core 能力在 app 侧的代理投影
 Remote 只表示跨 app 使用 link 的连接场景
 配对、session、签名、设备信任和 server 生命周期属于 app access
@@ -374,6 +376,7 @@ Remote 只表示跨 app 使用 link 的连接场景
 call          一次性方法调用
 watchSnapshot 单次属性快照
 watchStream   持续事件流
+push          客户端到 Core 的持续有序输入流
 ```
 
 ### 3.4 operit-core-proxy
@@ -1291,6 +1294,7 @@ Bridge 抽象：
 
 ```text
 OperitRuntimeBridge.call(CoreCallRequest)
+OperitRuntimeBridge.push(CorePushRequest)
 OperitRuntimeBridge.watchSnapshot(CoreWatchRequest)
 OperitRuntimeBridge.watchStream(CoreWatchRequest)
 OperitRuntimeBridge.hostDescriptor()
@@ -1312,7 +1316,21 @@ POST /link/watch/snapshot
 POST /link/watch/channel/events
 POST /link/watch/channel/open
 POST /link/watch/channel/close
+POST /link/push/open
+POST /link/push/item
+POST /link/push/close
 POST /link/session
+```
+
+Push stream 语义：
+
+```text
+push 是 watch 的方向对偶，由客户端持有 CorePushSink。
+CorePushSink.add 发送有序参数 item，close 结束逻辑流。
+同一个 pushId 内 sequence 单调递增并保持消费顺序。
+高频输入使用独立 WebSocket carrier，不通过反复 /link/call 传输。
+push 与 watch 使用不同物理通道，避免大帧阻塞输入。
+Link v3 加入 push，所有握手和 carrier 必须声明版本 3。
 ```
 
 Watch channel 语义：
@@ -1320,7 +1338,8 @@ Watch channel 语义：
 ```text
 watchStream 是逻辑订阅。
 多个 watchStream 必须复用到少量物理 watch channel。
-/link/watch/channel/events 打开物理事件通道，HTTP 响应是 application/x-ndjson 长流。
+/link/watch/channel/events 打开物理事件通道，HTTP 响应是 application/msgpack-seq 长流。
+/link/watch/channel/events 的每帧是 u32 大端长度，随后是一个 MessagePack LinkWatchChannelEvent。
 /link/watch/channel/open 在 channel 上创建 subscription。
 /link/watch/channel/close 关闭 subscription。
 事件 frame 携带 subscriptionId 和 CoreEvent，客户端按 subscriptionId 分发。
@@ -1335,7 +1354,8 @@ Dart UI isolate 不应通过固定周期 poll 驱动 watchStream。
 Remote signed headers：
 
 ```text
-content-type: application/json
+content-type: application/msgpack
+x-operit-link-version: 3
 x-operit-session
 x-operit-device
 x-operit-signature
@@ -1344,7 +1364,7 @@ x-operit-signature
 签名：
 
 ```text
-Hmac(sha256, base64Decode(sessionSecret), utf8(body))
+Hmac(sha256, base64Decode(sessionSecret), exactMessagePackBodyBytes)
 ```
 
 签名、session 和配对属于 Flutter app access；`operit-link` 不持有这些状态。
@@ -1851,7 +1871,7 @@ CLI app access：
 
 ```text
 link serve/connect/sync/watch 由 CLI app access 管理配对、session、签名和 accepted sessions
-operit-link 只承载 core call/watch/event 穿透协议
+operit-link 只承载 core call/watch/push/event 穿透协议
 CLI app access session storage: client/access/link_sessions.json
 CLI app accepted session storage: client/access/link_server_sessions.json
 ```

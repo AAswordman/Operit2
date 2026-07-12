@@ -68,6 +68,36 @@ class CoreWatchRequest {
   }
 }
 
+class CorePushRequest {
+  /// Creates a client-owned input stream targeting one Core method.
+  const CorePushRequest({
+    required this.requestId,
+    required this.targetPath,
+    required this.methodName,
+  });
+
+  final String requestId;
+  final CoreObjectPath targetPath;
+  final String methodName;
+
+  /// Encodes this push target for the Link carrier.
+  Map<String, Object?> toJson() {
+    return {
+      'requestId': requestId,
+      'targetPath': targetPath.toJson(),
+      'methodName': methodName,
+    };
+  }
+}
+
+abstract class CorePushSink {
+  /// Sends one ordered argument value into the input stream.
+  void add(Object? args);
+
+  /// Completes the input stream after all queued values are sent.
+  Future<void> close();
+}
+
 class CoreEvent {
   const CoreEvent({
     required this.requestId,

@@ -1,83 +1,59 @@
 # operit-link
 
-`operit-link` defines the transport-neutral protocol used to call and observe
-Operit2 core objects. It describes call, watch, event, stream, and error shapes
-without owning app access state.
+`operit-link` defines the only application-to-Core protocol used by local and
+remote Operit clients.
 
-## Responsibilities
+## Protocol
 
-- Model object paths with `CoreObjectPath`.
-- Model one-shot method calls with `CoreCallRequest` and `CoreCallResponse`.
-- Model observable values and event streams with `CoreWatchRequest`,
-  `CoreEvent`, and `CoreEventStream`.
-- Define `CoreLinkClient`, the async interface implemented by local and remote
-  core clients.
-- Provide optional Axum HTTP/WebSocket dispatch helpers for native builds.
+The protocol consists of these semantic messages:
 
-## Key Files
+- `CoreCallRequest` / `CoreCallResponse`
+- `CoreWatchRequest`
+- `CoreEvent` / `CoreEventStream`
+- `CorePushRequest` / `CorePushItem`
 
-- `src/protocol.rs`: protocol data structures, object paths, request IDs,
-  events, watch metadata, and link errors.
-- `src/client.rs`: `CoreLinkClient` trait.
-- `src/codec.rs`: optional binary codec helpers for CBOR payloads.
-- `src/http.rs`: HTTP and WebSocket dispatcher for `CoreLinkClient`
-  implementations on native targets.
-- `src/lib.rs`: crate exports and target-specific module wiring.
-- `benches/`: protocol and dispatcher microbenchmarks for Link-only costs.
-- `benches_data/`: stable payload fixtures used by benchmarks and external
-  performance scenarios.
-- `tests/`: protocol roundtrip and dispatcher behavior tests.
+`call` is a client-to-Core request/response operation. `watch` is a
+Core-to-client stream. `push` is the directional counterpart of `watch`: the
+client opens a logical input stream, sends ordered argument values, and closes
+the stream without creating one request/response operation per item.
 
-## Boundary
+Every message is encoded with MessagePack through `encodeLink` and
+`decodeLink`. There is no codec negotiation, JSON transport, CBOR transport,
+or platform-specific Link envelope.
 
-This crate carries core call/watch/event semantics only. Pairing, signatures,
-sessions, device trust, and server lifecycle are owned by the app access layer
-that embeds or exposes the link client.
+`CoreValue` maps directly to MessagePack primitives and preserves native binary
+values as MessagePack `bin` data. Runtime conversion uses `toCoreValue` and
+`fromCoreValue`; it never normalizes values through `serde_json::Value`.
 
-## Dispatcher Client Modes
+## Carriers
 
-`CoreLinkHttpDispatcher::new` accepts the mutable `CoreLinkClient` interface and
-serializes access to that client instance.
+Physical carriers transport the same encoded messages:
 
-`CoreLinkHttpDispatcher::newShared` accepts `CoreLinkSharedClient`, whose
-methods take `&self`. Use it for clients that are internally concurrency-safe
-and can process call or watch requests without dispatcher-level serialization.
+- HTTP request and response bodies use `application/msgpack`.
+- WebSocket messages use binary frames.
+- Flutter MethodChannel uses `Uint8List`.
+- WebAssembly uses `Uint8Array`.
+- HTTP watch streams use repeated four-byte big-endian lengths followed by one
+  MessagePack `LinkWatchChannelEvent` frame.
 
-## Codec Modes
+Watch channels multiplex logical subscriptions by `subscriptionId`. Events for
+each subscription remain ordered, and a `Completed` event terminates that
+subscription.
 
-The JSON endpoints remain the stable default transport. Native callers that want
-smaller binary bodies can use explicit binary dispatcher methods:
+Push streams use `pushId` and a monotonically increasing `sequence`. A carrier
+must preserve item order within a push stream. WebSocket carriers keep push
+input separate from HTTP calls and from watch event responses, so a large watch
+payload cannot occupy the request/response path used by interaction input.
 
-- `callCbor`
-- `watchSnapshotCbor`
-- `callMessagePack`
-- `watchSnapshotMessagePack`
+Link protocol version 3 adds push streams. The HTTP carrier exposes
+`/link/push/open`, `/link/push/item`, and `/link/push/close`; the WebSocket
+carrier uses tagged `PushOpen`, `PushItem`, and `PushClose` binary messages.
 
-These methods use the same envelope and response types as JSON, encoded through
-the exported codec helpers.
+## Benchmarks
 
-## Performance Tests
+`browser_surface_codec_bench.rs` compares the final MessagePack representation
+against historical JSON/base64 and CBOR baselines. Those baseline codecs are
+benchmark-only and are not exported by the product protocol.
 
-`operit-link` performance tests measure only protocol and carrier costs inside
-this crate:
-
-- `protocol_codec_bench.rs`: JSON encode/decode cost for calls, responses, and
-  events.
-- `dispatcher_call_bench.rs`: native HTTP dispatcher call cost around a
-  deterministic `CoreLinkClient`.
-- `watch_channel_bench.rs`: watch channel open and queued event dispatch cost.
-- `link_stress_bench.rs`: sequential and concurrent dispatcher call burst cost
-  for mutable and shared client modes.
-
-Run microbenchmarks from `core`:
-
-```powershell
-cargo bench -p operit-link --bench protocol_codec_bench
-cargo bench -p operit-link --bench dispatcher_call_bench
-cargo bench -p operit-link --bench watch_channel_bench
-cargo bench -p operit-link --bench link_stress_bench
-```
-
-End-to-end scenarios live in `tools/link-perf` because CLI, host, session,
-signature, and server lifecycle behavior belongs to the embedding app access
-layer.
+`protocol_codec_bench.rs` measures the final Link codec for small calls and
+native binary browser frame payloads.

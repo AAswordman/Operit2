@@ -29,7 +29,8 @@ use x25519_dalek::{PublicKey, StaticSecret};
 
 use operit_link::CoreLinkClient;
 use operit_link::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError, CoreWatchRequest,
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError, CorePushItem,
+    CorePushRequest, CoreWatchRequest,
 };
 use operit_runtime::services::RuntimeHostInteractionService::{
     withRuntimeHostInteractionOrigin, RuntimeHostInteractionRequestOrigin,
@@ -347,10 +348,22 @@ pub struct RemoteSessionInfoResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemoteWsEnvelope {
+    pub protocolVersion: i32,
     pub sessionId: String,
     pub deviceId: String,
     pub signature: String,
     pub payload: RemoteWsPayload,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemotePushAccepted {
+    pub pushId: String,
+    pub sequence: u64,
+}
+
+struct RemotePushState {
+    request: CorePushRequest,
+    nextSequence: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -359,6 +372,9 @@ pub enum RemoteWsPayload {
     SessionInfo(RemoteSessionInfoEnvelope),
     Call(RemoteCallEnvelope),
     WatchSnapshot(RemoteWatchEnvelope),
+    PushOpen(CorePushRequest),
+    PushItem(CorePushItem),
+    PushClose(String),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -367,6 +383,9 @@ pub enum RemoteWsResponse {
     SessionInfo(RemoteSessionInfoResponse),
     Call(CoreCallResponse),
     WatchSnapshot(CoreEvent),
+    PushOpened(String),
+    PushAccepted(RemotePushAccepted),
+    PushClosed(String),
     Error(CoreLinkError),
 }
 
@@ -478,6 +497,9 @@ impl RemoteLinkServer {
             .route("/link/watch/channel/events", post(watch_channel_events))
             .route("/link/watch/channel/open", post(watch_channel_open))
             .route("/link/watch/channel/close", post(watch_channel_close))
+            .route("/link/push/open", post(push_open))
+            .route("/link/push/item", post(push_item))
+            .route("/link/push/close", post(push_close))
             .route("/link/ws", get(ws));
         if webAccessConfig.is_some() {
             app = app
@@ -678,13 +700,14 @@ impl PairedRemoteSession {
 
     #[allow(non_snake_case)]
     pub async fn sessionInfo(&self) -> Result<RemoteSessionInfoResponse, String> {
-        let body = serde_json::to_vec(&RemoteSessionInfoEnvelope {
+        let body = operit_link::encodeLink(&RemoteSessionInfoEnvelope {
             nonce: Uuid::new_v4().to_string(),
         })
         .map_err(|error| error.to_string())?;
         let signature = sign(&self.sessionSecret, &body);
         self.http
             .post(format!("{}/link/session", self.baseUrl))
+            .header("x-operit-link-version", "3")
             .header("x-operit-session", &self.sessionId)
             .header("x-operit-device", &self.deviceId)
             .header("x-operit-signature", signature)
@@ -694,17 +717,19 @@ impl PairedRemoteSession {
             .map_err(|error| error.to_string())?
             .error_for_status()
             .map_err(|error| error.to_string())?
-            .json::<RemoteSessionInfoResponse>()
+            .bytes()
             .await
             .map_err(|error| error.to_string())
+            .and_then(|bytes| operit_link::decodeLink(&bytes).map_err(|error| error.to_string()))
     }
 
     pub async fn call(&self, request: CoreCallRequest) -> Result<CoreCallResponse, String> {
-        let body = serde_json::to_vec(&RemoteCallEnvelope { request })
+        let body = operit_link::encodeLink(&RemoteCallEnvelope { request })
             .map_err(|error| error.to_string())?;
         let signature = sign(&self.sessionSecret, &body);
         self.http
             .post(format!("{}/link/call", self.baseUrl))
+            .header("x-operit-link-version", "3")
             .header("x-operit-session", &self.sessionId)
             .header("x-operit-device", &self.deviceId)
             .header("x-operit-signature", signature)
@@ -714,17 +739,68 @@ impl PairedRemoteSession {
             .map_err(|error| error.to_string())?
             .error_for_status()
             .map_err(|error| error.to_string())?
-            .json::<CoreCallResponse>()
+            .bytes()
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| operit_link::decodeLink(&bytes).map_err(|error| error.to_string()))
+    }
+
+    /// Opens one HTTP-carried Link push stream.
+    pub async fn pushOpen(&self, request: CorePushRequest) -> Result<String, String> {
+        let pushId = request.requestId.0.clone();
+        let body = operit_link::encodeLink(operit_link::LinkPushOpenEnvelope {
+            pushId: pushId.clone(),
+            request,
+        })
+        .map_err(|error| error.to_string())?;
+        let response = self.signedPushPost("open", body).await?;
+        let opened = operit_link::decodeLink::<operit_link::LinkPushOpenResponse>(&response)
+            .map_err(|error| error.to_string())?;
+        Ok(opened.pushId)
+    }
+
+    /// Sends one ordered item through the HTTP push carrier.
+    pub async fn pushItem(&self, item: CorePushItem) -> Result<(), String> {
+        let body = operit_link::encodeLink(item).map_err(|error| error.to_string())?;
+        self.signedPushPost("item", body).await?;
+        Ok(())
+    }
+
+    /// Closes one HTTP-carried Link push stream.
+    pub async fn pushClose(&self, pushId: String) -> Result<(), String> {
+        let body = operit_link::encodeLink(operit_link::LinkPushCloseEnvelope { pushId })
+            .map_err(|error| error.to_string())?;
+        self.signedPushPost("close", body).await?;
+        Ok(())
+    }
+
+    /// Posts one signed push lifecycle message and returns its bytes.
+    async fn signedPushPost(&self, operation: &str, body: Vec<u8>) -> Result<Bytes, String> {
+        let signature = sign(&self.sessionSecret, &body);
+        self.http
+            .post(format!("{}/link/push/{operation}", self.baseUrl))
+            .header("x-operit-link-version", "3")
+            .header("x-operit-session", &self.sessionId)
+            .header("x-operit-device", &self.deviceId)
+            .header("x-operit-signature", signature)
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?
+            .error_for_status()
+            .map_err(|error| error.to_string())?
+            .bytes()
             .await
             .map_err(|error| error.to_string())
     }
 
     pub async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, String> {
-        let body = serde_json::to_vec(&RemoteWatchEnvelope { request })
+        let body = operit_link::encodeLink(&RemoteWatchEnvelope { request })
             .map_err(|error| error.to_string())?;
         let signature = sign(&self.sessionSecret, &body);
         self.http
             .post(format!("{}/link/watch/snapshot", self.baseUrl))
+            .header("x-operit-link-version", "3")
             .header("x-operit-session", &self.sessionId)
             .header("x-operit-device", &self.deviceId)
             .header("x-operit-signature", signature)
@@ -734,9 +810,10 @@ impl PairedRemoteSession {
             .map_err(|error| error.to_string())?
             .error_for_status()
             .map_err(|error| error.to_string())?
-            .json::<CoreEvent>()
+            .bytes()
             .await
             .map_err(|error| error.to_string())
+            .and_then(|bytes| operit_link::decodeLink(&bytes).map_err(|error| error.to_string()))
     }
 
     pub async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, String> {
@@ -753,7 +830,7 @@ impl PairedRemoteSession {
             }
             channel.subscriptions.insert(subscriptionId.clone(), sender);
         }
-        let body = serde_json::to_vec(&RemoteWatchChannelOpenEnvelope {
+        let body = operit_link::encodeLink(&RemoteWatchChannelOpenEnvelope {
             channelId: channelId.clone(),
             subscriptionId: subscriptionId.clone(),
             request,
@@ -763,6 +840,7 @@ impl PairedRemoteSession {
         let openResult = self
             .http
             .post(format!("{}/link/watch/channel/open", self.baseUrl))
+            .header("x-operit-link-version", "3")
             .header("x-operit-session", &self.sessionId)
             .header("x-operit-device", &self.deviceId)
             .header("x-operit-signature", signature)
@@ -772,8 +850,13 @@ impl PairedRemoteSession {
             .map_err(|error| error.to_string())?
             .error_for_status()
             .map_err(|error| error.to_string())?
-            .json::<RemoteWatchChannelOpenResponse>()
-            .await;
+            .bytes()
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| {
+                operit_link::decodeLink::<RemoteWatchChannelOpenResponse>(&bytes)
+                    .map_err(|error| error.to_string())
+            });
         if let Err(error) = openResult {
             self.removeLocalWatchSubscription(&channelId, &subscriptionId)
                 .await;
@@ -788,16 +871,15 @@ impl PairedRemoteSession {
         Ok(CoreEventStream::new(receiver).withOnClose(move || {
             tokio::spawn(async move {
                 remove_paired_watch_subscription(&watchChannel, &channelId, &subscriptionId).await;
-                let body = match serde_json::to_vec(&RemoteWatchChannelCloseEnvelope {
+                let body = operit_link::encodeLink(&RemoteWatchChannelCloseEnvelope {
                     channelId,
                     subscriptionId,
-                }) {
-                    Ok(value) => value,
-                    Err(_) => return,
-                };
+                })
+                .expect("watch close envelope must encode");
                 let signature = sign(&sessionSecret, &body);
                 let _ = http
                     .post(format!("{}/link/watch/channel/close", baseUrl))
+                    .header("x-operit-link-version", "3")
                     .header("x-operit-session", sessionId)
                     .header("x-operit-device", deviceId)
                     .header("x-operit-signature", signature)
@@ -820,7 +902,7 @@ impl PairedRemoteSession {
             return Ok(channelId);
         }
         let channelId = format!("watch-channel-{}", Uuid::new_v4().simple());
-        let body = serde_json::to_vec(&RemoteWatchChannelEnvelope {
+        let body = operit_link::encodeLink(&RemoteWatchChannelEnvelope {
             channelId: channelId.clone(),
         })
         .map_err(|error| error.to_string())?;
@@ -828,6 +910,7 @@ impl PairedRemoteSession {
         let response = self
             .http
             .post(format!("{}/link/watch/channel/events", self.baseUrl))
+            .header("x-operit-link-version", "3")
             .header("x-operit-session", &self.sessionId)
             .header("x-operit-device", &self.deviceId)
             .header("x-operit-signature", signature)
@@ -847,15 +930,18 @@ impl PairedRemoteSession {
                     break;
                 };
                 buffer.extend_from_slice(&chunk);
-                while let Some(index) = buffer.iter().position(|byte| *byte == b'\n') {
-                    let line = buffer.drain(..=index).collect::<Vec<_>>();
-                    let line = &line[..line.len().saturating_sub(1)];
-                    if line.is_empty() {
-                        continue;
+                while buffer.len() >= 4 {
+                    let frameLength = u32::from_be_bytes(
+                        buffer[..4]
+                            .try_into()
+                            .expect("frame length prefix must be four bytes"),
+                    ) as usize;
+                    if buffer.len() < 4 + frameLength {
+                        break;
                     }
-                    let Ok(event) = serde_json::from_slice::<RemoteWatchChannelEvent>(line) else {
-                        continue;
-                    };
+                    let frame = buffer.drain(..4 + frameLength).collect::<Vec<_>>();
+                    let event = operit_link::decodeLink::<RemoteWatchChannelEvent>(&frame[4..])
+                        .expect("authenticated watch event frame must decode");
                     let sender = {
                         let guard = watchChannel.lock().await;
                         guard.as_ref().and_then(|channel| {
@@ -940,7 +1026,7 @@ async fn hello(State(state): State<RemoteLinkState>, headers: HeaderMap) -> Resp
         return unauthorized("invalid token");
     }
     Json(HelloResponse {
-        protocolVersion: 1,
+        protocolVersion: 3,
         pairingServiceVersion: REMOTE_PAIRING_SERVICE_VERSION,
         coreDeviceId: state.deviceId,
         coreDeviceInfo: state.deviceInfo,
@@ -1091,25 +1177,32 @@ async fn session_info(
         Ok(value) => value,
         Err(response) => return response,
     };
-    let envelope = match serde_json::from_slice::<RemoteSessionInfoEnvelope>(&body) {
+    let envelope = match operit_link::decodeLink::<RemoteSessionInfoEnvelope>(&body) {
         Ok(value) => value,
-        Err(error) => return bad_request(error.to_string()),
+        Err(error) => {
+            return encode_link_response(
+                StatusCode::BAD_REQUEST,
+                CoreLinkError::new("BAD_REQUEST", error.to_string()),
+            )
+        }
     };
     let sessions = state.sessions.lock().await;
     let Some(session) = sessions.get(&verified.sessionId) else {
         return unauthorized("invalid session");
     };
-    Json(RemoteSessionInfoResponse {
-        protocolVersion: 1,
-        pairingServiceVersion: session.pairingServiceVersion,
-        coreDeviceId: state.deviceId,
-        coreDeviceInfo: state.deviceInfo,
-        clientDeviceId: session.deviceId.clone(),
-        clientDeviceInfo: session.deviceInfo.clone(),
-        transports: vec!["http".to_string(), "ws".to_string()],
-        nonce: envelope.nonce,
-    })
-    .into_response()
+    encode_link_response(
+        StatusCode::OK,
+        RemoteSessionInfoResponse {
+            protocolVersion: 3,
+            pairingServiceVersion: session.pairingServiceVersion,
+            coreDeviceId: state.deviceId,
+            coreDeviceInfo: state.deviceInfo,
+            clientDeviceId: session.deviceId.clone(),
+            clientDeviceInfo: session.deviceInfo.clone(),
+            transports: vec!["http".to_string(), "ws".to_string()],
+            nonce: envelope.nonce,
+        },
+    )
 }
 
 async fn call(State(state): State<RemoteLinkState>, headers: HeaderMap, body: Bytes) -> Response {
@@ -1171,6 +1264,44 @@ async fn watch_channel_close(
     state.linkDispatcher.watchChannelClose(body).await
 }
 
+/// Opens an authenticated client-owned Link input stream.
+async fn push_open(
+    State(state): State<RemoteLinkState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let verified = match verify_session(&state, &headers, &body).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    withRuntimeHostInteractionOrigin(verified.origin(), state.linkDispatcher.pushOpen(body)).await
+}
+
+/// Accepts one authenticated item for a Link input stream.
+async fn push_item(
+    State(state): State<RemoteLinkState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let verified = match verify_session(&state, &headers, &body).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    withRuntimeHostInteractionOrigin(verified.origin(), state.linkDispatcher.pushItem(body)).await
+}
+
+/// Closes an authenticated client-owned Link input stream.
+async fn push_close(
+    State(state): State<RemoteLinkState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if let Err(response) = verify_session(&state, &headers, &body).await {
+        return response;
+    }
+    state.linkDispatcher.pushClose(body).await
+}
+
 async fn web_access_index(State(state): State<RemoteLinkState>) -> Response {
     let Some(webAccess) = state.webAccess.as_ref() else {
         return bad_request("web access is not enabled");
@@ -1217,11 +1348,12 @@ async fn ws(State(state): State<RemoteLinkState>, upgrade: WebSocketUpgrade) -> 
 }
 
 async fn handle_ws(mut socket: WebSocket, state: RemoteLinkState) {
+    let mut pushes = BTreeMap::<String, RemotePushState>::new();
     while let Some(Ok(message)) = socket.recv().await {
         match message {
-            Message::Text(text) => {
-                let response = handle_ws_text(&state, text).await;
-                let _ = socket.send(Message::Text(response)).await;
+            Message::Binary(bytes) => {
+                let response = handle_ws_binary(&state, &mut pushes, &bytes).await;
+                let _ = socket.send(Message::Binary(response)).await;
             }
             Message::Close(frame) => {
                 let _ = socket.send(Message::Close(frame)).await;
@@ -1232,19 +1364,30 @@ async fn handle_ws(mut socket: WebSocket, state: RemoteLinkState) {
     }
 }
 
-async fn handle_ws_text(state: &RemoteLinkState, text: String) -> String {
-    let response = match serde_json::from_str::<RemoteWsEnvelope>(&text) {
-        Ok(envelope) => handle_ws_envelope(state, envelope).await,
+async fn handle_ws_binary(
+    state: &RemoteLinkState,
+    pushes: &mut BTreeMap<String, RemotePushState>,
+    bytes: &[u8],
+) -> Vec<u8> {
+    let response = match operit_link::decodeLink::<RemoteWsEnvelope>(bytes) {
+        Ok(envelope) => handle_ws_envelope(state, pushes, envelope).await,
         Err(error) => RemoteWsResponse::Error(CoreLinkError::new("BAD_REQUEST", error.to_string())),
     };
-    serde_json::to_string(&response).expect("RemoteWsResponse must serialize")
+    operit_link::encodeLink(&response).expect("RemoteWsResponse must serialize")
 }
 
 async fn handle_ws_envelope(
     state: &RemoteLinkState,
+    pushes: &mut BTreeMap<String, RemotePushState>,
     envelope: RemoteWsEnvelope,
 ) -> RemoteWsResponse {
-    let body = match serde_json::to_vec(&envelope.payload) {
+    if envelope.protocolVersion != 3 {
+        return RemoteWsResponse::Error(CoreLinkError::new(
+            "LINK_VERSION_MISMATCH",
+            "Link protocol version 3 is required",
+        ));
+    }
+    let body = match operit_link::encodeLink(&envelope.payload) {
         Ok(value) => value,
         Err(error) => {
             return RemoteWsResponse::Error(CoreLinkError::internal(error.to_string()));
@@ -1272,7 +1415,7 @@ async fn handle_ws_envelope(
                 ));
             };
             RemoteWsResponse::SessionInfo(RemoteSessionInfoResponse {
-                protocolVersion: 1,
+                protocolVersion: 3,
                 pairingServiceVersion: session.pairingServiceVersion,
                 coreDeviceId: state.deviceId.clone(),
                 coreDeviceInfo: state.deviceInfo.clone(),
@@ -1299,6 +1442,64 @@ async fn handle_ws_envelope(
             })
             .await
         }
+        RemoteWsPayload::PushOpen(request) => {
+            let pushId = request.requestId.0.clone();
+            if pushes.contains_key(&pushId) {
+                return RemoteWsResponse::Error(CoreLinkError::new(
+                    "PUSH_ALREADY_EXISTS",
+                    "Link push stream already exists",
+                ));
+            }
+            pushes.insert(
+                pushId.clone(),
+                RemotePushState {
+                    request,
+                    nextSequence: 0,
+                },
+            );
+            RemoteWsResponse::PushOpened(pushId)
+        }
+        RemoteWsPayload::PushItem(item) => {
+            let Some(push) = pushes.get_mut(&item.pushId) else {
+                return RemoteWsResponse::Error(CoreLinkError::new(
+                    "PUSH_NOT_FOUND",
+                    "Link push stream not found",
+                ));
+            };
+            if item.sequence != push.nextSequence {
+                return RemoteWsResponse::Error(CoreLinkError::new(
+                    "PUSH_SEQUENCE_MISMATCH",
+                    format!(
+                        "Link push sequence is {}, expected {}",
+                        item.sequence, push.nextSequence
+                    ),
+                ));
+            }
+            push.nextSequence += 1;
+            let request = push.request.clone();
+            let response = withRuntimeHostInteractionOrigin(verified.origin(), async {
+                let mut core = state.core.lock().await;
+                core.call(request.itemCall(item.sequence, item.args.clone()))
+                    .await
+            })
+            .await;
+            match response.result {
+                Ok(_) => RemoteWsResponse::PushAccepted(RemotePushAccepted {
+                    pushId: item.pushId,
+                    sequence: item.sequence,
+                }),
+                Err(error) => RemoteWsResponse::Error(error),
+            }
+        }
+        RemoteWsPayload::PushClose(pushId) => {
+            if pushes.remove(&pushId).is_none() {
+                return RemoteWsResponse::Error(CoreLinkError::new(
+                    "PUSH_NOT_FOUND",
+                    "Link push stream not found",
+                ));
+            }
+            RemoteWsResponse::PushClosed(pushId)
+        }
     }
 }
 
@@ -1307,18 +1508,36 @@ async fn verify_session(
     headers: &HeaderMap,
     body: &[u8],
 ) -> Result<VerifiedRemoteSession, Response> {
+    if header_string(headers, "x-operit-link-version").as_deref() != Some("3") {
+        return Err(encode_link_response(
+            StatusCode::BAD_REQUEST,
+            CoreLinkError::new(
+                "LINK_VERSION_MISMATCH",
+                "Link protocol version 3 is required",
+            ),
+        ));
+    }
     let Some(sessionId) = header_string(headers, "x-operit-session") else {
-        return Err(unauthorized("missing session"));
+        return Err(encode_link_response(
+            StatusCode::UNAUTHORIZED,
+            CoreLinkError::new("UNAUTHORIZED", "missing session"),
+        ));
     };
     let Some(deviceId) = header_string(headers, "x-operit-device") else {
-        return Err(unauthorized("missing device"));
+        return Err(encode_link_response(
+            StatusCode::UNAUTHORIZED,
+            CoreLinkError::new("UNAUTHORIZED", "missing device"),
+        ));
     };
     let Some(signature) = header_string(headers, "x-operit-signature") else {
-        return Err(unauthorized("missing signature"));
+        return Err(encode_link_response(
+            StatusCode::UNAUTHORIZED,
+            CoreLinkError::new("UNAUTHORIZED", "missing signature"),
+        ));
     };
     verify_session_parts(state, &sessionId, &deviceId, &signature, body)
         .await
-        .map_err(|error| (StatusCode::UNAUTHORIZED, Json(error)).into_response())
+        .map_err(|error| encode_link_response(StatusCode::UNAUTHORIZED, error))
 }
 
 async fn verify_session_parts(
@@ -1499,6 +1718,18 @@ fn internal_server_error(message: impl Into<String>) -> Response {
         Json(CoreLinkError::new("INTERNAL_SERVER_ERROR", message.into())),
     )
         .into_response()
+}
+
+/// Encodes a typed Link response as MessagePack bytes.
+fn encode_link_response(status: StatusCode, value: impl Serialize) -> Response {
+    match operit_link::encodeLink(value) {
+        Ok(bytes) => Response::builder()
+            .status(status)
+            .header("content-type", "application/msgpack")
+            .body(Body::from(bytes))
+            .expect("Link response must build"),
+        Err(error) => internal_server_error(error.to_string()),
+    }
 }
 
 fn serve_web_access_file(webAccess: &RemoteWebAccessState, path: &str) -> Response {

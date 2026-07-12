@@ -8,13 +8,15 @@ from common import (
     FLUTTER_APP_DIR,
     REPO_ROOT,
     WEB_ACCESS_BUNDLE_DIR,
+    copy_required_file,
+    dart_pub_get,
     ensure_node_and_npm,
     ensure_typescript,
     flutter_command,
     host_platform,
     prepare_python_command,
+    prepare_web_access_embedded_assets,
     require_command,
-    require_web_access_bundle,
     reset_dir,
     run,
     stage_web_access_source,
@@ -22,6 +24,27 @@ from common import (
 
 
 WASI_SDK_MAJOR_VERSION = "20"
+WEB_ACCESS_ASSET_PREFIX = "    - path: assets/web_access/"
+WEB_ACCESS_ASSET_PLATFORM_LINE = "      platforms: [android, ios, linux, macos, windows]"
+WASM_SOURCE = (
+    REPO_ROOT
+    / "apps"
+    / "flutter"
+    / "native"
+    / "operit-flutter-bridge"
+    / "target"
+    / "wasm32-unknown-unknown"
+    / "release"
+    / "operit_flutter_bridge.wasm"
+)
+SQL_DIST_DIR = (
+    FLUTTER_APP_DIR
+    / ".dart_tool"
+    / "web-build-deps"
+    / "node_modules"
+    / "sql.js"
+    / "dist"
+)
 
 
 # Ensures wasm-bindgen is installed at the requested version.
@@ -88,6 +111,63 @@ def ensure_wasi_sdk(version: str) -> Path:
     return root
 
 
+# Writes a pubspec view that excludes native embedded Web Access assets.
+def remove_web_access_native_assets_from_pubspec(pubspec: Path) -> str:
+    original = pubspec.read_text(encoding="utf-8")
+    lines = original.splitlines(keepends=True)
+    staged: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith(WEB_ACCESS_ASSET_PREFIX):
+            next_index = index + 1
+            if (
+                next_index >= len(lines)
+                or lines[next_index].rstrip("\r\n") != WEB_ACCESS_ASSET_PLATFORM_LINE
+            ):
+                raise RuntimeError(
+                    f"Unexpected Web Access asset declaration near line {index + 1}"
+                )
+            index += 2
+            continue
+        staged.append(line)
+        index += 1
+    if len(staged) == len(lines):
+        raise RuntimeError("No Web Access native asset declarations were removed.")
+    pubspec.write_text("".join(staged), encoding="utf-8", newline="")
+    return original
+
+
+# Restores the pubspec after the temporary Web Access build view is finished.
+def restore_pubspec(pubspec: Path, content: str) -> None:
+    pubspec.write_text(content, encoding="utf-8", newline="")
+
+
+# Writes bridge and SQL.js runtime files after Flutter finalizes its output.
+def stage_web_runtime_files(wasm_bindgen_bin: Path) -> None:
+    suffix = ".exe" if sys.platform == "win32" else ""
+    run(
+        [
+            wasm_bindgen_bin / f"wasm-bindgen{suffix}",
+            "--target",
+            "web",
+            "--out-dir",
+            WEB_ACCESS_BUNDLE_DIR,
+            "--out-name",
+            "operit_flutter_bridge",
+            WASM_SOURCE,
+        ]
+    )
+    copy_required_file(
+        SQL_DIST_DIR / "sql-wasm.js",
+        WEB_ACCESS_BUNDLE_DIR / "sql-wasm.js",
+    )
+    copy_required_file(
+        SQL_DIST_DIR / "sql-wasm.wasm",
+        WEB_ACCESS_BUNDLE_DIR / "sql-wasm.wasm",
+    )
+
+
 # Builds the shared Web Access Flutter Web bundle.
 def main() -> int:
     os.environ.setdefault("RUSTFLAGS", "-Awarnings")
@@ -120,15 +200,31 @@ def main() -> int:
         f'-I"{clang_resource_includes[0].as_posix()}"'
     )
 
+    dart_pub_get(enforce_lockfile=True, env=env)
     run(["rustup", "target", "add", "wasm32-unknown-unknown"])
     stage_web_access_source()
     reset_dir(WEB_ACCESS_BUNDLE_DIR)
-    run(
-        [flutter, "build", "web", "--release", "--output", WEB_ACCESS_BUNDLE_DIR],
-        cwd=FLUTTER_APP_DIR,
-        env=env,
-    )
-    require_web_access_bundle()
+    pubspec = FLUTTER_APP_DIR / "pubspec.yaml"
+    original_pubspec = remove_web_access_native_assets_from_pubspec(pubspec)
+    try:
+        run(
+            [
+                flutter,
+                "build",
+                "web",
+                "--release",
+                "--no-pub",
+                "--no-wasm-dry-run",
+                "--output",
+                WEB_ACCESS_BUNDLE_DIR,
+            ],
+            cwd=FLUTTER_APP_DIR,
+            env=env,
+        )
+    finally:
+        restore_pubspec(pubspec, original_pubspec)
+    stage_web_runtime_files(wasm_bindgen_bin)
+    prepare_web_access_embedded_assets()
     return 0
 
 

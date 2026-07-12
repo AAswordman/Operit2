@@ -16,10 +16,21 @@ WEB_ACCESS_APP_DIR = REPO_ROOT / "apps" / "web_access"
 WEB_ACCESS_SOURCE_DIR = WEB_ACCESS_APP_DIR / "web"
 WEB_ACCESS_BUNDLE_DIR = WEB_ACCESS_APP_DIR / "build" / "bundle"
 WEB_ACCESS_FLUTTER_STAGE_DIR = FLUTTER_APP_DIR / "web"
+WEB_ACCESS_EMBEDDED_ASSETS_DIR = FLUTTER_APP_DIR / "assets" / "web_access"
+WEB_ACCESS_ASSET_DECLARATION_PREFIX = "    - path: assets/web_access/"
+WEB_ACCESS_REQUIRED_FILES = (
+    "index.html",
+    "main.dart.js",
+    "operit_flutter_bridge.js",
+    "operit_flutter_bridge_bg.wasm",
+    "sql-wasm.js",
+    "sql-wasm.wasm",
+)
 RELEASE_DIR = REPO_ROOT / "tools" / "release"
 DIST_DIR = RELEASE_DIR / "dist"
 ANDROID_DIR = FLUTTER_APP_DIR / "android"
 ANDROID_LOCAL_PROPERTIES = ANDROID_DIR / "local.properties"
+_fvm_sdk_prepared = False
 
 
 def run(command: list[str | Path], cwd: Path = REPO_ROOT, env: dict[str, str] | None = None) -> None:
@@ -43,6 +54,18 @@ def reset_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+# Copies one generated directory tree into another build-owned directory.
+def sync_dir(source: Path, destination: Path) -> None:
+    if not source.is_dir():
+        raise RuntimeError(f"Expected source directory not found: {source}")
+    if destination.is_symlink():
+        destination.unlink()
+    elif destination.exists():
+        shutil.rmtree(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, destination)
+
+
 # Ensures Flutter's web directory points to the Web Access source shell.
 def stage_web_access_source() -> None:
     if not WEB_ACCESS_SOURCE_DIR.is_dir():
@@ -64,11 +87,36 @@ def stage_web_access_source() -> None:
 
 # Verifies the shared Web Access bundle has been built.
 def require_web_access_bundle() -> None:
-    index = WEB_ACCESS_BUNDLE_DIR / "index.html"
-    if not index.is_file():
+    missing = [
+        name for name in WEB_ACCESS_REQUIRED_FILES if not (WEB_ACCESS_BUNDLE_DIR / name).is_file()
+    ]
+    if missing:
         raise RuntimeError(
-            "Web Access bundle not found: "
-            f"{WEB_ACCESS_BUNDLE_DIR}. Run tools/build_scripts/build_flutter_web_access.py before building this product."
+            "Web Access bundle is incomplete at "
+            f"{WEB_ACCESS_BUNDLE_DIR}; missing: {', '.join(missing)}. "
+            "Run tools/build_scripts/build_flutter_web_access.py before building this product."
+        )
+
+
+# Synchronizes the Web Access bundle and validates every pubspec asset directory.
+def prepare_web_access_embedded_assets() -> None:
+    require_web_access_bundle()
+    sync_dir(WEB_ACCESS_BUNDLE_DIR, WEB_ACCESS_EMBEDDED_ASSETS_DIR)
+
+    pubspec = FLUTTER_APP_DIR / "pubspec.yaml"
+    declared_paths = []
+    for line in pubspec.read_text(encoding="utf-8").splitlines():
+        if line.startswith(WEB_ACCESS_ASSET_DECLARATION_PREFIX):
+            relative_path = line.removeprefix("    - path: ").rstrip("/")
+            declared_paths.append(FLUTTER_APP_DIR / Path(relative_path))
+    if not declared_paths:
+        raise RuntimeError(f"No Web Access asset directories are declared in {pubspec}")
+
+    missing = [path for path in declared_paths if not path.is_dir()]
+    if missing:
+        raise RuntimeError(
+            "Embedded Web Access asset directories declared in pubspec.yaml are missing: "
+            + ", ".join(str(path) for path in missing)
         )
 
 
@@ -122,8 +170,34 @@ def host_arch() -> str:
     raise RuntimeError(f"Unsupported host architecture: {machine}")
 
 
+def prepare_fvm_flutter_sdk() -> None:
+    """Installs and selects the Flutter SDK pinned by the app FVM configuration."""
+    global _fvm_sdk_prepared
+    if _fvm_sdk_prepared:
+        return
+    fvm = require_command("fvm")
+    run([fvm, "install", "--skip-pub-get"], cwd=FLUTTER_APP_DIR)
+    _fvm_sdk_prepared = True
+
+
+def fvm_sdk_command(name: str) -> str:
+    """Returns one executable from the prepared project Flutter SDK."""
+    prepare_fvm_flutter_sdk()
+    executable_name = f"{name}.bat" if host_platform() == "windows" else name
+    executable = FLUTTER_APP_DIR / ".fvm" / "flutter_sdk" / "bin" / executable_name
+    if not executable.is_file():
+        raise RuntimeError(f"FVM SDK command not found: {executable}")
+    return str(executable)
+
+
 def flutter_command() -> str:
-    return require_command("flutter")
+    """Returns Flutter from the SDK pinned by the app FVM configuration."""
+    return fvm_sdk_command("flutter")
+
+
+def dart_command() -> str:
+    """Returns Dart from the SDK pinned by the app FVM configuration."""
+    return fvm_sdk_command("dart")
 
 
 def node_package_command(name: str) -> str:
@@ -216,8 +290,9 @@ def generate_dart_proxy_artifacts() -> None:
             raise RuntimeError(f"Expected generated Dart proxy artifact is missing: {path}")
 
 
-def flutter_pub_get(enforce_lockfile: bool = False, env: dict[str, str] | None = None) -> None:
-    command = [flutter_command(), "pub", "get"]
+def dart_pub_get(enforce_lockfile: bool = False, env: dict[str, str] | None = None) -> None:
+    """Resolves app dependencies with the Dart SDK selected by FVM."""
+    command = [dart_command(), "pub", "get"]
     if enforce_lockfile:
         command.append("--enforce-lockfile")
     run(command, cwd=FLUTTER_APP_DIR, env=env)

@@ -12,11 +12,14 @@ object OperitRuntimeNative {
     ): Long
     @JvmStatic external fun createError(): String
     @JvmStatic external fun destroy(handle: Long)
-    @JvmStatic external fun call(handle: Long, request: ByteArray): String
-    @JvmStatic external fun watchSnapshot(handle: Long, request: ByteArray): String
-    @JvmStatic external fun watchStream(handle: Long, request: ByteArray): String
-    @JvmStatic external fun nextWatchChannelEvent(handle: Long): String
-    @JvmStatic external fun closeWatchStream(handle: Long, subscriptionId: String): String
+    @JvmStatic external fun call(handle: Long, request: ByteArray): ByteArray
+    @JvmStatic external fun pushOpen(handle: Long, request: ByteArray): ByteArray
+    @JvmStatic external fun pushItem(handle: Long, item: ByteArray): ByteArray
+    @JvmStatic external fun pushClose(handle: Long, pushId: String): ByteArray
+    @JvmStatic external fun watchSnapshot(handle: Long, request: ByteArray): ByteArray
+    @JvmStatic external fun watchStream(handle: Long, request: ByteArray): ByteArray
+    @JvmStatic external fun nextWatchChannelEvent(handle: Long): ByteArray?
+    @JvmStatic external fun closeWatchStream(handle: Long, subscriptionId: String): ByteArray
     @JvmStatic
     external fun startWebAccessServer(
         handle: Long,

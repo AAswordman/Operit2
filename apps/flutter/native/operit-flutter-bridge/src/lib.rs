@@ -6,7 +6,7 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -27,7 +27,8 @@ use access::{
 use operit_host_api::HostManager::HostManager;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
-    CoreLinkError, CoreRequestId, CoreWatchRequest,
+    CoreLinkError, CoreLinkSharedClient, CorePushItem, CorePushRequest, CoreRequestId,
+    CoreWatchRequest,
 };
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
@@ -93,6 +94,11 @@ use operit_host_linux_native::{
 use operit_host_linux_native::{
     LinuxTtsPlaybackHost as NativeTtsPlaybackHost, LinuxTtsSynthesisHost as NativeTtsSynthesisHost,
 };
+#[cfg(target_os = "ohos")]
+use operit_host_ohos_native::{
+    newOhosFileSystemHost, OhosHttpHost as NativeHttpHost,
+    OhosRuntimeStorageHost as NativeRuntimeStorageHost, OhosTerminalHost as NativeTerminalHost,
+};
 #[cfg(target_arch = "wasm32")]
 use operit_host_web::{
     WebAudioPlaybackHost as NativeAudioPlaybackHost, WebBluetoothHost as NativeBluetoothHost,
@@ -123,13 +129,14 @@ use wasm_bindgen::prelude::*;
 pub struct OperitFlutterBridge {
     #[cfg(not(target_arch = "wasm32"))]
     runtime: tokio::runtime::Runtime,
-    proxyCore: Arc<ConcurrentLocalCoreProxy>,
+    proxyCore: Arc<LocalCoreProxy>,
     #[cfg(not(target_arch = "wasm32"))]
     watchChannel: NativeWatchChannel,
     #[cfg(not(target_arch = "wasm32"))]
     watchSubscriptions: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
     #[cfg(target_arch = "wasm32")]
     watchSubscriptions: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    pushStreams: Mutex<HashMap<String, NativePushState>>,
     #[cfg(not(target_arch = "wasm32"))]
     webAccessTask: Mutex<Option<tokio::task::JoinHandle<Result<(), String>>>>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -140,9 +147,15 @@ pub struct OperitFlutterBridge {
         windows,
         target_os = "linux",
         target_os = "android",
-        target_os = "macos"
+        target_os = "macos",
+        target_os = "ohos"
     ))]
     terminalHost: Arc<NativeTerminalHost>,
+}
+
+struct NativePushState {
+    request: CorePushRequest,
+    nextSequence: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,6 +164,17 @@ struct FlutterWatchChannelOpenEnvelope {
     channelId: String,
     subscriptionId: String,
     request: CoreWatchRequest,
+}
+
+#[derive(Debug, Serialize)]
+struct FlutterPushOpenResponse {
+    pushId: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FlutterPushItemResponse {
+    pushId: String,
+    sequence: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -174,7 +198,7 @@ struct NativeWatchChannel {
 
 #[cfg(not(target_arch = "wasm32"))]
 enum NativeWatchChannelMessage {
-    Event(String),
+    Event(Vec<u8>),
     Closed,
 }
 
@@ -189,7 +213,7 @@ impl NativeWatchChannel {
         }
     }
 
-    fn send(&self, frame: String) {
+    fn send(&self, frame: Vec<u8>) {
         if !self.closed.load(Ordering::SeqCst) {
             let _ = self.sender.send(NativeWatchChannelMessage::Event(frame));
         }
@@ -201,7 +225,7 @@ impl NativeWatchChannel {
         }
     }
 
-    fn nextEvent(&self) -> Result<String, CoreLinkError> {
+    fn nextEvent(&self) -> Result<Vec<u8>, CoreLinkError> {
         let receiver = self.receiver.lock().map_err(|error| {
             CoreLinkError::internal(format!("watch channel lock poisoned: {error}"))
         })?;
@@ -233,24 +257,6 @@ impl Drop for OperitFlutterBridge {
 struct PendingRemotePairing {
     client: RemoteLinkClient,
     state: PairStartState,
-}
-
-struct ConcurrentLocalCoreProxy {
-    inner: Mutex<LocalCoreProxy>,
-}
-
-impl ConcurrentLocalCoreProxy {
-    fn new(core: LocalCoreProxy) -> Self {
-        Self {
-            inner: Mutex::new(core),
-        }
-    }
-
-    fn lock(&self) -> Result<MutexGuard<'_, LocalCoreProxy>, CoreLinkError> {
-        self.inner
-            .lock()
-            .map_err(|error| CoreLinkError::internal(format!("core proxy lock poisoned: {error}")))
-    }
 }
 
 const PERMISSION_REQUEST_TIMEOUT_MS: u64 = 60_000;
@@ -336,9 +342,9 @@ impl FlutterBrowserSessionBridge {
             sessionId: None,
             url: None,
             script: None,
+            payloadJson: String::new(),
             userAgent: None,
             headers: BTreeMap::new(),
-            reveal: false,
         }
     }
 
@@ -375,7 +381,6 @@ impl operit_host_api::BrowserSessionHost for FlutterBrowserSessionBridge {
         command.url = Some(initialUrl.to_string());
         command.userAgent = userAgent.map(str::to_string);
         command.headers = headers;
-        command.reveal = true;
         Self::requireSession(self.requestCommand(command)?, "create")
     }
 
@@ -691,7 +696,8 @@ impl OperitFlutterBridge {
             windows,
             target_os = "linux",
             target_os = "android",
-            target_os = "macos"
+            target_os = "macos",
+            target_os = "ohos"
         ))]
         let terminalHost = Arc::new(NativeTerminalHost::new());
         let mut core = create_local_core(
@@ -705,7 +711,8 @@ impl OperitFlutterBridge {
                 windows,
                 target_os = "linux",
                 target_os = "android",
-                target_os = "macos"
+                target_os = "macos",
+                target_os = "ohos"
             ))]
             terminalHost.clone(),
         )?;
@@ -714,13 +721,14 @@ impl OperitFlutterBridge {
         Ok(Self {
             #[cfg(not(target_arch = "wasm32"))]
             runtime,
-            proxyCore: Arc::new(ConcurrentLocalCoreProxy::new(core)),
+            proxyCore: Arc::new(core),
             #[cfg(not(target_arch = "wasm32"))]
             watchChannel: NativeWatchChannel::new(),
             #[cfg(not(target_arch = "wasm32"))]
             watchSubscriptions: Mutex::new(HashMap::new()),
             #[cfg(target_arch = "wasm32")]
             watchSubscriptions: Mutex::new(HashMap::new()),
+            pushStreams: Mutex::new(HashMap::new()),
             #[cfg(not(target_arch = "wasm32"))]
             webAccessTask: Mutex::new(None),
             #[cfg(not(target_arch = "wasm32"))]
@@ -731,7 +739,8 @@ impl OperitFlutterBridge {
                 windows,
                 target_os = "linux",
                 target_os = "android",
-                target_os = "macos"
+                target_os = "macos",
+                target_os = "ohos"
             ))]
             terminalHost,
         })
@@ -739,24 +748,100 @@ impl OperitFlutterBridge {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
-        let Ok(mut proxyCore) = self.proxyCore.lock() else {
-            return CoreCallResponse::err(
-                request.requestId,
-                CoreLinkError::internal("core proxy lock poisoned"),
-            );
-        };
-        self.runtime.block_on(proxyCore.call(request))
+        self.runtime
+            .block_on(CoreLinkSharedClient::call(self.proxyCore.as_ref(), request))
     }
 
     #[cfg(target_arch = "wasm32")]
     async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
-        let Ok(mut proxyCore) = self.proxyCore.lock() else {
-            return CoreCallResponse::err(
-                request.requestId,
-                CoreLinkError::internal("core proxy lock poisoned"),
-            );
-        };
-        proxyCore.call(request).await
+        CoreLinkSharedClient::call(self.proxyCore.as_ref(), request).await
+    }
+
+    /// Opens one client-owned input stream on the local runtime carrier.
+    fn pushOpen(&self, request: CorePushRequest) -> Result<String, CoreLinkError> {
+        let pushId = request.requestId.0.clone();
+        let mut pushes = self.pushStreams.lock().map_err(|error| {
+            CoreLinkError::internal(format!("push stream lock poisoned: {error}"))
+        })?;
+        if pushes
+            .insert(
+                pushId.clone(),
+                NativePushState {
+                    request,
+                    nextSequence: 0,
+                },
+            )
+            .is_some()
+        {
+            return Err(CoreLinkError::new(
+                "PUSH_ALREADY_EXISTS",
+                "Link push stream already exists",
+            ));
+        }
+        Ok(pushId)
+    }
+
+    /// Dispatches one native push item in stream order.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn pushItem(&self, item: CorePushItem) -> Result<FlutterPushItemResponse, CoreLinkError> {
+        let request = self.takePushItemRequest(&item)?;
+        let response = self.call(request.itemCall(item.sequence, item.args));
+        response.result?;
+        Ok(FlutterPushItemResponse {
+            pushId: item.pushId,
+            sequence: item.sequence,
+        })
+    }
+
+    /// Dispatches one wasm push item in stream order.
+    #[cfg(target_arch = "wasm32")]
+    async fn pushItem(&self, item: CorePushItem) -> Result<FlutterPushItemResponse, CoreLinkError> {
+        let request = self.takePushItemRequest(&item)?;
+        let response = self.call(request.itemCall(item.sequence, item.args)).await;
+        response.result?;
+        Ok(FlutterPushItemResponse {
+            pushId: item.pushId,
+            sequence: item.sequence,
+        })
+    }
+
+    /// Closes one client-owned input stream.
+    fn pushClose(&self, pushId: &str) -> Result<(), CoreLinkError> {
+        let removed = self
+            .pushStreams
+            .lock()
+            .map_err(|error| {
+                CoreLinkError::internal(format!("push stream lock poisoned: {error}"))
+            })?
+            .remove(pushId);
+        if removed.is_none() {
+            return Err(CoreLinkError::new(
+                "PUSH_NOT_FOUND",
+                "Link push stream not found",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validates one item sequence and returns its registered target.
+    fn takePushItemRequest(&self, item: &CorePushItem) -> Result<CorePushRequest, CoreLinkError> {
+        let mut pushes = self.pushStreams.lock().map_err(|error| {
+            CoreLinkError::internal(format!("push stream lock poisoned: {error}"))
+        })?;
+        let state = pushes
+            .get_mut(&item.pushId)
+            .ok_or_else(|| CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found"))?;
+        if item.sequence != state.nextSequence {
+            return Err(CoreLinkError::new(
+                "PUSH_SEQUENCE_MISMATCH",
+                format!(
+                    "Link push sequence is {}, expected {}",
+                    item.sequence, state.nextSequence
+                ),
+            ));
+        }
+        state.nextSequence += 1;
+        Ok(state.request.clone())
     }
 
     #[allow(non_snake_case)]
@@ -764,13 +849,15 @@ impl OperitFlutterBridge {
         &self,
         request: CoreWatchRequest,
     ) -> Result<operit_link::CoreEvent, CoreLinkError> {
-        let mut proxyCore = self.proxyCore.lock()?;
         #[cfg(target_arch = "wasm32")]
         {
-            return proxyCore.watchSnapshotSync(request);
+            return self.proxyCore.watchSnapshotSync(request);
         }
         #[cfg(not(target_arch = "wasm32"))]
-        self.runtime.block_on(proxyCore.watchSnapshot(request))
+        self.runtime.block_on(CoreLinkSharedClient::watchSnapshot(
+            self.proxyCore.as_ref(),
+            request,
+        ))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -790,19 +877,23 @@ impl OperitFlutterBridge {
                 ));
             }
         }
-        let mut proxyCore = self.proxyCore.lock()?;
-        let receiver = self.runtime.block_on(proxyCore.watch(request))?;
-        drop(proxyCore);
+        let receiver = self.runtime.block_on(CoreLinkSharedClient::watch(
+            self.proxyCore.as_ref(),
+            request,
+        ))?;
         let channel = self.watchChannel.clone();
         let taskSubscriptionId = subscriptionId.clone();
         let task = self.runtime.spawn(async move {
             let mut receiver = receiver;
             while let Some(event) = receiver.recv().await {
                 let completed = event.kind == CoreEventKind::Completed;
-                channel.send(json_string(&FlutterWatchChannelEvent {
-                    subscriptionId: taskSubscriptionId.clone(),
-                    event,
-                }));
+                channel.send(
+                    operit_link::encodeLink(&FlutterWatchChannelEvent {
+                        subscriptionId: taskSubscriptionId.clone(),
+                        event,
+                    })
+                    .expect("Flutter watch channel event must encode"),
+                );
                 if completed {
                     break;
                 }
@@ -841,8 +932,7 @@ impl OperitFlutterBridge {
                 let cancelled = Arc::new(AtomicBool::new(false));
                 entry.insert(cancelled.clone());
                 drop(subscriptions);
-                let mut proxyCore = self.proxyCore.lock()?;
-                let receiver = match proxyCore.watchSync(request) {
+                let receiver = match self.proxyCore.watchSync(request) {
                     Ok(receiver) => receiver,
                     Err(error) => {
                         if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {
@@ -851,7 +941,6 @@ impl OperitFlutterBridge {
                         return Err(error);
                     }
                 };
-                drop(proxyCore);
                 let taskSubscriptionId = subscriptionId.clone();
                 wasm_bindgen_futures::spawn_local(async move {
                     let mut receiver = receiver;
@@ -860,11 +949,13 @@ impl OperitFlutterBridge {
                             break;
                         };
                         let completed = event.kind == CoreEventKind::Completed;
-                        let frame = json_string(&FlutterWatchChannelEvent {
+                        let frame = operit_link::encodeLink(&FlutterWatchChannelEvent {
                             subscriptionId: taskSubscriptionId.clone(),
                             event,
-                        });
-                        let _ = onEvent.call1(&JsValue::NULL, &JsValue::from_str(&frame));
+                        })
+                        .expect("Flutter watch channel event must encode");
+                        let frame = js_sys::Uint8Array::from(frame.as_slice());
+                        let _ = onEvent.call1(&JsValue::NULL, &frame.into());
                         if completed {
                             break;
                         }
@@ -895,7 +986,7 @@ impl OperitFlutterBridge {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn nextWatchChannelEvent(&self) -> Result<String, CoreLinkError> {
+    fn nextWatchChannelEvent(&self) -> Result<Vec<u8>, CoreLinkError> {
         self.watchChannel.nextEvent()
     }
 
@@ -915,9 +1006,10 @@ impl OperitFlutterBridge {
             format!("runtime-event-{}", current_time_millis_u64()),
             "services.runtimeEventIngressService",
             "ingestEvent",
-            serde_json::json!({
+            operit_link::toCoreValue(serde_json::json!({
                 "event": eventValue,
-            }),
+            }))
+            .expect("runtime event arguments must convert to CoreValue"),
         ));
         match response.result {
             Ok(value) => serde_json::json!({"ok": true, "result": value}).to_string(),
@@ -1126,7 +1218,7 @@ fn save_remote_pairing_code(path: &PathBuf, record: RemotePairingCodeRecord) -> 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 struct SharedFlutterCoreClient {
-    proxyCore: Arc<ConcurrentLocalCoreProxy>,
+    proxyCore: Arc<LocalCoreProxy>,
     runtimeHandle: tokio::runtime::Handle,
 }
 
@@ -1138,8 +1230,9 @@ impl CoreLinkClient for SharedFlutterCoreClient {
         let proxyCore = self.proxyCore.clone();
         let runtimeHandle = self.runtimeHandle.clone();
         match tokio::task::spawn_blocking(move || {
-            let mut proxyCore = proxyCore.lock()?;
-            Ok::<CoreCallResponse, CoreLinkError>(runtimeHandle.block_on(proxyCore.call(request)))
+            Ok::<CoreCallResponse, CoreLinkError>(
+                runtimeHandle.block_on(CoreLinkSharedClient::call(proxyCore.as_ref(), request)),
+            )
         })
         .await
         {
@@ -1160,8 +1253,10 @@ impl CoreLinkClient for SharedFlutterCoreClient {
         let proxyCore = self.proxyCore.clone();
         let runtimeHandle = self.runtimeHandle.clone();
         tokio::task::spawn_blocking(move || {
-            let mut proxyCore = proxyCore.lock()?;
-            runtimeHandle.block_on(proxyCore.watchSnapshot(request))
+            runtimeHandle.block_on(CoreLinkSharedClient::watchSnapshot(
+                proxyCore.as_ref(),
+                request,
+            ))
         })
         .await
         .map_err(|error| {
@@ -1173,8 +1268,7 @@ impl CoreLinkClient for SharedFlutterCoreClient {
         let proxyCore = self.proxyCore.clone();
         let runtimeHandle = self.runtimeHandle.clone();
         tokio::task::spawn_blocking(move || {
-            let mut proxyCore = proxyCore.lock()?;
-            runtimeHandle.block_on(proxyCore.watch(request))
+            runtimeHandle.block_on(CoreLinkSharedClient::watch(proxyCore.as_ref(), request))
         })
         .await
         .map_err(|error| CoreLinkError::internal(format!("core watch task join failed: {error}")))?
@@ -1453,12 +1547,55 @@ fn create_local_core(
     Ok(LocalCoreProxy::new(application))
 }
 
+#[cfg(target_os = "ohos")]
+/// Creates the OpenHarmony runtime context from explicit app storage roots.
+fn create_local_core(
+    runtime_root: PathBuf,
+    workspace_root: PathBuf,
+    webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
+    browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
+    browserSessionHost: Option<Arc<dyn operit_host_api::BrowserSessionHost>>,
+    composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
+    terminalHost: Arc<NativeTerminalHost>,
+) -> Result<LocalCoreProxy, String> {
+    let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(runtime_root, workspace_root));
+    let runtimeSqliteHost = runtimeStorageHost.clone();
+    let mut context = HostManager::withFileSystemAndWebVisitHosts(
+        Arc::new(newOhosFileSystemHost()),
+        webVisitHost,
+    );
+    context.httpHost = Some(Arc::new(NativeHttpHost::new()));
+    context.runtimeStorageHost = Some(runtimeStorageHost);
+    context.runtimeSqliteHost = Some(runtimeSqliteHost);
+    if let Some(host) = browserAutomationHost {
+        context = context.withBrowserAutomationHost(host);
+    }
+    if let Some(host) = browserSessionHost {
+        context = context.withBrowserSessionHost(host);
+    }
+    if let Some(host) = composeDslWebViewHost {
+        context = context.withComposeDslWebViewHost(host);
+    }
+    context = context.withTerminalHost(terminalHost);
+    let application = OperitApplication::newWithContext(context);
+    Ok(LocalCoreProxy::new(application))
+}
+
 #[cfg(any(windows, target_os = "linux", target_os = "ios", target_os = "macos"))]
 fn default_native_storage_roots() -> Result<(PathBuf, PathBuf), String> {
     Ok((
         NativeRuntimeStorageHost::defaultRuntimeRoot(),
         NativeRuntimeStorageHost::defaultWorkspaceRoot(),
     ))
+}
+
+#[cfg(target_os = "ohos")]
+/// Requires OpenHarmony owner code to provide application storage roots.
+fn default_native_storage_roots() -> Result<(PathBuf, PathBuf), String> {
+    Err(
+        "OpenHarmony runtime and workspace roots must be provided by the OpenHarmony host"
+            .to_string(),
+    )
 }
 
 #[cfg(target_os = "android")]
@@ -1700,6 +1837,7 @@ fn create_local_core(
     target_os = "android",
     target_os = "ios",
     target_os = "macos",
+    target_os = "ohos",
     target_arch = "wasm32"
 )))]
 fn create_local_core(
@@ -1723,6 +1861,22 @@ pub extern "C" fn operit_flutter_bridge_create() -> *mut OperitFlutterBridge {
         Err(error) => {
             set_last_create_error(error);
             std::ptr::null_mut()
+        }
+    }
+}
+
+#[repr(C)]
+pub struct OperitByteBuffer {
+    pub ptr: *mut u8,
+    pub len: usize,
+}
+
+impl OperitByteBuffer {
+    /// Creates an empty byte buffer for a failed or closed native operation.
+    fn empty() -> Self {
+        Self {
+            ptr: std::ptr::null_mut(),
+            len: 0,
         }
     }
 }
@@ -1788,48 +1942,160 @@ pub unsafe extern "C" fn operit_flutter_bridge_call(
     handle: *mut OperitFlutterBridge,
     request_ptr: *const u8,
     request_len: usize,
-) -> *mut c_char {
+) -> OperitByteBuffer {
     if handle.is_null() {
-        return error_response("flutter-bridge-null", "runtime bridge is not initialized");
+        return call_error_bytes("flutter-bridge-null", "runtime bridge is not initialized");
     }
     if request_ptr.is_null() {
-        return error_response(
+        return call_error_bytes(
             "flutter-bridge-null-request",
             "runtime request pointer is null",
         );
     }
     let request_bytes = std::slice::from_raw_parts(request_ptr, request_len);
-    string_to_ptr(bridge_call_json(&mut *handle, request_bytes))
+    bytes_to_buffer(bridge_call(&mut *handle, request_bytes))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn bridge_call_json(handle: &mut OperitFlutterBridge, request_bytes: &[u8]) -> String {
-    let request: CoreCallRequest = match serde_json::from_slice(request_bytes) {
+fn bridge_call(handle: &mut OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
+    let request: CoreCallRequest = match operit_link::decodeLink(request_bytes) {
         Ok(request) => request,
         Err(error) => {
-            return error_response_string(
+            return call_error_vec(
                 "flutter-bridge-invalid-request",
                 format!("invalid core request: {error}"),
             );
         }
     };
     let response = handle.call(request);
-    json_string(&response)
+    operit_link::encodeLink(&response).expect("CoreCallResponse must encode")
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn bridge_call_json_async(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> String {
-    let request: CoreCallRequest = match serde_json::from_slice(request_bytes) {
+async fn bridge_call_async(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
+    let request: CoreCallRequest = match operit_link::decodeLink(request_bytes) {
         Ok(request) => request,
         Err(error) => {
-            return error_response_string(
+            return call_error_vec(
                 "flutter-bridge-invalid-request",
                 format!("invalid core request: {error}"),
             );
         }
     };
     let response = handle.call(request).await;
-    json_string(&response)
+    operit_link::encodeLink(&response).expect("CoreCallResponse must encode")
+}
+
+/// Decodes and opens one local Link push stream.
+fn bridge_push_open(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
+    let request = match operit_link::decodeLink::<CorePushRequest>(request_bytes) {
+        Ok(value) => value,
+        Err(error) => {
+            return operit_link::encodeLink(CoreLinkError::internal(format!(
+                "invalid core push request: {error}"
+            )))
+            .expect("CoreLinkError must encode");
+        }
+    };
+    match handle.pushOpen(request) {
+        Ok(pushId) => operit_link::encodeLink(FlutterPushOpenResponse { pushId })
+            .expect("FlutterPushOpenResponse must encode"),
+        Err(error) => operit_link::encodeLink(error).expect("CoreLinkError must encode"),
+    }
+}
+
+/// Decodes and dispatches one native Link push item.
+#[cfg(not(target_arch = "wasm32"))]
+fn bridge_push_item(handle: &OperitFlutterBridge, item_bytes: &[u8]) -> Vec<u8> {
+    let item = match operit_link::decodeLink::<CorePushItem>(item_bytes) {
+        Ok(value) => value,
+        Err(error) => {
+            return operit_link::encodeLink(CoreLinkError::internal(format!(
+                "invalid core push item: {error}"
+            )))
+            .expect("CoreLinkError must encode");
+        }
+    };
+    match handle.pushItem(item) {
+        Ok(response) => {
+            operit_link::encodeLink(response).expect("FlutterPushItemResponse must encode")
+        }
+        Err(error) => operit_link::encodeLink(error).expect("CoreLinkError must encode"),
+    }
+}
+
+/// Decodes and dispatches one wasm Link push item.
+#[cfg(target_arch = "wasm32")]
+async fn bridge_push_item_async(handle: &OperitFlutterBridge, item_bytes: &[u8]) -> Vec<u8> {
+    let item = match operit_link::decodeLink::<CorePushItem>(item_bytes) {
+        Ok(value) => value,
+        Err(error) => {
+            return operit_link::encodeLink(CoreLinkError::internal(format!(
+                "invalid core push item: {error}"
+            )))
+            .expect("CoreLinkError must encode");
+        }
+    };
+    match handle.pushItem(item).await {
+        Ok(response) => {
+            operit_link::encodeLink(response).expect("FlutterPushItemResponse must encode")
+        }
+        Err(error) => operit_link::encodeLink(error).expect("CoreLinkError must encode"),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn operit_flutter_bridge_push_open(
+    handle: *mut OperitFlutterBridge,
+    request_ptr: *const u8,
+    request_len: usize,
+) -> OperitByteBuffer {
+    if handle.is_null() || request_ptr.is_null() {
+        return link_error_buffer("runtime push open arguments are invalid");
+    }
+    bytes_to_buffer(bridge_push_open(
+        &*handle,
+        std::slice::from_raw_parts(request_ptr, request_len),
+    ))
+}
+
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe extern "C" fn operit_flutter_bridge_push_item(
+    handle: *mut OperitFlutterBridge,
+    item_ptr: *const u8,
+    item_len: usize,
+) -> OperitByteBuffer {
+    if handle.is_null() || item_ptr.is_null() {
+        return link_error_buffer("runtime push item arguments are invalid");
+    }
+    bytes_to_buffer(bridge_push_item(
+        &*handle,
+        std::slice::from_raw_parts(item_ptr, item_len),
+    ))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn operit_flutter_bridge_push_close(
+    handle: *mut OperitFlutterBridge,
+    push_id_ptr: *const c_char,
+) -> OperitByteBuffer {
+    if handle.is_null() || push_id_ptr.is_null() {
+        return link_error_buffer("runtime push close arguments are invalid");
+    }
+    let pushId = match CStr::from_ptr(push_id_ptr).to_str() {
+        Ok(value) => value,
+        Err(error) => return link_error_buffer(error.to_string()),
+    };
+    match (*handle).pushClose(pushId) {
+        Ok(()) => bytes_to_buffer(
+            operit_link::encodeLink(BTreeMap::<String, operit_link::CoreValue>::new())
+                .expect("push close response must encode"),
+        ),
+        Err(error) => {
+            bytes_to_buffer(operit_link::encodeLink(error).expect("CoreLinkError must encode"))
+        }
+    }
 }
 
 #[no_mangle]
@@ -1837,23 +2103,15 @@ pub unsafe extern "C" fn operit_flutter_bridge_watch_snapshot(
     handle: *mut OperitFlutterBridge,
     request_ptr: *const u8,
     request_len: usize,
-) -> *mut c_char {
+) -> OperitByteBuffer {
     if handle.is_null() {
-        return string_to_ptr(
-            serde_json::to_string(&CoreLinkError::internal(
-                "runtime bridge is not initialized",
-            ))
-            .expect("CoreLinkError must serialize"),
-        );
+        return link_error_buffer("runtime bridge is not initialized");
     }
     if request_ptr.is_null() {
-        return string_to_ptr(
-            serde_json::to_string(&CoreLinkError::internal("runtime request pointer is null"))
-                .expect("CoreLinkError must serialize"),
-        );
+        return link_error_buffer("runtime request pointer is null");
     }
     let request_bytes = std::slice::from_raw_parts(request_ptr, request_len);
-    string_to_ptr(bridge_watch_snapshot_json(&mut *handle, request_bytes))
+    bytes_to_buffer(bridge_watch_snapshot(&mut *handle, request_bytes))
 }
 
 #[no_mangle]
@@ -1862,66 +2120,58 @@ pub unsafe extern "C" fn operit_flutter_bridge_watch_stream(
     handle: *mut OperitFlutterBridge,
     request_ptr: *const u8,
     request_len: usize,
-) -> *mut c_char {
+) -> OperitByteBuffer {
     if handle.is_null() {
-        return string_to_ptr(
-            serde_json::to_string(&CoreLinkError::internal(
-                "runtime bridge is not initialized",
-            ))
-            .expect("CoreLinkError must serialize"),
-        );
+        return link_error_buffer("runtime bridge is not initialized");
     }
     if request_ptr.is_null() {
-        return string_to_ptr(
-            serde_json::to_string(&CoreLinkError::internal("runtime request pointer is null"))
-                .expect("CoreLinkError must serialize"),
-        );
+        return link_error_buffer("runtime request pointer is null");
     }
     let request_bytes = std::slice::from_raw_parts(request_ptr, request_len);
-    string_to_ptr(bridge_watch_stream_json(&mut *handle, request_bytes))
+    bytes_to_buffer(bridge_watch_stream(&mut *handle, request_bytes))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn bridge_watch_stream_json(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> String {
-    let envelope: FlutterWatchChannelOpenEnvelope = match serde_json::from_slice(request_bytes) {
+fn bridge_watch_stream(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
+    let envelope: FlutterWatchChannelOpenEnvelope = match operit_link::decodeLink(request_bytes) {
         Ok(request) => request,
         Err(error) => {
-            return serde_json::to_string(&CoreLinkError::internal(format!(
+            return operit_link::encodeLink(CoreLinkError::internal(format!(
                 "invalid core watch open envelope: {error}"
             )))
-            .expect("CoreLinkError must serialize");
+            .expect("CoreLinkError must encode");
         }
     };
     match handle.watchStream(envelope.subscriptionId, envelope.request) {
         Ok(subscriptionId) => {
-            serde_json::to_string(&FlutterWatchChannelOpenResponse { subscriptionId })
-                .expect("FlutterWatchChannelOpenResponse must serialize")
+            operit_link::encodeLink(&FlutterWatchChannelOpenResponse { subscriptionId })
+                .expect("FlutterWatchChannelOpenResponse must encode")
         }
-        Err(error) => serde_json::to_string(&error).expect("CoreLinkError must serialize"),
+        Err(error) => operit_link::encodeLink(&error).expect("CoreLinkError must encode"),
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-fn bridge_watch_stream_json_wasm(
+fn bridge_watch_stream_wasm(
     handle: &OperitFlutterBridge,
     request_bytes: &[u8],
     onEvent: Function,
-) -> String {
-    let envelope: FlutterWatchChannelOpenEnvelope = match serde_json::from_slice(request_bytes) {
+) -> Vec<u8> {
+    let envelope: FlutterWatchChannelOpenEnvelope = match operit_link::decodeLink(request_bytes) {
         Ok(request) => request,
         Err(error) => {
-            return serde_json::to_string(&CoreLinkError::internal(format!(
+            return operit_link::encodeLink(CoreLinkError::internal(format!(
                 "invalid core watch open envelope: {error}"
             )))
-            .expect("CoreLinkError must serialize");
+            .expect("CoreLinkError must encode");
         }
     };
     match handle.watchStream(envelope.subscriptionId, envelope.request, onEvent) {
         Ok(subscriptionId) => {
-            serde_json::to_string(&FlutterWatchChannelOpenResponse { subscriptionId })
-                .expect("FlutterWatchChannelOpenResponse must serialize")
+            operit_link::encodeLink(&FlutterWatchChannelOpenResponse { subscriptionId })
+                .expect("FlutterWatchChannelOpenResponse must encode")
         }
-        Err(error) => serde_json::to_string(&error).expect("CoreLinkError must serialize"),
+        Err(error) => operit_link::encodeLink(&error).expect("CoreLinkError must encode"),
     }
 }
 
@@ -1929,18 +2179,13 @@ fn bridge_watch_stream_json_wasm(
 #[cfg(not(target_arch = "wasm32"))]
 pub unsafe extern "C" fn operit_flutter_bridge_next_watch_channel_event(
     handle: *mut OperitFlutterBridge,
-) -> *mut c_char {
+) -> OperitByteBuffer {
     if handle.is_null() {
-        return string_to_ptr(
-            serde_json::to_string(&CoreLinkError::internal(
-                "runtime bridge is not initialized",
-            ))
-            .expect("CoreLinkError must serialize"),
-        );
+        return OperitByteBuffer::empty();
     }
     match (*handle).nextWatchChannelEvent() {
-        Ok(event) => string_to_ptr(event),
-        Err(_) => std::ptr::null_mut(),
+        Ok(event) => bytes_to_buffer(event),
+        Err(_) => OperitByteBuffer::empty(),
     }
 }
 
@@ -1948,27 +2193,22 @@ pub unsafe extern "C" fn operit_flutter_bridge_next_watch_channel_event(
 pub unsafe extern "C" fn operit_flutter_bridge_close_watch_stream(
     handle: *mut OperitFlutterBridge,
     subscription_ptr: *const c_char,
-) -> *mut c_char {
+) -> OperitByteBuffer {
     if handle.is_null() {
-        return string_to_ptr(
-            serde_json::to_string(&CoreLinkError::internal(
-                "runtime bridge is not initialized",
-            ))
-            .expect("CoreLinkError must serialize"),
-        );
+        return link_error_buffer("runtime bridge is not initialized");
     }
     if subscription_ptr.is_null() {
-        return string_to_ptr(
-            serde_json::to_string(&CoreLinkError::internal(
-                "watch subscription pointer is null",
-            ))
-            .expect("CoreLinkError must serialize"),
-        );
+        return link_error_buffer("watch subscription pointer is null");
     }
     if let Ok(subscriptionId) = CStr::from_ptr(subscription_ptr).to_str() {
         (*handle).closeWatchStream(subscriptionId);
     }
-    string_to_ptr("{\"ok\":true}")
+    bytes_to_buffer(
+        operit_link::encodeLink(
+            std::collections::BTreeMap::<String, operit_link::CoreValue>::new(),
+        )
+        .expect("close response must encode"),
+    )
 }
 
 #[no_mangle]
@@ -2138,19 +2378,19 @@ pub unsafe extern "C" fn operit_flutter_bridge_stop_web_access_server(
     string_to_ptr("{\"ok\":true}")
 }
 
-fn bridge_watch_snapshot_json(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> String {
-    let request: CoreWatchRequest = match serde_json::from_slice(request_bytes) {
+fn bridge_watch_snapshot(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
+    let request: CoreWatchRequest = match operit_link::decodeLink(request_bytes) {
         Ok(request) => request,
         Err(error) => {
-            return serde_json::to_string(&CoreLinkError::internal(format!(
+            return operit_link::encodeLink(CoreLinkError::internal(format!(
                 "invalid core watch request: {error}"
             )))
-            .expect("CoreLinkError must serialize");
+            .expect("CoreLinkError must encode");
         }
     };
     match handle.watchSnapshot(request) {
-        Ok(event) => json_string(&event),
-        Err(error) => serde_json::to_string(&error).expect("CoreLinkError must serialize"),
+        Ok(event) => operit_link::encodeLink(&event).expect("CoreEvent must encode"),
+        Err(error) => operit_link::encodeLink(&error).expect("CoreLinkError must encode"),
     }
 }
 
@@ -2356,37 +2596,93 @@ impl OperitFlutterBridgeWasm {
             .map_err(|error| JsValue::from_str(&error))
     }
 
-    pub async fn call(&self, request: &str) -> String {
-        bridge_call_json_async(&self.inner, request.as_bytes()).await
+    pub async fn call(&self, request: &[u8]) -> Vec<u8> {
+        bridge_call_async(&self.inner, request).await
+    }
+
+    /// Opens one wasm Link push stream.
+    #[allow(non_snake_case)]
+    pub fn pushOpen(&self, request: &[u8]) -> Vec<u8> {
+        bridge_push_open(&self.inner, request)
+    }
+
+    /// Dispatches one wasm Link push item.
+    #[allow(non_snake_case)]
+    pub async fn pushItem(&self, item: &[u8]) -> Vec<u8> {
+        bridge_push_item_async(&self.inner, item).await
+    }
+
+    /// Closes one wasm Link push stream.
+    #[allow(non_snake_case)]
+    pub fn pushClose(&self, pushId: &str) -> Vec<u8> {
+        match self.inner.pushClose(pushId) {
+            Ok(()) => operit_link::encodeLink(BTreeMap::<String, operit_link::CoreValue>::new())
+                .expect("push close response must encode"),
+            Err(error) => operit_link::encodeLink(error).expect("CoreLinkError must encode"),
+        }
     }
 
     #[allow(non_snake_case)]
-    pub fn watchSnapshot(&self, request: &str) -> String {
-        bridge_watch_snapshot_json(&self.inner, request.as_bytes())
+    pub fn watchSnapshot(&self, request: &[u8]) -> Vec<u8> {
+        bridge_watch_snapshot(&self.inner, request)
     }
 
     #[allow(non_snake_case)]
-    pub fn watchStream(&self, request: &str, onEvent: Function) -> String {
-        bridge_watch_stream_json_wasm(&self.inner, request.as_bytes(), onEvent)
+    pub fn watchStream(&self, request: &[u8], onEvent: Function) -> Vec<u8> {
+        bridge_watch_stream_wasm(&self.inner, request, onEvent)
     }
 
     #[allow(non_snake_case)]
-    pub fn closeWatchStream(&self, subscriptionId: &str) -> String {
+    pub fn closeWatchStream(&self, subscriptionId: &str) -> Vec<u8> {
         self.inner.closeWatchStream(subscriptionId);
-        "{\"ok\":true}".to_string()
+        operit_link::encodeLink(std::collections::BTreeMap::<String, operit_link::CoreValue>::new())
+            .expect("close response must encode")
     }
 }
 
-fn error_response(requestId: impl Into<String>, message: impl Into<String>) -> *mut c_char {
-    string_to_ptr(error_response_string(requestId, message))
+/// Encodes a failed call response into an owned native byte buffer.
+fn call_error_bytes(requestId: impl Into<String>, message: impl Into<String>) -> OperitByteBuffer {
+    bytes_to_buffer(call_error_vec(requestId, message))
 }
 
-fn error_response_string(requestId: impl Into<String>, message: impl Into<String>) -> String {
+/// Encodes a failed call response into Link bytes.
+fn call_error_vec(requestId: impl Into<String>, message: impl Into<String>) -> Vec<u8> {
     let response = CoreCallResponse::err(
         CoreRequestId::new(requestId),
         CoreLinkError::internal(message.into()),
     );
-    json_string(&response)
+    operit_link::encodeLink(response).expect("CoreCallResponse must encode")
+}
+
+/// Encodes a Link error into an owned native byte buffer.
+fn link_error_buffer(message: impl Into<String>) -> OperitByteBuffer {
+    bytes_to_buffer(link_error_vec(message))
+}
+
+/// Encodes an internal Link error into protocol bytes.
+fn link_error_vec(message: impl Into<String>) -> Vec<u8> {
+    operit_link::encodeLink(CoreLinkError::internal(message.into()))
+        .expect("CoreLinkError must encode")
+}
+
+/// Transfers ownership of a Rust byte vector to the C ABI.
+fn bytes_to_buffer(value: Vec<u8>) -> OperitByteBuffer {
+    let mut value = value.into_boxed_slice();
+    let buffer = OperitByteBuffer {
+        ptr: value.as_mut_ptr(),
+        len: value.len(),
+    };
+    std::mem::forget(value);
+    buffer
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn operit_flutter_bridge_free_bytes(value: OperitByteBuffer) {
+    if !value.ptr.is_null() {
+        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+            value.ptr, value.len,
+        )));
+    }
 }
 
 fn json_to_ptr(value: &impl serde::Serialize) -> *mut c_char {
@@ -2427,7 +2723,7 @@ fn set_last_create_error(value: String) {
 mod android_jni {
     use super::*;
     use jni::objects::{JByteArray, JClass, JObject, JString};
-    use jni::sys::{jlong, jstring};
+    use jni::sys::{jbyteArray, jlong, jstring};
     use jni::JNIEnv;
 
     fn jni_bool_arg(env: &mut JNIEnv, value: &JString, name: &str) -> Result<bool, String> {
@@ -2528,26 +2824,91 @@ mod android_jni {
         _class: JClass,
         handle: jlong,
         request: JByteArray,
-    ) -> jstring {
+    ) -> jbyteArray {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_mut() else {
-            return new_java_string(
-                env,
-                &error_response_string("flutter-bridge-null", "runtime bridge is not initialized"),
+            return new_java_bytes(
+                &mut env,
+                &call_error_vec("flutter-bridge-null", "runtime bridge is not initialized"),
             );
         };
         let bytes = match env.convert_byte_array(request) {
             Ok(value) => value,
             Err(error) => {
-                return new_java_string(
-                    env,
-                    &error_response_string(
+                return new_java_bytes(
+                    &mut env,
+                    &call_error_vec(
                         "flutter-bridge-invalid-request",
                         format!("invalid JNI request bytes: {error}"),
                     ),
                 );
             }
         };
-        new_java_string(env, &bridge_call_json(bridge, &bytes))
+        new_java_bytes(&mut env, &bridge_call(bridge, &bytes))
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_pushOpen(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        request: JByteArray,
+    ) -> jbyteArray {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_bytes(
+                &mut env,
+                &link_error_vec("runtime bridge is not initialized"),
+            );
+        };
+        let bytes = match env.convert_byte_array(request) {
+            Ok(value) => value,
+            Err(error) => return new_java_bytes(&mut env, &link_error_vec(error.to_string())),
+        };
+        new_java_bytes(&mut env, &bridge_push_open(bridge, &bytes))
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_pushItem(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        item: JByteArray,
+    ) -> jbyteArray {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_bytes(
+                &mut env,
+                &link_error_vec("runtime bridge is not initialized"),
+            );
+        };
+        let bytes = match env.convert_byte_array(item) {
+            Ok(value) => value,
+            Err(error) => return new_java_bytes(&mut env, &link_error_vec(error.to_string())),
+        };
+        new_java_bytes(&mut env, &bridge_push_item(bridge, &bytes))
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_pushClose(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        push_id: JString,
+    ) -> jbyteArray {
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_bytes(
+                &mut env,
+                &link_error_vec("runtime bridge is not initialized"),
+            );
+        };
+        let pushId = match env.get_string(&push_id) {
+            Ok(value) => String::from(value),
+            Err(error) => return new_java_bytes(&mut env, &link_error_vec(error.to_string())),
+        };
+        let response = match bridge.pushClose(&pushId) {
+            Ok(()) => operit_link::encodeLink(BTreeMap::<String, operit_link::CoreValue>::new())
+                .expect("push close response must encode"),
+            Err(error) => operit_link::encodeLink(error).expect("CoreLinkError must encode"),
+        };
+        new_java_bytes(&mut env, &response)
     }
 
     #[no_mangle]
@@ -2556,29 +2917,29 @@ mod android_jni {
         _class: JClass,
         handle: jlong,
         request: JByteArray,
-    ) -> jstring {
+    ) -> jbyteArray {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_mut() else {
-            return new_java_string(
-                env,
-                &serde_json::to_string(&CoreLinkError::internal(
+            return new_java_bytes(
+                &mut env,
+                &operit_link::encodeLink(CoreLinkError::internal(
                     "runtime bridge is not initialized",
                 ))
-                .expect("CoreLinkError must serialize"),
+                .expect("CoreLinkError must encode"),
             );
         };
         let bytes = match env.convert_byte_array(request) {
             Ok(value) => value,
             Err(error) => {
-                return new_java_string(
-                    env,
-                    &serde_json::to_string(&CoreLinkError::internal(format!(
+                return new_java_bytes(
+                    &mut env,
+                    &operit_link::encodeLink(CoreLinkError::internal(format!(
                         "invalid JNI watch request bytes: {error}"
                     )))
-                    .expect("CoreLinkError must serialize"),
+                    .expect("CoreLinkError must encode"),
                 );
             }
         };
-        new_java_string(env, &bridge_watch_snapshot_json(bridge, &bytes))
+        new_java_bytes(&mut env, &bridge_watch_snapshot(bridge, &bytes))
     }
 
     #[no_mangle]
@@ -2587,29 +2948,29 @@ mod android_jni {
         _class: JClass,
         handle: jlong,
         request: JByteArray,
-    ) -> jstring {
+    ) -> jbyteArray {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_mut() else {
-            return new_java_string(
-                env,
-                &serde_json::to_string(&CoreLinkError::internal(
+            return new_java_bytes(
+                &mut env,
+                &operit_link::encodeLink(CoreLinkError::internal(
                     "runtime bridge is not initialized",
                 ))
-                .expect("CoreLinkError must serialize"),
+                .expect("CoreLinkError must encode"),
             );
         };
         let bytes = match env.convert_byte_array(request) {
             Ok(value) => value,
             Err(error) => {
-                return new_java_string(
-                    env,
-                    &serde_json::to_string(&CoreLinkError::internal(format!(
+                return new_java_bytes(
+                    &mut env,
+                    &operit_link::encodeLink(CoreLinkError::internal(format!(
                         "invalid JNI watch request bytes: {error}"
                     )))
-                    .expect("CoreLinkError must serialize"),
+                    .expect("CoreLinkError must encode"),
                 );
             }
         };
-        new_java_string(env, &bridge_watch_stream_json(bridge, &bytes))
+        new_java_bytes(&mut env, &bridge_watch_stream(bridge, &bytes))
     }
 
     #[no_mangle]
@@ -2617,21 +2978,14 @@ mod android_jni {
         mut env: JNIEnv,
         _class: JClass,
         handle: jlong,
-    ) -> jstring {
+    ) -> jbyteArray {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
-            return new_java_string(
-                env,
-                &serde_json::to_string(&CoreLinkError::internal(
-                    "runtime bridge is not initialized",
-                ))
-                .expect("CoreLinkError must serialize"),
-            );
+            return std::ptr::null_mut();
         };
-        let response = match bridge.nextWatchChannelEvent() {
-            Ok(frame) => frame,
-            Err(error) => serde_json::to_string(&error).expect("CoreLinkError must serialize"),
-        };
-        new_java_string(env, &response)
+        match bridge.nextWatchChannelEvent() {
+            Ok(frame) => new_java_bytes(&mut env, &frame),
+            Err(_) => std::ptr::null_mut(),
+        }
     }
 
     #[no_mangle]
@@ -2640,13 +2994,19 @@ mod android_jni {
         _class: JClass,
         handle: jlong,
         subscriptionId: JString,
-    ) -> jstring {
+    ) -> jbyteArray {
         if let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() {
             if let Ok(subscriptionId) = env.get_string(&subscriptionId) {
                 bridge.closeWatchStream(&String::from(subscriptionId));
             }
         }
-        new_java_string(env, "{\"ok\":true}")
+        new_java_bytes(
+            &mut env,
+            &operit_link::encodeLink(
+                std::collections::BTreeMap::<String, operit_link::CoreValue>::new(),
+            )
+            .expect("close response must encode"),
+        )
     }
 
     #[no_mangle]
@@ -3042,6 +3402,13 @@ mod android_jni {
     fn new_java_string(mut env: JNIEnv, value: &str) -> jstring {
         env.new_string(value)
             .expect("JNI string allocation must succeed")
+            .into_raw()
+    }
+
+    /// Allocates a Java byte array containing one encoded Link payload.
+    fn new_java_bytes(env: &mut JNIEnv, value: &[u8]) -> jbyteArray {
+        env.byte_array_from_slice(value)
+            .expect("JNI byte array allocation must succeed")
             .into_raw()
     }
 }

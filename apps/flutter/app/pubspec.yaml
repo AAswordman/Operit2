@@ -37,8 +37,10 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   crypto: ^3.0.6
   cupertino_icons: ^1.0.8
-  flutter_math_fork: ^0.7.4
+  flutter_math_fork:
+    path: ../thirdparty/flutter_math_fork
   http: ^1.2.2
+  web_socket_channel: ^3.0.3
   dynamic_color: ^1.8.1
   hooks: ^2.0.0
   printing: ^5.14.3
@@ -74,6 +76,8 @@ dev_dependencies:
 dependency_overrides:
   webview_all_web:
     path: ../thirdparty/webview_all_web
+  webview_all_windows:
+    path: ../thirdparty/webview_all_windows
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -114,8 +118,6 @@ flutter:
     - path: assets/web_access/canvaskit/
       platforms: [android, ios, linux, macos, windows]
     - path: assets/web_access/canvaskit/chromium/
-      platforms: [android, ios, linux, macos, windows]
-    - path: assets/web_access/canvaskit/experimental_webparagraph/
       platforms: [android, ios, linux, macos, windows]
     - path: assets/web_access/icons/
       platforms: [android, ios, linux, macos, windows]

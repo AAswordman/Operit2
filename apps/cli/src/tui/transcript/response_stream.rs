@@ -58,8 +58,8 @@ impl OperitTui {
         }
     }
 
-    pub(super) fn apply_response_stream_event(&mut self, value: serde_json::Value) {
-        let event = serde_json::from_value::<ResponseStreamLinkEvent>(value)
+    pub(super) fn apply_response_stream_event(&mut self, value: operit_link::CoreValue) {
+        let event = operit_link::fromCoreValue::<ResponseStreamLinkEvent>(value)
             .expect("response stream event must match TUI schema");
         if event.parent_block_id.is_some() {
             return;

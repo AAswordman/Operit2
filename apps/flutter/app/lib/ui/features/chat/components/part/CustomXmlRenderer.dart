@@ -38,6 +38,7 @@ class CustomXmlRenderer extends StatelessWidget {
   final bool initialThinkingExpanded;
   final bool allowExpandedThinkingFullHeight;
 
+  /// Builds the rendered XML message content.
   @override
   Widget build(BuildContext context) {
     final parsed = _ParsedXml.from(xmlContent);
@@ -416,6 +417,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     });
   }
 
+  /// Builds the expandable thinking panel.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -480,7 +482,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
               transitionBuilder: (child, animation) {
                 return SizeTransition(
                   sizeFactor: animation,
-                  alignment: Alignment.topCenter,
+                  axisAlignment: -1.0,
                   child: FadeTransition(opacity: animation, child: child),
                 );
               },

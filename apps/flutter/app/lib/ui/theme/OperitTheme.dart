@@ -17,7 +17,7 @@ import '../../core/runtime/RuntimeConnectionManager.dart';
 import '../../data/preferences/UserPreferencesManager.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../common/RuntimeBootstrapScreen.dart';
-import '../features/chat/components/workspace/browser/automation/WorkspaceBrowserAutomationHost.dart';
+import '../../core/host/browser/RuntimeBrowserOwnerHost.dart';
 import '../features/chat/components/workspace/browser/automation/WorkspaceWebVisitHost.dart';
 import '../permissions/ToolApprovalHost.dart';
 
@@ -222,7 +222,7 @@ class _OperitMaterialApp extends StatelessWidget {
           ),
         );
       },
-      home: WorkspaceBrowserAutomationHost(
+      home: RuntimeBrowserOwnerHost(
         enabled: hostInteractionHostsEnabled,
         child: WorkspaceWebVisitHost(child: ToolApprovalHost(child: child)),
       ),

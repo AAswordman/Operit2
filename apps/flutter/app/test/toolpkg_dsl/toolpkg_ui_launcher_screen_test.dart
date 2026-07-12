@@ -921,6 +921,12 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
     throw StateError('unexpected core call: ${request.methodName}');
   }
 
+  /// Rejects push streams because this test bridge only models DSL calls and watches.
+  @override
+  Future<CorePushSink> push(CorePushRequest request) async {
+    throw StateError('unexpected core push: ${request.methodName}');
+  }
+
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
     return CoreEvent(

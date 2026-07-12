@@ -71,6 +71,12 @@ final class AppleRuntimeChannel: NSObject {
     switch call.method {
     case "call":
       callRuntime(call: call, result: result, nativeCall: operit_flutter_bridge_call)
+    case "pushOpen":
+      callRuntime(call: call, result: result, nativeCall: operit_flutter_bridge_push_open)
+    case "pushItem":
+      callRuntime(call: call, result: result, nativeCall: operit_flutter_bridge_push_item)
+    case "pushClose":
+      pushClose(call: call, result: result)
     case "watchSnapshot":
       callRuntime(call: call, result: result, nativeCall: operit_flutter_bridge_watch_snapshot)
     case "watchStream":
@@ -224,34 +230,47 @@ final class AppleRuntimeChannel: NSObject {
     }
   }
 
+  /// Runs one binary Link operation and returns Flutter typed data.
+  private func runRuntimeBytes(result: @escaping FlutterResult, _ body: @escaping (UnsafeMutableRawPointer) throws -> Data) {
+    workQueue.async {
+      do {
+        let handle = try self.ensureRuntimeHandle()
+        let response = try body(handle)
+        DispatchQueue.main.async { result(FlutterStandardTypedData(bytes: response)) }
+      } catch {
+        DispatchQueue.main.async {
+          result(FlutterError(code: "OPERIT_RUNTIME_ERROR", message: error.localizedDescription, details: nil))
+        }
+      }
+    }
+  }
+
   private func callRuntime(
     call: FlutterMethodCall,
     result: @escaping FlutterResult,
-    nativeCall: @escaping (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, UInt) -> UnsafeMutablePointer<CChar>?
+    nativeCall: @escaping (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, UInt) -> OperitByteBuffer
   ) {
-    guard let request = call.arguments as? String else {
-      result(FlutterError(code: "INVALID_ARGS", message: "\(call.method) expects a JSON string", details: nil))
+    guard let request = (call.arguments as? FlutterStandardTypedData)?.data else {
+      result(FlutterError(code: "INVALID_ARGS", message: "\(call.method) expects MessagePack bytes", details: nil))
       return
     }
-    runRuntime(result: result) { handle in
-      try self.withUtf8Bytes(request) { pointer, count in
-        self.takeString(nativeCall(handle, pointer, UInt(count)))
+    runRuntimeBytes(result: result) { handle in
+      request.withUnsafeBytes { bytes in
+        self.takeBytes(nativeCall(handle, bytes.bindMemory(to: UInt8.self).baseAddress, UInt(bytes.count)))
       }
     }
   }
 
   private func watchStream(call: FlutterMethodCall, result: @escaping FlutterResult) {
-    guard let request = call.arguments as? String else {
-      result(FlutterError(code: "INVALID_ARGS", message: "watchStream expects a JSON string", details: nil))
+    guard let request = (call.arguments as? FlutterStandardTypedData)?.data else {
+      result(FlutterError(code: "INVALID_ARGS", message: "watchStream expects MessagePack bytes", details: nil))
       return
     }
-    runRuntime(result: result) { handle in
-      let response = try self.withUtf8Bytes(request) { pointer, count in
-        self.takeString(operit_flutter_bridge_watch_stream(handle, pointer, UInt(count)))
+    runRuntimeBytes(result: result) { handle in
+      let response = request.withUnsafeBytes { bytes in
+        self.takeBytes(operit_flutter_bridge_watch_stream(handle, bytes.bindMemory(to: UInt8.self).baseAddress, UInt(bytes.count)))
       }
-      if self.hasSubscriptionId(response) {
-        self.ensureWatchPump()
-      }
+      self.ensureWatchPump()
       return response
     }
   }
@@ -261,8 +280,19 @@ final class AppleRuntimeChannel: NSObject {
       result(FlutterError(code: "INVALID_ARGS", message: "closeWatchStream expects a subscription id", details: nil))
       return
     }
-    runRuntime(result: result) { handle in
-      self.takeString(operit_flutter_bridge_close_watch_stream(handle, subscriptionId))
+    runRuntimeBytes(result: result) { handle in
+      self.takeBytes(operit_flutter_bridge_close_watch_stream(handle, subscriptionId))
+    }
+  }
+
+  /// Closes one local Link push stream.
+  private func pushClose(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard let pushId = call.arguments as? String else {
+      result(FlutterError(code: "INVALID_ARGS", message: "pushClose expects a push id", details: nil))
+      return
+    }
+    runRuntimeBytes(result: result) { handle in
+      self.takeBytes(operit_flutter_bridge_push_close(handle, pushId))
     }
   }
 
@@ -284,13 +314,14 @@ final class AppleRuntimeChannel: NSObject {
         }
         do {
           let handle = try self.ensureRuntimeHandle()
-          guard let framePointer = operit_flutter_bridge_next_watch_channel_event(handle) else {
+          let frameBuffer = operit_flutter_bridge_next_watch_channel_event(handle)
+          guard frameBuffer.ptr != nil else {
             self.stopWatchPump()
             return
           }
-          let frame = self.takeString(framePointer)
+          let frame = self.takeBytes(frameBuffer)
           DispatchQueue.main.async {
-            self.channel.invokeMethod("watchChannelEvent", arguments: frame)
+            self.channel.invokeMethod("watchChannelEvent", arguments: FlutterStandardTypedData(bytes: frame))
           }
         } catch {
           self.stopWatchPump()
@@ -690,6 +721,16 @@ final class AppleRuntimeChannel: NSObject {
     let value = String(cString: pointer)
     operit_flutter_bridge_free_string(pointer)
     return value
+  }
+
+  /// Copies and releases one owned Rust Link byte buffer.
+  private func takeBytes(_ buffer: OperitByteBuffer) -> Data {
+    guard let pointer = buffer.ptr else {
+      return Data()
+    }
+    let data = Data(bytes: pointer, count: Int(buffer.len))
+    operit_flutter_bridge_free_bytes(buffer)
+    return data
   }
 }
 

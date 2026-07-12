@@ -4,6 +4,7 @@ pub(crate) fn dart_default_value(dart_ty: &str) -> &'static str {
         "int" => "0",
         "double" => "0.0",
         "bool" => "false",
+        "Uint8List" => "Uint8List(0)",
         _ if dart_ty.starts_with("List<") => "const []",
         _ if dart_ty.starts_with("Map<") => "const {}",
         _ if dart_ty.ends_with('?') => "null",
@@ -55,6 +56,7 @@ fn render_dart_models(
     types.sort_by(|left, right| left.full_type.cmp(&right.full_type));
 
     let mut output = generated_header();
+    output.push_str("import 'dart:typed_data';\n\n");
     output.push_str("import '../../link/CoreLinkProtocol.dart';\n\n");
     output.push_str(&render_core_proxy_error_details());
     for ty in types {
@@ -146,6 +148,7 @@ fn render_dart_clients(
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
     let mut output = generated_header();
+    output.push_str("import 'dart:typed_data';\n\n");
     output.push_str("import '../../bridge/OperitRuntimeBridge.dart';\n");
     output.push_str("import '../../link/CoreLinkProtocol.dart';\n");
     output.push_str("import 'CoreProxyModels.g.dart';\n\n");
@@ -753,6 +756,9 @@ fn collect_reachable_type(
 }
 
 fn dart_type(ty: &str, serializable_types: &HashMap<String, SerializableType>) -> String {
+    if ty == "Vec<u8>" {
+        return "Uint8List".to_string();
+    }
     if let Some(inner) = single_generic_arg(ty, "Option") {
         let inner_type = dart_type(inner, serializable_types);
         if inner_type.ends_with('?') {
@@ -839,6 +845,9 @@ fn dart_decode_expr(
     if dart_type == "double" {
         return format!("({value} as num).toDouble()");
     }
+    if dart_type == "Uint8List" {
+        return format!("{value} as Uint8List");
+    }
     if let Some(inner) = list_inner(dart_type) {
         return format!(
             "({value} as List<Object?>).map((item) => {}).toList(growable: false)",
@@ -870,7 +879,12 @@ fn dart_encode_expr(
         return value.to_string();
     }
     if let Some(inner) = dart_type.strip_suffix('?') {
-        if inner == "Object?" || matches!(inner, "bool" | "int" | "double" | "String" | "void") {
+        if inner == "Object?"
+            || matches!(
+                inner,
+                "bool" | "int" | "double" | "String" | "Uint8List" | "void"
+            )
+        {
             return value.to_string();
         }
         if dart_is_unit_enum_type(inner, serializable_types) {
@@ -891,7 +905,10 @@ fn dart_encode_expr(
         }
         return format!("{value}?.toJson()");
     }
-    if matches!(dart_type, "bool" | "int" | "double" | "String" | "void") {
+    if matches!(
+        dart_type,
+        "bool" | "int" | "double" | "String" | "Uint8List" | "void"
+    ) {
         return value.to_string();
     }
     if let Some(inner) = list_inner(dart_type) {

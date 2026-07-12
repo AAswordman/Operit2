@@ -5,23 +5,17 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:webview_all/webview_all.dart';
 
-import '../../../../../../l10n/generated/app_localizations.dart';
 import '../../../../../theme/OperitGlassSurface.dart';
-import 'WorkspaceBrowserSessionStore.dart';
+import 'WorkspaceBrowserViewStore.dart';
 import 'bookmarks/WorkspaceBrowserBookmarkSheet.dart';
-import 'chrome/WorkspaceBrowserExternalNavigationDialog.dart';
-import 'chrome/WorkspaceBrowserJavaScriptDialogs.dart';
 import 'chrome/WorkspaceBrowserMenuSheet.dart';
 import 'chrome/WorkspaceBrowserSiteDataSheet.dart';
 import 'chrome/WorkspaceBrowserUrlBar.dart';
 import 'downloads/WorkspaceBrowserDownloadSheet.dart';
 import 'history/WorkspaceBrowserHistorySheet.dart';
-import 'permissions/WorkspaceBrowserPermissionDialog.dart';
 import 'permissions/WorkspaceBrowserPermissionSheet.dart';
-import 'surface/WorkspaceBrowserSurfaceHost.dart';
+import 'surface/WorkspaceBrowserCompositorSurface.dart';
 import 'tabs/WorkspaceBrowserTabModels.dart';
 import 'userscripts/WorkspaceUserscriptSheet.dart';
 
@@ -69,8 +63,8 @@ class WorkspaceBrowserContent extends StatefulWidget {
 }
 
 class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
-  final WorkspaceBrowserSessionStore _sessionStore =
-      WorkspaceBrowserSessionStore.instance;
+  final WorkspaceBrowserViewStore _sessionStore =
+      WorkspaceBrowserViewStore.instance;
   final FocusNode _browserFocusNode = FocusNode();
   final GlobalKey _menuButtonKey = GlobalKey();
   OverlayEntry? _menuPopupEntry;
@@ -124,7 +118,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     _dismissMenuPopup();
     _dismissPanelPopup();
     _browserFocusNode.dispose();
-    _sessionStore.detachUi(this);
+    _sessionStore.detachUi();
     super.dispose();
   }
 
@@ -198,10 +192,12 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
                         menuButtonKey: _menuButtonKey,
                       ),
                       Expanded(
-                        child: Stack(
-                          children: <Widget>[
-                            const WorkspaceBrowserSurfaceTarget(),
-                          ],
+                        child: WorkspaceBrowserCompositorSurface(
+                          key: ValueKey<String>(
+                            'workspace-browser-surface-${tab.id}',
+                          ),
+                          tab: tab,
+                          store: _sessionStore,
                         ),
                       ),
                     ],
@@ -216,26 +212,11 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   }
 
   void _attachBrowserUi() {
-    final l10n = AppLocalizations.of(context)!;
     _sessionStore.attachUi(
-      owner: this,
-      newTabTitle: l10n.newTab,
-      delegate: WorkspaceBrowserUiDelegate(
-        showAlertDialog: (request) {
-          return showWorkspaceBrowserAlertDialog(context, request);
-        },
-        showConfirmDialog: (request) {
-          return showWorkspaceBrowserConfirmDialog(context, request);
-        },
-        showPromptDialog: (request) {
-          return showWorkspaceBrowserPromptDialog(context, request);
-        },
-        openExternalNavigation: _openExternalNavigation,
-        handlePermissionRequest: _handlePermissionRequest,
+      delegate: WorkspaceBrowserViewDelegate(
         onActivateRequested: widget.onActivateRequested,
         onCloseRequested: widget.onCloseRequested,
       ),
-      onReadWorkspaceFileBytes: widget.onReadWorkspaceFileBytes,
       onWriteWorkspaceFileBytes: widget.onWriteWorkspaceFileBytes,
     );
   }
@@ -357,17 +338,11 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
                         unawaited(_sessionStore.setDesktopMode(enabled));
                       },
                       onLoadMenuCommands: () {
-                        return _sessionStore.stores.userscriptRuntime
-                            .menuCommands(_currentTab.controller);
+                        return _sessionStore.loadMenuCommands();
                       },
                       onRunMenuCommand: (index) {
                         _dismissMenuPopup();
-                        unawaited(
-                          _sessionStore.stores.userscriptRuntime.runMenuCommand(
-                            _currentTab.controller,
-                            index,
-                          ),
-                        );
+                        unawaited(_sessionStore.runMenuCommand(index));
                       },
                       activeDownloadCount: _sessionStore.activeDownloadCount,
                     ),
@@ -466,7 +441,10 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
 
   void _openSiteDataSheet() {
     _showPanelPopup(
-      WorkspaceBrowserSiteDataSheet(controller: _currentTab.controller),
+      WorkspaceBrowserSiteDataSheet(
+        evaluate: _sessionStore.evaluateValue,
+        clearCookies: _sessionStore.clearCookies,
+      ),
     );
   }
 
@@ -530,69 +508,13 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
         },
         onReadWorkspaceTextFile: widget.onReadWorkspaceTextFile,
         onLoadMenuCommands: () {
-          return _sessionStore.stores.userscriptRuntime.menuCommands(
-            _currentTab.controller,
-          );
+          return _sessionStore.loadMenuCommands();
         },
         onRunMenuCommand: (index) {
-          return _sessionStore.stores.userscriptRuntime.runMenuCommand(
-            _currentTab.controller,
-            index,
-          );
+          return _sessionStore.runMenuCommand(index);
         },
       ),
       preferredWidth: 420,
     );
-  }
-
-  Future<void> _openExternalNavigation(String url) async {
-    if (!mounted) {
-      throw StateError('Browser UI is not mounted');
-    }
-    final confirmed = await showWorkspaceBrowserExternalNavigationDialog(
-      context,
-      url,
-    );
-    if (!confirmed) {
-      return;
-    }
-    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-  }
-
-  Future<void> _handlePermissionRequest(
-    WorkspaceBrowserTabState tab,
-    WebViewPermissionRequest request,
-  ) async {
-    if (!mounted) {
-      throw StateError('Browser UI is not mounted');
-    }
-    final uri = Uri.tryParse(tab.url);
-    final origin = uri == null || uri.host.isEmpty
-        ? tab.url
-        : '${uri.scheme}://${uri.host}';
-    final allowed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return WorkspaceBrowserPermissionDialog(
-          origin: origin,
-          types: request.types,
-        );
-      },
-    );
-    if (allowed == true) {
-      _sessionStore.permissions.record(
-        origin: origin,
-        types: request.types.toList(growable: false),
-        allowed: true,
-      );
-      await request.grant();
-      return;
-    }
-    _sessionStore.permissions.record(
-      origin: origin,
-      types: request.types.toList(growable: false),
-      allowed: false,
-    );
-    await request.deny();
   }
 }

@@ -103,6 +103,36 @@ impl HostEnvironmentDescriptor {
         }
     }
 
+    /// Builds the OpenHarmony host descriptor used by mobile runtime prompts.
+    pub fn ohos() -> Self {
+        Self {
+            id: "ohos".to_string(),
+            displayName: "OpenHarmony".to_string(),
+            platform: HostPlatform::Ohos,
+            privilege: HostPrivilege::Normal,
+            isolation: HostIsolation::OsAppSandbox,
+            pathStyleDescriptionEn:
+                "Use absolute OpenHarmony application paths supplied by the host.".to_string(),
+            pathStyleDescriptionCn: "使用鸿蒙 Host 提供的绝对应用路径。".to_string(),
+            examplePaths: Vec::new(),
+            usesEnvironmentParameter: false,
+            environmentParameterDescriptionEn: String::new(),
+            environmentParameterDescriptionCn: String::new(),
+            capabilities: vec![
+                "fs.read".to_string(),
+                "fs.write".to_string(),
+                "fs.search".to_string(),
+                "fs.archive".to_string(),
+                "web.visit".to_string(),
+                "runtime.storage".to_string(),
+                "runtime.sqlite".to_string(),
+            ],
+            structuredCapabilities: defaultHostCapabilities(),
+            onboardingRequirements: Vec::new(),
+            workspaceRoots: Vec::new(),
+        }
+    }
+
     /// Builds the Windows host descriptor used by desktop runtime prompts.
     pub fn windows() -> Self {
         Self {
@@ -265,6 +295,7 @@ impl Default for HostEnvironmentDescriptor {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HostPlatform {
     Android,
+    Ohos,
     Windows,
     Linux,
     Macos,
@@ -590,9 +621,9 @@ pub struct BrowserSessionCommand {
     pub sessionId: Option<String>,
     pub url: Option<String>,
     pub script: Option<String>,
+    pub payloadJson: String,
     pub userAgent: Option<String>,
     pub headers: BTreeMap<String, String>,
-    pub reveal: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

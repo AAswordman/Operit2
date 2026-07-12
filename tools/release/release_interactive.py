@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 
@@ -11,9 +12,31 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 RELEASE_SCRIPT = SCRIPT_DIR / "release.py"
 
 
+class ValueEnum(str, Enum):
+    # Returns the raw enum value for command-line interpolation.
+    def __str__(self):
+        return self.value
+
+
+class ChoiceKey(ValueEnum):
+    CLI = "cli"
+    APP = "app"
+    FULL = "full"
+    CHECK = "check"
+    HOST = "host"
+    ALL = "all"
+    WSL = "wsl"
+    NO_WSL = "no_wsl"
+    RUN = "run"
+    CANCEL = "cancel"
+    BUILD = "build"
+    PUBLISH = "publish"
+    DRAFT = "draft"
+
+
 @dataclass(frozen=True)
 class Choice:
-    key: str
+    key: ChoiceKey
     title: str
     args: tuple[str, ...]
 
@@ -37,42 +60,42 @@ def build_command() -> list[str]:
     target = choose(
         "这次要处理什么？",
         [
-            Choice("cli", "CLI/TUI", ("--scope", "cli")),
-            Choice("app", "App", ("--scope", "app")),
-            Choice("full", "全量：App + CLI/TUI", ("--scope", "full")),
-            Choice("check", "只检查版本和脚本入口", ("--scope", "none", "--build-only", "--no-wsl")),
+            Choice(ChoiceKey.CLI, "CLI/TUI", ("--scope", "cli")),
+            Choice(ChoiceKey.APP, "App（Android + OpenHarmony + 当前桌面平台）", ("--scope", "app")),
+            Choice(ChoiceKey.FULL, "全量：App（Android + OpenHarmony + 当前桌面平台）+ CLI/TUI", ("--scope", "full")),
+            Choice(ChoiceKey.CHECK, "只检查版本和脚本入口", ("--scope", "none", "--build-only", "--no-wsl")),
         ],
     )
 
     command = [sys.executable, str(RELEASE_SCRIPT), *target.args]
 
-    if target.key != "check":
+    if target.key != ChoiceKey.CHECK:
         mode = choose(
             "执行方式？",
             [
-                Choice("build", "只构建检查", ("--build-only",)),
-                Choice("publish", "发布到 GitHub Release", ()),
-                Choice("draft", "发布到 GitHub Draft", ("--draft",)),
+                Choice(ChoiceKey.BUILD, "只构建检查", ("--build-only",)),
+                Choice(ChoiceKey.PUBLISH, "发布到 GitHub Release", ()),
+                Choice(ChoiceKey.DRAFT, "发布到 GitHub Draft", ("--draft",)),
             ],
         )
         command.extend(mode.args)
 
-    if target.key in ("cli", "full"):
+    if target.key in (ChoiceKey.CLI, ChoiceKey.FULL):
         arches = choose(
             "CLI 构建架构？",
             [
-                Choice("host", "当前主机架构 (x86_64/aarch64)", ("--cli-arches", "host")),
-                Choice("all", "全量桌面架构 (x86_64 + aarch64 for Windows/Linux/macOS)", ("--cli-arches", "all")),
+                Choice(ChoiceKey.HOST, "当前主机架构 (x86_64/aarch64)", ("--cli-arches", "host")),
+                Choice(ChoiceKey.ALL, "全量桌面架构 (x86_64 + aarch64 for Windows/Linux/macOS)", ("--cli-arches", "all")),
             ],
         )
         command.extend(arches.args)
 
-    if target.key != "check":
+    if target.key != ChoiceKey.CHECK:
         linux = choose(
             "Linux WSL 构建？",
             [
-                Choice("wsl", "启用 WSL Linux 构建", ()),
-                Choice("no_wsl", "关闭 WSL Linux 构建", ("--no-wsl",)),
+                Choice(ChoiceKey.WSL, "启用 WSL Linux 构建", ()),
+                Choice(ChoiceKey.NO_WSL, "关闭 WSL Linux 构建", ("--no-wsl",)),
             ],
         )
         command.extend(linux.args)
@@ -94,11 +117,11 @@ def main() -> int:
     confirm = choose(
         "确认执行？",
         [
-            Choice("run", "执行", ()),
-            Choice("cancel", "取消", ()),
+            Choice(ChoiceKey.RUN, "执行", ()),
+            Choice(ChoiceKey.CANCEL, "取消", ()),
         ],
     )
-    if confirm.key == "cancel":
+    if confirm.key == ChoiceKey.CANCEL:
         print("已取消。")
         return 0
 

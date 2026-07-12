@@ -23,12 +23,11 @@ void main(List<String> args) async {
     final webHostRoot = Directory.fromUri(
       input.packageRoot.resolve('../../../hosts/web/'),
     );
+    final ohosHostRoot = Directory.fromUri(
+      input.packageRoot.resolve('../../../hosts/ohos/'),
+    );
     final webSourceDir = Directory.fromUri(
       input.packageRoot.resolve('../../../apps/web_access/web/'),
-    );
-    final webDir = Directory.fromUri(input.packageRoot.resolve('web/'));
-    final flutterWebOutputDir = Directory.fromUri(
-      input.packageRoot.resolve('build/web/'),
     );
     final webBuildDir = Directory.fromUri(
       input.packageRoot.resolve('../../../apps/web_access/build/bundle/'),
@@ -63,6 +62,7 @@ void main(List<String> args) async {
     await _addRustDependencies(output, bridgeCrate);
     await _addRustDependencies(output, coreRoot);
     await _addRustDependencies(output, webHostRoot);
+    await _addRustDependencies(output, ohosHostRoot);
     await _addDirectoryFileDependencies(output, webSourceDir, {
       '.html',
       '.ico',
@@ -79,15 +79,6 @@ void main(List<String> args) async {
     ], workingDirectory: repoRoot.path);
 
     if (shouldBuildWebAssets) {
-      _verifyDirectorySymlink(
-        linkDirectory: webDir,
-        targetDirectory: webSourceDir,
-      );
-      await _ensureDirectorySymlink(
-        linkDirectory: flutterWebOutputDir,
-        targetDirectory: webBuildDir,
-      );
-
       await _run(
         'cargo',
         const ['build', '--release', '--target', 'wasm32-unknown-unknown'],
@@ -139,60 +130,6 @@ void main(List<String> args) async {
   });
 }
 
-/// Verifies a directory symlink points to the expected target directory.
-void _verifyDirectorySymlink({
-  required Directory linkDirectory,
-  required Directory targetDirectory,
-}) {
-  final type = FileSystemEntity.typeSync(
-    linkDirectory.path,
-    followLinks: false,
-  );
-  if (type != FileSystemEntityType.link) {
-    throw StateError(
-      'Expected directory symlink at ${linkDirectory.path}, found $type.',
-    );
-  }
-  final actualTarget = Directory(linkDirectory.path).resolveSymbolicLinksSync();
-  final expectedTarget = targetDirectory.resolveSymbolicLinksSync();
-  if (actualTarget != expectedTarget) {
-    throw StateError(
-      'Directory symlink ${linkDirectory.path} points to $actualTarget, '
-      'expected $expectedTarget.',
-    );
-  }
-}
-
-/// Ensures a generated directory path points to another directory.
-Future<void> _ensureDirectorySymlink({
-  required Directory linkDirectory,
-  required Directory targetDirectory,
-}) async {
-  await targetDirectory.create(recursive: true);
-  await linkDirectory.parent.create(recursive: true);
-
-  final link = Link(linkDirectory.path);
-  if (link.existsSync()) {
-    final actualTarget = Directory(
-      linkDirectory.path,
-    ).resolveSymbolicLinksSync();
-    final expectedTarget = targetDirectory.resolveSymbolicLinksSync();
-    if (actualTarget == expectedTarget) {
-      return;
-    }
-    await link.delete();
-  } else if (linkDirectory.existsSync()) {
-    await linkDirectory.delete(recursive: true);
-  } else {
-    final file = File(linkDirectory.path);
-    if (file.existsSync()) {
-      await file.delete();
-    }
-  }
-
-  await link.create(targetDirectory.absolute.path);
-}
-
 Future<void> _addDirectoryFileDependencies(
   BuildOutputBuilder output,
   Directory root,
@@ -242,11 +179,12 @@ Future<void> _addRustDependencies(
   }
 }
 
+/// Copies the shared Web Access bundle into Flutter native assets.
 Future<void> _syncDirectory(Directory source, Directory destination) async {
   if (!source.existsSync()) {
     throw StateError('Web access source bundle does not exist: ${source.path}');
   }
-  if (destination.existsSync()) {
+  if (destination.existsSync() || await Link(destination.path).exists()) {
     await destination.delete(recursive: true);
   }
   await destination.create(recursive: true);
@@ -266,6 +204,7 @@ Future<void> _syncDirectory(Directory source, Directory destination) async {
   }
 }
 
+/// Computes a path relative to the copied Web Access bundle root.
 String _relativePath(Directory root, FileSystemEntity entity) {
   final rootPath = root.uri.toFilePath(windows: Platform.isWindows);
   final entityPath = entity.uri.toFilePath(windows: Platform.isWindows);
@@ -275,6 +214,7 @@ String _relativePath(Directory root, FileSystemEntity entity) {
   return entityPath.substring(rootPath.length);
 }
 
+/// Detects recursive copies of the embedded Web Access asset directory.
 bool _isFlutterBundledWebAccessCopy(String relativePath) {
   final segments = relativePath
       .split(RegExp(r'[\\/]'))
@@ -332,21 +272,32 @@ String _pythonExecutable(Directory repoRoot) {
   return File.fromUri(repoRoot.uri.resolve('.venv/bin/python')).path;
 }
 
-String? _targetOs(BuildInput input) {
+/// Reads the exact Flutter build target from the hook configuration schema.
+String _targetOs(BuildInput input) {
   final config = input.json['config'];
   if (config is! Map<String, Object?>) {
-    return null;
+    throw StateError('Build hook config is not an object.');
   }
   final extensions = config['extensions'];
-  if (extensions is! Map<String, Object?>) {
-    return null;
+  if (extensions is Map<String, Object?>) {
+    final codeAssets = extensions['code_assets'];
+    if (codeAssets is! Map<String, Object?>) {
+      throw StateError('Build hook code_assets config is not an object.');
+    }
+    final targetOs = codeAssets['target_os'];
+    if (targetOs is! String || targetOs.isEmpty) {
+      throw StateError('Build hook code_assets target_os is missing.');
+    }
+    return targetOs;
   }
-  final codeAssets = extensions['code_assets'];
-  if (codeAssets is! Map<String, Object?>) {
-    return null;
+  final buildAssetTypes = config['build_asset_types'];
+  final linkingEnabled = config['linking_enabled'];
+  if (buildAssetTypes is List<Object?> &&
+      buildAssetTypes.isEmpty &&
+      linkingEnabled == true) {
+    return 'web';
   }
-  final targetOs = codeAssets['target_os'];
-  return targetOs is String ? targetOs : null;
+  throw StateError('Unsupported build hook target configuration: $config');
 }
 
 Future<Map<String, String>> _wasmCargoEnvironment(Directory repoRoot) async {

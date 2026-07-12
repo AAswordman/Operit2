@@ -18,9 +18,10 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
     output.push_str("    }\n\n");
     output.push_str("    #[cfg(not(target_arch = \"wasm32\"))]\n");
     output.push_str("    pub async fn runCoreCommand(&mut self, args: &[String]) -> Result<operit_command_core::CoreCommandOutput, operit_link::CoreLinkError> {\n");
-    output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), operit_link::CoreObjectPath::parse(\"application\"), \"runCoreCommand\", serde_json::json!({ \"args\": args }))).await;\n");
+    output.push_str("        let args = operit_link::toCoreValue(std::collections::BTreeMap::from([(\"args\", args)])).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_ARGS\", error.to_string()))?;\n");
+    output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), operit_link::CoreObjectPath::parse(\"application\"), \"runCoreCommand\", args)).await;\n");
     output.push_str("        let value = response.result?;\n");
-    output.push_str("        serde_json::from_value(value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
+    output.push_str("        operit_link::fromCoreValue(value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
     output.push_str("    }\n\n");
     for object in objects
         .iter()
@@ -75,18 +76,18 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
         );
         output.push_str("        Self { client, target_path }\n");
         output.push_str("    }\n\n");
-        output.push_str("    async fn callGenerated<T: serde::de::DeserializeOwned>(&mut self, methodName: &str, args: serde_json::Value) -> Result<T, operit_link::CoreLinkError> {\n");
+        output.push_str("    async fn callGenerated<T: serde::de::DeserializeOwned>(&mut self, methodName: &str, args: operit_link::CoreValue) -> Result<T, operit_link::CoreLinkError> {\n");
         output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_path.clone(), methodName, args)).await;\n");
         output.push_str("        let value = response.result?;\n");
-        output.push_str("        serde_json::from_value(value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
+        output.push_str("        operit_link::fromCoreValue(value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
         output.push_str("    }\n\n");
-        output.push_str("    async fn callGeneratedUnit(&mut self, methodName: &str, args: serde_json::Value) -> Result<(), operit_link::CoreLinkError> {\n");
+        output.push_str("    async fn callGeneratedUnit(&mut self, methodName: &str, args: operit_link::CoreValue) -> Result<(), operit_link::CoreLinkError> {\n");
         output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_path.clone(), methodName, args)).await;\n");
         output.push_str("        response.result.map(|_| ())\n");
         output.push_str("    }\n\n");
-        output.push_str("    async fn watchGenerated<T: serde::de::DeserializeOwned>(&mut self, propertyName: &str, args: serde_json::Value) -> Result<T, operit_link::CoreLinkError> {\n");
+        output.push_str("    async fn watchGenerated<T: serde::de::DeserializeOwned>(&mut self, propertyName: &str, args: operit_link::CoreValue) -> Result<T, operit_link::CoreLinkError> {\n");
         output.push_str("        let event = self.client.watchSnapshot(operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), propertyName, args)).await?;\n");
-        output.push_str("        serde_json::from_value(event.value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
+        output.push_str("        operit_link::fromCoreValue(event.value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
         output.push_str("    }\n\n");
         for method in object
             .methods
@@ -250,7 +251,7 @@ fn render_proxy_watch_all_method(object: &SourceObject) -> String {
         return "    /// Watches every generated state-flow property on this proxy object.\n    pub async fn watchAllGeneratedStateFlows(&mut self, _sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {\n        Ok(())\n    }\n\n".to_string();
     }
     format!(
-        "    /// Watches every generated state-flow property on this proxy object.\n    pub async fn watchAllGeneratedStateFlows(&mut self, sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {{\n        let mut propertyNames: Vec<&'static str> = Vec::new();\n{}        for propertyName in propertyNames {{\n            let request = operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), propertyName, serde_json::json!({{}}));\n            let mut stream = self.client.watch(request).await?;\n            let sender = sender.clone();\n            tokio::spawn(async move {{\n                while let Some(event) = stream.recv().await {{\n                    let _ = sender.send(event);\n                }}\n            }});\n        }}\n        Ok(())\n    }}\n\n",
+        "    /// Watches every generated state-flow property on this proxy object.\n    pub async fn watchAllGeneratedStateFlows(&mut self, sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {{\n        let mut propertyNames: Vec<&'static str> = Vec::new();\n{}        for propertyName in propertyNames {{\n            let request = operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), propertyName, operit_link::CoreValue::emptyMap());\n            let mut stream = self.client.watch(request).await?;\n            let sender = sender.clone();\n            tokio::spawn(async move {{\n                while let Some(event) = stream.recv().await {{\n                    let _ = sender.send(event);\n                }}\n            }});\n        }}\n        Ok(())\n    }}\n\n",
         watchable.join("")
     )
 }
@@ -270,22 +271,30 @@ fn render_proxy_params(method: &SourceMethod) -> String {
 
 fn render_proxy_args_json(method: &SourceMethod) -> String {
     if method.args.is_empty() {
-        return "serde_json::json!({})".to_string();
+        return "operit_link::CoreValue::emptyMap()".to_string();
     }
     let entries = method
         .args
         .iter()
-        .map(|arg| format!("{:?}: {}", arg.name, render_proxy_arg_json_expr(arg)))
+        .map(|arg| {
+            format!(
+                "__core_args.insert({:?}.to_string(), {});",
+                arg.name,
+                render_proxy_arg_core_value_expr(arg),
+            )
+        })
         .collect::<Vec<_>>()
-        .join(", ");
-    format!("serde_json::json!({{{entries}}})")
+        .join(" ");
+    format!("{{ let mut __core_args = std::collections::BTreeMap::new(); {entries} operit_link::CoreValue::Map(__core_args) }}")
 }
 
-fn render_proxy_arg_json_expr(arg: &SourceArg) -> String {
-    if arg.ty == "&std::path::Path" {
-        format!("{}.to_string_lossy().to_string()", arg.name)
+fn render_proxy_arg_core_value_expr(arg: &SourceArg) -> String {
+    if arg.ty == "Vec<u8>" {
+        format!("operit_link::CoreValue::Bytes({})", arg.name)
+    } else if arg.ty == "&std::path::Path" {
+        format!("operit_link::toCoreValue({}.to_string_lossy().to_string()).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_ARGS\", format!(\"{}: {{error}}\")))?", arg.name, arg.name)
     } else {
-        arg.name.clone()
+        format!("operit_link::toCoreValue({}).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_ARGS\", format!(\"{}: {{error}}\")))?", arg.name, arg.name)
     }
 }
 

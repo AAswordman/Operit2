@@ -216,8 +216,8 @@ fn start_remote_host_interaction_loop(
             .await
             .expect("remote host interaction stream must open");
         while let Some(event) = stream.recv().await {
-            let request: RuntimeHostInteractionRequest =
-                serde_json::from_value(event.value).expect("host interaction event must be typed");
+            let request: RuntimeHostInteractionRequest = operit_link::fromCoreValue(event.value)
+                .expect("host interaction event must be typed");
             handle_remote_tool_permission_interaction(&mut proxy, approval_bridge.clone(), request)
                 .await;
         }

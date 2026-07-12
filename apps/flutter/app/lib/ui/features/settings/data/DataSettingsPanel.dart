@@ -237,7 +237,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
       return;
     }
     setState(() => _busy = true);
-    late final List<int> bytes;
+    late final Uint8List bytes;
     late final RawSnapshotManifest manifest;
     try {
       bytes = await file.readAsBytes();

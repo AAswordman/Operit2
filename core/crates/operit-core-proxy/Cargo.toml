@@ -24,6 +24,10 @@ tokio = { workspace = true, features = ["sync"] }
 quote = "1"
 syn = { version = "2", features = ["full"] }
 
+[dev-dependencies]
+operit-host-native-common = { path = "../../../hosts/common/operit-host-native-common" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"
 

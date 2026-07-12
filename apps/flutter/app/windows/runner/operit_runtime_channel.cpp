@@ -27,11 +27,16 @@ using BridgeCreate = BridgeHandle (*)();
 using BridgeCreateWithStorageRoots = BridgeHandle (*)(const char*, const char*);
 using BridgeCreateError = char* (*)();
 using BridgeDestroy = void (*)(BridgeHandle);
-using BridgeCall = char* (*)(BridgeHandle, const unsigned char*, size_t);
-using BridgeWatchSnapshot = char* (*)(BridgeHandle, const unsigned char*, size_t);
-using BridgeWatchStream = char* (*)(BridgeHandle, const unsigned char*, size_t);
-using BridgeNextWatchChannelEvent = char* (*)(BridgeHandle);
-using BridgeCloseWatchStream = char* (*)(BridgeHandle, const char*);
+struct OperitByteBuffer { unsigned char* ptr; size_t len; };
+using BridgeCall = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
+using BridgePushOpen = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
+using BridgePushItem = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
+using BridgePushClose = OperitByteBuffer (*)(BridgeHandle, const char*);
+using BridgeWatchSnapshot = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
+using BridgeWatchStream = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
+using BridgeNextWatchChannelEvent = OperitByteBuffer (*)(BridgeHandle);
+using BridgeCloseWatchStream = OperitByteBuffer (*)(BridgeHandle, const char*);
+using BridgeFreeBytes = void (*)(OperitByteBuffer);
 using BridgeStartWebAccessServer =
     char* (*)(BridgeHandle, const char*, const char*, const char*, const char*,
               const char*, const char*, const char*, const char*, const char*,
@@ -219,6 +224,12 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_destroy"));
       call_ = reinterpret_cast<BridgeCall>(
           GetProcAddress(library_, "operit_flutter_bridge_call"));
+      push_open_ = reinterpret_cast<BridgePushOpen>(
+          GetProcAddress(library_, "operit_flutter_bridge_push_open"));
+      push_item_ = reinterpret_cast<BridgePushItem>(
+          GetProcAddress(library_, "operit_flutter_bridge_push_item"));
+      push_close_ = reinterpret_cast<BridgePushClose>(
+          GetProcAddress(library_, "operit_flutter_bridge_push_close"));
       watch_snapshot_ = reinterpret_cast<BridgeWatchSnapshot>(
           GetProcAddress(library_, "operit_flutter_bridge_watch_snapshot"));
       watch_stream_ = reinterpret_cast<BridgeWatchStream>(
@@ -241,14 +252,17 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_remote_pair_finish"));
       free_string_ = reinterpret_cast<BridgeFreeString>(
           GetProcAddress(library_, "operit_flutter_bridge_free_string"));
+      free_bytes_ = reinterpret_cast<BridgeFreeBytes>(
+          GetProcAddress(library_, "operit_flutter_bridge_free_bytes"));
       if (create_ == nullptr || create_with_storage_roots_ == nullptr ||
-          destroy_ == nullptr || call_ == nullptr ||
+          destroy_ == nullptr || call_ == nullptr || push_open_ == nullptr ||
+          push_item_ == nullptr || push_close_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
           next_watch_channel_event_ == nullptr ||
           close_watch_stream_ == nullptr ||
           start_web_access_server_ == nullptr || stop_web_access_server_ == nullptr ||
           remote_pair_start_ == nullptr || remote_pair_finish_ == nullptr ||
-          free_string_ == nullptr) {
+          free_string_ == nullptr || free_bytes_ == nullptr) {
         AssignError(error, "operit flutter bridge exports are incomplete");
         return false;
       }
@@ -267,54 +281,64 @@ class OperitRuntimeLibrary {
     return true;
   }
 
-  bool Call(const std::string& request, std::string* response,
+  bool Call(const std::vector<uint8_t>& request, std::vector<uint8_t>* response,
             std::string* error) {
     if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
-    char* raw_response = call_(
-        handle_, reinterpret_cast<const unsigned char*>(request.data()),
-        request.size());
-    return TakeBridgeString(raw_response, response, error);
+    return TakeBridgeBytes(call_(handle_, request.data(), request.size()), response, error);
   }
 
-  bool WatchSnapshot(const std::string& request, std::string* response,
+  /// Opens one local Link push stream.
+  bool PushOpen(const std::vector<uint8_t>& request,
+                std::vector<uint8_t>* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) return false;
+    return TakeBridgeBytes(push_open_(handle_, request.data(), request.size()), response, error);
+  }
+
+  /// Dispatches one local Link push item.
+  bool PushItem(const std::vector<uint8_t>& item,
+                std::vector<uint8_t>* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) return false;
+    return TakeBridgeBytes(push_item_(handle_, item.data(), item.size()), response, error);
+  }
+
+  /// Closes one local Link push stream.
+  bool PushClose(const std::string& push_id,
+                 std::vector<uint8_t>* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) return false;
+    return TakeBridgeBytes(push_close_(handle_, push_id.c_str()), response, error);
+  }
+
+  bool WatchSnapshot(const std::vector<uint8_t>& request, std::vector<uint8_t>* response,
                      std::string* error) {
     if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
-    char* raw_response = watch_snapshot_(
-        handle_, reinterpret_cast<const unsigned char*>(request.data()),
-        request.size());
-    return TakeBridgeString(raw_response, response, error);
+    return TakeBridgeBytes(watch_snapshot_(handle_, request.data(), request.size()), response, error);
   }
 
-  bool WatchStream(const std::string& request, std::string* response,
+  bool WatchStream(const std::vector<uint8_t>& request, std::vector<uint8_t>* response,
                    std::string* error) {
     if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
-    char* raw_response = watch_stream_(
-        handle_, reinterpret_cast<const unsigned char*>(request.data()),
-        request.size());
-    return TakeBridgeString(raw_response, response, error);
+    return TakeBridgeBytes(watch_stream_(handle_, request.data(), request.size()), response, error);
   }
 
-  bool NextWatchChannelEvent(std::string* response, std::string* error) {
+  bool NextWatchChannelEvent(std::vector<uint8_t>* response, std::string* error) {
     if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
-    char* raw_response = next_watch_channel_event_(handle_);
-    return TakeBridgeString(raw_response, response, error);
+    return TakeBridgeBytes(next_watch_channel_event_(handle_), response, error);
   }
 
-  bool CloseWatchStream(const std::string& subscription, std::string* response,
+  bool CloseWatchStream(const std::string& subscription, std::vector<uint8_t>* response,
                         std::string* error) {
     if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
-    char* raw_response = close_watch_stream_(handle_, subscription.c_str());
-    return TakeBridgeString(raw_response, response, error);
+    return TakeBridgeBytes(close_watch_stream_(handle_, subscription.c_str()), response, error);
   }
 
   bool StartWebAccessServer(const std::string& bind_address,
@@ -448,6 +472,18 @@ class OperitRuntimeLibrary {
     return true;
   }
 
+  /// Copies one owned Rust Link buffer and releases its native allocation.
+  bool TakeBridgeBytes(OperitByteBuffer value, std::vector<uint8_t>* output,
+                       std::string* error) {
+    if (value.ptr == nullptr) {
+      AssignError(error, "operit flutter bridge returned an empty byte buffer");
+      return false;
+    }
+    output->assign(value.ptr, value.ptr + value.len);
+    free_bytes_(value);
+    return true;
+  }
+
   HMODULE library_ = nullptr;
   BridgeHandle handle_ = nullptr;
   std::string configured_runtime_root_;
@@ -458,6 +494,9 @@ class OperitRuntimeLibrary {
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
   BridgeCall call_ = nullptr;
+  BridgePushOpen push_open_ = nullptr;
+  BridgePushItem push_item_ = nullptr;
+  BridgePushClose push_close_ = nullptr;
   BridgeWatchSnapshot watch_snapshot_ = nullptr;
   BridgeWatchStream watch_stream_ = nullptr;
   BridgeNextWatchChannelEvent next_watch_channel_event_ = nullptr;
@@ -468,6 +507,7 @@ class OperitRuntimeLibrary {
   BridgeRemotePairStart remote_pair_start_ = nullptr;
   BridgeRemotePairFinish remote_pair_finish_ = nullptr;
   BridgeFreeString free_string_ = nullptr;
+  BridgeFreeBytes free_bytes_ = nullptr;
 };
 
 std::shared_ptr<OperitRuntimeLibrary> g_operit_runtime_library;
@@ -579,7 +619,7 @@ void RequestWindowsAdminAuthorization(
   result->Success();
 }
 
-void DispatchWatchChannelEvent(std::string frame) {
+void DispatchWatchChannelEvent(std::vector<uint8_t> frame) {
   PostOperitRuntimePlatformTask([frame = std::move(frame)]() {
     for (const auto& channel : g_operit_runtime_channels) {
       channel->InvokeMethod(
@@ -596,7 +636,7 @@ void EnsureWatchChannelPump(std::shared_ptr<OperitRuntimeLibrary> library) {
   }
   std::thread([library = std::move(library)]() {
     while (g_watch_channel_pump_running.load()) {
-      std::string frame;
+      std::vector<uint8_t> frame;
       std::string error;
       if (!library->NextWatchChannelEvent(&frame, &error)) {
         break;
@@ -629,14 +669,34 @@ void RespondRuntimeStringAsync(
   }).detach();
 }
 
+/// Runs one binary Link bridge operation off the Windows platform thread.
+template <typename Operation>
+void RespondRuntimeBytesAsync(
+    Operation operation,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  std::thread([operation = std::move(operation), result = std::move(result)]() mutable {
+    std::vector<uint8_t> response;
+    std::string error;
+    const bool ok = operation(&response, &error);
+    PostOperitRuntimePlatformTask(
+        [result = std::move(result), ok, response = std::move(response), error = std::move(error)]() mutable {
+          if (ok) {
+            result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+        });
+  }).detach();
+}
+
 /// Runs a core proxy call off the Windows platform thread.
 void RespondRuntimeCallAsync(
-    std::string request,
+    std::vector<uint8_t> request,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   auto library = g_operit_runtime_library;
-  RespondRuntimeStringAsync(
+  RespondRuntimeBytesAsync(
       [library, request = std::move(request)](
-          std::string* response, std::string* error) {
+          std::vector<uint8_t>* response, std::string* error) {
         return library->Call(request, response, error);
       },
       std::move(result));
@@ -742,23 +802,58 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
           return;
         }
         if (method_call.method_name().compare("call") == 0) {
-          const std::string* request = StringArgument(method_call);
+          const std::vector<uint8_t>* request =
+              std::get_if<std::vector<uint8_t>>(method_call.arguments());
           if (request == nullptr) {
-            result->Error("INVALID_ARGS", "call expects a JSON string");
+            result->Error("INVALID_ARGS", "call expects MessagePack bytes");
             return;
           }
           RespondRuntimeCallAsync(*request, std::move(result));
           return;
         }
-        if (method_call.method_name().compare("watchSnapshot") == 0) {
-          const std::string* request = StringArgument(method_call);
+        if (method_call.method_name().compare("pushOpen") == 0 ||
+            method_call.method_name().compare("pushItem") == 0) {
+          const std::vector<uint8_t>* request =
+              std::get_if<std::vector<uint8_t>>(method_call.arguments());
           if (request == nullptr) {
-            result->Error("INVALID_ARGS", "watchSnapshot expects a JSON string");
+            result->Error("INVALID_ARGS", "push operation expects MessagePack bytes");
             return;
           }
-          RespondRuntimeStringAsync(
+          const bool opening = method_call.method_name().compare("pushOpen") == 0;
+          RespondRuntimeBytesAsync(
+              [runtime_library, request = *request, opening](
+                  std::vector<uint8_t>* response, std::string* operation_error) {
+                return opening
+                    ? runtime_library->PushOpen(request, response, operation_error)
+                    : runtime_library->PushItem(request, response, operation_error);
+              },
+              std::move(result));
+          return;
+        }
+        if (method_call.method_name().compare("pushClose") == 0) {
+          const std::string* push_id = StringArgument(method_call);
+          if (push_id == nullptr) {
+            result->Error("INVALID_ARGS", "pushClose expects a push id");
+            return;
+          }
+          RespondRuntimeBytesAsync(
+              [runtime_library, push_id = *push_id](
+                  std::vector<uint8_t>* response, std::string* operation_error) {
+                return runtime_library->PushClose(push_id, response, operation_error);
+              },
+              std::move(result));
+          return;
+        }
+        if (method_call.method_name().compare("watchSnapshot") == 0) {
+          const std::vector<uint8_t>* request =
+              std::get_if<std::vector<uint8_t>>(method_call.arguments());
+          if (request == nullptr) {
+            result->Error("INVALID_ARGS", "watchSnapshot expects MessagePack bytes");
+            return;
+          }
+          RespondRuntimeBytesAsync(
               [runtime_library, request = *request](
-                  std::string* response, std::string* operation_error) {
+                  std::vector<uint8_t>* response, std::string* operation_error) {
                 return runtime_library->WatchSnapshot(
                     request, response, operation_error);
               },
@@ -766,14 +861,15 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
           return;
         }
         if (method_call.method_name().compare("watchStream") == 0) {
-          const std::string* request = StringArgument(method_call);
+          const std::vector<uint8_t>* request =
+              std::get_if<std::vector<uint8_t>>(method_call.arguments());
           if (request == nullptr) {
-            result->Error("INVALID_ARGS", "watchStream expects a JSON string");
+            result->Error("INVALID_ARGS", "watchStream expects MessagePack bytes");
             return;
           }
-          RespondRuntimeStringAsync(
+          RespondRuntimeBytesAsync(
               [runtime_library, request = *request](
-                  std::string* response, std::string* operation_error) {
+                  std::vector<uint8_t>* response, std::string* operation_error) {
                 if (!runtime_library->WatchStream(
                         request, response, operation_error)) {
                   return false;
@@ -791,9 +887,9 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                           "closeWatchStream expects a subscription id");
             return;
           }
-          RespondRuntimeStringAsync(
+          RespondRuntimeBytesAsync(
               [runtime_library, subscription = *subscription](
-                  std::string* response, std::string* operation_error) {
+                  std::vector<uint8_t>* response, std::string* operation_error) {
                 return runtime_library->CloseWatchStream(
                     subscription, response, operation_error);
               },

@@ -15,10 +15,10 @@ pub(crate) fn render_generated(
 ) -> String {
     let mut output = String::new();
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
-    output.push_str("fn generated_core_proxy_schema() -> serde_json::Value {\n");
-    output.push_str("    serde_json::from_str(r#\"");
+    output.push_str("fn generated_core_proxy_schema() -> operit_link::CoreValue {\n");
+    output.push_str("    to_core_value(serde_json::from_str::<serde_json::Value>(r#\"");
     output.push_str(&schema_json);
-    output.push_str("\"#).expect(\"generated core proxy schema must be valid JSON\")\n");
+    output.push_str("\"#).expect(\"generated core proxy schema must be valid JSON\")).expect(\"generated core proxy schema must convert to CoreValue\")\n");
     output.push_str("}\n\n");
     output.push_str(&render_generated_error_details(objects, error_types));
     for object in objects {
@@ -114,7 +114,7 @@ fn render_error_type_helper(
 ) -> String {
     let mut output = String::new();
     output.push_str(&format!(
-        "fn {}(error: &{}) -> serde_json::Value {{\n",
+        "fn {}(error: &{}) -> operit_link::CoreValue {{\n",
         error_details_fn_name(&definition.full_type),
         definition.full_type
     ));
@@ -158,7 +158,7 @@ fn render_error_variant_arm(
         .iter()
         .map(|field| {
             format!(
-                "{:?}: {}",
+                "({:?}.to_string(), {})",
                 field.name,
                 error_field_json_expr(&field.name, &field.ty, error_types)
             )
@@ -166,7 +166,7 @@ fn render_error_variant_arm(
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "            {}::{}{} => serde_json::json!({{\n                \"errorType\": {:?},\n                \"variant\": {:?},\n                \"message\": error.to_string(),\n                \"fields\": {{ {} }},\n            }}),\n",
+        "            {}::{}{} => core_value_map(vec![(\"errorType\".to_string(), CoreValue::String({:?}.to_string())), (\"variant\".to_string(), CoreValue::String({:?}.to_string())), (\"message\".to_string(), CoreValue::String(error.to_string())), (\"fields\".to_string(), core_value_map(vec![{}]))]),\n",
         definition.full_type,
         variant.name,
         pattern,
@@ -182,7 +182,7 @@ fn error_field_json_expr(
     error_types: &HashMap<String, ErrorTypeDefinition>,
 ) -> String {
     if is_json_direct_error_field_type(ty) {
-        name.to_string()
+        format!("to_core_value({name}).expect(\"error field must convert\")")
     } else if error_types.contains_key(ty) {
         format!("{}({name})", error_details_fn_name(ty))
     } else {
@@ -196,24 +196,17 @@ fn error_field_json_expr(
 fn render_string_error_details_helper() -> String {
     let mut output = String::new();
     output.push_str(
-        "fn generated_core_proxy_error_details_for_string(error: &String) -> serde_json::Value {\n",
+        "fn generated_core_proxy_error_details_for_string(error: &String) -> operit_link::CoreValue {\n",
     );
-    output.push_str("    serde_json::json!({\n");
-    output.push_str("        \"errorType\": \"String\",\n");
-    output.push_str("        \"message\": error,\n");
-    output.push_str("        \"fields\": { \"value\": error },\n");
-    output.push_str("    })\n");
+    output.push_str("    core_value_map(vec![(\"errorType\".to_string(), CoreValue::String(\"String\".to_string())), (\"message\".to_string(), CoreValue::String(error.clone())), (\"fields\".to_string(), core_value_map(vec![(\"value\".to_string(), CoreValue::String(error.clone()))]))])\n");
     output.push_str("}\n\n");
     output
 }
 
 fn render_leaf_error_details_helper() -> String {
     let mut output = String::new();
-    output.push_str("fn generated_core_proxy_error_leaf_details<E: std::fmt::Display>(error: &E, error_type: &str) -> serde_json::Value {\n");
-    output.push_str("    serde_json::json!({\n");
-    output.push_str("        \"errorType\": error_type,\n");
-    output.push_str("        \"message\": error.to_string(),\n");
-    output.push_str("    })\n");
+    output.push_str("fn generated_core_proxy_error_leaf_details<E: std::fmt::Display>(error: &E, error_type: &str) -> operit_link::CoreValue {\n");
+    output.push_str("    core_value_map(vec![(\"errorType\".to_string(), CoreValue::String(error_type.to_string())), (\"message\".to_string(), CoreValue::String(error.to_string()))])\n");
     output.push_str("}\n\n");
     output
 }

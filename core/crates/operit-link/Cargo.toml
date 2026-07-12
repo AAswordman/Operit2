@@ -7,11 +7,10 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-ciborium = "0.2"
 futures-util.workspace = true
 rmp-serde = "1"
 serde.workspace = true
-serde_json.workspace = true
+serde_bytes = "0.11"
 tokio = { workspace = true, features = ["sync"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -19,11 +18,18 @@ axum = { version = "0.7", features = ["ws"] }
 tokio = { workspace = true, features = ["rt", "sync"] }
 
 [dev-dependencies]
+base64.workspace = true
+ciborium = "0.2"
 criterion = "0.5"
+serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "sync"] }
 
 [[bench]]
 name = "protocol_codec_bench"
+harness = false
+
+[[bench]]
+name = "browser_surface_codec_bench"
 harness = false
 
 [[bench]]

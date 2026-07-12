@@ -3,15 +3,19 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:webview_all/webview_all.dart';
 
 import '../../../../../../../l10n/generated/app_localizations.dart';
 import 'WorkspaceBrowserPopupWidgets.dart';
 
 class WorkspaceBrowserSiteDataSheet extends StatefulWidget {
-  const WorkspaceBrowserSiteDataSheet({super.key, required this.controller});
+  const WorkspaceBrowserSiteDataSheet({
+    super.key,
+    required this.evaluate,
+    required this.clearCookies,
+  });
 
-  final WebViewController controller;
+  final Future<Object?> Function(String script) evaluate;
+  final Future<void> Function() clearCookies;
 
   @override
   State<WorkspaceBrowserSiteDataSheet> createState() =>
@@ -115,7 +119,7 @@ class _WorkspaceBrowserSiteDataSheetState
   }
 
   Future<_WorkspaceBrowserSiteData> _loadData() async {
-    final result = await widget.controller.runJavaScriptReturningResult(r'''
+    final result = await widget.evaluate(r'''
 JSON.stringify({
   localStorage: Object.fromEntries(Object.keys(localStorage).map(function(key) {
     return [key, localStorage.getItem(key)];
@@ -125,21 +129,24 @@ JSON.stringify({
   }))
 })
 ''');
-    return _WorkspaceBrowserSiteData.fromJsonText(result as String);
+    if (result is! String) {
+      throw StateError('Site data result is not a string');
+    }
+    return _WorkspaceBrowserSiteData.fromJsonText(result);
   }
 
   Future<void> _clearLocalStorage() async {
-    await widget.controller.runJavaScript('localStorage.clear();');
+    await widget.evaluate('localStorage.clear();');
     _refresh();
   }
 
   Future<void> _clearSessionStorage() async {
-    await widget.controller.runJavaScript('sessionStorage.clear();');
+    await widget.evaluate('sessionStorage.clear();');
     _refresh();
   }
 
   Future<void> _clearCookies() async {
-    await WebViewCookieManager().clearCookies();
+    await widget.clearCookies();
     _refresh();
   }
 }

@@ -1968,17 +1968,17 @@ impl OperitTui {
         for event in self.core.drainEvents() {
             match event.propertyName.as_str() {
                 "currentChatIdFlow" => {
-                    if let Ok(value) = serde_json::from_value::<Option<String>>(event.value) {
+                    if let Ok(value) = operit_link::fromCoreValue::<Option<String>>(event.value) {
                         self.current_chat_id_cache = value;
                     }
                 }
                 "chatHistoryFlow" => {
-                    if let Ok(value) = serde_json::from_value::<Vec<ChatMessage>>(event.value) {
+                    if let Ok(value) = operit_link::fromCoreValue::<Vec<ChatMessage>>(event.value) {
                         self.current_messages_cache = value;
                     }
                 }
                 "chatHistoriesFlow" => {
-                    if let Ok(value) = serde_json::from_value::<Vec<ChatHistory>>(event.value) {
+                    if let Ok(value) = operit_link::fromCoreValue::<Vec<ChatHistory>>(event.value) {
                         self.chats = chat_histories_to_list(value);
                         if let Some(chat_id) = self.current_chat_id_cache.clone() {
                             self.select_chat_by_id(&chat_id);
@@ -1986,7 +1986,7 @@ impl OperitTui {
                     }
                 }
                 "activeStreamingChatIdsFlow" => {
-                    if let Ok(value) = serde_json::from_value::<HashSet<String>>(event.value) {
+                    if let Ok(value) = operit_link::fromCoreValue::<HashSet<String>>(event.value) {
                         self.active_streaming_chat_ids_cache = value;
                         self.update_current_chat_loading_from_streaming_ids();
                         self.retain_active_response_stream_state();
@@ -1996,8 +1996,9 @@ impl OperitTui {
                     self.apply_response_stream_event(event.value);
                 }
                 "inputProcessingStateByChatIdFlow" => {
-                    if let Ok(value) =
-                        serde_json::from_value::<HashMap<String, InputProcessingState>>(event.value)
+                    if let Ok(value) = operit_link::fromCoreValue::<
+                        HashMap<String, InputProcessingState>,
+                    >(event.value)
                     {
                         self.current_chat_input_processing_state_cache =
                             current_input_processing_state_from_map(
@@ -2007,7 +2008,7 @@ impl OperitTui {
                     }
                 }
                 "currentWindowSizeFlow" => {
-                    if let Ok(value) = serde_json::from_value::<i32>(event.value) {
+                    if let Ok(value) = operit_link::fromCoreValue::<i32>(event.value) {
                         self.current_window_size_cache = value;
                     }
                 }

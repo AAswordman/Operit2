@@ -485,7 +485,7 @@ async fn run_link_call_command(args: &[String]) -> Result<(), String> {
             link_request_id(),
             CoreObjectPath::parse(target_path),
             method_name.clone(),
-            args_json,
+            operit_link::toCoreValue(args_json).map_err(|error| error.to_string())?,
         ))
         .await?;
     println!(
@@ -516,7 +516,7 @@ async fn run_link_watch_command(args: &[String]) -> Result<(), String> {
             link_request_id(),
             CoreObjectPath::parse(target_path),
             property_name.clone(),
-            args_json,
+            operit_link::toCoreValue(args_json).map_err(|error| error.to_string())?,
         ),
     )
     .await
@@ -589,10 +589,13 @@ where
             link_request_id(),
             CoreObjectPath::parse("application"),
             method_name.to_string(),
-            args,
+            operit_link::toCoreValue(args).map_err(|error| error.to_string())?,
         ))
         .await;
-    response.result.map_err(|error| error.to_string())
+    response
+        .result
+        .map_err(|error| error.to_string())
+        .and_then(|value| operit_link::fromCoreValue(value).map_err(|error| error.to_string()))
 }
 
 fn merge_sync_operations(

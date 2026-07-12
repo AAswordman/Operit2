@@ -15,6 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 
@@ -25,6 +26,16 @@ WORK_DIR = SCRIPT_DIR / "work"
 SECRETS_DIR = SCRIPT_DIR / "secrets"
 FLUTTER_APP_DIR = REPO_ROOT / "apps" / "flutter" / "app"
 WEB_ACCESS_BUNDLE_DIR = REPO_ROOT / "apps" / "web_access" / "build" / "bundle"
+WEB_ACCESS_EMBEDDED_ASSETS_DIR = FLUTTER_APP_DIR / "assets" / "web_access"
+WEB_ACCESS_ASSET_DECLARATION_PREFIX = "    - path: assets/web_access/"
+WEB_ACCESS_REQUIRED_FILES = (
+    "index.html",
+    "main.dart.js",
+    "operit_flutter_bridge.js",
+    "operit_flutter_bridge_bg.wasm",
+    "sql-wasm.js",
+    "sql-wasm.wasm",
+)
 PUBSPEC_PATH = FLUTTER_APP_DIR / "pubspec.yaml"
 ANDROID_DIR = FLUTTER_APP_DIR / "android"
 ANDROID_LOCAL_PROPERTIES = ANDROID_DIR / "local.properties"
@@ -84,26 +95,61 @@ class GitHubRepo:
     name: str
 
 
+class ValueEnum(str, Enum):
+    # Returns the raw enum value for command-line interpolation.
+    def __str__(self):
+        return self.value
+
+
+class HostPlatform(ValueEnum):
+    WINDOWS = "windows"
+    LINUX = "linux"
+    MACOS = "macos"
+
+
+class ReleaseProduct(ValueEnum):
+    APP = "app"
+    CLI = "cli"
+    NONE = "none"
+
+
+class ReleaseScope(ValueEnum):
+    CLI = "cli"
+    APP = "app"
+    FULL = "full"
+    NONE = "none"
+
+
+class CliArchMode(ValueEnum):
+    HOST = "host"
+    ALL = "all"
+
+
+class CliWebAssetMode(ValueEnum):
+    EMBEDDED = "embedded"
+    EXTERNAL = "external"
+
+
 @dataclass(frozen=True)
 class CliBuildTarget:
-    platform: str
+    platform: HostPlatform
     arch: str
     rust_target: str
 
 
 CLI_RUST_TARGETS = {
-    ("windows", "x86_64"): "x86_64-pc-windows-msvc",
-    ("windows", "aarch64"): "aarch64-pc-windows-msvc",
-    ("linux", "x86_64"): "x86_64-unknown-linux-musl",
-    ("linux", "aarch64"): "aarch64-unknown-linux-musl",
-    ("macos", "x86_64"): "x86_64-apple-darwin",
-    ("macos", "aarch64"): "aarch64-apple-darwin",
+    (HostPlatform.WINDOWS, "x86_64"): "x86_64-pc-windows-msvc",
+    (HostPlatform.WINDOWS, "aarch64"): "aarch64-pc-windows-msvc",
+    (HostPlatform.LINUX, "x86_64"): "x86_64-unknown-linux-musl",
+    (HostPlatform.LINUX, "aarch64"): "aarch64-unknown-linux-musl",
+    (HostPlatform.MACOS, "x86_64"): "x86_64-apple-darwin",
+    (HostPlatform.MACOS, "aarch64"): "aarch64-apple-darwin",
 }
 CLI_RELEASE_ARCHES = ("x86_64", "aarch64")
-CLI_WEB_ASSET_MODES = ("embedded", "external")
+CLI_WEB_ASSET_MODES = tuple(item.value for item in CliWebAssetMode)
 CLI_ALL_TARGETS = tuple(
     CliBuildTarget(platform=plat, arch=arch, rust_target=CLI_RUST_TARGETS[(plat, arch)])
-    for plat in ("windows", "linux", "macos")
+    for plat in HostPlatform
     for arch in CLI_RELEASE_ARCHES
 )
 
@@ -255,19 +301,6 @@ def github_auth():
     return GitHubAuth(token=token, api_url=api_url.rstrip("/"))
 
 
-def flutter_command():
-    local = read_properties(ANDROID_LOCAL_PROPERTIES)
-    flutter_sdk = local.get("flutter.sdk")
-    if not flutter_sdk:
-        raise RuntimeError(f"flutter.sdk is not defined in {ANDROID_LOCAL_PROPERTIES}")
-
-    sdk_path = Path(flutter_sdk)
-    command = sdk_path / "bin" / ("flutter.bat" if platform.system().lower() == "windows" else "flutter")
-    if not command.exists():
-        raise RuntimeError(f"Flutter command not found from flutter.sdk: {command}")
-    return command
-
-
 def reset_dir(path):
     ensure_cwd_outside(path)
     path.mkdir(parents=True, exist_ok=True)
@@ -277,11 +310,36 @@ def reset_dir(path):
 
 # Verifies the shared Web Access bundle has been generated.
 def require_web_access_bundle():
-    index = WEB_ACCESS_BUNDLE_DIR / "index.html"
-    if not index.is_file():
+    missing_files = [
+        name for name in WEB_ACCESS_REQUIRED_FILES if not (WEB_ACCESS_BUNDLE_DIR / name).is_file()
+    ]
+    if missing_files:
         raise RuntimeError(
-            "Web Access bundle not found: "
-            f"{WEB_ACCESS_BUNDLE_DIR}. Run tools/build_scripts/build_flutter_web_access.py before building this product."
+            "Web Access bundle is incomplete at "
+            f"{WEB_ACCESS_BUNDLE_DIR}; missing: {', '.join(missing_files)}. "
+            "Run tools/build_scripts/build_flutter_web_access.py before building this product."
+        )
+
+    if WEB_ACCESS_EMBEDDED_ASSETS_DIR.is_symlink():
+        WEB_ACCESS_EMBEDDED_ASSETS_DIR.unlink()
+    elif WEB_ACCESS_EMBEDDED_ASSETS_DIR.exists():
+        shutil.rmtree(WEB_ACCESS_EMBEDDED_ASSETS_DIR)
+    WEB_ACCESS_EMBEDDED_ASSETS_DIR.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(WEB_ACCESS_BUNDLE_DIR, WEB_ACCESS_EMBEDDED_ASSETS_DIR)
+
+    declared_paths = []
+    for line in PUBSPEC_PATH.read_text(encoding="utf-8").splitlines():
+        if line.startswith(WEB_ACCESS_ASSET_DECLARATION_PREFIX):
+            relative_path = line.removeprefix("    - path: ").rstrip("/")
+            declared_paths.append(FLUTTER_APP_DIR / Path(relative_path))
+    if not declared_paths:
+        raise RuntimeError(f"No Web Access asset directories are declared in {PUBSPEC_PATH}")
+
+    missing_directories = [path for path in declared_paths if not path.is_dir()]
+    if missing_directories:
+        raise RuntimeError(
+            "Embedded Web Access asset directories declared in pubspec.yaml are missing: "
+            + ", ".join(str(path) for path in missing_directories)
         )
 
 
@@ -616,7 +674,7 @@ Command after install:
 
 
 def write_cli_installer_files(package_dir, target_platform):
-    if target_platform == "windows":
+    if target_platform == HostPlatform.WINDOWS:
         write_windows_cli_installer_files(package_dir)
     else:
         write_unix_cli_installer_files(package_dir)
@@ -624,12 +682,12 @@ def write_cli_installer_files(package_dir, target_platform):
 
 def host_platform():
     name = platform.system().lower()
-    if name == "windows":
-        return "windows"
-    if name == "linux":
-        return "linux"
+    if name == HostPlatform.WINDOWS.value:
+        return HostPlatform.WINDOWS
+    if name == HostPlatform.LINUX.value:
+        return HostPlatform.LINUX
     if name == "darwin":
-        return "macos"
+        return HostPlatform.MACOS
     raise RuntimeError(f"Unsupported host OS: {name}")
 
 
@@ -654,38 +712,40 @@ def cli_build_targets_for_platform(target_platform):
 
 
 def cli_binary_name(target_platform):
-    return "operit2.exe" if target_platform == "windows" else "operit2"
+    return "operit2.exe" if target_platform == HostPlatform.WINDOWS else "operit2"
 
 
 def cli_archive_extension(target_platform):
-    return "zip" if target_platform == "windows" else "tar.gz"
+    return "zip" if target_platform == HostPlatform.WINDOWS else "tar.gz"
 
 
 # Returns the package name suffix for the selected Web Access asset mode.
 def cli_web_asset_package_suffix(web_assets):
-    if web_assets == "embedded":
+    web_assets = CliWebAssetMode(web_assets)
+    if web_assets == CliWebAssetMode.EMBEDDED:
         return ""
-    if web_assets == "external":
+    if web_assets == CliWebAssetMode.EXTERNAL:
         return "-external-web"
     raise RuntimeError(f"Unsupported CLI Web Access asset mode: {web_assets}")
 
 
 # Returns the cargo feature arguments for the selected Web Access asset mode.
 def cli_web_asset_cargo_args(web_assets):
-    if web_assets == "embedded":
+    web_assets = CliWebAssetMode(web_assets)
+    if web_assets == CliWebAssetMode.EMBEDDED:
         return []
-    if web_assets == "external":
+    if web_assets == CliWebAssetMode.EXTERNAL:
         return ["--no-default-features"]
     raise RuntimeError(f"Unsupported CLI Web Access asset mode: {web_assets}")
 
 
 # Returns the working directory for one packaged CLI target.
-def cli_package_dir(target, web_assets="embedded"):
+def cli_package_dir(target, web_assets=CliWebAssetMode.EMBEDDED):
     return WORK_DIR / f"cli-{target.platform}-{target.arch}{cli_web_asset_package_suffix(web_assets)}"
 
 
 # Returns the release archive path for one packaged CLI target.
-def cli_package_path(target, web_assets="embedded"):
+def cli_package_path(target, web_assets=CliWebAssetMode.EMBEDDED):
     return DIST_DIR / (
         f"operit2-cli-{target.platform}-{target.arch}"
         f"{cli_web_asset_package_suffix(web_assets)}.{cli_archive_extension(target.platform)}"
@@ -755,7 +815,7 @@ def github_request(method, url, auth, payload=None, headers=None, expected_statu
 
 
 def is_windows_host():
-    return platform.system().lower() == "windows"
+    return platform.system().lower() == HostPlatform.WINDOWS.value
 
 
 def windows_path_to_wsl(path):
@@ -768,7 +828,7 @@ def windows_path_to_wsl(path):
 
 
 def wsl_run(distro, script):
-    script = "export PATH=\"$HOME/.cargo/bin:$HOME/.local/flutter/bin:$PATH\"\n" + script
+    script = "export PATH=\"$HOME/.cargo/bin:$HOME/.pub-cache/bin:$HOME/.local/flutter/bin:$PATH\"\n" + script
     script = script.replace("\r\n", "\n").replace("\r", "\n")
     command = ["wsl.exe"]
     if distro:
@@ -784,7 +844,7 @@ def wsl_check_command(distro, name):
         command.extend(["-d", distro])
     command.extend(["bash", "-s"])
     script = (
-        "export PATH=\"$HOME/.cargo/bin:$HOME/.local/flutter/bin:$PATH\"\n"
+        "export PATH=\"$HOME/.cargo/bin:$HOME/.pub-cache/bin:$HOME/.local/flutter/bin:$PATH\"\n"
         f"command -v {shlex.quote(name)} >/dev/null\n"
     )
     script = script.replace("\r\n", "\n").replace("\r", "\n")
@@ -797,10 +857,12 @@ def wsl_single_quote(value):
 
 def build_wsl_linux_app(distro, build_name, build_number):
     require_web_access_bundle()
-    if not wsl_check_command(distro, "flutter"):
+    if not wsl_check_command(distro, "dart"):
         raise RuntimeError(
-            "WSL Linux app build requires Flutter inside WSL. Install Linux Flutter SDK in WSL and put flutter on PATH."
+            "WSL Linux app build requires Dart on PATH to start FVM."
         )
+    if not wsl_check_command(distro, "fvm"):
+        raise RuntimeError("WSL Linux app build requires FVM on PATH.")
     repo = shlex.quote(windows_path_to_wsl(REPO_ROOT))
     dist = shlex.quote(windows_path_to_wsl(DIST_DIR))
     build_name_arg = shlex.quote(build_name)
@@ -809,9 +871,10 @@ def build_wsl_linux_app(distro, build_name, build_number):
 set -e
 cd {repo}
 cd apps/flutter/app
-flutter pub get --enforce-lockfile
+fvm install --skip-pub-get
+fvm dart pub get --enforce-lockfile
 rm -rf build/linux/x64/release
-flutter build linux --release --build-name {build_name_arg} --build-number {build_number_arg}
+fvm flutter build linux --release --no-pub --build-name {build_name_arg} --build-number {build_number_arg}
 cd {repo}
 mkdir -p {dist}
 rm -f {dist}/operit2-app-linux-x86_64.tar.gz
@@ -823,7 +886,7 @@ tar -czf {dist}/operit2-app-linux-x86_64.tar.gz -C apps/flutter/app/build/linux/
 def build_wsl_linux_cli(distro):
     if not wsl_check_command(distro, "cargo"):
         raise RuntimeError("WSL Linux CLI build requires cargo inside WSL.")
-    wsl_build_cli_target(distro, CliBuildTarget("linux", "x86_64", CLI_RUST_TARGETS[("linux", "x86_64")]))
+    wsl_build_cli_target(distro, CliBuildTarget(HostPlatform.LINUX, "x86_64", CLI_RUST_TARGETS[(HostPlatform.LINUX, "x86_64")]))
 
 
 def wsl_build_cli_target(distro, target):
@@ -909,17 +972,18 @@ tar -czf {package} -C {work} .
     wsl_run(distro, script)
 
 
-def build_wsl_linux(products, distro, build_name, build_number, cli_arches="host"):
+def build_wsl_linux(products, distro, build_name, build_number, cli_arches=CliArchMode.HOST):
+    cli_arches = CliArchMode(cli_arches)
     if not is_windows_host():
         return
     if shutil.which("wsl.exe") is None:
         raise RuntimeError("wsl.exe not found")
-    if "app" in products:
+    if ReleaseProduct.APP in products:
         build_wsl_linux_app(distro, build_name, build_number)
-    if "cli" in products:
-        if cli_arches == "all":
-            wsl_build_cli_target(distro, CliBuildTarget("linux", "x86_64", CLI_RUST_TARGETS[("linux", "x86_64")]))
-            wsl_build_cli_target(distro, CliBuildTarget("linux", "aarch64", CLI_RUST_TARGETS[("linux", "aarch64")]))
+    if ReleaseProduct.CLI in products:
+        if cli_arches == CliArchMode.ALL:
+            wsl_build_cli_target(distro, CliBuildTarget(HostPlatform.LINUX, "x86_64", CLI_RUST_TARGETS[(HostPlatform.LINUX, "x86_64")]))
+            wsl_build_cli_target(distro, CliBuildTarget(HostPlatform.LINUX, "aarch64", CLI_RUST_TARGETS[(HostPlatform.LINUX, "aarch64")]))
         else:
             build_wsl_linux_cli(distro)
 
@@ -938,6 +1002,23 @@ def build_android_app(build_name, build_number):
     )
 
 
+# Builds the OpenHarmony Flutter application package.
+def build_ohos_app(build_name, build_number):
+    run(
+        [
+            sys.executable,
+            BUILD_SCRIPTS_DIR / "build_flutter_ohos.py",
+            "--build-name",
+            build_name,
+            "--build-number",
+            build_number,
+            "--enforce-lockfile",
+            "--output",
+            DIST_DIR / "operit2-app-ohos-arm64.hap",
+        ],
+    )
+
+
 # Builds the shared Web Access bundle consumed by app and CLI packages.
 def build_web_access_bundle():
     run([sys.executable, BUILD_SCRIPTS_DIR / "build_flutter_web_access.py"])
@@ -947,7 +1028,7 @@ def build_host_app(build_name, build_number):
     current_platform = host_platform()
     current_arch = host_arch()
 
-    if current_platform == "windows":
+    if current_platform == HostPlatform.WINDOWS:
         run(
             [
                 sys.executable,
@@ -963,7 +1044,7 @@ def build_host_app(build_name, build_number):
         )
         return
 
-    if current_platform == "linux":
+    if current_platform == HostPlatform.LINUX:
         run(
             [
                 sys.executable,
@@ -979,7 +1060,7 @@ def build_host_app(build_name, build_number):
         )
         return
 
-    if current_platform == "macos":
+    if current_platform == HostPlatform.MACOS:
         run(
             [
                 sys.executable,
@@ -1064,7 +1145,7 @@ def build_cli_target(target, use_default_target=False):
         binary_source = REPO_ROOT / "apps" / "cli" / "target" / "release" / binary_name
     else:
         build_env = {**os.environ}
-        if target.platform == "windows" and target.arch == "aarch64":
+        if target.platform == HostPlatform.WINDOWS and target.arch == "aarch64":
             vs_path = vs_installation_path()
             if not vs_path:
                 raise RuntimeError("Visual Studio installation not found for Windows aarch64 CLI build")
@@ -1086,7 +1167,7 @@ def build_cli_target(target, use_default_target=False):
     copy_required_file(binary_source, package_dir / binary_name)
     write_cli_installer_files(package_dir, target.platform)
 
-    if target.platform == "windows":
+    if target.platform == HostPlatform.WINDOWS:
         compress_zip(package_dir, package_path)
     else:
         os.chmod(package_dir / binary_name, 0o755)
@@ -1195,19 +1276,20 @@ def upload_release_asset(upload_url, asset, auth):
 
 
 def products_for_scope(scope, explicit_products):
+    scope = ReleaseScope(scope)
     if explicit_products is not None:
-        if scope != "full":
+        if scope != ReleaseScope.FULL:
             raise RuntimeError("--products cannot be combined with --scope app, --scope cli, or --scope none")
-        products = set(explicit_products)
+        products = {ReleaseProduct(product) for product in explicit_products}
     else:
         products = {
-            "full": {"app", "cli"},
-            "app": {"app"},
-            "cli": {"cli"},
-            "none": {"none"},
+            ReleaseScope.FULL: {ReleaseProduct.APP, ReleaseProduct.CLI},
+            ReleaseScope.APP: {ReleaseProduct.APP},
+            ReleaseScope.CLI: {ReleaseProduct.CLI},
+            ReleaseScope.NONE: {ReleaseProduct.NONE},
         }[scope]
 
-    if "none" in products and len(products) > 1:
+    if ReleaseProduct.NONE in products and len(products) > 1:
         raise RuntimeError("--products none cannot be combined with app or cli")
     return products
 
@@ -1224,11 +1306,11 @@ def main():
         action="store_true",
         help="Accepted for prerelease versions. The GitHub flag is derived from the release version.",
     )
-    parser.add_argument("--scope", default="full", choices=["cli", "app", "full", "none"])
-    parser.add_argument("--products", nargs="+", choices=["app", "cli", "none"])
+    parser.add_argument("--scope", default=ReleaseScope.FULL.value, choices=[item.value for item in ReleaseScope])
+    parser.add_argument("--products", nargs="+", choices=[item.value for item in ReleaseProduct])
     parser.add_argument("--wsl-distro", default="FedoraLinux-43")
     parser.add_argument("--no-wsl", action="store_true")
-    parser.add_argument("--cli-arches", default="host", choices=["host", "all"],
+    parser.add_argument("--cli-arches", default=CliArchMode.HOST.value, choices=[item.value for item in CliArchMode],
                         help="CLI target architectures: host (current only) or all (all desktop arches)")
     args = parser.parse_args()
 
@@ -1252,17 +1334,18 @@ def main():
     reset_dir(DIST_DIR)
     reset_dir(WORK_DIR)
 
-    if "app" in products or "cli" in products:
+    if ReleaseProduct.APP in products or ReleaseProduct.CLI in products:
         build_web_access_bundle()
 
-    if "app" in products:
+    if ReleaseProduct.APP in products:
         build_android_app(platform_version.build_name, platform_version.build_number)
+        build_ohos_app(platform_version.build_name, platform_version.build_number)
         build_host_app(platform_version.build_name, platform_version.build_number)
 
-    if "cli" in products:
+    if ReleaseProduct.CLI in products:
         build_host_cli(args.cli_arches)
 
-    if not args.no_wsl and "none" not in products:
+    if not args.no_wsl and ReleaseProduct.NONE not in products:
         build_wsl_linux(
             products,
             args.wsl_distro,
@@ -1272,7 +1355,7 @@ def main():
         )
 
     next_platform_version = None
-    if "app" in products and not args.build_only:
+    if ReleaseProduct.APP in products and not args.build_only:
         next_platform_version = increment_flutter_platform_build_number(platform_version)
 
     print(f"\nRelease version: {version.text}")

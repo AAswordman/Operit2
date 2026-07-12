@@ -14,7 +14,7 @@ import '../proxy/generated/CoreProxyModels.g.dart';
 import '../web_visit/WebVisitBridge.dart';
 import '../web_visit/WebVisitModels.dart';
 import 'ComposeWebViewControllerBridge.dart';
-import '../../ui/features/chat/components/workspace/browser/automation/WorkspaceBrowserSessionRegistry.dart';
+import 'browser/RuntimeBrowserSessionRegistry.dart';
 
 class RuntimeHostInteractionSubscriber {
   RuntimeHostInteractionSubscriber._();
@@ -62,6 +62,13 @@ class RuntimeHostInteractionSubscriber {
             );
           },
         );
+  }
+
+  /// Stops the owner host interaction stream listener.
+  static Future<void> uninstall() async {
+    final subscription = _subscription;
+    _subscription = null;
+    await subscription?.cancel();
   }
 
   static Future<void> _handleEvent(
@@ -161,7 +168,7 @@ class RuntimeHostInteractionSubscriber {
   static Future<RuntimeHostInteractionResponse> _handleBrowserSession(
     RuntimeHostInteractionBrowserSessionPayload payload,
   ) async {
-    final resultJson = await WorkspaceBrowserSessionRegistry.instance
+    final resultJson = await RuntimeBrowserSessionRegistry.instance
         .handleRuntimeBrowserCommandJson(payload.commandJson);
     return _response(
       browserSession: RuntimeHostInteractionBrowserSessionResponse(

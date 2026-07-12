@@ -196,19 +196,98 @@ The release script builds app packages through Flutter. Local checks can be run 
 
 ```powershell
 cd apps\flutter\app
-flutter pub get --enforce-lockfile
+fvm install --skip-pub-get
+fvm dart pub get --enforce-lockfile
 ```
 
 Windows app release build:
 
 ```powershell
-flutter build windows --release --build-name 2.0.0 --build-number 1
+fvm flutter build windows --release --no-pub --build-name 2.0.0 --build-number 1
 ```
 
 Android release build requires signing values in:
 
 ```text
 tools/release/secrets/android-signing.properties
+```
+
+## OpenHarmony Flutter App
+
+OpenHarmony builds require the OpenHarmony Flutter SDK maintained at:
+
+```text
+https://gitcode.com/openharmony-sig/flutter_flutter.git
+```
+
+The Flutter app is pinned to the OpenHarmony `oh-3.41.9-dev` branch in
+`apps/flutter/app/.fvmrc`. Keep this SDK selected for OpenHarmony development;
+the standard Flutter SDK is a different toolchain and does not provide the
+OpenHarmony target.
+
+The user environment must provide:
+
+- FVM `4.1.2` through the Pub cache `bin` directory on `PATH`.
+- `dart` through a Flutter or Dart SDK `bin` directory on `PATH` so the FVM
+  launcher can start.
+- `OHOS_SDK_HOME` pointing to the OpenHarmony SDK root.
+- The selected OpenHarmony SDK `toolchains` directory on `PATH` for `hdc`.
+
+Restart the terminal or IDE after changing user environment variables so new
+processes inherit them.
+
+The FVM-selected SDK must expose the `ohos` platform and the `hap` build
+command. Verify the selected SDK and DevEco environment from the Flutter app
+directory:
+
+```powershell
+cd apps\flutter\app
+fvm install --skip-pub-get
+fvm flutter doctor -v
+fvm flutter config
+```
+
+`fvm flutter doctor -v` must report both Flutter and OpenHarmony toolchains.
+
+Generate the OpenHarmony application module once with the selected SDK:
+
+```powershell
+cd apps\flutter\app
+fvm flutter create --platforms ohos .
+```
+
+Build the shared Web Access bundle from the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe tools\build_scripts\build_flutter_web_access.py
+```
+
+The remote access bundle is written to `apps/web_access/build/bundle` and
+synchronized into the native Flutter assets at:
+
+```text
+apps/flutter/app/assets/web_access
+```
+
+Build the OpenHarmony HAP with the repository script. The script invokes the
+same FVM-selected Flutter SDK and the OpenHarmony native toolchain:
+
+The Rust toolchain uses the native OpenHarmony target:
+
+```powershell
+rustup target add aarch64-unknown-linux-ohos
+```
+
+Build the HAP through the repository build script from the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe tools\build_scripts\build_flutter_ohos.py --enforce-lockfile
+```
+
+The signed build output is copied to:
+
+```text
+tools/release/dist/operit2-app-ohos-arm64.hap
 ```
 
 ## Useful Cleanup

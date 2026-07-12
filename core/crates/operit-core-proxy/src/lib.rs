@@ -1,12 +1,15 @@
 #![allow(non_snake_case)]
 
 use async_trait::async_trait;
+use operit_host_api::HostManager::HostManager;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
-    CoreLinkError, CoreObjectPath, CoreRequestId, CoreWatchRequest,
+    CoreLinkError, CoreLinkSharedClient, CoreObjectPath, CoreRequestId, CoreValue,
+    CoreWatchRequest,
 };
 use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_util::stream::RevisableTextStream::{
     RevisableTextStream, TextStreamEventCarrier, TextStreamEventType,
@@ -14,24 +17,32 @@ use operit_util::stream::RevisableTextStream::{
 use operit_util::stream::Stream::Stream;
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use serde::de::DeserializeOwned;
-use serde_json::{Map, Value};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 include!(concat!(env!("OUT_DIR"), "/generated_core_dispatch.rs"));
 
 pub struct LocalCoreProxy {
-    application: OperitApplication,
+    application: Mutex<OperitApplication>,
+    hostManager: HostManager,
+    chatRuntimeHolder: Arc<Mutex<ChatRuntimeHolder>>,
 }
 
 impl LocalCoreProxy {
     /// Creates a local link client backed by an in-process application.
     pub fn new(application: OperitApplication) -> Self {
-        Self { application }
+        Self {
+            hostManager: application.hostManager.clone(),
+            chatRuntimeHolder: application.chatRuntimeHolder.clone(),
+            application: Mutex::new(application),
+        }
     }
 
     /// Returns mutable access to the hosted local application.
     #[allow(non_snake_case)]
     pub fn localApplicationMut(&mut self) -> &mut OperitApplication {
-        &mut self.application
+        self.application.get_mut()
     }
 }
 
@@ -39,6 +50,26 @@ impl LocalCoreProxy {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl CoreLinkClient for LocalCoreProxy {
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
+        CoreLinkSharedClient::call(self, request).await
+    }
+
+    #[allow(non_snake_case)]
+    async fn watchSnapshot(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
+        CoreLinkSharedClient::watchSnapshot(self, request).await
+    }
+
+    async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        CoreLinkSharedClient::watch(self, request).await
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl CoreLinkSharedClient for LocalCoreProxy {
+    async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
         match self.dispatchCall(request).await {
             Ok(value) => CoreCallResponse::ok(requestId, value),
@@ -47,55 +78,40 @@ impl CoreLinkClient for LocalCoreProxy {
     }
 
     #[allow(non_snake_case)]
-    async fn watchSnapshot(
-        &mut self,
-        request: CoreWatchRequest,
-    ) -> Result<CoreEvent, CoreLinkError> {
-        self.dispatchWatchSnapshot(request)
+    async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+        generated_dispatch_core_proxy_watch_snapshot_async(self, request).await
     }
 
-    async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
-        self.dispatchWatch(request)
+    async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        generated_dispatch_core_proxy_watch_async(self, request).await
     }
 }
 
 impl LocalCoreProxy {
     #[allow(non_snake_case)]
-    async fn dispatchCall(&mut self, request: CoreCallRequest) -> Result<Value, CoreLinkError> {
+    async fn dispatchCall(&self, request: CoreCallRequest) -> Result<CoreValue, CoreLinkError> {
         generated_dispatch_core_proxy_call(self, request).await
     }
 
     /// Executes a watch snapshot through the generated synchronous dispatcher.
     #[allow(non_snake_case)]
-    pub fn watchSnapshotSync(
-        &mut self,
-        request: CoreWatchRequest,
-    ) -> Result<CoreEvent, CoreLinkError> {
+    pub fn watchSnapshotSync(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
         self.dispatchWatchSnapshot(request)
     }
 
     /// Opens a watch stream through the generated synchronous dispatcher.
     #[allow(non_snake_case)]
-    pub fn watchSync(
-        &mut self,
-        request: CoreWatchRequest,
-    ) -> Result<CoreEventStream, CoreLinkError> {
+    pub fn watchSync(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         self.dispatchWatch(request)
     }
 
     #[allow(non_snake_case)]
-    fn dispatchWatchSnapshot(
-        &mut self,
-        request: CoreWatchRequest,
-    ) -> Result<CoreEvent, CoreLinkError> {
+    fn dispatchWatchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
         generated_dispatch_core_proxy_watch_snapshot(self, request)
     }
 
     #[allow(non_snake_case)]
-    fn dispatchWatch(
-        &mut self,
-        request: CoreWatchRequest,
-    ) -> Result<CoreEventStream, CoreLinkError> {
+    fn dispatchWatch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         generated_dispatch_core_proxy_watch(self, request)
     }
 }
@@ -126,32 +142,41 @@ fn chat_runtime_slot_from_segments(slot: &str, id: Option<&String>) -> Option<Ch
     }
 }
 
-fn object_args(args: Value) -> Result<Map<String, Value>, CoreLinkError> {
+/// Extracts a string-keyed argument map from a CoreValue request payload.
+fn object_args(args: CoreValue) -> Result<BTreeMap<String, CoreValue>, CoreLinkError> {
     match args {
-        Value::Object(value) => Ok(value),
-        Value::Null => Ok(Map::new()),
+        CoreValue::Map(value) => Ok(value),
+        CoreValue::Null => Ok(BTreeMap::new()),
         _ => Err(CoreLinkError::new(
             "INVALID_ARGS",
-            "core call args must be a JSON object",
+            "core call args must be a map",
         )),
     }
 }
 
+/// Decodes and removes one named argument from a CoreValue argument map.
 fn decode_core_arg<T: DeserializeOwned>(
-    args: &mut Map<String, Value>,
+    args: &mut BTreeMap<String, CoreValue>,
     name: &str,
 ) -> Result<T, CoreLinkError> {
-    let value = args.remove(name).unwrap_or(Value::Null);
-    serde_json::from_value(value)
+    let value = args.remove(name).unwrap_or(CoreValue::Null);
+    operit_link::fromCoreValue(value)
         .map_err(|error| CoreLinkError::new("INVALID_ARGS", format!("{name}: {error}")))
 }
 
-fn to_core_value(value: impl serde::Serialize) -> Result<Value, CoreLinkError> {
-    serde_json::to_value(value).map_err(|error| CoreLinkError::internal(error.to_string()))
+/// Converts a serializable runtime value into the native Link value model.
+fn to_core_value(value: impl serde::Serialize) -> Result<CoreValue, CoreLinkError> {
+    operit_link::toCoreValue(value).map_err(|error| CoreLinkError::internal(error.to_string()))
 }
 
-fn core_call_error(message: String, details: Value) -> CoreLinkError {
+/// Creates a command error with native Link details.
+fn core_call_error(message: String, details: CoreValue) -> CoreLinkError {
     CoreLinkError::withDetails("COMMAND_ERROR", message, details)
+}
+
+/// Builds a string-keyed CoreValue map for generated Link payloads.
+fn core_value_map(fields: impl IntoIterator<Item = (String, CoreValue)>) -> CoreValue {
+    CoreValue::Map(fields.into_iter().collect())
 }
 
 fn core_event_stream_channel() -> (
@@ -240,7 +265,7 @@ where
                 targetPath: request.targetPath.clone(),
                 propertyName: request.propertyName.clone(),
                 kind: CoreEventKind::Changed,
-                value: Value::String(value),
+                value: CoreValue::String(value),
             });
         });
         let _ = sender.send(CoreEvent {
@@ -248,7 +273,7 @@ where
             targetPath: request.targetPath,
             propertyName: request.propertyName,
             kind: CoreEventKind::Completed,
-            value: Value::Null,
+            value: CoreValue::Null,
         });
     });
     receiver
@@ -276,7 +301,7 @@ where
             targetPath: request.targetPath,
             propertyName: request.propertyName,
             kind: CoreEventKind::Completed,
-            value: Value::Null,
+            value: CoreValue::Null,
         });
     });
     receiver
@@ -288,7 +313,7 @@ fn send_text_event(
     target_path: &CoreObjectPath,
     property_name: &str,
     kind: CoreEventKind,
-    value: Value,
+    value: CoreValue,
 ) {
     let _ = sender.send(CoreEvent {
         requestId: Some(request_id.clone()),

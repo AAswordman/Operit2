@@ -4,8 +4,11 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:operit2/core/browser/BrowserSessions.dart';
 import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
+    as core_proxy;
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
 
 import '../../../../theme/OperitGlassSurface.dart';
@@ -13,8 +16,7 @@ import '../../viewmodel/WorkspaceFileModels.dart';
 import 'WorkspaceTabContent.dart';
 import 'WorkspaceTabModels.dart';
 import 'WorkspaceTabStrip.dart';
-import 'browser/WorkspaceBrowserSessionStore.dart';
-import 'browser/automation/WorkspaceBrowserSessionRegistry.dart';
+import 'browser/WorkspaceBrowserViewStore.dart';
 import 'browser/automation/WorkspaceWebVisitSessionRegistry.dart';
 import 'terminal/WorkspaceTerminalSessions.dart';
 
@@ -54,10 +56,9 @@ class WorkspacePanel extends StatefulWidget {
 }
 
 class _WorkspacePanelState extends State<WorkspacePanel> {
-  final WorkspaceBrowserSessionRegistry _browserSessionRegistry =
-      WorkspaceBrowserSessionRegistry.instance;
-  final WorkspaceBrowserSessionStore _browserSessionStore =
-      WorkspaceBrowserSessionStore.instance;
+  final BrowserSessions _browserSessions = BrowserSessions();
+  final WorkspaceBrowserViewStore _browserViewStore =
+      WorkspaceBrowserViewStore.instance;
   final WorkspaceWebVisitSessionRegistry _webVisitSessionRegistry =
       WorkspaceWebVisitSessionRegistry.instance;
   final WorkspaceTerminalSessions _terminalSessions =
@@ -82,8 +83,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   void initState() {
     super.initState();
-    _configureBrowserWorkspaceAccess();
-    _registerBrowserControls();
+    unawaited(_browserViewStore.ensureLoaded());
     _registerWebVisitControls();
     _terminalSessionSubscription = _terminalSessions.watchSessions().listen(
       (sessions) {
@@ -101,8 +101,6 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   void didUpdateWidget(covariant WorkspacePanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _configureBrowserWorkspaceAccess();
-    _registerBrowserControls();
     _registerWebVisitControls();
     if (!oldWidget.hasBoundWorkspace && widget.hasBoundWorkspace) {
       _replaceSetupTabWithFilesTab();
@@ -111,7 +109,6 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   @override
   void dispose() {
-    _browserSessionRegistry.clearBrowserControls(this);
     _webVisitSessionRegistry.clearControls();
     for (final entry in _webVisitCompleters.entries) {
       final completer = entry.value;
@@ -175,20 +172,6 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     );
   }
 
-  void _registerBrowserControls() {
-    _browserSessionRegistry.setBrowserControls(
-      owner: this,
-      revealBrowserTab: _openBrowserWorkspaceTab,
-    );
-  }
-
-  void _configureBrowserWorkspaceAccess() {
-    _browserSessionStore.configureWorkspaceAccess(
-      onReadWorkspaceFileBytes: widget.onReadWorkspaceFileBytes,
-      onWriteWorkspaceFileBytes: widget.onWriteWorkspaceFileBytes,
-    );
-  }
-
   void _registerWebVisitControls() {
     _webVisitSessionRegistry.setControls(openWebVisitTab: _openWebVisitTab);
   }
@@ -238,16 +221,13 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }) async {
     final htmlPath = workspaceHtmlPath?.trim();
     if (htmlPath != null && htmlPath.isNotEmpty) {
-      await _browserSessionStore.openWorkspaceHtmlTab(
-        htmlPath,
-        initialUrl: url,
-      );
+      await _browserViewStore.openWorkspaceHtmlTab(htmlPath, initialUrl: url);
     } else {
       final filePath = localFilePath?.trim();
       if (filePath != null && filePath.isNotEmpty) {
-        await _browserSessionStore.openLocalFileTab(filePath);
+        await _browserViewStore.openLocalFileTab(filePath);
       } else {
-        await _browserSessionStore.openTab(
+        await _browserViewStore.openTab(
           url: url,
           userAgent: userAgent,
           headers: headers,
@@ -314,7 +294,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       tab: tab,
       workspacePath: widget.workspacePath,
       terminalSessionCountListenable: _terminalSessionCount,
-      browserSessionRegistry: _browserSessionRegistry,
+      browserSessionCountListenable: _browserViewStore.sessionCount,
       onListWorkspaceFiles: widget.onListWorkspaceFiles,
       onListWorkspaceBindingDirectories:
           widget.onListWorkspaceBindingDirectories,
@@ -483,16 +463,25 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }
 
   Future<void> _showBrowserSessionPicker() async {
+    final sessions = await _browserSessions.listSessions();
+    if (!mounted) {
+      return;
+    }
     await showDialog<void>(
       context: context,
       builder: (context) {
         final theme = Theme.of(context);
-        var dialogSessions = _browserSessionRegistry.sessions;
+        var dialogSessions = sessions;
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            void refreshDialogSessions() {
+            Future<void> closeSession(String sessionId) async {
+              await _browserSessions.close(sessionId);
+              final updated = await _browserSessions.listSessions();
+              if (!context.mounted) {
+                return;
+              }
               setDialogState(() {
-                dialogSessions = _browserSessionRegistry.sessions;
+                dialogSessions = updated;
               });
             }
 
@@ -532,17 +521,18 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
                               trailing: IconButton(
                                 tooltip: '关闭会话',
                                 onPressed: () {
-                                  _browserSessionRegistry.closeTab(
-                                    session.sessionId,
-                                  );
-                                  refreshDialogSessions();
+                                  unawaited(closeSession(session.sessionId));
                                 },
                                 icon: const Icon(Icons.close),
                               ),
-                              onTap: () {
+                              onTap: () async {
                                 Navigator.of(context).pop();
+                                await _browserViewStore.attachSession(session);
+                                if (!mounted) {
+                                  return;
+                                }
                                 _openBrowserWorkspaceTab();
-                                _browserSessionRegistry.selectTab(
+                                _browserViewStore.selectSession(
                                   session.sessionId,
                                 );
                               },
@@ -593,8 +583,8 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     return 'UUID · ${session.sessionId}\n$prefix · ${session.terminalType}';
   }
 
-  String _browserSessionSubtitle(WorkspaceBrowserSessionInfo session) {
-    return 'UUID · ${session.sessionId}\n${session.url}';
+  String _browserSessionSubtitle(core_proxy.RuntimeBrowserSessionInfo session) {
+    return 'UUID · ${session.sessionId}\n${session.currentUrl}';
   }
 
   void _openTerminalSessionTab(WorkspaceTerminalSessionInfo session) {

@@ -14,6 +14,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -22,11 +23,16 @@ using BridgeCreate = BridgeHandle (*)();
 using BridgeCreateWithStorageRoots = BridgeHandle (*)(const char*, const char*);
 using BridgeCreateError = char* (*)();
 using BridgeDestroy = void (*)(BridgeHandle);
-using BridgeCall = char* (*)(BridgeHandle, const unsigned char*, size_t);
-using BridgeWatchSnapshot = char* (*)(BridgeHandle, const unsigned char*, size_t);
-using BridgeWatchStream = char* (*)(BridgeHandle, const unsigned char*, size_t);
-using BridgeNextWatchChannelEvent = char* (*)(BridgeHandle);
-using BridgeCloseWatchStream = char* (*)(BridgeHandle, const char*);
+struct OperitByteBuffer { unsigned char* ptr; size_t len; };
+using BridgeCall = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
+using BridgePushOpen = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
+using BridgePushItem = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
+using BridgePushClose = OperitByteBuffer (*)(BridgeHandle, const char*);
+using BridgeWatchSnapshot = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
+using BridgeWatchStream = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
+using BridgeNextWatchChannelEvent = OperitByteBuffer (*)(BridgeHandle);
+using BridgeCloseWatchStream = OperitByteBuffer (*)(BridgeHandle, const char*);
+using BridgeFreeBytes = void (*)(OperitByteBuffer);
 using BridgeFreeString = void (*)(char*);
 
 FlMethodChannel* g_operit_runtime_channel = nullptr;
@@ -171,6 +177,12 @@ class OperitRuntimeLibrary {
           dlsym(library_, "operit_flutter_bridge_destroy"));
       call_ = reinterpret_cast<BridgeCall>(
           dlsym(library_, "operit_flutter_bridge_call"));
+      push_open_ = reinterpret_cast<BridgePushOpen>(
+          dlsym(library_, "operit_flutter_bridge_push_open"));
+      push_item_ = reinterpret_cast<BridgePushItem>(
+          dlsym(library_, "operit_flutter_bridge_push_item"));
+      push_close_ = reinterpret_cast<BridgePushClose>(
+          dlsym(library_, "operit_flutter_bridge_push_close"));
       watch_snapshot_ = reinterpret_cast<BridgeWatchSnapshot>(
           dlsym(library_, "operit_flutter_bridge_watch_snapshot"));
       watch_stream_ = reinterpret_cast<BridgeWatchStream>(
@@ -179,13 +191,17 @@ class OperitRuntimeLibrary {
           dlsym(library_, "operit_flutter_bridge_next_watch_channel_event"));
       close_watch_stream_ = reinterpret_cast<BridgeCloseWatchStream>(
           dlsym(library_, "operit_flutter_bridge_close_watch_stream"));
+      free_bytes_ = reinterpret_cast<BridgeFreeBytes>(
+          dlsym(library_, "operit_flutter_bridge_free_bytes"));
       free_string_ = reinterpret_cast<BridgeFreeString>(
           dlsym(library_, "operit_flutter_bridge_free_string"));
       if (create_ == nullptr || create_with_storage_roots_ == nullptr ||
-          destroy_ == nullptr || call_ == nullptr ||
+          destroy_ == nullptr || call_ == nullptr || push_open_ == nullptr ||
+          push_item_ == nullptr || push_close_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
           next_watch_channel_event_ == nullptr ||
-          close_watch_stream_ == nullptr || free_string_ == nullptr) {
+          close_watch_stream_ == nullptr || free_bytes_ == nullptr ||
+          free_string_ == nullptr) {
         AssignError(error, "operit flutter bridge exports are incomplete");
         return false;
       }
@@ -204,54 +220,64 @@ class OperitRuntimeLibrary {
     return true;
   }
 
-  bool Call(const std::string& request, std::string* response,
+  bool Call(const std::vector<uint8_t>& request, std::vector<uint8_t>* response,
             std::string* error) {
     if (!EnsureReady(error)) {
       return false;
     }
-    char* raw_response = call_(
-        handle_, reinterpret_cast<const unsigned char*>(request.data()),
-        request.size());
-    return TakeBridgeString(raw_response, response, error);
+    return TakeBridgeBytes(call_(handle_, request.data(), request.size()), response, error);
   }
 
-  bool WatchSnapshot(const std::string& request, std::string* response,
+  /// Opens one local Link push stream.
+  bool PushOpen(const std::vector<uint8_t>& request, std::vector<uint8_t>* response,
+                std::string* error) {
+    if (!EnsureReady(error)) return false;
+    return TakeBridgeBytes(push_open_(handle_, request.data(), request.size()), response, error);
+  }
+
+  /// Dispatches one local Link push item.
+  bool PushItem(const std::vector<uint8_t>& item, std::vector<uint8_t>* response,
+                std::string* error) {
+    if (!EnsureReady(error)) return false;
+    return TakeBridgeBytes(push_item_(handle_, item.data(), item.size()), response, error);
+  }
+
+  /// Closes one local Link push stream.
+  bool PushClose(const std::string& push_id, std::vector<uint8_t>* response,
+                 std::string* error) {
+    if (!EnsureReady(error)) return false;
+    return TakeBridgeBytes(push_close_(handle_, push_id.c_str()), response, error);
+  }
+
+  bool WatchSnapshot(const std::vector<uint8_t>& request, std::vector<uint8_t>* response,
                      std::string* error) {
     if (!EnsureReady(error)) {
       return false;
     }
-    char* raw_response = watch_snapshot_(
-        handle_, reinterpret_cast<const unsigned char*>(request.data()),
-        request.size());
-    return TakeBridgeString(raw_response, response, error);
+    return TakeBridgeBytes(watch_snapshot_(handle_, request.data(), request.size()), response, error);
   }
 
-  bool WatchStream(const std::string& request, std::string* response,
+  bool WatchStream(const std::vector<uint8_t>& request, std::vector<uint8_t>* response,
                    std::string* error) {
     if (!EnsureReady(error)) {
       return false;
     }
-    char* raw_response = watch_stream_(
-        handle_, reinterpret_cast<const unsigned char*>(request.data()),
-        request.size());
-    return TakeBridgeString(raw_response, response, error);
+    return TakeBridgeBytes(watch_stream_(handle_, request.data(), request.size()), response, error);
   }
 
-  bool NextWatchChannelEvent(std::string* response, std::string* error) {
+  bool NextWatchChannelEvent(std::vector<uint8_t>* response, std::string* error) {
     if (!EnsureReady(error)) {
       return false;
     }
-    char* raw_response = next_watch_channel_event_(handle_);
-    return TakeBridgeString(raw_response, response, error);
+    return TakeBridgeBytes(next_watch_channel_event_(handle_), response, error);
   }
 
-  bool CloseWatchStream(const std::string& subscription, std::string* response,
+  bool CloseWatchStream(const std::string& subscription, std::vector<uint8_t>* response,
                         std::string* error) {
     if (!EnsureReady(error)) {
       return false;
     }
-    char* raw_response = close_watch_stream_(handle_, subscription.c_str());
-    return TakeBridgeString(raw_response, response, error);
+    return TakeBridgeBytes(close_watch_stream_(handle_, subscription.c_str()), response, error);
   }
 
   /// Sets the runtime and workspace roots used when the runtime handle is created.
@@ -322,6 +348,24 @@ class OperitRuntimeLibrary {
     return true;
   }
 
+  /// Copies and releases one Rust-owned binary response.
+  bool TakeBridgeBytes(OperitByteBuffer value, std::vector<uint8_t>* output,
+                       std::string* error) {
+    if (value.ptr == nullptr && value.len != 0) {
+      AssignError(error, "operit flutter bridge returned invalid bytes");
+      return false;
+    }
+    if (output != nullptr) {
+      if (value.len == 0) {
+        output->clear();
+      } else {
+        output->assign(value.ptr, value.ptr + value.len);
+      }
+    }
+    free_bytes_(value);
+    return true;
+  }
+
   void* library_ = nullptr;
   BridgeHandle handle_ = nullptr;
   std::string configured_runtime_root_;
@@ -332,10 +376,14 @@ class OperitRuntimeLibrary {
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
   BridgeCall call_ = nullptr;
+  BridgePushOpen push_open_ = nullptr;
+  BridgePushItem push_item_ = nullptr;
+  BridgePushClose push_close_ = nullptr;
   BridgeWatchSnapshot watch_snapshot_ = nullptr;
   BridgeWatchStream watch_stream_ = nullptr;
   BridgeNextWatchChannelEvent next_watch_channel_event_ = nullptr;
   BridgeCloseWatchStream close_watch_stream_ = nullptr;
+  BridgeFreeBytes free_bytes_ = nullptr;
   BridgeFreeString free_string_ = nullptr;
 };
 
@@ -374,20 +422,22 @@ FlValue* linux_root_requirement_snapshot() {
   return result;
 }
 
-void dispatch_watch_channel_event(std::string frame) {
+void dispatch_watch_channel_event(std::vector<uint8_t> frame) {
   g_main_context_invoke(
       nullptr,
       [](gpointer data) -> gboolean {
-        std::unique_ptr<std::string> frame(static_cast<std::string*>(data));
+        std::unique_ptr<std::vector<uint8_t>> frame(
+            static_cast<std::vector<uint8_t>*>(data));
         if (g_operit_runtime_channel != nullptr) {
-          g_autoptr(FlValue) args = fl_value_new_string(frame->c_str());
+          g_autoptr(FlValue) args =
+              fl_value_new_uint8_list(frame->data(), frame->size());
           fl_method_channel_invoke_method(g_operit_runtime_channel,
                                           "watchChannelEvent", args, nullptr,
                                           nullptr, nullptr);
         }
         return G_SOURCE_REMOVE;
       },
-      new std::string(std::move(frame)));
+      new std::vector<uint8_t>(std::move(frame)));
 }
 
 void ensure_watch_channel_pump() {
@@ -398,7 +448,7 @@ void ensure_watch_channel_pump() {
   auto library = g_operit_runtime_library;
   std::thread([library]() {
     while (g_watch_channel_pump_running.load()) {
-      std::string frame;
+      std::vector<uint8_t> frame;
       std::string error;
       if (!library->NextWatchChannelEvent(&frame, &error)) {
         break;
@@ -415,6 +465,43 @@ struct RuntimeStringResponse {
   std::string response;
   std::string error;
 };
+
+struct RuntimeBytesResponse {
+  FlMethodCall* method_call;
+  bool ok;
+  std::vector<uint8_t> response;
+  std::string error;
+};
+
+/// Runs one binary Rust bridge operation off the Linux platform thread.
+template <typename Operation>
+void respond_runtime_bytes_async(FlMethodCall* method_call,
+                                 Operation operation) {
+  g_object_ref(method_call);
+  std::thread([method_call, operation = std::move(operation)]() mutable {
+    std::vector<uint8_t> response;
+    std::string error;
+    const bool ok = operation(&response, &error);
+    auto* result = new RuntimeBytesResponse{
+        method_call, ok, std::move(response), std::move(error)};
+    g_main_context_invoke(
+        nullptr,
+        [](gpointer data) -> gboolean {
+          std::unique_ptr<RuntimeBytesResponse> result(
+              static_cast<RuntimeBytesResponse*>(data));
+          if (result->ok) {
+            g_autoptr(FlValue) value = fl_value_new_uint8_list(
+                result->response.data(), result->response.size());
+            respond_success_value(result->method_call, value);
+          } else {
+            respond_error(result->method_call, "RUNTIME_BRIDGE_ERROR", result->error);
+          }
+          g_object_unref(result->method_call);
+          return G_SOURCE_REMOVE;
+        },
+        result);
+  }).detach();
+}
 
 /// Runs one Rust bridge operation off the Linux platform thread.
 template <typename Operation>
@@ -451,6 +538,17 @@ const gchar* string_map_value(FlValue* map, const char* key) {
     return nullptr;
   }
   return fl_value_get_string(value);
+}
+
+/// Copies a Flutter uint8 list into an owned byte vector.
+bool bytes_value(FlValue* value, std::vector<uint8_t>* output) {
+  if (value == nullptr || output == nullptr ||
+      fl_value_get_type(value) != FL_VALUE_TYPE_UINT8_LIST) {
+    return false;
+  }
+  const uint8_t* bytes = fl_value_get_uint8_list(value);
+  output->assign(bytes, bytes + fl_value_get_length(value));
+  return true;
 }
 
 void operit_runtime_method_call_cb(FlMethodChannel* channel,
@@ -531,33 +629,68 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
   }
   if (strcmp(method, "call") == 0) {
     FlValue* args = fl_method_call_get_args(method_call);
-    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
-      respond_error(method_call, "INVALID_ARGS", "call expects a JSON string");
+    std::vector<uint8_t> request;
+    if (!bytes_value(args, &request)) {
+      respond_error(method_call, "INVALID_ARGS", "call expects MessagePack bytes");
       return;
     }
-    std::string request = fl_value_get_string(args);
     auto library = g_operit_runtime_library;
-    respond_runtime_string_async(
+    respond_runtime_bytes_async(
         method_call,
         [library, request = std::move(request)](
-            std::string* response, std::string* operation_error) {
+            std::vector<uint8_t>* response, std::string* operation_error) {
           return library->Call(request, response, operation_error);
+        });
+    return;
+  }
+  if (strcmp(method, "pushOpen") == 0 || strcmp(method, "pushItem") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    std::vector<uint8_t> request;
+    if (!bytes_value(args, &request)) {
+      respond_error(method_call, "INVALID_ARGS", "push operation expects MessagePack bytes");
+      return;
+    }
+    auto library = g_operit_runtime_library;
+    const bool opening = strcmp(method, "pushOpen") == 0;
+    respond_runtime_bytes_async(
+        method_call,
+        [library, request = std::move(request), opening](
+            std::vector<uint8_t>* response, std::string* operation_error) {
+          return opening
+              ? library->PushOpen(request, response, operation_error)
+              : library->PushItem(request, response, operation_error);
+        });
+    return;
+  }
+  if (strcmp(method, "pushClose") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
+      respond_error(method_call, "INVALID_ARGS", "pushClose expects a push id");
+      return;
+    }
+    std::string push_id = fl_value_get_string(args);
+    auto library = g_operit_runtime_library;
+    respond_runtime_bytes_async(
+        method_call,
+        [library, push_id = std::move(push_id)](
+            std::vector<uint8_t>* response, std::string* operation_error) {
+          return library->PushClose(push_id, response, operation_error);
         });
     return;
   }
   if (strcmp(method, "watchSnapshot") == 0) {
     FlValue* args = fl_method_call_get_args(method_call);
-    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
+    std::vector<uint8_t> request;
+    if (!bytes_value(args, &request)) {
       respond_error(method_call, "INVALID_ARGS",
-                    "watchSnapshot expects a JSON string");
+                    "watchSnapshot expects MessagePack bytes");
       return;
     }
-    std::string request = fl_value_get_string(args);
     auto library = g_operit_runtime_library;
-    respond_runtime_string_async(
+    respond_runtime_bytes_async(
         method_call,
         [library, request = std::move(request)](
-            std::string* response, std::string* operation_error) {
+            std::vector<uint8_t>* response, std::string* operation_error) {
           return library->WatchSnapshot(
               request, response, operation_error);
         });
@@ -565,17 +698,17 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
   }
   if (strcmp(method, "watchStream") == 0) {
     FlValue* args = fl_method_call_get_args(method_call);
-    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
+    std::vector<uint8_t> request;
+    if (!bytes_value(args, &request)) {
       respond_error(method_call, "INVALID_ARGS",
-                    "watchStream expects a JSON string");
+                    "watchStream expects MessagePack bytes");
       return;
     }
-    std::string request = fl_value_get_string(args);
     auto library = g_operit_runtime_library;
-    respond_runtime_string_async(
+    respond_runtime_bytes_async(
         method_call,
         [library, request = std::move(request)](
-            std::string* response, std::string* operation_error) {
+            std::vector<uint8_t>* response, std::string* operation_error) {
           if (!library->WatchStream(request, response, operation_error)) {
             return false;
           }
@@ -593,10 +726,10 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
     }
     std::string subscription = fl_value_get_string(args);
     auto library = g_operit_runtime_library;
-    respond_runtime_string_async(
+    respond_runtime_bytes_async(
         method_call,
         [library, subscription = std::move(subscription)](
-            std::string* response, std::string* operation_error) {
+            std::vector<uint8_t>* response, std::string* operation_error) {
           return library->CloseWatchStream(
               subscription, response, operation_error);
         });

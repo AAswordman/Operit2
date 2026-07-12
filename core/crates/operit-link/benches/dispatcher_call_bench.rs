@@ -10,6 +10,12 @@ use serde_json::json;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc;
 
+macro_rules! core_json {
+    ($($json:tt)+) => {
+        operit_link::toCoreValue(json!($($json)+)).expect("benchmark JSON must convert to CoreValue")
+    };
+}
+
 struct BenchCoreClient;
 
 #[async_trait]
@@ -18,7 +24,7 @@ impl CoreLinkClient for BenchCoreClient {
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
         CoreCallResponse::ok(
             request.requestId,
-            json!({
+            core_json!({
                 "ok": true,
                 "value": 42
             }),
@@ -35,7 +41,7 @@ impl CoreLinkClient for BenchCoreClient {
             targetPath: request.targetPath,
             propertyName: request.propertyName,
             kind: CoreEventKind::Snapshot,
-            value: json!({
+            value: core_json!({
                 "value": 42
             }),
         })
@@ -50,7 +56,7 @@ impl CoreLinkClient for BenchCoreClient {
                 targetPath: request.targetPath,
                 propertyName: request.propertyName,
                 kind: CoreEventKind::Completed,
-                value: json!({}),
+                value: core_json!({}),
             })
             .unwrap();
         Ok(CoreEventStream::new(receiver))
@@ -64,7 +70,7 @@ fn call_body() -> Bytes {
             "bench-dispatch",
             CoreObjectPath::from("runtime.chat"),
             "send",
-            json!({
+            core_json!({
                 "message": "ping"
             }),
         ),

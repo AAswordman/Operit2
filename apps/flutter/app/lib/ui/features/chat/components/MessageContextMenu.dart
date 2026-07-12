@@ -430,32 +430,28 @@ class _PressFeedback extends StatelessWidget {
   final bool isPressing;
   final Widget child;
 
+  /// Builds the long-press visual feedback using only the color overlay.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return AnimatedScale(
-      scale: isPressing ? 0.99 : 1,
-      duration: const Duration(milliseconds: 80),
-      curve: Curves.easeOut,
-      child: Stack(
-        children: <Widget>[
-          child,
-          Positioned.fill(
-            child: IgnorePointer(
-              child: AnimatedOpacity(
-                opacity: isPressing ? 1 : 0,
-                duration: const Duration(milliseconds: 80),
-                curve: Curves.easeOut,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: colorScheme.onSurface.withValues(alpha: 0.06),
-                  ),
+    return Stack(
+      children: <Widget>[
+        child,
+        Positioned.fill(
+          child: IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: isPressing ? 1 : 0,
+              duration: const Duration(milliseconds: 80),
+              curve: Curves.easeOut,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colorScheme.onSurface.withValues(alpha: 0.06),
                 ),
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

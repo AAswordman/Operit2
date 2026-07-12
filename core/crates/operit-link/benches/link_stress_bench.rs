@@ -11,6 +11,12 @@ use serde_json::json;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc;
 
+macro_rules! core_json {
+    ($($json:tt)+) => {
+        operit_link::toCoreValue(json!($($json)+)).expect("benchmark JSON must convert to CoreValue")
+    };
+}
+
 const SEQUENTIAL_CALLS: usize = 1_000;
 const CONCURRENT_CALLS: usize = 256;
 
@@ -26,7 +32,7 @@ impl CoreLinkClient for StressCoreClient {
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
         CoreCallResponse::ok(
             request.requestId,
-            json!({
+            core_json!({
                 "ok": true,
                 "method": request.methodName
             }),
@@ -43,7 +49,7 @@ impl CoreLinkClient for StressCoreClient {
             targetPath: request.targetPath,
             propertyName: request.propertyName,
             kind: CoreEventKind::Snapshot,
-            value: json!({
+            value: core_json!({
                 "ready": true
             }),
         })
@@ -58,7 +64,7 @@ impl CoreLinkClient for StressCoreClient {
                 targetPath: request.targetPath,
                 propertyName: request.propertyName,
                 kind: CoreEventKind::Completed,
-                value: json!({}),
+                value: core_json!({}),
             })
             .unwrap();
         Ok(CoreEventStream::new(receiver))
@@ -71,7 +77,7 @@ impl CoreLinkSharedClient for SharedStressCoreClient {
     async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
         CoreCallResponse::ok(
             request.requestId,
-            json!({
+            core_json!({
                 "ok": true,
                 "method": request.methodName
             }),
@@ -85,7 +91,7 @@ impl CoreLinkSharedClient for SharedStressCoreClient {
             targetPath: request.targetPath,
             propertyName: request.propertyName,
             kind: CoreEventKind::Snapshot,
-            value: json!({
+            value: core_json!({
                 "ready": true
             }),
         })
@@ -100,7 +106,7 @@ impl CoreLinkSharedClient for SharedStressCoreClient {
                 targetPath: request.targetPath,
                 propertyName: request.propertyName,
                 kind: CoreEventKind::Completed,
-                value: json!({}),
+                value: core_json!({}),
             })
             .unwrap();
         Ok(CoreEventStream::new(receiver))
@@ -114,7 +120,7 @@ fn call_body(index: usize) -> Bytes {
             format!("stress-call-{index}"),
             "runtime.chat",
             "send",
-            json!({
+            core_json!({
                 "message": "ping",
                 "index": index
             }),

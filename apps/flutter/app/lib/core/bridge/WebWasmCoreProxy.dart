@@ -1,10 +1,11 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
+import 'dart:typed_data';
 
+import '../link/CoreLinkCodec.dart';
 import '../link/CoreLinkProtocol.dart';
 import 'CoreProxy.dart';
 
@@ -13,11 +14,10 @@ class WebWasmCoreProxy extends CoreProxy {
 
   @override
   Future<Object?> call(CoreCallRequest request) async {
-    final requestText = jsonEncode(request.toJson());
-    final responseText = await _invokeString('call', <JSAny?>[
-      requestText.toJS,
+    final responseBytes = await _invokeBytes('call', <JSAny?>[
+      encodeCoreLink(request.toJson()).toJS,
     ]);
-    final response = jsonDecode(responseText) as Map<String, Object?>;
+    final response = decodeCoreLinkMap(responseBytes);
     final result = response['result'] as Map<String, Object?>;
     if (result.containsKey('Ok')) {
       return result['Ok'];
@@ -34,12 +34,29 @@ class WebWasmCoreProxy extends CoreProxy {
     );
   }
 
+  /// Opens a client-owned Link input stream through the web runtime carrier.
+  @override
+  Future<CorePushSink> push(CorePushRequest request) async {
+    final responseBytes = await _invokeBytes('pushOpen', <JSAny?>[
+      encodeCoreLink(request.toJson()).toJS,
+    ]);
+    final response = decodeCoreLinkMap(responseBytes);
+    final pushId = response['pushId'] as String;
+    if (pushId != request.requestId) {
+      throw CoreLinkError(
+        code: 'INVALID_RESPONSE',
+        message: 'web push id mismatch: $pushId',
+      );
+    }
+    return _WebCorePushSink(pushId);
+  }
+
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
-    final responseText = await _invokeString('watchSnapshot', <JSAny?>[
-      jsonEncode(request.toJson()).toJS,
+    final responseBytes = await _invokeBytes('watchSnapshot', <JSAny?>[
+      encodeCoreLink(request.toJson()).toJS,
     ]);
-    final response = jsonDecode(responseText) as Map<String, Object?>;
+    final response = decodeCoreLinkMap(responseBytes);
     if (response.containsKey('code') && response.containsKey('message')) {
       final error = CoreLinkError.fromJson(response);
       throw error;
@@ -55,23 +72,29 @@ class WebWasmCoreProxy extends CoreProxy {
     var opened = false;
     var canceled = false;
     late final JSFunction onEvent;
-    onEvent = ((JSString frameText) {
-      _dispatchWatchFrame(controller, subscriptionId, frameText.toDart);
+    onEvent = ((JSUint8Array frameBytes) {
+      _dispatchWatchFrame(
+        controller,
+        subscriptionId,
+        frameBytes.toDart,
+        onTransportError: () {
+          opened = false;
+        },
+      );
     }).toJS;
 
     controller.onListen = () {
       unawaited(() async {
         try {
-          final subscriptionText = await _invokeString('watchStream', <JSAny?>[
-            jsonEncode(<String, Object?>{
+          final subscriptionBytes = await _invokeBytes('watchStream', <JSAny?>[
+            encodeCoreLink(<String, Object?>{
               'channelId': 'web-watch-channel',
               'subscriptionId': subscriptionId,
               'request': request.toJson(),
             }).toJS,
             onEvent,
           ]);
-          final subscriptionJson =
-              jsonDecode(subscriptionText) as Map<String, Object?>;
+          final subscriptionJson = decodeCoreLinkMap(subscriptionBytes);
           if (subscriptionJson.containsKey('code') &&
               subscriptionJson.containsKey('message')) {
             throw CoreLinkError.fromJson(subscriptionJson);
@@ -85,7 +108,7 @@ class WebWasmCoreProxy extends CoreProxy {
           }
           opened = true;
           if (canceled) {
-            await _invokeString('closeWatchStream', <JSAny?>[
+            await _invokeBytes('closeWatchStream', <JSAny?>[
               subscriptionId.toJS,
             ]);
           }
@@ -100,10 +123,49 @@ class WebWasmCoreProxy extends CoreProxy {
     controller.onCancel = () async {
       canceled = true;
       if (opened) {
-        await _invokeString('closeWatchStream', <JSAny?>[subscriptionId.toJS]);
+        await _invokeBytes('closeWatchStream', <JSAny?>[subscriptionId.toJS]);
       }
     };
     return controller.stream;
+  }
+}
+
+class _WebCorePushSink implements CorePushSink {
+  /// Creates an ordered web push sink.
+  _WebCorePushSink(this._pushId);
+
+  final String _pushId;
+  Future<void> _tail = Future<void>.value();
+  int _sequence = 0;
+  bool _closed = false;
+
+  /// Queues one input item on the persistent push carrier.
+  @override
+  void add(Object? args) {
+    if (_closed) {
+      throw StateError('Link push stream is closed');
+    }
+    final sequence = _sequence++;
+    _tail = _tail.then((_) async {
+      await _invokeBytes('pushItem', <JSAny?>[
+        encodeCoreLink(<String, Object?>{
+          'pushId': _pushId,
+          'sequence': sequence,
+          'args': args,
+        }).toJS,
+      ]);
+    });
+  }
+
+  /// Flushes queued items and closes the persistent push stream.
+  @override
+  Future<void> close() async {
+    if (_closed) {
+      return;
+    }
+    _closed = true;
+    await _tail;
+    await _invokeBytes('pushClose', <JSAny?>[_pushId.toJS]);
   }
 }
 
@@ -112,13 +174,14 @@ int _nextWebWatchSubscriptionIndex = 0;
 void _dispatchWatchFrame(
   StreamController<CoreEvent> controller,
   String subscriptionId,
-  String frameText,
-) {
+  Uint8List frameBytes, {
+  required void Function() onTransportError,
+}) {
   if (controller.isClosed) {
     return;
   }
   try {
-    final frame = jsonDecode(frameText) as Map<String, Object?>;
+    final frame = decodeCoreLinkMap(frameBytes);
     if (frame['subscriptionId'] != subscriptionId) {
       throw CoreLinkError(
         code: 'INVALID_RESPONSE',
@@ -126,11 +189,19 @@ void _dispatchWatchFrame(
             'web watch subscription id mismatch: ${frame['subscriptionId']}',
       );
     }
+    final errorCode = frame['errorCode'];
+    if (errorCode is String) {
+      onTransportError();
+      throw CoreLinkError(
+        code: errorCode,
+        message: frame['errorMessage'] as String,
+      );
+    }
     final event = CoreEvent.fromJson(frame['event'] as Map<String, Object?>);
     controller.add(event);
     if (event.kind == 'Completed') {
       unawaited(
-        _invokeString('closeWatchStream', <JSAny?>[subscriptionId.toJS]),
+        _invokeBytes('closeWatchStream', <JSAny?>[subscriptionId.toJS]),
       );
       unawaited(controller.close());
     }
@@ -140,7 +211,7 @@ void _dispatchWatchFrame(
   }
 }
 
-Future<String> _invokeString(String method, List<JSAny?> args) async {
+Future<Uint8List> _invokeBytes(String method, List<JSAny?> args) async {
   final runtime = globalContext.getProperty<JSAny?>('__operitRuntime'.toJS);
   if (runtime.isUndefinedOrNull) {
     throw const CoreLinkError(
@@ -153,11 +224,11 @@ Future<String> _invokeString(String method, List<JSAny?> args) async {
     args,
   );
   final value = await promise.toDart;
-  if (value.isA<JSString>()) {
-    return (value as JSString).toDart;
+  if (value.isA<JSUint8Array>()) {
+    return (value as JSUint8Array).toDart;
   }
   throw CoreLinkError(
     code: 'WEB_WASM_BRIDGE_INVALID_RESPONSE',
-    message: 'window.__operitRuntime.$method returned a non-string value',
+    message: 'window.__operitRuntime.$method returned a non-binary value',
   );
 }

@@ -215,6 +215,7 @@ pub struct IntResultData {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BinaryResultData {
+    #[serde(with = "serde_bytes")]
     pub value: Vec<u8>,
 }
 

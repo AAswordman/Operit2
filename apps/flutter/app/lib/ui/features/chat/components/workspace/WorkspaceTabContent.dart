@@ -8,7 +8,6 @@ import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../theme/OperitGlassSurface.dart';
 import '../../viewmodel/WorkspaceFileModels.dart';
 import 'browser/WorkspaceBrowserContent.dart';
-import 'browser/automation/WorkspaceBrowserSessionRegistry.dart';
 import 'browser/automation/WorkspaceWebVisitContent.dart';
 import 'WorkspaceFileBrowserContent.dart';
 import 'WorkspaceFilePreviewContent.dart';
@@ -23,7 +22,7 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.tab,
     required this.workspacePath,
     required this.terminalSessionCountListenable,
-    required this.browserSessionRegistry,
+    required this.browserSessionCountListenable,
     required this.onListWorkspaceFiles,
     required this.onListWorkspaceBindingDirectories,
     required this.onReadWorkspaceTextFile,
@@ -47,7 +46,7 @@ class WorkspaceTabContent extends StatelessWidget {
   final WorkspaceTab tab;
   final String? workspacePath;
   final ValueListenable<int> terminalSessionCountListenable;
-  final WorkspaceBrowserSessionRegistry browserSessionRegistry;
+  final ValueListenable<int> browserSessionCountListenable;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
   final Future<List<WorkspaceFileEntry>> Function(String path)
@@ -84,7 +83,7 @@ class WorkspaceTabContent extends StatelessWidget {
         return WorkspaceHomeContent(
           workspacePath: workspacePath,
           terminalSessionCountListenable: terminalSessionCountListenable,
-          browserSessionRegistry: browserSessionRegistry,
+          browserSessionCountListenable: browserSessionCountListenable,
           onOpenFiles: onOpenFiles,
           onOpenTerminal: onOpenTerminal,
           onOpenTerminalSessions: onOpenTerminalSessions,

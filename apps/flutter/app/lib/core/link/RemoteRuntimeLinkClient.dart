@@ -2,11 +2,14 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' show Response;
 import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../link/CoreLinkCodec.dart';
 import '../link/CoreLinkProtocol.dart';
 import '../bridge/CoreProxy.dart';
 
@@ -24,12 +27,17 @@ class RemoteRuntimeLinkClient extends CoreProxy {
       client: this.client,
       onConnectionIssue: (error) => _notifyConnectionIssue(error),
     );
+    _pushChannel = _RemotePushChannel(
+      session: session,
+      onConnectionIssue: (error) => _notifyConnectionIssue(error),
+    );
   }
 
   final PairedRemoteSessionRecord session;
   final http.Client client;
   RemoteConnectionIssueCallback? _onConnectionIssue;
   late final _RemoteWatchChannelPool _watchPool;
+  late final _RemotePushChannel _pushChannel;
   bool _disposed = false;
 
   void setConnectionIssueHandler(RemoteConnectionIssueCallback? handler) {
@@ -41,7 +49,7 @@ class RemoteRuntimeLinkClient extends CoreProxy {
     _onConnectionIssue?.call(error);
   }
 
-  Future<Response> _postRequest(String path, String body) async {
+  Future<Response> _postRequest(String path, Uint8List body) async {
     try {
       return await client.post(
         session.uri(path),
@@ -58,11 +66,11 @@ class RemoteRuntimeLinkClient extends CoreProxy {
 
   @override
   Future<Object?> call(CoreCallRequest request) async {
-    final body = jsonEncode({'request': request.toJson()});
+    final body = encodeCoreLink(<String, Object?>{'request': request.toJson()});
     final response = await _postRequest('/link/call', body);
     _throwIfRemoteError(response);
 
-    final json = jsonDecode(response.body) as Map<String, Object?>;
+    final json = decodeCoreLinkMap(response.bodyBytes);
     final result = json['result'] as Map<String, Object?>;
     if (result.containsKey('Ok')) {
       return result['Ok'];
@@ -79,14 +87,18 @@ class RemoteRuntimeLinkClient extends CoreProxy {
     );
   }
 
+  /// Opens a client-owned stream on the remote Link push carrier.
+  @override
+  Future<CorePushSink> push(CorePushRequest request) {
+    return _pushChannel.open(request);
+  }
+
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
-    final body = jsonEncode({'request': request.toJson()});
+    final body = encodeCoreLink(<String, Object?>{'request': request.toJson()});
     final response = await _postRequest('/link/watch/snapshot', body);
     _throwIfRemoteError(response);
-    return CoreEvent.fromJson(
-      jsonDecode(response.body) as Map<String, Object?>,
-    );
+    return CoreEvent.fromJson(decodeCoreLinkMap(response.bodyBytes));
   }
 
   @override
@@ -103,17 +115,26 @@ class RemoteRuntimeLinkClient extends CoreProxy {
 
   Future<RemoteSessionInfo> sessionInfo() async {
     final nonce = 'flutter-${DateTime.now().microsecondsSinceEpoch}';
-    final body = jsonEncode(<String, Object?>{'nonce': nonce});
+    final body = encodeCoreLink(<String, Object?>{'nonce': nonce});
     final response = await _postRequest('/link/session', body);
     _throwIfRemoteError(response);
-    return RemoteSessionInfo.fromJson(
-      jsonDecode(response.body) as Map<String, Object?>,
+    final info = RemoteSessionInfo.fromJson(
+      decodeCoreLinkMap(response.bodyBytes),
     );
+    if (info.protocolVersion != 3) {
+      throw CoreLinkError(
+        code: 'LINK_VERSION_MISMATCH',
+        message:
+            'remote Link protocol version is ${info.protocolVersion}, expected 3',
+      );
+    }
+    return info;
   }
 
   void dispose() {
     _disposed = true;
     _watchPool.dispose();
+    _pushChannel.dispose();
     client.close();
   }
 
@@ -123,15 +144,15 @@ class RemoteRuntimeLinkClient extends CoreProxy {
     }
     if (response.statusCode == 401 || response.statusCode == 403) {
       _notifyConnectionIssue(
-        _parseErrorBody(response.statusCode, response.body),
+        _parseErrorBody(response.statusCode, response.bodyBytes),
       );
     }
-    _throwRemoteErrorBody(response.statusCode, response.body);
+    _throwRemoteErrorBody(response.statusCode, response.bodyBytes);
   }
 
-  CoreLinkError _parseErrorBody(int statusCode, String body) {
+  CoreLinkError _parseErrorBody(int statusCode, Uint8List body) {
     try {
-      final decoded = jsonDecode(body);
+      final decoded = decodeCoreLink(body);
       if (decoded is Map<String, Object?> &&
           decoded.containsKey('code') &&
           decoded.containsKey('message')) {
@@ -144,8 +165,134 @@ class RemoteRuntimeLinkClient extends CoreProxy {
     );
   }
 
-  void _throwRemoteErrorBody(int statusCode, String body) {
+  void _throwRemoteErrorBody(int statusCode, Uint8List body) {
     throw _parseErrorBody(statusCode, body);
+  }
+}
+
+class _RemotePushChannel {
+  /// Creates one persistent remote push carrier.
+  _RemotePushChannel({required this.session, this.onConnectionIssue});
+
+  final PairedRemoteSessionRecord session;
+  final RemoteConnectionIssueCallback? onConnectionIssue;
+  WebSocketChannel? _channel;
+  StreamSubscription<Object?>? _subscription;
+
+  /// Opens one logical push stream on the shared websocket.
+  Future<CorePushSink> open(CorePushRequest request) async {
+    final channel = await _ensureChannel();
+    _send(channel, <String, Object?>{
+      'type': 'PushOpen',
+      'body': request.toJson(),
+    });
+    return _RemoteCorePushSink(channel: this, pushId: request.requestId);
+  }
+
+  /// Sends one signed protocol payload in websocket order.
+  void send(Map<String, Object?> payload) {
+    final channel = _channel;
+    if (channel == null) {
+      throw StateError('Link push carrier is not open');
+    }
+    _send(channel, payload);
+  }
+
+  /// Closes the shared push carrier.
+  void dispose() {
+    unawaited(_subscription?.cancel());
+    unawaited(_channel?.sink.close());
+    _subscription = null;
+    _channel = null;
+  }
+
+  /// Creates and observes the shared websocket carrier.
+  Future<WebSocketChannel> _ensureChannel() async {
+    final current = _channel;
+    if (current != null) {
+      return current;
+    }
+    final channel = WebSocketChannel.connect(session.wsUri('/link/ws'));
+    await channel.ready;
+    _channel = channel;
+    _subscription = channel.stream.listen(
+      _handleResponse,
+      onError: (Object error, StackTrace stackTrace) {
+        onConnectionIssue?.call(
+          CoreLinkError(code: 'REMOTE_PUSH_ERROR', message: error.toString()),
+        );
+      },
+      onDone: () {
+        onConnectionIssue?.call(
+          const CoreLinkError(
+            code: 'REMOTE_PUSH_CLOSED',
+            message: 'remote Link push carrier closed',
+          ),
+        );
+      },
+    );
+    return channel;
+  }
+
+  /// Reports structured server errors received on the push carrier.
+  void _handleResponse(Object? frame) {
+    final bytes = Uint8List.fromList((frame as List<int>));
+    final response = decodeCoreLinkMap(bytes);
+    if (response['type'] == 'Error') {
+      onConnectionIssue?.call(
+        CoreLinkError.fromJson(response['body'] as Map<String, Object?>),
+      );
+    }
+  }
+
+  /// Signs and writes one websocket payload.
+  void _send(WebSocketChannel channel, Map<String, Object?> payload) {
+    final payloadBytes = encodeCoreLink(payload);
+    channel.sink.add(
+      encodeCoreLink(<String, Object?>{
+        'protocolVersion': 3,
+        'sessionId': session.sessionId,
+        'deviceId': session.deviceId,
+        'signature': session.signature(payloadBytes),
+        'payload': payload,
+      }),
+    );
+  }
+}
+
+class _RemoteCorePushSink implements CorePushSink {
+  /// Creates one logical stream on a remote push carrier.
+  _RemoteCorePushSink({required this.channel, required this.pushId});
+
+  final _RemotePushChannel channel;
+  final String pushId;
+  int _sequence = 0;
+  bool _closed = false;
+
+  /// Sends one ordered item without opening an HTTP request.
+  @override
+  void add(Object? args) {
+    if (_closed) {
+      throw StateError('Link push stream is closed');
+    }
+    channel.send(<String, Object?>{
+      'type': 'PushItem',
+      'body': <String, Object?>{
+        'pushId': pushId,
+        'sequence': _sequence++,
+        'args': args,
+      },
+    });
+  }
+
+  /// Completes this logical stream after its preceding items.
+  @override
+  Future<void> close() async {
+    if (_closed) {
+      return;
+    }
+    _closed = true;
+    channel.send(<String, Object?>{'type': 'PushClose', 'body': pushId});
   }
 }
 
@@ -171,7 +318,7 @@ class _RemoteWatchChannelPool {
     final controller = StreamController<CoreEvent>();
     channel.subscriptions[subscriptionId] = controller;
     channel.subscriptionCount += 1;
-    final body = jsonEncode({
+    final body = encodeCoreLink(<String, Object?>{
       'channelId': channel.channelId,
       'subscriptionId': subscriptionId,
       'request': request.toJson(),
@@ -185,9 +332,9 @@ class _RemoteWatchChannelPool {
       channel.subscriptions.remove(subscriptionId);
       channel.subscriptionCount -= 1;
       await controller.close();
-      _throwRemoteErrorBody(response.statusCode, response.body);
+      _throwRemoteErrorBody(response.statusCode, response.bodyBytes);
     }
-    final decoded = jsonDecode(response.body) as Map<String, Object?>;
+    final decoded = decodeCoreLinkMap(response.bodyBytes);
     if (decoded['subscriptionId'] != subscriptionId) {
       channel.subscriptions.remove(subscriptionId);
       channel.subscriptionCount -= 1;
@@ -211,7 +358,7 @@ class _RemoteWatchChannelPool {
     );
     channel.subscriptionCount -= 1;
     await controller?.close();
-    final body = jsonEncode({
+    final body = encodeCoreLink(<String, Object?>{
       'channelId': subscription.channelId,
       'subscriptionId': subscription.subscriptionId,
     });
@@ -221,7 +368,7 @@ class _RemoteWatchChannelPool {
       body: body,
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      _throwRemoteErrorBody(response.statusCode, response.body);
+      _throwRemoteErrorBody(response.statusCode, response.bodyBytes);
     }
     if (channel.subscriptionCount == 0) {
       await channel.dispose();
@@ -261,7 +408,7 @@ class _RemoteWatchChannel {
   _RemoteWatchChannel._({
     required this.channelId,
     required this.subscriptions,
-    required StreamSubscription<String> eventSubscription,
+    required StreamSubscription<List<int>> eventSubscription,
   }) : _eventSubscription = eventSubscription;
 
   static Future<_RemoteWatchChannel> open({
@@ -271,63 +418,65 @@ class _RemoteWatchChannel {
     required String channelId,
   }) async {
     final subscriptions = <String, StreamController<CoreEvent>>{};
-    final body = jsonEncode({'channelId': channelId});
+    final body = encodeCoreLink(<String, Object?>{'channelId': channelId});
     final request =
         http.Request('POST', session.uri('/link/watch/channel/events'))
           ..headers.addAll(session.signedHeaders(body))
-          ..body = body;
+          ..bodyBytes = body;
     final response = await client.send(request);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      final bodyText = await response.stream.bytesToString();
-      _throwRemoteErrorBody(response.statusCode, bodyText);
+      final bodyBytes = Uint8List.fromList(await response.stream.toBytes());
+      _throwRemoteErrorBody(response.statusCode, bodyBytes);
     }
     late final _RemoteWatchChannel channel;
-    var buffer = '';
-    final eventSubscription = response.stream
-        .transform(utf8.decoder)
-        .listen(
-          (text) {
-            buffer += text;
-            var index = buffer.indexOf('\n');
-            while (index >= 0) {
-              final line = buffer.substring(0, index).trim();
-              buffer = buffer.substring(index + 1);
-              if (line.isNotEmpty) {
-                channel._dispatch(line);
-              }
-              index = buffer.indexOf('\n');
-            }
-          },
-          onError: (Object error, StackTrace stackTrace) {
-            if (channel._closing) {
-              return;
-            }
-            onConnectionIssue?.call(
-              CoreLinkError(
-                code: 'REMOTE_WATCH_ERROR',
-                message: error.toString(),
-              ),
-            );
-            channel._fail(error, stackTrace);
-          },
-          onDone: () {
-            final tail = buffer.trim();
-            if (tail.isNotEmpty) {
-              channel._dispatch(tail);
-            }
-            if (channel._closing) {
-              channel._done();
-              return;
-            }
-            channel._done();
-            onConnectionIssue?.call(
-              const CoreLinkError(
-                code: 'REMOTE_WATCH_CLOSED',
-                message: 'remote watch channel closed',
-              ),
-            );
-          },
+    final buffer = <int>[];
+    final eventSubscription = response.stream.listen(
+      (bytes) {
+        buffer.addAll(bytes);
+        while (buffer.length >= 4) {
+          final frameLength = ByteData.sublistView(
+            Uint8List.fromList(buffer.sublist(0, 4)),
+          ).getUint32(0);
+          if (buffer.length < 4 + frameLength) {
+            break;
+          }
+          final frame = Uint8List.fromList(buffer.sublist(4, 4 + frameLength));
+          buffer.removeRange(0, 4 + frameLength);
+          channel._dispatch(frame);
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (channel._closing) {
+          return;
+        }
+        onConnectionIssue?.call(
+          CoreLinkError(code: 'REMOTE_WATCH_ERROR', message: error.toString()),
         );
+        channel._fail(error, stackTrace);
+      },
+      onDone: () {
+        if (buffer.isNotEmpty) {
+          channel._fail(
+            const CoreLinkError(
+              code: 'INVALID_FRAME',
+              message: 'remote watch channel ended with an incomplete frame',
+            ),
+            StackTrace.current,
+          );
+        }
+        if (channel._closing) {
+          channel._done();
+          return;
+        }
+        channel._done();
+        onConnectionIssue?.call(
+          const CoreLinkError(
+            code: 'REMOTE_WATCH_CLOSED',
+            message: 'remote watch channel closed',
+          ),
+        );
+      },
+    );
     channel = _RemoteWatchChannel._(
       channelId: channelId,
       subscriptions: subscriptions,
@@ -338,12 +487,12 @@ class _RemoteWatchChannel {
 
   final String channelId;
   final Map<String, StreamController<CoreEvent>> subscriptions;
-  final StreamSubscription<String> _eventSubscription;
+  final StreamSubscription<List<int>> _eventSubscription;
   int subscriptionCount = 0;
   bool _closing = false;
 
-  void _dispatch(String line) {
-    final decoded = jsonDecode(line) as Map<String, Object?>;
+  void _dispatch(Uint8List frame) {
+    final decoded = decodeCoreLinkMap(frame);
     final subscriptionId = decoded['subscriptionId'] as String;
     final event = CoreEvent.fromJson(decoded['event'] as Map<String, Object?>);
     final controller = subscriptions[subscriptionId];
@@ -405,8 +554,8 @@ class _RemoteWatchSubscription {
   final Stream<CoreEvent> events;
 }
 
-void _throwRemoteErrorBody(int statusCode, String body) {
-  final decoded = jsonDecode(body);
+void _throwRemoteErrorBody(int statusCode, Uint8List body) {
+  final decoded = decodeCoreLink(body);
   if (decoded is Map<String, Object?> &&
       decoded.containsKey('code') &&
       decoded.containsKey('message')) {
@@ -517,13 +666,30 @@ class PairedRemoteSessionRecord {
     return Uri.parse('$normalizedBaseUrl$path');
   }
 
-  Map<String, String> signedHeaders(String body) {
+  /// Builds one websocket URI rooted at this remote session.
+  Uri wsUri(String path) {
+    final value = uri(path);
+    final scheme = switch (value.scheme) {
+      'http' => 'ws',
+      'https' => 'wss',
+      _ => throw StateError('unsupported remote websocket scheme'),
+    };
+    return value.replace(scheme: scheme);
+  }
+
+  Map<String, String> signedHeaders(Uint8List body) {
     return {
-      'content-type': 'application/json',
+      'content-type': 'application/msgpack',
+      'x-operit-link-version': '3',
       'x-operit-session': sessionId,
       'x-operit-device': deviceId,
-      'x-operit-signature': _sign(body),
+      'x-operit-signature': signature(body),
     };
+  }
+
+  /// Signs one remote link message body with this session secret.
+  String signature(Uint8List body) {
+    return _sign(body);
   }
 
   Map<String, Object?> toJson() {
@@ -538,9 +704,9 @@ class PairedRemoteSessionRecord {
     };
   }
 
-  String _sign(String body) {
+  String _sign(Uint8List body) {
     final secret = base64Decode(sessionSecret);
     final hmac = Hmac(sha256, secret);
-    return base64Encode(hmac.convert(utf8.encode(body)).bytes);
+    return base64Encode(hmac.convert(body).bytes);
   }
 }

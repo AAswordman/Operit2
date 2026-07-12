@@ -8,9 +8,9 @@ from common import (
     FLUTTER_APP_DIR,
     compress_tar_gz,
     flutter_command,
-    flutter_pub_get,
+    dart_pub_get,
     host_arch,
-    require_web_access_bundle,
+    prepare_web_access_embedded_assets,
     run,
 )
 
@@ -26,14 +26,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    require_web_access_bundle()
-    flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
+    prepare_web_access_embedded_assets()
+    dart_pub_get(enforce_lockfile=args.enforce_lockfile)
     run(
         [
             flutter_command(),
             "build",
             "linux",
             "--release",
+            "--no-pub",
             "--build-name",
             args.build_name,
             "--build-number",

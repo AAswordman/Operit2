@@ -20,6 +20,12 @@ class ProxyCoreRuntimeBridge extends OperitRuntimeBridge {
     return _coreProxy.call(request);
   }
 
+  /// Opens a client-owned Link input stream.
+  @override
+  Future<CorePushSink> push(CorePushRequest request) {
+    return _coreProxy.push(request);
+  }
+
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) {
     return _coreProxy.watchSnapshot(request);

@@ -14,22 +14,44 @@ use operit_host_api::{
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-#[derive(Clone, Debug, Default)]
-pub struct PosixFileSystemHost;
+#[derive(Clone, Debug)]
+pub struct PosixFileSystemHost {
+    envLabel: &'static str,
+    environmentDescriptor: HostEnvironmentDescriptor,
+}
 
 impl PosixFileSystemHost {
+    /// Creates the shared POSIX file host with the Linux descriptor.
     pub fn new() -> Self {
-        Self
+        Self::newForEnvironment("posix", HostEnvironmentDescriptor::linux())
+    }
+
+    /// Creates the shared POSIX file host with an owner-specific descriptor.
+    pub fn newForEnvironment(
+        envLabel: &'static str,
+        environmentDescriptor: HostEnvironmentDescriptor,
+    ) -> Self {
+        Self {
+            envLabel,
+            environmentDescriptor,
+        }
+    }
+}
+
+impl Default for PosixFileSystemHost {
+    /// Creates the default shared POSIX file host.
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 impl FileSystemHost for PosixFileSystemHost {
     fn envLabel(&self) -> &str {
-        "posix"
+        self.envLabel
     }
 
     fn environmentDescriptor(&self) -> HostEnvironmentDescriptor {
-        HostEnvironmentDescriptor::linux()
+        self.environmentDescriptor.clone()
     }
 
     fn validatePath(&self, path: &str, paramName: &str) -> HostResult<()> {

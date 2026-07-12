@@ -30,6 +30,7 @@ operit-store = { version = "0.1.0", path = "../operit-store" }
 operit-util = { version = "2.0.0-preview.3", path = "../operit-util" }
 regex.workspace = true
 serde.workspace = true
+serde_bytes = "0.11"
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true

@@ -42,6 +42,9 @@ operit-host-windows-native = { path = "../../../../hosts/windows" }
 [target.'cfg(target_os = "linux")'.dependencies]
 operit-host-linux-native = { path = "../../../../hosts/linux" }
 
+[target.'cfg(target_os = "ohos")'.dependencies]
+operit-host-ohos-native = { path = "../../../../hosts/ohos" }
+
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
 operit-host-apple-native = { path = "../../../../hosts/apple" }
 

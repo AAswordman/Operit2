@@ -18,6 +18,7 @@ jobs:
     env:
       RUSTFLAGS: -Awarnings
       RUST_TOOLCHAIN_VERSION: 1.95.0
+      FVM_VERSION: 4.1.2
       TYPESCRIPT_VERSION: 5.9.3
       WASM_BINDGEN_VERSION: 0.2.122
       WASI_SDK_VERSION: "20.0"
@@ -33,11 +34,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Flutter
+      - name: Install bootstrap Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
+
+      - name: Install FVM
+        run: |
+          dart pub global activate fvm "$FVM_VERSION"
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+
+      - name: Cache project Flutter SDK
+        uses: actions/cache@v4
+        with:
+          path: ~/fvm
+          key: ${{ runner.os }}-fvm-${{ hashFiles('apps/flutter/app/.fvmrc') }}
+
+      - name: Install project Flutter SDK
+        working-directory: apps/flutter/app
+        run: fvm install --skip-pub-get
 
       - name: Cache Pub packages
         uses: actions/cache@v4
@@ -82,7 +98,7 @@ jobs:
           path: |
             apps/web_access/build/bundle
             apps/flutter/app/assets/web_access
-          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-web-access-${{ env.WEB_BUILD_CACHE_VERSION }}-${{ hashFiles('apps/flutter/app/pubspec.yaml', 'apps/flutter/app/pubspec.lock', 'apps/flutter/app/lib/**/*.dart', 'apps/flutter/app/hook/build.dart', 'apps/web_access/web/**', 'apps/flutter/native/operit-flutter-bridge/Cargo.lock', 'apps/flutter/native/operit-flutter-bridge/Cargo.toml', 'apps/flutter/native/operit-flutter-bridge/src/**', 'core/Cargo.lock', 'core/crates/**/*.rs', 'core/crates/**/Cargo.toml', 'hosts/web/Cargo.lock', 'hosts/web/Cargo.toml', 'hosts/web/src/**', 'plugins/packages/**', 'plugins/tools/**') }}
+          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-web-access-${{ env.WEB_BUILD_CACHE_VERSION }}-${{ hashFiles('apps/flutter/app/.fvmrc', 'apps/flutter/app/pubspec.yaml', 'apps/flutter/app/pubspec.lock', 'apps/flutter/app/lib/**/*.dart', 'apps/flutter/app/hook/build.dart', 'apps/web_access/web/**', 'apps/flutter/native/operit-flutter-bridge/Cargo.lock', 'apps/flutter/native/operit-flutter-bridge/Cargo.toml', 'apps/flutter/native/operit-flutter-bridge/src/**', 'core/Cargo.lock', 'core/crates/**/*.rs', 'core/crates/**/Cargo.toml', 'hosts/web/Cargo.lock', 'hosts/web/Cargo.toml', 'hosts/web/src/**', 'plugins/packages/**', 'plugins/tools/**') }}
           restore-keys: |
             ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-web-access-${{ env.WEB_BUILD_CACHE_VERSION }}-
 

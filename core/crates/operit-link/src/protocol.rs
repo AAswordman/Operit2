@@ -1,8 +1,179 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use std::collections::BTreeMap;
+
+use serde::de::{MapAccess, SeqAccess, Visitor};
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio::sync::mpsc;
 
-pub type CoreValue = Value;
+#[derive(Clone, Debug, PartialEq)]
+pub enum CoreValue {
+    Null,
+    Bool(bool),
+    Signed(i64),
+    Unsigned(u64),
+    Float(f64),
+    String(String),
+    Bytes(Vec<u8>),
+    List(Vec<CoreValue>),
+    Map(BTreeMap<String, CoreValue>),
+}
+
+impl CoreValue {
+    /// Returns an empty structured argument map.
+    pub fn emptyMap() -> Self {
+        Self::Map(BTreeMap::new())
+    }
+}
+
+impl Serialize for CoreValue {
+    /// Serializes a core value directly into the serializer's native data model.
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Null => serializer.serialize_unit(),
+            Self::Bool(value) => serializer.serialize_bool(*value),
+            Self::Signed(value) => serializer.serialize_i64(*value),
+            Self::Unsigned(value) => serializer.serialize_u64(*value),
+            Self::Float(value) => serializer.serialize_f64(*value),
+            Self::String(value) => serializer.serialize_str(value),
+            Self::Bytes(value) => serializer.serialize_bytes(value),
+            Self::List(values) => {
+                let mut sequence = serializer.serialize_seq(Some(values.len()))?;
+                for value in values {
+                    sequence.serialize_element(value)?;
+                }
+                sequence.end()
+            }
+            Self::Map(values) => {
+                let mut map = serializer.serialize_map(Some(values.len()))?;
+                for (key, value) in values {
+                    map.serialize_entry(key, value)?;
+                }
+                map.end()
+            }
+        }
+    }
+}
+
+struct CoreValueVisitor;
+
+impl<'de> Visitor<'de> for CoreValueVisitor {
+    type Value = CoreValue;
+
+    /// Describes the native value forms accepted by CoreValue.
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a Link core value")
+    }
+
+    /// Decodes a null value.
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(CoreValue::Null)
+    }
+
+    /// Decodes a null optional value.
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(CoreValue::Null)
+    }
+
+    /// Decodes a present optional value.
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Deserialize::deserialize(deserializer)
+    }
+
+    /// Decodes a boolean value.
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+        Ok(CoreValue::Bool(value))
+    }
+
+    /// Decodes a signed integer value.
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+        Ok(CoreValue::Signed(value))
+    }
+
+    /// Decodes an unsigned integer value.
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+        Ok(CoreValue::Unsigned(value))
+    }
+
+    /// Decodes a floating-point value.
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E> {
+        Ok(CoreValue::Float(value))
+    }
+
+    /// Decodes an owned string value.
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+        Ok(CoreValue::String(value))
+    }
+
+    /// Decodes a borrowed string value.
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
+        Ok(CoreValue::String(value.to_string()))
+    }
+
+    /// Decodes an owned binary value.
+    fn visit_byte_buf<E>(self, value: Vec<u8>) -> Result<Self::Value, E> {
+        Ok(CoreValue::Bytes(value))
+    }
+
+    /// Decodes a borrowed binary value.
+    fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E> {
+        Ok(CoreValue::Bytes(value.to_vec()))
+    }
+
+    /// Decodes a sequence value.
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::with_capacity(sequence.size_hint().unwrap_or(0));
+        while let Some(value) = sequence.next_element()? {
+            values.push(value);
+        }
+        Ok(CoreValue::List(values))
+    }
+
+    /// Decodes a string-keyed map value.
+    fn visit_map<A>(self, mut entries: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut values = BTreeMap::new();
+        while let Some((key, value)) = entries.next_entry::<String, CoreValue>()? {
+            values.insert(key, value);
+        }
+        Ok(CoreValue::Map(values))
+    }
+}
+
+impl<'de> Deserialize<'de> for CoreValue {
+    /// Deserializes a core value directly from the serializer's native data model.
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(CoreValueVisitor)
+    }
+}
+
+/// Converts a serializable Rust value into the Link value model.
+#[allow(non_snake_case)]
+pub fn toCoreValue(value: impl Serialize) -> Result<CoreValue, crate::codec::CoreLinkCodecError> {
+    crate::codec::decodeLink(&crate::codec::encodeLink(value)?)
+}
+
+/// Converts a Link value into a typed Rust value.
+#[allow(non_snake_case)]
+pub fn fromCoreValue<T>(value: CoreValue) -> Result<T, crate::codec::CoreLinkCodecError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    crate::codec::decodeLink(&crate::codec::encodeLink(value)?)
+}
 
 pub struct CoreEventStream {
     receiver: mpsc::UnboundedReceiver<CoreEvent>,
@@ -101,11 +272,12 @@ impl From<String> for CoreObjectPath {
 pub enum CoreMethodMode {
     Call,
     Watch,
+    Push,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CorePayloadKind {
-    Json,
+    Value,
     TextStreamEvent,
 }
 
@@ -123,20 +295,20 @@ pub struct CoreMethodProtocol {
 }
 
 impl CoreMethodProtocol {
-    /// Describes a JSON request/response method call.
-    pub fn callJson() -> Self {
+    /// Describes a structured value request/response method call.
+    pub fn callValue() -> Self {
         Self {
             mode: CoreMethodMode::Call,
-            payload: CorePayloadKind::Json,
+            payload: CorePayloadKind::Value,
             initial: CoreWatchInitial::None,
         }
     }
 
-    /// Describes a JSON watch whose initial event behavior is explicit.
-    pub fn watchJson(initial: CoreWatchInitial) -> Self {
+    /// Describes a structured value watch whose initial event behavior is explicit.
+    pub fn watchValue(initial: CoreWatchInitial) -> Self {
         Self {
             mode: CoreMethodMode::Watch,
-            payload: CorePayloadKind::Json,
+            payload: CorePayloadKind::Value,
             initial,
         }
     }
@@ -146,6 +318,15 @@ impl CoreMethodProtocol {
         Self {
             mode: CoreMethodMode::Watch,
             payload: CorePayloadKind::TextStreamEvent,
+            initial: CoreWatchInitial::None,
+        }
+    }
+
+    /// Describes a client-owned structured value input stream.
+    pub fn pushValue() -> Self {
+        Self {
+            mode: CoreMethodMode::Push,
+            payload: CorePayloadKind::Value,
             initial: CoreWatchInitial::None,
         }
     }
@@ -213,6 +394,45 @@ pub struct CoreWatchRequest {
     pub args: CoreValue,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CorePushRequest {
+    pub requestId: CoreRequestId,
+    pub targetPath: CoreObjectPath,
+    pub methodName: String,
+}
+
+impl CorePushRequest {
+    /// Creates a client-owned input stream targeting one core method.
+    pub fn new(
+        requestId: impl Into<String>,
+        targetPath: impl Into<CoreObjectPath>,
+        methodName: impl Into<String>,
+    ) -> Self {
+        Self {
+            requestId: CoreRequestId::new(requestId),
+            targetPath: targetPath.into(),
+            methodName: methodName.into(),
+        }
+    }
+
+    /// Builds the one-shot call represented by one ordered push item.
+    pub fn itemCall(&self, sequence: u64, args: CoreValue) -> CoreCallRequest {
+        CoreCallRequest {
+            requestId: CoreRequestId::new(format!("{}:{sequence}", self.requestId.0)),
+            targetPath: self.targetPath.clone(),
+            methodName: self.methodName.clone(),
+            args,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CorePushItem {
+    pub pushId: String,
+    pub sequence: u64,
+    pub args: CoreValue,
+}
+
 impl CoreWatchRequest {
     /// Creates a serialized watch request.
     pub fn new(
@@ -256,7 +476,7 @@ pub struct CoreLinkError {
     pub code: String,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub details: Option<Value>,
+    pub details: Option<CoreValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<CoreLinkErrorLocation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -287,7 +507,7 @@ impl CoreLinkError {
     pub fn withDetails(
         code: impl Into<String>,
         message: impl Into<String>,
-        details: Value,
+        details: CoreValue,
     ) -> Self {
         Self {
             code: code.into(),

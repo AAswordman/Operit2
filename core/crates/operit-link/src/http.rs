@@ -13,9 +13,10 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
 
 use crate::client::{CoreLinkClient, CoreLinkSharedClient};
-use crate::codec::{decodeCbor, decodeMessagePack, encodeCbor, encodeMessagePack};
+use crate::codec::{decodeLink, encodeLink};
 use crate::protocol::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreLinkError, CoreWatchRequest,
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreLinkError, CorePushItem,
+    CorePushRequest, CoreWatchRequest,
 };
 
 #[derive(Clone)]
@@ -26,6 +27,12 @@ pub struct CoreLinkHttpDispatcher {
 struct CoreLinkHttpState {
     core: CoreLinkHttpCore,
     watchChannels: Arc<Mutex<BTreeMap<String, LinkWatchChannel>>>,
+    pushStreams: Arc<Mutex<BTreeMap<String, LinkPushState>>>,
+}
+
+struct LinkPushState {
+    request: CorePushRequest,
+    nextSequence: u64,
 }
 
 #[derive(Clone)]
@@ -51,10 +58,13 @@ impl futures_util::Stream for LinkWatchChannelEventStream {
     fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.receiver.poll_recv(context) {
             Poll::Ready(Some(event)) => {
-                let mut line =
-                    serde_json::to_vec(&event).expect("LinkWatchChannelEvent must serialize");
-                line.push(b'\n');
-                Poll::Ready(Some(Ok(Bytes::from(line))))
+                let payload = encodeLink(&event).expect("LinkWatchChannelEvent must serialize");
+                let length = u32::try_from(payload.len())
+                    .expect("Link watch event frame exceeds the protocol length limit");
+                let mut frame = Vec::with_capacity(4 + payload.len());
+                frame.extend_from_slice(&length.to_be_bytes());
+                frame.extend_from_slice(&payload);
+                Poll::Ready(Some(Ok(Bytes::from(frame))))
             }
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
@@ -108,9 +118,39 @@ pub struct LinkWatchChannelOpenResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LinkWatchChannelCloseResponse {}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LinkWatchChannelEvent {
     pub subscriptionId: String,
     pub event: CoreEvent,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LinkPushOpenEnvelope {
+    pub pushId: String,
+    pub request: CorePushRequest,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LinkPushCloseEnvelope {
+    pub pushId: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LinkPushOpenResponse {
+    pub pushId: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LinkPushItemResponse {
+    pub pushId: String,
+    pub sequence: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LinkPushCloseResponse {
+    pub pushId: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -118,6 +158,9 @@ pub struct LinkWatchChannelEvent {
 pub enum CoreLinkWsPayload {
     Call(LinkCallEnvelope),
     WatchSnapshot(LinkWatchEnvelope),
+    PushOpen(LinkPushOpenEnvelope),
+    PushItem(CorePushItem),
+    PushClose(LinkPushCloseEnvelope),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -125,6 +168,9 @@ pub enum CoreLinkWsPayload {
 pub enum CoreLinkWsResponse {
     Call(CoreCallResponse),
     WatchSnapshot(CoreEvent),
+    PushOpened(LinkPushOpenResponse),
+    PushAccepted(LinkPushItemResponse),
+    PushClosed(LinkPushCloseResponse),
     Error(CoreLinkError),
 }
 
@@ -135,6 +181,7 @@ impl CoreLinkHttpDispatcher {
             state: Arc::new(CoreLinkHttpState {
                 core: CoreLinkHttpCore::Locked(Arc::new(Mutex::new(Box::new(core)))),
                 watchChannels: Arc::new(Mutex::new(BTreeMap::new())),
+                pushStreams: Arc::new(Mutex::new(BTreeMap::new())),
             }),
         }
     }
@@ -146,41 +193,19 @@ impl CoreLinkHttpDispatcher {
             state: Arc::new(CoreLinkHttpState {
                 core: CoreLinkHttpCore::Shared(Arc::new(core)),
                 watchChannels: Arc::new(Mutex::new(BTreeMap::new())),
+                pushStreams: Arc::new(Mutex::new(BTreeMap::new())),
             }),
         }
     }
 
-    /// Handles a serialized call request body and returns a JSON response.
+    /// Handles a MessagePack call request and returns a MessagePack response.
     pub async fn call(&self, body: Bytes) -> Response {
-        let envelope = match serde_json::from_slice::<LinkCallEnvelope>(&body) {
+        let envelope = match decodeLink::<LinkCallEnvelope>(&body) {
             Ok(value) => value,
             Err(error) => return bad_request(error.to_string()),
         };
-        JsonResponse(self.executeCall(envelope.request).await).into_response()
-    }
-
-    /// Handles a CBOR-serialized call request body and returns a CBOR response.
-    #[allow(non_snake_case)]
-    pub async fn callCbor(&self, body: Bytes) -> Response {
-        let envelope = match decodeCbor::<LinkCallEnvelope>(&body) {
-            Ok(value) => value,
-            Err(error) => return bad_request(error.to_string()),
-        };
-        match encodeCbor(self.executeCall(envelope.request).await) {
-            Ok(bytes) => binary_response("application/cbor", bytes),
-            Err(error) => codec_error(error.to_string()),
-        }
-    }
-
-    /// Handles a MessagePack-serialized call request body and returns a MessagePack response.
-    #[allow(non_snake_case)]
-    pub async fn callMessagePack(&self, body: Bytes) -> Response {
-        let envelope = match decodeMessagePack::<LinkCallEnvelope>(&body) {
-            Ok(value) => value,
-            Err(error) => return bad_request(error.to_string()),
-        };
-        match encodeMessagePack(self.executeCall(envelope.request).await) {
-            Ok(bytes) => binary_response("application/msgpack", bytes),
+        match encodeLink(self.executeCall(envelope.request).await) {
+            Ok(bytes) => binary_response(StatusCode::OK, bytes),
             Err(error) => codec_error(error.to_string()),
         }
     }
@@ -197,48 +222,19 @@ impl CoreLinkHttpDispatcher {
         response
     }
 
-    /// Handles a serialized watch snapshot request body.
+    /// Handles a MessagePack watch snapshot request and returns a MessagePack event.
     #[allow(non_snake_case)]
     pub async fn watchSnapshot(&self, body: Bytes) -> Response {
-        let envelope = match serde_json::from_slice::<LinkWatchEnvelope>(&body) {
+        let envelope = match decodeLink::<LinkWatchEnvelope>(&body) {
             Ok(value) => value,
             Err(error) => return bad_request(error.to_string()),
         };
         match self.executeWatchSnapshot(envelope.request).await {
-            Ok(event) => JsonResponse(event).into_response(),
-            Err(error) => (StatusCode::BAD_REQUEST, JsonResponse(error)).into_response(),
-        }
-    }
-
-    /// Handles a CBOR-serialized watch snapshot request body and returns a CBOR response.
-    #[allow(non_snake_case)]
-    pub async fn watchSnapshotCbor(&self, body: Bytes) -> Response {
-        let envelope = match decodeCbor::<LinkWatchEnvelope>(&body) {
-            Ok(value) => value,
-            Err(error) => return bad_request(error.to_string()),
-        };
-        match self.executeWatchSnapshot(envelope.request).await {
-            Ok(event) => match encodeCbor(event) {
-                Ok(bytes) => binary_response("application/cbor", bytes),
+            Ok(event) => match encodeLink(event) {
+                Ok(bytes) => binary_response(StatusCode::OK, bytes),
                 Err(error) => codec_error(error.to_string()),
             },
-            Err(error) => (StatusCode::BAD_REQUEST, JsonResponse(error)).into_response(),
-        }
-    }
-
-    /// Handles a MessagePack-serialized watch snapshot body and returns a MessagePack response.
-    #[allow(non_snake_case)]
-    pub async fn watchSnapshotMessagePack(&self, body: Bytes) -> Response {
-        let envelope = match decodeMessagePack::<LinkWatchEnvelope>(&body) {
-            Ok(value) => value,
-            Err(error) => return bad_request(error.to_string()),
-        };
-        match self.executeWatchSnapshot(envelope.request).await {
-            Ok(event) => match encodeMessagePack(event) {
-                Ok(bytes) => binary_response("application/msgpack", bytes),
-                Err(error) => codec_error(error.to_string()),
-            },
-            Err(error) => (StatusCode::BAD_REQUEST, JsonResponse(error)).into_response(),
+            Err(error) => error_response(StatusCode::BAD_REQUEST, error),
         }
     }
 
@@ -260,7 +256,7 @@ impl CoreLinkHttpDispatcher {
     /// Drains queued events for an opened watch channel.
     #[allow(non_snake_case)]
     pub async fn watchChannelEvents(&self, body: Bytes) -> Response {
-        let envelope = match serde_json::from_slice::<LinkWatchChannelEnvelope>(&body) {
+        let envelope = match decodeLink::<LinkWatchChannelEnvelope>(&body) {
             Ok(value) => value,
             Err(error) => return bad_request(error.to_string()),
         };
@@ -270,7 +266,7 @@ impl CoreLinkHttpDispatcher {
     /// Opens a watch stream and stores it under a channel identifier.
     #[allow(non_snake_case)]
     pub async fn watchChannelOpen(&self, body: Bytes) -> Response {
-        let envelope = match serde_json::from_slice::<LinkWatchChannelOpenEnvelope>(&body) {
+        let envelope = match decodeLink::<LinkWatchChannelOpenEnvelope>(&body) {
             Ok(value) => value,
             Err(error) => return bad_request(error.to_string()),
         };
@@ -282,21 +278,75 @@ impl CoreLinkHttpDispatcher {
             )
             .await
         {
-            Ok(response) => JsonResponse(response).into_response(),
-            Err(error) => (StatusCode::BAD_REQUEST, JsonResponse(error)).into_response(),
+            Ok(response) => encode_response(StatusCode::OK, response),
+            Err(error) => error_response(StatusCode::BAD_REQUEST, error),
         }
     }
 
     /// Closes a previously opened watch channel.
     #[allow(non_snake_case)]
     pub async fn watchChannelClose(&self, body: Bytes) -> Response {
-        let envelope = match serde_json::from_slice::<LinkWatchChannelCloseEnvelope>(&body) {
+        let envelope = match decodeLink::<LinkWatchChannelCloseEnvelope>(&body) {
             Ok(value) => value,
             Err(error) => return bad_request(error.to_string()),
         };
         self.closeWatchChannelSubscription(&envelope.channelId, &envelope.subscriptionId)
             .await;
-        JsonResponse(serde_json::json!({})).into_response()
+        encode_response(StatusCode::OK, LinkWatchChannelCloseResponse {})
+    }
+
+    /// Opens a client-owned input stream targeting one core method.
+    #[allow(non_snake_case)]
+    pub async fn pushOpen(&self, body: Bytes) -> Response {
+        let envelope = match decodeLink::<LinkPushOpenEnvelope>(&body) {
+            Ok(value) => value,
+            Err(error) => return bad_request(error.to_string()),
+        };
+        match self.openPushStream(envelope.pushId, envelope.request).await {
+            Ok(response) => encode_response(StatusCode::OK, response),
+            Err(error) => error_response(StatusCode::BAD_REQUEST, error),
+        }
+    }
+
+    /// Accepts one ordered item for an opened client-owned input stream.
+    #[allow(non_snake_case)]
+    pub async fn pushItem(&self, body: Bytes) -> Response {
+        let item = match decodeLink::<CorePushItem>(&body) {
+            Ok(value) => value,
+            Err(error) => return bad_request(error.to_string()),
+        };
+        match self.executePushItem(item).await {
+            Ok(response) => encode_response(StatusCode::OK, response),
+            Err(error) => error_response(StatusCode::BAD_REQUEST, error),
+        }
+    }
+
+    /// Closes one client-owned input stream.
+    #[allow(non_snake_case)]
+    pub async fn pushClose(&self, body: Bytes) -> Response {
+        let envelope = match decodeLink::<LinkPushCloseEnvelope>(&body) {
+            Ok(value) => value,
+            Err(error) => return bad_request(error.to_string()),
+        };
+        if self
+            .state
+            .pushStreams
+            .lock()
+            .await
+            .remove(&envelope.pushId)
+            .is_none()
+        {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found"),
+            );
+        }
+        encode_response(
+            StatusCode::OK,
+            LinkPushCloseResponse {
+                pushId: envelope.pushId,
+            },
+        )
     }
 
     /// Upgrades an HTTP request into a WebSocket core link session.
@@ -307,6 +357,65 @@ impl CoreLinkHttpDispatcher {
                 dispatcher.handleWs(socket).await;
             })
             .into_response()
+    }
+
+    /// Registers a logical push stream in this dispatcher.
+    #[allow(non_snake_case)]
+    async fn openPushStream(
+        &self,
+        pushId: String,
+        request: CorePushRequest,
+    ) -> Result<LinkPushOpenResponse, CoreLinkError> {
+        let mut streams = self.state.pushStreams.lock().await;
+        if streams.contains_key(&pushId) {
+            return Err(CoreLinkError::new(
+                "PUSH_ALREADY_EXISTS",
+                "Link push stream already exists",
+            ));
+        }
+        streams.insert(
+            pushId.clone(),
+            LinkPushState {
+                request,
+                nextSequence: 0,
+            },
+        );
+        Ok(LinkPushOpenResponse { pushId })
+    }
+
+    /// Dispatches one push item through its registered method target.
+    #[allow(non_snake_case)]
+    async fn executePushItem(
+        &self,
+        item: CorePushItem,
+    ) -> Result<LinkPushItemResponse, CoreLinkError> {
+        let request = {
+            let mut streams = self.state.pushStreams.lock().await;
+            let state = streams.get_mut(&item.pushId).ok_or_else(|| {
+                CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found")
+            })?;
+            if item.sequence != state.nextSequence {
+                return Err(CoreLinkError::new(
+                    "PUSH_SEQUENCE_MISMATCH",
+                    format!(
+                        "Link push sequence is {}, expected {}",
+                        item.sequence, state.nextSequence
+                    ),
+                ));
+            }
+            state.nextSequence += 1;
+            state.request.clone()
+        };
+        let response = self
+            .executeCall(request.itemCall(item.sequence, item.args))
+            .await;
+        match response.result {
+            Ok(_) => Ok(LinkPushItemResponse {
+                pushId: item.pushId,
+                sequence: item.sequence,
+            }),
+            Err(error) => Err(error),
+        }
     }
 
     #[allow(non_snake_case)]
@@ -329,7 +438,7 @@ impl CoreLinkHttpDispatcher {
             channelId,
         };
         Response::builder()
-            .header("content-type", "application/x-ndjson")
+            .header("content-type", "application/msgpack-seq")
             .body(Body::from_stream(stream))
             .expect("watch channel event response must build")
     }
@@ -416,9 +525,9 @@ impl CoreLinkHttpDispatcher {
     async fn handleWs(&self, mut socket: WebSocket) {
         while let Some(Ok(message)) = socket.recv().await {
             match message {
-                Message::Text(text) => {
-                    let response = self.handleWsText(text).await;
-                    let _ = socket.send(Message::Text(response)).await;
+                Message::Binary(bytes) => {
+                    let response = self.handleWsBinary(&bytes).await;
+                    let _ = socket.send(Message::Binary(response)).await;
                 }
                 Message::Close(frame) => {
                     let _ = socket.send(Message::Close(frame)).await;
@@ -430,14 +539,14 @@ impl CoreLinkHttpDispatcher {
     }
 
     #[allow(non_snake_case)]
-    async fn handleWsText(&self, text: String) -> String {
-        let response = match serde_json::from_str::<CoreLinkWsPayload>(&text) {
+    async fn handleWsBinary(&self, bytes: &[u8]) -> Vec<u8> {
+        let response = match decodeLink::<CoreLinkWsPayload>(bytes) {
             Ok(payload) => self.handleWsPayload(payload).await,
             Err(error) => {
                 CoreLinkWsResponse::Error(CoreLinkError::new("BAD_REQUEST", error.to_string()))
             }
         };
-        serde_json::to_string(&response).expect("CoreLinkWsResponse must serialize")
+        encodeLink(response).expect("CoreLinkWsResponse must serialize")
     }
 
     #[allow(non_snake_case)]
@@ -466,6 +575,34 @@ impl CoreLinkHttpDispatcher {
                     Err(error) => CoreLinkWsResponse::Error(error),
                 }
             }
+            CoreLinkWsPayload::PushOpen(envelope) => {
+                match self.openPushStream(envelope.pushId, envelope.request).await {
+                    Ok(response) => CoreLinkWsResponse::PushOpened(response),
+                    Err(error) => CoreLinkWsResponse::Error(error),
+                }
+            }
+            CoreLinkWsPayload::PushItem(item) => match self.executePushItem(item).await {
+                Ok(response) => CoreLinkWsResponse::PushAccepted(response),
+                Err(error) => CoreLinkWsResponse::Error(error),
+            },
+            CoreLinkWsPayload::PushClose(envelope) => {
+                if self
+                    .state
+                    .pushStreams
+                    .lock()
+                    .await
+                    .remove(&envelope.pushId)
+                    .is_none()
+                {
+                    return CoreLinkWsResponse::Error(CoreLinkError::new(
+                        "PUSH_NOT_FOUND",
+                        "Link push stream not found",
+                    ));
+                }
+                CoreLinkWsResponse::PushClosed(LinkPushCloseResponse {
+                    pushId: envelope.pushId,
+                })
+            }
         }
     }
 }
@@ -477,35 +614,45 @@ fn abort_watch_channel(channel: LinkWatchChannel) {
 }
 
 fn bad_request(message: impl Into<String>) -> Response {
-    (
+    error_response(
         StatusCode::BAD_REQUEST,
-        JsonResponse(CoreLinkError::new("BAD_REQUEST", message.into())),
+        CoreLinkError::new("BAD_REQUEST", message.into()),
     )
-        .into_response()
 }
 
+/// Creates a MessagePack codec failure response.
 fn codec_error(message: impl Into<String>) -> Response {
-    (
+    error_response(
         StatusCode::INTERNAL_SERVER_ERROR,
-        JsonResponse(CoreLinkError::new("CODEC_ERROR", message.into())),
+        CoreLinkError::new("CODEC_ERROR", message.into()),
     )
-        .into_response()
 }
 
-fn binary_response(content_type: &'static str, bytes: Vec<u8>) -> Response {
+/// Encodes a successful typed Link response.
+fn encode_response(value_status: StatusCode, value: impl Serialize) -> Response {
+    match encodeLink(value) {
+        Ok(bytes) => binary_response(value_status, bytes),
+        Err(error) => codec_error(error.to_string()),
+    }
+}
+
+/// Encodes a structured Link error response.
+fn error_response(status: StatusCode, error: CoreLinkError) -> Response {
+    match encodeLink(error) {
+        Ok(bytes) => binary_response(status, bytes),
+        Err(encode_error) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .header("content-type", "text/plain; charset=utf-8")
+            .body(Body::from(encode_error.to_string()))
+            .expect("plain codec failure response must build"),
+    }
+}
+
+/// Creates a MessagePack HTTP response from encoded Link bytes.
+fn binary_response(status: StatusCode, bytes: Vec<u8>) -> Response {
     Response::builder()
-        .header("content-type", content_type)
+        .status(status)
+        .header("content-type", "application/msgpack")
         .body(Body::from(bytes))
         .expect("binary link response must build")
-}
-
-struct JsonResponse<T>(T);
-
-impl<T> IntoResponse for JsonResponse<T>
-where
-    T: Serialize,
-{
-    fn into_response(self) -> Response {
-        axum::Json(self.0).into_response()
-    }
 }

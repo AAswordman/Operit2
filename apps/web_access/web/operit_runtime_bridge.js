@@ -28,6 +28,15 @@
       async call(request) {
         return (await runtimePromise).call(request);
       },
+      async pushOpen(request) {
+        return (await runtimePromise).pushOpen(request);
+      },
+      async pushItem(item) {
+        return (await runtimePromise).pushItem(item);
+      },
+      async pushClose(pushId) {
+        return (await runtimePromise).pushClose(pushId);
+      },
       async watchSnapshot(request) {
         return (await runtimePromise).watchSnapshot(request);
       },
@@ -221,7 +230,7 @@
     return output;
   }
 
-  function createLinkedWebRuntime(config) {
+  async function createLinkedWebRuntime(config) {
     const baseUrl = String(config.baseUrl || "").replace(/\/+$/, "");
     const sessionId = String(config.sessionId);
     const deviceId = String(config.deviceId);
@@ -232,6 +241,9 @@
     let hmacKeyPromise = null;
     let openingChannelPromise = null;
     const maxSubscriptionsPerChannel = 16;
+    let pushSocketPromise = null;
+    let pushSendTail = Promise.resolve();
+    let pushError = null;
 
     function linkPath(path) {
       return `${baseUrl}${path}`;
@@ -250,44 +262,85 @@
       return hmacKeyPromise;
     }
 
-    async function linkHeaders(bodyText) {
+    async function linkHeaders(bodyBytes) {
       const signature = await crypto.subtle.sign(
         "HMAC",
         await hmacKey(),
-        textEncoder.encode(bodyText),
+        bodyBytes,
       );
       return {
-        "content-type": "application/json",
+        "content-type": "application/msgpack",
+        "x-operit-link-version": "3",
         "x-operit-session": sessionId,
         "x-operit-device": deviceId,
         "x-operit-signature": bytesToBase64(new Uint8Array(signature)),
       };
     }
 
-    async function postText(path, body, signal) {
-      const bodyText = JSON.stringify(body);
+    async function postLink(path, body, signal) {
+      const bodyBytes = MessagePack.encode(body);
       const response = await fetch(linkPath(path), {
         method: "POST",
-        headers: await linkHeaders(bodyText),
-        body: bodyText,
+        headers: await linkHeaders(bodyBytes),
+        body: bodyBytes,
         signal,
       });
-      const text = await response.text();
+      const bytes = new Uint8Array(await response.arrayBuffer());
       if (!response.ok) {
-        handleLinkErrorResponse(response.status, text);
-        throw new Error(text);
+        throwLinkErrorResponse(response.status, bytes);
       }
-      return text;
+      return bytes;
     }
 
-    function handleLinkErrorResponse(status, text) {
-      if (status !== 401) {
-        return;
+    /** Opens the authenticated binary carrier used by client-owned push streams. */
+    function pushSocket() {
+      if (pushSocketPromise === null) {
+        pushSocketPromise = new Promise((resolve, reject) => {
+          const url = new URL(linkPath("/link/ws"), globalThis.location.href);
+          url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+          const socket = new WebSocket(url);
+          socket.binaryType = "arraybuffer";
+          socket.addEventListener("open", () => resolve(socket), { once: true });
+          socket.addEventListener("error", () => reject(new Error("Link push socket failed to open")), { once: true });
+          socket.addEventListener("message", (event) => {
+            const response = MessagePack.decode(new Uint8Array(event.data));
+            if (response.type === "Error") {
+              pushError = new Error(`${response.body.code}: ${response.body.message}`);
+            }
+          });
+          socket.addEventListener("close", () => {
+            pushError = new Error("Link push socket closed");
+          });
+        });
       }
-      const error = JSON.parse(text);
-      if (error.code === "UNAUTHORIZED" && error.message === "invalid session") {
+      return pushSocketPromise;
+    }
+
+    /** Signs and queues one push protocol frame without waiting for a per-item acknowledgement. */
+    function sendPushPayload(payload) {
+      pushSendTail = pushSendTail.then(async () => {
+        if (pushError !== null) throw pushError;
+        const bodyBytes = MessagePack.encode(payload);
+        const signature = await crypto.subtle.sign("HMAC", await hmacKey(), bodyBytes);
+        const socket = await pushSocket();
+        socket.send(MessagePack.encode({
+          protocolVersion: 3,
+          sessionId,
+          deviceId,
+          signature: bytesToBase64(new Uint8Array(signature)),
+          payload,
+        }));
+      });
+      return pushSendTail;
+    }
+
+    /** Decodes and throws one MessagePack Link error response. */
+    function throwLinkErrorResponse(status, bytes) {
+      const error = MessagePack.decode(bytes);
+      if (status === 401 && error.code === "UNAUTHORIZED" && error.message === "invalid session") {
         resetWebAccessSession();
       }
+      throw new Error(`${error.code}: ${error.message}`);
     }
 
     async function openChannel() {
@@ -299,17 +352,16 @@
         subscriptionCount: 0,
       };
       const body = { channelId };
-      const bodyText = JSON.stringify(body);
+      const bodyBytes = MessagePack.encode(body);
       const response = await fetch(linkPath("/link/watch/channel/events"), {
         method: "POST",
-        headers: await linkHeaders(bodyText),
-        body: bodyText,
+        headers: await linkHeaders(bodyBytes),
+        body: bodyBytes,
         signal: controller.signal,
       });
-      const errorText = response.ok ? null : await response.text();
-      if (errorText !== null) {
-        handleLinkErrorResponse(response.status, errorText);
-        throw new Error(errorText);
+      const errorBytes = response.ok ? null : new Uint8Array(await response.arrayBuffer());
+      if (errorBytes !== null) {
+        throwLinkErrorResponse(response.status, errorBytes);
       }
       channels.set(channelId, channel);
       readWatchChannel(channel, response);
@@ -318,54 +370,37 @@
 
     async function readWatchChannel(channel, response) {
       const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      let buffer = new Uint8Array();
       try {
         while (true) {
           const chunk = await reader.read();
           if (chunk.done) {
             break;
           }
-          buffer += decoder.decode(chunk.value, { stream: true });
-          let newlineIndex = buffer.indexOf("\n");
-          while (newlineIndex >= 0) {
-            const line = buffer.substring(0, newlineIndex).trim();
-            buffer = buffer.substring(newlineIndex + 1);
-            if (line.length > 0) {
-              const event = JSON.parse(line);
-              const callback = streamCallbacks.get(event.subscriptionId);
-              if (callback) {
-                callback(JSON.stringify(event));
-              }
-            }
-            newlineIndex = buffer.indexOf("\n");
+          const joined = new Uint8Array(buffer.length + chunk.value.length);
+          joined.set(buffer);
+          joined.set(chunk.value, buffer.length);
+          buffer = joined;
+          while (buffer.length >= 4) {
+            const frameLength = new DataView(buffer.buffer, buffer.byteOffset, 4).getUint32(0);
+            if (buffer.length < 4 + frameLength) break;
+            const frame = buffer.slice(4, 4 + frameLength);
+            buffer = buffer.slice(4 + frameLength);
+            const event = MessagePack.decode(frame);
+            const callback = streamCallbacks.get(event.subscriptionId);
+            if (callback) callback(frame);
           }
         }
-        const tail = buffer.trim();
-        if (tail.length > 0) {
-          const event = JSON.parse(tail);
-          const callback = streamCallbacks.get(event.subscriptionId);
-          if (callback) {
-            callback(JSON.stringify(event));
-          }
-        }
+        if (buffer.length !== 0) throw new Error("incomplete Link watch frame");
       } catch (error) {
         for (const [subscriptionId, channelId] of streamChannels.entries()) {
           if (channelId === channel.channelId) {
             const callback = streamCallbacks.get(subscriptionId);
             if (callback) {
-              callback(JSON.stringify({
+              callback(MessagePack.encode({
                 subscriptionId,
-                event: {
-                  requestId: null,
-                  targetPath: { segments: [] },
-                  propertyName: "watch",
-                  kind: "Completed",
-                  value: {
-                    code: "LINK_WATCH_CHANNEL_ERROR",
-                    message: String(error),
-                  },
-                },
+                errorCode: "LINK_WATCH_CHANNEL_ERROR",
+                errorMessage: String(error),
               }));
             }
           }
@@ -389,15 +424,35 @@
       return openingChannelPromise;
     }
 
+    const sessionNonce = `web-${crypto.randomUUID()}`;
+    const sessionBytes = await postLink("/link/session", { nonce: sessionNonce });
+    const sessionInfo = MessagePack.decode(sessionBytes);
+    if (sessionInfo.protocolVersion !== 3) {
+      throw new Error(`Link protocol version ${sessionInfo.protocolVersion} is not supported`);
+    }
+
     return {
       async call(request) {
-        return postText("/link/call", {
-          request: JSON.parse(request),
+        return postLink("/link/call", {
+          request: MessagePack.decode(request),
         });
       },
+      async pushOpen(request) {
+        const decoded = MessagePack.decode(request);
+        await sendPushPayload({ type: "PushOpen", body: decoded });
+        return MessagePack.encode({ pushId: decoded.requestId });
+      },
+      async pushItem(item) {
+        await sendPushPayload({ type: "PushItem", body: MessagePack.decode(item) });
+        return MessagePack.encode({});
+      },
+      async pushClose(pushId) {
+        await sendPushPayload({ type: "PushClose", body: pushId });
+        return MessagePack.encode({});
+      },
       async watchSnapshot(request) {
-        return postText("/link/watch/snapshot", {
-          request: JSON.parse(request),
+        return postLink("/link/watch/snapshot", {
+          request: MessagePack.decode(request),
         });
       },
       async watchStream(request, onEvent) {
@@ -405,22 +460,22 @@
           throw new Error("watchStream expects an event callback");
         }
         const channel = await acquireChannel();
-        const envelope = JSON.parse(request);
+        const envelope = MessagePack.decode(request);
         const subscriptionId = envelope.subscriptionId;
         streamCallbacks.set(subscriptionId, onEvent);
         streamChannels.set(subscriptionId, channel.channelId);
         channel.subscriptionCount += 1;
         try {
-          const responseText = await postText("/link/watch/channel/open", {
+          const responseBytes = await postLink("/link/watch/channel/open", {
             channelId: channel.channelId,
             subscriptionId,
             request: envelope.request,
           });
-          const response = JSON.parse(responseText);
+          const response = MessagePack.decode(responseBytes);
           if (response.subscriptionId !== subscriptionId) {
             throw new Error("watch channel subscription id mismatch");
           }
-          return JSON.stringify({ subscriptionId });
+          return MessagePack.encode({ subscriptionId });
         } catch (error) {
           channel.subscriptionCount -= 1;
           streamCallbacks.delete(subscriptionId);
@@ -434,7 +489,7 @@
           throw new Error(`link watch stream not found: ${subscriptionId}`);
         }
         const channel = channels.get(channelId);
-        await postText("/link/watch/channel/close", {
+        await postLink("/link/watch/channel/close", {
           channelId,
           subscriptionId,
         });
@@ -447,7 +502,7 @@
             channels.delete(channelId);
           }
         }
-        return "{}";
+        return MessagePack.encode({});
       },
     };
   }
@@ -1470,6 +1525,15 @@
   globalThis.__operitRuntime = {
     async call(request) {
       return (await bridge()).call(request);
+    },
+    async pushOpen(request) {
+      return (await bridge()).pushOpen(request);
+    },
+    async pushItem(item) {
+      return (await bridge()).pushItem(item);
+    },
+    async pushClose(pushId) {
+      return (await bridge()).pushClose(pushId);
     },
     async watchSnapshot(request) {
       return (await bridge()).watchSnapshot(request);

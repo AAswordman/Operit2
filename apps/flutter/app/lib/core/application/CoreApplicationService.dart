@@ -100,16 +100,7 @@ class CoreApplicationService {
         tag: _logTag,
       );
       await _startLocalBackgroundService();
-      if (!_hostSubscriberInstalled) {
-        final subscriberStopwatch = Stopwatch()..start();
-        ClientLogger.i('host subscriber install start', tag: _logTag);
-        RuntimeHostInteractionSubscriber.install();
-        _hostSubscriberInstalled = true;
-        ClientLogger.i(
-          'host subscriber install done elapsedMs=${subscriberStopwatch.elapsedMilliseconds}',
-          tag: _logTag,
-        );
-      }
+      await _syncHostSubscriber();
       if (_linkHostStartAttempted ||
           !_runtimeManager.config.localStorage.confirmed) {
         ClientLogger.i(
@@ -165,5 +156,37 @@ class CoreApplicationService {
       'local background service done elapsedMs=${stopwatch.elapsedMilliseconds}',
       tag: _logTag,
     );
+  }
+
+  /// Synchronizes owner-host event handling with the selected runtime role.
+  Future<void> _syncHostSubscriber() async {
+    final shouldInstall = _ownsHostInteractions;
+    if (shouldInstall && !_hostSubscriberInstalled) {
+      final subscriberStopwatch = Stopwatch()..start();
+      ClientLogger.i('host subscriber install start', tag: _logTag);
+      RuntimeHostInteractionSubscriber.install();
+      _hostSubscriberInstalled = true;
+      ClientLogger.i(
+        'host subscriber install done elapsedMs=${subscriberStopwatch.elapsedMilliseconds}',
+        tag: _logTag,
+      );
+      return;
+    }
+    if (!shouldInstall && _hostSubscriberInstalled) {
+      final subscriberStopwatch = Stopwatch()..start();
+      ClientLogger.i('host subscriber uninstall start', tag: _logTag);
+      await RuntimeHostInteractionSubscriber.uninstall();
+      _hostSubscriberInstalled = false;
+      ClientLogger.i(
+        'host subscriber uninstall done elapsedMs=${subscriberStopwatch.elapsedMilliseconds}',
+        tag: _logTag,
+      );
+    }
+  }
+
+  /// Returns whether this process owns native host interaction handling.
+  bool get _ownsHostInteractions {
+    return !kIsWeb &&
+        _runtimeManager.config.mode == RuntimeConnectionMode.local;
   }
 }
