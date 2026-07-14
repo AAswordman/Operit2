@@ -13,6 +13,7 @@ from common import (
     ensure_node_and_npm,
     ensure_typescript,
     flutter_command,
+    generate_dart_proxy_artifacts,
     host_platform,
     prepare_python_command,
     prepare_web_access_embedded_assets,
@@ -200,6 +201,7 @@ def main() -> int:
         f'-I"{clang_resource_includes[0].as_posix()}"'
     )
 
+    generate_dart_proxy_artifacts()
     dart_pub_get(enforce_lockfile=True, env=env)
     run(["rustup", "target", "add", "wasm32-unknown-unknown"])
     stage_web_access_source()
