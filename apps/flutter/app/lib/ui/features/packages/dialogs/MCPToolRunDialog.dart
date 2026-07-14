@@ -153,11 +153,8 @@ class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
           success: false,
           result:
               core_proxy
-                  .CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
-                value:
-                    const core_proxy.CoreOperitToolsToolsToolResultDataClassesStringResultData(
-                      value: '',
-                    ),
+                  .CoreOperitPluginSdkJsSdkResultsToolResultData.stringResultData(
+                value: const core_proxy.StringResultData(value: ''),
               ),
           error: '缺少必填参数：${missing.join(", ")}',
         );
@@ -209,11 +206,8 @@ class _MCPToolRunDialogState extends State<MCPToolRunDialog> {
           success: false,
           result:
               core_proxy
-                  .CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
-                value:
-                    const core_proxy.CoreOperitToolsToolsToolResultDataClassesStringResultData(
-                      value: '',
-                    ),
+                  .CoreOperitPluginSdkJsSdkResultsToolResultData.stringResultData(
+                value: const core_proxy.StringResultData(value: ''),
               ),
           error: error.toString(),
         );
@@ -267,8 +261,7 @@ String _toolResultText(
     return result.error ?? '';
   }
   final value = result.result.value;
-  if (value
-      is core_proxy.CoreOperitToolsToolsToolResultDataClassesStringResultData) {
+  if (value is core_proxy.StringResultData) {
     return value.value;
   }
   return const JsonEncoder.withIndent('  ').convert(result.result.toJson());

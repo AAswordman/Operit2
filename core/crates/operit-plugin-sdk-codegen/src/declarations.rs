@@ -537,10 +537,11 @@ impl<'a> EmitContext<'a> {
             return;
         };
         for field in &fields.named {
-            if has_serde_flatten(&field.attrs) {
-                if field_name(field) == "additionalProperties" {
-                    self.emit_index_signature(output, &field.ty, scope, indent);
-                }
+            if is_additional_properties_field(field) {
+                self.emit_index_signature(output, &field.ty, scope, indent);
+                continue;
+            }
+            if is_inherited_base_field(field) {
                 continue;
             }
             emit_jsdoc(output, &field.attrs, indent);
@@ -1408,11 +1409,30 @@ fn flattened_bases(item: &ItemStruct, context: &EmitContext<'_>, scope: &[String
     fields
         .named
         .iter()
-        .filter(|field| {
-            has_serde_flatten(&field.attrs) && field_name(field) != "additionalProperties"
-        })
+        .filter(|field| is_inherited_base_field(field))
         .map(|field| context.emit_type(&field.ty, scope))
         .collect()
+}
+
+/// Reports whether a Rust composition field represents an inherited TypeScript interface.
+fn is_inherited_base_field(field: &syn::Field) -> bool {
+    if has_serde_flatten(&field.attrs) && !is_additional_properties_field(field) {
+        return true;
+    }
+    field
+        .ident
+        .as_ref()
+        .is_some_and(|ident| ident.to_string().starts_with("base_"))
+        && !is_optional_field(&field.ty)
+}
+
+/// Reports whether a Rust map field represents an open TypeScript object index signature.
+fn is_additional_properties_field(field: &syn::Field) -> bool {
+    field
+        .ident
+        .as_ref()
+        .is_some_and(|ident| ident == "additional_properties")
+        || field_name(field) == "additionalProperties"
 }
 
 /// Returns angle-bracketed generic arguments when a Rust path has them.
@@ -1637,6 +1657,26 @@ mod tests {
             output,
             "  /**\n   * Summary.\n   *\n   * Details.\n   */\n"
         );
+    }
+
+    /// Verifies that ordinary Rust composition fields retain interface and open-object semantics.
+    #[test]
+    fn recognizes_interface_composition_fields() {
+        let item: ItemStruct = syn::parse_quote! {
+            pub struct Example {
+                pub base_json_object: ToolPkgJsonObject,
+                pub base_url: Option<String>,
+                pub additional_properties: BTreeMap<String, String>,
+            }
+        };
+        let Fields::Named(fields) = item.fields else {
+            panic!("test struct must use named fields");
+        };
+        let fields = fields.named.iter().collect::<Vec<_>>();
+
+        assert!(is_inherited_base_field(fields[0]));
+        assert!(!is_inherited_base_field(fields[1]));
+        assert!(is_additional_properties_field(fields[2]));
     }
 }
 

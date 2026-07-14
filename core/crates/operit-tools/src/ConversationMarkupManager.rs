@@ -1,4 +1,4 @@
-use operit_tools::tools::ToolResultDataClasses::ToolResultData;
+use operit_plugin_sdk::js_sdk::results::ToolResultData;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use serde::{Deserialize, Serialize};
 

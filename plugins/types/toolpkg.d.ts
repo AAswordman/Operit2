@@ -8,20 +8,14 @@ export namespace ToolPkg {
    * Stores localized strings keyed by language tag.
    */
   export interface LocalizedTextVariant2 {
-    /**
-     * Maps language tags to localized text.
-     */
-    additional_properties: Record<string, string>;
+    [key: string]: string;
   }
 
   /**
    * Stores a JSON object whose properties may contain any ToolPkg JSON value.
    */
   export interface JsonValueVariant3 {
-    /**
-     * Stores arbitrary JSON properties keyed by name.
-     */
-    additional_properties: Record<string, JsonValue>;
+    [key: string]: JsonValue;
   }
 
   /**
@@ -100,10 +94,7 @@ export namespace ToolPkg {
    * Stores tool-call parameters as strings keyed by parameter name.
    */
   export interface ToolLifecycleEventPayloadParameters {
-    /**
-     * Maps tool parameter names to serialized values.
-     */
-    additional_properties: Record<string, string>;
+    [key: string]: string;
   }
 
   /**
@@ -440,10 +431,7 @@ export namespace ToolPkg {
    * Stores a ToolPkg JSON object as values keyed by property name.
    */
   export interface JsonObject {
-    /**
-     * Stores arbitrary JSON properties keyed by name.
-     */
-    additional_properties: Record<string, JsonValue>;
+    [key: string]: JsonValue;
   }
 
   /**
@@ -474,11 +462,7 @@ export namespace ToolPkg {
   /**
    * Controls how message processing reports a match and replacement content.
    */
-  export interface MessageProcessingHookObjectResult {
-    /**
-     * Preserves additional JSON properties supplied with this message processing hook object result.
-     */
-    base_json_object: JsonObject;
+  export interface MessageProcessingHookObjectResult extends JsonObject {
     /**
      * Reports whether message processing matched this plugin.
      */
@@ -542,11 +526,7 @@ export namespace ToolPkg {
   /**
    * Describes one toggle contributed to the chat input menu.
    */
-  export interface InputMenuToggleDefinitionResult {
-    /**
-     * Preserves additional JSON properties supplied with this input menu toggle definition result.
-     */
-    base_json_object: JsonObject;
+  export interface InputMenuToggleDefinitionResult extends JsonObject {
     /**
      * Identifies this input menu toggle definition result within its owning package.
      */
@@ -576,11 +556,7 @@ export namespace ToolPkg {
   /**
    * Wraps toggle definitions returned by an input-menu hook.
    */
-  export interface InputMenuToggleObjectResult {
-    /**
-     * Preserves additional JSON properties supplied with this input menu toggle object result.
-     */
-    base_json_object: JsonObject;
+  export interface InputMenuToggleObjectResult extends JsonObject {
     /**
      * Contains toggle definitions contributed to the input menu.
      */
@@ -605,11 +581,7 @@ export namespace ToolPkg {
   /**
    * Controls chat input handling and optionally supplies replacement text or metadata.
    */
-  export interface ChatInputHookObjectResult {
-    /**
-     * Preserves additional JSON properties supplied with this chat input hook object result.
-     */
-    base_json_object: JsonObject;
+  export interface ChatInputHookObjectResult extends JsonObject {
     /**
      * Controls whether the host allows, blocks, replaces, or consumes chat input.
      */
@@ -680,11 +652,7 @@ export namespace ToolPkg {
   /**
    * Contains one typed turn in prepared prompt history.
    */
-  export interface PromptTurn {
-    /**
-     * Preserves additional JSON properties supplied with this prompt turn.
-     */
-    base_json_object: JsonObject;
+  export interface PromptTurn extends JsonObject {
     /**
      * Identifies the concrete kind of trigger or prompt value.
      */
@@ -711,11 +679,7 @@ export namespace ToolPkg {
   /**
    * Captures the identity of the character prompt active for a hook.
    */
-  export interface ActivePromptSnapshot {
-    /**
-     * Preserves additional JSON properties supplied with this active prompt snapshot.
-     */
-    base_json_object: JsonObject;
+  export interface ActivePromptSnapshot extends JsonObject {
     /**
      * Identifies the semantic kind of this value.
      */
@@ -733,11 +697,7 @@ export namespace ToolPkg {
   /**
    * Carries contextual metadata shared across prompt hooks.
    */
-  export interface HookMetadata {
-    /**
-     * Preserves additional JSON properties supplied with this hook metadata.
-     */
-    base_json_object: JsonObject;
+  export interface HookMetadata extends JsonObject {
     /**
      * Captures the character prompt currently active for this hook.
      */
@@ -747,11 +707,7 @@ export namespace ToolPkg {
   /**
    * Carries tool request, permission, execution, and result data.
    */
-  export interface ToolLifecycleEventPayload {
-    /**
-     * Preserves additional JSON properties supplied with this tool lifecycle event payload.
-     */
-    base_json_object: JsonObject;
+  export interface ToolLifecycleEventPayload extends JsonObject {
     /**
      * Identifies the tool associated with this event or prompt entry.
      */
@@ -793,11 +749,7 @@ export namespace ToolPkg {
   /**
    * Describes one parameter exposed in a model-facing tool prompt.
    */
-  export interface ToolPromptParameter {
-    /**
-     * Preserves additional JSON properties supplied with this tool prompt parameter.
-     */
-    base_json_object: JsonObject;
+  export interface ToolPromptParameter extends JsonObject {
     /**
      * Provides the stable or user-facing name of this tool prompt parameter.
      */
@@ -823,11 +775,7 @@ export namespace ToolPkg {
   /**
    * Describes one tool entry made available to the model.
    */
-  export interface ToolPromptItem {
-    /**
-     * Preserves additional JSON properties supplied with this tool prompt item.
-     */
-    base_json_object: JsonObject;
+  export interface ToolPromptItem extends JsonObject {
     /**
      * Groups this tool under a model-facing category.
      */
@@ -869,11 +817,7 @@ export namespace ToolPkg {
   /**
    * Contains prompt fields that a hook may replace for subsequent stages.
    */
-  export interface PromptHookObjectResult {
-    /**
-     * Preserves additional JSON properties supplied with this prompt hook object result.
-     */
-    base_json_object: JsonObject;
+  export interface PromptHookObjectResult extends JsonObject {
     /**
      * Contains user input before prompt processing.
      */
@@ -911,11 +855,7 @@ export namespace ToolPkg {
   /**
    * Contains summary inputs and output that a hook may replace.
    */
-  export interface SummaryHookObjectResult {
-    /**
-     * Preserves additional JSON properties supplied with this summary hook object result.
-     */
-    base_json_object: JsonObject;
+  export interface SummaryHookObjectResult extends JsonObject {
     /**
      * Contains conversation turns available at this hook stage.
      */
@@ -945,11 +885,7 @@ export namespace ToolPkg {
   /**
    * Carries the current prompt-building state to prompt hooks.
    */
-  export interface PromptHookEventPayload {
-    /**
-     * Preserves additional JSON properties supplied with this prompt hook event payload.
-     */
-    base_json_object: JsonObject;
+  export interface PromptHookEventPayload extends JsonObject {
     /**
      * Names the current prompt or summary processing stage.
      */
@@ -1011,11 +947,7 @@ export namespace ToolPkg {
   /**
    * Carries the current summary-generation state to summary hooks.
    */
-  export interface SummaryGenerateEventPayload {
-    /**
-     * Preserves additional JSON properties supplied with this summary generate event payload.
-     */
-    base_json_object: JsonObject;
+  export interface SummaryGenerateEventPayload extends JsonObject {
     /**
      * Names the current prompt or summary processing stage.
      */
@@ -1217,11 +1149,7 @@ export namespace ToolPkg {
   /**
    * Carries app lifecycle data supplied when the event is dispatched.
    */
-  export interface AppLifecycleEventPayload {
-    /**
-     * Preserves additional JSON properties supplied with this app lifecycle event payload.
-     */
-    base_json_object: JsonObject;
+  export interface AppLifecycleEventPayload extends JsonObject {
     /**
      * Carries host-specific data without a dedicated field.
      */
@@ -1231,11 +1159,7 @@ export namespace ToolPkg {
   /**
    * Carries message processing data supplied when the event is dispatched.
    */
-  export interface MessageProcessingEventPayload {
-    /**
-     * Preserves additional JSON properties supplied with this message processing event payload.
-     */
-    base_json_object: JsonObject;
+  export interface MessageProcessingEventPayload extends JsonObject {
     /**
      * Identifies the conversation associated with the event.
      */
@@ -1273,11 +1197,7 @@ export namespace ToolPkg {
   /**
    * Carries XML render data supplied when the event is dispatched.
    */
-  export interface XmlRenderEventPayload {
-    /**
-     * Preserves additional JSON properties supplied with this XML render event payload.
-     */
-    base_json_object: JsonObject;
+  export interface XmlRenderEventPayload extends JsonObject {
     /**
      * Contains the XML fragment supplied to the renderer.
      */
@@ -1291,11 +1211,7 @@ export namespace ToolPkg {
   /**
    * Carries input menu toggle data supplied when the event is dispatched.
    */
-  export interface InputMenuToggleEventPayload {
-    /**
-     * Preserves additional JSON properties supplied with this input menu toggle event payload.
-     */
-    base_json_object: JsonObject;
+  export interface InputMenuToggleEventPayload extends JsonObject {
     /**
      * Selects whether toggle definitions are requested or a toggle is changed.
      */
@@ -1317,11 +1233,7 @@ export namespace ToolPkg {
   /**
    * Carries chat input data supplied when the event is dispatched.
    */
-  export interface ChatInputEventPayload {
-    /**
-     * Preserves additional JSON properties supplied with this chat input event payload.
-     */
-    base_json_object: JsonObject;
+  export interface ChatInputEventPayload extends JsonObject {
     /**
      * Identifies the conversation associated with the event.
      */
@@ -1367,11 +1279,7 @@ export namespace ToolPkg {
   /**
    * Carries chat view data supplied when the event is dispatched.
    */
-  export interface ChatViewEventPayload {
-    /**
-     * Preserves additional JSON properties supplied with this chat view event payload.
-     */
-    base_json_object: JsonObject;
+  export interface ChatViewEventPayload extends JsonObject {
     /**
      * Identifies the chat view that emitted the event.
      */
@@ -1401,11 +1309,7 @@ export namespace ToolPkg {
   /**
    * Carries navigation entry action data supplied when the event is dispatched.
    */
-  export interface NavigationEntryActionEventPayload {
-    /**
-     * Preserves additional JSON properties supplied with this navigation entry action event payload.
-     */
-    base_json_object: JsonObject;
+  export interface NavigationEntryActionEventPayload extends JsonObject {
     /**
      * Identifies the navigation entry that emitted the action.
      */
@@ -1431,171 +1335,103 @@ export namespace ToolPkg {
   /**
    * Combines shared dispatch metadata with an application lifecycle payload.
    */
-  export interface AppLifecycleHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this app lifecycle hook event.
-     */
-    base_hook_event_base: HookEventBase<AppLifecycleEvent, AppLifecycleEventPayload>;
+  export interface AppLifecycleHookEvent extends HookEventBase<AppLifecycleEvent, AppLifecycleEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a message processing hook.
    */
-  export interface MessageProcessingHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this message processing hook event.
-     */
-    base_hook_event_base: HookEventBase<MessageProcessingHookEventBaseType1, MessageProcessingEventPayload>;
+  export interface MessageProcessingHookEvent extends HookEventBase<MessageProcessingHookEventBaseType1, MessageProcessingEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with an XML-render payload.
    */
-  export interface XmlRenderHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this XML render hook event.
-     */
-    base_hook_event_base: HookEventBase<XmlRenderHookEventBaseType1, XmlRenderEventPayload>;
+  export interface XmlRenderHookEvent extends HookEventBase<XmlRenderHookEventBaseType1, XmlRenderEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with an input-menu-toggle payload.
    */
-  export interface InputMenuToggleHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this input menu toggle hook event.
-     */
-    base_hook_event_base: HookEventBase<InputMenuToggleHookEventBaseType1, InputMenuToggleEventPayload>;
+  export interface InputMenuToggleHookEvent extends HookEventBase<InputMenuToggleHookEventBaseType1, InputMenuToggleEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a chat input hook.
    */
-  export interface ChatInputHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this chat input hook event.
-     */
-    base_hook_event_base: HookEventBase<ChatInputEventName, ChatInputEventPayload>;
+  export interface ChatInputHookEvent extends HookEventBase<ChatInputEventName, ChatInputEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a chat view hook.
    */
-  export interface ChatViewHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this chat view hook event.
-     */
-    base_hook_event_base: HookEventBase<ChatViewEventName, ChatViewEventPayload>;
+  export interface ChatViewHookEvent extends HookEventBase<ChatViewEventName, ChatViewEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a navigation entry action hook.
    */
-  export interface NavigationEntryActionHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this navigation entry action hook event.
-     */
-    base_hook_event_base: HookEventBase<NavigationEntryActionHookEventBaseType1, NavigationEntryActionEventPayload>;
+  export interface NavigationEntryActionHookEvent extends HookEventBase<NavigationEntryActionHookEventBaseType1, NavigationEntryActionEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a tool lifecycle hook.
    */
-  export interface ToolLifecycleHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this tool lifecycle hook event.
-     */
-    base_hook_event_base: HookEventBase<ToolLifecycleEventName, ToolLifecycleEventPayload>;
+  export interface ToolLifecycleHookEvent extends HookEventBase<ToolLifecycleEventName, ToolLifecycleEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a prompt input hook.
    */
-  export interface PromptInputHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this prompt input hook event.
-     */
-    base_hook_event_base: HookEventBase<PromptInputEventName, PromptHookEventPayload>;
+  export interface PromptInputHookEvent extends HookEventBase<PromptInputEventName, PromptHookEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a prompt history hook.
    */
-  export interface PromptHistoryHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this prompt history hook event.
-     */
-    base_hook_event_base: HookEventBase<PromptHistoryEventName, PromptHookEventPayload>;
+  export interface PromptHistoryHookEvent extends HookEventBase<PromptHistoryEventName, PromptHookEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a prompt estimate history hook.
    */
-  export interface PromptEstimateHistoryHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this prompt estimate history hook event.
-     */
-    base_hook_event_base: HookEventBase<PromptHistoryEventName, PromptHookEventPayload>;
+  export interface PromptEstimateHistoryHookEvent extends HookEventBase<PromptHistoryEventName, PromptHookEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a system prompt compose hook.
    */
-  export interface SystemPromptComposeHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this system prompt compose hook event.
-     */
-    base_hook_event_base: HookEventBase<SystemPromptComposeEventName, PromptHookEventPayload>;
+  export interface SystemPromptComposeHookEvent extends HookEventBase<SystemPromptComposeEventName, PromptHookEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a tool prompt compose hook.
    */
-  export interface ToolPromptComposeHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this tool prompt compose hook event.
-     */
-    base_hook_event_base: HookEventBase<ToolPromptComposeEventName, PromptHookEventPayload>;
+  export interface ToolPromptComposeHookEvent extends HookEventBase<ToolPromptComposeEventName, PromptHookEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a prompt finalize hook.
    */
-  export interface PromptFinalizeHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this prompt finalize hook event.
-     */
-    base_hook_event_base: HookEventBase<PromptFinalizeEventName, PromptHookEventPayload>;
+  export interface PromptFinalizeHookEvent extends HookEventBase<PromptFinalizeEventName, PromptHookEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a prompt estimate finalize hook.
    */
-  export interface PromptEstimateFinalizeHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this prompt estimate finalize hook event.
-     */
-    base_hook_event_base: HookEventBase<PromptFinalizeEventName, PromptHookEventPayload>;
+  export interface PromptEstimateFinalizeHookEvent extends HookEventBase<PromptFinalizeEventName, PromptHookEventPayload> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a summary generate hook.
    */
-  export interface SummaryGenerateHookEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this summary generate hook event.
-     */
-    base_hook_event_base: HookEventBase<SummaryGenerateEventName, SummaryGenerateEventPayload>;
+  export interface SummaryGenerateHookEvent extends HookEventBase<SummaryGenerateEventName, SummaryGenerateEventPayload> {
   }
 
   /**
    * Contains host configuration supplied to registered AI provider callbacks.
    */
-  export interface AiProviderConfig {
-    /**
-     * Preserves additional JSON properties supplied with this AI provider config.
-     */
-    base_json_object: JsonObject;
+  export interface AiProviderConfig extends JsonObject {
     /**
      * Identifies this AI provider config within its owning package.
      */
@@ -1673,11 +1509,7 @@ export namespace ToolPkg {
   /**
    * Carries provider configuration and locale shared by AI provider operations.
    */
-  export interface AiProviderBaseEventPayload {
-    /**
-     * Preserves additional JSON properties supplied with this AI provider base event payload.
-     */
-    base_json_object: JsonObject;
+  export interface AiProviderBaseEventPayload extends JsonObject {
     /**
      * Identifies the provider registration handling the event.
      */
@@ -1699,21 +1531,13 @@ export namespace ToolPkg {
   /**
    * Carries a request to list the models available from an AI provider.
    */
-  export interface AiProviderListModelsEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this AI provider list models event.
-     */
-    base_hook_event_base: HookEventBase<AiProviderListModelsEventBaseType1, AiProviderBaseEventPayload>;
+  export interface AiProviderListModelsEvent extends HookEventBase<AiProviderListModelsEventBaseType1, AiProviderBaseEventPayload> {
   }
 
   /**
    * Carries AI provider send message data supplied when the event is dispatched.
    */
-  export interface AiProviderSendMessageEventPayload {
-    /**
-     * Carries provider configuration and locale shared by this AI provider request.
-     */
-    base_ai_provider_base_event_payload: AiProviderBaseEventPayload;
+  export interface AiProviderSendMessageEventPayload extends AiProviderBaseEventPayload {
     /**
      * Contains conversation turns available at this hook stage.
      */
@@ -1747,31 +1571,19 @@ export namespace ToolPkg {
   /**
    * Carries a message-generation request dispatched to an AI provider.
    */
-  export interface AiProviderSendMessageEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this AI provider send message event.
-     */
-    base_hook_event_base: HookEventBase<AiProviderSendMessageEventBaseType1, AiProviderSendMessageEventPayload>;
+  export interface AiProviderSendMessageEvent extends HookEventBase<AiProviderSendMessageEventBaseType1, AiProviderSendMessageEventPayload> {
   }
 
   /**
    * Carries a connection-test request dispatched to an AI provider.
    */
-  export interface AiProviderTestConnectionEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this AI provider test connection event.
-     */
-    base_hook_event_base: HookEventBase<AiProviderTestConnectionEventBaseType1, AiProviderBaseEventPayload>;
+  export interface AiProviderTestConnectionEvent extends HookEventBase<AiProviderTestConnectionEventBaseType1, AiProviderBaseEventPayload> {
   }
 
   /**
    * Carries AI provider calculate input tokens data supplied when the event is dispatched.
    */
-  export interface AiProviderCalculateInputTokensEventPayload {
-    /**
-     * Carries provider configuration and locale shared by this AI provider request.
-     */
-    base_ai_provider_base_event_payload: AiProviderBaseEventPayload;
+  export interface AiProviderCalculateInputTokensEventPayload extends AiProviderBaseEventPayload {
     /**
      * Contains conversation turns available at this hook stage.
      */
@@ -1785,21 +1597,13 @@ export namespace ToolPkg {
   /**
    * Carries an input-token-count request dispatched to an AI provider.
    */
-  export interface AiProviderCalculateInputTokensEvent {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this AI provider calculate input tokens event.
-     */
-    base_hook_event_base: HookEventBase<AiProviderCalculateInputTokensEventBaseType1, AiProviderCalculateInputTokensEventPayload>;
+  export interface AiProviderCalculateInputTokensEvent extends HookEventBase<AiProviderCalculateInputTokensEventBaseType1, AiProviderCalculateInputTokensEventPayload> {
   }
 
   /**
    * Describes one model exposed by a registered AI provider.
    */
-  export interface AiProviderModelOption {
-    /**
-     * Preserves additional JSON properties supplied with this AI provider model option.
-     */
-    base_json_object: JsonObject;
+  export interface AiProviderModelOption extends JsonObject {
     /**
      * Identifies this AI provider model option within its owning package.
      */
@@ -1813,11 +1617,7 @@ export namespace ToolPkg {
   /**
    * Reports input, output, and cached token usage for a provider response.
    */
-  export interface AiProviderUsage {
-    /**
-     * Preserves additional JSON properties supplied with this AI provider usage.
-     */
-    base_json_object: JsonObject;
+  export interface AiProviderUsage extends JsonObject {
     /**
      * Reports the number of input tokens consumed.
      */
@@ -1835,11 +1635,7 @@ export namespace ToolPkg {
   /**
    * Returns models available from a registered AI provider.
    */
-  export interface AiProviderListModelsResult {
-    /**
-     * Preserves additional JSON properties supplied with this AI provider list models result.
-     */
-    base_json_object: JsonObject;
+  export interface AiProviderListModelsResult extends JsonObject {
     /**
      * Lists models discovered from the provider.
      */
@@ -1849,11 +1645,7 @@ export namespace ToolPkg {
   /**
    * Returns generated text and token usage from an AI provider.
    */
-  export interface AiProviderSendMessageResult {
-    /**
-     * Preserves additional JSON properties supplied with this AI provider send message result.
-     */
-    base_json_object: JsonObject;
+  export interface AiProviderSendMessageResult extends JsonObject {
     /**
      * Contains text produced, replaced, or inspected by this operation.
      */
@@ -1867,11 +1659,7 @@ export namespace ToolPkg {
   /**
    * Reports whether an AI provider connection test succeeded.
    */
-  export interface AiProviderTestConnectionResult {
-    /**
-     * Preserves additional JSON properties supplied with this AI provider test connection result.
-     */
-    base_json_object: JsonObject;
+  export interface AiProviderTestConnectionResult extends JsonObject {
     /**
      * Reports whether the operation completed successfully.
      */
@@ -1889,11 +1677,7 @@ export namespace ToolPkg {
   /**
    * Reports the input-token count calculated by an AI provider.
    */
-  export interface AiProviderCalculateInputTokensResult {
-    /**
-     * Preserves additional JSON properties supplied with this AI provider calculate input tokens result.
-     */
-    base_json_object: JsonObject;
+  export interface AiProviderCalculateInputTokensResult extends JsonObject {
     /**
      * Reports the calculated number of input tokens.
      */
@@ -2248,11 +2032,7 @@ export namespace ToolPkg {
   /**
    * Carries a generic operating-system broadcast action and its extra values.
    */
-  export interface BroadcastSystemData {
-    /**
-     * Preserves additional JSON properties supplied with this broadcast system data.
-     */
-    base_json_object: JsonObject;
+  export interface BroadcastSystemData extends JsonObject {
     /**
      * Names the operating-system broadcast action.
      */
@@ -2266,11 +2046,7 @@ export namespace ToolPkg {
   /**
    * Carries a Bluetooth device broadcast and optional device identity.
    */
-  export interface BroadcastBluetoothDeviceData {
-    /**
-     * Preserves additional JSON properties supplied with this broadcast bluetooth device data.
-     */
-    base_json_object: JsonObject;
+  export interface BroadcastBluetoothDeviceData extends JsonObject {
     /**
      * Names the Bluetooth device broadcast action.
      */
@@ -2292,11 +2068,7 @@ export namespace ToolPkg {
   /**
    * Reports whether a power-state broadcast is entering sleep or waking.
    */
-  export interface BroadcastPowerSleepData {
-    /**
-     * Preserves additional JSON properties supplied with this broadcast power sleep data.
-     */
-    base_json_object: JsonObject;
+  export interface BroadcastPowerSleepData extends JsonObject {
     /**
      * Reports whether the system is entering sleep rather than waking.
      */
@@ -2306,11 +2078,7 @@ export namespace ToolPkg {
   /**
    * Carries network state reported by a network-change broadcast.
    */
-  export interface BroadcastNetworkChangedData {
-    /**
-     * Preserves additional JSON properties supplied with this broadcast network changed data.
-     */
-    base_json_object: JsonObject;
+  export interface BroadcastNetworkChangedData extends JsonObject {
     /**
      * Contains the platform network state code.
      */
@@ -2328,11 +2096,7 @@ export namespace ToolPkg {
   /**
    * Carries a Bluetooth adapter broadcast and its extra values.
    */
-  export interface BroadcastAdapterData {
-    /**
-     * Preserves additional JSON properties supplied with this broadcast adapter data.
-     */
-    base_json_object: JsonObject;
+  export interface BroadcastAdapterData extends JsonObject {
     /**
      * Names the Bluetooth adapter broadcast action.
      */
@@ -2346,15 +2110,8 @@ export namespace ToolPkg {
   /**
    * Preserves a platform broadcast that has no dedicated payload type.
    */
-  export interface RawBroadcastData {
-    /**
-     * Preserves additional JSON properties supplied with this raw broadcast data.
-     */
-    base_json_object: JsonObject;
-    /**
-     * Stores platform-specific fields from the raw broadcast.
-     */
-    additional_properties: Record<string, JsonValue>;
+  export interface RawBroadcastData extends JsonObject {
+    [key: string]: JsonValue;
   }
 
   /**
@@ -2370,11 +2127,7 @@ export namespace ToolPkg {
   /**
    * Configures when a host event timer event is emitted.
    */
-  export interface HostEventTimerTrigger<TPayload = JsonObject> {
-    /**
-     * Preserves additional JSON properties supplied with this host event timer trigger.
-     */
-    base_json_object: JsonObject;
+  export interface HostEventTimerTrigger<TPayload = JsonObject> extends JsonObject {
     /**
      * Identifies the concrete kind of trigger or prompt value.
      */
@@ -2392,11 +2145,7 @@ export namespace ToolPkg {
   /**
    * Configures when a host event interval event is emitted.
    */
-  export interface HostEventIntervalTrigger<TPayload = JsonObject> {
-    /**
-     * Preserves additional JSON properties supplied with this host event interval trigger.
-     */
-    base_json_object: JsonObject;
+  export interface HostEventIntervalTrigger<TPayload = JsonObject> extends JsonObject {
     /**
      * Identifies the concrete kind of trigger or prompt value.
      */
@@ -2429,11 +2178,7 @@ export namespace ToolPkg {
   /**
    * Carries runtime data for a host event timer event.
    */
-  export interface HostEventTimerPayload<TPayload> {
-    /**
-     * Preserves additional JSON properties supplied with this host event timer payload.
-     */
-    base_json_object: JsonObject;
+  export interface HostEventTimerPayload<TPayload> extends JsonObject {
     /**
      * Identifies the registered hook that received the event.
      */
@@ -2467,11 +2212,7 @@ export namespace ToolPkg {
   /**
    * Carries runtime data for a host event interval event.
    */
-  export interface HostEventIntervalPayload<TPayload> {
-    /**
-     * Preserves additional JSON properties supplied with this host event interval payload.
-     */
-    base_json_object: JsonObject;
+  export interface HostEventIntervalPayload<TPayload> extends JsonObject {
     /**
      * Identifies the registered hook that received the event.
      */
@@ -2589,51 +2330,31 @@ export namespace ToolPkg {
   /**
    * Combines shared dispatch metadata with the typed payload for a host event hook.
    */
-  export interface HostEventHookEvent<TSource> {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this host event hook event.
-     */
-    base_hook_event_base: HookEventBase<HostEventHookEventName, HostEventHookEventPayload<TSource>>;
+  export interface HostEventHookEvent<TSource> extends HookEventBase<HostEventHookEventName, HostEventHookEventPayload<TSource>> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a host event timer hook.
    */
-  export interface HostEventTimerHookEvent<TPayload> {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this host event timer hook event.
-     */
-    base_hook_event_base: HookEventBase<HostEventHookEventName, HostEventTimerHookEventPayload<TPayload>>;
+  export interface HostEventTimerHookEvent<TPayload> extends HookEventBase<HostEventHookEventName, HostEventTimerHookEventPayload<TPayload>> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a host event interval hook.
    */
-  export interface HostEventIntervalHookEvent<TPayload> {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this host event interval hook event.
-     */
-    base_hook_event_base: HookEventBase<HostEventHookEventName, HostEventIntervalHookEventPayload<TPayload>>;
+  export interface HostEventIntervalHookEvent<TPayload> extends HookEventBase<HostEventHookEventName, HostEventIntervalHookEventPayload<TPayload>> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a host event broadcast hook.
    */
-  export interface HostEventBroadcastHookEvent<TTopic> {
-    /**
-     * Carries shared dispatch metadata and the typed payload for this host event broadcast hook event.
-     */
-    base_hook_event_base: HookEventBase<HostEventHookEventName, HostEventBroadcastHookEventPayload<TTopic>>;
+  export interface HostEventBroadcastHookEvent<TTopic> extends HookEventBase<HostEventHookEventName, HostEventBroadcastHookEventPayload<TTopic>> {
   }
 
   /**
    * Carries source, trigger, and runtime data delivered to a host event hook.
    */
-  export interface HostEventHookEventPayload<TSource> {
-    /**
-     * Preserves additional JSON properties supplied with this host event hook event payload.
-     */
-    base_json_object: JsonObject;
+  export interface HostEventHookEventPayload<TSource> extends JsonObject {
     /**
      * Identifies the timer, interval, or broadcast source that fired.
      */
@@ -2655,11 +2376,7 @@ export namespace ToolPkg {
   /**
    * Carries source, trigger, and runtime data delivered to a host event timer hook.
    */
-  export interface HostEventTimerHookEventPayload<TPayload> {
-    /**
-     * Preserves additional JSON properties supplied with this host event timer hook event payload.
-     */
-    base_json_object: JsonObject;
+  export interface HostEventTimerHookEventPayload<TPayload> extends JsonObject {
     /**
      * Identifies the timer, interval, or broadcast source that fired.
      */
@@ -2681,11 +2398,7 @@ export namespace ToolPkg {
   /**
    * Carries source, trigger, and runtime data delivered to a host event interval hook.
    */
-  export interface HostEventIntervalHookEventPayload<TPayload> {
-    /**
-     * Preserves additional JSON properties supplied with this host event interval hook event payload.
-     */
-    base_json_object: JsonObject;
+  export interface HostEventIntervalHookEventPayload<TPayload> extends JsonObject {
     /**
      * Identifies the timer, interval, or broadcast source that fired.
      */
@@ -2707,11 +2420,7 @@ export namespace ToolPkg {
   /**
    * Carries source, trigger, and runtime data delivered to a host event broadcast hook.
    */
-  export interface HostEventBroadcastHookEventPayload<TTopic> {
-    /**
-     * Preserves additional JSON properties supplied with this host event broadcast hook event payload.
-     */
-    base_json_object: JsonObject;
+  export interface HostEventBroadcastHookEventPayload<TTopic> extends JsonObject {
     /**
      * Identifies the timer, interval, or broadcast source that fired.
      */

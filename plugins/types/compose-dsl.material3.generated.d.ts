@@ -201,11 +201,7 @@ export type ComposeGeneratedWideNavigationRailItemPropsOnClickOutput = void | Pr
 /**
  * Properties configuring a vertical column layout with child alignment and arrangement.
  */
-export interface ComposeGeneratedColumnProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedColumnProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -227,11 +223,7 @@ export interface ComposeGeneratedColumnProps {
 /**
  * Properties configuring a horizontal layout that arranges child nodes and can handle row clicks.
  */
-export interface ComposeGeneratedRowProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedRowProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -257,11 +249,7 @@ export interface ComposeGeneratedRowProps {
 /**
  * Properties configuring a stacking layout that aligns child nodes within the same bounds.
  */
-export interface ComposeGeneratedBoxProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedBoxProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -283,11 +271,7 @@ export interface ComposeGeneratedBoxProps {
 /**
  * Properties configuring an empty layout node used to reserve space between neighboring content.
  */
-export interface ComposeGeneratedSpacerProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedSpacerProps extends ComposeCommonProps {
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
@@ -297,11 +281,7 @@ export interface ComposeGeneratedSpacerProps {
 /**
  * Properties configuring a vertically scrolling lazy list that composes visible child content.
  */
-export interface ComposeGeneratedLazyColumnProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedLazyColumnProps extends ComposeCommonProps {
   /**
    * Automatically scrolls the list to its final item as content is appended.
    */
@@ -335,11 +315,7 @@ export interface ComposeGeneratedLazyColumnProps {
 /**
  * Properties configuring a horizontally scrolling lazy list that composes visible child content.
  */
-export interface ComposeGeneratedLazyRowProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedLazyRowProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -365,11 +341,7 @@ export interface ComposeGeneratedLazyRowProps {
 /**
  * Properties configuring a Material text node with typography, wrapping, overflow, and color controls.
  */
-export interface ComposeGeneratedTextProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedTextProps extends ComposeCommonProps {
   /**
    * Primary color used to render the component.
    */
@@ -415,11 +387,7 @@ export interface ComposeGeneratedTextProps {
 /**
  * Properties configuring an editable Material text input with labels, adornments, validation state, and value-change handling.
  */
-export interface ComposeGeneratedTextFieldProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedTextFieldProps extends ComposeCommonProps {
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -497,11 +465,7 @@ export interface ComposeGeneratedTextFieldProps {
 /**
  * Properties configuring a binary Material switch with controlled checked state and track and thumb styling.
  */
-export interface ComposeGeneratedSwitchProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedSwitchProps extends ComposeCommonProps {
   /**
    * Controlled toggle state indicating whether the control is checked.
    */
@@ -543,11 +507,7 @@ export interface ComposeGeneratedSwitchProps {
 /**
  * Properties configuring a binary Material checkbox with controlled checked state.
  */
-export interface ComposeGeneratedCheckboxProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedCheckboxProps extends ComposeCommonProps {
   /**
    * Controlled toggle state indicating whether the control is checked.
    */
@@ -569,11 +529,7 @@ export interface ComposeGeneratedCheckboxProps {
 /**
  * Properties configuring a filled Material action button with configurable content, colors, padding, and click handling.
  */
-export interface ComposeGeneratedButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedButtonProps extends ComposeCommonProps {
   /**
    * Background color of the component's container.
    */
@@ -623,11 +579,7 @@ export interface ComposeGeneratedButtonProps {
 /**
  * Properties configuring a compact Material action button intended for an icon or custom content.
  */
-export interface ComposeGeneratedIconButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedIconButtonProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -657,11 +609,7 @@ export interface ComposeGeneratedIconButtonProps {
 /**
  * Properties configuring a Material card surface that groups related content with shape, border, color, and elevation.
  */
-export interface ComposeGeneratedCardProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedCardProps extends ComposeCommonProps {
   /**
    * Border drawn around the component's container.
    */
@@ -695,11 +643,7 @@ export interface ComposeGeneratedCardProps {
 /**
  * Properties configuring a theme scope that applies Material styling to its child content.
  */
-export interface ComposeGeneratedMaterialThemeProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedMaterialThemeProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -713,11 +657,7 @@ export interface ComposeGeneratedMaterialThemeProps {
 /**
  * Properties configuring a Material surface that provides color, shape, elevation, opacity, and optional click handling.
  */
-export interface ComposeGeneratedSurfaceProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedSurfaceProps extends ComposeCommonProps {
   /**
    * Opacity applied to the rendered node, from transparent to fully opaque.
    */
@@ -763,11 +703,7 @@ export interface ComposeGeneratedSurfaceProps {
 /**
  * Properties configuring a Material icon node with accessibility description, size, and tint.
  */
-export interface ComposeGeneratedIconProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedIconProps extends ComposeCommonProps {
   /**
    * Accessible description announced for non-text visual content.
    */
@@ -793,11 +729,7 @@ export interface ComposeGeneratedIconProps {
 /**
  * Properties configuring a horizontal Material progress indicator for determinate or indeterminate work.
  */
-export interface ComposeGeneratedLinearProgressIndicatorProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedLinearProgressIndicatorProps extends ComposeCommonProps {
   /**
    * Primary color used to render the component.
    */
@@ -815,11 +747,7 @@ export interface ComposeGeneratedLinearProgressIndicatorProps {
 /**
  * Properties configuring a circular Material progress indicator with configurable color and stroke width.
  */
-export interface ComposeGeneratedCircularProgressIndicatorProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedCircularProgressIndicatorProps extends ComposeCommonProps {
   /**
    * Primary color used to render the component.
    */
@@ -837,11 +765,7 @@ export interface ComposeGeneratedCircularProgressIndicatorProps {
 /**
  * Properties configuring the layout host where queued snackbar messages are displayed.
  */
-export interface ComposeGeneratedSnackbarHostProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedSnackbarHostProps extends ComposeCommonProps {
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
@@ -851,11 +775,7 @@ export interface ComposeGeneratedSnackbarHostProps {
 /**
  * Properties configuring a compact assist action chip with label, optional icons, enabled state, and click handling.
  */
-export interface ComposeGeneratedAssistChipProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedAssistChipProps extends ComposeCommonProps {
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -885,11 +805,7 @@ export interface ComposeGeneratedAssistChipProps {
 /**
  * Properties configuring a small status or count indicator rendered over associated content.
  */
-export interface ComposeGeneratedBadgeProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedBadgeProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -907,11 +823,7 @@ export interface ComposeGeneratedBadgeProps {
 /**
  * Properties configuring a container that positions a badge relative to its primary content.
  */
-export interface ComposeGeneratedBadgedBoxProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedBadgedBoxProps extends ComposeCommonProps {
   /**
    * Badge content positioned over or beside the associated destination content.
    */
@@ -929,11 +841,7 @@ export interface ComposeGeneratedBadgedBoxProps {
 /**
  * Properties configuring the sheet surface and content used inside a dismissible navigation drawer.
  */
-export interface ComposeGeneratedDismissibleDrawerSheetProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedDismissibleDrawerSheetProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -951,11 +859,7 @@ export interface ComposeGeneratedDismissibleDrawerSheetProps {
 /**
  * Properties configuring a navigation drawer that can be opened, closed, and dismissed with gestures.
  */
-export interface ComposeGeneratedDismissibleNavigationDrawerProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedDismissibleNavigationDrawerProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -977,11 +881,7 @@ export interface ComposeGeneratedDismissibleNavigationDrawerProps {
 /**
  * Properties configuring a horizontal separator between adjacent regions of content.
  */
-export interface ComposeGeneratedDividerProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedDividerProps extends ComposeCommonProps {
   /**
    * Primary color used to render the component.
    */
@@ -999,11 +899,7 @@ export interface ComposeGeneratedDividerProps {
 /**
  * Properties configuring an anchored popup menu with explicit visibility, positioning, dismissal, and window behavior.
  */
-export interface ComposeGeneratedDropdownMenuProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedDropdownMenuProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -1033,11 +929,7 @@ export interface ComposeGeneratedDropdownMenuProps {
 /**
  * Properties configuring an elevated assist action chip with label, optional icons, enabled state, and click handling.
  */
-export interface ComposeGeneratedElevatedAssistChipProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedElevatedAssistChipProps extends ComposeCommonProps {
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -1067,11 +959,7 @@ export interface ComposeGeneratedElevatedAssistChipProps {
 /**
  * Properties configuring an elevated Material action button with configurable content, colors, padding, shape, and click handling.
  */
-export interface ComposeGeneratedElevatedButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedElevatedButtonProps extends ComposeCommonProps {
   /**
    * Background color of the component's container.
    */
@@ -1117,11 +1005,7 @@ export interface ComposeGeneratedElevatedButtonProps {
 /**
  * Properties configuring an elevated Material card that groups related content above its surrounding surface.
  */
-export interface ComposeGeneratedElevatedCardProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedElevatedCardProps extends ComposeCommonProps {
   /**
    * Border drawn around the component's container.
    */
@@ -1155,11 +1039,7 @@ export interface ComposeGeneratedElevatedCardProps {
 /**
  * Properties configuring an elevated selectable filter chip with controlled selection, icons, and click handling.
  */
-export interface ComposeGeneratedElevatedFilterChipProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedElevatedFilterChipProps extends ComposeCommonProps {
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -1193,11 +1073,7 @@ export interface ComposeGeneratedElevatedFilterChipProps {
 /**
  * Properties configuring an elevated suggestion chip that presents a recommended action.
  */
-export interface ComposeGeneratedElevatedSuggestionChipProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedElevatedSuggestionChipProps extends ComposeCommonProps {
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -1223,11 +1099,7 @@ export interface ComposeGeneratedElevatedSuggestionChipProps {
 /**
  * Properties configuring an extended floating action button for a prominent screen-level action.
  */
-export interface ComposeGeneratedExtendedFloatingActionButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedExtendedFloatingActionButtonProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -1253,11 +1125,7 @@ export interface ComposeGeneratedExtendedFloatingActionButtonProps {
 /**
  * Properties configuring a filled compact Material action button intended for an icon or custom content.
  */
-export interface ComposeGeneratedFilledIconButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedFilledIconButtonProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -1287,11 +1155,7 @@ export interface ComposeGeneratedFilledIconButtonProps {
 /**
  * Properties configuring a filled icon button with controlled checked state.
  */
-export interface ComposeGeneratedFilledIconToggleButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedFilledIconToggleButtonProps extends ComposeCommonProps {
   /**
    * Controlled toggle state indicating whether the control is checked.
    */
@@ -1321,11 +1185,7 @@ export interface ComposeGeneratedFilledIconToggleButtonProps {
 /**
  * Properties configuring a tonal filled Material action button with configurable content, colors, padding, and click handling.
  */
-export interface ComposeGeneratedFilledTonalButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedFilledTonalButtonProps extends ComposeCommonProps {
   /**
    * Background color of the component's container.
    */
@@ -1371,11 +1231,7 @@ export interface ComposeGeneratedFilledTonalButtonProps {
 /**
  * Properties configuring a tonal filled compact Material action button intended for an icon or custom content.
  */
-export interface ComposeGeneratedFilledTonalIconButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedFilledTonalIconButtonProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -1405,11 +1261,7 @@ export interface ComposeGeneratedFilledTonalIconButtonProps {
 /**
  * Properties configuring a tonal filled icon button with controlled checked state.
  */
-export interface ComposeGeneratedFilledTonalIconToggleButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedFilledTonalIconToggleButtonProps extends ComposeCommonProps {
   /**
    * Controlled toggle state indicating whether the control is checked.
    */
@@ -1439,11 +1291,7 @@ export interface ComposeGeneratedFilledTonalIconToggleButtonProps {
 /**
  * Properties configuring a selectable filter chip with controlled selection, optional icons, and click handling.
  */
-export interface ComposeGeneratedFilterChipProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedFilterChipProps extends ComposeCommonProps {
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -1477,11 +1325,7 @@ export interface ComposeGeneratedFilterChipProps {
 /**
  * Properties configuring a floating action button for a prominent screen-level action.
  */
-export interface ComposeGeneratedFloatingActionButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedFloatingActionButtonProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -1507,11 +1351,7 @@ export interface ComposeGeneratedFloatingActionButtonProps {
 /**
  * Properties configuring a horizontal separator with configurable thickness and color.
  */
-export interface ComposeGeneratedHorizontalDividerProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedHorizontalDividerProps extends ComposeCommonProps {
   /**
    * Primary color used to render the component.
    */
@@ -1529,11 +1369,7 @@ export interface ComposeGeneratedHorizontalDividerProps {
 /**
  * Properties configuring an icon button with controlled checked state.
  */
-export interface ComposeGeneratedIconToggleButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedIconToggleButtonProps extends ComposeCommonProps {
   /**
    * Controlled toggle state indicating whether the control is checked.
    */
@@ -1567,11 +1403,7 @@ export interface ComposeGeneratedIconToggleButtonProps {
 /**
  * Properties configuring an input chip representing user-supplied information, with avatar, label, icons, and selection state.
  */
-export interface ComposeGeneratedInputChipProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedInputChipProps extends ComposeCommonProps {
   /**
    * Avatar content shown at the leading edge of the input chip.
    */
@@ -1609,11 +1441,7 @@ export interface ComposeGeneratedInputChipProps {
 /**
  * Properties configuring a large floating action button for a prominent screen-level action.
  */
-export interface ComposeGeneratedLargeFloatingActionButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedLargeFloatingActionButtonProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -1639,11 +1467,7 @@ export interface ComposeGeneratedLargeFloatingActionButtonProps {
 /**
  * Properties configuring a selectable tab that displays a leading icon beside its label.
  */
-export interface ComposeGeneratedLeadingIconTabProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedLeadingIconTabProps extends ComposeCommonProps {
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -1673,11 +1497,7 @@ export interface ComposeGeneratedLeadingIconTabProps {
 /**
  * Properties configuring a Material list row with headline, supporting, overline, leading, and trailing content slots.
  */
-export interface ComposeGeneratedListItemProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedListItemProps extends ComposeCommonProps {
   /**
    * Primary headline content of the list item.
    */
@@ -1715,11 +1535,7 @@ export interface ComposeGeneratedListItemProps {
 /**
  * Properties configuring the sheet surface and content used inside a modal navigation drawer.
  */
-export interface ComposeGeneratedModalDrawerSheetProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedModalDrawerSheetProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -1737,11 +1553,7 @@ export interface ComposeGeneratedModalDrawerSheetProps {
 /**
  * Properties configuring a modal navigation drawer with gesture handling and separate drawer and body content.
  */
-export interface ComposeGeneratedModalNavigationDrawerProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedModalNavigationDrawerProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -1763,11 +1575,7 @@ export interface ComposeGeneratedModalNavigationDrawerProps {
 /**
  * Properties configuring a modal wide navigation rail with collapsible header and navigation content.
  */
-export interface ComposeGeneratedModalWideNavigationRailProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedModalWideNavigationRailProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -1797,11 +1605,7 @@ export interface ComposeGeneratedModalWideNavigationRailProps {
 /**
  * Properties configuring a bottom navigation bar that lays out destination content.
  */
-export interface ComposeGeneratedNavigationBarProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedNavigationBarProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -1823,11 +1627,7 @@ export interface ComposeGeneratedNavigationBarProps {
 /**
  * Properties configuring a selectable destination row within a navigation drawer.
  */
-export interface ComposeGeneratedNavigationDrawerItemProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedNavigationDrawerItemProps extends ComposeCommonProps {
   /**
    * Badge content positioned over or beside the associated destination content.
    */
@@ -1857,11 +1657,7 @@ export interface ComposeGeneratedNavigationDrawerItemProps {
 /**
  * Properties configuring a vertical navigation rail with an optional header and destination content.
  */
-export interface ComposeGeneratedNavigationRailProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedNavigationRailProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -1883,11 +1679,7 @@ export interface ComposeGeneratedNavigationRailProps {
 /**
  * Properties configuring a selectable destination item within a navigation rail.
  */
-export interface ComposeGeneratedNavigationRailItemProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedNavigationRailItemProps extends ComposeCommonProps {
   /**
    * Keeps the destination label visible even when the item is not selected.
    */
@@ -1921,11 +1713,7 @@ export interface ComposeGeneratedNavigationRailItemProps {
 /**
  * Properties configuring an outlined Material action button with configurable content, colors, padding, shape, and click handling.
  */
-export interface ComposeGeneratedOutlinedButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedOutlinedButtonProps extends ComposeCommonProps {
   /**
    * Background color of the component's container.
    */
@@ -1971,11 +1759,7 @@ export interface ComposeGeneratedOutlinedButtonProps {
 /**
  * Properties configuring an outlined Material card that groups related content within a bordered surface.
  */
-export interface ComposeGeneratedOutlinedCardProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedOutlinedCardProps extends ComposeCommonProps {
   /**
    * Border drawn around the component's container.
    */
@@ -2009,11 +1793,7 @@ export interface ComposeGeneratedOutlinedCardProps {
 /**
  * Properties configuring an outlined compact Material action button intended for an icon or custom content.
  */
-export interface ComposeGeneratedOutlinedIconButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedOutlinedIconButtonProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -2043,11 +1823,7 @@ export interface ComposeGeneratedOutlinedIconButtonProps {
 /**
  * Properties configuring an outlined icon button with controlled checked state.
  */
-export interface ComposeGeneratedOutlinedIconToggleButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedOutlinedIconToggleButtonProps extends ComposeCommonProps {
   /**
    * Controlled toggle state indicating whether the control is checked.
    */
@@ -2077,11 +1853,7 @@ export interface ComposeGeneratedOutlinedIconToggleButtonProps {
 /**
  * Properties configuring the always-visible sheet surface and content of a permanent navigation drawer.
  */
-export interface ComposeGeneratedPermanentDrawerSheetProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedPermanentDrawerSheetProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -2099,11 +1871,7 @@ export interface ComposeGeneratedPermanentDrawerSheetProps {
 /**
  * Properties configuring an always-visible navigation drawer with separate drawer and body content.
  */
-export interface ComposeGeneratedPermanentNavigationDrawerProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedPermanentNavigationDrawerProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -2121,11 +1889,7 @@ export interface ComposeGeneratedPermanentNavigationDrawerProps {
 /**
  * Properties configuring a primary tab strip that scrolls when its tabs exceed the available width.
  */
-export interface ComposeGeneratedPrimaryScrollableTabRowProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedPrimaryScrollableTabRowProps extends ComposeCommonProps {
   /**
    * Default foreground color supplied to child content.
    */
@@ -2159,11 +1923,7 @@ export interface ComposeGeneratedPrimaryScrollableTabRowProps {
 /**
  * Properties configuring a primary fixed-width tab strip with selection indicator and divider slots.
  */
-export interface ComposeGeneratedPrimaryTabRowProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedPrimaryTabRowProps extends ComposeCommonProps {
   /**
    * Default foreground color supplied to child content.
    */
@@ -2193,11 +1953,7 @@ export interface ComposeGeneratedPrimaryTabRowProps {
 /**
  * Properties configuring a typography scope that supplies a text style to descendant text nodes.
  */
-export interface ComposeGeneratedProvideTextStyleProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedProvideTextStyleProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -2215,11 +1971,7 @@ export interface ComposeGeneratedProvideTextStyleProps {
 /**
  * Properties configuring a pull-to-refresh container with controlled refresh state, indicator, and refresh callback.
  */
-export interface ComposeGeneratedPullToRefreshBoxProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedPullToRefreshBoxProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -2249,11 +2001,7 @@ export interface ComposeGeneratedPullToRefreshBoxProps {
 /**
  * Properties configuring a selectable Material radio control for choosing one option from a group.
  */
-export interface ComposeGeneratedRadioButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedRadioButtonProps extends ComposeCommonProps {
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -2279,11 +2027,7 @@ export interface ComposeGeneratedRadioButtonProps {
 /**
  * Properties configuring a Material screen layout coordinating top bar, bottom bar, body, snackbar host, and floating action button.
  */
-export interface ComposeGeneratedScaffoldProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedScaffoldProps extends ComposeCommonProps {
   /**
    * Content rendered in the scaffold's bottom bar slot.
    */
@@ -2321,11 +2065,7 @@ export interface ComposeGeneratedScaffoldProps {
 /**
  * Properties configuring a secondary tab strip that scrolls when its tabs exceed the available width.
  */
-export interface ComposeGeneratedSecondaryScrollableTabRowProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedSecondaryScrollableTabRowProps extends ComposeCommonProps {
   /**
    * Default foreground color supplied to child content.
    */
@@ -2359,11 +2099,7 @@ export interface ComposeGeneratedSecondaryScrollableTabRowProps {
 /**
  * Properties configuring a secondary fixed-width tab strip with selection indicator and divider slots.
  */
-export interface ComposeGeneratedSecondaryTabRowProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedSecondaryTabRowProps extends ComposeCommonProps {
   /**
    * Default foreground color supplied to child content.
    */
@@ -2393,11 +2129,7 @@ export interface ComposeGeneratedSecondaryTabRowProps {
 /**
  * Properties configuring a compact bottom navigation bar that lays out destination content.
  */
-export interface ComposeGeneratedShortNavigationBarProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedShortNavigationBarProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -2415,11 +2147,7 @@ export interface ComposeGeneratedShortNavigationBarProps {
 /**
  * Properties configuring a selectable destination item within a compact navigation bar.
  */
-export interface ComposeGeneratedShortNavigationBarItemProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedShortNavigationBarItemProps extends ComposeCommonProps {
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -2449,11 +2177,7 @@ export interface ComposeGeneratedShortNavigationBarItemProps {
 /**
  * Properties configuring a small floating action button for a prominent screen-level action.
  */
-export interface ComposeGeneratedSmallFloatingActionButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedSmallFloatingActionButtonProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -2479,11 +2203,7 @@ export interface ComposeGeneratedSmallFloatingActionButtonProps {
 /**
  * Properties configuring a transient message surface with optional action and dismissal content.
  */
-export interface ComposeGeneratedSnackbarProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedSnackbarProps extends ComposeCommonProps {
   /**
    * Action content displayed alongside the snackbar message.
    */
@@ -2513,11 +2233,7 @@ export interface ComposeGeneratedSnackbarProps {
 /**
  * Properties configuring a suggestion chip that presents a recommended action.
  */
-export interface ComposeGeneratedSuggestionChipProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedSuggestionChipProps extends ComposeCommonProps {
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -2543,11 +2259,7 @@ export interface ComposeGeneratedSuggestionChipProps {
 /**
  * Properties configuring a selectable tab with custom content and controlled selection state.
  */
-export interface ComposeGeneratedTabProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedTabProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -2573,11 +2285,7 @@ export interface ComposeGeneratedTabProps {
 /**
  * Properties configuring a low-emphasis text action button with configurable content, colors, padding, and click handling.
  */
-export interface ComposeGeneratedTextButtonProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedTextButtonProps extends ComposeCommonProps {
   /**
    * Background color of the component's container.
    */
@@ -2623,11 +2331,7 @@ export interface ComposeGeneratedTextButtonProps {
 /**
  * Properties configuring a Material time-picker dialog with title, controls, confirmation, dismissal, and mode switching slots.
  */
-export interface ComposeGeneratedTimePickerDialogProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedTimePickerDialogProps extends ComposeCommonProps {
   /**
    * Confirmation action displayed by the time-picker dialog.
    */
@@ -2661,11 +2365,7 @@ export interface ComposeGeneratedTimePickerDialogProps {
 /**
  * Properties configuring a vertical separator with configurable thickness and color.
  */
-export interface ComposeGeneratedVerticalDividerProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedVerticalDividerProps extends ComposeCommonProps {
   /**
    * Primary color used to render the component.
    */
@@ -2683,11 +2383,7 @@ export interface ComposeGeneratedVerticalDividerProps {
 /**
  * Properties configuring a visual handle indicating that a surface can be dragged vertically.
  */
-export interface ComposeGeneratedVerticalDragHandleProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedVerticalDragHandleProps extends ComposeCommonProps {
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
@@ -2697,11 +2393,7 @@ export interface ComposeGeneratedVerticalDragHandleProps {
 /**
  * Properties configuring an expanded vertical navigation rail with header and destination content.
  */
-export interface ComposeGeneratedWideNavigationRailProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedWideNavigationRailProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -2723,11 +2415,7 @@ export interface ComposeGeneratedWideNavigationRailProps {
 /**
  * Properties configuring a selectable destination item that adapts to an expanded or collapsed wide navigation rail.
  */
-export interface ComposeGeneratedWideNavigationRailItemProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedWideNavigationRailItemProps extends ComposeCommonProps {
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -2761,11 +2449,7 @@ export interface ComposeGeneratedWideNavigationRailItemProps {
 /**
  * Properties configuring a stacking layout that exposes its available constraints while aligning child content.
  */
-export interface ComposeGeneratedBoxWithConstraintsProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedBoxWithConstraintsProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -2787,11 +2471,7 @@ export interface ComposeGeneratedBoxWithConstraintsProps {
 /**
  * Properties configuring a lightweight text node with typography, wrapping, and overflow controls.
  */
-export interface ComposeGeneratedBasicTextProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedBasicTextProps extends ComposeCommonProps {
   /**
    * Font family used to render the text.
    */
@@ -2829,11 +2509,7 @@ export interface ComposeGeneratedBasicTextProps {
 /**
  * Properties configuring a scope that prevents text selection within its child content.
  */
-export interface ComposeGeneratedDisableSelectionProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedDisableSelectionProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -2847,11 +2523,7 @@ export interface ComposeGeneratedDisableSelectionProps {
 /**
  * Properties configuring an image node supporting local, URI, URL, resource, and icon sources with scaling and accessibility controls.
  */
-export interface ComposeGeneratedImageProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedImageProps extends ComposeCommonProps {
   /**
    * Opacity applied to the rendered node, from transparent to fully opaque.
    */
@@ -2905,11 +2577,7 @@ export interface ComposeGeneratedImageProps {
 /**
  * Properties configuring a scope that enables text selection across its child content.
  */
-export interface ComposeGeneratedSelectionContainerProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedSelectionContainerProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the component.
    */
@@ -2923,11 +2591,7 @@ export interface ComposeGeneratedSelectionContainerProps {
 /**
  * Properties configuring a drawing surface that executes an ordered list of canvas commands.
  */
-export interface ComposeGeneratedCanvasProps {
-  /**
-   * Common layout, sizing, semantics, and modifier properties applied to this node.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ComposeGeneratedCanvasProps extends ComposeCommonProps {
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */

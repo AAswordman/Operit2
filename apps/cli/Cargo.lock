@@ -2361,11 +2361,21 @@ dependencies = [
 name = "operit-plugin-sdk"
 version = "2.0.0-preview.4"
 dependencies = [
+ "chrono",
  "json5",
+ "operit-plugin-sdk-codegen",
  "regex",
  "serde",
+ "serde_bytes",
  "serde_json",
  "zip",
+]
+
+[[package]]
+name = "operit-plugin-sdk-codegen"
+version = "2.0.0-preview.4"
+dependencies = [
+ "syn",
 ]
 
 [[package]]
@@ -2471,6 +2481,7 @@ dependencies = [
  "operit-host-api",
  "operit-model",
  "operit-plugin-sdk",
+ "operit-plugin-sdk-codegen",
  "operit-store",
  "operit-util",
  "quickjs-wasm-rs",

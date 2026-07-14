@@ -843,10 +843,7 @@ export type ComposeColor = string | ComposeColorToken;
  * Named semantic colors available from the active Material theme.
  */
 export interface ComposeColorScheme {
-  /**
-   * Maps Material color-role names to host-resolved tokens.
-   */
-  additional_properties: Record<string, ComposeColorToken>;
+  [key: string]: ComposeColorToken;
 }
 
 /**
@@ -958,11 +955,7 @@ export interface ComposeModifierAxisBounds {
 /**
  * Horizontal measurement constraints accepted by `widthIn`.
  */
-export interface ComposeModifierWidthBounds {
-  /**
-   * Generic axis bounds accepted as shorthand width limits.
-   */
-  base_compose_modifier_axis_bounds: ComposeModifierAxisBounds;
+export interface ComposeModifierWidthBounds extends ComposeModifierAxisBounds {
   /**
    * Explicit minimum measured width.
    */
@@ -976,11 +969,7 @@ export interface ComposeModifierWidthBounds {
 /**
  * Vertical measurement constraints accepted by `heightIn`.
  */
-export interface ComposeModifierHeightBounds {
-  /**
-   * Generic axis bounds accepted as shorthand height limits.
-   */
-  base_compose_modifier_axis_bounds: ComposeModifierAxisBounds;
+export interface ComposeModifierHeightBounds extends ComposeModifierAxisBounds {
   /**
    * Explicit minimum measured height.
    */
@@ -1134,11 +1123,7 @@ export interface ComposePointerOffsetEvent {
 /**
  * Pointer position and movement delta for one drag update.
  */
-export interface ComposeDragGestureEvent {
-  /**
-   * Current pointer location in local coordinates.
-   */
-  base_compose_pointer_offset_event: ComposePointerOffsetEvent;
+export interface ComposeDragGestureEvent extends ComposePointerOffsetEvent {
   /**
    * Horizontal movement since the preceding drag event.
    */
@@ -1310,11 +1295,7 @@ export interface ComposeCanvasTransformEvent {
 /**
  * Canvas dimensions reported after layout measurement changes.
  */
-export interface ComposeCanvasSizeEvent {
-  /**
-   * New measured width and height of the drawing surface.
-   */
-  base_compose_size_changed_event: ComposeSizeChangedEvent;
+export interface ComposeCanvasSizeEvent extends ComposeSizeChangedEvent {
 }
 
 /**
@@ -2742,11 +2723,7 @@ export interface ComposeCommonProps {
 /**
  * Properties for laying out child nodes vertically.
  */
-export interface ColumnProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ColumnProps extends ComposeCommonProps {
   /**
    * Child nodes placed from top to bottom.
    */
@@ -2764,11 +2741,7 @@ export interface ColumnProps {
 /**
  * Properties for laying out child nodes horizontally.
  */
-export interface RowProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface RowProps extends ComposeCommonProps {
   /**
    * Child nodes placed from start to end.
    */
@@ -2790,11 +2763,7 @@ export interface RowProps {
 /**
  * Properties for stacking child nodes in the same layout bounds.
  */
-export interface BoxProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface BoxProps extends ComposeCommonProps {
   /**
    * Child nodes drawn in stacking order.
    */
@@ -2822,11 +2791,7 @@ export interface SpacerProps {
 /**
  * Properties for rendering one styled block of plain text.
  */
-export interface TextProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface TextProps extends ComposeCommonProps {
   /**
    * String rendered by the text layout.
    */
@@ -2872,11 +2837,7 @@ export interface TextProps {
 /**
  * Properties for parsing and rendering Markdown content.
  */
-export interface MarkdownProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface MarkdownProps extends ComposeCommonProps {
   /**
    * Markdown source rendered by the component.
    */
@@ -2902,11 +2863,7 @@ export interface MarkdownProps {
 /**
  * State, decoration, validation, and typography for an editable text field.
  */
-export interface TextFieldProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface TextFieldProps extends ComposeCommonProps {
   /**
    * Plain or composed label displayed with the field.
    */
@@ -2976,11 +2933,7 @@ export interface TextFieldProps {
 /**
  * Controlled state and colors for a binary sliding switch.
  */
-export interface SwitchProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface SwitchProps extends ComposeCommonProps {
   /**
    * Current on or off state.
    */
@@ -3018,11 +2971,7 @@ export interface SwitchProps {
 /**
  * Controlled state and interaction for a binary checkbox.
  */
-export interface CheckboxProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface CheckboxProps extends ComposeCommonProps {
   /**
    * Current selected or unselected state.
    */
@@ -3040,11 +2989,7 @@ export interface CheckboxProps {
 /**
  * Content, shape, state, and action for a standard Material button.
  */
-export interface ButtonProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface ButtonProps extends ComposeCommonProps {
   /**
    * Arbitrary composed content rendered inside the button.
    */
@@ -3074,11 +3019,7 @@ export interface ButtonProps {
 /**
  * Icon or custom content rendered as a compact clickable control.
  */
-export interface IconButtonProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface IconButtonProps extends ComposeCommonProps {
   /**
    * Arbitrary content rendered inside the icon-button bounds.
    */
@@ -3104,11 +3045,7 @@ export interface IconButtonProps {
 /**
  * Elevated or outlined Material container for grouped content.
  */
-export interface CardProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface CardProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the card container.
    */
@@ -3146,11 +3083,7 @@ export interface CardProps {
 /**
  * Material surface that supplies container color, content color, and shape.
  */
-export interface SurfaceProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface SurfaceProps extends ComposeCommonProps {
   /**
    * Child nodes rendered inside the surface.
    */
@@ -3180,11 +3113,7 @@ export interface SurfaceProps {
 /**
  * Properties for rendering and optionally animating a Material icon.
  */
-export interface IconProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface IconProps extends ComposeCommonProps {
   /**
    * Material icon name resolved by the host icon registry.
    */
@@ -3210,11 +3139,7 @@ export interface IconProps {
 /**
  * Vertically scrolling list whose child content is hosted by a lazy column.
  */
-export interface LazyColumnProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface LazyColumnProps extends ComposeCommonProps {
   /**
    * List content rendered in vertical order.
    */
@@ -3228,11 +3153,7 @@ export interface LazyColumnProps {
 /**
  * Properties for a horizontal determinate or indeterminate progress indicator.
  */
-export interface LinearProgressIndicatorProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface LinearProgressIndicatorProps extends ComposeCommonProps {
   /**
    * Determinate completion fraction; omission selects indeterminate animation.
    */
@@ -3242,11 +3163,7 @@ export interface LinearProgressIndicatorProps {
 /**
  * Appearance of an indeterminate circular progress indicator.
  */
-export interface CircularProgressIndicatorProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface CircularProgressIndicatorProps extends ComposeCommonProps {
   /**
    * Thickness of the animated circular arc.
    */
@@ -3260,21 +3177,13 @@ export interface CircularProgressIndicatorProps {
 /**
  * Host slot where queued snackbar messages are presented.
  */
-export interface SnackbarHostProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface SnackbarHostProps extends ComposeCommonProps {
 }
 
 /**
  * Drawing commands, viewport transform, and gesture callbacks for a canvas node.
  */
-export interface CanvasProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface CanvasProps extends ComposeCommonProps {
   /**
    * Drawing operations rendered sequentially into the canvas.
    */
@@ -3296,11 +3205,7 @@ export interface CanvasProps {
 /**
  * Content source, platform settings, controller, and event hooks for an embedded WebView.
  */
-export interface WebViewProps {
-  /**
-   * Shared node layout, drawing, identity, and lifecycle properties.
-   */
-  base_compose_common_props: ComposeCommonProps;
+export interface WebViewProps extends ComposeCommonProps {
   /**
    * Remote or local URL loaded as the primary document.
    */
@@ -3589,10 +3494,7 @@ export interface ComposeUiFactoryRegistry {
  * Named scalar substitutions used by runtime message templates.
  */
 export interface ComposeTemplateValues {
-  /**
-   * Maps placeholder names to text, numeric, boolean, null, or undefined values.
-   */
-  additional_properties: Record<string, ComposeTemplateValuesAdditionalValue | null | undefined>;
+  [key: string]: ComposeTemplateValuesAdditionalValue | null | undefined;
 }
 
 /**
@@ -3607,10 +3509,7 @@ export interface ComposeUiModuleSpec {
    * Runtime implementation selected for the module.
    */
   runtime?: string;
-  /**
-   * Module-defined metadata retained alongside the standard fields.
-   */
-  additional_properties: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 /**

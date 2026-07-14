@@ -237,11 +237,7 @@ export namespace Chat {
   /**
    * Extends chat-turn controls with incremental reply delivery.
    */
-  export interface SendMessageStreamingOptions {
-    /**
-     * Contains the persistence, presentation, and timeout controls for the turn.
-     */
-    base_send_message_options: SendMessageOptions;
+  export interface SendMessageStreamingOptions extends SendMessageOptions {
     /**
      * Enables waifu-style aggregation of streamed reply chunks.
      */

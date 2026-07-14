@@ -18,7 +18,8 @@ export type NativeInterfaceHostCryptoAlgorithm = "md5" | "aes";
 /**
  * Stores the named arguments passed to a tool invocation.
  */
-export interface ToolParams extends Record<string, ToolParamsAdditionalValue> {
+export interface ToolParams {
+  [key: string]: ToolParamsAdditionalValue;
 }
 
 /**

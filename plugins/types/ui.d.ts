@@ -9,7 +9,8 @@ export namespace UI {
   /**
    * Holds an object-style set of element-selection criteria for a click operation.
    */
-  export interface HostClickElementParam1Variant2 extends Record<string, unknown> {
+  export interface HostClickElementParam1Variant2 {
+    [key: string]: unknown;
   }
 
   /**
