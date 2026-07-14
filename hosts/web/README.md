@@ -25,11 +25,18 @@ type OperitWebHost = {
   runtimeStorage: RuntimeStorageBridge;
   sqlite: SqliteBridge;
   systemOperation: SystemOperationBridge;
+  localInference: LocalInferenceBridge;
 };
 ```
 
 The bridge values use the same field names as `operit-host-api`. Binary data is passed as
 `Uint8Array`. SQLite integers are passed as strings to preserve 64-bit values across JS.
+
+`localInference` executes installed Sherpa ONNX Web STT and TTS bundles. The
+browser host stores model files in IndexedDB, materializes model bundle files as
+Blob URLs, runs TTS in a module Worker, and returns the same local inference
+response types used by native hosts. The serving origin must provide COOP and
+COEP headers because Sherpa TTS uses `SharedArrayBuffer`.
 
 ```ts
 type SqliteValue =

@@ -138,7 +138,10 @@ class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
           result:
               core_proxy
                   .CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
-                value: const core_proxy.StringResultData(value: ''),
+                value:
+                    const core_proxy.CoreOperitToolsToolsToolResultDataClassesStringResultData(
+                      value: '',
+                    ),
               ),
           error: '缺少必填参数：${missing.join(", ")}',
         );
@@ -182,7 +185,10 @@ class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
           result:
               core_proxy
                   .CoreOperitToolsToolsToolResultDataClassesToolResultData.stringResultData(
-                value: const core_proxy.StringResultData(value: ''),
+                value:
+                    const core_proxy.CoreOperitToolsToolsToolResultDataClassesStringResultData(
+                      value: '',
+                    ),
               ),
           error: error.toString(),
         );
@@ -236,7 +242,8 @@ String _toolResultText(
     return result.error ?? '';
   }
   final value = result.result.value;
-  if (value is core_proxy.StringResultData) {
+  if (value
+      is core_proxy.CoreOperitToolsToolsToolResultDataClassesStringResultData) {
     return value.value;
   }
   return const JsonEncoder.withIndent('  ').convert(result.result.toJson());

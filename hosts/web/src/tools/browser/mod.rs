@@ -1,5 +1,5 @@
 use js_sys::Reflect;
-use operit_host_api::{HostResult, WebVisitHost, WebVisitResult, WebVisitRequest};
+use operit_host_api::{HostResult, WebVisitHost, WebVisitRequest, WebVisitResult};
 use wasm_bindgen::prelude::*;
 
 use crate::common::{
@@ -30,7 +30,9 @@ impl WebVisitHost for WebWebVisitHost {
                 Reflect::get(&value, &JsValue::from_str("metadata")).map_err(js_error)?,
                 "metadata",
             )?,
-            links: js_visit_links(Reflect::get(&value, &JsValue::from_str("links")).map_err(js_error)?)?,
+            links: js_visit_links(
+                Reflect::get(&value, &JsValue::from_str("links")).map_err(js_error)?,
+            )?,
             imageLinks: js_string_array(
                 Reflect::get(&value, &JsValue::from_str("imageLinks")).map_err(js_error)?,
                 "imageLinks",

@@ -3,9 +3,12 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::data::preferences::ApiPreferences::ApiPreferences;
+use operit_local_models::LocalEngineManifest::LocalPlatformTarget;
+use operit_local_models::LocalModelManifest::LocalModelKind;
+use operit_local_models::LocalModelRegistryStore::LocalModelRegistryStore;
 use operit_model::ModelCatalog::ModelCatalog;
 use operit_model::ModelConfigData::{
-    default_deepseek_provider, ApiProviderType, AvailableProviderModel,
+    default_deepseek_provider, local_model_provider, ApiProviderType, AvailableProviderModel,
     AvailableProviderModelSource, ModelCapabilities, ModelCatalogKey, ModelConfigDefaults,
     ModelContextSpec, ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderModelSummary,
     ProviderProfile, ResolvedModelConfig,
@@ -55,6 +58,8 @@ pub enum ModelConfigError {
     ModelListFetch(String),
     #[error("connection test error: {0}")]
     ConnectionTest(String),
+    #[error("built-in provider operation is not allowed: {0}")]
+    BuiltInProvider(String),
 }
 
 /// Stores provider profiles, model profiles, and resolved model configuration.
@@ -91,15 +96,21 @@ impl ModelConfigManager {
         Self::new(ApiPreferences::data_dir())
     }
 
-    /// Ensures the default provider profile exists in preferences.
+    /// Ensures the default API provider and fixed local provider exist.
     pub fn initializeIfNeeded(&self) -> Result<(), ModelConfigError> {
         self.modelConfigDataStore.try_edit_result(|preferences| {
-            let providerIds = Self::readProviderList(preferences)?;
+            let mut providerIds = Self::readProviderList(preferences)?;
             if providerIds.is_empty() {
                 let provider = default_deepseek_provider();
                 Self::writeProvider(preferences, &provider)?;
-                Self::writeProviderList(preferences, &[provider.id.clone()])?;
+                providerIds.push(provider.id);
             }
+            let localProvider = local_model_provider();
+            if !providerIds.iter().any(|id| id == &localProvider.id) {
+                Self::writeProvider(preferences, &localProvider)?;
+                providerIds.push(localProvider.id);
+            }
+            Self::writeProviderList(preferences, &providerIds)?;
             Ok::<(), ModelConfigError>(())
         })
     }
@@ -140,7 +151,8 @@ impl ModelConfigManager {
         &self,
         providerId: &str,
     ) -> Result<ProviderProfile, ModelConfigError> {
-        self.loadProviderFromDataStore(providerId)
+        let provider = self.loadProviderFromDataStore(providerId)?;
+        self.hydrateLocalProviderModels(provider)
     }
 
     /// Builds summary rows for every configured provider model.
@@ -180,6 +192,11 @@ impl ModelConfigManager {
     ) -> Result<String, ModelConfigError> {
         let providerType = ApiProviderType::fromProviderTypeId(&providerTypeId)
             .ok_or_else(|| ModelConfigError::InvalidProviderType(providerTypeId.clone()))?;
+        if providerType == ApiProviderType::LOCAL_MODEL {
+            return Err(ModelConfigError::BuiltInProvider(
+                ApiProviderType::LOCAL_MODEL.name().to_string(),
+            ));
+        }
         let providerId = self.createProviderId();
         let provider = ProviderProfile::new(providerId.clone(), name, providerType, endpoint);
         self.modelConfigDataStore.try_edit_result(|preferences| {
@@ -233,6 +250,9 @@ impl ModelConfigManager {
 
     /// Deletes one provider profile and removes it from provider order.
     pub fn deleteProvider(&self, providerId: &str) -> Result<(), ModelConfigError> {
+        if providerId == ApiProviderType::LOCAL_MODEL.name() {
+            return Err(ModelConfigError::BuiltInProvider(providerId.to_string()));
+        }
         let providerKey = self.providerKey(providerId);
         self.modelConfigDataStore.try_edit_result(|preferences| {
             self.assertProviderExistsInPreferences(preferences, providerId)?;
@@ -266,6 +286,21 @@ impl ModelConfigManager {
         providerId: &str,
     ) -> Result<Vec<AvailableProviderModel>, ModelConfigError> {
         let provider = self.getProviderProfile(providerId)?;
+        if provider.providerType == ApiProviderType::LOCAL_MODEL {
+            return Ok(provider
+                .models
+                .iter()
+                .map(|model| AvailableProviderModel {
+                    modelId: model.id.clone(),
+                    source: AvailableProviderModelSource::Local,
+                    pricing: model.pricingOverride.clone(),
+                    context: model.contextOverride.clone(),
+                    capabilities: model.capabilitiesOverride.clone(),
+                    builtinTools: model.builtinToolsOverride.clone().unwrap_or_default(),
+                    request: model.requestOverride.clone(),
+                })
+                .collect());
+        }
         let providerCatalog = ModelCatalog::provider(&provider.providerTypeId)
             .map_err(ModelConfigError::ModelListFetch)?;
         let mut models: Vec<AvailableProviderModel> = providerCatalog
@@ -313,7 +348,7 @@ impl ModelConfigManager {
                         modelId: modelId.clone(),
                     });
                 }
-                AvailableProviderModelSource::Remote => {
+                AvailableProviderModelSource::Remote | AvailableProviderModelSource::Local => {
                     let availableModel =
                         Self::completeAvailableProviderModel(availableModel.clone());
                     model.pricingOverride = availableModel.pricing.clone();
@@ -617,6 +652,7 @@ impl ModelConfigManager {
     {
         self.modelConfigDataStore.try_edit_result(|preferences| {
             let provider = self.readProviderFromPreferences(preferences, providerId)?;
+            let provider = self.hydrateLocalProviderModels(provider)?;
             let updated = transform(provider)?;
             Self::writeProvider(preferences, &updated)?;
             Ok(updated)
@@ -710,6 +746,25 @@ impl ModelConfigManager {
         provider: &ProviderProfile,
         modelId: &str,
     ) -> Result<AvailableProviderModel, ModelConfigError> {
+        if provider.providerType == ApiProviderType::LOCAL_MODEL {
+            return provider
+                .models
+                .iter()
+                .find(|model| model.id == modelId)
+                .map(|model| AvailableProviderModel {
+                    modelId: model.id.clone(),
+                    source: AvailableProviderModelSource::Local,
+                    pricing: model.pricingOverride.clone(),
+                    context: model.contextOverride.clone(),
+                    capabilities: model.capabilitiesOverride.clone(),
+                    builtinTools: model.builtinToolsOverride.clone().unwrap_or_default(),
+                    request: model.requestOverride.clone(),
+                })
+                .ok_or_else(|| ModelConfigError::AvailableProviderModelNotFound {
+                    providerId: provider.id.clone(),
+                    modelId: modelId.to_string(),
+                });
+        }
         let providerCatalog = ModelCatalog::provider(&provider.providerTypeId)
             .map_err(ModelConfigError::ModelListFetch)?;
         if let Some(model) = providerCatalog
@@ -816,6 +871,33 @@ impl ModelConfigManager {
         }
     }
 
+    /// Replaces a LOCAL_MODEL provider's model rows with the installed asset inventory.
+    fn hydrateLocalProviderModels(
+        &self,
+        mut provider: ProviderProfile,
+    ) -> Result<ProviderProfile, ModelConfigError> {
+        if provider.providerType != ApiProviderType::LOCAL_MODEL {
+            return Ok(provider);
+        }
+        let registry = LocalModelRegistryStore::forRuntimeRoot(self.runtimeRoot.clone())
+            .map_err(|error| ModelConfigError::ModelListFetch(error.to_string()))?
+            .read()
+            .map_err(|error| ModelConfigError::ModelListFetch(error.to_string()))?;
+        let platform = LocalPlatformTarget::current().map_err(ModelConfigError::ModelListFetch)?;
+        let mut models = registry
+            .installedModels
+            .into_iter()
+            .filter(|installed| {
+                installed.manifest.kind == LocalModelKind::Chat
+                    && installed.manifest.supportsPlatform(&platform.platform)
+            })
+            .map(|installed| ModelProfile::new(installed.manifest.registryKey()))
+            .collect::<Vec<_>>();
+        models.sort_by(|left, right| left.id.cmp(&right.id));
+        provider.models = models;
+        Ok(provider)
+    }
+
     fn findModel(
         &self,
         providerId: &str,
@@ -850,7 +932,7 @@ mod tests {
     use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorageHost};
     use operit_model::ModelConfigData::ModelConfigDefaults;
     use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
-    use operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRoot;
+    use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
     use std::fs;
     use std::path::{Component, Path, PathBuf};
     use std::sync::Arc;
@@ -862,6 +944,27 @@ mod tests {
             ModelConfigManager::DEFAULT_MODEL_ID,
             ModelConfigDefaults::DEFAULT_MODEL_ID
         );
+    }
+
+    /// Verifies local provider hydration does not create a nested HTTP runtime.
+    #[test]
+    fn local_provider_hydration_runs_inside_tokio_runtime() {
+        let root = unique_test_root("local_provider_tokio_runtime");
+        setup_test_runtime(root.clone());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("build Tokio runtime");
+        runtime.block_on(async {
+            let manager = ModelConfigManager::new(root.clone());
+            manager
+                .initializeIfNeeded()
+                .expect("initialize model config");
+            let providers = manager.getProviderProfiles().expect("provider profiles");
+            assert!(providers
+                .iter()
+                .any(|provider| provider.id == "LOCAL_MODEL"));
+        });
+        fs::remove_dir_all(root).expect("remove model config test root");
     }
 
     #[test]
@@ -965,7 +1068,10 @@ mod tests {
     }
 
     fn setup_test_runtime(root: PathBuf) {
-        setDefaultRuntimeStoreRoot(root.clone());
+        setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
+            root.clone(),
+            root.join("workspaces"),
+        ));
         setDefaultRuntimeStorageHost(Arc::new(TestRuntimeStorageHost { root }));
     }
 
@@ -1000,8 +1106,14 @@ mod tests {
     }
 
     impl RuntimeStorageHost for TestRuntimeStorageHost {
-        fn rootDir(&self) -> Option<PathBuf> {
+        /// Returns the temporary runtime root.
+        fn runtimeRootDir(&self) -> Option<PathBuf> {
             Some(self.root.clone())
+        }
+
+        /// Returns the temporary workspace collection root.
+        fn workspaceRootDir(&self) -> Option<PathBuf> {
+            Some(self.root.join("workspaces"))
         }
 
         fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {

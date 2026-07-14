@@ -31,6 +31,10 @@ fn main() {
     let runtime_root =
         SourceRoot::new(manifest_dir.join("../operit-runtime/src"), "operit_runtime");
     let model_root = SourceRoot::new(manifest_dir.join("../operit-model/src"), "operit_model");
+    let local_models_root = SourceRoot::new(
+        manifest_dir.join("../operit-local-models/src"),
+        "operit_local_models",
+    );
     let plugin_sdk_root = SourceRoot::new(
         manifest_dir.join("../operit-plugin-sdk/src"),
         "operit_plugin_sdk",
@@ -49,6 +53,7 @@ fn main() {
     let source_roots = vec![
         runtime_root.clone(),
         model_root,
+        local_models_root,
         plugin_sdk_root,
         store_root.clone(),
         util_root,

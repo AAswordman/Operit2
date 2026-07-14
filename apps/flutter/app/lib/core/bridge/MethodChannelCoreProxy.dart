@@ -155,7 +155,7 @@ class _MethodChannelCorePushSink implements CorePushSink {
 
   /// Queues one item for ordered local dispatch.
   @override
-  void add(Object? args) {
+  Future<void> add(Object? args) {
     if (_closed) {
       throw StateError('Link push stream is closed');
     }
@@ -180,6 +180,7 @@ class _MethodChannelCorePushSink implements CorePushSink {
         throw CoreLinkError.fromJson(response);
       }
     });
+    return _tail;
   }
 
   /// Waits for all local items and completes this stream.

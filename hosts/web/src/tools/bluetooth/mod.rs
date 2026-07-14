@@ -2,10 +2,9 @@ use operit_host_api::{
     BluetoothBleCharacteristicAddress, BluetoothBleConnectRequest, BluetoothBleNotificationData,
     BluetoothBleServicesData, BluetoothBleSubscribeRequest, BluetoothBleWriteAndReadRequest,
     BluetoothBleWriteRequest, BluetoothBondedDevicesData, BluetoothClassicAcceptRequest,
-    BluetoothClassicConnectRequest, BluetoothClassicListenRequest, BluetoothHost,
-    BluetoothPayload, BluetoothReadData, BluetoothReadRequest, BluetoothScanRequest,
-    BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData,
-    HostResult,
+    BluetoothClassicConnectRequest, BluetoothClassicListenRequest, BluetoothHost, BluetoothPayload,
+    BluetoothReadData, BluetoothReadRequest, BluetoothScanRequest, BluetoothScanResultData,
+    BluetoothSessionData, BluetoothStateData, BluetoothTransferData, HostResult,
 };
 use wasm_bindgen::prelude::*;
 
@@ -35,7 +34,10 @@ impl WebBluetoothHost {
 
 impl BluetoothHost for WebBluetoothHost {
     fn requestBluetoothPermission(&self) -> HostResult<String> {
-        js_string(call_bluetooth("requestBluetoothPermission", &[])?, "requestBluetoothPermission")
+        js_string(
+            call_bluetooth("requestBluetoothPermission", &[])?,
+            "requestBluetoothPermission",
+        )
     }
 
     fn bluetoothState(&self) -> HostResult<BluetoothStateData> {
@@ -43,7 +45,10 @@ impl BluetoothHost for WebBluetoothHost {
     }
 
     fn requestEnableBluetooth(&self) -> HostResult<String> {
-        js_string(call_bluetooth("requestEnableBluetooth", &[])?, "requestEnableBluetooth")
+        js_string(
+            call_bluetooth("requestEnableBluetooth", &[])?,
+            "requestEnableBluetooth",
+        )
     }
 
     fn listBluetoothBondedDevices(&self) -> HostResult<BluetoothBondedDevicesData> {
@@ -97,7 +102,10 @@ impl BluetoothHost for WebBluetoothHost {
     ) -> HostResult<BluetoothTransferData> {
         bluetooth_transfer_data(call_bluetooth(
             "bluetoothSend",
-            &[JsValue::from_str(sessionId), bluetooth_payload_to_js(payload)],
+            &[
+                JsValue::from_str(sessionId),
+                bluetooth_payload_to_js(payload),
+            ],
         )?)
     }
 
@@ -148,7 +156,10 @@ impl BluetoothHost for WebBluetoothHost {
     ) -> HostResult<BluetoothBleServicesData> {
         bluetooth_ble_services_data(call_bluetooth(
             "bluetoothBleDiscoverServices",
-            &[JsValue::from_str(sessionId), JsValue::from_f64(timeoutMs as f64)],
+            &[
+                JsValue::from_str(sessionId),
+                JsValue::from_f64(timeoutMs as f64),
+            ],
         )?)
     }
 
@@ -199,7 +210,10 @@ impl BluetoothHost for WebBluetoothHost {
     ) -> HostResult<BluetoothBleNotificationData> {
         bluetooth_ble_notification_data(call_bluetooth(
             "bluetoothBleReadNotifications",
-            &[JsValue::from_str(sessionId), JsValue::from_f64(limit as f64)],
+            &[
+                JsValue::from_str(sessionId),
+                JsValue::from_f64(limit as f64),
+            ],
         )?)
     }
 }

@@ -13,6 +13,7 @@ use operit_util::AppLogger::AppLogger;
 use serde::{Deserialize, Serialize};
 
 const BROWSER_RUNTIME_LOG_TAG: &str = "RuntimeBrowser";
+const BROWSER_RUNTIME_INTERACTION_ACTION: &str = "interact";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// Published browser session metadata for attached views.
@@ -313,26 +314,30 @@ impl RuntimeBrowserService {
         command: RuntimeBrowserCommand,
     ) -> Result<RuntimeBrowserCommandResult, String> {
         let started_at = std::time::Instant::now();
-        AppLogger::i(
-            BROWSER_RUNTIME_LOG_TAG,
-            &format!(
-                "command start action={} session={}",
-                command.action,
-                command.sessionId.as_deref().unwrap_or("")
-            ),
-        );
+        let log_context = (command.action != BROWSER_RUNTIME_INTERACTION_ACTION)
+            .then(|| (command.action.clone(), command.sessionId.clone()));
+        if let Some((action, session_id)) = log_context.as_ref() {
+            AppLogger::i(
+                BROWSER_RUNTIME_LOG_TAG,
+                &format!("command start action={} session={:?}", action, session_id),
+            );
+        }
         let result = self
             .browserSessionHost
             .submitBrowserCommand(host_browser_session_command(command))
             .map(runtime_browser_command_result)
             .map_err(|error| error.message)?;
-        AppLogger::i(
-            BROWSER_RUNTIME_LOG_TAG,
-            &format!(
-                "command done elapsedMs={}",
-                started_at.elapsed().as_millis()
-            ),
-        );
+        if let Some((action, session_id)) = log_context.as_ref() {
+            AppLogger::i(
+                BROWSER_RUNTIME_LOG_TAG,
+                &format!(
+                    "command done action={} session={:?} elapsedMs={}",
+                    action,
+                    session_id,
+                    started_at.elapsed().as_millis()
+                ),
+            );
+        }
         Ok(result)
     }
 

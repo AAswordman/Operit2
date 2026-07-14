@@ -66,7 +66,7 @@ class AndroidRuntimeHost(context: Context) {
     }
 
     /** Executes a runtime bridge call on the runtime executor. */
-    fun runRuntime(result: MethodChannel.Result, block: () -> String) {
+    fun <T> runRuntime(result: MethodChannel.Result, block: () -> T) {
         runtimeExecutor.execute {
             try {
                 val response = block()
@@ -161,6 +161,16 @@ class AndroidRuntimeHost(context: Context) {
     /** Deletes host secret bytes for native Runtime calls. */
     fun deleteHostSecret(key: String) {
         AndroidHostSecretStore.delete(applicationContext, key)
+    }
+
+    /** Executes one installed local speech-to-text model request. */
+    fun transcribeLocalSpeech(requestJson: String): String {
+        return AndroidLocalInference.transcribe(requestJson)
+    }
+
+    /** Executes one installed local text-to-speech model request. */
+    fun synthesizeLocalSpeech(requestJson: String): String {
+        return AndroidLocalInference.synthesize(requestJson)
     }
 
     /** Validates one required absolute storage root. */

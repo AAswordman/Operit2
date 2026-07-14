@@ -68,7 +68,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::cli::link::load_link_session;
+use crate::cli::link::load_link_session_resolved;
 use crate::{create_local_core, initialize_shell_chat, parse_shell_args};
 
 pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
@@ -114,7 +114,7 @@ pub(crate) async fn run_link_tui_command(args: &[String]) -> Result<(), String> 
         })?
         .clone();
     let shell_args = parse_shell_args(&args[1..])?;
-    let session = load_link_session(&session_name)?;
+    let session = load_link_session_resolved(&session_name).await?;
     let local_application = crate::bootstrap::create_cli_application();
     let language = TuiLanguage::from_context(&local_application.hostManager)?;
     let host_interaction_session = session.clone();
@@ -250,23 +250,11 @@ async fn handle_remote_tool_permission_interaction(
         .services_runtime_host_interaction_service()
         .respondOwnerHostInteraction(
             request.requestId,
-            RuntimeHostInteractionResponse {
-                browserAutomation: None,
-                browserSession: None,
-                webVisit: None,
-                composeWebViewController: None,
-                systemCaptureScreenshot: None,
-                systemRecognizeText: None,
-                systemLanguageCode: None,
-                audioPlay: None,
-                musicPlayback: None,
-                bluetooth: None,
-                ttsSynthesis: None,
-                ttsPlayback: None,
-                toolPermission: Some(RuntimeHostInteractionToolPermissionResponse {
+            RuntimeHostInteractionResponse::toolPermission(
+                RuntimeHostInteractionToolPermissionResponse {
                     result: result.to_string(),
-                }),
-            },
+                },
+            ),
         )
         .await
         .expect("tool permission response must be accepted");

@@ -79,9 +79,9 @@ impl EndpointCompleter {
                 }
                 endpoint.to_string()
             }
-            ApiProviderType::GOOGLE | ApiProviderType::GEMINI_GENERIC | ApiProviderType::MNN => {
-                endpoint.to_string()
-            }
+            ApiProviderType::GOOGLE
+            | ApiProviderType::GEMINI_GENERIC
+            | ApiProviderType::LOCAL_MODEL => endpoint.to_string(),
             _ => Self::completeEndpoint(endpoint),
         }
     }

@@ -96,6 +96,10 @@ pub mod SerializableColorScheme;
 pub mod SerializableTypography;
 #[path = "StandardModelParameters.rs"]
 pub mod StandardModelParameters;
+#[path = "SttCatalog.rs"]
+pub mod SttCatalog;
+#[path = "SttConfig.rs"]
+pub mod SttConfig;
 #[path = "ToolPrompt.rs"]
 pub mod ToolPrompt;
 #[path = "TtsCatalog.rs"]
@@ -157,6 +161,8 @@ pub use PromptTurn::*;
 pub use SerializableColorScheme::*;
 pub use SerializableTypography::*;
 pub use StandardModelParameters::*;
+pub use SttCatalog::*;
+pub use SttConfig::*;
 pub use ToolPrompt::*;
 pub use TtsCatalog::*;
 pub use TtsConfig::*;

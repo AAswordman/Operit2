@@ -18,6 +18,7 @@ from common import (
     prepare_web_access_embedded_assets,
     run,
 )
+from prepare_apple_sherpa import prepare_apple_sherpa
 
 
 IOS_RELEASE_APP_DIR = FLUTTER_APP_DIR / "build" / "ios" / "iphoneos" / "Runner.app"
@@ -53,6 +54,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     prepare_web_access_embedded_assets()
+    prepare_apple_sherpa()
     os.environ.setdefault("RUSTFLAGS", "-Awarnings")
     typescript_version = os.environ.get("TYPESCRIPT_VERSION", "5.9.3")
 

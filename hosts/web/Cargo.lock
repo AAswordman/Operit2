@@ -95,6 +95,8 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "operit-host-api",
+ "serde",
+ "serde_json",
  "wasm-bindgen",
 ]
 

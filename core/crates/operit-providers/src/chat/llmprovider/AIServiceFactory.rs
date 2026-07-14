@@ -22,8 +22,6 @@ pub enum ProviderServiceKind {
     ClaudeProvider,
     GeminiProvider,
     OllamaProvider,
-    MNNProvider,
-    LlamaProvider,
     QwenAIProvider,
     KimiProvider,
     MimoProvider,
@@ -44,20 +42,6 @@ pub enum ApiKeyProviderSpec {
     SingleApiKeyProvider { api_key: String },
     /// Resolves keys from the multi-key store for the provider profile.
     MultiApiKeyProvider { provider_id: String },
-}
-
-/// Runtime settings used when constructing a llama.cpp session.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LlamaSessionConfig {
-    pub n_threads: i32,
-    pub n_ctx: i32,
-    pub n_batch: i32,
-    pub n_ubatch: i32,
-    pub n_gpu_layers: i32,
-    pub use_mmap: bool,
-    pub flash_attention: bool,
-    pub kv_unified: bool,
-    pub offload_kqv: bool,
 }
 
 /// Provider-specific constructor parameters emitted by the service factory.
@@ -111,22 +95,6 @@ pub enum ProviderCreateParams {
         supports_vision: bool,
         supports_audio: bool,
         supports_video: bool,
-        enable_tool_call: bool,
-    },
-    MNNProvider {
-        model_name: String,
-        forward_type: String,
-        thread_count: i32,
-        provider_type: ApiProviderType,
-        enable_tool_call: bool,
-        supports_vision: bool,
-        supports_audio: bool,
-        supports_video: bool,
-    },
-    LlamaProvider {
-        model_name: String,
-        session_config: LlamaSessionConfig,
-        provider_type: ApiProviderType,
         enable_tool_call: bool,
     },
     QwenAIProvider {
@@ -371,22 +339,11 @@ impl AIServiceFactory {
                 supports_video,
                 enable_tool_call,
             ),
-            ApiProviderType::MNN => Self::mnn_provider(
-                model_name,
-                config.localRuntime.mnnForwardType.to_string(),
-                config.localRuntime.mnnThreadCount,
-                provider_type,
-                enable_tool_call,
-                supports_vision,
-                supports_audio,
-                supports_video,
-            ),
-            ApiProviderType::LLAMA_CPP => Self::llama_provider(
-                model_name,
-                Self::build_android_llama_session_config(&config, 1),
-                provider_type,
-                enable_tool_call,
-            ),
+            ApiProviderType::LOCAL_MODEL => {
+                return Err(AiServiceError::ProviderNotImplemented(
+                    "LOCAL_MODEL chat inference".to_string(),
+                ));
+            }
             ApiProviderType::ALIYUN => Self::qwen_provider(
                 config.apiEndpoint,
                 api_key_provider,
@@ -586,30 +543,6 @@ impl AIServiceFactory {
         }
     }
 
-    /// Builds llama.cpp runtime settings from resolved local model configuration.
-    pub fn build_android_llama_session_config(
-        config: &ResolvedModelConfig,
-        available_processors: i32,
-    ) -> LlamaSessionConfig {
-        let processor_count = available_processors.max(1);
-        let thread_count = config
-            .localRuntime
-            .llamaThreadCount
-            .max(1)
-            .min(processor_count);
-        LlamaSessionConfig {
-            n_threads: thread_count,
-            n_ctx: config.localRuntime.llamaContextSize.max(1),
-            n_batch: config.localRuntime.llamaBatchSize.max(1),
-            n_ubatch: config.localRuntime.llamaUBatchSize.max(1),
-            n_gpu_layers: config.localRuntime.llamaGpuLayers.max(0),
-            use_mmap: config.localRuntime.llamaUseMmap,
-            flash_attention: config.localRuntime.llamaFlashAttention,
-            kv_unified: config.localRuntime.llamaKvUnified,
-            offload_kqv: config.localRuntime.llamaOffloadKqv,
-        }
-    }
-
     /// Builds an OpenAI-compatible provider spec.
     fn open_ai_provider(
         api_endpoint: String,
@@ -763,50 +696,6 @@ impl AIServiceFactory {
                 supports_vision,
                 supports_audio,
                 supports_video,
-                enable_tool_call,
-            },
-        })
-    }
-
-    /// Builds an MNN local-runtime provider spec.
-    fn mnn_provider(
-        model_name: String,
-        forward_type: String,
-        thread_count: i32,
-        provider_type: ApiProviderType,
-        enable_tool_call: bool,
-        supports_vision: bool,
-        supports_audio: bool,
-        supports_video: bool,
-    ) -> Result<ProviderServiceSpec, AiServiceError> {
-        Ok(ProviderServiceSpec {
-            kind: ProviderServiceKind::MNNProvider,
-            params: ProviderCreateParams::MNNProvider {
-                model_name,
-                forward_type,
-                thread_count,
-                provider_type,
-                enable_tool_call,
-                supports_vision,
-                supports_audio,
-                supports_video,
-            },
-        })
-    }
-
-    /// Builds a llama.cpp local-runtime provider spec.
-    fn llama_provider(
-        model_name: String,
-        session_config: LlamaSessionConfig,
-        provider_type: ApiProviderType,
-        enable_tool_call: bool,
-    ) -> Result<ProviderServiceSpec, AiServiceError> {
-        Ok(ProviderServiceSpec {
-            kind: ProviderServiceKind::LlamaProvider,
-            params: ProviderCreateParams::LlamaProvider {
-                model_name,
-                session_config,
-                provider_type,
                 enable_tool_call,
             },
         })

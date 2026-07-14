@@ -6,6 +6,7 @@ import '../../../../l10n/generated/app_localizations.dart';
 
 enum SettingsCategory {
   model,
+  localModels,
   tts,
   characters,
   tools,
@@ -39,10 +40,16 @@ class SettingsCategorySpec {
         description: l10n.settingsCategoryModelDescription,
         icon: Icons.hub_outlined,
       ),
+      SettingsCategory.localModels => const SettingsCategorySpec(
+        title: '本地模型',
+        subtitle: '下载、引擎、STT / TTS',
+        description: '管理按需安装的本地模型和推理引擎。',
+        icon: Icons.memory_outlined,
+      ),
       SettingsCategory.tts => const SettingsCategorySpec(
-        title: '语音 TTS',
-        subtitle: '供应商、音色、全局当前',
-        description: '管理语音合成供应商、模型/音色配置，并选择全局当前 TTS。',
+        title: '语音与识别',
+        subtitle: 'TTS 与 STT 供应商',
+        description: '管理语音合成与语音识别供应商，并分别选择当前配置。',
         icon: Icons.record_voice_over_outlined,
       ),
       SettingsCategory.characters => SettingsCategorySpec(

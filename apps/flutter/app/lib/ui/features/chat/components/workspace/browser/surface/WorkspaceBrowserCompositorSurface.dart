@@ -6,7 +6,6 @@ import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:webview_all_windows/webview_all_windows.dart';
 
 import '../WorkspaceBrowserViewStore.dart';
 import '../tabs/WorkspaceBrowserTabModels.dart';
@@ -33,19 +32,10 @@ class _WorkspaceBrowserCompositorSurfaceState
   final FocusNode _focusNode = FocusNode();
   Size? _reportedSize;
   double? _reportedScaleFactor;
-  final Map<int, int> _downButtons = <int, int>{};
 
-  /// Releases pressed compositor buttons when the widget is destroyed.
+  /// Releases local resources when the widget is destroyed.
   @override
   void dispose() {
-    for (final button in _downButtons.values.toList(growable: false)) {
-      widget.store.setSurfacePointerButton(
-        widget.tab.id,
-        button: button,
-        isDown: false,
-      );
-    }
-    _downButtons.clear();
     _focusNode.dispose();
     super.dispose();
   }
@@ -67,21 +57,13 @@ class _WorkspaceBrowserCompositorSurfaceState
           onKeyEvent: _handleKeyEvent,
           child: Listener(
             behavior: HitTestBehavior.opaque,
-            onPointerHover: (event) => _moveCursor(event.localPosition),
-            onPointerMove: (event) => _moveCursor(event.localPosition),
+            onPointerMove: (event) => _sendPointerEvent('move', event),
             onPointerDown: (event) {
               _focusNode.requestFocus();
-              _moveCursor(event.localPosition);
-              final button = _buttonForButtons(event.buttons);
-              _downButtons[event.pointer] = button;
-              widget.store.setSurfacePointerButton(
-                widget.tab.id,
-                button: button,
-                isDown: true,
-              );
+              _sendPointerEvent('down', event);
             },
-            onPointerUp: (event) => _releaseButton(event.pointer),
-            onPointerCancel: (event) => _releaseButton(event.pointer),
+            onPointerUp: (event) => _sendPointerEvent('up', event),
+            onPointerCancel: (event) => _sendPointerEvent('cancel', event),
             onPointerSignal: _handlePointerSignal,
             onPointerPanZoomUpdate: _handlePointerPanZoomUpdate,
             child: MouseRegion(
@@ -133,35 +115,14 @@ class _WorkspaceBrowserCompositorSurfaceState
     });
   }
 
-  /// Moves the owner compositor cursor.
-  void _moveCursor(Offset position) {
-    widget.store.moveSurfaceCursor(widget.tab.id, position);
-  }
-
-  /// Resolves a Flutter pointer button mask into the WebView surface button.
-  int _buttonForButtons(int buttons) {
-    if ((buttons & kPrimaryMouseButton) != 0) {
-      return WindowsBrowserSurfacePointerButton.primary.index;
-    }
-    if ((buttons & kSecondaryMouseButton) != 0) {
-      return WindowsBrowserSurfacePointerButton.secondary.index;
-    }
-    if ((buttons & kMiddleMouseButton) != 0) {
-      return WindowsBrowserSurfacePointerButton.tertiary.index;
-    }
-    return WindowsBrowserSurfacePointerButton.none.index;
-  }
-
-  /// Releases a tracked pointer button on the owner compositor.
-  void _releaseButton(int pointer) {
-    final button = _downButtons.remove(pointer);
-    if (button == null) {
-      return;
-    }
-    widget.store.setSurfacePointerButton(
+  /// Sends one raw Flutter pointer event to the owner compositor.
+  void _sendPointerEvent(String eventType, PointerEvent event) {
+    widget.store.pointerSurface(
       widget.tab.id,
-      button: button,
-      isDown: false,
+      eventType: eventType,
+      pointer: event.pointer,
+      position: event.localPosition,
+      buttons: event.buttons,
     );
   }
 

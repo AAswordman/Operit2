@@ -32,6 +32,12 @@ pub enum RuntimeHostInteractionKind {
     SystemLanguageCode,
     #[serde(rename = "system_recognize_text")]
     SystemRecognizeText,
+    #[serde(rename = "system_operation")]
+    SystemOperation,
+    #[serde(rename = "file_open")]
+    FileOpen,
+    #[serde(rename = "file_share")]
+    FileShare,
     #[serde(rename = "audio_play")]
     AudioPlay,
     #[serde(rename = "music_playback")]
@@ -42,6 +48,8 @@ pub enum RuntimeHostInteractionKind {
     TtsSynthesis,
     #[serde(rename = "tts_playback")]
     TtsPlayback,
+    #[serde(rename = "local_inference")]
+    LocalInference,
     #[serde(rename = "tool_permission")]
     ToolPermission,
 }
@@ -58,11 +66,15 @@ pub struct RuntimeHostInteractionRequest {
     pub systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotPayload>,
     pub systemLanguageCode: Option<RuntimeHostInteractionSystemLanguageCodePayload>,
     pub systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextPayload>,
+    pub systemOperation: Option<RuntimeHostInteractionSystemOperationPayload>,
+    pub fileOpen: Option<RuntimeHostInteractionFileOpenPayload>,
+    pub fileShare: Option<RuntimeHostInteractionFileSharePayload>,
     pub audioPlay: Option<RuntimeHostInteractionAudioPlayPayload>,
     pub musicPlayback: Option<RuntimeHostInteractionMusicPlaybackPayload>,
     pub bluetooth: Option<RuntimeHostInteractionBluetoothPayload>,
     pub ttsSynthesis: Option<RuntimeHostInteractionTtsSynthesisPayload>,
     pub ttsPlayback: Option<RuntimeHostInteractionTtsPlaybackPayload>,
+    pub localInference: Option<RuntimeHostInteractionLocalInferencePayload>,
     pub toolPermission: Option<RuntimeHostInteractionToolPermissionPayload>,
 }
 
@@ -83,6 +95,7 @@ enum RuntimeHostInteractionTarget {
 struct RuntimeHostInteractionPending {
     target: RuntimeHostInteractionTarget,
     request: RuntimeHostInteractionRequest,
+    sequence: u64,
 }
 
 impl RuntimeHostInteractionRequest {
@@ -132,6 +145,25 @@ impl RuntimeHostInteractionRequest {
         request
     }
 
+    /// Builds a request for one owner-host system operation.
+    fn systemOperation(payload: RuntimeHostInteractionSystemOperationPayload) -> Self {
+        let mut request = Self::empty(RuntimeHostInteractionKind::SystemOperation);
+        request.systemOperation = Some(payload);
+        request
+    }
+
+    fn fileOpen(payload: RuntimeHostInteractionFileOpenPayload) -> Self {
+        let mut request = Self::empty(RuntimeHostInteractionKind::FileOpen);
+        request.fileOpen = Some(payload);
+        request
+    }
+
+    fn fileShare(payload: RuntimeHostInteractionFileSharePayload) -> Self {
+        let mut request = Self::empty(RuntimeHostInteractionKind::FileShare);
+        request.fileShare = Some(payload);
+        request
+    }
+
     fn audioPlay(payload: RuntimeHostInteractionAudioPlayPayload) -> Self {
         let mut request = Self::empty(RuntimeHostInteractionKind::AudioPlay);
         request.audioPlay = Some(payload);
@@ -162,6 +194,13 @@ impl RuntimeHostInteractionRequest {
         request
     }
 
+    /// Builds a request for one owner-host local inference operation.
+    fn localInference(payload: RuntimeHostInteractionLocalInferencePayload) -> Self {
+        let mut request = Self::empty(RuntimeHostInteractionKind::LocalInference);
+        request.localInference = Some(payload);
+        request
+    }
+
     fn toolPermission(payload: RuntimeHostInteractionToolPermissionPayload) -> Self {
         let mut request = Self::empty(RuntimeHostInteractionKind::ToolPermission);
         request.toolPermission = Some(payload);
@@ -179,11 +218,15 @@ impl RuntimeHostInteractionRequest {
             systemCaptureScreenshot: None,
             systemLanguageCode: None,
             systemRecognizeText: None,
+            systemOperation: None,
+            fileOpen: None,
+            fileShare: None,
             audioPlay: None,
             musicPlayback: None,
             bluetooth: None,
             ttsSynthesis: None,
             ttsPlayback: None,
+            localInference: None,
             toolPermission: None,
         }
     }
@@ -242,6 +285,26 @@ pub struct RuntimeHostInteractionSystemRecognizeTextPayload {
     pub imagePath: String,
     pub language: String,
     pub quality: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Generic system operation request sent to the owner host.
+pub struct RuntimeHostInteractionSystemOperationPayload {
+    pub operation: String,
+    pub paramsJson: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// File-open request payload sent to the owner host.
+pub struct RuntimeHostInteractionFileOpenPayload {
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// File-share request payload sent to the owner host.
+pub struct RuntimeHostInteractionFileSharePayload {
+    pub path: String,
+    pub title: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -307,12 +370,21 @@ pub struct RuntimeHostInteractionTtsSynthesisPayload {
 /// TTS playback command payload.
 pub struct RuntimeHostInteractionTtsPlaybackPayload {
     pub command: String,
+    #[serde(default)]
+    pub audioPath: Option<String>,
     pub text: String,
     pub voice: String,
     pub locale: String,
     pub speed: f64,
     pub pitch: f64,
     pub interrupt: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Local inference command payload sent to the owner host.
+pub struct RuntimeHostInteractionLocalInferencePayload {
+    pub method: String,
+    pub requestJson: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -339,6 +411,7 @@ pub struct RuntimeHostInteractionToolPermissionPayload {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Response envelope returned for one host interaction request.
 pub struct RuntimeHostInteractionResponse {
+    pub error: Option<String>,
     pub browserAutomation: Option<RuntimeHostInteractionBrowserAutomationResponse>,
     pub browserSession: Option<RuntimeHostInteractionBrowserSessionResponse>,
     pub webVisit: Option<RuntimeHostInteractionWebVisitResponse>,
@@ -346,11 +419,15 @@ pub struct RuntimeHostInteractionResponse {
     pub systemCaptureScreenshot: Option<RuntimeHostInteractionSystemCaptureScreenshotResponse>,
     pub systemLanguageCode: Option<RuntimeHostInteractionSystemLanguageCodeResponse>,
     pub systemRecognizeText: Option<RuntimeHostInteractionSystemRecognizeTextResponse>,
+    pub systemOperation: Option<RuntimeHostInteractionSystemOperationResponse>,
+    pub fileOpen: Option<RuntimeHostInteractionFileOperationResponse>,
+    pub fileShare: Option<RuntimeHostInteractionFileOperationResponse>,
     pub audioPlay: Option<RuntimeHostInteractionAudioPlayResponse>,
     pub musicPlayback: Option<RuntimeHostInteractionMusicPlaybackResponse>,
     pub bluetooth: Option<RuntimeHostInteractionBluetoothResponse>,
     pub ttsSynthesis: Option<RuntimeHostInteractionTtsSynthesisResponse>,
     pub ttsPlayback: Option<RuntimeHostInteractionTtsPlaybackResponse>,
+    pub localInference: Option<RuntimeHostInteractionLocalInferenceResponse>,
     pub toolPermission: Option<RuntimeHostInteractionToolPermissionResponse>,
 }
 
@@ -410,6 +487,27 @@ impl RuntimeHostInteractionResponse {
         value
     }
 
+    /// Builds a system operation response envelope.
+    pub fn systemOperation(response: RuntimeHostInteractionSystemOperationResponse) -> Self {
+        let mut value = Self::empty();
+        value.systemOperation = Some(response);
+        value
+    }
+
+    /// Builds a file-open response envelope.
+    pub fn fileOpen(response: RuntimeHostInteractionFileOperationResponse) -> Self {
+        let mut value = Self::empty();
+        value.fileOpen = Some(response);
+        value
+    }
+
+    /// Builds a file-share response envelope.
+    pub fn fileShare(response: RuntimeHostInteractionFileOperationResponse) -> Self {
+        let mut value = Self::empty();
+        value.fileShare = Some(response);
+        value
+    }
+
     /// Builds an audio playback response envelope.
     pub fn audioPlay(response: RuntimeHostInteractionAudioPlayResponse) -> Self {
         let mut value = Self::empty();
@@ -445,6 +543,13 @@ impl RuntimeHostInteractionResponse {
         value
     }
 
+    /// Builds a local inference response envelope.
+    pub fn localInference(response: RuntimeHostInteractionLocalInferenceResponse) -> Self {
+        let mut value = Self::empty();
+        value.localInference = Some(response);
+        value
+    }
+
     /// Builds a tool permission response envelope.
     pub fn toolPermission(response: RuntimeHostInteractionToolPermissionResponse) -> Self {
         let mut value = Self::empty();
@@ -454,6 +559,7 @@ impl RuntimeHostInteractionResponse {
 
     fn empty() -> Self {
         Self {
+            error: None,
             browserAutomation: None,
             browserSession: None,
             webVisit: None,
@@ -461,11 +567,15 @@ impl RuntimeHostInteractionResponse {
             systemCaptureScreenshot: None,
             systemLanguageCode: None,
             systemRecognizeText: None,
+            systemOperation: None,
+            fileOpen: None,
+            fileShare: None,
             audioPlay: None,
             musicPlayback: None,
             bluetooth: None,
             ttsSynthesis: None,
             ttsPlayback: None,
+            localInference: None,
             toolPermission: None,
         }
     }
@@ -545,6 +655,19 @@ pub struct RuntimeHostInteractionSystemRecognizeTextResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+/// Generic system operation response returned by the owner host.
+pub struct RuntimeHostInteractionSystemOperationResponse {
+    pub resultJson: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// File operation response payload.
+pub struct RuntimeHostInteractionFileOperationResponse {
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 /// Audio playback response payload.
 pub struct RuntimeHostInteractionAudioPlayResponse {
     pub path: String,
@@ -569,6 +692,12 @@ pub struct RuntimeHostInteractionTtsPlaybackResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+/// Local inference command response returned by the owner host.
+pub struct RuntimeHostInteractionLocalInferenceResponse {
+    pub resultJson: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 /// Tool permission response payload.
 pub struct RuntimeHostInteractionToolPermissionResponse {
     pub result: String,
@@ -578,6 +707,7 @@ pub struct RuntimeHostInteractionToolPermissionResponse {
 struct RuntimeHostInteractionState {
     pending: BTreeMap<String, RuntimeHostInteractionPending>,
     responses: BTreeMap<String, RuntimeHostInteractionResponse>,
+    nextSequence: u64,
 }
 
 #[derive(Debug)]
@@ -610,6 +740,7 @@ pub struct RuntimeHostInteractionEventStream {
 impl Stream for RuntimeHostInteractionEventStream {
     type Item = RuntimeHostInteractionRequest;
 
+    /// Collects matching pending interactions in broker insertion order.
     fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
         let broker = runtimeHostInteractionBroker();
         let mut delivered = BTreeSet::<String>::new();
@@ -621,9 +752,10 @@ impl Stream for RuntimeHostInteractionEventStream {
             let next = state
                 .pending
                 .values()
-                .find(|pending| {
+                .filter(|pending| {
                     !delivered.contains(&pending.request.requestId) && self.matchesPending(pending)
                 })
+                .min_by_key(|pending| pending.sequence)
                 .map(|pending| pending.request.clone());
             if let Some(request) = next {
                 delivered.insert(request.requestId.clone());
@@ -773,6 +905,51 @@ pub fn requestOwnerSystemRecognizeText(
         .ok_or_else(|| "system recognize text response payload is missing".to_string())
 }
 
+/// Requests a system operation from the owner host.
+pub fn requestOwnerSystemOperation(
+    payload: RuntimeHostInteractionSystemOperationPayload,
+    timeout: Duration,
+) -> Result<RuntimeHostInteractionSystemOperationResponse, String> {
+    let response = runtimeHostInteractionBroker().request(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::systemOperation(payload),
+        timeout,
+    )?;
+    response
+        .systemOperation
+        .ok_or_else(|| "system operation response payload is missing".to_string())
+}
+
+/// Requests file opening from the owner host.
+pub fn requestOwnerFileOpen(
+    payload: RuntimeHostInteractionFileOpenPayload,
+    timeout: Duration,
+) -> Result<RuntimeHostInteractionFileOperationResponse, String> {
+    let response = runtimeHostInteractionBroker().request(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::fileOpen(payload),
+        timeout,
+    )?;
+    response
+        .fileOpen
+        .ok_or_else(|| "file open response payload is missing".to_string())
+}
+
+/// Requests file sharing from the owner host.
+pub fn requestOwnerFileShare(
+    payload: RuntimeHostInteractionFileSharePayload,
+    timeout: Duration,
+) -> Result<RuntimeHostInteractionFileOperationResponse, String> {
+    let response = runtimeHostInteractionBroker().request(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::fileShare(payload),
+        timeout,
+    )?;
+    response
+        .fileShare
+        .ok_or_else(|| "file share response payload is missing".to_string())
+}
+
 /// Requests audio playback from the owner host.
 pub fn requestOwnerAudioPlay(
     payload: RuntimeHostInteractionAudioPlayPayload,
@@ -848,6 +1025,21 @@ pub fn requestOwnerTtsPlayback(
         .ok_or_else(|| "tts playback response payload is missing".to_string())
 }
 
+/// Requests local inference execution from the owner host.
+pub fn requestOwnerLocalInference(
+    payload: RuntimeHostInteractionLocalInferencePayload,
+    timeout: Duration,
+) -> Result<RuntimeHostInteractionLocalInferenceResponse, String> {
+    let response = runtimeHostInteractionBroker().request(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::localInference(payload),
+        timeout,
+    )?;
+    response
+        .localInference
+        .ok_or_else(|| "local inference response payload is missing".to_string())
+}
+
 /// Requests a tool permission decision from the active controller.
 pub fn requestOwnerToolPermission(
     payload: RuntimeHostInteractionToolPermissionPayload,
@@ -901,6 +1093,7 @@ impl RuntimeHostInteractionEventStream {
 }
 
 impl RuntimeHostInteractionBroker {
+    /// Enqueues one interaction and waits for its response or timeout.
     fn request(
         &self,
         target: RuntimeHostInteractionTarget,
@@ -913,15 +1106,24 @@ impl RuntimeHostInteractionBroker {
             .state
             .lock()
             .map_err(|error| format!("host interaction mutex poisoned: {error}"))?;
+        let sequence = state.nextSequence;
+        state.nextSequence = state.nextSequence.wrapping_add(1);
         state.pending.insert(
             requestId.clone(),
-            RuntimeHostInteractionPending { target, request },
+            RuntimeHostInteractionPending {
+                target,
+                request,
+                sequence,
+            },
         );
         self.changed.notify_all();
         loop {
             if let Some(response) = state.responses.remove(&requestId) {
                 state.pending.remove(&requestId);
                 self.changed.notify_all();
+                if let Some(error) = response.error.as_ref() {
+                    return Err(error.clone());
+                }
                 return Ok(response);
             }
             let elapsed = startedAt.elapsed();
@@ -954,5 +1156,46 @@ impl RuntimeHostInteractionBroker {
         state.responses.insert(requestId.to_string(), response);
         self.changed.notify_all();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies that a structured owner error returns without waiting for timeout.
+    #[test]
+    fn brokerReturnsStructuredOwnerErrorImmediately() {
+        let broker = RuntimeHostInteractionBroker::default();
+        let mut request =
+            RuntimeHostInteractionRequest::ttsPlayback(RuntimeHostInteractionTtsPlaybackPayload {
+                command: "speak".to_string(),
+                audioPath: None,
+                text: "hello".to_string(),
+                voice: String::new(),
+                locale: String::new(),
+                speed: 1.0,
+                pitch: 1.0,
+                interrupt: true,
+            });
+        request.requestId = "structured-owner-error".to_string();
+        let mut response = RuntimeHostInteractionResponse::empty();
+        response.error = Some("owner tts failed".to_string());
+        broker
+            .state
+            .lock()
+            .expect("host interaction mutex poisoned")
+            .responses
+            .insert(request.requestId.clone(), response);
+
+        let error = broker
+            .request(
+                RuntimeHostInteractionTarget::OwnerHost,
+                request,
+                Duration::from_secs(120),
+            )
+            .expect_err("structured owner error must fail the request");
+
+        assert_eq!(error, "owner tts failed");
     }
 }

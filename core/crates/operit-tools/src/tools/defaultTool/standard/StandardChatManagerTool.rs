@@ -7,7 +7,7 @@ use crate::tools::ToolResultDataClasses::{
     stringResultData, AgentStatusResultData, CharacterCardInfo, CharacterCardListResultData,
     ChatCreationResultData, ChatDeleteResultData, ChatFindResultData, ChatInfo, ChatListResultData,
     ChatMessageInfo, ChatMessagesResultData, ChatServiceStartResultData, ChatSwitchResultData,
-    ChatTitleUpdateResultData, MessageSendResultData, ToolResultData,
+    ChatTitleUpdateResultData, JsNullable, JsOptional, MessageSendResultData, ToolResultData,
 };
 use crate::ConversationMarkupManager::ToolResult;
 use crate::ToolExecutionManager::{
@@ -151,7 +151,7 @@ impl StandardChatManagerTool {
                 tool,
                 ToolResultData::ChatListResultData(ChatListResultData {
                     totalCount,
-                    currentChatId,
+                    currentChatId: JsNullable::from_option(currentChatId),
                     chats,
                 }),
             ),
@@ -227,7 +227,7 @@ impl StandardChatManagerTool {
             tool,
             ToolResultData::ChatFindResultData(ChatFindResultData {
                 matchedCount: matched.len(),
-                chat: Some(buildChatInfo(
+                chat: JsNullable::Value(buildChatInfo(
                     &matched[targetIndex],
                     &messageCounts,
                     currentChatId.as_deref(),
@@ -252,7 +252,7 @@ impl StandardChatManagerTool {
             ToolResultData::AgentStatusResultData(AgentStatusResultData {
                 chatId,
                 state: if isProcessing { "processing" } else { "idle" }.to_string(),
-                message: None,
+                message: JsOptional::Null,
                 isIdle: !isProcessing,
                 isProcessing,
             }),
@@ -420,8 +420,8 @@ impl StandardChatManagerTool {
             ToolResultData::MessageSendResultData(MessageSendResultData {
                 chatId: resolvedChatId,
                 message,
-                aiResponse,
-                receivedAt: Some(currentTimeMillis()),
+                aiResponse: JsOptional::from_nullable_option(aiResponse),
+                receivedAt: JsOptional::Value(currentTimeMillis()),
                 sentAt,
             }),
         )
@@ -772,7 +772,7 @@ fn buildChatInfo(
         isCurrent: currentChatId == Some(chat.id.as_str()),
         inputTokens: chat.inputTokens,
         outputTokens: chat.outputTokens,
-        characterCardName: chat.characterCardName.clone(),
+        characterCardName: JsOptional::from_nullable_option(chat.characterCardName.clone()),
     }
 }
 

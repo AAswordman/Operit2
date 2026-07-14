@@ -41,7 +41,7 @@ use operit_tools::tools::AIToolHandler::{AIToolHandler, FnToolExecutor};
 use operit_tools::tools::PackageToolExecutor::PackageToolExecutor;
 use operit_tools::tools::ToolResultDataClasses::{
     stringResultData, EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData,
-    SleepResultData, ToolResultData,
+    JsOptional, SleepResultData, ToolResultData,
 };
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
@@ -885,7 +885,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                         result: ToolResultData::EnvironmentVariableReadResultData(
                             EnvironmentVariableReadResultData {
                                 key: String::new(),
-                                value: None,
+                                value: JsOptional::Null,
                                 exists: false,
                             },
                         ),
@@ -900,7 +900,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                             EnvironmentVariableReadResultData {
                                 key,
                                 exists: value.is_some(),
-                                value,
+                                value: JsOptional::from_nullable_option(value),
                             },
                         ),
                         error: None,
@@ -911,7 +911,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                         result: ToolResultData::EnvironmentVariableReadResultData(
                             EnvironmentVariableReadResultData {
                                 key,
-                                value: None,
+                                value: JsOptional::Null,
                                 exists: false,
                             },
                         ),
@@ -948,7 +948,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                             EnvironmentVariableWriteResultData {
                                 key: String::new(),
                                 requestedValue: String::new(),
-                                value: None,
+                                value: JsOptional::Null,
                                 exists: false,
                                 cleared: false,
                             },
@@ -969,7 +969,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                             EnvironmentVariableWriteResultData {
                                 key,
                                 requestedValue: value.clone(),
-                                value: None,
+                                value: JsOptional::Null,
                                 exists: false,
                                 cleared,
                             },
@@ -987,7 +987,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                                 key,
                                 requestedValue: value,
                                 exists: current.is_some(),
-                                value: current,
+                                value: JsOptional::from_nullable_option(current),
                                 cleared,
                             },
                         ),
@@ -1000,7 +1000,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                             EnvironmentVariableWriteResultData {
                                 key,
                                 requestedValue: value.clone(),
-                                value: None,
+                                value: JsOptional::Null,
                                 exists: false,
                                 cleared,
                             },

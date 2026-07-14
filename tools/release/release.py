@@ -531,8 +531,8 @@ def ensure_android_signing():
 
     signing = read_properties(signing_properties)
     local = read_properties(ANDROID_LOCAL_PROPERTIES)
+    local["RELEASE_STORE_FILE"] = str(android_release_store_file(signing, signing_properties))
     for key in (
-        "RELEASE_STORE_FILE",
         "RELEASE_STORE_PASSWORD",
         "RELEASE_KEY_ALIAS",
         "RELEASE_KEY_PASSWORD",
@@ -541,6 +541,20 @@ def ensure_android_signing():
             raise RuntimeError(f"Android signing property missing from {signing_properties}: {key}")
         local[key] = signing[key]
     write_properties(ANDROID_LOCAL_PROPERTIES, local)
+
+
+# Reads the Android release keystore path from signing properties.
+def android_release_store_file(signing, signing_properties):
+    key = "RELEASE_STORE_FILE"
+    value = signing.get(key)
+    if not value:
+        raise RuntimeError(f"Android signing property missing from {signing_properties}: {key}")
+    store_file = Path(value)
+    if not store_file.is_absolute():
+        store_file = signing_properties.parent / store_file
+    if not store_file.is_file():
+        raise RuntimeError(f"Android release keystore not found: {store_file}")
+    return store_file
 
 
 def copy_required_file(source, destination):
@@ -1187,6 +1201,33 @@ def build_host_cli(cli_arches="host"):
     )
 
 
+# Builds Apple release assets on a macOS SSH worker.
+def build_remote_apple(products, build_name, build_number, cli_arches, apple_builder, apple_remote_root):
+    selected = [product.value for product in sorted(products, key=lambda item: item.value) if product != ReleaseProduct.NONE]
+    if not selected:
+        return
+    run(
+        [
+            sys.executable,
+            SCRIPT_DIR / "build_apple_remote.py",
+            "--ssh",
+            apple_builder,
+            "--remote-root",
+            apple_remote_root,
+            "--build-name",
+            build_name,
+            "--build-number",
+            build_number,
+            "--cli-arches",
+            cli_arches,
+            "--products",
+            *selected,
+            "--dist-dir",
+            DIST_DIR,
+        ]
+    )
+
+
 def publish_release(tag, repo_value, draft, prerelease, auth):
     assets = sorted(path for path in DIST_DIR.iterdir() if path.is_file())
     if not assets:
@@ -1310,6 +1351,8 @@ def main():
     parser.add_argument("--products", nargs="+", choices=[item.value for item in ReleaseProduct])
     parser.add_argument("--wsl-distro", default="FedoraLinux-43")
     parser.add_argument("--no-wsl", action="store_true")
+    parser.add_argument("--apple-builder", default="", help="macOS SSH target used to build macOS and iOS assets")
+    parser.add_argument("--apple-remote-root", default="operit2-apple-release")
     parser.add_argument("--cli-arches", default=CliArchMode.HOST.value, choices=[item.value for item in CliArchMode],
                         help="CLI target architectures: host (current only) or all (all desktop arches)")
     args = parser.parse_args()
@@ -1352,6 +1395,16 @@ def main():
             platform_version.build_name,
             platform_version.build_number,
             args.cli_arches,
+        )
+
+    if args.apple_builder:
+        build_remote_apple(
+            products,
+            platform_version.build_name,
+            platform_version.build_number,
+            args.cli_arches,
+            args.apple_builder,
+            args.apple_remote_root,
         )
 
     next_platform_version = None

@@ -24,7 +24,6 @@ import {
 import {
     SleepResultData as _SleepResultData,
     SystemSettingData as _SystemSettingData,
-    SystemSettingResult as _SystemSettingResult,
     AppOperationData as _AppOperationData,
     AppListData as _AppListData,
     DeviceInfoResultData as _DeviceInfoResultData,
@@ -46,9 +45,7 @@ import {
     TerminalCommandResultData as _TerminalCommandResultData,
     TerminalStreamEventData as _TerminalStreamEventData,
     HiddenTerminalCommandResultData as _HiddenTerminalCommandResultData,
-    MusicPlaybackState as _MusicPlaybackState,
     MusicPlaybackResultData as _MusicPlaybackResultData,
-    CombinedOperationResultData as _CombinedOperationResultData,
     AutomationExecutionResultData as _AutomationExecutionResultData,
     FilePartContentData as _FilePartContentData,
     FileApplyResultData as _FileApplyResultData,
@@ -56,29 +53,7 @@ import {
     GrepFileMatch as _GrepFileMatch,
     GrepLineMatch as _GrepLineMatch,
     EnvironmentVariableReadResultData as _EnvironmentVariableReadResultData,
-    EnvironmentVariableWriteResultData as _EnvironmentVariableWriteResultData,
-    SandboxPackageResultItem as _SandboxPackageResultItem,
-    SandboxPackagesResultData as _SandboxPackagesResultData,
-    SandboxPackageUpdateResultData as _SandboxPackageUpdateResultData,
-    SandboxScriptExecutionResultData as _SandboxScriptExecutionResultData,
-    McpRestartLogPluginResultItem as _McpRestartLogPluginResultItem,
-    McpRestartWithLogsResultData as _McpRestartWithLogsResultData,
-    SpeechTtsHttpConfigResultItem as _SpeechTtsHttpConfigResultItem,
-    SpeechSttHttpConfigResultItem as _SpeechSttHttpConfigResultItem,
-    SpeechServicesConfigResultData as _SpeechServicesConfigResultData,
-    SpeechServicesUpdateResultData as _SpeechServicesUpdateResultData,
-    SpeechServicesTtsPlaybackTestResultData as _SpeechServicesTtsPlaybackTestResultData,
-    ModelConfigResultItem as _ModelConfigResultItem,
-    FunctionModelMappingResultItem as _FunctionModelMappingResultItem,
-    ModelConfigsResultData as _ModelConfigsResultData,
-    ModelConfigCreateResultData as _ModelConfigCreateResultData,
-    ModelConfigUpdateResultData as _ModelConfigUpdateResultData,
-    ModelConfigDeleteResultData as _ModelConfigDeleteResultData,
-    FunctionModelConfigsResultData as _FunctionModelConfigsResultData,
-    FunctionModelConfigResultData as _FunctionModelConfigResultData,
-    FunctionModelBindingResultData as _FunctionModelBindingResultData,
-    ModelConfigConnectionTestItemResultData as _ModelConfigConnectionTestItemResultData,
-    ModelConfigConnectionTestResultData as _ModelConfigConnectionTestResultData
+    EnvironmentVariableWriteResultData as _EnvironmentVariableWriteResultData
 } from './results';
 import { UINode as UINodeClass, UI as UINamespace } from './ui';
 import { Android as AndroidClass } from './android';
@@ -189,7 +164,6 @@ declare global {
     // Make result types available globally
     type SleepResultData = _SleepResultData;
     type SystemSettingData = _SystemSettingData;
-    type SystemSettingResult = _SystemSettingResult;
     type AppOperationData = _AppOperationData;
     type AppListData = _AppListData;
     type DeviceInfoResultData = _DeviceInfoResultData;
@@ -211,9 +185,7 @@ declare global {
     type TerminalCommandResultData = _TerminalCommandResultData;
     type TerminalStreamEventData = _TerminalStreamEventData;
     type HiddenTerminalCommandResultData = _HiddenTerminalCommandResultData;
-    type MusicPlaybackState = _MusicPlaybackState;
     type MusicPlaybackResultData = _MusicPlaybackResultData;
-    type CombinedOperationResultData = _CombinedOperationResultData;
     type AutomationExecutionResultData = _AutomationExecutionResultData;
     type FilePartContentData = _FilePartContentData;
     type FileApplyResultData = _FileApplyResultData;
@@ -222,28 +194,6 @@ declare global {
     type GrepLineMatch = _GrepLineMatch;
     type EnvironmentVariableReadResultData = _EnvironmentVariableReadResultData;
     type EnvironmentVariableWriteResultData = _EnvironmentVariableWriteResultData;
-    type SandboxPackageResultItem = _SandboxPackageResultItem;
-    type SandboxPackagesResultData = _SandboxPackagesResultData;
-    type SandboxPackageUpdateResultData = _SandboxPackageUpdateResultData;
-    type SandboxScriptExecutionResultData = _SandboxScriptExecutionResultData;
-    type McpRestartLogPluginResultItem = _McpRestartLogPluginResultItem;
-    type McpRestartWithLogsResultData = _McpRestartWithLogsResultData;
-    type SpeechTtsHttpConfigResultItem = _SpeechTtsHttpConfigResultItem;
-    type SpeechSttHttpConfigResultItem = _SpeechSttHttpConfigResultItem;
-    type SpeechServicesConfigResultData = _SpeechServicesConfigResultData;
-    type SpeechServicesUpdateResultData = _SpeechServicesUpdateResultData;
-    type SpeechServicesTtsPlaybackTestResultData = _SpeechServicesTtsPlaybackTestResultData;
-    type ModelConfigResultItem = _ModelConfigResultItem;
-    type FunctionModelMappingResultItem = _FunctionModelMappingResultItem;
-    type ModelConfigsResultData = _ModelConfigsResultData;
-    type ModelConfigCreateResultData = _ModelConfigCreateResultData;
-    type ModelConfigUpdateResultData = _ModelConfigUpdateResultData;
-    type ModelConfigDeleteResultData = _ModelConfigDeleteResultData;
-    type FunctionModelConfigsResultData = _FunctionModelConfigsResultData;
-    type FunctionModelConfigResultData = _FunctionModelConfigResultData;
-    type FunctionModelBindingResultData = _FunctionModelBindingResultData;
-    type ModelConfigConnectionTestItemResultData = _ModelConfigConnectionTestItemResultData;
-    type ModelConfigConnectionTestResultData = _ModelConfigConnectionTestResultData;
 
     export import ToolPkg = ToolPkgType;
 

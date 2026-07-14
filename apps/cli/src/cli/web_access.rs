@@ -239,7 +239,7 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     });
 
     if let Some(session_name) = link_session_name {
-        let remote = super::link::load_link_session(&session_name)?;
+        let remote = super::link::load_link_session_resolved(&session_name).await?;
         println!("runtimeMode=remote");
         println!("runtimeSession={session_name}");
         let result = RemoteLinkServer::serveWithListener(

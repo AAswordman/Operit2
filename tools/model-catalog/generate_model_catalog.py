@@ -14,7 +14,7 @@ import certifi
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
-TARGET = REPO_ROOT / "core" / "crates" / "operit-runtime" / "src" / "data" / "collects" / "ModelCatalog.rs"
+TARGET = REPO_ROOT / "core" / "crates" / "operit-model" / "collects" / "ModelCatalog.rs"
 
 USER_AGENT = "operit-model-catalog-generator/1.0"
 MODELS_DEV_URL = "https://models.dev/api.json"
@@ -66,6 +66,7 @@ PROVIDERS = [
 ]
 
 
+# Fetch JSON content from a URL using the project certificate bundle.
 def fetch_json(url: str) -> Any:
     ctx = ssl.create_default_context(cafile=certifi.where())
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -73,30 +74,35 @@ def fetch_json(url: str) -> Any:
         return json.load(response)
 
 
+# Require a JSON value to be an object.
 def required_object(value: Any, path: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path} must be an object")
     return value
 
 
+# Require a JSON value to be a list.
 def required_list(value: Any, path: str) -> list[Any]:
     if not isinstance(value, list):
         raise ValueError(f"{path} must be a list")
     return value
 
 
+# Require a JSON value to be a non-empty string.
 def required_string(value: Any, path: str) -> str:
     if not isinstance(value, str) or value == "":
         raise ValueError(f"{path} must be a non-empty string")
     return value
 
 
+# Require a JSON value to be a boolean.
 def required_bool(value: Any, path: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"{path} must be a bool")
     return value
 
 
+# Require a JSON value to be a decimal-compatible number.
 def required_number(value: Any, path: str) -> Decimal:
     if isinstance(value, bool):
         raise ValueError(f"{path} must be a number")
@@ -108,12 +114,14 @@ def required_number(value: Any, path: str) -> Decimal:
     raise ValueError(f"{path} must be a number")
 
 
+# Parse an optional JSON number as a Decimal.
 def optional_number(value: Any, path: str) -> Decimal | None:
     if value is None:
         return None
     return required_number(value, path)
 
 
+# Format a Decimal for compact Rust row output.
 def format_decimal(value: Decimal) -> str:
     text = format(value.normalize(), "f")
     if "." in text:
@@ -123,29 +131,35 @@ def format_decimal(value: Decimal) -> str:
     return text
 
 
+# Convert token counts into thousands of tokens.
 def tokens_to_k(value: Decimal) -> Decimal:
     return value / Decimal("1000")
 
 
+# Render a Rust boolean literal.
 def bool_field(value: bool) -> str:
     return "true" if value else "false"
 
 
+# Validate a catalog field before row joining.
 def clean_field(value: str) -> str:
     if "\n" in value or "\r" in value or "|" in value:
         raise ValueError(f"catalog field contains unsupported separator: {value!r}")
     return value
 
 
+# Join catalog fields with the row separator.
 def row(fields: list[str]) -> str:
     return "|".join(clean_field(field) for field in fields)
 
 
+# Determine whether output modalities include text.
 def has_text_output(output_modalities: list[Any], path: str) -> bool:
     modalities = [required_string(item, f"{path}[{index}]") for index, item in enumerate(output_modalities)]
     return "text" in modalities
 
 
+# Convert input modalities into direct media capability flags.
 def modality_flags(input_modalities: list[Any], path: str) -> tuple[bool, bool, bool]:
     modalities = [required_string(item, f"{path}[{index}]") for index, item in enumerate(input_modalities)]
     return (
@@ -155,6 +169,7 @@ def modality_flags(input_modalities: list[Any], path: str) -> tuple[bool, bool, 
     )
 
 
+# Build one compact model catalog row.
 def model_row(
     provider_type_id: str,
     api_name: str,
@@ -191,6 +206,7 @@ def model_row(
     )
 
 
+# Collect model rows for one models.dev provider.
 def collect_models_dev(provider: SourceProvider, data: dict[str, Any]) -> list[str]:
     provider_data = required_object(data.get(provider.source_id), f"models.dev.{provider.source_id}")
     models = required_object(provider_data.get("models"), f"models.dev.{provider.source_id}.models")
@@ -228,6 +244,7 @@ def collect_models_dev(provider: SourceProvider, data: dict[str, Any]) -> list[s
     return rows
 
 
+# Generate all provider model rows.
 def generate_rows() -> list[str]:
     models_dev = required_object(fetch_json(MODELS_DEV_URL), "models.dev")
     model_rows: list[str] = []
@@ -242,6 +259,7 @@ def generate_rows() -> list[str]:
     return model_rows
 
 
+# Render model rows as a Rust constant.
 def render(model_data: list[str]) -> str:
     model_block = "\n".join(model_data)
     return f"""pub const MODEL_CATALOG_MODEL_ROWS: &str = r#"
@@ -250,6 +268,7 @@ def render(model_data: list[str]) -> str:
 """
 
 
+# Run the generator command-line interface.
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate compact model catalog row data.")
     parser.add_argument("--check", action="store_true", help="Verify that ModelCatalog.rs matches generated output.")

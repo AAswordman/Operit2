@@ -20,12 +20,8 @@ pub mod FourRouterProvider;
 pub mod GeminiProvider;
 #[path = "KimiProvider.rs"]
 pub mod KimiProvider;
-#[path = "LlamaProvider.rs"]
-pub mod LlamaProvider;
 #[path = "LlmRetryPolicy.rs"]
 pub mod LlmRetryPolicy;
-#[path = "MNNProvider.rs"]
-pub mod MNNProvider;
 #[path = "MediaLinkBuilder.rs"]
 pub mod MediaLinkBuilder;
 #[path = "MediaLinkParser.rs"]

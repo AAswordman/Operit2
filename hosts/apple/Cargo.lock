@@ -846,16 +846,10 @@ name = "operit-host-native-common"
 version = "0.1.0"
 dependencies = [
  "base64",
- "globset",
- "grep-regex",
- "grep-searcher",
- "ignore",
  "operit-host-api",
  "portable-pty",
  "reqwest",
- "rusqlite",
  "uuid",
- "zip",
 ]
 
 [[package]]

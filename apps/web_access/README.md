@@ -2,6 +2,17 @@
 
 This directory owns the Web Access frontend boundary.
 
+The deployment server must send these headers for every application asset so
+threaded Sherpa ONNX WebAssembly can run local STT and TTS:
+
+```text
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+Cross-Origin-Resource-Policy: same-origin
+```
+
+The Operit CLI Web Access server emits these headers directly.
+
 - `web/` contains the tracked Flutter Web shell files for Web Access.
 - `build/bundle/` contains the generated bundle consumed by the Flutter app and CLI packages.
 - `tools/build_scripts/build_flutter_web_access.py` ensures the Flutter web entry link exists and writes the shared bundle.

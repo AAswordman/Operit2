@@ -39,10 +39,10 @@ operit-host-android-native = { path = "../../../../hosts/android" }
 [target.'cfg(windows)'.dependencies]
 operit-host-windows-native = { path = "../../../../hosts/windows" }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(all(target_os = "linux", not(target_env = "ohos")))'.dependencies]
 operit-host-linux-native = { path = "../../../../hosts/linux" }
 
-[target.'cfg(target_os = "ohos")'.dependencies]
+[target.'cfg(target_env = "ohos")'.dependencies]
 operit-host-ohos-native = { path = "../../../../hosts/ohos" }
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]

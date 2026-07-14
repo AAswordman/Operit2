@@ -4,7 +4,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -16,6 +16,11 @@ import '../../common/OperitLogoMark.dart';
 import '../../common/RuntimeBootstrapScreen.dart';
 import '../../common/components/CommonNetworkErrorView.dart';
 import '../../main/navigation/StartupRouteStrategy.dart';
+
+const XTypeGroup _operit1SnapshotFileTypeGroup = XTypeGroup(
+  label: 'Operit snapshot',
+  extensions: <String>['opsnapshot', 'zip'],
+);
 
 void registerOnboardingStartupRoute(StartupRouteRegistry registry) {
   registry.register(const OnboardingStartupRouteStrategy());
@@ -495,7 +500,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
 
   /// Lets the user select the runtime data directory.
   Future<void> _selectRuntimeRoot() async {
-    final path = await FilePicker.getDirectoryPath();
+    final path = await getDirectoryPath();
     if (path == null || path.trim().isEmpty) {
       return;
     }
@@ -508,7 +513,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
 
   /// Lets the user select the workspace data directory.
   Future<void> _selectWorkspaceRoot() async {
-    final path = await FilePicker.getDirectoryPath();
+    final path = await getDirectoryPath();
     if (path == null || path.trim().isEmpty) {
       return;
     }
@@ -798,19 +803,14 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<_PickedOperit1SnapshotFile?> _pickOperit1SnapshotFile() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const <String>['opsnapshot', 'zip'],
-      allowMultiple: false,
-      withData: false,
-      withReadStream: false,
+    final file = await openFile(
+      acceptedTypeGroups: const <XTypeGroup>[_operit1SnapshotFileTypeGroup],
     );
-    if (result == null || result.files.isEmpty) {
+    if (file == null) {
       return null;
     }
-    final file = result.files.first;
     final path = file.path;
-    if (path == null || path.isEmpty) {
+    if (path.isEmpty) {
       return null;
     }
     return _PickedOperit1SnapshotFile(path: path, name: file.name);

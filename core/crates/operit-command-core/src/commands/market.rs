@@ -1197,6 +1197,7 @@ mod tests {
     struct ReqwestTestHttpHost;
 
     impl HttpHost for ReqwestTestHttpHost {
+        /// Executes one test HTTP request through reqwest.
         fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
             let method = reqwest::Method::from_bytes(request.method.as_bytes())
                 .map_err(|e| HostError::new(e.to_string()))?;
@@ -1247,6 +1248,18 @@ mod tests {
                 headers,
                 body,
             })
+        }
+
+        /// Rejects file downloads because market tests only exercise buffered requests.
+        fn downloadFiles(
+            &self,
+            _request: operit_host_api::HttpDownloadRequest,
+            _control: operit_host_api::HttpDownloadControl,
+            _onProgress: operit_host_api::HttpDownloadProgressCallback,
+        ) -> HostResult<operit_host_api::HttpDownloadResult> {
+            Err(HostError::new(
+                "market test HTTP downloads are not configured",
+            ))
         }
     }
 

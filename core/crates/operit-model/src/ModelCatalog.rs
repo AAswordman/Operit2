@@ -40,8 +40,7 @@ NVIDIA|NVIDIA|https://integrate.api.nvidia.com/v1/chat/completions|list_models:G
 LMSTUDIO|LM Studio|http://localhost:1234/v1/chat/completions|list_models:GET:/v1/models:$.data:$.id:::::::::::::false
 OLLAMA|Ollama|http://localhost:11434/v1/chat/completions|list_models:GET:/v1/models:$.data:$.id:::::::::::::false
 OPENAI_LOCAL|OpenAI Local|http://localhost:8000/v1/chat/completions|list_models:GET:/v1/models:$.data:$.id:::::::::::::false
-MNN|MNN||
-LLAMA_CPP|llama.cpp||
+LOCAL_MODEL|Local Models||
 PPINFRA|PPInfra|https://api.ppinfra.com/openai/v1/chat/completions|list_models:GET:/openai/v1/models:$.data:$.id:::::::::::::true
 NOVITA|Novita AI|https://api.novita.ai/openai/v1/chat/completions|list_models:GET:/openai/v1/models:$.data:$.id:::::::::::::true
 OTHER|Other||list_models:GET:/v1/models:$.data:$.id:::::::::::::true

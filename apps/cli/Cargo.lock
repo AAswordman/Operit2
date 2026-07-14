@@ -437,6 +437,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
+name = "bzip2-rs"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "beeb59e7e4c811ab37cc73680c798c7a5da77fc9989c62b09138e31ee740f735"
+dependencies = [
+ "crc32fast",
+ "tinyvec",
+]
+
+[[package]]
 name = "cassowary"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2134,7 +2144,7 @@ dependencies = [
 
 [[package]]
 name = "operit-cli"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "arboard",
  "async-trait",
@@ -2179,6 +2189,7 @@ name = "operit-command-core"
 version = "0.1.0"
 dependencies = [
  "operit-host-api",
+ "operit-local-models",
  "operit-model",
  "operit-providers",
  "operit-runtime",
@@ -2200,6 +2211,7 @@ dependencies = [
  "operit-command-core",
  "operit-host-api",
  "operit-link",
+ "operit-local-models",
  "operit-model",
  "operit-plugin-sdk",
  "operit-providers",
@@ -2237,6 +2249,7 @@ dependencies = [
  "image",
  "libc",
  "operit-host-api",
+ "operit-host-native-common",
  "portable-pty",
  "regex",
  "reqwest",
@@ -2250,6 +2263,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-host-native-common"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+ "reqwest",
+]
+
+[[package]]
 name = "operit-host-windows-native"
 version = "0.1.0"
 dependencies = [
@@ -2260,6 +2281,7 @@ dependencies = [
  "ignore",
  "image",
  "operit-host-api",
+ "operit-host-native-common",
  "portable-pty",
  "regex",
  "reqwest",
@@ -2276,7 +2298,7 @@ dependencies = [
 
 [[package]]
 name = "operit-js-bridge"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "aes",
  "base64",
@@ -2310,8 +2332,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-local-models"
+version = "2.0.0-preview.4"
+dependencies = [
+ "bzip2-rs",
+ "operit-host-api",
+ "operit-util",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "operit-model"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "chrono",
  "operit-host-api",
@@ -2323,7 +2359,7 @@ dependencies = [
 
 [[package]]
 name = "operit-plugin-sdk"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "json5",
  "regex",
@@ -2334,7 +2370,7 @@ dependencies = [
 
 [[package]]
 name = "operit-providers"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "async-trait",
  "base64",
@@ -2361,7 +2397,7 @@ dependencies = [
 
 [[package]]
 name = "operit-runtime"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "aes",
  "async-trait",
@@ -2377,6 +2413,7 @@ dependencies = [
  "md-5",
  "operit-host-api",
  "operit-js-bridge",
+ "operit-local-models",
  "operit-model",
  "operit-plugin-sdk",
  "operit-providers",
@@ -2420,7 +2457,7 @@ dependencies = [
 
 [[package]]
 name = "operit-tools"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "aes",
  "async-trait",
@@ -2454,7 +2491,7 @@ dependencies = [
 
 [[package]]
 name = "operit-util"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "chrono",
  "operit-host-api",

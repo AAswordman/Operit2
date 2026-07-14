@@ -5,8 +5,8 @@ use jni::JavaVM;
 use operit_host_api::{HostError, HostResult};
 
 pub(crate) struct AndroidHostSecretStoreBridge {
-    vm: JavaVM,
-    host: GlobalRef,
+    pub(crate) vm: JavaVM,
+    pub(crate) host: GlobalRef,
 }
 
 /// Returns the global Android host secret bridge slot.

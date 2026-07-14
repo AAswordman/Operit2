@@ -1,6 +1,7 @@
-use std::thread;
-
-use operit_host_api::{HostError, HostResult, HttpHost, HttpRequestData, HttpResponseData};
+use operit_host_api::{
+    HostResult, HttpDownloadControl, HttpDownloadProgressCallback, HttpDownloadRequest,
+    HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct AndroidHttpHost {
@@ -8,6 +9,7 @@ pub struct AndroidHttpHost {
 }
 
 impl AndroidHttpHost {
+    /// Creates the Android HTTP host.
     pub fn new() -> Self {
         Self {
             inner: operit_host_native_common::NativeHttpHost::new(),
@@ -16,10 +18,18 @@ impl AndroidHttpHost {
 }
 
 impl HttpHost for AndroidHttpHost {
+    /// Executes one buffered HTTP request through the native host implementation.
     fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
-        let inner = self.inner.clone();
-        thread::spawn(move || inner.executeHttpRequest(request))
-            .join()
-            .map_err(|_| HostError::new("android HTTP request thread panicked"))?
+        self.inner.executeHttpRequest(request)
+    }
+
+    /// Downloads files through the native bounded worker pool.
+    fn downloadFiles(
+        &self,
+        request: HttpDownloadRequest,
+        control: HttpDownloadControl,
+        onProgress: HttpDownloadProgressCallback,
+    ) -> HostResult<HttpDownloadResult> {
+        self.inner.downloadFiles(request, control, onProgress)
     }
 }

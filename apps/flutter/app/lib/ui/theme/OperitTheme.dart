@@ -17,6 +17,7 @@ import '../../core/runtime/RuntimeConnectionManager.dart';
 import '../../data/preferences/UserPreferencesManager.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../common/RuntimeBootstrapScreen.dart';
+import '../features/chat/tts/TtsFloatingPanel.dart';
 import '../../core/host/browser/RuntimeBrowserOwnerHost.dart';
 import '../features/chat/components/workspace/browser/automation/WorkspaceWebVisitHost.dart';
 import '../permissions/ToolApprovalHost.dart';
@@ -194,6 +195,7 @@ class _OperitMaterialApp extends StatelessWidget {
   final bool hostInteractionHostsEnabled;
   final Widget child;
 
+  /// Builds the themed application and process-wide host overlays.
   @override
   Widget build(BuildContext context) {
     final lightColorScheme = _seedColorScheme(
@@ -224,7 +226,17 @@ class _OperitMaterialApp extends StatelessWidget {
       },
       home: RuntimeBrowserOwnerHost(
         enabled: hostInteractionHostsEnabled,
-        child: WorkspaceWebVisitHost(child: ToolApprovalHost(child: child)),
+        child: WorkspaceWebVisitHost(
+          child: ToolApprovalHost(
+            child: Stack(
+              fit: StackFit.expand,
+              children: <Widget>[
+                Positioned.fill(child: child),
+                const TtsFloatingPanel(),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -334,12 +346,14 @@ class OperitThemeController {
   }
 
   Future<void> saveThemeSettings({
+    String? inputStyle,
     String? chatStyle,
     bool? bubbleShowAvatar,
     bool? bubbleWideLayoutEnabled,
     bool? bubbleUserRoundedCornersEnabled,
     bool? bubbleAiRoundedCornersEnabled,
     bool? transparentSurfaceEnabled,
+    bool? chatInputFloating,
     int? cursorUserBubbleColor,
     int? bubbleUserBubbleColor,
     int? bubbleAiBubbleColor,
@@ -411,12 +425,14 @@ class OperitThemeController {
     await _preferencesManager.saveThemeSettings(
       characterCardId: _activeCharacterCardId,
       characterGroupId: _activeCharacterGroupId,
+      inputStyle: inputStyle,
       chatStyle: chatStyle,
       bubbleShowAvatar: bubbleShowAvatar,
       bubbleWideLayoutEnabled: bubbleWideLayoutEnabled,
       bubbleUserRoundedCornersEnabled: bubbleUserRoundedCornersEnabled,
       bubbleAiRoundedCornersEnabled: bubbleAiRoundedCornersEnabled,
       transparentSurfaceEnabled: transparentSurfaceEnabled,
+      chatInputFloating: chatInputFloating,
       cursorUserBubbleColor: cursorUserBubbleColor,
       bubbleUserBubbleColor: bubbleUserBubbleColor,
       bubbleAiBubbleColor: bubbleAiBubbleColor,
@@ -653,6 +669,7 @@ ThemePreferenceSnapshot _themePreferenceSnapshotWith(
     backgroundBlurRadius: backgroundBlurRadius ?? snapshot.backgroundBlurRadius,
     transparentSurfaceEnabled: snapshot.transparentSurfaceEnabled,
     chatInputFloating: snapshot.chatInputFloating,
+    inputStyle: snapshot.inputStyle,
     chatStyle: snapshot.chatStyle,
     bubbleShowAvatar: snapshot.bubbleShowAvatar,
     bubbleWideLayoutEnabled: snapshot.bubbleWideLayoutEnabled,

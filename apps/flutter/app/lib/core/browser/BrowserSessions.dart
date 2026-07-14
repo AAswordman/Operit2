@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -51,6 +53,17 @@ class BrowserSessionEvent {
   final String? error;
 }
 
+class _BrowserSurfaceInteraction {
+  /// Creates one browser compositor interaction envelope.
+  const _BrowserSurfaceInteraction({
+    required this.sessionId,
+    required this.payload,
+  });
+
+  final String sessionId;
+  final Map<String, Object?> payload;
+}
+
 class BrowserSessions {
   /// Creates a Core-only browser session client.
   BrowserSessions({
@@ -61,6 +74,10 @@ class BrowserSessions {
 
   final GeneratedCoreProxyClients _clients;
   Future<CorePushSink>? _interactionPush;
+  final Queue<_BrowserSurfaceInteraction> _orderedInteractions =
+      Queue<_BrowserSurfaceInteraction>();
+  _BrowserSurfaceInteraction? _pendingPointerMoveInteraction;
+  bool _interactionDraining = false;
 
   GeneratedServicesRuntimeBrowserServiceCoreProxy get _browser =>
       _clients.servicesRuntimeBrowserService;
@@ -146,22 +163,11 @@ class BrowserSessions {
   }
 
   /// Sends one compositor surface interaction to the real owner WebView.
-  Future<void> interact(
-    String sessionId,
-    Map<String, Object?> payload,
-  ) async {
-    final sink = await _interactionSink();
-    sink.add(<String, Object?>{
-      'command': RuntimeBrowserCommand(
-        action: 'interact',
-        sessionId: sessionId,
-        url: null,
-        script: null,
-        payloadJson: jsonEncode(payload),
-        userAgent: null,
-        headers: const <String, String>{},
-      ).toJson(),
-    });
+  Future<void> interact(String sessionId, Map<String, Object?> payload) {
+    _enqueueInteraction(
+      _BrowserSurfaceInteraction(sessionId: sessionId, payload: payload),
+    );
+    return Future<void>.value();
   }
 
   /// Evaluates a script in the real owner WebView session.
@@ -211,13 +217,96 @@ class BrowserSessions {
     }
     final opened = _browser.bridge.push(
       CorePushRequest(
-        requestId:
-            'browser-input-${DateTime.now().microsecondsSinceEpoch}',
+        requestId: 'browser-input-${DateTime.now().microsecondsSinceEpoch}',
         targetPath: _browser.targetPath,
         methodName: 'submitBrowserCommand',
       ),
     );
     _interactionPush = opened;
     return opened;
+  }
+
+  /// Enqueues one browser interaction with pointer movement compaction.
+  void _enqueueInteraction(_BrowserSurfaceInteraction interaction) {
+    if (_isPointerMoveInteraction(interaction)) {
+      _pendingPointerMoveInteraction = interaction;
+    } else {
+      _flushPendingPointerMoveInteraction();
+      _orderedInteractions.add(interaction);
+    }
+    _scheduleInteractionDrain();
+  }
+
+  /// Schedules the browser interaction drain.
+  void _scheduleInteractionDrain() {
+    if (_interactionDraining) {
+      return;
+    }
+    _interactionDraining = true;
+    unawaited(_drainInteractions());
+  }
+
+  /// Drains browser interactions through the Core push stream.
+  Future<void> _drainInteractions() async {
+    try {
+      while (true) {
+        final interaction = _takeInteraction();
+        if (interaction == null) {
+          return;
+        }
+        await _sendInteraction(interaction);
+      }
+    } finally {
+      _interactionDraining = false;
+      if (_hasQueuedInteractions) {
+        _scheduleInteractionDrain();
+      }
+    }
+  }
+
+  /// Sends one browser interaction through the Core push stream.
+  Future<void> _sendInteraction(_BrowserSurfaceInteraction interaction) async {
+    final sink = await _interactionSink();
+    await sink.add(<String, Object?>{
+      'command': RuntimeBrowserCommand(
+        action: 'interact',
+        sessionId: interaction.sessionId,
+        url: null,
+        script: null,
+        payloadJson: jsonEncode(interaction.payload),
+        userAgent: null,
+        headers: const <String, String>{},
+      ).toJson(),
+    });
+  }
+
+  /// Returns whether any browser interaction is waiting to be sent.
+  bool get _hasQueuedInteractions =>
+      _orderedInteractions.isNotEmpty || _pendingPointerMoveInteraction != null;
+
+  /// Takes the next browser interaction for transmission.
+  _BrowserSurfaceInteraction? _takeInteraction() {
+    if (_orderedInteractions.isNotEmpty) {
+      return _orderedInteractions.removeFirst();
+    }
+    final interaction = _pendingPointerMoveInteraction;
+    _pendingPointerMoveInteraction = null;
+    return interaction;
+  }
+
+  /// Moves the latest pointer move before the next ordered interaction.
+  void _flushPendingPointerMoveInteraction() {
+    final interaction = _pendingPointerMoveInteraction;
+    if (interaction == null) {
+      return;
+    }
+    _pendingPointerMoveInteraction = null;
+    _orderedInteractions.add(interaction);
+  }
+
+  /// Returns whether one browser interaction is a pointer move.
+  bool _isPointerMoveInteraction(_BrowserSurfaceInteraction interaction) {
+    final payload = interaction.payload;
+    return payload['type'] == 'pointer' && payload['eventType'] == 'move';
   }
 }

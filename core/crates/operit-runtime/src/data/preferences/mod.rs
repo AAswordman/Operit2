@@ -48,6 +48,8 @@ pub mod RemoteAnnouncementPreferences;
 pub mod SharedMemoryStoreManager;
 #[path = "SkillVisibilityPreferences.rs"]
 pub mod SkillVisibilityPreferences;
+#[path = "SttConfigManager.rs"]
+pub mod SttConfigManager;
 #[path = "ToolCollapseMode.rs"]
 pub mod ToolCollapseMode;
 #[path = "TtsConfigManager.rs"]
@@ -83,6 +85,7 @@ pub use PromptVersionManager::*;
 pub use RemoteAnnouncementPreferences::*;
 pub use SharedMemoryStoreManager::*;
 pub use SkillVisibilityPreferences::*;
+pub use SttConfigManager::*;
 pub use ToolCollapseMode::*;
 pub use TtsConfigManager::*;
 pub use UserPreferencesManager::*;

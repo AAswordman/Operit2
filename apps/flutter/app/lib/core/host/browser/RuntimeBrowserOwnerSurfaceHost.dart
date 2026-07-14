@@ -34,7 +34,11 @@ class RuntimeBrowserOwnerSurfaceHost extends StatelessWidget {
                 return Stack(
                   children: <Widget>[
                     for (final tab in sessions.tabs)
-                      _buildOwnerWebView(context, tab),
+                      if (!sessions.isWorkspaceSurfaceSession(tab.id))
+                        RuntimeBrowserOwnerWebView(
+                          tab: tab,
+                          layoutControlsSurfaceSize: false,
+                        ),
                   ],
                 );
               },
@@ -44,12 +48,22 @@ class RuntimeBrowserOwnerSurfaceHost extends StatelessWidget {
       ],
     );
   }
+}
 
-  /// Builds a real owner WebView without letting hidden Windows layout resize it.
-  Widget _buildOwnerWebView(
-    BuildContext context,
-    WorkspaceBrowserTabState tab,
-  ) {
+class RuntimeBrowserOwnerWebView extends StatelessWidget {
+  /// Creates a real owner WebView widget for one browser session.
+  const RuntimeBrowserOwnerWebView({
+    super.key,
+    required this.tab,
+    required this.layoutControlsSurfaceSize,
+  });
+
+  final WorkspaceBrowserTabState tab;
+  final bool layoutControlsSurfaceSize;
+
+  /// Builds the platform WebView attached to the owner controller.
+  @override
+  Widget build(BuildContext context) {
     final key = ValueKey<String>('runtime-browser-owner-${tab.id}');
     final platformController = tab.controller.platform;
     if (platformController is WindowsWebViewController) {
@@ -58,7 +72,7 @@ class RuntimeBrowserOwnerSurfaceHost extends StatelessWidget {
         params: WindowsWebViewWidgetCreationParams(
           controller: platformController,
           layoutDirection: Directionality.of(context),
-          layoutControlsSurfaceSize: false,
+          layoutControlsSurfaceSize: layoutControlsSurfaceSize,
         ),
       );
     }

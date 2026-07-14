@@ -1001,6 +1001,18 @@
       }
     }
   },
+  "settingsRuntimeAutoSyncEnable": "开启持续同步",
+  "settingsRuntimeAutoSyncDisable": "关闭持续同步",
+  "settingsRuntimeAutoSyncEnabled": "已开启持续同步，扫到该设备后会自动同步。",
+  "settingsRuntimeAutoSyncDisabled": "已关闭持续同步。",
+  "settingsRuntimeAutoSyncFailed": "持续同步设置失败：{error}",
+  "@settingsRuntimeAutoSyncFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsRuntimeDiscoverDevices": "发现设备",
   "settingsRuntimeDiscoverDevicesDescription": "扫描附近设备或手动输入地址来建立连接。",
   "settingsRuntimeScan": "扫描",
@@ -1110,6 +1122,11 @@
   "settingsAppearanceThemeSystem": "跟随系统",
   "settingsAppearanceThemeLight": "浅色",
   "settingsAppearanceThemeDark": "深色",
+  "settingsAppearanceInputSection": "输入框",
+  "settingsAppearanceInputStyle": "输入框样式",
+  "settingsAppearanceInputStyleClassic": "经典",
+  "settingsAppearanceInputStyleAgent": "Agent",
+  "settingsAppearanceInputFloating": "悬浮输入框",
   "settingsAppearanceColorSection": "主题色",
   "settingsAppearanceColorDescription": "选择一个简单的颜色预设。系统栏和当前应用外壳会自动跟随主题，不再单独配置。",
   "settingsAppearanceColorDefault": "默认",

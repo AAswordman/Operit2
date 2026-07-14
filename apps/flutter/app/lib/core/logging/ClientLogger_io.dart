@@ -10,6 +10,7 @@ File? _logFile;
 Future<void> _writeQueue = Future<void>.value();
 String? _lastWriteError;
 
+/// Initializes the file logger backend.
 Future<void> initialize() async {
   final path = await _resolveLogFilePath();
   final file = File(path);
@@ -24,6 +25,7 @@ bool isInitialized() => _logFile != null;
 /// Returns whether this backend already mirrors writes to a live console.
 bool writesToConsole() => false;
 
+/// Returns the active file logger path.
 Future<String> logFilePath() async {
   final file = _logFile;
   if (file != null) {
@@ -32,18 +34,22 @@ Future<String> logFilePath() async {
   return _resolveLogFilePath();
 }
 
+/// Reads the complete client log text.
 Future<String> readText() async {
   final file = _requireLogFile();
   return file.readAsString();
 }
 
+/// Returns the latest asynchronous file-write error text.
 String? lastWriteError() => _lastWriteError;
 
+/// Clears the active client log file.
 Future<void> clear() async {
   final file = _requireLogFile();
   await file.writeAsString('');
 }
 
+/// Appends one formatted log entry to the active file.
 void write(
   ClientLogLevel level,
   String message, {
@@ -68,6 +74,7 @@ void write(
   unawaited(_writeQueue);
 }
 
+/// Returns the initialized log file handle.
 File _requireLogFile() {
   final file = _logFile;
   if (file == null) {
@@ -76,6 +83,7 @@ File _requireLogFile() {
   return file;
 }
 
+/// Resolves the client log path for supported native platforms.
 Future<String> _resolveLogFilePath() async {
   if (Platform.isAndroid) {
     return _clientLogPath();
@@ -92,15 +100,20 @@ Future<String> _resolveLogFilePath() async {
   if (Platform.isIOS) {
     return _clientLogPath();
   }
+  if (Platform.isOhos) {
+    return _clientLogPath();
+  }
   throw UnsupportedError(
     'ClientLogger file logging is not supported on ${Platform.operatingSystem}',
   );
 }
 
+/// Returns the shared client log path under application storage.
 Future<String> _clientLogPath() async {
   return (await OperitClientPaths.clientLogFile()).path;
 }
 
+/// Formats one log message with optional error details.
 String _formatLogLine(
   ClientLogLevel level,
   String message, {
@@ -122,6 +135,7 @@ String _formatLogLine(
   return buffer.toString();
 }
 
+/// Formats a write failure for diagnostics.
 String _formatWriteError(Object error, StackTrace stackTrace) {
   return '$error\n$stackTrace';
 }

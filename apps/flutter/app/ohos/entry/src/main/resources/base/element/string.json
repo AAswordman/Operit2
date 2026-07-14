@@ -11,6 +11,18 @@
     {
       "name": "EntryAbility_label",
       "value": "operit2"
+    },
+    {
+      "name": "permission_bluetooth_reason",
+      "value": "Used to connect and manage nearby Bluetooth devices."
+    },
+    {
+      "name": "permission_location_reason",
+      "value": "Used to access device location when requested."
+    },
+    {
+      "name": "permission_microphone_reason",
+      "value": "Used to record speech for text recognition."
     }
   ]
 }

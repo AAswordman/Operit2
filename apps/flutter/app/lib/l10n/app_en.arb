@@ -1001,6 +1001,18 @@
       }
     }
   },
+  "settingsRuntimeAutoSyncEnable": "Enable continuous sync",
+  "settingsRuntimeAutoSyncDisable": "Disable continuous sync",
+  "settingsRuntimeAutoSyncEnabled": "Continuous sync is enabled. It will sync automatically when this device is discovered.",
+  "settingsRuntimeAutoSyncDisabled": "Continuous sync is disabled.",
+  "settingsRuntimeAutoSyncFailed": "Continuous sync setting failed: {error}",
+  "@settingsRuntimeAutoSyncFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsRuntimeDiscoverDevices": "Discover devices",
   "settingsRuntimeDiscoverDevicesDescription": "Scan for nearby devices or enter an address to connect.",
   "settingsRuntimeScan": "Scan",
@@ -1110,6 +1122,11 @@
   "settingsAppearanceThemeSystem": "System",
   "settingsAppearanceThemeLight": "Light",
   "settingsAppearanceThemeDark": "Dark",
+  "settingsAppearanceInputSection": "Input",
+  "settingsAppearanceInputStyle": "Input style",
+  "settingsAppearanceInputStyleClassic": "Classic",
+  "settingsAppearanceInputStyleAgent": "Agent",
+  "settingsAppearanceInputFloating": "Floating input",
   "settingsAppearanceColorSection": "Theme color",
   "settingsAppearanceColorDescription": "Choose a simple color preset. System bars and current app chrome follow the theme automatically.",
   "settingsAppearanceColorDefault": "Default",

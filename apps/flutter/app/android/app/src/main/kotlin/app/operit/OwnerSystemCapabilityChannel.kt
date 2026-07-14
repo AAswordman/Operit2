@@ -49,20 +49,26 @@ class OwnerSystemCapabilityChannel(
 ) {
     private companion object {
         private const val DEFAULT_CLASSIC_UUID = "00001101-0000-1000-8000-00805f9b34fb"
+        private const val TTS_ENGINE_INIT_TIMEOUT_MS = 15_000L
+        private const val TTS_SYNTHESIS_TIMEOUT_MS = 120_000L
     }
 
     private var cachedMediaProjectionCaptureManager: MediaProjectionCaptureManager? = null
     private var cachedMediaProjection: MediaProjection? = null
     private val ttsPlaybackLock = Any()
-    private val ttsPlaybackQueue = ArrayDeque<TtsPlaybackUtterance>()
+    private val ttsPlaybackSynthesisLock = Any()
+    private val ttsPlaybackAudioQueue = ArrayDeque<TtsPlaybackAudio>()
     private var ttsPlaybackEngine: TextToSpeech? = null
-    private var ttsPlaybackCurrentUtteranceId: String? = null
-    private var ttsPlaybackCurrentText: String = ""
-    private var ttsPlaybackRangeStart: Int = 0
-    private var ttsPlaybackPausedSegments: List<String> = emptyList()
+    private var ttsPlaybackPreparing: Boolean = false
     private var ttsPlaybackPaused: Boolean = false
     private var ttsPlaybackPath: String = ""
     private var ttsPlaybackIndex: Long = 0
+    private var ttsPlaybackGeneration: Long = 0
+    private var ttsPlaybackDetails: String = "android system tts playback idle"
+    private var ttsPlaybackError: String? = null
+    private var ttsPlaybackReleased: Boolean = false
+    private var ttsPlaybackLastOwnerSequence: Long = 0
+    private var ttsPlaybackCommandEpoch: Long = 0
     private val musicLock = Any()
     private var musicPlayer: MediaPlayer? = null
     private var musicState: String = "idle"
@@ -78,9 +84,10 @@ class OwnerSystemCapabilityChannel(
     private val bluetoothClassicServers = ConcurrentHashMap<String, BluetoothServerSocket>()
     private val bluetoothBleSessions = ConcurrentHashMap<String, BluetoothBleSession>()
 
-    private data class TtsPlaybackUtterance(
-        val utteranceId: String,
-        val text: String,
+    private data class TtsPlaybackAudio(
+        val player: MediaPlayer,
+        val file: File,
+        val deleteOnRelease: Boolean,
     )
 
     private data class BluetoothBleSession(
@@ -111,6 +118,7 @@ class OwnerSystemCapabilityChannel(
         return true
     }
 
+    /** Releases owner-host resources and invalidates every active TTS generation. */
     fun release() {
         cachedMediaProjectionCaptureManager?.release()
         cachedMediaProjectionCaptureManager = null
@@ -137,16 +145,15 @@ class OwnerSystemCapabilityChannel(
             }
         }
         bluetoothBleSessions.clear()
-        ttsPlaybackEngine?.shutdown()
-        ttsPlaybackEngine = null
-        synchronized(ttsPlaybackLock) {
-            ttsPlaybackQueue.clear()
-            ttsPlaybackPausedSegments = emptyList()
-            ttsPlaybackPaused = false
-            ttsPlaybackCurrentUtteranceId = null
-            ttsPlaybackCurrentText = ""
-            ttsPlaybackRangeStart = 0
-        }
+        val playbackResources =
+            synchronized(ttsPlaybackLock) {
+                ttsPlaybackReleased = true
+                ttsPlaybackGeneration += 1
+                ttsPlaybackEngine?.shutdown()
+                ttsPlaybackEngine = null
+                detachTtsPlaybackAudioLocked()
+            }
+        releaseTtsPlaybackAudio(playbackResources)
         MediaProjectionHolder.clear(activity.applicationContext)
     }
 
@@ -269,6 +276,7 @@ class OwnerSystemCapabilityChannel(
         }
     }
 
+    /** Executes an insertion-ordered owner TTS command on a runtime worker. */
     private fun ownerTtsPlayback(call: MethodCall, result: MethodChannel.Result) {
         val payload = call.arguments as? Map<*, *>
         if (payload == null) {
@@ -277,7 +285,10 @@ class OwnerSystemCapabilityChannel(
         }
         runtimeHost.runBackground {
             try {
-                val response = ttsPlaybackResult(payload)
+                val ownerSequence =
+                    (payload["ownerSequence"] as? Number)?.toLong()
+                        ?: throw IllegalArgumentException("ownerSequence is required")
+                val response = ttsPlaybackResult(payload, ownerSequence)
                 activity.runOnUiThread { result.success(response) }
             } catch (error: Throwable) {
                 activity.runOnUiThread {
@@ -1171,11 +1182,13 @@ class OwnerSystemCapabilityChannel(
         return JSONObject(ttsSynthesizeResult(payload)).toString()
     }
 
+    /** Decodes a runtime JSON payload and executes one TTS command. */
     private fun ttsPlayback(payloadJson: String): String {
         val request = JSONObject(payloadJson)
         val payload =
             mapOf(
                 "command" to request.getString("command"),
+                "audioPath" to request.optString("audioPath", ""),
                 "text" to request.optString("text", ""),
                 "voice" to request.optString("voice", ""),
                 "locale" to request.optString("locale", ""),
@@ -1183,21 +1196,84 @@ class OwnerSystemCapabilityChannel(
                 "pitch" to request.optDouble("pitch", 1.0),
                 "interrupt" to request.optBoolean("interrupt", false),
             )
-        return JSONObject(ttsPlaybackResult(payload)).toString()
+        return JSONObject(ttsPlaybackResult(payload, null)).toString()
     }
 
-    private fun ttsPlaybackResult(payload: Map<*, *>): Map<String, Any> {
-        return when (val command = payload["command"] as? String ?: throw IllegalArgumentException("command is required")) {
-            "speak" -> ttsPlaybackSpeak(payload)
-            "pause" -> ttsPlaybackPause()
-            "resume" -> ttsPlaybackResume()
-            "stop" -> ttsPlaybackStop()
-            "state" -> ttsPlaybackStatus("android system tts playback state")
+    /** Executes one Android TTS playback command. */
+    private fun ttsPlaybackResult(payload: Map<*, *>, ownerSequence: Long?): Map<String, Any> {
+        val command = payload["command"] as? String ?: throw IllegalArgumentException("command is required")
+        if (command == "state") {
+            return ttsPlaybackState()
+        }
+        val commandEpoch = registerTtsPlaybackCommand(ownerSequence)
+            ?: return ttsPlaybackStatus("android system tts ignored an outdated owner command")
+        return when (command) {
+            "play" -> ttsPlaybackPlayAudio(payload, commandEpoch)
+            "speak" -> ttsPlaybackSpeak(payload, commandEpoch)
+            "pause" -> ttsPlaybackPause(commandEpoch)
+            "resume" -> ttsPlaybackResume(commandEpoch)
+            "stop" -> ttsPlaybackStop(commandEpoch)
             else -> throw IllegalArgumentException("unsupported tts playback command: $command")
         }
     }
 
-    private fun ttsPlaybackSpeak(payload: Map<*, *>): Map<String, Any> {
+    /** Starts one generated speech audio file in the Android TTS session. */
+    private fun ttsPlaybackPlayAudio(payload: Map<*, *>, commandEpoch: Long): Map<String, Any> {
+        val path = payload["audioPath"] as? String ?: throw IllegalArgumentException("audioPath is required")
+        if (path.isBlank()) {
+            throw IllegalArgumentException("audioPath is empty")
+        }
+        val file = File(path)
+        if (!file.isFile) {
+            throw IllegalArgumentException("TTS audio file does not exist: $path")
+        }
+        val previousAudio: List<TtsPlaybackAudio>
+        val engine: TextToSpeech?
+        val generation: Long
+        synchronized(ttsPlaybackLock) {
+            if (!isTtsPlaybackCommandCurrentLocked(commandEpoch)) {
+                return ttsPlaybackStatusLocked("android TTS ignored an outdated play command")
+            }
+            if (ttsPlaybackReleased) {
+                throw IllegalStateException("android TTS playback host is released")
+            }
+            ttsPlaybackGeneration += 1
+            generation = ttsPlaybackGeneration
+            previousAudio = detachTtsPlaybackAudioLocked()
+            engine = ttsPlaybackEngine
+            ttsPlaybackPreparing = true
+            ttsPlaybackPaused = false
+            ttsPlaybackPath = path
+            ttsPlaybackDetails = "android generated TTS playback preparing"
+            ttsPlaybackError = null
+        }
+        engine?.stop()
+        releaseTtsPlaybackAudio(previousAudio)
+        val audio = prepareTtsPlaybackAudio(listOf(file), generation, false)
+        synchronized(ttsPlaybackLock) {
+            if (generation != ttsPlaybackGeneration || !ttsPlaybackPreparing) {
+                releaseTtsPlaybackAudio(audio)
+                return ttsPlaybackStatusLocked("android TTS playback request cancelled")
+            }
+            audio.forEach(ttsPlaybackAudioQueue::addLast)
+            ttsPlaybackPreparing = false
+            ttsPlaybackDetails = "android generated TTS playback started"
+            try {
+                ttsPlaybackAudioQueue.first().player.start()
+            } catch (error: Throwable) {
+                val failedAudio = detachTtsPlaybackAudioLocked()
+                releaseTtsPlaybackAudio(failedAudio)
+                ttsPlaybackPath = ""
+                ttsPlaybackDetails = "android generated TTS playback start failed"
+                ttsPlaybackError = error.message ?: error.toString()
+                throw error
+            }
+            return ttsPlaybackStatusLocked(ttsPlaybackDetails)
+        }
+    }
+
+    /** Synthesizes and starts one generation-checked Android speech request. */
+    private fun ttsPlaybackSpeak(payload: Map<*, *>, commandEpoch: Long): Map<String, Any> {
         val text = payload["text"] as? String ?: throw IllegalArgumentException("text is required")
         if (text.isBlank()) {
             throw IllegalArgumentException("text is empty")
@@ -1207,152 +1283,196 @@ class OwnerSystemCapabilityChannel(
         val speed = (payload["speed"] as? Number)?.toFloat() ?: throw IllegalArgumentException("speed is required")
         val pitch = (payload["pitch"] as? Number)?.toFloat() ?: throw IllegalArgumentException("pitch is required")
         val interrupt = payload["interrupt"] as? Boolean ?: throw IllegalArgumentException("interrupt is required")
-        val tts = ensureTtsPlaybackEngine()
-        configureTtsPlaybackVoice(tts, voice, localeTag, speed, pitch)
-        val utterance = TtsPlaybackUtterance(UUID.randomUUID().toString(), text)
+        val previousAudio: List<TtsPlaybackAudio>
+        val generation: Long
         synchronized(ttsPlaybackLock) {
-            if (interrupt) {
-                ttsPlaybackQueue.clear()
-                ttsPlaybackPausedSegments = emptyList()
-                ttsPlaybackPaused = false
-                ttsPlaybackCurrentUtteranceId = null
-                ttsPlaybackCurrentText = ""
-                ttsPlaybackRangeStart = 0
-                tts.stop()
+            if (!isTtsPlaybackCommandCurrentLocked(commandEpoch)) {
+                return ttsPlaybackStatusLocked("android system tts ignored an outdated speak command")
             }
-            if (ttsPlaybackPaused && !interrupt) {
-                ttsPlaybackPausedSegments = ttsPlaybackPausedSegments + text
-                return ttsPlaybackStatusLocked("android system tts playback buffered while paused")
+            if (ttsPlaybackReleased) {
+                throw IllegalStateException("android system tts playback host is released")
             }
-            ttsPlaybackQueue.addLast(utterance)
+            if (!interrupt && (ttsPlaybackPreparing || ttsPlaybackAudioQueue.isNotEmpty())) {
+                throw IllegalStateException("android system tts playback is busy")
+            }
+            ttsPlaybackGeneration += 1
+            generation = ttsPlaybackGeneration
+            previousAudio = detachTtsPlaybackAudioLocked()
+            ttsPlaybackPreparing = true
+            ttsPlaybackPaused = false
             ttsPlaybackPath = "android-tts://${++ttsPlaybackIndex}"
+            ttsPlaybackDetails = "android system tts synthesis started"
+            ttsPlaybackError = null
         }
-        val queueMode = if (interrupt) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-        val speakStatus = tts.speak(utterance.text, queueMode, null, utterance.utteranceId)
-        if (speakStatus != TextToSpeech.SUCCESS) {
-            synchronized(ttsPlaybackLock) {
-                removeTtsPlaybackUtteranceLocked(utterance.utteranceId)
+        releaseTtsPlaybackAudio(previousAudio)
+        if (interrupt) {
+            synchronized(ttsPlaybackLock) { ttsPlaybackEngine }?.stop()
+        }
+        val outputFiles =
+            try {
+                synthesizeTtsPlaybackFiles(text, voice, localeTag, speed, pitch, generation)
+            } catch (error: Throwable) {
+                synchronized(ttsPlaybackLock) {
+                    if (generation == ttsPlaybackGeneration) {
+                        ttsPlaybackPreparing = false
+                        ttsPlaybackPath = ""
+                        ttsPlaybackDetails = "android system tts synthesis failed"
+                        ttsPlaybackError = error.message ?: error.toString()
+                    }
+                }
+                throw error
             }
-            throw IllegalStateException("android system tts speak failed")
+        if (!isTtsPlaybackGenerationCurrent(generation)) {
+            deleteTtsPlaybackFiles(outputFiles)
+            return ttsPlaybackStatus("android system tts playback request cancelled")
         }
-        return ttsPlaybackStatus("android system tts playback started")
+        val audio = prepareTtsPlaybackAudio(outputFiles, generation, true)
+        synchronized(ttsPlaybackLock) {
+            if (generation != ttsPlaybackGeneration || !ttsPlaybackPreparing) {
+                releaseTtsPlaybackAudio(audio)
+                return ttsPlaybackStatusLocked("android system tts playback request cancelled")
+            }
+            audio.forEach(ttsPlaybackAudioQueue::addLast)
+            ttsPlaybackPreparing = false
+            ttsPlaybackPaused = false
+            ttsPlaybackDetails = "android system tts playback started"
+            try {
+                ttsPlaybackAudioQueue.first().player.start()
+            } catch (error: Throwable) {
+                val failedAudio = detachTtsPlaybackAudioLocked()
+                releaseTtsPlaybackAudio(failedAudio)
+                ttsPlaybackPath = ""
+                ttsPlaybackDetails = "android system tts playback start failed"
+                ttsPlaybackError = error.message ?: error.toString()
+                throw error
+            }
+            return ttsPlaybackStatusLocked(ttsPlaybackDetails)
+        }
     }
 
-    private fun ttsPlaybackPause(): Map<String, Any> {
-        val tts = ttsPlaybackEngine ?: return ttsPlaybackStatus("android system tts playback is not initialized")
+    /** Pauses Android speech at the exact MediaPlayer position. */
+    private fun ttsPlaybackPause(commandEpoch: Long): Map<String, Any> {
         synchronized(ttsPlaybackLock) {
-            val segments = buildTtsPlaybackPausedSegmentsLocked()
-            if (segments.isEmpty()) {
+            if (!isTtsPlaybackCommandCurrentLocked(commandEpoch)) {
+                return ttsPlaybackStatusLocked("android system tts ignored an outdated pause command")
+            }
+            val current = ttsPlaybackAudioQueue.firstOrNull()
+            if (current == null) {
                 return ttsPlaybackStatusLocked("android system tts playback is not active")
             }
-            ttsPlaybackPausedSegments = segments
-            ttsPlaybackPaused = true
-            ttsPlaybackQueue.clear()
-            ttsPlaybackCurrentUtteranceId = null
-            ttsPlaybackCurrentText = ""
-            ttsPlaybackRangeStart = 0
+            if (!ttsPlaybackPaused) {
+                current.player.pause()
+                ttsPlaybackPaused = true
+                ttsPlaybackDetails = "android system tts playback paused"
+            }
+            return ttsPlaybackStatusLocked(ttsPlaybackDetails)
         }
-        tts.stop()
-        return ttsPlaybackStatus("android system tts playback paused")
     }
 
-    private fun ttsPlaybackResume(): Map<String, Any> {
-        val tts = ttsPlaybackEngine ?: throw IllegalStateException("android system tts playback is not initialized")
-        val segments =
-            synchronized(ttsPlaybackLock) {
-                if (ttsPlaybackPausedSegments.isEmpty()) {
-                    return ttsPlaybackStatusLocked("android system tts playback is not paused")
-                }
-                val captured = ttsPlaybackPausedSegments
-                ttsPlaybackPausedSegments = emptyList()
-                ttsPlaybackPaused = false
-                captured
-            }
-        segments.forEachIndexed { index, segment ->
-            val utterance = TtsPlaybackUtterance(UUID.randomUUID().toString(), segment)
-            synchronized(ttsPlaybackLock) {
-                ttsPlaybackQueue.addLast(utterance)
-                if (ttsPlaybackPath.isEmpty()) {
-                    ttsPlaybackPath = "android-tts://${++ttsPlaybackIndex}"
-                }
-            }
-            val queueMode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-            val speakStatus = tts.speak(utterance.text, queueMode, null, utterance.utteranceId)
-            if (speakStatus != TextToSpeech.SUCCESS) {
-                synchronized(ttsPlaybackLock) {
-                    removeTtsPlaybackUtteranceLocked(utterance.utteranceId)
-                }
-                throw IllegalStateException("android system tts resume failed")
-            }
-        }
-        return ttsPlaybackStatus("android system tts playback resumed")
-    }
-
-    private fun ttsPlaybackStop(): Map<String, Any> {
-        ttsPlaybackEngine?.stop()
+    /** Resumes Android speech from the exact paused MediaPlayer position. */
+    private fun ttsPlaybackResume(commandEpoch: Long): Map<String, Any> {
         synchronized(ttsPlaybackLock) {
-            ttsPlaybackQueue.clear()
-            ttsPlaybackPausedSegments = emptyList()
+            if (!isTtsPlaybackCommandCurrentLocked(commandEpoch)) {
+                return ttsPlaybackStatusLocked("android system tts ignored an outdated resume command")
+            }
+            val current = ttsPlaybackAudioQueue.firstOrNull()
+            if (current == null || !ttsPlaybackPaused) {
+                return ttsPlaybackStatusLocked("android system tts playback is not paused")
+            }
+            current.player.start()
             ttsPlaybackPaused = false
-            ttsPlaybackCurrentUtteranceId = null
-            ttsPlaybackCurrentText = ""
-            ttsPlaybackRangeStart = 0
+            ttsPlaybackDetails = "android system tts playback resumed"
+            return ttsPlaybackStatusLocked(ttsPlaybackDetails)
         }
+    }
+
+    /** Invalidates preparation and stops all Android speech audio. */
+    private fun ttsPlaybackStop(commandEpoch: Long): Map<String, Any> {
+        val audio: List<TtsPlaybackAudio>
+        val engine: TextToSpeech?
+        synchronized(ttsPlaybackLock) {
+            if (!isTtsPlaybackCommandCurrentLocked(commandEpoch)) {
+                return ttsPlaybackStatusLocked("android system tts ignored an outdated stop command")
+            }
+            ttsPlaybackGeneration += 1
+            ttsPlaybackPreparing = false
+            ttsPlaybackPaused = false
+            ttsPlaybackPath = ""
+            ttsPlaybackDetails = "android system tts playback stopped"
+            ttsPlaybackError = null
+            audio = detachTtsPlaybackAudioLocked()
+            engine = ttsPlaybackEngine
+        }
+        engine?.stop()
+        releaseTtsPlaybackAudio(audio)
         return ttsPlaybackStatus("android system tts playback stopped")
     }
 
-    private fun ensureTtsPlaybackEngine(): TextToSpeech {
-        ttsPlaybackEngine?.let { return it }
-        val initLatch = CountDownLatch(1)
-        var initStatus = TextToSpeech.ERROR
-        val tts = TextToSpeech(activity.applicationContext) { status ->
-            initStatus = status
-            initLatch.countDown()
-        }
-        initLatch.await()
-        if (initStatus != TextToSpeech.SUCCESS) {
-            tts.shutdown()
-            throw IllegalStateException("android system tts playback init failed")
-        }
-        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {
-                if (utteranceId == null) {
-                    return
-                }
-                synchronized(ttsPlaybackLock) {
-                    val entry = ttsPlaybackQueue.firstOrNull { it.utteranceId == utteranceId }
-                    if (entry != null) {
-                        ttsPlaybackCurrentUtteranceId = utteranceId
-                        ttsPlaybackCurrentText = entry.text
-                        ttsPlaybackRangeStart = 0
+    /** Synthesizes every bounded Android playback segment into a WAV file. */
+    private fun synthesizeTtsPlaybackFiles(
+        text: String,
+        voice: String,
+        localeTag: String,
+        speed: Float,
+        pitch: Float,
+        generation: Long,
+    ): List<File> {
+        synchronized(ttsPlaybackSynthesisLock) {
+            val tts = ensureTtsPlaybackEngine()
+            configureTtsPlaybackVoice(tts, voice, localeTag, speed, pitch)
+            val outputDir = File(runtimeHost.prepareAndroidRuntimePaths().runtimeRoot, "temp/tts-playback")
+            if (!outputDir.mkdirs() && !outputDir.isDirectory) {
+                throw IllegalStateException("failed to create Android TTS playback directory: ${outputDir.absolutePath}")
+            }
+            val outputFiles = mutableListOf<File>()
+            try {
+                for (segment in splitTtsPlaybackText(text)) {
+                    if (!isTtsPlaybackGenerationCurrent(generation)) {
+                        break
                     }
+                    val outputFile = File(outputDir, "${UUID.randomUUID()}.wav")
+                    synthesizeTtsFile(
+                        tts,
+                        segment,
+                        outputFile,
+                        "android system tts playback",
+                        cancelled = { !isTtsPlaybackGenerationCurrent(generation) },
+                    )
+                    outputFiles += outputFile
                 }
+            } catch (error: Throwable) {
+                deleteTtsPlaybackFiles(outputFiles)
+                throw error
             }
-
-            override fun onDone(utteranceId: String?) {
-                finishTtsPlaybackUtterance(utteranceId)
-            }
-
-            override fun onError(utteranceId: String?) {
-                finishTtsPlaybackUtterance(utteranceId)
-            }
-
-            override fun onError(utteranceId: String?, errorCode: Int) {
-                finishTtsPlaybackUtterance(utteranceId)
-            }
-
-            override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
-                synchronized(ttsPlaybackLock) {
-                    if (utteranceId == ttsPlaybackCurrentUtteranceId) {
-                        ttsPlaybackRangeStart = start.coerceIn(0, ttsPlaybackCurrentText.length)
-                    }
-                }
-            }
-        })
-        ttsPlaybackEngine = tts
-        return tts
+            return outputFiles
+        }
     }
 
+    /** Creates the shared Android TextToSpeech engine with a bounded wait. */
+    private fun ensureTtsPlaybackEngine(): TextToSpeech {
+        synchronized(ttsPlaybackLock) {
+            ttsPlaybackEngine?.let { return it }
+            if (ttsPlaybackReleased) {
+                throw IllegalStateException("android system tts playback host is released")
+            }
+        }
+        val tts = createInitializedTtsEngine("android system tts playback")
+        synchronized(ttsPlaybackLock) {
+            if (ttsPlaybackReleased) {
+                tts.shutdown()
+                throw IllegalStateException("android system tts playback host is released")
+            }
+            val current = ttsPlaybackEngine
+            if (current != null) {
+                tts.shutdown()
+                return current
+            }
+            ttsPlaybackEngine = tts
+            return tts
+        }
+    }
+
+    /** Applies explicit voice, locale, rate, and pitch configuration. */
     private fun configureTtsPlaybackVoice(
         tts: TextToSpeech,
         voice: String,
@@ -1360,96 +1480,207 @@ class OwnerSystemCapabilityChannel(
         speed: Float,
         pitch: Float,
     ) {
-        if (localeTag.isNotEmpty()) {
-            val locale = java.util.Locale.forLanguageTag(localeTag)
-            val languageResult = tts.setLanguage(locale)
-            if (languageResult == TextToSpeech.LANG_MISSING_DATA || languageResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-                throw IllegalStateException("android system tts language not supported: $localeTag")
-            }
+        if (!speed.isFinite() || speed <= 0.0f) {
+            throw IllegalArgumentException("tts speed must be positive and finite")
+        }
+        if (!pitch.isFinite() || pitch <= 0.0f) {
+            throw IllegalArgumentException("tts pitch must be positive and finite")
+        }
+        val locale = if (localeTag.isEmpty()) Locale.getDefault() else Locale.forLanguageTag(localeTag)
+        val languageResult = tts.setLanguage(locale)
+        if (languageResult == TextToSpeech.LANG_MISSING_DATA || languageResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+            throw IllegalStateException("android system tts language not supported: ${locale.toLanguageTag()}")
         }
         if (voice.isNotEmpty()) {
             val selectedVoice = tts.voices.firstOrNull { it.name == voice }
-            if (selectedVoice == null) {
-                throw IllegalStateException("android system tts voice not found: $voice")
-            }
+                ?: throw IllegalStateException("android system tts voice not found: $voice")
             tts.voice = selectedVoice
         }
-        tts.setSpeechRate(speed)
-        tts.setPitch(pitch)
-    }
-
-    private fun finishTtsPlaybackUtterance(utteranceId: String?) {
-        if (utteranceId == null) {
-            return
+        if (tts.setSpeechRate(speed) != TextToSpeech.SUCCESS) {
+            throw IllegalStateException("android system tts rejected speech rate: $speed")
         }
-        synchronized(ttsPlaybackLock) {
-            removeTtsPlaybackUtteranceLocked(utteranceId)
-            if (ttsPlaybackCurrentUtteranceId == utteranceId) {
-                ttsPlaybackCurrentUtteranceId = null
-                ttsPlaybackCurrentText = ""
-                ttsPlaybackRangeStart = 0
-            }
+        if (tts.setPitch(pitch) != TextToSpeech.SUCCESS) {
+            throw IllegalStateException("android system tts rejected pitch: $pitch")
         }
     }
 
-    private fun buildTtsPlaybackPausedSegmentsLocked(): List<String> {
-        if (ttsPlaybackQueue.isEmpty()) {
-            return emptyList()
+    /** Prepares and chains every synthesized playback file. */
+    private fun prepareTtsPlaybackAudio(
+        files: List<File>,
+        generation: Long,
+        deleteOnRelease: Boolean,
+    ): List<TtsPlaybackAudio> {
+        if (files.isEmpty()) {
+            throw IllegalStateException("android system tts playback produced no audio files")
         }
-        val currentId = ttsPlaybackCurrentUtteranceId
-        if (currentId == null) {
-            return ttsPlaybackQueue.map { it.text }.filter { it.isNotBlank() }
-        }
-        val result = mutableListOf<String>()
-        var foundCurrent = false
-        ttsPlaybackQueue.forEach { entry ->
-            if (!foundCurrent && entry.utteranceId == currentId) {
-                foundCurrent = true
-                val safeStart = ttsPlaybackRangeStart.coerceIn(0, entry.text.length)
-                val remaining = entry.text.substring(safeStart).trimStart()
-                if (remaining.isNotBlank()) {
-                    result += remaining
+        val audio = mutableListOf<TtsPlaybackAudio>()
+        try {
+            files.forEach { file ->
+                val player = MediaPlayer()
+                try {
+                    player.setDataSource(file.absolutePath)
+                    player.prepare()
+                } catch (error: Throwable) {
+                    player.release()
+                    throw error
                 }
-            } else if (foundCurrent && entry.text.isNotBlank()) {
-                result += entry.text
+                audio += TtsPlaybackAudio(player, file, deleteOnRelease)
             }
+            for (index in 0 until audio.lastIndex) {
+                audio[index].player.setNextMediaPlayer(audio[index + 1].player)
+            }
+            audio.forEach { entry ->
+                entry.player.setOnCompletionListener { player ->
+                    finishTtsPlaybackAudio(generation, player, null)
+                }
+                entry.player.setOnErrorListener { player, what, extra ->
+                    finishTtsPlaybackAudio(generation, player, "android system tts playback error: $what/$extra")
+                    true
+                }
+            }
+            return audio
+        } catch (error: Throwable) {
+            releaseTtsPlaybackAudio(audio)
+            if (deleteOnRelease) {
+                deleteTtsPlaybackFiles(files.drop(audio.size))
+            }
+            throw error
         }
-        if (!foundCurrent) {
-            return ttsPlaybackQueue.map { it.text }.filter { it.isNotBlank() }
-        }
-        return result
     }
 
-    private fun removeTtsPlaybackUtteranceLocked(utteranceId: String) {
-        val iterator = ttsPlaybackQueue.iterator()
-        while (iterator.hasNext()) {
-            if (iterator.next().utteranceId == utteranceId) {
-                iterator.remove()
+    /** Advances or terminates the Android playback queue after a player event. */
+    private fun finishTtsPlaybackAudio(generation: Long, player: MediaPlayer, error: String?) {
+        val completed: TtsPlaybackAudio?
+        val remaining: List<TtsPlaybackAudio>
+        synchronized(ttsPlaybackLock) {
+            if (generation != ttsPlaybackGeneration || ttsPlaybackAudioQueue.firstOrNull()?.player !== player) {
                 return
             }
+            completed = ttsPlaybackAudioQueue.removeFirst()
+            if (error != null) {
+                ttsPlaybackGeneration += 1
+                remaining = detachTtsPlaybackAudioLocked()
+                ttsPlaybackPaused = false
+                ttsPlaybackPath = ""
+                ttsPlaybackDetails = error
+                ttsPlaybackError = error
+            } else {
+                remaining = emptyList()
+                if (ttsPlaybackAudioQueue.isEmpty()) {
+                    ttsPlaybackPaused = false
+                    ttsPlaybackPath = ""
+                    ttsPlaybackDetails = "android system tts playback completed"
+                }
+            }
+        }
+        releaseTtsPlaybackAudio(listOfNotNull(completed) + remaining)
+    }
+
+    /** Detaches all prepared Android playback resources while holding the state lock. */
+    private fun detachTtsPlaybackAudioLocked(): List<TtsPlaybackAudio> {
+        val audio = ttsPlaybackAudioQueue.toList()
+        ttsPlaybackAudioQueue.clear()
+        return audio
+    }
+
+    /** Stops, releases, and deletes detached Android playback resources. */
+    private fun releaseTtsPlaybackAudio(audio: List<TtsPlaybackAudio>) {
+        audio.forEach { entry ->
+            entry.player.setOnCompletionListener(null)
+            entry.player.setOnErrorListener(null)
+            entry.player.release()
+            if (entry.deleteOnRelease) {
+                entry.file.delete()
+            }
         }
     }
 
+    /** Deletes synthesized Android playback files that have no player. */
+    private fun deleteTtsPlaybackFiles(files: List<File>) {
+        files.forEach { file ->
+            file.delete()
+        }
+    }
+
+    /** Returns whether one Android playback generation is still current. */
+    private fun isTtsPlaybackGenerationCurrent(generation: Long): Boolean {
+        synchronized(ttsPlaybackLock) {
+            return generation == ttsPlaybackGeneration && ttsPlaybackPreparing && !ttsPlaybackReleased
+        }
+    }
+
+    /** Registers a mutating command and returns its cross-origin command epoch. */
+    private fun registerTtsPlaybackCommand(ownerSequence: Long?): Long? {
+        synchronized(ttsPlaybackLock) {
+            if (ownerSequence != null) {
+                if (ownerSequence <= 0L) {
+                    throw IllegalArgumentException("ownerSequence must be positive")
+                }
+                if (ownerSequence <= ttsPlaybackLastOwnerSequence) {
+                    return null
+                }
+                ttsPlaybackLastOwnerSequence = ownerSequence
+            }
+            ttsPlaybackCommandEpoch += 1
+            return ttsPlaybackCommandEpoch
+        }
+    }
+
+    /** Checks whether a registered command remains the newest mutating command. */
+    private fun isTtsPlaybackCommandCurrentLocked(commandEpoch: Long): Boolean {
+        return commandEpoch == ttsPlaybackCommandEpoch
+    }
+
+    /** Returns playback state or propagates an asynchronous MediaPlayer failure. */
+    private fun ttsPlaybackState(): Map<String, Any> {
+        synchronized(ttsPlaybackLock) {
+            ttsPlaybackError?.let { throw IllegalStateException(it) }
+            return ttsPlaybackStatusLocked("android system tts playback state")
+        }
+    }
+
+    /** Returns a synchronized Android playback status snapshot. */
     private fun ttsPlaybackStatus(details: String): Map<String, Any> {
         synchronized(ttsPlaybackLock) {
             return ttsPlaybackStatusLocked(details)
         }
     }
 
+    /** Returns an Android playback status while the playback lock is held. */
     private fun ttsPlaybackStatusLocked(details: String): Map<String, Any> {
-        val active = ttsPlaybackQueue.isNotEmpty() || ttsPlaybackPaused
+        val active = ttsPlaybackPreparing || ttsPlaybackAudioQueue.isNotEmpty()
         return mapOf(
             "path" to ttsPlaybackPath,
             "active" to active,
-            "paused" to ttsPlaybackPaused,
+            "paused" to (active && ttsPlaybackPaused),
             "details" to details,
         )
     }
 
+    /** Splits speech without exceeding the Android engine input limit. */
+    private fun splitTtsPlaybackText(text: String): List<String> {
+        val maxLength = TextToSpeech.getMaxSpeechInputLength()
+        val segments = mutableListOf<String>()
+        var start = 0
+        while (start < text.length) {
+            var end = (start + maxLength).coerceAtMost(text.length)
+            if (end < text.length && Character.isHighSurrogate(text[end - 1])) {
+                end -= 1
+            }
+            segments += text.substring(start, end)
+            start = end
+        }
+        return segments
+    }
+
+    /** Synthesizes one bounded Android system TTS file request. */
     private fun ttsSynthesizeResult(payload: Map<*, *>): Map<String, Any> {
         val text = payload["text"] as? String ?: throw IllegalArgumentException("text is required")
         if (text.isBlank()) {
             throw IllegalArgumentException("text is empty")
+        }
+        if (text.length > TextToSpeech.getMaxSpeechInputLength()) {
+            throw IllegalArgumentException("android system tts text exceeds the engine input limit")
         }
         val outputFormat =
             payload["outputFormat"] as? String ?: throw IllegalArgumentException("outputFormat is required")
@@ -1461,73 +1692,121 @@ class OwnerSystemCapabilityChannel(
         val speed = (payload["speed"] as? Number)?.toFloat() ?: throw IllegalArgumentException("speed is required")
         val pitch = (payload["pitch"] as? Number)?.toFloat() ?: throw IllegalArgumentException("pitch is required")
         val outputDir = File(runtimeHost.prepareAndroidRuntimePaths().runtimeRoot, "temp/tts")
-        outputDir.mkdirs()
-        val outputFile = File(outputDir, "${java.util.UUID.randomUUID()}.wav")
+        if (!outputDir.mkdirs() && !outputDir.isDirectory) {
+            throw IllegalStateException("failed to create Android TTS directory: ${outputDir.absolutePath}")
+        }
+        val outputFile = File(outputDir, "${UUID.randomUUID()}.wav")
+        val tts = createInitializedTtsEngine("android system tts")
+        try {
+            configureTtsPlaybackVoice(tts, voice, localeTag, speed, pitch)
+            synthesizeTtsFile(
+                tts,
+                text,
+                outputFile,
+                "android system tts",
+                cancelled = { false },
+            )
+        } catch (error: Throwable) {
+            outputFile.delete()
+            throw error
+        } finally {
+            tts.shutdown()
+        }
+        return mapOf(
+            "audioPath" to outputFile.absolutePath,
+            "details" to "android TextToSpeech synthesis completed",
+        )
+    }
+
+    /** Creates an Android TextToSpeech engine without allowing an unbounded initialization wait. */
+    private fun createInitializedTtsEngine(label: String): TextToSpeech {
         val initLatch = CountDownLatch(1)
         var initStatus = TextToSpeech.ERROR
         val tts = TextToSpeech(activity.applicationContext) { status ->
             initStatus = status
             initLatch.countDown()
         }
-        initLatch.await()
+        if (!initLatch.await(TTS_ENGINE_INIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            tts.shutdown()
+            throw IllegalStateException("$label initialization timed out")
+        }
         if (initStatus != TextToSpeech.SUCCESS) {
             tts.shutdown()
-            throw IllegalStateException("android system tts init failed")
+            throw IllegalStateException("$label initialization failed: $initStatus")
         }
-        if (localeTag.isNotEmpty()) {
-            val locale = java.util.Locale.forLanguageTag(localeTag)
-            val languageResult = tts.setLanguage(locale)
-            if (languageResult == TextToSpeech.LANG_MISSING_DATA || languageResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-                tts.shutdown()
-                throw IllegalStateException("android system tts language not supported: $localeTag")
-            }
-        }
-        if (voice.isNotEmpty()) {
-            val selectedVoice = tts.voices.firstOrNull { it.name == voice }
-            if (selectedVoice == null) {
-                tts.shutdown()
-                throw IllegalStateException("android system tts voice not found: $voice")
-            }
-            tts.voice = selectedVoice
-        }
-        tts.setSpeechRate(speed)
-        tts.setPitch(pitch)
+        return tts
+    }
+
+    /** Synthesizes one utterance and validates its exact completion callback. */
+    private fun synthesizeTtsFile(
+        tts: TextToSpeech,
+        text: String,
+        outputFile: File,
+        label: String,
+        cancelled: () -> Boolean,
+    ) {
+        val utteranceId = UUID.randomUUID().toString()
         val completionLatch = CountDownLatch(1)
         var synthesisError: String? = null
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {}
 
-            override fun onDone(utteranceId: String?) {
-                completionLatch.countDown()
+            override fun onDone(completedUtteranceId: String?) {
+                if (completedUtteranceId == utteranceId) {
+                    completionLatch.countDown()
+                }
             }
 
-            override fun onError(utteranceId: String?) {
-                synthesisError = "android system tts synthesis failed"
-                completionLatch.countDown()
+            override fun onError(failedUtteranceId: String?) {
+                if (failedUtteranceId == utteranceId) {
+                    synthesisError = "$label synthesis failed"
+                    completionLatch.countDown()
+                }
             }
 
-            override fun onError(utteranceId: String?, errorCode: Int) {
-                synthesisError = "android system tts synthesis failed: $errorCode"
-                completionLatch.countDown()
+            override fun onError(failedUtteranceId: String?, errorCode: Int) {
+                if (failedUtteranceId == utteranceId) {
+                    synthesisError = "$label synthesis failed: $errorCode"
+                    completionLatch.countDown()
+                }
+            }
+
+            override fun onStop(stoppedUtteranceId: String?, interrupted: Boolean) {
+                if (stoppedUtteranceId == utteranceId) {
+                    synthesisError = "$label synthesis stopped"
+                    completionLatch.countDown()
+                }
             }
         })
-        val utteranceId = java.util.UUID.randomUUID().toString()
         val params = Bundle()
         val synthStatus = tts.synthesizeToFile(text, params, outputFile, utteranceId)
         if (synthStatus != TextToSpeech.SUCCESS) {
-            tts.shutdown()
-            throw IllegalStateException("android system tts synthesizeToFile failed")
+            outputFile.delete()
+            throw IllegalStateException("$label synthesizeToFile failed")
         }
-        completionLatch.await()
-        tts.shutdown()
+        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(TTS_SYNTHESIS_TIMEOUT_MS)
+        while (true) {
+            if (cancelled()) {
+                tts.stop()
+                outputFile.delete()
+                throw IllegalStateException("$label synthesis cancelled")
+            }
+            val remainingNanos = deadlineNanos - System.nanoTime()
+            if (remainingNanos <= 0L) {
+                tts.stop()
+                outputFile.delete()
+                throw IllegalStateException("$label synthesis timed out")
+            }
+            val waitNanos = remainingNanos.coerceAtMost(TimeUnit.MILLISECONDS.toNanos(100L))
+            if (completionLatch.await(waitNanos, TimeUnit.NANOSECONDS)) {
+                break
+            }
+        }
         synthesisError?.let { throw IllegalStateException(it) }
-        if (!outputFile.exists()) {
-            throw IllegalStateException("android system tts output missing: ${outputFile.absolutePath}")
+        if (!outputFile.isFile || outputFile.length() == 0L) {
+            outputFile.delete()
+            throw IllegalStateException("$label output missing: ${outputFile.absolutePath}")
         }
-        return mapOf(
-            "audioPath" to outputFile.absolutePath,
-            "details" to "android TextToSpeech synthesis completed",
-        )
     }
 
     private fun parseOcrLanguage(value: String): OCRUtils.Language {

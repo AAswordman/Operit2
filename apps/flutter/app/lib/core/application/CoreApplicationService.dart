@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../host/RuntimeHostInteractionSubscriber.dart';
 import '../link_host/LinkHostServer.dart';
 import '../logging/ClientLogger.dart';
+import '../runtime/RuntimeAutoSyncManager.dart';
 import '../runtime/RuntimeConnectionManager.dart';
 
 class CoreApplicationService {
@@ -19,6 +20,8 @@ class CoreApplicationService {
 
   final RuntimeConnectionManager _runtimeManager =
       RuntimeConnectionManager.instance;
+  final RuntimeAutoSyncManager _autoSyncManager =
+      RuntimeAutoSyncManager.instance;
   final StreamController<Object> _startupErrors =
       StreamController<Object>.broadcast();
 
@@ -101,22 +104,15 @@ class CoreApplicationService {
       );
       await _startLocalBackgroundService();
       await _syncHostSubscriber();
-      if (_linkHostStartAttempted ||
-          !_runtimeManager.config.localStorage.confirmed) {
+      if (!_runtimeManager.config.localStorage.confirmed) {
         ClientLogger.i(
-          'runtime services start done linkHostAttempted=$_linkHostStartAttempted elapsedMs=${stopwatch.elapsedMilliseconds}',
+          'runtime services start done localStorageConfirmed=false elapsedMs=${stopwatch.elapsedMilliseconds}',
           tag: _logTag,
         );
         return;
       }
-      _linkHostStartAttempted = true;
-      final linkHostStopwatch = Stopwatch()..start();
-      ClientLogger.i('link host initialize start', tag: _logTag);
-      await LinkHostServer.instance.initializeFromConfig();
-      ClientLogger.i(
-        'link host initialize done elapsedMs=${linkHostStopwatch.elapsedMilliseconds}',
-        tag: _logTag,
-      );
+      await _ensureLinkHostStarted();
+      await _autoSyncManager.initialize();
       ClientLogger.i(
         'runtime services start done elapsedMs=${stopwatch.elapsedMilliseconds}',
         tag: _logTag,
@@ -134,6 +130,25 @@ class CoreApplicationService {
         _pendingStartupError = error;
       }
     }
+  }
+
+  /// Starts LinkHost once the local runtime storage is confirmed.
+  Future<void> _ensureLinkHostStarted() async {
+    if (_linkHostStartAttempted) {
+      ClientLogger.d(
+        'link host initialize skipped attempted=true',
+        tag: _logTag,
+      );
+      return;
+    }
+    _linkHostStartAttempted = true;
+    final linkHostStopwatch = Stopwatch()..start();
+    ClientLogger.i('link host initialize start', tag: _logTag);
+    await LinkHostServer.instance.initializeFromConfig();
+    ClientLogger.i(
+      'link host initialize done elapsedMs=${linkHostStopwatch.elapsedMilliseconds}',
+      tag: _logTag,
+    );
   }
 
   /// Starts the Android foreground Core service for a local runtime.

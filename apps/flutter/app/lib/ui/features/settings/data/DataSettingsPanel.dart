@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'package:file_selector/file_selector.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -1063,7 +1062,7 @@ class _StorageLocationEditDialogState
 
   /// Selects a new runtime root directory.
   Future<void> _selectRuntimeRoot() async {
-    final path = await FilePicker.getDirectoryPath();
+    final path = await getDirectoryPath();
     if (path == null || path.trim().isEmpty) {
       return;
     }
@@ -1075,7 +1074,7 @@ class _StorageLocationEditDialogState
 
   /// Selects a new workspace root directory.
   Future<void> _selectWorkspaceRoot() async {
-    final path = await FilePicker.getDirectoryPath();
+    final path = await getDirectoryPath();
     if (path == null || path.trim().isEmpty) {
       return;
     }

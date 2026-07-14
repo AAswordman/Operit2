@@ -2002,6 +2002,24 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get settingsRuntimeAutoSyncEnable => 'Enable continuous sync';
+
+  @override
+  String get settingsRuntimeAutoSyncDisable => 'Disable continuous sync';
+
+  @override
+  String get settingsRuntimeAutoSyncEnabled =>
+      'Continuous sync is enabled. It will sync automatically when this device is discovered.';
+
+  @override
+  String get settingsRuntimeAutoSyncDisabled => 'Continuous sync is disabled.';
+
+  @override
+  String settingsRuntimeAutoSyncFailed(String error) {
+    return 'Continuous sync setting failed: $error';
+  }
+
+  @override
   String get settingsRuntimeDiscoverDevices => 'Discover devices';
 
   @override
@@ -2186,6 +2204,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsAppearanceThemeDark => 'Dark';
+
+  @override
+  String get settingsAppearanceInputSection => 'Input';
+
+  @override
+  String get settingsAppearanceInputStyle => 'Input style';
+
+  @override
+  String get settingsAppearanceInputStyleClassic => 'Classic';
+
+  @override
+  String get settingsAppearanceInputStyleAgent => 'Agent';
+
+  @override
+  String get settingsAppearanceInputFloating => 'Floating input';
 
   @override
   String get settingsAppearanceColorSection => 'Theme color';

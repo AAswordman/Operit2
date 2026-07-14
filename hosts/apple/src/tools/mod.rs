@@ -3,6 +3,7 @@ pub mod bluetooth;
 pub mod fs;
 pub mod host_runtime_event;
 pub mod http;
+pub mod local_inference;
 pub mod runtime;
 pub mod storage;
 pub mod system;

@@ -47,6 +47,8 @@
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Operit2 uses the local network to discover and connect to nearby Operit devices for Web Access.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Operit2 records speech for text recognition.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_operit._tcp</string>

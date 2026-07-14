@@ -1926,6 +1926,23 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get settingsRuntimeAutoSyncEnable => '开启持续同步';
+
+  @override
+  String get settingsRuntimeAutoSyncDisable => '关闭持续同步';
+
+  @override
+  String get settingsRuntimeAutoSyncEnabled => '已开启持续同步，扫到该设备后会自动同步。';
+
+  @override
+  String get settingsRuntimeAutoSyncDisabled => '已关闭持续同步。';
+
+  @override
+  String settingsRuntimeAutoSyncFailed(String error) {
+    return '持续同步设置失败：$error';
+  }
+
+  @override
   String get settingsRuntimeDiscoverDevices => '发现设备';
 
   @override
@@ -2103,6 +2120,21 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsAppearanceThemeDark => '深色';
+
+  @override
+  String get settingsAppearanceInputSection => '输入框';
+
+  @override
+  String get settingsAppearanceInputStyle => '输入框样式';
+
+  @override
+  String get settingsAppearanceInputStyleClassic => '经典';
+
+  @override
+  String get settingsAppearanceInputStyleAgent => 'Agent';
+
+  @override
+  String get settingsAppearanceInputFloating => '悬浮输入框';
 
   @override
   String get settingsAppearanceColorSection => '主题色';

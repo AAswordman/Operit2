@@ -4,6 +4,7 @@
 /.idea
 **/build
 /.hvigor
+/.flutter_ohos_plugins
 .cxx
 /.clangd
 /.clang-format
@@ -18,3 +19,8 @@
 **/libs/**/libapp.so
 **/libs/**/libflutter.so
 **/libs/**/libvmservice_snapshot.so
+**/libs/**/liboperit_flutter_bridge.so
+**/libs/**/libonnxruntime.so
+**/libs/**/libsherpa-onnx-c-api.so
+/har/
+/signing/

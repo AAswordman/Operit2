@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use operit_host_api::{AudioPlaybackHost, TtsPlaybackHost, TtsPlaybackRequest, TtsPlaybackStatus};
+use operit_host_api::{TtsPlaybackHost, TtsPlaybackRequest, TtsPlaybackStatus};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
@@ -16,7 +16,6 @@ use operit_util::TtsCleaner::TtsCleaner;
 #[derive(Clone)]
 /// Coordinates generated audio playback and host TTS playback controls.
 pub struct TtsPlaybackService {
-    audioPlaybackHost: Option<Arc<dyn AudioPlaybackHost>>,
     ttsPlaybackHost: Option<Arc<dyn TtsPlaybackHost>>,
     characterCardManager: CharacterCardManager,
     ttsConfigManager: TtsConfigManager,
@@ -27,29 +26,25 @@ impl TtsPlaybackService {
     pub fn getInstance(context: &HostManager) -> Result<Self, String> {
         let paths = RuntimeStorePaths::default();
         Ok(Self {
-            audioPlaybackHost: context.audioPlaybackHost.clone(),
             ttsPlaybackHost: context.ttsPlaybackHost.clone(),
             characterCardManager: CharacterCardManager::new(paths.clone()),
             ttsConfigManager: TtsConfigManager::new(paths),
         })
     }
 
-    /// Plays an audio file through the host audio playback service.
+    /// Plays a generated speech file through the TTS playback host.
     pub fn playAudio(&self, path: &str) -> Result<TtsPlaybackResult, String> {
         let path = path.trim();
         if path.is_empty() {
             return Err("audio path is empty".to_string());
         }
-        let audioPlaybackHost = self
-            .audioPlaybackHost
-            .clone()
-            .ok_or_else(|| "AudioPlaybackHost is required for audio playback".to_string())?;
-        let status = audioPlaybackHost
+        let status = self
+            .ttsPlaybackHost()?
             .playAudio(path)
             .map_err(|error| error.to_string())?;
         Ok(TtsPlaybackResult {
             path: status.path,
-            started: status.started,
+            started: status.active,
             details: status.details,
         })
     }
@@ -108,6 +103,7 @@ impl TtsPlaybackService {
         self.speakWithResolvedConfig(config, cleanedText, interrupt)
     }
 
+    /// Starts system speech with one already resolved TTS configuration.
     fn speakWithResolvedConfig(
         &self,
         config: TtsConfig,
@@ -166,13 +162,15 @@ impl TtsPlaybackService {
             .map_err(|error| error.to_string())
     }
 
+    /// Returns the required platform TTS playback host.
     fn ttsPlaybackHost(&self) -> Result<Arc<dyn TtsPlaybackHost>, String> {
         self.ttsPlaybackHost
             .clone()
-            .ok_or_else(|| "TtsPlaybackHost is required for system TTS playback".to_string())
+            .ok_or_else(|| "TtsPlaybackHost is required for TTS playback".to_string())
     }
 }
 
+/// Converts a host playback status into the Core proxy result model.
 fn ttsHostPlaybackResult(status: TtsPlaybackStatus) -> TtsHostPlaybackResult {
     TtsHostPlaybackResult {
         path: status.path,

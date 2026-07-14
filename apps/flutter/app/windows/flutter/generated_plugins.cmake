@@ -9,6 +9,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   dynamic_color
   file_selector_windows
   printing
+  record_windows
   url_launcher_windows
   webview_all_windows
 )

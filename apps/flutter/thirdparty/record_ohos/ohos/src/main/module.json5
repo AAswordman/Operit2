@@ -1,0 +1,10 @@
+{
+  "module": {
+    "name": "record_ohos",
+    "type": "har",
+    "deviceTypes": [
+      "default",
+      "tablet"
+    ]
+  }
+}

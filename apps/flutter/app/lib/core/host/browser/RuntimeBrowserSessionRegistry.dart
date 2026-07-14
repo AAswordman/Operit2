@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:webview_all/webview_all.dart';
 
@@ -113,12 +114,32 @@ class _WorkspaceBrowserSessionControls {
 
   final void Function(String sessionId) selectTab;
   final void Function(String sessionId) closeTab;
-  final void Function(String url) navigate;
-  final void Function() navigateBack;
-  final void Function() navigateForward;
-  final void Function() reload;
-  final void Function() stop;
+  final Future<void> Function(String url) navigate;
+  final Future<void> Function() navigateBack;
+  final Future<void> Function() navigateForward;
+  final Future<void> Function() reload;
+  final Future<void> Function() stop;
   final bool Function() supportsPageJavaScript;
+}
+
+class _RuntimeBrowserInteractionQueue {
+  /// Creates an owner-host interaction queue for one browser session.
+  _RuntimeBrowserInteractionQueue();
+
+  final List<RuntimeBrowserCommand> commands = <RuntimeBrowserCommand>[];
+  final Stopwatch lifetimeStopwatch = Stopwatch();
+  final Stopwatch summaryStopwatch = Stopwatch();
+  bool draining = false;
+  int acceptedCount = 0;
+  int dispatchedCount = 0;
+  int dispatchErrorCount = 0;
+  int totalDispatchElapsedMs = 0;
+  int maxDispatchElapsedMs = 0;
+  int maxPendingCount = 0;
+  String slowestDispatchType = '';
+
+  /// Returns whether this queue has no pending interaction.
+  bool get isEmpty => commands.isEmpty;
 }
 
 class RuntimeBrowserSessionRegistry extends ChangeNotifier {
@@ -128,6 +149,8 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
   static final RuntimeBrowserSessionRegistry instance =
       RuntimeBrowserSessionRegistry._();
 
+  static const String _interactionLogTag = 'RuntimeBrowserInput';
+  static const int _interactionSummaryIntervalMs = 500;
   final Map<String, RuntimeBrowserAutomationController> _controllers =
       <String, RuntimeBrowserAutomationController>{};
   final Map<String, WorkspaceBrowserSessionInfo> _sessions =
@@ -136,6 +159,8 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
   _RuntimeBrowserSessionUpdater? _browserSessionUpdater;
   final Map<String, _WorkspaceBrowserSessionControls> _sessionControls =
       <String, _WorkspaceBrowserSessionControls>{};
+  final Map<String, _RuntimeBrowserInteractionQueue> _interactionQueues =
+      <String, _RuntimeBrowserInteractionQueue>{};
   final List<Completer<void>> _sessionWaiters = <Completer<void>>[];
   final List<_WorkspaceBrowserOpenRequest> _pendingOpenRequests =
       <_WorkspaceBrowserOpenRequest>[];
@@ -270,7 +295,7 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
   }
 
   /// Navigates the active browser tab.
-  void navigate(String url) {
+  Future<void> navigate(String url) async {
     final sessionId = _activeSessionId;
     if (sessionId == null) {
       throw StateError('No active browser session');
@@ -279,11 +304,11 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     if (controls == null) {
       throw StateError('Browser session controls are not registered');
     }
-    controls.navigate(url);
+    await controls.navigate(url);
   }
 
   /// Navigates the active browser tab backward.
-  void navigateBack() {
+  Future<void> navigateBack() async {
     final sessionId = _activeSessionId;
     if (sessionId == null) {
       throw StateError('No active browser session');
@@ -292,11 +317,11 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     if (controls == null) {
       throw StateError('Browser session controls are not registered');
     }
-    controls.navigateBack();
+    await controls.navigateBack();
   }
 
   /// Navigates the active browser tab forward.
-  void navigateForward() {
+  Future<void> navigateForward() async {
     final sessionId = _activeSessionId;
     if (sessionId == null) {
       throw StateError('No active browser session');
@@ -305,11 +330,11 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     if (controls == null) {
       throw StateError('Browser session controls are not registered');
     }
-    controls.navigateForward();
+    await controls.navigateForward();
   }
 
   /// Reloads the active browser tab.
-  void reload() {
+  Future<void> reload() async {
     final sessionId = _activeSessionId;
     if (sessionId == null) {
       throw StateError('No active browser session');
@@ -318,11 +343,11 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     if (controls == null) {
       throw StateError('Browser session controls are not registered');
     }
-    controls.reload();
+    await controls.reload();
   }
 
   /// Stops loading the active browser tab.
-  void stop() {
+  Future<void> stop() async {
     final sessionId = _activeSessionId;
     if (sessionId == null) {
       throw StateError('No active browser session');
@@ -331,7 +356,7 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     if (controls == null) {
       throw StateError('Browser session controls are not registered');
     }
-    controls.stop();
+    await controls.stop();
   }
 
   /// Executes a runtime browser command on the owner host.
@@ -360,6 +385,27 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     return jsonEncode(result.toJson());
   }
 
+  /// Accepts one high-frequency browser interaction for queued host dispatch.
+  RuntimeBrowserCommandResult acceptRuntimeBrowserInteraction(
+    RuntimeBrowserCommand command,
+  ) {
+    if (command.action != 'interact') {
+      throw StateError('Browser command is not an interaction');
+    }
+    final session = _sessionForCommand(command);
+    if (session == null) {
+      return RuntimeBrowserCommandResult(
+        success: false,
+        session: null,
+        sessions: runtimeSessions,
+        resultJson: '',
+        error: 'Browser session is not registered',
+      );
+    }
+    _enqueueRuntimeBrowserInteraction(session.sessionId, command);
+    return _commandResult(success: true, command: command, session: session);
+  }
+
   /// Returns the current browser sessions in runtime model form.
   List<RuntimeBrowserSessionInfo> get runtimeSessions {
     return _sessions.values
@@ -381,11 +427,11 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     required int progress,
     required void Function(String sessionId) selectTab,
     required void Function(String sessionId) closeTab,
-    required void Function(String url) navigate,
-    required void Function() navigateBack,
-    required void Function() navigateForward,
-    required void Function() reload,
-    required void Function() stop,
+    required Future<void> Function(String url) navigate,
+    required Future<void> Function() navigateBack,
+    required Future<void> Function() navigateForward,
+    required Future<void> Function() reload,
+    required Future<void> Function() stop,
     required bool Function() supportsPageJavaScript,
   }) {
     _controllers[sessionId] = controller;
@@ -453,6 +499,7 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     _controllers.remove(sessionId);
     _sessionControls.remove(sessionId);
     _sessions.remove(sessionId);
+    _interactionQueues.remove(sessionId);
     if (_activeSessionId == sessionId) {
       final nextSessionId = _sessions.isEmpty ? null : _sessions.keys.last;
       _activeSessionId = null;
@@ -483,7 +530,9 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
         );
       case 'navigate':
         _selectSessionForCommand(command);
-        _controlsForCommand(command).navigate(_requireCommandUrl(command));
+        await _controlsForCommand(
+          command,
+        ).navigate(_requireCommandUrl(command));
         return _commandResult(
           success: true,
           command: command,
@@ -491,7 +540,7 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
         );
       case 'back':
         _selectSessionForCommand(command);
-        _controlsForCommand(command).navigateBack();
+        await _controlsForCommand(command).navigateBack();
         return _commandResult(
           success: true,
           command: command,
@@ -499,7 +548,7 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
         );
       case 'forward':
         _selectSessionForCommand(command);
-        _controlsForCommand(command).navigateForward();
+        await _controlsForCommand(command).navigateForward();
         return _commandResult(
           success: true,
           command: command,
@@ -507,7 +556,7 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
         );
       case 'reload':
         _selectSessionForCommand(command);
-        _controlsForCommand(command).reload();
+        await _controlsForCommand(command).reload();
         return _commandResult(
           success: true,
           command: command,
@@ -515,7 +564,7 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
         );
       case 'stop':
         _selectSessionForCommand(command);
-        _controlsForCommand(command).stop();
+        await _controlsForCommand(command).stop();
         return _commandResult(
           success: true,
           command: command,
@@ -583,6 +632,184 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     }
     await controller.dispatchSurfaceInteraction(command.payloadJson);
     return _commandResult(success: true, command: command, session: session);
+  }
+
+  /// Enqueues an interaction for owner-host dispatch.
+  void _enqueueRuntimeBrowserInteraction(
+    String sessionId,
+    RuntimeBrowserCommand command,
+  ) {
+    final queue = _interactionQueues.putIfAbsent(
+      sessionId,
+      _RuntimeBrowserInteractionQueue.new,
+    );
+    _startInteractionQueueTiming(queue);
+    queue.acceptedCount += 1;
+    queue.commands.add(command);
+    _recordInteractionQueueDepth(queue);
+    _logInteractionQueueSummaryWhenDue(sessionId, queue);
+    if (!queue.draining) {
+      queue.draining = true;
+      unawaited(_drainRuntimeBrowserInteractionQueue(sessionId, queue));
+    }
+  }
+
+  /// Drains queued browser interactions.
+  Future<void> _drainRuntimeBrowserInteractionQueue(
+    String sessionId,
+    _RuntimeBrowserInteractionQueue queue,
+  ) async {
+    while (true) {
+      final command = _takeRuntimeBrowserInteraction(queue);
+      if (command == null) {
+        _logInteractionQueueSummary(sessionId, queue, reason: 'idle');
+        queue.draining = false;
+        if (queue.isEmpty && identical(_interactionQueues[sessionId], queue)) {
+          _interactionQueues.remove(sessionId);
+        }
+        return;
+      }
+      final dispatchStopwatch = Stopwatch()..start();
+      final dispatchType = _interactionType(command);
+      try {
+        await _interactRuntimeSession(command);
+      } catch (error, stackTrace) {
+        queue.dispatchErrorCount += 1;
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stackTrace,
+            library: 'runtime browser interaction queue',
+            context: ErrorDescription('dispatching browser surface input'),
+          ),
+        );
+      } finally {
+        dispatchStopwatch.stop();
+        _recordInteractionDispatch(
+          queue,
+          dispatchType,
+          dispatchStopwatch.elapsedMilliseconds,
+        );
+        _logInteractionQueueSummaryWhenDue(sessionId, queue);
+      }
+    }
+  }
+
+  /// Takes the next queued interaction.
+  RuntimeBrowserCommand? _takeRuntimeBrowserInteraction(
+    _RuntimeBrowserInteractionQueue queue,
+  ) {
+    if (queue.commands.isNotEmpty) {
+      return queue.commands.removeAt(0);
+    }
+    return null;
+  }
+
+  /// Starts timing for a newly active interaction queue.
+  void _startInteractionQueueTiming(_RuntimeBrowserInteractionQueue queue) {
+    if (!queue.lifetimeStopwatch.isRunning) {
+      queue.lifetimeStopwatch.start();
+    }
+    if (!queue.summaryStopwatch.isRunning) {
+      queue.summaryStopwatch.start();
+    }
+  }
+
+  /// Records the current queue depth peak.
+  void _recordInteractionQueueDepth(_RuntimeBrowserInteractionQueue queue) {
+    final depth = _interactionQueueDepth(queue);
+    if (depth > queue.maxPendingCount) {
+      queue.maxPendingCount = depth;
+    }
+  }
+
+  /// Records one dispatched browser interaction duration.
+  void _recordInteractionDispatch(
+    _RuntimeBrowserInteractionQueue queue,
+    String dispatchType,
+    int elapsedMs,
+  ) {
+    queue.dispatchedCount += 1;
+    queue.totalDispatchElapsedMs += elapsedMs;
+    if (elapsedMs > queue.maxDispatchElapsedMs) {
+      queue.maxDispatchElapsedMs = elapsedMs;
+      queue.slowestDispatchType = dispatchType;
+    }
+  }
+
+  /// Logs an active queue summary after the configured interval.
+  void _logInteractionQueueSummaryWhenDue(
+    String sessionId,
+    _RuntimeBrowserInteractionQueue queue,
+  ) {
+    if (queue.summaryStopwatch.elapsedMilliseconds <
+        _interactionSummaryIntervalMs) {
+      return;
+    }
+    _logInteractionQueueSummary(sessionId, queue, reason: 'active');
+  }
+
+  /// Logs one compact browser interaction queue summary.
+  void _logInteractionQueueSummary(
+    String sessionId,
+    _RuntimeBrowserInteractionQueue queue, {
+    required String reason,
+  }) {
+    if (_isQuietPointerMoveIdleSummary(queue, reason)) {
+      return;
+    }
+    final dispatched = queue.dispatchedCount;
+    final averageDispatchMs = dispatched == 0
+        ? 0.0
+        : queue.totalDispatchElapsedMs / dispatched;
+    ClientLogger.d(
+      'summary reason=$reason session=$sessionId '
+      'elapsedMs=${queue.lifetimeStopwatch.elapsedMilliseconds} '
+      'accepted=${queue.acceptedCount} dispatched=${queue.dispatchedCount} '
+      'pending=${_interactionQueueDepth(queue)} maxPending=${queue.maxPendingCount} '
+      'avgDispatchMs=${averageDispatchMs.toStringAsFixed(1)} '
+      'maxDispatchMs=${queue.maxDispatchElapsedMs} '
+      'slowest=${queue.slowestDispatchType} errors=${queue.dispatchErrorCount}',
+      tag: _interactionLogTag,
+    );
+    queue.summaryStopwatch
+      ..reset()
+      ..start();
+  }
+
+  /// Returns whether one idle summary only contains a fast pointer move.
+  bool _isQuietPointerMoveIdleSummary(
+    _RuntimeBrowserInteractionQueue queue,
+    String reason,
+  ) {
+    return reason == 'idle' &&
+        queue.acceptedCount == 1 &&
+        queue.dispatchedCount == 1 &&
+        queue.dispatchErrorCount == 0 &&
+        queue.maxDispatchElapsedMs < 16 &&
+        _interactionQueueDepth(queue) == 0;
+  }
+
+  /// Returns the number of queued or pending interactions.
+  int _interactionQueueDepth(_RuntimeBrowserInteractionQueue queue) {
+    return queue.commands.length;
+  }
+
+  /// Describes one browser interaction payload type.
+  String _interactionType(RuntimeBrowserCommand command) {
+    final payload = jsonDecode(command.payloadJson);
+    if (payload is! Map<String, Object?>) {
+      return 'invalid';
+    }
+    final type = payload['type'];
+    final eventType = payload['eventType'];
+    if (type == 'pointer' && eventType is String) {
+      return 'pointer/$eventType';
+    }
+    if (type is String) {
+      return type;
+    }
+    return 'invalid';
   }
 
   /// Creates a browser session through the owner host tab opener.

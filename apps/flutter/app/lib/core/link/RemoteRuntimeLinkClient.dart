@@ -271,7 +271,7 @@ class _RemoteCorePushSink implements CorePushSink {
 
   /// Sends one ordered item without opening an HTTP request.
   @override
-  void add(Object? args) {
+  Future<void> add(Object? args) {
     if (_closed) {
       throw StateError('Link push stream is closed');
     }
@@ -283,6 +283,7 @@ class _RemoteCorePushSink implements CorePushSink {
         'args': args,
       },
     });
+    return Future<void>.value();
   }
 
   /// Completes this logical stream after its preceding items.
@@ -658,6 +659,22 @@ class PairedRemoteSessionRecord {
   final RemoteDeviceInfo remoteDeviceInfo;
   final int pairingServiceVersion;
   final String sessionSecret;
+
+  /// Creates a copy of this paired session record with a new endpoint URL.
+  PairedRemoteSessionRecord withBaseUrl(String value) {
+    final normalizedBaseUrl = value.endsWith('/')
+        ? value.substring(0, value.length - 1)
+        : value;
+    return PairedRemoteSessionRecord(
+      baseUrl: normalizedBaseUrl,
+      sessionId: sessionId,
+      deviceId: deviceId,
+      coreDeviceId: coreDeviceId,
+      remoteDeviceInfo: remoteDeviceInfo,
+      pairingServiceVersion: pairingServiceVersion,
+      sessionSecret: sessionSecret,
+    );
+  }
 
   Uri uri(String path) {
     final normalizedBaseUrl = baseUrl.endsWith('/')

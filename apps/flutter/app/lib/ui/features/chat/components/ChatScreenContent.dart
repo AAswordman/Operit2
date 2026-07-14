@@ -4,11 +4,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../theme/OperitTheme.dart';
 import '../viewmodel/ChatViewModel.dart';
-import '../tts/TtsFloatingPanel.dart';
 import '../tts/TtsPlaybackController.dart';
-import 'AgentChatInputSection.dart';
 import 'ChatArea.dart';
 import 'ChatMultiSelectBar.dart';
 import 'ChatScrollNavigator.dart';
@@ -16,6 +16,9 @@ import 'ChatToastHost.dart';
 import 'MessageContextMenu.dart';
 import 'share/ChatShareImageGenerator.dart';
 import 'share/ChatShareImagePreviewDialog.dart';
+import 'style/input/agent/AgentChatInputSection.dart';
+import 'style/input/classic/ClassicChatInputSection.dart';
+import 'style/input/common/PendingQueueMessageItem.dart';
 
 class ChatScreenContent extends StatelessWidget {
   const ChatScreenContent({
@@ -81,6 +84,9 @@ class ChatScreenContent extends StatelessWidget {
     required this.onDismissToast,
     required this.isMultiSelectMode,
     required this.isPreparingChatSwitch,
+    required this.isSpeechRecording,
+    required this.isSpeechTranscribing,
+    required this.onSpeechInput,
     this.selectedMessageIndices = const <int>{},
   });
 
@@ -145,10 +151,16 @@ class ChatScreenContent extends StatelessWidget {
   final VoidCallback onDismissToast;
   final bool isMultiSelectMode;
   final bool isPreparingChatSwitch;
+  final bool isSpeechRecording;
+  final bool isSpeechTranscribing;
+  final VoidCallback onSpeechInput;
   final Set<int> selectedMessageIndices;
 
   @override
   Widget build(BuildContext context) {
+    final inputStyle = OperitTheme.of(
+      context,
+    ).themePreferenceSnapshot.inputStyle;
     return Stack(
       alignment: Alignment.topCenter,
       children: <Widget>[
@@ -195,35 +207,7 @@ class ChatScreenContent extends StatelessWidget {
                       : () => _confirmDeleteSelected(context),
                 )
               else
-                AgentChatInputSection(
-                  controller: messageController,
-                  focusNode: inputFocusNode,
-                  isLoading: loading,
-                  inputState: inputProcessingState,
-                  viewModel: viewModel,
-                  currentChatId: currentChatId,
-                  onSendMessage: onSendMessage,
-                  onQueueMessage: onQueueMessage,
-                  onCancelMessage: onCancelMessage,
-                  pendingQueueMessages: pendingQueueMessages,
-                  isPendingQueueExpanded: isPendingQueueExpanded,
-                  onPendingQueueExpandedChange: onPendingQueueExpandedChange,
-                  onDeletePendingQueueMessage: onDeletePendingQueueMessage,
-                  onEditPendingQueueMessage: onEditPendingQueueMessage,
-                  onSendPendingQueueMessage: onSendPendingQueueMessage,
-                  attachments: attachments,
-                  onAttachImage: onAttachImage,
-                  onTakePhoto: onTakePhoto,
-                  onAttachMemory: onAttachMemory,
-                  onAttachFile: onAttachFile,
-                  onAttachFiles: onAttachFiles,
-                  onAttachScreenContent: onAttachScreenContent,
-                  onAttachNotifications: onAttachNotifications,
-                  onAttachLocation: onAttachLocation,
-                  onAttachPackage: onAttachPackage,
-                  onRemoveAttachment: onRemoveAttachment,
-                  onInsertAttachment: onInsertAttachment,
-                ),
+                _buildChatInputSection(inputStyle),
             ],
           ],
         ),
@@ -242,11 +226,82 @@ class ChatScreenContent extends StatelessWidget {
             ),
           ),
         ),
-        const TtsFloatingPanel(),
       ],
     );
   }
 
+  /// Builds the chat input section selected by the saved input style.
+  Widget _buildChatInputSection(String inputStyle) {
+    return switch (inputStyle) {
+      UserPreferencesManager.INPUT_STYLE_AGENT => AgentChatInputSection(
+        controller: messageController,
+        focusNode: inputFocusNode,
+        isLoading: loading,
+        inputState: inputProcessingState,
+        viewModel: viewModel,
+        currentChatId: currentChatId,
+        onSendMessage: onSendMessage,
+        onQueueMessage: onQueueMessage,
+        onCancelMessage: onCancelMessage,
+        pendingQueueMessages: pendingQueueMessages,
+        isPendingQueueExpanded: isPendingQueueExpanded,
+        onPendingQueueExpandedChange: onPendingQueueExpandedChange,
+        onDeletePendingQueueMessage: onDeletePendingQueueMessage,
+        onEditPendingQueueMessage: onEditPendingQueueMessage,
+        onSendPendingQueueMessage: onSendPendingQueueMessage,
+        attachments: attachments,
+        onAttachImage: onAttachImage,
+        onTakePhoto: onTakePhoto,
+        onAttachMemory: onAttachMemory,
+        onAttachFile: onAttachFile,
+        onAttachFiles: onAttachFiles,
+        onAttachScreenContent: onAttachScreenContent,
+        onAttachNotifications: onAttachNotifications,
+        onAttachLocation: onAttachLocation,
+        onAttachPackage: onAttachPackage,
+        onRemoveAttachment: onRemoveAttachment,
+        onInsertAttachment: onInsertAttachment,
+        isSpeechRecording: isSpeechRecording,
+        isSpeechTranscribing: isSpeechTranscribing,
+        onSpeechInput: onSpeechInput,
+      ),
+      UserPreferencesManager.INPUT_STYLE_CLASSIC => ClassicChatInputSection(
+        controller: messageController,
+        focusNode: inputFocusNode,
+        isLoading: loading,
+        inputState: inputProcessingState,
+        viewModel: viewModel,
+        currentChatId: currentChatId,
+        onSendMessage: onSendMessage,
+        onQueueMessage: onQueueMessage,
+        onCancelMessage: onCancelMessage,
+        pendingQueueMessages: pendingQueueMessages,
+        isPendingQueueExpanded: isPendingQueueExpanded,
+        onPendingQueueExpandedChange: onPendingQueueExpandedChange,
+        onDeletePendingQueueMessage: onDeletePendingQueueMessage,
+        onEditPendingQueueMessage: onEditPendingQueueMessage,
+        onSendPendingQueueMessage: onSendPendingQueueMessage,
+        attachments: attachments,
+        onAttachImage: onAttachImage,
+        onTakePhoto: onTakePhoto,
+        onAttachMemory: onAttachMemory,
+        onAttachFile: onAttachFile,
+        onAttachFiles: onAttachFiles,
+        onAttachScreenContent: onAttachScreenContent,
+        onAttachNotifications: onAttachNotifications,
+        onAttachLocation: onAttachLocation,
+        onAttachPackage: onAttachPackage,
+        onRemoveAttachment: onRemoveAttachment,
+        onInsertAttachment: onInsertAttachment,
+        isSpeechRecording: isSpeechRecording,
+        isSpeechTranscribing: isSpeechTranscribing,
+        onSpeechInput: onSpeechInput,
+      ),
+      _ => throw FormatException('Unknown chat input style: $inputStyle'),
+    };
+  }
+
+  /// Builds the scrollable chat area with message-level actions.
   Widget _buildChatArea(BuildContext context) {
     return ChatArea(
       messages: messages,
@@ -283,6 +338,7 @@ class ChatScreenContent extends StatelessWidget {
     );
   }
 
+  /// Plays the selected message through the configured TTS voice.
   Future<void> _playVoice(BuildContext context, ChatUiMessage message) async {
     try {
       final targetCharacterName = _voiceCharacterName(message);
@@ -292,9 +348,11 @@ class ChatScreenContent extends StatelessWidget {
       }
       final cards = await viewModel.clients.preferencesCharacterCardManager
           .getAllCharacterCards();
-      final matchingCards = cards.where((card) {
-        return card.name.trim() == targetCharacterName;
-      }).toList(growable: false);
+      final matchingCards = cards
+          .where((card) {
+            return card.name.trim() == targetCharacterName;
+          })
+          .toList(growable: false);
       if (matchingCards.length != 1) {
         _showTtsSnack(context, '角色卡匹配数量不是 1：$targetCharacterName');
         return;
@@ -315,20 +373,23 @@ class ChatScreenContent extends StatelessWidget {
     }
   }
 
+  /// Resolves the character name used for message TTS playback.
   String? _voiceCharacterName(ChatUiMessage message) {
     final roleName = message.roleName.trim();
     return roleName.isEmpty ? null : roleName;
   }
 
+  /// Shows a snackbar for TTS status and errors.
   void _showTtsSnack(BuildContext context, String message) {
     if (!context.mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Resolves the message indices eligible for multi-select actions.
   List<int> get _selectableMessageIndices {
     return List<int>.generate(messages.length, (index) => index)
         .where((index) {
@@ -338,6 +399,7 @@ class ChatScreenContent extends StatelessWidget {
         .toList(growable: false);
   }
 
+  /// Copies the selected messages into the system clipboard.
   Future<void> _copySelectedMessages(BuildContext context) async {
     final selectedMessages = selectedMessageIndices.toList()..sort();
     final text = selectedMessages
@@ -347,6 +409,7 @@ class ChatScreenContent extends StatelessWidget {
     await Clipboard.setData(ClipboardData(text: text));
   }
 
+  /// Confirms deletion of the selected messages.
   Future<void> _confirmDeleteSelected(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -372,6 +435,7 @@ class ChatScreenContent extends StatelessWidget {
     }
   }
 
+  /// Generates and previews a share image for the selected messages.
   Future<void> _generateShareImage(BuildContext context) async {
     showDialog<void>(
       context: context,

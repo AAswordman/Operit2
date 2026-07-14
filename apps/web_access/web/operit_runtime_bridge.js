@@ -5,12 +5,19 @@
   const filePrefix = "operit2.files.";
   const sqlitePrefix = "operit2.sqlite.";
   const secretPrefix = "operit2.secrets.";
+  const storageDatabaseName = "operit2.host.storage";
+  const storageObjectStoreName = "entries";
+  const storageCache = new Map();
   const sqliteConnections = new Map();
   const sqliteTransactions = new Map();
   let sqliteConnectionIndex = 0;
   let sqliteTransactionIndex = 0;
   let sqliteModulePromise;
   let SQLite;
+  let storageDatabasePromise;
+  let storageReadyPromise;
+  let webLocalInferenceReadyPromise;
+  let webLocalInferenceState;
 
   const webAccessSessionStorageKey = "operit2.webAccess.session";
   const pairingServiceVersion = 1;
@@ -334,10 +341,21 @@
       return pushSendTail;
     }
 
+    /** Returns whether the link error requests a saved Web Access session reset. */
+    function shouldResetWebAccessSession(status, error) {
+      const details = error.details;
+      return status === 401 &&
+        error.code === "UNAUTHORIZED" &&
+        details !== null &&
+        typeof details === "object" &&
+        details.type === "remote_session_auth" &&
+        details.resetWebAccessSession === true;
+    }
+
     /** Decodes and throws one MessagePack Link error response. */
     function throwLinkErrorResponse(status, bytes) {
       const error = MessagePack.decode(bytes);
-      if (status === 401 && error.code === "UNAUTHORIZED" && error.message === "invalid session") {
+      if (shouldResetWebAccessSession(status, error)) {
         resetWebAccessSession();
       }
       throw new Error(`${error.code}: ${error.message}`);
@@ -532,23 +550,109 @@
     return new Date().toISOString();
   }
 
+  // Opens the browser storage database used for large runtime files.
+  function openStorageDatabase() {
+    if (!storageDatabasePromise) {
+      storageDatabasePromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(storageDatabaseName, 1);
+        request.onupgradeneeded = () => {
+          request.result.createObjectStore(storageObjectStoreName);
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error("indexedDB open failed"));
+      });
+    }
+    return storageDatabasePromise;
+  }
+
+  // Loads the persisted storage entries into the synchronous memory view.
+  async function ensureBrowserStorage() {
+    if (!storageReadyPromise) {
+      storageReadyPromise = (async () => {
+        const database = await openStorageDatabase();
+        await new Promise((resolve, reject) => {
+          const transaction = database.transaction(storageObjectStoreName, "readonly");
+          const store = transaction.objectStore(storageObjectStoreName);
+          const request = store.openCursor();
+          request.onsuccess = () => {
+            const cursor = request.result;
+            if (cursor) {
+              storageCache.set(cursor.key, new Uint8Array(cursor.value));
+              cursor.continue();
+            }
+          };
+          request.onerror = () => reject(request.error || new Error("indexedDB cursor failed"));
+          transaction.oncomplete = resolve;
+          transaction.onerror = () => reject(transaction.error || new Error("indexedDB read failed"));
+        });
+        migrateLocalStorageEntries(runtimePrefix);
+        migrateLocalStorageEntries(filePrefix);
+        migrateLocalStorageEntries(sqlitePrefix);
+      })();
+    }
+    return storageReadyPromise;
+  }
+
+  // Copies existing localStorage-hosted entries into the synchronous storage view.
+  function migrateLocalStorageEntries(prefix) {
+    const migratedKeys = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const itemKey = localStorage.key(index);
+      if (itemKey && itemKey.startsWith(prefix)) {
+        storageCache.set(itemKey, base64ToBytes(localStorage.getItem(itemKey)));
+        persistStorageEntry(itemKey, storageCache.get(itemKey));
+        migratedKeys.push(itemKey);
+      }
+    }
+    for (const itemKey of migratedKeys) {
+      localStorage.removeItem(itemKey);
+    }
+  }
+
+  // Persists one memory-view entry into IndexedDB.
+  async function persistStorageEntry(itemKey, bytes) {
+    const database = await openStorageDatabase();
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction(storageObjectStoreName, "readwrite");
+      transaction.objectStore(storageObjectStoreName).put(new Uint8Array(bytes), itemKey);
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error || new Error("indexedDB write failed"));
+    });
+  }
+
+  // Removes one memory-view entry from IndexedDB.
+  async function removeStorageEntry(itemKey) {
+    const database = await openStorageDatabase();
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction(storageObjectStoreName, "readwrite");
+      transaction.objectStore(storageObjectStoreName).delete(itemKey);
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error || new Error("indexedDB delete failed"));
+    });
+  }
+
   function storageRead(prefix, path) {
-    return base64ToBytes(localStorage.getItem(key(prefix, path)));
+    return storageCache.get(key(prefix, path)) || new Uint8Array();
   }
 
   function storageWrite(prefix, path, content) {
-    localStorage.setItem(key(prefix, path), bytesToBase64(new Uint8Array(content)));
+    const itemKey = key(prefix, path);
+    const bytes = new Uint8Array(content);
+    storageCache.set(itemKey, bytes);
+    void persistStorageEntry(itemKey, bytes);
+    if (isLocalModelRegistryPath(prefix, path)) {
+      scheduleWebLocalInferenceRefresh();
+    }
   }
 
   function storageExists(prefix, path) {
     const exact = key(prefix, path);
     const directory = exact.endsWith("/") ? exact : exact + "/";
-    if (localStorage.getItem(exact) !== null) {
+    if (storageCache.has(exact)) {
       return true;
     }
-    for (let index = 0; index < localStorage.length; index += 1) {
-      const itemKey = localStorage.key(index);
-      if (itemKey && itemKey.startsWith(directory)) {
+    for (const itemKey of storageCache.keys()) {
+      if (itemKey.startsWith(directory)) {
         return true;
       }
     }
@@ -558,35 +662,45 @@
   function storageDelete(prefix, path, recursive) {
     const exact = key(prefix, path);
     const directory = exact.endsWith("/") ? exact : exact + "/";
-    localStorage.removeItem(exact);
+    storageCache.delete(exact);
+    void removeStorageEntry(exact);
     if (recursive) {
       const keys = [];
-      for (let index = 0; index < localStorage.length; index += 1) {
-        const itemKey = localStorage.key(index);
-        if (itemKey && itemKey.startsWith(directory)) {
+      for (const itemKey of storageCache.keys()) {
+        if (itemKey.startsWith(directory)) {
           keys.push(itemKey);
         }
       }
       for (const itemKey of keys) {
-        localStorage.removeItem(itemKey);
+        storageCache.delete(itemKey);
+        void removeStorageEntry(itemKey);
       }
     }
+    if (isLocalModelRegistryPath(prefix, path)) {
+      scheduleWebLocalInferenceRefresh();
+    }
+  }
+
+  // Returns whether one storage mutation commits the local model registry.
+  function isLocalModelRegistryPath(prefix, path) {
+    return prefix === runtimePrefix &&
+      normalizeRuntimePath(path) ===
+        "runtime/config/preferences/local_model_registry.preferences.json";
   }
 
   function storageList(prefix, path) {
     const root = key(prefix, path);
     const directory = root.endsWith(".") || root.endsWith("/") ? root : root + "/";
     const entries = [];
-    for (let index = 0; index < localStorage.length; index += 1) {
-      const itemKey = localStorage.key(index);
-      if (!itemKey || !itemKey.startsWith(directory)) {
+    for (const itemKey of storageCache.keys()) {
+      if (!itemKey.startsWith(directory)) {
         continue;
       }
       const pathValue = itemKey.substring(prefix.length);
       entries.push({
         path: pathValue,
         isDirectory: false,
-        size: base64ToBytes(localStorage.getItem(itemKey)).length,
+        size: storageCache.get(itemKey).length,
       });
     }
     return entries;
@@ -627,7 +741,7 @@
   }
 
   function saveSqliteDatabase(connection) {
-    localStorage.setItem(sqliteKey(connection.path), bytesToBase64(connection.db.export()));
+    storageWrite(sqlitePrefix, connection.path, connection.db.export());
   }
 
   function sqliteConnection(id) {
@@ -724,6 +838,9 @@
 
   const ttsPlayback = (() => {
     let activeUtterance = null;
+    let activeAudio = null;
+    let activeAudioUrl = null;
+    let activeAudioPaused = false;
     let activePath = "";
     let utteranceIndex = 0;
     let lastDetails = "browser speech synthesis idle";
@@ -771,6 +888,14 @@
     }
 
     function currentStatus(details) {
+      if (activeAudio !== null) {
+        return {
+          path: activePath,
+          active: !activeAudio.ended,
+          paused: activeAudioPaused,
+          details,
+        };
+      }
       const engine = synthesis();
       const active = activeUtterance !== null || engine.speaking || engine.pending;
       return {
@@ -781,7 +906,79 @@
       };
     }
 
+    // Resolves the media type for one generated TTS resource path.
+    function audioContentType(path) {
+      const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+      switch (extension) {
+        case "aac": return "audio/aac";
+        case "flac": return "audio/flac";
+        case "m4a": return "audio/mp4";
+        case "mp3": return "audio/mpeg";
+        case "ogg":
+        case "oga":
+        case "opus": return "audio/ogg";
+        case "wav": return "audio/wav";
+        case "webm": return "audio/webm";
+        default: return "application/octet-stream";
+      }
+    }
+
+    // Releases the browser audio element and its object URL.
+    function releaseAudio() {
+      if (activeAudio !== null) {
+        activeAudio.pause();
+        activeAudio.onended = null;
+        activeAudio.onerror = null;
+        activeAudio = null;
+        activeAudioPaused = false;
+      }
+      if (activeAudioUrl !== null) {
+        URL.revokeObjectURL(activeAudioUrl);
+        activeAudioUrl = null;
+      }
+    }
+
     return {
+      playAudio(path) {
+        const audioPath = requireText(path, "tts audio path");
+        if (audioPath.length === 0) {
+          throw new Error("tts audio path is empty");
+        }
+        const bytes = storageRead(runtimePrefix, audioPath);
+        if (bytes.length === 0) {
+          throw new Error(`tts audio resource is empty or missing: ${audioPath}`);
+        }
+        synthesis().cancel();
+        activeUtterance = null;
+        releaseAudio();
+        activeAudioUrl = URL.createObjectURL(
+          new Blob([bytes], { type: audioContentType(audioPath) })
+        );
+        const audio = new Audio(activeAudioUrl);
+        activeAudio = audio;
+        activeAudioPaused = false;
+        activePath = audioPath;
+        lastDetails = "browser generated TTS playback started";
+        audio.onended = () => {
+          if (activeAudio === audio) {
+            releaseAudio();
+            lastDetails = "browser generated TTS playback completed";
+          }
+        };
+        audio.onerror = () => {
+          if (activeAudio === audio) {
+            releaseAudio();
+            lastDetails = "browser generated TTS playback error";
+          }
+        };
+        void audio.play().catch((error) => {
+          if (activeAudio === audio) {
+            releaseAudio();
+            lastDetails = `browser generated TTS playback error: ${error}`;
+          }
+        });
+        return currentStatus(lastDetails);
+      },
       speakText(request) {
         const text = requireText(request.text, "tts text");
         if (text.length === 0) {
@@ -797,6 +994,7 @@
           engine.cancel();
           activeUtterance = null;
         }
+        releaseAudio();
         const utterance = new SpeechSynthesisUtterance(text);
         const voice = selectedVoice(voiceName);
         if (voice !== null) {
@@ -827,18 +1025,29 @@
         return currentStatus(lastDetails);
       },
       pauseSpeech() {
-        synthesis().pause();
+        if (activeAudio !== null) {
+          activeAudio.pause();
+          activeAudioPaused = true;
+        } else {
+          synthesis().pause();
+        }
         lastDetails = "browser speech synthesis paused";
         return currentStatus(lastDetails);
       },
       resumeSpeech() {
-        synthesis().resume();
+        if (activeAudio !== null) {
+          void activeAudio.play();
+          activeAudioPaused = false;
+        } else {
+          synthesis().resume();
+        }
         lastDetails = "browser speech synthesis resumed";
         return currentStatus(lastDetails);
       },
       stopSpeech() {
         synthesis().cancel();
         activeUtterance = null;
+        releaseAudio();
         lastDetails = "browser speech synthesis stopped";
         return {
           path: activePath,
@@ -1180,6 +1389,614 @@
     return names;
   }
 
+  // Schedules browser local inference discovery after storage changes.
+  function scheduleWebLocalInferenceRefresh() {
+    webLocalInferenceReadyPromise = null;
+    queueMicrotask(() => {
+      void ensureWebLocalInference().catch((error) => {
+        console.warn("[Operit local inference]", error);
+      });
+    });
+  }
+
+  // Initializes installed browser local inference bundles.
+  async function ensureWebLocalInference() {
+    if (!webLocalInferenceReadyPromise) {
+      webLocalInferenceReadyPromise = (async () => {
+        const state = {
+          asrBundles: new Map(),
+          ttsBundles: new Map(),
+          blobUrls: [],
+        };
+        try {
+          await loadInstalledWebTtsBundles(state);
+          await loadInstalledWebAsrBundles(state);
+        } catch (error) {
+          disposeWebLocalInferenceState(state);
+          throw error;
+        }
+        disposeWebLocalInferenceState(webLocalInferenceState);
+        webLocalInferenceState = state;
+        globalThis.__operitLocalInference = {
+          transcribeLocalSpeech: transcribeWebLocalSpeech,
+          synthesizeLocalSpeech: synthesizeWebLocalSpeech,
+        };
+      })();
+    }
+    return webLocalInferenceReadyPromise;
+  }
+
+  // Releases all native objects and Blob URLs owned by one Web inference state.
+  function disposeWebLocalInferenceState(state) {
+    if (!state) {
+      return;
+    }
+    for (const bundle of state.asrBundles.values()) {
+      bundle.recognizer.free();
+    }
+    for (const bundle of state.ttsBundles.values()) {
+      bundle.worker.terminate();
+    }
+    for (const url of state.blobUrls) {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  // Loads every complete browser ASR bundle visible in runtime storage.
+  async function loadInstalledWebAsrBundles(state) {
+    const roots = runtimeBundleRoots("sherpa-onnx-asr.js");
+    for (const root of roots) {
+      const paths = {
+        recognizerScript: `${root}/sherpa-onnx-asr.js`,
+        runtimeScript: `${root}/sherpa-onnx-wasm-main-vad-asr.js`,
+        runtimeWasm: `${root}/sherpa-onnx-wasm-main-vad-asr.wasm`,
+        runtimeData: `${root}/sherpa-onnx-wasm-main-vad-asr.data`,
+      };
+      if (runtimePathsExist(Object.values(paths))) {
+        state.asrBundles.set(root, await createWebAsrBundle(paths, state));
+      }
+    }
+  }
+
+  // Loads every complete browser TTS bundle visible in runtime storage.
+  async function loadInstalledWebTtsBundles(state) {
+    const roots = runtimeBundleRoots("sherpa-onnx-tts.js");
+    for (const root of roots) {
+      const paths = {
+        ttsScript: `${root}/sherpa-onnx-tts.js`,
+        runtimeScript: `${root}/sherpa-onnx-wasm-main-tts.js`,
+        runtimeWasm: `${root}/sherpa-onnx-wasm-main-tts.wasm`,
+        runtimeData: `${root}/sherpa-onnx-wasm-main-tts.data`,
+      };
+      if (runtimePathsExist(Object.values(paths))) {
+        state.ttsBundles.set(root, await createWebTtsBundle(paths, state));
+      }
+    }
+  }
+
+  // Returns storage roots ending with one exact bundle file name.
+  function runtimeBundleRoots(fileName) {
+    const suffix = `/${fileName}`;
+    const roots = [];
+    for (const itemKey of storageCache.keys()) {
+      if (!itemKey.startsWith(runtimePrefix) || !itemKey.endsWith(suffix)) {
+        continue;
+      }
+      roots.push(itemKey.substring(runtimePrefix.length, itemKey.length - suffix.length));
+    }
+    return roots;
+  }
+
+  // Checks that every runtime path is present in the synchronous storage view.
+  function runtimePathsExist(paths) {
+    return paths.every((path) => storageExists(runtimePrefix, path));
+  }
+
+  // Creates a blob URL for one runtime-storage file.
+  function runtimeBlobUrl(path, contentType, state) {
+    const bytes = storageRead(runtimePrefix, path);
+    if (bytes.length === 0) {
+      throw new Error(`runtime file is empty or missing: ${path}`);
+    }
+    const url = URL.createObjectURL(new Blob([bytes], { type: contentType }));
+    state.blobUrls.push(url);
+    return url;
+  }
+
+  // Creates a JavaScript Blob URL with one exact source suffix.
+  function runtimeJavaScriptUrl(path, suffix, state) {
+    const bytes = storageRead(runtimePrefix, path);
+    if (bytes.length === 0) {
+      throw new Error(`runtime file is empty or missing: ${path}`);
+    }
+    const source = `${textDecoder.decode(bytes)}\n${suffix}\n`;
+    const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+    state.blobUrls.push(url);
+    return url;
+  }
+
+  // Loads a classic script from a blob URL.
+  function loadClassicScriptUrl(src) {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = src;
+      script.onload = resolve;
+      script.onerror = () => reject(new Error(`failed to load ${src}`));
+      document.head.appendChild(script);
+    });
+  }
+
+  // Builds one browser ASR bundle from installed Sherpa files.
+  async function createWebAsrBundle(paths, state) {
+    requireCrossOriginIsolation("ASR");
+    const urls = {
+      recognizerScript: runtimeJavaScriptUrl(
+        paths.recognizerScript,
+        "globalThis.__operitSherpaAsrClasses = { OfflineRecognizer };",
+        state,
+      ),
+      runtimeScript: runtimeBlobUrl(paths.runtimeScript, "text/javascript", state),
+      runtimeWasm: runtimeBlobUrl(paths.runtimeWasm, "application/wasm", state),
+      runtimeData: runtimeBlobUrl(paths.runtimeData, "application/octet-stream", state),
+    };
+    const moduleValue = {};
+    const ready = new Promise((resolve, reject) => {
+      moduleValue.mainScriptUrlOrBlob = urls.runtimeScript;
+      moduleValue.locateFile = (path) => {
+        if (path === "sherpa-onnx-wasm-main-vad-asr.wasm") return urls.runtimeWasm;
+        if (path === "sherpa-onnx-wasm-main-vad-asr.data") return urls.runtimeData;
+        return path;
+      };
+      moduleValue.setStatus = (status) => console.debug("[Operit ASR]", status);
+      moduleValue.onRuntimeInitialized = () => resolve(moduleValue);
+      moduleValue.onAbort = (reason) => reject(new Error(String(reason)));
+    });
+    globalThis.Module = moduleValue;
+    await loadClassicScriptUrl(urls.runtimeScript);
+    await ready;
+    await loadClassicScriptUrl(urls.recognizerScript);
+    const classes = globalThis.__operitSherpaAsrClasses;
+    if (!classes || typeof classes.OfflineRecognizer !== "function") {
+      throw new Error("Web ASR recognizer class was not exported");
+    }
+    const recognizer = new classes.OfflineRecognizer(webAsrConfig(), moduleValue);
+    return { recognizer, moduleValue };
+  }
+
+  // Returns the Paraformer ASR config embedded in the Web bundle.
+  function webAsrConfig() {
+    return {
+      modelConfig: {
+        debug: 0,
+        tokens: "./tokens.txt",
+        paraformer: {
+          model: "./paraformer.onnx",
+        },
+      },
+    };
+  }
+
+  // Builds one browser TTS bundle from installed Sherpa files.
+  async function createWebTtsBundle(paths, state) {
+    requireCrossOriginIsolation("TTS");
+    const urls = {
+      ttsScript: runtimeBlobUrl(paths.ttsScript, "text/javascript", state),
+      runtimeScript: runtimeBlobUrl(paths.runtimeScript, "text/javascript", state),
+      runtimeWasm: runtimeBlobUrl(paths.runtimeWasm, "application/wasm", state),
+      runtimeData: runtimeBlobUrl(paths.runtimeData, "application/octet-stream", state),
+    };
+    const workerSource = webTtsWorkerSource(urls);
+    const workerUrl = URL.createObjectURL(new Blob([workerSource], { type: "text/javascript" }));
+    state.blobUrls.push(workerUrl);
+    const worker = new Worker(workerUrl, { type: "module", name: "operit-web-tts" });
+    const instance = await waitForWebTtsWorker(worker);
+    return {
+      worker,
+      numSpeakers: instance.numSpeakers,
+      sampleRate: instance.sampleRate,
+    };
+  }
+
+  // Builds the isolated module-worker source required by Sherpa Web TTS.
+  function webTtsWorkerSource(urls) {
+    return `
+import createModule from ${JSON.stringify(urls.runtimeScript)};
+import { createOfflineTts } from ${JSON.stringify(urls.ttsScript)};
+
+const pendingAudio = new Map();
+
+// Writes one worker failure into the shared control buffer.
+function writeError(controlBuffer, error) {
+  const control = new Int32Array(controlBuffer, 0, 3);
+  const payload = new Uint8Array(controlBuffer, 12);
+  const message = error instanceof Error ? error.stack || error.message : String(error);
+  const bytes = new TextEncoder().encode(message);
+  const length = Math.min(bytes.length, payload.length);
+  payload.set(bytes.subarray(0, length));
+  Atomics.store(control, 1, length);
+  Atomics.store(control, 0, -1);
+  Atomics.notify(control, 0);
+}
+
+// Encodes Float32 samples into mono PCM16 WAV bytes.
+function encodeWav(samples, sampleRate) {
+  const bytes = new Uint8Array(44 + samples.length * 2);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, 0x46464952, true);
+  view.setUint32(4, 36 + samples.length * 2, true);
+  view.setUint32(8, 0x45564157, true);
+  view.setUint32(12, 0x20746d66, true);
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  view.setUint32(36, 0x61746164, true);
+  view.setUint32(40, samples.length * 2, true);
+  for (let index = 0; index < samples.length; index += 1) {
+    const value = Math.max(-1, Math.min(1, samples[index]));
+    view.setInt16(44 + index * 2, value * 32767, true);
+  }
+  return bytes;
+}
+
+let tts = null;
+try {
+  const moduleValue = await createModule({
+    mainScriptUrlOrBlob: ${JSON.stringify(urls.runtimeScript)},
+    locateFile(path) {
+      if (path === "sherpa-onnx-wasm-main-tts.wasm") return ${JSON.stringify(urls.runtimeWasm)};
+      if (path === "sherpa-onnx-wasm-main-tts.data") return ${JSON.stringify(urls.runtimeData)};
+      return path;
+    },
+    setStatus(status) {
+      self.postMessage({ type: "status", status });
+    },
+  });
+  tts = createOfflineTts(moduleValue, {
+    offlineTtsModelConfig: {
+      offlineTtsVitsModelConfig: {
+        model: "./en_US-libritts_r-medium.onnx",
+        lexicon: "",
+        tokens: "./tokens.txt",
+        dataDir: "./espeak-ng-data",
+        noiseScale: 0.667,
+        noiseScaleW: 0.8,
+        lengthScale: 1.0,
+      },
+      numThreads: 1,
+      debug: 0,
+      provider: "cpu",
+    },
+    ruleFsts: "",
+    ruleFars: "",
+    maxNumSentences: 1,
+    silenceScale: 0.2,
+  });
+  self.postMessage({
+    type: "ready",
+    numSpeakers: tts.numSpeakers,
+    sampleRate: tts.sampleRate,
+  });
+} catch (error) {
+  const message = error instanceof Error ? error.stack || error.message : String(error);
+  self.postMessage({ type: "initError", message });
+}
+
+self.onmessage = (event) => {
+  const message = event.data;
+  try {
+    if (message.type === "generate") {
+      const audio = tts.generate({
+        text: message.text,
+        sid: message.sid,
+        speed: message.speed,
+      });
+      const bytes = encodeWav(audio.samples, audio.sampleRate || tts.sampleRate);
+      pendingAudio.set(message.requestId, bytes);
+      const control = new Int32Array(message.controlBuffer, 0, 3);
+      Atomics.store(control, 1, bytes.length);
+      Atomics.store(control, 0, 1);
+      Atomics.notify(control, 0);
+      return;
+    }
+    if (message.type === "copy") {
+      const bytes = pendingAudio.get(message.requestId);
+      if (!bytes) throw new Error("Web TTS pending audio is missing");
+      const output = new Uint8Array(message.outputBuffer);
+      if (output.length !== bytes.length) throw new Error("Web TTS output buffer length mismatch");
+      output.set(bytes);
+      pendingAudio.delete(message.requestId);
+      const control = new Int32Array(message.controlBuffer, 0, 3);
+      Atomics.store(control, 0, 2);
+      Atomics.notify(control, 0);
+      return;
+    }
+    throw new Error("Web TTS worker method is unknown");
+  } catch (error) {
+    writeError(message.controlBuffer, error);
+  }
+};
+`;
+  }
+
+  // Waits for one Web TTS worker to initialize its model instance.
+  function waitForWebTtsWorker(worker) {
+    return new Promise((resolve, reject) => {
+      const onMessage = (event) => {
+        const message = event.data;
+        if (message.type === "status") {
+          console.debug("[Operit TTS]", message.status);
+          return;
+        }
+        if (message.type === "ready") {
+          worker.removeEventListener("message", onMessage);
+          worker.removeEventListener("error", onError);
+          resolve(message);
+          return;
+        }
+        if (message.type === "initError") {
+          worker.removeEventListener("message", onMessage);
+          worker.removeEventListener("error", onError);
+          reject(new Error(message.message));
+        }
+      };
+      const onError = (event) => {
+        worker.removeEventListener("message", onMessage);
+        worker.removeEventListener("error", onError);
+        reject(new Error(event.message || "Web TTS worker initialization failed"));
+      };
+      worker.addEventListener("message", onMessage);
+      worker.addEventListener("error", onError);
+    });
+  }
+
+  // Runs one synchronous command against an initialized Web TTS worker.
+  function generateWebTtsWav(bundle, text, speaker, speed) {
+    const requestId = crypto.randomUUID();
+    const controlBuffer = new SharedArrayBuffer(65_536);
+    const control = new Int32Array(controlBuffer, 0, 3);
+    bundle.worker.postMessage({
+      type: "generate",
+      requestId,
+      text,
+      sid: speaker,
+      speed,
+      controlBuffer,
+    });
+    waitForWebTtsControl(control, 1);
+    const byteLength = Atomics.load(control, 1);
+    if (byteLength <= 44) {
+      throw new Error(`Web TTS worker returned an invalid WAV length: ${byteLength}`);
+    }
+    const outputBuffer = new SharedArrayBuffer(byteLength);
+    Atomics.store(control, 0, 0);
+    bundle.worker.postMessage({
+      type: "copy",
+      requestId,
+      outputBuffer,
+      controlBuffer,
+    });
+    waitForWebTtsControl(control, 2);
+    return new Uint8Array(outputBuffer);
+  }
+
+  // Waits for one exact worker state while preserving worker error text.
+  function waitForWebTtsControl(control, expectedState) {
+    const deadline = performance.now() + 600_000;
+    while (true) {
+      const state = Atomics.load(control, 0);
+      if (state === expectedState) {
+        return;
+      }
+      if (state === -1) {
+        const length = Atomics.load(control, 1);
+        const bytes = new Uint8Array(control.buffer, 12, length);
+        throw new Error(new TextDecoder().decode(bytes));
+      }
+      if (performance.now() >= deadline) {
+        throw new Error("Web TTS worker command timed out");
+      }
+    }
+  }
+
+  // Requires the response isolation headers needed by threaded Sherpa WASM.
+  function requireCrossOriginIsolation(capability) {
+    if (globalThis.crossOriginIsolated !== true) {
+      throw new Error(
+        `Web local ${capability} requires Cross-Origin-Opener-Policy: same-origin and ` +
+          "Cross-Origin-Embedder-Policy: require-corp",
+      );
+    }
+  }
+
+  // Transcribes one local Web speech request.
+  function transcribeWebLocalSpeech(requestJson) {
+    const state = requireWebLocalInferenceState();
+    const request = JSON.parse(requestJson);
+    const driver = parseTaggedDriver(request.driverJson, "SherpaOnnxWebAsrBundle");
+    const root = runtimeDirectoryForDriver(request.modelDirectory, driver.recognizerScript);
+    const bundle = state.asrBundles.get(root);
+    if (!bundle) {
+      throw new Error(`Web ASR bundle is not initialized: ${root}`);
+    }
+    const wav = decodeMonoPcmWav(storageRead(runtimePrefix, request.audioPath));
+    const stream = bundle.recognizer.createStream();
+    try {
+      stream.acceptWaveform(wav.sampleRate, wav.samples);
+      bundle.recognizer.decode(stream);
+      const result = bundle.recognizer.getResult(stream);
+      return JSON.stringify({
+        text: result.text || "",
+        resultJson: JSON.stringify(result),
+      });
+    } finally {
+      stream.free();
+    }
+  }
+
+  // Synthesizes one local Web speech request.
+  function synthesizeWebLocalSpeech(requestJson) {
+    const state = requireWebLocalInferenceState();
+    const request = JSON.parse(requestJson);
+    const driver = parseTaggedDriver(request.driverJson, "SherpaOnnxWebTtsBundle");
+    const speaker = Number.parseInt(String(request.voice), 10);
+    if (!Number.isInteger(speaker) || speaker < 0 || speaker >= driver.speakerCount) {
+      throw new Error(`Web TTS speaker is outside 0..${driver.speakerCount - 1}`);
+    }
+    const root = runtimeDirectoryForDriver(request.modelDirectory, driver.ttsScript);
+    const bundle = state.ttsBundles.get(root);
+    if (!bundle) {
+      throw new Error(`Web TTS bundle is not initialized: ${root}`);
+    }
+    if (bundle.numSpeakers !== driver.speakerCount) {
+      throw new Error(
+        `Web TTS speaker count mismatch: manifest=${driver.speakerCount}, ` +
+          `engine=${bundle.numSpeakers}`,
+      );
+    }
+    const wav = generateWebTtsWav(
+      bundle,
+      String(request.text),
+      speaker,
+      Number(request.speed),
+    );
+    storageWrite(runtimePrefix, request.outputPath, wav);
+    return JSON.stringify({
+      audioPath: request.outputPath,
+      outputFormat: "wav",
+    });
+  }
+
+  // Returns the initialized Web local inference state.
+  function requireWebLocalInferenceState() {
+    if (!webLocalInferenceState) {
+      throw new Error("Web local inference runner is still initializing");
+    }
+    return webLocalInferenceState;
+  }
+
+  // Parses one externally tagged local model driver.
+  function parseTaggedDriver(driverJson, expectedTag) {
+    const root = JSON.parse(driverJson);
+    const keys = Object.keys(root);
+    if (keys.length !== 1 || keys[0] !== expectedTag) {
+      throw new Error(`Web local inference driver must be ${expectedTag}`);
+    }
+    return root[expectedTag];
+  }
+
+  // Resolves a model bundle root from model directory and driver script path.
+  function runtimeDirectoryForDriver(modelDirectory, relativeFilePath) {
+    const directory = normalizeRuntimePath(modelDirectory);
+    const filePath = normalizeRuntimePath(relativeFilePath);
+    const slash = filePath.lastIndexOf("/");
+    if (slash < 0) {
+      return directory;
+    }
+    return normalizeRuntimePath(`${directory}/${filePath.slice(0, slash)}`);
+  }
+
+  // Normalizes runtime storage paths to slash separators.
+  function normalizeRuntimePath(path) {
+    return String(path).replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+  }
+
+  // Decodes one mono PCM WAV byte payload into Float32 samples.
+  function decodeMonoPcmWav(bytes) {
+    if (bytes.length < 44) {
+      throw new Error("WAV input is too small");
+    }
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (view.getUint32(0, true) !== 0x46464952 || view.getUint32(8, true) !== 0x45564157) {
+      throw new Error("WAV input has invalid RIFF header");
+    }
+    let offset = 12;
+    let sampleRate = 0;
+    let channels = 0;
+    let bitsPerSample = 0;
+    let audioFormat = 0;
+    let dataOffset = -1;
+    let dataSize = 0;
+    while (offset + 8 <= view.byteLength) {
+      const chunkId = view.getUint32(offset, true);
+      const chunkSize = view.getUint32(offset + 4, true);
+      const chunkDataOffset = offset + 8;
+      if (chunkId === 0x20746d66) {
+        audioFormat = view.getUint16(chunkDataOffset, true);
+        channels = view.getUint16(chunkDataOffset + 2, true);
+        sampleRate = view.getUint32(chunkDataOffset + 4, true);
+        bitsPerSample = view.getUint16(chunkDataOffset + 14, true);
+      } else if (chunkId === 0x61746164) {
+        dataOffset = chunkDataOffset;
+        dataSize = chunkSize;
+      }
+      offset = chunkDataOffset + chunkSize + (chunkSize % 2);
+    }
+    if (audioFormat !== 1 || channels !== 1 || bitsPerSample !== 16 || sampleRate <= 0) {
+      throw new Error("Web local STT requires mono PCM16 WAV input");
+    }
+    if (dataOffset < 0 || dataOffset + dataSize > view.byteLength) {
+      throw new Error("WAV input has no complete data chunk");
+    }
+    const sampleCount = dataSize / 2;
+    const samples = new Float32Array(sampleCount);
+    for (let index = 0; index < sampleCount; index += 1) {
+      samples[index] = view.getInt16(dataOffset + index * 2, true) / 32768;
+    }
+    return { sampleRate, samples };
+  }
+
+  // Resolves a synchronous browser local inference runner method.
+  function localInferenceRunner(method) {
+    const runner = globalThis.__operitLocalInference;
+    if (!runner || typeof runner[method] !== "function") {
+      throw new Error(`web local inference method is not installed: ${method}`);
+    }
+    // Calls the resolved runner and validates its JSON string contract.
+    return function runLocalInference(requestJson) {
+      const responseJson = runner[method](requestJson);
+      if (typeof responseJson !== "string") {
+        throw new Error(`web local inference method returned non-string JSON: ${method}`);
+      }
+      return responseJson;
+    };
+  }
+
+  // Installs an isolated smoke-test API when explicitly requested by the test page.
+  function installWebLocalInferenceTestApi() {
+    if (globalThis.__OPERIT_LOCAL_INFERENCE_TEST__ !== true) {
+      return;
+    }
+    globalThis.__operitLocalInferenceTest = {
+      putRuntimeFile(path, content) {
+        storageCache.set(key(runtimePrefix, path), new Uint8Array(content));
+      },
+      readRuntimeFile(path) {
+        return storageRead(runtimePrefix, path);
+      },
+      async initialize() {
+        webLocalInferenceReadyPromise = null;
+        await ensureWebLocalInference();
+      },
+      transcribe(request) {
+        return JSON.parse(transcribeWebLocalSpeech(JSON.stringify(request)));
+      },
+      synthesize(request) {
+        return JSON.parse(synthesizeWebLocalSpeech(JSON.stringify(request)));
+      },
+      dispose() {
+        disposeWebLocalInferenceState(webLocalInferenceState);
+        webLocalInferenceState = null;
+        webLocalInferenceReadyPromise = null;
+      },
+    };
+  }
+
+  installWebLocalInferenceTestApi();
+
   globalThis.__operitHost = {
     runtimeStorage: {
       readBytes(path) {
@@ -1219,8 +2036,7 @@
           throw new Error("sqlite host is not initialized");
         }
         const id = `sqlite-${++sqliteConnectionIndex}`;
-        const stored = localStorage.getItem(sqliteKey(path));
-        const bytes = stored === null ? undefined : base64ToBytes(stored);
+        const bytes = storageCache.get(sqliteKey(path));
         sqliteConnections.set(id, {
           path,
           db: bytes === undefined ? new SQLite.Database() : new SQLite.Database(bytes),
@@ -1348,6 +2164,16 @@
         };
       },
     },
+    localInference: {
+      // Transcribes one local speech request through the installed browser runner.
+      transcribeLocalSpeech(requestJson) {
+        return localInferenceRunner("transcribeLocalSpeech")(requestJson);
+      },
+      // Synthesizes one local speech request through the installed browser runner.
+      synthesizeLocalSpeech(requestJson) {
+        return localInferenceRunner("synthesizeLocalSpeech")(requestJson);
+      },
+    },
     http: {
       executeHttpRequest(request) {
         const xhr = new XMLHttpRequest();
@@ -1396,6 +2222,35 @@
               return [line.slice(0, index).trim(), line.slice(index + 1).trim()];
             }),
           body: responseBytes,
+        };
+      },
+      downloadFile(request) {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", request.url, false);
+        xhr.overrideMimeType("text/plain; charset=x-user-defined");
+        for (const pair of request.headers || []) {
+          const name = Array.isArray(pair) ? pair[0] : pair.key;
+          const value = Array.isArray(pair) ? pair[1] : pair.value;
+          xhr.setRequestHeader(name, value);
+        }
+        xhr.send(null);
+        if (xhr.status < 200 || xhr.status >= 300) {
+          throw new Error(`download ${request.fileId} failed with HTTP ${xhr.status}`);
+        }
+        const raw = xhr.responseText || "";
+        const bytes = new Uint8Array(raw.length);
+        for (let index = 0; index < raw.length; index += 1) {
+          bytes[index] = raw.charCodeAt(index) & 0xff;
+        }
+        if (typeof request.expectedBytes === "number" && bytes.length !== request.expectedBytes) {
+          throw new Error(`download ${request.fileId} size mismatch: ${bytes.length} != ${request.expectedBytes}`);
+        }
+        storageWrite(runtimePrefix, request.targetPath, bytes);
+        return {
+          fileId: String(request.fileId),
+          finalUrl: xhr.responseURL || request.url,
+          targetPath: String(request.targetPath),
+          downloadedBytes: bytes.length,
         };
       },
     },
@@ -1514,7 +2369,9 @@
   async function bridge() {
     if (!bridgePromise) {
       bridgePromise = import("./operit_flutter_bridge.js").then(async (module) => {
+        await ensureBrowserStorage();
         await ensureSqlite();
+        await ensureWebLocalInference();
         await module.default({ module_or_path: "./operit_flutter_bridge_bg.wasm" });
         return new module.OperitFlutterBridgeWasm();
       });

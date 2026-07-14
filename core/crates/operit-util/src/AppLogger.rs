@@ -392,7 +392,10 @@ fn format_timestamp_ms(timestamp_ms: u128) -> String {
     let Some(datetime) = DateTime::<Utc>::from_timestamp_millis(timestamp) else {
         return timestamp_ms.to_string();
     };
-    datetime.with_timezone(&Local).format("%H:%M:%S%.3f").to_string()
+    datetime
+        .with_timezone(&Local)
+        .format("%H:%M:%S%.3f")
+        .to_string()
 }
 
 fn priority_char(priority: i32) -> char {

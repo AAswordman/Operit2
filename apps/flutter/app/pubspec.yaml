@@ -46,15 +46,37 @@ dependencies:
   printing: ^5.14.3
   audioplayers: ^6.7.0
   video_player: ^2.11.1
+  video_player_ohos:
+    git:
+      url: https://gitee.com/openharmony-sig/flutter_packages.git
+      ref: 35fb467533e174411a117b2a030c15d2a3a9687c
+      path: packages/video_player/video_player_ohos
   path_provider: ^2.1.5
+  path_provider_ohos:
+    git:
+      url: https://gitee.com/openharmony-sig/flutter_packages.git
+      ref: 35fb467533e174411a117b2a030c15d2a3a9687c
+      path: packages/path_provider/path_provider_ohos
   path: ^1.9.1
+  record: ^6.2.1
+  record_ohos:
+    path: ../thirdparty/record_ohos
   archive: ^4.0.9
   xml: ^6.6.1
   webview_all: ^1.2.1
   webview_all_windows: ^1.2.1
   url_launcher: ^6.3.2
+  url_launcher_ohos:
+    git:
+      url: https://gitee.com/openharmony-sig/flutter_packages.git
+      ref: 35fb467533e174411a117b2a030c15d2a3a9687c
+      path: packages/url_launcher/url_launcher_ohos
   file_selector: ^1.1.0
-  file_picker: ^11.0.2
+  file_selector_ohos:
+    git:
+      url: https://gitee.com/openharmony-sig/flutter_packages.git
+      ref: 35fb467533e174411a117b2a030c15d2a3a9687c
+      path: packages/file_selector/file_selector_ohos
   xterm:
     path: ../thirdparty/xterm
   liquid_glass_widgets:

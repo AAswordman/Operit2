@@ -16,8 +16,6 @@ use crate::chat::llmprovider::DoubaoAIProvider::DoubaoAIProvider;
 use crate::chat::llmprovider::FourRouterProvider::FourRouterProvider;
 use crate::chat::llmprovider::GeminiProvider::GeminiProvider;
 use crate::chat::llmprovider::KimiProvider::KimiProvider;
-use crate::chat::llmprovider::LlamaProvider::LlamaProvider;
-use crate::chat::llmprovider::MNNProvider::MNNProvider;
 use crate::chat::llmprovider::MimoProvider::MimoProvider;
 use crate::chat::llmprovider::MistralProvider::MistralProvider;
 use crate::chat::llmprovider::NousPortalProvider::NousPortalProvider;
@@ -862,8 +860,6 @@ impl MultiServiceManager {
                 enable_tool_call,
                 inner.runtime_context.clone(),
             ))),
-            ProviderCreateParams::MNNProvider { .. } => Ok(Box::new(MNNProvider)),
-            ProviderCreateParams::LlamaProvider { .. } => Ok(Box::new(LlamaProvider)),
             ProviderCreateParams::ToolPkgJsAiProviderService {
                 provider_type_id,
                 provider_id,

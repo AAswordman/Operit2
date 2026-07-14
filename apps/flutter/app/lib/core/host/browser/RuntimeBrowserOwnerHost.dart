@@ -202,10 +202,10 @@ class _RuntimeBrowserOwnerHostState extends State<RuntimeBrowserOwnerHost> {
           await _registry.waitForSession(timeout: const Duration(seconds: 30));
           return jsonEncode(<String, Object?>{'url': url});
         }
-        _registry.navigate(url);
+        await _registry.navigate(url);
         return jsonEncode(<String, Object?>{'url': url});
       case 'browser_navigate_back':
-        _registry.navigateBack();
+        await _registry.navigateBack();
         return 'OK';
       case 'browser_close':
         _registry.closeActiveTab();

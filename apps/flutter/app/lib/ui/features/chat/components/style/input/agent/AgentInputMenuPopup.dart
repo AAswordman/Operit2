@@ -15,11 +15,13 @@ class AgentInputMenuPopup extends StatefulWidget {
     required this.viewModel,
     required this.currentChatId,
     required this.onDismiss,
+    this.leadingChildren = const <Widget>[],
   });
 
   final ChatViewModel viewModel;
   final String? currentChatId;
   final VoidCallback onDismiss;
+  final List<Widget> leadingChildren;
 
   @override
   State<AgentInputMenuPopup> createState() => _AgentInputMenuPopupState();
@@ -148,6 +150,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     _reloadSettings();
   }
 
+  /// Builds the input menu popup with optional leading entries.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -182,6 +185,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
+                    ...widget.leadingChildren,
                     _MenuSection(
                       icon: Icons.data_object_outlined,
                       title: '记忆',

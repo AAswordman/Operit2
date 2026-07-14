@@ -9,7 +9,7 @@ use operit_store::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepositor
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_tools::tools::ToolResultDataClasses::{
     stringResultData, LinkInfo, MemoryInfo, MemoryLinkQueryResultData, MemoryLinkResultData,
-    MemoryQueryResultData, ToolResultData,
+    JsOptional, MemoryQueryResultData, ToolResultData,
 };
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
@@ -819,9 +819,9 @@ fn memoryQueryResultData(
 ) -> MemoryQueryResultData {
     MemoryQueryResultData {
         memories: memories.iter().map(memoryInfo).collect(),
-        snapshotId,
-        snapshotCreated,
-        excludedBySnapshotCount: excludedBySnapshotCount as i32,
+        snapshotId: JsOptional::from_nullable_option(snapshotId),
+        snapshotCreated: Some(snapshotCreated),
+        excludedBySnapshotCount: Some(excludedBySnapshotCount as i32),
     }
 }
 
@@ -834,8 +834,8 @@ fn memoryInfo(entry: &OwnedMemoryResult) -> MemoryInfo {
         source: memory.source.clone(),
         tags: memory.tags.iter().map(|tag| tag.name.clone()).collect(),
         createdAt: formatMillis(memory.createdAt),
-        chunkInfo: None,
-        chunkIndices: None,
+        chunkInfo: JsOptional::Null,
+        chunkIndices: JsOptional::Null,
     }
 }
 

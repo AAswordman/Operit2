@@ -1,5 +1,9 @@
 #[path = "ChatServiceCore.rs"]
 pub mod ChatServiceCore;
+#[path = "LocalModelService.rs"]
+pub mod LocalModelService;
+#[path = "LocalProviderService.rs"]
+pub mod LocalProviderService;
 #[path = "ProviderRuntimeSupportService.rs"]
 pub mod ProviderRuntimeSupportService;
 #[path = "RuntimeBrowserService.rs"]
@@ -12,6 +16,8 @@ pub mod RuntimeHostInfoService;
 pub mod RuntimeHostInteractionService;
 #[path = "RuntimeTerminalService.rs"]
 pub mod RuntimeTerminalService;
+#[path = "SttRecognitionService.rs"]
+pub mod SttRecognitionService;
 #[path = "ToolRuntimeSupportService.rs"]
 pub mod ToolRuntimeSupportService;
 #[path = "TtsPlaybackService.rs"]
@@ -23,12 +29,15 @@ pub mod WorkspaceService;
 
 pub mod core;
 
+pub use LocalModelService::*;
+pub use LocalProviderService::*;
 pub use ProviderRuntimeSupportService::*;
 pub use RuntimeBrowserService::*;
 pub use RuntimeEventIngressService::*;
 pub use RuntimeHostInfoService::*;
 pub use RuntimeHostInteractionService::*;
 pub use RuntimeTerminalService::*;
+pub use SttRecognitionService::*;
 pub use ToolRuntimeSupportService::*;
 pub use TtsPlaybackService::*;
 pub use TtsSynthesisService::*;

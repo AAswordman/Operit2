@@ -177,14 +177,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.9"
-  dbus:
-    dependency: transitive
-    description:
-      name: dbus
-      sha256: "0ce9b0a839e6dee59a37a623d2fc26a35bbbe6404213e419b0d6411023d62645"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.7.14"
   desktop_drop:
     dependency: "direct main"
     description:
@@ -241,14 +233,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "7.0.1"
-  file_picker:
-    dependency: "direct main"
-    description:
-      name: file_picker
-      sha256: f13a03000d942e476bc1ff0a736d2e9de711d2f89a95cd4c1d88f861c3348387
-      url: "https://pub.dev"
-    source: hosted
-    version: "11.0.2"
   file_selector:
     dependency: "direct main"
     description:
@@ -289,6 +273,15 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.9.5"
+  file_selector_ohos:
+    dependency: "direct main"
+    description:
+      path: "packages/file_selector/file_selector_ohos"
+      ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
+      resolved-ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
+      url: "https://gitee.com/openharmony-sig/flutter_packages.git"
+    source: git
+    version: "0.5.0+2"
   file_selector_platform_interface:
     dependency: transitive
     description:
@@ -346,14 +339,6 @@ packages:
       relative: true
     source: path
     version: "0.7.4"
-  flutter_plugin_android_lifecycle:
-    dependency: transitive
-    description:
-      name: flutter_plugin_android_lifecycle
-      sha256: "3854fe5e3bff0b113c658f260b90c95dea17c92db0f2addeac2e343dd9969785"
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.0.35"
   flutter_shaders:
     dependency: transitive
     description:
@@ -587,6 +572,15 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.1"
+  path_provider_ohos:
+    dependency: "direct main"
+    description:
+      path: "packages/path_provider/path_provider_ohos"
+      ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
+      resolved-ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
+      url: "https://gitee.com/openharmony-sig/flutter_packages.git"
+    source: git
+    version: "2.2.1"
   path_provider_platform_interface:
     dependency: transitive
     description:
@@ -691,6 +685,61 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.2.2"
+  record:
+    dependency: "direct main"
+    description:
+      name: record
+      sha256: "10911465138fafacef459a780564e883e01bd48eabf87ab20543684884492870"
+      url: "https://pub.dev"
+    source: hosted
+    version: "6.2.1"
+  record_android:
+    dependency: transitive
+    description:
+      name: record_android
+      sha256: eb1732e42d0d2a1895b8db86e4fc917287e6d8491b6ed59918aea8bed6c69de4
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.5.2"
+  record_ios:
+    dependency: transitive
+    description:
+      name: record_ios
+      sha256: c051fb48edd7a0e265daafb9108730dc827c27b551728a3fdfb3ef69efd89c73
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.2.1"
+  record_linux:
+    dependency: transitive
+    description:
+      name: record_linux
+      sha256: "31181787bf7eccb0e298835836b69b3cd0a903863b75d70e937de3dec71cd8f3"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.3.1"
+  record_macos:
+    dependency: transitive
+    description:
+      name: record_macos
+      sha256: cfe1b61435e27db418bf513dc36820d10c9f7eb1843786c2c9a52e07e2f4f627
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.2.2"
+  record_ohos:
+    dependency: "direct main"
+    description:
+      path: "../thirdparty/record_ohos"
+      relative: true
+    source: path
+    version: "1.0.0+operit.1"
+  record_platform_interface:
+    dependency: transitive
+    description:
+      name: record_platform_interface
+      sha256: "8e56cbe06c6984137fb86132ff03459f29938d927496d9b2d0962e2d6345d488"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.6.0"
   record_use:
     dependency: transitive
     description:
@@ -699,6 +748,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.6.0"
+  record_web:
+    dependency: transitive
+    description:
+      name: record_web
+      sha256: "7e9846981c1f2d111d86f0ae3309071f5bba8b624d1c977316706f08fc31d16d"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.3.0"
+  record_windows:
+    dependency: transitive
+    description:
+      name: record_windows
+      sha256: "223258060a1d25c62bae18282c16783f28581ec19401d17e56b5205b9f039d78"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.7"
   sky_engine:
     dependency: transitive
     description: flutter
@@ -824,6 +889,15 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.2.5"
+  url_launcher_ohos:
+    dependency: "direct main"
+    description:
+      path: "packages/url_launcher/url_launcher_ohos"
+      ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
+      resolved-ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
+      url: "https://gitee.com/openharmony-sig/flutter_packages.git"
+    source: git
+    version: "6.0.38"
   url_launcher_platform_interface:
     dependency: transitive
     description:
@@ -912,6 +986,15 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.9.7"
+  video_player_ohos:
+    dependency: "direct main"
+    description:
+      path: "packages/video_player/video_player_ohos"
+      ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
+      resolved-ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
+      url: "https://gitee.com/openharmony-sig/flutter_packages.git"
+    source: git
+    version: "1.0.0+1"
   video_player_platform_interface:
     dependency: transitive
     description:
@@ -1022,14 +1105,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.25.1"
-  win32:
-    dependency: transitive
-    description:
-      name: win32
-      sha256: d7cb55e04cd34096cd3a79b3330245f54cb96a370a1c27adb3c84b917de8b08e
-      url: "https://pub.dev"
-    source: hosted
-    version: "5.15.0"
   xdg_directories:
     dependency: transitive
     description:

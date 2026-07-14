@@ -5,12 +5,15 @@ use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use uuid::Uuid;
 
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use operit_local_models::LocalEngineManifest::LocalPlatformTarget;
+use operit_local_models::LocalModelManifest::{LocalModelDriver, LocalModelKind};
+use operit_local_models::LocalModelRegistryStore::LocalModelRegistryStore;
 use operit_model::TtsCatalog::TtsCatalog;
 use operit_model::TtsConfig::{
     AvailableTtsVoice, TtsConfig, TtsHttpHeader, TtsHttpResponsePipelineStep,
     TtsProviderCatalogEntry, TtsProviderType,
 };
-use operit_providers::voice::TtsVoiceListFetcher::TtsVoiceListFetcher;
+use operit_providers::tts::TtsVoiceListFetcher::TtsVoiceListFetcher;
 
 const DEFAULT_SYSTEM_TTS_CONFIG_ID: &str = "system_tts_default";
 
@@ -147,6 +150,7 @@ impl TtsConfigManager {
             updatedAt: now,
             ..config
         })?;
+        self.validateLocalModelSelection(&config)?;
         self.dataStore
             .try_edit_result(|preferences| -> Result<(), PreferencesDataStoreError> {
                 assertTtsConfigVoiceDoesNotExist(preferences, &config, None)?;
@@ -169,7 +173,7 @@ impl TtsConfigManager {
         providerConfigId: &str,
     ) -> Result<Vec<AvailableTtsVoice>, String> {
         let providerConfig = self.getTtsConfig(providerConfigId)?;
-        availableTtsVoicesForProvider(&providerConfig)
+        self.availableTtsVoicesForProvider(&providerConfig)
     }
 
     #[allow(non_snake_case)]
@@ -181,7 +185,7 @@ impl TtsConfigManager {
         voice: String,
     ) -> Result<TtsConfig, String> {
         let providerConfig = self.getTtsConfig(providerConfigId)?;
-        let voiceConfig = findAvailableTtsVoice(&providerConfig, &model, &voice)?;
+        let voiceConfig = self.findAvailableTtsVoice(&providerConfig, &model, &voice)?;
         self.createTtsVoiceFromProvider(
             providerConfig,
             voiceConfig.model,
@@ -243,6 +247,100 @@ impl TtsConfigManager {
         })
     }
 
+    /// Lists voices exposed by one configured TTS provider.
+    fn availableTtsVoicesForProvider(
+        &self,
+        providerConfig: &TtsConfig,
+    ) -> Result<Vec<AvailableTtsVoice>, String> {
+        let providerType = TtsProviderType::normalize(&providerConfig.providerType);
+        if providerType == TtsProviderType::LOCAL_MODEL {
+            return self.localModelTtsVoices(providerConfig);
+        }
+        availableTtsVoicesForProvider(providerConfig)
+    }
+
+    /// Finds one exact voice exposed by a configured TTS provider.
+    fn findAvailableTtsVoice(
+        &self,
+        providerConfig: &TtsConfig,
+        model: &str,
+        voice: &str,
+    ) -> Result<AvailableTtsVoice, String> {
+        self.availableTtsVoicesForProvider(providerConfig)?
+            .into_iter()
+            .find(|candidate| candidate.model == model.trim() && candidate.voice == voice.trim())
+            .ok_or_else(|| format!("tts provider voice not found: {model}:{voice}"))
+    }
+
+    /// Builds local TTS voice rows from installed model driver metadata.
+    fn localModelTtsVoices(
+        &self,
+        providerConfig: &TtsConfig,
+    ) -> Result<Vec<AvailableTtsVoice>, String> {
+        let platform = LocalPlatformTarget::current()?.platform;
+        let registry =
+            LocalModelRegistryStore::forRuntimeRoot(self.paths.runtime_dir().to_path_buf())
+                .map_err(|error| error.to_string())?
+                .read()
+                .map_err(|error| error.to_string())?;
+        let mut voices = Vec::new();
+        for installed in registry
+            .installedModels
+            .into_iter()
+            .filter(|model| {
+                model.manifest.kind == LocalModelKind::TextToSpeech
+                    && model.manifest.supportsPlatform(&platform)
+            })
+        {
+            let driver = installed.manifest.driver.as_ref().ok_or_else(|| {
+                format!(
+                    "local TTS model driver is missing: {}",
+                    installed.manifest.registryKey()
+                )
+            })?;
+            let speakerCount = localTtsSpeakerCount(driver).ok_or_else(|| {
+                format!(
+                    "local TTS model driver is unsupported: {}",
+                    installed.manifest.registryKey()
+                )
+            })?;
+            for speakerId in 0..speakerCount {
+                voices.push(AvailableTtsVoice {
+                    model: installed.manifest.registryKey(),
+                    voice: speakerId.to_string(),
+                    displayName: format!("{} Speaker {speakerId}", installed.manifest.displayName),
+                    description: installed.manifest.description.clone(),
+                    responseFormat: "wav".to_string(),
+                    speed: providerConfig.speed,
+                });
+            }
+        }
+        voices.sort_by(|left, right| {
+            left.model
+                .cmp(&right.model)
+                .then(left.voice.cmp(&right.voice))
+        });
+        Ok(voices)
+    }
+
+    /// Validates one LOCAL_MODEL TTS model and speaker against installed inventory.
+    fn validateLocalModelSelection(&self, config: &TtsConfig) -> Result<(), String> {
+        if config.providerType != TtsProviderType::LOCAL_MODEL {
+            return Ok(());
+        }
+        let voices = self.localModelTtsVoices(config)?;
+        if voices
+            .iter()
+            .any(|voice| voice.model == config.model && voice.voice == config.voice)
+        {
+            return Ok(());
+        }
+        Err(format!(
+            "LOCAL_MODEL TTS model or speaker is not installed or platform-compatible: {}:{}",
+            config.model, config.voice
+        ))
+    }
+
     #[allow(non_snake_case)]
     /// Updates a text-to-speech configuration and preserves its creation timestamp.
     pub fn updateTtsConfig(&self, config: TtsConfig) -> Result<TtsConfig, String> {
@@ -258,6 +356,7 @@ impl TtsConfigManager {
             updatedAt: now,
             ..config
         })?;
+        self.validateLocalModelSelection(&config)?;
         self.dataStore
             .try_edit_result(|preferences| -> Result<(), PreferencesDataStoreError> {
                 assertTtsConfigVoiceDoesNotExist(preferences, &config, Some(id.as_str()))?;
@@ -514,8 +613,13 @@ fn normalizeConfig(config: TtsConfig) -> Result<TtsConfig, String> {
     let providerType = TtsProviderType::normalize(&config.providerType);
     let providerCatalog = TtsCatalog::provider(&providerType)?;
     let endpoint = catalogText(&config.endpoint, &providerCatalog.defaultEndpoint);
-    let model = catalogText(&config.model, &providerCatalog.defaultModel);
-    if providerType != TtsProviderType::SYSTEM_TTS {
+    let model = match providerType.as_str() {
+        TtsProviderType::LOCAL_MODEL => config.model.trim().to_string(),
+        _ => catalogText(&config.model, &providerCatalog.defaultModel),
+    };
+    let usesHttpProvider =
+        providerType != TtsProviderType::SYSTEM_TTS && providerType != TtsProviderType::LOCAL_MODEL;
+    if usesHttpProvider {
         if endpoint.is_empty() {
             return Err("tts config endpoint is empty".to_string());
         }
@@ -532,23 +636,17 @@ fn normalizeConfig(config: TtsConfig) -> Result<TtsConfig, String> {
     let requestBody = catalogText(&config.requestBody, &providerCatalog.defaultRequestBody);
     let headers = catalogHeaders(config.headers, &providerCatalog);
     let responsePipeline = catalogPipeline(config.responsePipeline, &providerCatalog);
-    if providerType != TtsProviderType::SYSTEM_TTS
-        && templateUsesModel(&endpoint, &requestBody, &headers)
-    {
+    if usesHttpProvider && templateUsesModel(&endpoint, &requestBody, &headers) {
         if model.is_empty() {
             return Err("tts config model is empty".to_string());
         }
     }
-    if providerType != TtsProviderType::SYSTEM_TTS
-        && templateUsesVoice(&endpoint, &requestBody, &headers)
-    {
+    if usesHttpProvider && templateUsesVoice(&endpoint, &requestBody, &headers) {
         if voice.is_empty() {
             return Err("tts config voice is empty".to_string());
         }
     }
-    if providerType != TtsProviderType::SYSTEM_TTS
-        && templateUsesApiKey(&endpoint, &requestBody, &headers)
-    {
+    if usesHttpProvider && templateUsesApiKey(&endpoint, &requestBody, &headers) {
         if config.apiKey.trim().is_empty() {
             return Err("tts config api key is empty".to_string());
         }
@@ -572,12 +670,15 @@ fn normalizeConfig(config: TtsConfig) -> Result<TtsConfig, String> {
             return Err("http tts text placeholder is missing".to_string());
         }
     }
-    if providerType != TtsProviderType::SYSTEM_TTS
+    if usesHttpProvider
         && httpMethod == "POST"
         && !requestBody.is_empty()
         && !templateHasTextPlaceholder(&requestBody)
     {
         return Err("tts request body text placeholder is missing".to_string());
+    }
+    if providerType == TtsProviderType::LOCAL_MODEL {
+        validateLocalModelTtsConfig(&endpoint, &config.apiKey, &model, &voice, &responseFormat)?;
     }
     let headers = normalizeHeaders(headers)?;
     let responsePipeline = normalizePipeline(responsePipeline)?;
@@ -599,6 +700,36 @@ fn normalizeConfig(config: TtsConfig) -> Result<TtsConfig, String> {
         createdAt: config.createdAt,
         updatedAt: config.updatedAt,
     })
+}
+
+/// Validates fields owned by the LOCAL_MODEL TTS provider contract.
+#[allow(non_snake_case)]
+fn validateLocalModelTtsConfig(
+    endpoint: &str,
+    apiKey: &str,
+    model: &str,
+    voice: &str,
+    responseFormat: &str,
+) -> Result<(), String> {
+    if !endpoint.is_empty() {
+        return Err("LOCAL_MODEL TTS endpoint must be empty".to_string());
+    }
+    if !apiKey.trim().is_empty() {
+        return Err("LOCAL_MODEL TTS api key must be empty".to_string());
+    }
+    let (modelId, version) = model
+        .split_once('@')
+        .ok_or_else(|| "LOCAL_MODEL TTS model must use modelId@version".to_string())?;
+    if modelId.is_empty() || version.is_empty() {
+        return Err("LOCAL_MODEL TTS model must use non-empty modelId@version".to_string());
+    }
+    if voice.is_empty() {
+        return Err("LOCAL_MODEL TTS voice is empty".to_string());
+    }
+    if responseFormat != "wav" {
+        return Err("LOCAL_MODEL TTS response format must be wav".to_string());
+    }
+    Ok(())
 }
 
 #[allow(non_snake_case)]
@@ -632,6 +763,16 @@ fn catalogPipeline(
         providerCatalog.defaultResponsePipeline.clone()
     } else {
         responsePipeline
+    }
+}
+
+/// Returns the local TTS speaker count declared by a supported driver.
+fn localTtsSpeakerCount(driver: &LocalModelDriver) -> Option<i32> {
+    match driver {
+        LocalModelDriver::SherpaOnnxVits { speakerCount, .. } => Some(*speakerCount),
+        LocalModelDriver::SherpaOnnxMatcha { speakerCount, .. } => Some(*speakerCount),
+        LocalModelDriver::SherpaOnnxKitten { speakerCount, .. } => Some(*speakerCount),
+        _ => None,
     }
 }
 

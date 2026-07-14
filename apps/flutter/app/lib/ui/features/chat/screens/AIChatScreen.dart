@@ -10,13 +10,14 @@ import '../../../main/MainLayoutController.dart';
 import '../../../main/TopBarController.dart';
 import '../../../main/components/TopBarTitleText.dart';
 import '../PendingChatDraftHandler.dart';
-import '../components/AgentChatInputSection.dart';
 import '../components/ChatScreenContent.dart';
 import '../components/MessageEditorDialog.dart';
 import '../components/WorkspaceChangeConfirmDialog.dart';
 import '../components/WorkspaceShell.dart';
+import '../components/style/input/common/PendingQueueMessageItem.dart';
 import '../components/workspace/WorkspaceLayoutMetrics.dart';
 import '../components/workspace/WorkspaceTopBarButton.dart';
+import '../speech/LocalSpeechRecorder.dart';
 import '../viewmodel/ChatSwitchRenderCoordinator.dart';
 import '../viewmodel/ChatViewModel.dart';
 
@@ -64,6 +65,8 @@ class _ChatContentData {
     required this.pendingQueueMessages,
     required this.isPendingQueueExpanded,
     required this.attachments,
+    required this.isSpeechRecording,
+    required this.isSpeechTranscribing,
   });
 
   final List<ChatUiMessage> messages;
@@ -81,6 +84,8 @@ class _ChatContentData {
   final List<PendingQueueMessageItem> pendingQueueMessages;
   final bool isPendingQueueExpanded;
   final List<AttachmentInfo> attachments;
+  final bool isSpeechRecording;
+  final bool isSpeechTranscribing;
 }
 
 class _AIChatScreenState extends State<AIChatScreen>
@@ -90,6 +95,7 @@ class _AIChatScreenState extends State<AIChatScreen>
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _inputFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
+  final LocalSpeechRecorder _speechRecorder = LocalSpeechRecorder();
   late final Map<String?, TextEditingValue> _inputDraftsByChatId;
   final List<ChatUiMessage> _messages = <ChatUiMessage>[];
   final List<PendingQueueMessageItem> _pendingQueueMessages =
@@ -143,6 +149,8 @@ class _AIChatScreenState extends State<AIChatScreen>
   bool _wasQueueBlocked = false;
   bool _suppressNextAutoDequeue = false;
   bool _isApplyingChatDraft = false;
+  bool _isSpeechRecording = false;
+  bool _isSpeechTranscribing = false;
 
   @override
   void initState() {
@@ -206,6 +214,7 @@ class _AIChatScreenState extends State<AIChatScreen>
     _toastMessageNotifier.dispose();
     _mainStateSubscription?.cancel();
     _toastEventSubscription?.cancel();
+    unawaited(_speechRecorder.dispose());
     _topBarController?.clearActions(owner: _topBarActionsOwner);
     _topBarController?.clearTitleContent(owner: _topBarTitleOwner);
     _mainLayoutController?.clearAttachment(owner: _mainLayoutOwner);
@@ -713,6 +722,74 @@ class _AIChatScreenState extends State<AIChatScreen>
     _startSendMessageText(text);
   }
 
+  /// Starts or stops local speech input from the chat action button.
+  Future<void> _toggleSpeechInput() async {
+    if (_isSpeechTranscribing) {
+      return;
+    }
+    try {
+      if (_isSpeechRecording) {
+        await _finishSpeechInput();
+      } else {
+        await _startSpeechInput();
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _mutateChatContentData(() {
+        _isSpeechRecording = false;
+        _isSpeechTranscribing = false;
+      });
+      _showLocalToast('语音输入失败：$error');
+    }
+  }
+
+  /// Starts one WAV recording after validating the current STT provider config.
+  Future<void> _startSpeechInput() async {
+    await _viewModel.clients.preferencesSttConfigManager.getCurrentSttConfig();
+    await _speechRecorder.start();
+    if (!mounted) {
+      return;
+    }
+    _mutateChatContentData(() {
+      _isSpeechRecording = true;
+    });
+  }
+
+  /// Stops recording, transcribes its bytes, and updates the current draft.
+  Future<void> _finishSpeechInput() async {
+    _mutateChatContentData(() {
+      _isSpeechRecording = false;
+      _isSpeechTranscribing = true;
+    });
+    final recordedAudio = await _speechRecorder.stop();
+    try {
+      final response = await _viewModel.clients.servicesSttRecognitionService
+          .transcribeCurrent(
+            audioBytes: recordedAudio.bytes,
+            fileName: recordedAudio.fileName,
+            contentType: recordedAudio.contentType,
+            language: null,
+          );
+      final text = response.text.trim();
+      if (text.isEmpty) {
+        throw StateError('STT 未识别到文本');
+      }
+      _messageController.value = TextEditingValue(
+        text: text,
+        selection: TextSelection.collapsed(offset: text.length),
+      );
+      _inputFocusNode.requestFocus();
+    } finally {
+      if (mounted) {
+        _mutateChatContentData(() {
+          _isSpeechTranscribing = false;
+        });
+      }
+    }
+  }
+
   void _startSendMessageText(String text) {
     _mutateChatContentData(() {
       _autoScrollToBottom = true;
@@ -1172,6 +1249,9 @@ class _AIChatScreenState extends State<AIChatScreen>
           isMultiSelectMode: data.isMultiSelectMode,
           selectedMessageIndices: data.selectedMessageIndices,
           isPreparingChatSwitch: data.isPreparingChatSwitch,
+          isSpeechRecording: data.isSpeechRecording,
+          isSpeechTranscribing: data.isSpeechTranscribing,
+          onSpeechInput: _toggleSpeechInput,
           onSendMessage: _sendMessage,
           onQueueMessage: _enqueueDraftToPendingQueue,
           onCancelMessage: _cancelMessage,
@@ -1331,6 +1411,8 @@ class _AIChatScreenState extends State<AIChatScreen>
       ),
       isPendingQueueExpanded: _isPendingQueueExpanded,
       attachments: List<AttachmentInfo>.unmodifiable(_attachments),
+      isSpeechRecording: _isSpeechRecording,
+      isSpeechTranscribing: _isSpeechTranscribing,
     );
   }
 

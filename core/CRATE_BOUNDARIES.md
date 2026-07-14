@@ -22,10 +22,13 @@ the parent runtime wires concrete behavior together.
   skill packages, permission-aware tool registration, package lifecycle
   management, tool execution metadata, and tool-specific runtime support
   traits. Shared plugin formats and loaders live in `operit-plugin-sdk`.
+- `operit-local-models`: local model manifests, installed model registry
+  contracts, storage path helpers, and local STT/TTS/chat session interfaces.
+  Runtime-owned operations are exposed through `LocalModelRuntimeSupport`.
 - `operit-providers`: provider contracts and built-in implementations,
   including `AIService`, provider request/result/stream types,
   `ProviderRuntimeSupport`, LLM adapters, conversation orchestration,
-  voice/market services, prompt hooks, and ToolPkg provider integration.
+  TTS/STT/market services, prompt hooks, and ToolPkg provider integration.
 - `operit-js-bridge`: JavaScript engine integration and JS-specific ToolPkg
   execution surfaces. It implements the JS execution trait exposed by
   `operit-plugin-sdk`.
@@ -44,7 +47,7 @@ the parent runtime wires concrete behavior together.
 
 The intended direction is:
 
-`plugin-sdk/host-api` -> `util` -> `model` -> `store` -> `tools/providers/js-bridge` -> `runtime` -> `core-proxy/command-core`
+`plugin-sdk/host-api` -> `util` -> `model` -> `store` -> `tools/local-models/providers/js-bridge` -> `runtime` -> `core-proxy/command-core`
 
 The arrows describe who may depend on definitions to its left. `runtime` may
 depend on all child crates. Child crates must not depend on `operit-runtime`.
@@ -58,6 +61,9 @@ Current practical edges:
 - `operit-plugin-sdk` depends only on public ecosystem crates.
 - `operit-tools` depends on `operit-plugin-sdk`, `operit-store`,
   `operit-model`, `operit-util`, and `operit-host-api`.
+- `operit-local-models` depends on `operit-host-api`, `operit-util`, and public
+  ecosystem crates, and does not depend on `operit-runtime` or concrete host
+  implementations.
 - `operit-providers` depends on `operit-tools`, `operit-store`,
   `operit-plugin-sdk`, `operit-model`, `operit-util`, and `operit-host-api`,
   but not on `operit-runtime`.
@@ -83,6 +89,10 @@ Examples:
   provider-side requests for model bindings, provider profiles, prompt context,
   token accounting, ToolPkg AI provider hooks, and timing logs.
   `operit-runtime` implements it in `services/ProviderRuntimeSupportService.rs`.
+- `operit-local-models::runtime_support::LocalModelRuntimeSupport` defines the
+  local-model-side requests for model data roots, installed registry snapshots,
+  registry persistence, and available manifests. `operit-runtime` owns the
+  concrete implementation.
 - `operit-plugin-sdk::javascript::JsExecutionHost` defines the complete
   JavaScript-to-application execution boundary. `operit-tools` implements it
   with the real tool, package, resource, and IPC logic.
@@ -120,6 +130,14 @@ belongs in `operit-runtime/src/services/WorkspaceService.rs`.
 Provider contracts, built-in implementations, and provider orchestration
 belong in `operit-providers`. Runtime-specific operations are exposed through
 `ProviderRuntimeSupport`.
+
+## Local Model Boundary
+
+Local model manifests, installed model registry contracts, storage path helpers,
+and local inference session interfaces belong in `operit-local-models`. Local
+model runtime behavior is exposed through `LocalModelRuntimeSupport`. Network
+transfer is submitted through `operit-host-api::HttpHost`; concrete hosts own
+download worker concurrency, progress reporting, and cancellation handling.
 
 ## Tool Boundary
 

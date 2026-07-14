@@ -13,6 +13,8 @@ through trait objects and data models.
 - Declare file system, HTTP, web visit, browser automation, terminal, managed
   runtime process, runtime storage, SQLite, audio, Bluetooth, TTS, and system
   operation traits.
+- Define `HttpHost` batch download requests with bounded concurrency,
+  aggregate progress events, native target paths, and cancellation controls.
 - Keep platform code outside `operit-runtime` by routing host capabilities
   through explicit Rust traits.
 

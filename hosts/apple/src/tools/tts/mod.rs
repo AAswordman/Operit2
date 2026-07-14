@@ -12,6 +12,7 @@ pub type AppleTtsPlaybackController =
 
 pub struct AppleTtsPlaybackCommand {
     pub command: String,
+    pub audioPath: Option<String>,
     pub request: Option<TtsPlaybackRequest>,
 }
 
@@ -26,56 +27,73 @@ pub struct AppleTtsPlaybackHost {
 }
 
 impl AppleTtsSynthesisHost {
+    /// Creates an Apple TTS synthesis host backed by the owner application.
     pub fn fromSynthesizer(synthesizer: AppleTtsSynthesizer) -> Self {
         Self { synthesizer }
     }
 }
 
 impl AppleTtsPlaybackHost {
+    /// Creates an Apple TTS playback host backed by the owner application.
     pub fn fromController(controller: AppleTtsPlaybackController) -> Self {
         Self { controller }
+    }
+
+    /// Sends one playback command to the Apple owner application.
+    fn call(
+        &self,
+        command: &str,
+        audioPath: Option<String>,
+        request: Option<TtsPlaybackRequest>,
+    ) -> HostResult<TtsPlaybackStatus> {
+        (self.controller)(AppleTtsPlaybackCommand {
+            command: command.to_string(),
+            audioPath,
+            request,
+        })
     }
 }
 
 impl TtsSynthesisHost for AppleTtsSynthesisHost {
+    /// Synthesizes one Apple system speech request into an audio file.
     fn synthesizeSpeech(&self, request: TtsSynthesisRequest) -> HostResult<TtsSynthesisResponse> {
         (self.synthesizer)(request)
     }
 }
 
 impl TtsPlaybackHost for AppleTtsPlaybackHost {
+    /// Reports Apple AVSpeechSynthesizer availability through the owner host.
+    fn supportsSystemSpeech(&self) -> bool {
+        true
+    }
+
+    /// Starts one generated speech audio file in the Apple owner application.
+    fn playAudio(&self, path: &str) -> HostResult<TtsPlaybackStatus> {
+        self.call("play", Some(path.to_string()), None)
+    }
+
+    /// Starts one Apple system speech request.
     fn speakText(&self, request: TtsPlaybackRequest) -> HostResult<TtsPlaybackStatus> {
-        (self.controller)(AppleTtsPlaybackCommand {
-            command: "speak".to_string(),
-            request: Some(request),
-        })
+        self.call("speak", None, Some(request))
     }
 
+    /// Pauses the active Apple speech session.
     fn pauseSpeech(&self) -> HostResult<TtsPlaybackStatus> {
-        (self.controller)(AppleTtsPlaybackCommand {
-            command: "pause".to_string(),
-            request: None,
-        })
+        self.call("pause", None, None)
     }
 
+    /// Resumes the active Apple speech session.
     fn resumeSpeech(&self) -> HostResult<TtsPlaybackStatus> {
-        (self.controller)(AppleTtsPlaybackCommand {
-            command: "resume".to_string(),
-            request: None,
-        })
+        self.call("resume", None, None)
     }
 
+    /// Stops the active Apple speech session.
     fn stopSpeech(&self) -> HostResult<TtsPlaybackStatus> {
-        (self.controller)(AppleTtsPlaybackCommand {
-            command: "stop".to_string(),
-            request: None,
-        })
+        self.call("stop", None, None)
     }
 
+    /// Returns the current Apple speech session state.
     fn speechState(&self) -> HostResult<TtsPlaybackStatus> {
-        (self.controller)(AppleTtsPlaybackCommand {
-            command: "status".to_string(),
-            request: None,
-        })
+        self.call("status", None, None)
     }
 }

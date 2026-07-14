@@ -92,6 +92,11 @@ impl RuntimeStorePaths {
         self.runtime_storage_path(TTS_CONFIGS_PREFERENCES_PATH)
     }
 
+    /// Returns the STT configuration preferences path.
+    pub fn stt_configs_preferences_path(&self) -> PathBuf {
+        self.runtime_storage_path(STT_CONFIGS_PREFERENCES_PATH)
+    }
+
     /// Returns the tool permission preferences path.
     pub fn tool_permissions_preferences_path(&self) -> PathBuf {
         self.runtime_storage_path(TOOL_PERMISSIONS_PREFERENCES_PATH)

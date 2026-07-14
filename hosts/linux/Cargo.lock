@@ -1237,6 +1237,7 @@ dependencies = [
  "image",
  "libc",
  "operit-host-api",
+ "operit-host-native-common",
  "portable-pty",
  "regex",
  "reqwest",
@@ -1247,6 +1248,14 @@ dependencies = [
  "uuid",
  "zbus",
  "zip",
+]
+
+[[package]]
+name = "operit-host-native-common"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+ "reqwest",
 ]
 
 [[package]]

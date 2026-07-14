@@ -141,7 +141,7 @@ class _WebCorePushSink implements CorePushSink {
 
   /// Queues one input item on the persistent push carrier.
   @override
-  void add(Object? args) {
+  Future<void> add(Object? args) {
     if (_closed) {
       throw StateError('Link push stream is closed');
     }
@@ -155,6 +155,7 @@ class _WebCorePushSink implements CorePushSink {
         }).toJS,
       ]);
     });
+    return _tail;
   }
 
   /// Flushes queued items and closes the persistent push stream.

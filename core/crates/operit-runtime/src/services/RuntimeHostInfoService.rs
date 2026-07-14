@@ -31,6 +31,7 @@ pub struct RuntimeHostDescriptor {
     pub audioPlaybackHost: bool,
     pub ttsSynthesisHost: bool,
     pub ttsPlaybackHost: bool,
+    pub systemTtsPlaybackHost: bool,
     pub managedRuntimeHost: bool,
     pub runtimeStorageHost: bool,
     pub runtimeSqliteHost: bool,
@@ -71,6 +72,10 @@ impl RuntimeHostInfoService {
                 audioPlaybackHost: context.audioPlaybackHost.is_some(),
                 ttsSynthesisHost: context.ttsSynthesisHost.is_some(),
                 ttsPlaybackHost: context.ttsPlaybackHost.is_some(),
+                systemTtsPlaybackHost: context
+                    .ttsPlaybackHost
+                    .as_ref()
+                    .is_some_and(|host| host.supportsSystemSpeech()),
                 managedRuntimeHost: context.managedRuntimeHost.is_some(),
                 runtimeStorageHost: context.runtimeStorageHost.is_some(),
                 runtimeSqliteHost: context.runtimeSqliteHost.is_some(),

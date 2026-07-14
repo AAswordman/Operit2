@@ -15,8 +15,8 @@ chacha20poly1305 = "0.10"
 chrono.workspace = true
 getrandom = "0.2"
 operit-host-api = { version = "0.1.0", path = "../operit-host-api" }
-operit-model = { version = "2.0.0-preview.3", path = "../operit-model" }
-operit-util = { version = "2.0.0-preview.3", path = "../operit-util" }
+operit-model = { version = "2.0.0-preview.4", path = "../operit-model" }
+operit-util = { version = "2.0.0-preview.4", path = "../operit-util" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

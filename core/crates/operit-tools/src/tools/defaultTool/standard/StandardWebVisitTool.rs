@@ -7,7 +7,7 @@ use operit_host_api::{WebVisitHost, WebVisitRequest, WebVisitResult};
 use url::Url;
 
 use operit_tools::tools::ToolResultDataClasses::{
-    stringResultData, LinkData, ToolResultData, VisitWebResultData,
+    stringResultData, FromHostResult, LinkData, ToolResultData, VisitWebResultData,
 };
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
@@ -34,7 +34,7 @@ fn webVisitResultToVisitData(value: WebVisitResult) -> VisitWebResultData {
         title: value.title,
         content: value.content,
         metadata: value.metadata.into_iter().collect(),
-        links: value.links.into_iter().map(LinkData::from).collect(),
+        links: value.links.into_iter().map(LinkData::from_host).collect(),
         imageLinks: value.imageLinks,
         visitKey: None,
         contentSavedTo: None,
@@ -366,7 +366,13 @@ fn buildInlineContentPreview(fullContent: &str, savedPath: &PathBuf) -> String {
     )
 }
 
-impl VisitWebResultData {
+trait VisitWebResultPreview {
+    /// Replaces full content with its persisted inline preview metadata.
+    fn copy_with_preview(self, preview: String, savedPath: PathBuf) -> Self;
+}
+
+impl VisitWebResultPreview for VisitWebResultData {
+    /// Replaces full content with its persisted inline preview metadata.
     fn copy_with_preview(mut self, preview: String, savedPath: PathBuf) -> Self {
         let originalLength = self.content.chars().count();
         self.content = preview;

@@ -10,6 +10,7 @@ import '../proxy/generated/CoreProxyModels.g.dart';
 import 'ToolApprovalModels.dart';
 
 class ToolApprovalBridge {
+  /// Creates a bridge for tool approval requests.
   const ToolApprovalBridge();
 
   static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
@@ -20,6 +21,7 @@ class ToolApprovalBridge {
       <String, ToolApprovalRequest>{};
   static StreamSubscription<RuntimeHostInteractionRequest>? _subscription;
 
+  /// Returns the current pending permission request.
   Future<ToolApprovalRequest?> currentPermissionRequest() async {
     _ensureSubscription();
     if (_requests.isEmpty) {
@@ -28,12 +30,14 @@ class ToolApprovalBridge {
     return _requests.values.first;
   }
 
+  /// Rejects direct result handling for remote permission requests.
   Future<void> handlePermissionResult(ToolApprovalResult result) async {
     throw StateError(
       'permission result must be sent with respondPermissionRequest',
     );
   }
 
+  /// Sends one permission decision to the runtime host interaction service.
   Future<void> respondPermissionRequest(
     ToolApprovalRequest request,
     ToolApprovalResult result,
@@ -46,6 +50,7 @@ class ToolApprovalBridge {
         .respondOwnerHostInteraction(
           requestId: requestId,
           response: RuntimeHostInteractionResponse(
+            error: null,
             browserAutomation: null,
             browserSession: null,
             webVisit: null,
@@ -53,11 +58,15 @@ class ToolApprovalBridge {
             systemCaptureScreenshot: null,
             systemLanguageCode: null,
             systemRecognizeText: null,
+            systemOperation: null,
+            fileOpen: null,
+            fileShare: null,
             audioPlay: null,
             musicPlayback: null,
             bluetooth: null,
             ttsSynthesis: null,
             ttsPlayback: null,
+            localInference: null,
             toolPermission: RuntimeHostInteractionToolPermissionResponse(
               result: _resultName(result),
             ),
@@ -67,6 +76,7 @@ class ToolApprovalBridge {
     _requestedAtMillis.remove(requestId);
   }
 
+  /// Ensures the permission request event subscription is active.
   static void _ensureSubscription() {
     if (_subscription != null) {
       return;
@@ -92,6 +102,7 @@ class ToolApprovalBridge {
         );
   }
 
+  /// Handles one incoming runtime permission request event.
   static Future<void> _handleEvent(
     RuntimeHostInteractionRequest request,
   ) async {
@@ -122,6 +133,7 @@ class ToolApprovalBridge {
   }
 }
 
+/// Converts one approval result into the runtime protocol value.
 String _resultName(ToolApprovalResult result) {
   return switch (result) {
     ToolApprovalResult.allow => 'allow',

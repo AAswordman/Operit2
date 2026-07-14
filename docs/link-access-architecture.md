@@ -202,6 +202,12 @@ Android SYSTEM_TTS playback
   -> RuntimeHostInteractionService(ttsPlayback)
   -> OwnerSystemCapabilityChannel
   -> Android TextToSpeech
+
+Generated TTS audio playback
+  -> TtsSynthesisService writes runtime storage audio
+  -> TtsPlaybackService.playAudio
+  -> runtime owner's TtsPlaybackHost
+  -> owner platform speech audio player
 ```
 
 远程连接只转发 core call/watch/push 请求到 runtime owner。`TtsPlaybackHost`、`TtsSynthesisHost`、Android owner interaction 都归 runtime owner 所在 app/host 处理；remote client 不接管远端 runtime 的 host 能力。

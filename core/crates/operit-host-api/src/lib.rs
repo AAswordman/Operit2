@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use async_trait::async_trait;
@@ -123,12 +124,54 @@ impl HostEnvironmentDescriptor {
                 "fs.write".to_string(),
                 "fs.search".to_string(),
                 "fs.archive".to_string(),
+                "http.request".to_string(),
                 "web.visit".to_string(),
+                "os.open".to_string(),
+                "os.share".to_string(),
+                "terminal.pty".to_string(),
+                "audio.playback".to_string(),
+                "music.playback".to_string(),
+                "tts.synthesis".to_string(),
+                "tts.playback".to_string(),
+                "bluetooth.classic".to_string(),
+                "bluetooth.ble".to_string(),
+                "system.location".to_string(),
+                "system.notifications.read".to_string(),
+                "system.app_usage".to_string(),
+                "system.app.install".to_string(),
+                "system.app.uninstall".to_string(),
+                "system.settings".to_string(),
+                "runtime.process".to_string(),
                 "runtime.storage".to_string(),
                 "runtime.sqlite".to_string(),
             ],
-            structuredCapabilities: defaultHostCapabilities(),
-            onboardingRequirements: Vec::new(),
+            structuredCapabilities: hostCapabilities(&[
+                "fs.read",
+                "fs.write",
+                "fs.search",
+                "fs.archive",
+                "http.request",
+                "web.visit",
+                "os.open",
+                "os.share",
+                "terminal.pty",
+                "audio.playback",
+                "music.playback",
+                "tts.synthesis",
+                "tts.playback",
+                "bluetooth.classic",
+                "bluetooth.ble",
+                "system.location",
+                "system.notifications.read",
+                "system.app_usage",
+                "system.app.install",
+                "system.app.uninstall",
+                "system.settings",
+                "runtime.process",
+                "runtime.storage",
+                "runtime.sqlite",
+            ]),
+            onboardingRequirements: ohosOnboardingRequirements(),
             workspaceRoots: Vec::new(),
         }
     }
@@ -396,16 +439,128 @@ fn defaultHostCapabilities() -> Vec<HostCapability> {
             operations: vec![CapabilityOperation::Write],
         },
         HostCapability {
+            id: "fs.search".to_string(),
+            displayName: "文件搜索".to_string(),
+            scope: CapabilityScope::FileSystem,
+            operations: vec![CapabilityOperation::Read],
+        },
+        HostCapability {
+            id: "fs.archive".to_string(),
+            displayName: "归档文件处理".to_string(),
+            scope: CapabilityScope::FileSystem,
+            operations: vec![CapabilityOperation::Read, CapabilityOperation::Write],
+        },
+        HostCapability {
+            id: "http.request".to_string(),
+            displayName: "HTTP 请求".to_string(),
+            scope: CapabilityScope::Network,
+            operations: vec![
+                CapabilityOperation::Read,
+                CapabilityOperation::Write,
+                CapabilityOperation::Connect,
+            ],
+        },
+        HostCapability {
+            id: "web.visit".to_string(),
+            displayName: "网页访问".to_string(),
+            scope: CapabilityScope::Network,
+            operations: vec![CapabilityOperation::Read, CapabilityOperation::Connect],
+        },
+        HostCapability {
+            id: "os.open".to_string(),
+            displayName: "打开文件".to_string(),
+            scope: CapabilityScope::System,
+            operations: vec![CapabilityOperation::Execute],
+        },
+        HostCapability {
+            id: "os.share".to_string(),
+            displayName: "系统分享".to_string(),
+            scope: CapabilityScope::System,
+            operations: vec![CapabilityOperation::Execute],
+        },
+        HostCapability {
+            id: "terminal.pty".to_string(),
+            displayName: "交互终端".to_string(),
+            scope: CapabilityScope::Runtime,
+            operations: vec![CapabilityOperation::Read, CapabilityOperation::Write],
+        },
+        HostCapability {
             id: "runtime.process".to_string(),
             displayName: "进程执行".to_string(),
             scope: CapabilityScope::Runtime,
             operations: vec![CapabilityOperation::Execute],
         },
         HostCapability {
+            id: "runtime.storage".to_string(),
+            displayName: "运行时存储".to_string(),
+            scope: CapabilityScope::Runtime,
+            operations: vec![CapabilityOperation::Read, CapabilityOperation::Write],
+        },
+        HostCapability {
+            id: "runtime.sqlite".to_string(),
+            displayName: "SQLite 存储".to_string(),
+            scope: CapabilityScope::Runtime,
+            operations: vec![CapabilityOperation::Read, CapabilityOperation::Write],
+        },
+        HostCapability {
+            id: "audio.playback".to_string(),
+            displayName: "音频播放".to_string(),
+            scope: CapabilityScope::Media,
+            operations: vec![CapabilityOperation::Execute],
+        },
+        HostCapability {
+            id: "music.playback".to_string(),
+            displayName: "音乐播放控制".to_string(),
+            scope: CapabilityScope::Media,
+            operations: vec![CapabilityOperation::Read, CapabilityOperation::Execute],
+        },
+        HostCapability {
+            id: "tts.synthesis".to_string(),
+            displayName: "语音合成".to_string(),
+            scope: CapabilityScope::Media,
+            operations: vec![CapabilityOperation::Execute],
+        },
+        HostCapability {
+            id: "tts.playback".to_string(),
+            displayName: "语音播放".to_string(),
+            scope: CapabilityScope::Media,
+            operations: vec![CapabilityOperation::Read, CapabilityOperation::Execute],
+        },
+        HostCapability {
             id: "system.location".to_string(),
             displayName: "定位".to_string(),
             scope: CapabilityScope::System,
             operations: vec![CapabilityOperation::Read],
+        },
+        HostCapability {
+            id: "system.notifications.read".to_string(),
+            displayName: "通知读取".to_string(),
+            scope: CapabilityScope::System,
+            operations: vec![CapabilityOperation::Read],
+        },
+        HostCapability {
+            id: "system.app_usage".to_string(),
+            displayName: "应用使用统计".to_string(),
+            scope: CapabilityScope::System,
+            operations: vec![CapabilityOperation::Read],
+        },
+        HostCapability {
+            id: "system.app.install".to_string(),
+            displayName: "应用安装".to_string(),
+            scope: CapabilityScope::System,
+            operations: vec![CapabilityOperation::Execute],
+        },
+        HostCapability {
+            id: "system.app.uninstall".to_string(),
+            displayName: "应用卸载".to_string(),
+            scope: CapabilityScope::System,
+            operations: vec![CapabilityOperation::Execute],
+        },
+        HostCapability {
+            id: "system.settings".to_string(),
+            displayName: "系统设置".to_string(),
+            scope: CapabilityScope::System,
+            operations: vec![CapabilityOperation::Read, CapabilityOperation::Write],
         },
         HostCapability {
             id: "bluetooth.classic".to_string(),
@@ -420,6 +575,21 @@ fn defaultHostCapabilities() -> Vec<HostCapability> {
             operations: vec![CapabilityOperation::Read, CapabilityOperation::Connect],
         },
     ]
+}
+
+/// Builds structured capabilities for the provided capability id order.
+#[allow(non_snake_case)]
+fn hostCapabilities(ids: &[&str]) -> Vec<HostCapability> {
+    let capabilities = defaultHostCapabilities();
+    ids.iter()
+        .map(|id| {
+            capabilities
+                .iter()
+                .find(|capability| capability.id == *id)
+                .unwrap_or_else(|| panic!("host capability is not defined: {id}"))
+                .clone()
+        })
+        .collect()
 }
 
 fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
@@ -455,6 +625,31 @@ fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
             capabilityIds: vec!["runtime.background".to_string()],
             status: HostRequirementStatus::Missing,
             action: HostRequirementAction::OpenSystemSettings,
+        },
+    ]
+}
+
+/// Builds OpenHarmony runtime permission requirements for host onboarding.
+#[allow(non_snake_case)]
+fn ohosOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
+    vec![
+        HostOnboardingRequirement {
+            id: "ohos.location".to_string(),
+            title: "定位授权".to_string(),
+            description: "Host 需要系统定位授权来读取设备位置，并支持依赖位置权限的附近设备发现。"
+                .to_string(),
+            capabilityIds: vec!["system.location".to_string()],
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::RuntimePermission,
+        },
+        HostOnboardingRequirement {
+            id: "ohos.bluetooth".to_string(),
+            title: "蓝牙授权".to_string(),
+            description: "Host 需要蓝牙使用与发现授权来扫描、连接和读写经典蓝牙或 BLE 设备。"
+                .to_string(),
+            capabilityIds: vec!["bluetooth.classic".to_string(), "bluetooth.ble".to_string()],
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::RuntimePermission,
         },
     ]
 }
@@ -711,8 +906,98 @@ pub struct HttpResponseData {
     pub body: Vec<u8>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpDownloadFileRequest {
+    pub fileId: String,
+    pub url: String,
+    pub targetPath: String,
+    pub headers: Vec<(String, String)>,
+    pub expectedBytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpDownloadRequest {
+    pub downloadId: String,
+    pub files: Vec<HttpDownloadFileRequest>,
+    pub maxConcurrency: usize,
+    pub connectTimeoutSeconds: u64,
+    pub readTimeoutSeconds: u64,
+    pub followRedirects: bool,
+    pub ignoreSsl: bool,
+    pub proxyHost: String,
+    pub proxyPort: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HttpDownloadProgressState {
+    Started,
+    Downloading,
+    Completed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpDownloadProgress {
+    pub downloadId: String,
+    pub fileId: String,
+    pub state: HttpDownloadProgressState,
+    pub fileDownloadedBytes: u64,
+    pub fileTotalBytes: u64,
+    pub downloadedBytes: u64,
+    pub totalBytes: u64,
+    pub completedFiles: usize,
+    pub totalFiles: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpDownloadFileResult {
+    pub fileId: String,
+    pub finalUrl: String,
+    pub targetPath: String,
+    pub downloadedBytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpDownloadResult {
+    pub downloadId: String,
+    pub files: Vec<HttpDownloadFileResult>,
+    pub downloadedBytes: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct HttpDownloadControl {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl HttpDownloadControl {
+    /// Creates an active download control token.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Requests cancellation for every file in the associated download operation.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    /// Returns whether cancellation has been requested.
+    pub fn isCancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
+
+pub type HttpDownloadProgressCallback = Arc<dyn Fn(HttpDownloadProgress) + Send + Sync + 'static>;
+
 pub trait HttpHost: Send + Sync {
+    /// Executes one buffered HTTP request.
     fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData>;
+
+    /// Downloads files with bounded worker concurrency and progress reporting.
+    fn downloadFiles(
+        &self,
+        request: HttpDownloadRequest,
+        control: HttpDownloadControl,
+        onProgress: HttpDownloadProgressCallback,
+    ) -> HostResult<HttpDownloadResult>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1458,11 +1743,78 @@ pub struct TtsPlaybackStatus {
 }
 
 pub trait TtsPlaybackHost: Send + Sync {
+    /// Returns whether this host can speak text through a platform system voice.
+    fn supportsSystemSpeech(&self) -> bool;
+
+    /// Starts playback for one generated speech audio file.
+    fn playAudio(&self, path: &str) -> HostResult<TtsPlaybackStatus>;
+
+    /// Starts one platform-provided system speech request.
     fn speakText(&self, request: TtsPlaybackRequest) -> HostResult<TtsPlaybackStatus>;
+
+    /// Pauses the active speech session.
     fn pauseSpeech(&self) -> HostResult<TtsPlaybackStatus>;
+
+    /// Resumes the active speech session.
     fn resumeSpeech(&self) -> HostResult<TtsPlaybackStatus>;
+
+    /// Stops the active speech session.
     fn stopSpeech(&self) -> HostResult<TtsPlaybackStatus>;
+
+    /// Returns the current speech session state.
     fn speechState(&self) -> HostResult<TtsPlaybackStatus>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct LocalSttInferenceHostRequest {
+    pub engineLibraryDirectory: String,
+    pub modelDirectory: String,
+    pub driverJson: String,
+    pub audioPath: String,
+    pub language: Option<String>,
+    pub optionsJson: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct LocalSttInferenceHostResponse {
+    pub text: String,
+    pub resultJson: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct LocalTtsInferenceHostRequest {
+    pub engineLibraryDirectory: String,
+    pub modelDirectory: String,
+    pub driverJson: String,
+    pub text: String,
+    pub voice: String,
+    pub speed: f64,
+    pub outputPath: String,
+    pub optionsJson: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct LocalTtsInferenceHostResponse {
+    pub audioPath: String,
+    pub outputFormat: String,
+}
+
+pub trait LocalInferenceHost: Send + Sync {
+    /// Transcribes one local audio request through a platform inference engine.
+    fn transcribeLocalSpeech(
+        &self,
+        request: LocalSttInferenceHostRequest,
+    ) -> HostResult<LocalSttInferenceHostResponse>;
+
+    /// Synthesizes one local speech request through a platform inference engine.
+    fn synthesizeLocalSpeech(
+        &self,
+        request: LocalTtsInferenceHostRequest,
+    ) -> HostResult<LocalTtsInferenceHostResponse>;
 }
 
 pub trait SystemOperationHost: Send + Sync {
@@ -1527,4 +1879,110 @@ pub trait FileSystemHost: Send + Sync {
     fn unzipFiles(&self, source: &str, destination: &str) -> HostResult<()>;
     fn openFile(&self, path: &str) -> HostResult<()>;
     fn shareFile(&self, path: &str, title: &str) -> HostResult<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// Builds a sorted id set from borrowed string ids.
+    fn idSet(ids: &[&str]) -> BTreeSet<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    /// Returns a sorted id set for descriptor capability ids.
+    fn descriptorCapabilitySet(descriptor: &HostEnvironmentDescriptor) -> BTreeSet<String> {
+        descriptor.capabilities.iter().cloned().collect()
+    }
+
+    /// Returns a sorted id set for descriptor structured capability ids.
+    fn structuredCapabilitySet(descriptor: &HostEnvironmentDescriptor) -> BTreeSet<String> {
+        descriptor
+            .structuredCapabilities
+            .iter()
+            .map(|capability| capability.id.clone())
+            .collect()
+    }
+
+    /// Verifies that OpenHarmony advertises the implemented non-terminal host capabilities.
+    #[test]
+    fn ohosDescriptorExposesImplementedHostCapabilities() {
+        let descriptor = HostEnvironmentDescriptor::ohos();
+        let actual = descriptorCapabilitySet(&descriptor);
+        let expected = idSet(&[
+            "fs.read",
+            "fs.write",
+            "fs.search",
+            "fs.archive",
+            "http.request",
+            "web.visit",
+            "os.open",
+            "os.share",
+            "terminal.pty",
+            "audio.playback",
+            "music.playback",
+            "tts.synthesis",
+            "tts.playback",
+            "bluetooth.classic",
+            "bluetooth.ble",
+            "system.location",
+            "system.notifications.read",
+            "system.app_usage",
+            "system.app.install",
+            "system.app.uninstall",
+            "system.settings",
+            "runtime.process",
+            "runtime.storage",
+            "runtime.sqlite",
+        ]);
+        let missing: Vec<_> = expected.difference(&actual).cloned().collect();
+
+        assert!(
+            missing.is_empty(),
+            "OpenHarmony host descriptor is missing capabilities: {missing:?}"
+        );
+    }
+
+    /// Verifies that raw and structured OpenHarmony capabilities stay in sync.
+    #[test]
+    fn ohosStructuredCapabilitiesMatchDescriptorCapabilities() {
+        let descriptor = HostEnvironmentDescriptor::ohos();
+        let raw = descriptorCapabilitySet(&descriptor);
+        let structured = structuredCapabilitySet(&descriptor);
+
+        assert_eq!(raw, structured);
+    }
+
+    /// Verifies that OpenHarmony does not advertise unimplemented OCR capability.
+    #[test]
+    fn ohosDescriptorExcludesUnimplementedCapabilities() {
+        let descriptor = HostEnvironmentDescriptor::ohos();
+        let actual = descriptorCapabilitySet(&descriptor);
+        let unimplemented = idSet(&["ocr.recognition"]);
+        let advertised: Vec<_> = actual.intersection(&unimplemented).cloned().collect();
+
+        assert!(
+            advertised.is_empty(),
+            "OpenHarmony host descriptor advertises unimplemented capabilities: {advertised:?}"
+        );
+    }
+
+    /// Verifies that OpenHarmony onboarding exposes required runtime permissions.
+    #[test]
+    fn ohosOnboardingRequirementsExposeRuntimePermissions() {
+        let descriptor = HostEnvironmentDescriptor::ohos();
+        let actual: BTreeSet<_> = descriptor
+            .onboardingRequirements
+            .iter()
+            .map(|requirement| requirement.id.clone())
+            .collect();
+        let expected = idSet(&["ohos.location", "ohos.bluetooth"]);
+        let missing: Vec<_> = expected.difference(&actual).cloned().collect();
+
+        assert!(
+            missing.is_empty(),
+            "OpenHarmony onboarding requirements are missing ids: {missing:?}"
+        );
+    }
 }

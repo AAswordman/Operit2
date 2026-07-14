@@ -9,8 +9,8 @@ use operit_host_api::{
 
 use operit_tools::tools::ToolResultDataClasses::{
     stringResultData, BluetoothBleNotificationData, BluetoothBleServicesData,
-    BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData,
-    BluetoothStateData, BluetoothTransferData, ToolResultData,
+    BluetoothBondedDevicesData, BluetoothDeviceData, BluetoothReadData, BluetoothScanResultData,
+    BluetoothSessionData, BluetoothStateData, BluetoothTransferData, FromHostResult, ToolResultData,
 };
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
@@ -84,7 +84,7 @@ impl StandardBluetoothTools {
         match self.host().and_then(|host| host.bluetoothState()) {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothStateData(BluetoothStateData::from(data)),
+                ToolResultData::BluetoothStateData(BluetoothStateData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -113,7 +113,11 @@ impl StandardBluetoothTools {
             Ok(data) => toolSuccessData(
                 tool,
                 ToolResultData::BluetoothBondedDevicesData(BluetoothBondedDevicesData {
-                    devices: data.devices.into_iter().map(Into::into).collect(),
+                    devices: data
+                        .devices
+                        .into_iter()
+                        .map(BluetoothDeviceData::from_host)
+                        .collect(),
                 }),
             ),
             Err(error) => toolError(
@@ -135,7 +139,7 @@ impl StandardBluetoothTools {
         {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothScanResultData(BluetoothScanResultData::from(data)),
+                ToolResultData::BluetoothScanResultData(BluetoothScanResultData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -153,7 +157,7 @@ impl StandardBluetoothTools {
         match self.host().and_then(|host| host.bluetoothConnect(request)) {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothSessionData(BluetoothSessionData::from(data)),
+                ToolResultData::BluetoothSessionData(BluetoothSessionData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -171,7 +175,7 @@ impl StandardBluetoothTools {
         match self.host().and_then(|host| host.bluetoothListen(request)) {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothSessionData(BluetoothSessionData::from(data)),
+                ToolResultData::BluetoothSessionData(BluetoothSessionData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -189,7 +193,7 @@ impl StandardBluetoothTools {
         match self.host().and_then(|host| host.bluetoothAccept(request)) {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothSessionData(BluetoothSessionData::from(data)),
+                ToolResultData::BluetoothSessionData(BluetoothSessionData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -208,7 +212,7 @@ impl StandardBluetoothTools {
         {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothTransferData(BluetoothTransferData::from(data)),
+                ToolResultData::BluetoothTransferData(BluetoothTransferData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -223,7 +227,7 @@ impl StandardBluetoothTools {
         match self.host().and_then(|host| host.bluetoothRead(request)) {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothReadData(BluetoothReadData::from(data)),
+                ToolResultData::BluetoothReadData(BluetoothReadData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -243,7 +247,7 @@ impl StandardBluetoothTools {
         {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothReadData(BluetoothReadData::from(data)),
+                ToolResultData::BluetoothReadData(BluetoothReadData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -279,7 +283,7 @@ impl StandardBluetoothTools {
         {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothSessionData(BluetoothSessionData::from(data)),
+                ToolResultData::BluetoothSessionData(BluetoothSessionData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -298,7 +302,7 @@ impl StandardBluetoothTools {
         {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothBleServicesData(BluetoothBleServicesData::from(data)),
+                ToolResultData::BluetoothBleServicesData(BluetoothBleServicesData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -316,7 +320,7 @@ impl StandardBluetoothTools {
         {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothReadData(BluetoothReadData::from(data)),
+                ToolResultData::BluetoothReadData(BluetoothReadData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -340,7 +344,7 @@ impl StandardBluetoothTools {
         {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothTransferData(BluetoothTransferData::from(data)),
+                ToolResultData::BluetoothTransferData(BluetoothTransferData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -367,7 +371,7 @@ impl StandardBluetoothTools {
         {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothReadData(BluetoothReadData::from(data)),
+                ToolResultData::BluetoothReadData(BluetoothReadData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -393,7 +397,7 @@ impl StandardBluetoothTools {
         {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothTransferData(BluetoothTransferData::from(data)),
+                ToolResultData::BluetoothTransferData(BluetoothTransferData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -412,7 +416,7 @@ impl StandardBluetoothTools {
         {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothBleNotificationData(BluetoothBleNotificationData::from(
+                ToolResultData::BluetoothBleNotificationData(BluetoothBleNotificationData::from_host(
                     data,
                 )),
             ),

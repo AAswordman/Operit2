@@ -8,6 +8,7 @@ pub use tools::bluetooth::WebBluetoothHost;
 pub use tools::browser::WebWebVisitHost;
 pub use tools::fs::WebFileSystemHost;
 pub use tools::http::WebHttpHost;
+pub use tools::local_inference::WebLocalInferenceHost;
 pub use tools::runtime::WebManagedRuntimeHost;
 pub use tools::storage::WebRuntimeStorageHost;
 pub use tools::system::WebSystemOperationHost;

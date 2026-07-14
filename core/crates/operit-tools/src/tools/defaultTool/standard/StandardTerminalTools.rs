@@ -6,9 +6,10 @@ use operit_host_api::{
 };
 
 use operit_tools::tools::ToolResultDataClasses::{
-    HiddenTerminalCommandResultData, StringResultData, TerminalCommandResultData,
+    HiddenTerminalCommandResultData, JsOptional, StringResultData, TerminalCommandResultData,
     TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData,
-    TerminalSessionScreenResultData, TerminalStreamEventData, TerminalTypeInfoData, ToolResultData,
+    TerminalSessionScreenResultData, TerminalStreamEventData, TerminalType, TerminalTypeInfoData,
+    ToolResultData,
 };
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
@@ -121,9 +122,9 @@ impl StandardTerminalTools {
             r#type: "start".to_string(),
             command: command.clone(),
             sessionId: sessionId.clone(),
-            chunk: None,
-            chunkIndex: Some(0),
-            receivedChars: Some(0),
+            chunk: JsOptional::Null,
+            chunkIndex: JsOptional::Value(0),
+            receivedChars: JsOptional::Value(0),
         };
         let start = ToolResult {
             toolName: tool.name.clone(),
@@ -366,6 +367,12 @@ fn validateTerminalTool(operation: TerminalToolOperation, tool: &AITool) -> Tool
     }
 }
 
+/// Converts the host terminal literal into the SDK terminal enum.
+#[allow(non_snake_case)]
+fn terminalType(value: &str) -> TerminalType {
+    TerminalType::try_from(value).expect("host returned an invalid terminal type")
+}
+
 #[allow(non_snake_case)]
 fn terminalCommandResultData(data: &TerminalCommandOutput) -> TerminalCommandResultData {
     TerminalCommandResultData {
@@ -373,7 +380,7 @@ fn terminalCommandResultData(data: &TerminalCommandOutput) -> TerminalCommandRes
         output: data.output.clone(),
         exitCode: data.exitCode,
         sessionId: data.sessionId.clone(),
-        terminalType: data.terminalType.clone(),
+        terminalType: terminalType(&data.terminalType),
         timedOut: data.timedOut,
     }
 }
@@ -387,7 +394,7 @@ fn hiddenTerminalCommandResultData(
         output: data.output.clone(),
         exitCode: data.exitCode,
         executorKey: data.executorKey.clone(),
-        terminalType: data.terminalType.clone(),
+        terminalType: terminalType(&data.terminalType),
         timedOut: data.timedOut,
     }
 }
@@ -399,7 +406,7 @@ fn terminalSessionCreationResultData(
     TerminalSessionCreationResultData {
         sessionId: data.sessionId.clone(),
         sessionName: data.sessionName.clone(),
-        terminalType: data.terminalType.clone(),
+        terminalType: terminalType(&data.terminalType),
         isNewSession: data.isNewSession,
     }
 }
@@ -417,7 +424,7 @@ fn terminalSessionCloseResultData(data: &TerminalCloseOutput) -> TerminalSession
 fn terminalSessionScreenResultData(data: &TerminalScreenOutput) -> TerminalSessionScreenResultData {
     TerminalSessionScreenResultData {
         sessionId: data.sessionId.clone(),
-        terminalType: data.terminalType.clone(),
+        terminalType: terminalType(&data.terminalType),
         rows: data.rows,
         cols: data.cols,
         content: data.content.clone(),
@@ -430,15 +437,15 @@ fn terminalInfoResultData(data: &TerminalInfo) -> TerminalInfoResultData {
     let types = data
         .types
         .iter()
-        .map(|terminalType| TerminalTypeInfoData {
-            terminalType: terminalType.terminalType.clone(),
-            available: terminalType.available,
-            description: terminalType.description.clone(),
+        .map(|info| TerminalTypeInfoData {
+            terminalType: terminalType(&info.terminalType),
+            available: info.available,
+            description: info.description.clone(),
         })
         .collect::<Vec<_>>();
     TerminalInfoResultData {
         platform: data.platform.clone(),
-        defaultType: data.defaultType.clone(),
+        defaultType: terminalType(&data.defaultType),
         types,
     }
 }

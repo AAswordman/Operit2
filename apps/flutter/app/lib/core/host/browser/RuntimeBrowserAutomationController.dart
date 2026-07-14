@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:webview_all/webview_all.dart';
 import 'package:webview_all_windows/webview_all_windows.dart';
 
@@ -22,6 +23,8 @@ class RuntimeBrowserAutomationController {
   Size? _surfaceSize;
   bool _surfaceFrameCaptureActive = false;
   bool _surfaceFrameCapturePending = false;
+  final Map<int, WindowsBrowserSurfacePointerButton> _pressedPointerButtons =
+      <int, WindowsBrowserSurfacePointerButton>{};
 
   /// Dispatches a compositor surface interaction into the real WebView.
   Future<void> dispatchSurfaceInteraction(String payloadJson) async {
@@ -42,6 +45,9 @@ class RuntimeBrowserAutomationController {
     switch (payload['type'] as String?) {
       case 'batch':
         await _dispatchSurfaceInteractionBatch(platform, payload);
+        return;
+      case 'pointer':
+        await _dispatchSurfacePointer(platform, payload);
         return;
       case 'resize':
         final size = Size(
@@ -88,6 +94,42 @@ class RuntimeBrowserAutomationController {
         return;
       default:
         throw StateError('Unknown browser surface interaction');
+    }
+  }
+
+  /// Dispatches one raw Flutter pointer event into the compositor surface.
+  Future<void> _dispatchSurfacePointer(
+    WindowsWebViewController platform,
+    Map<String, Object?> payload,
+  ) async {
+    await platform.moveBrowserSurfaceCursor(
+      Offset(_readDouble(payload, 'x'), _readDouble(payload, 'y')),
+    );
+    final eventType = _readString(payload, 'eventType');
+    final pointer = _readInt(payload, 'pointer');
+    switch (eventType) {
+      case 'move':
+        return;
+      case 'down':
+        final button = _surfaceButtonForRawButtons(
+          _readInt(payload, 'buttons'),
+        );
+        _pressedPointerButtons[pointer] = button;
+        await platform.setBrowserSurfacePointerButton(button, isDown: true);
+        return;
+      case 'up':
+      case 'cancel':
+        final button = _pressedPointerButtons.remove(pointer);
+        if (button == null) {
+          throw StateError(
+            'Browser surface pointer ended before a button was pressed: '
+            '$pointer',
+          );
+        }
+        await platform.setBrowserSurfacePointerButton(button, isDown: false);
+        return;
+      default:
+        throw StateError('Unknown browser surface pointer event: $eventType');
     }
   }
 
@@ -508,5 +550,19 @@ new Promise(function(resolve) {
       throw StateError('Browser surface pointer button is invalid');
     }
     return WindowsBrowserSurfacePointerButton.values[value];
+  }
+
+  /// Converts a raw Flutter pointer button mask into the Windows enum.
+  WindowsBrowserSurfacePointerButton _surfaceButtonForRawButtons(int buttons) {
+    switch (buttons) {
+      case kPrimaryButton:
+        return WindowsBrowserSurfacePointerButton.primary;
+      case kSecondaryButton:
+        return WindowsBrowserSurfacePointerButton.secondary;
+      case kTertiaryButton:
+        return WindowsBrowserSurfacePointerButton.tertiary;
+      default:
+        throw StateError('Invalid browser surface raw buttons: $buttons');
+    }
   }
 }

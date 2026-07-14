@@ -10,6 +10,7 @@ operit-runtime = { path = "../operit-runtime" }
 operit-providers = { path = "../operit-providers" }
 operit-store = { path = "../operit-store" }
 operit-host-api = { path = "../operit-host-api" }
+operit-local-models = { path = "../operit-local-models" }
 operit-model = { path = "../operit-model" }
 operit-tools = { path = "../operit-tools" }
 operit-util = { path = "../operit-util" }

@@ -5,8 +5,8 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:operit2/core/browser/BrowserSessions.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/core/runtime/RuntimeConnectionManager.dart';
 
@@ -26,64 +26,6 @@ class WorkspaceBrowserViewDelegate {
 
   final VoidCallback onActivateRequested;
   final VoidCallback onCloseRequested;
-}
-
-class _SurfaceInteractionBatch {
-  /// Creates an empty browser surface interaction batch.
-  _SurfaceInteractionBatch();
-
-  Map<String, Object?>? _resize;
-  Map<String, Object?>? _cursor;
-  final List<Map<String, Object?>> _ordered = <Map<String, Object?>>[];
-  double _scrollDx = 0;
-  double _scrollDy = 0;
-  bool _hasScroll = false;
-
-  /// Records one browser surface interaction for the next frame.
-  void add(Map<String, Object?> interaction) {
-    switch (interaction['type'] as String?) {
-      case 'resize':
-        _resize = interaction;
-        return;
-      case 'cursor':
-        _cursor = interaction;
-        return;
-      case 'scroll':
-        _scrollDx += (interaction['dx'] as num).toDouble();
-        _scrollDy += (interaction['dy'] as num).toDouble();
-        _hasScroll = true;
-        return;
-      default:
-        _ordered.add(interaction);
-        return;
-    }
-  }
-
-  /// Returns whether the batch contains no pending interactions.
-  bool get isEmpty =>
-      _resize == null && _cursor == null && !_hasScroll && _ordered.isEmpty;
-
-  /// Serializes the pending interactions in compositor dispatch order.
-  List<Map<String, Object?>> toList() {
-    final interactions = <Map<String, Object?>>[];
-    final resize = _resize;
-    if (resize != null) {
-      interactions.add(resize);
-    }
-    final cursor = _cursor;
-    if (cursor != null) {
-      interactions.add(cursor);
-    }
-    if (_hasScroll) {
-      interactions.add(<String, Object?>{
-        'type': 'scroll',
-        'dx': _scrollDx,
-        'dy': _scrollDy,
-      });
-    }
-    interactions.addAll(_ordered);
-    return interactions;
-  }
 }
 
 class WorkspaceBrowserViewStore extends ChangeNotifier {
@@ -106,6 +48,7 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
       '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
   static const String _localTextureTransport = 'localTexture';
   static const String _encodedStreamTransport = 'encodedStream';
+  static const String _logTag = 'WorkspaceBrowserSurface';
 
   final BrowserSessions _sessions = BrowserSessions();
   final WorkspaceBrowserStores stores = WorkspaceBrowserStores();
@@ -114,9 +57,7 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
   final List<WorkspaceBrowserTabState> _tabs = <WorkspaceBrowserTabState>[];
   final Map<String, StreamSubscription<BrowserSessionEvent>> _subscriptions =
       <String, StreamSubscription<BrowserSessionEvent>>{};
-  final Map<String, _SurfaceInteractionBatch> _surfaceInteractionBatches =
-      <String, _SurfaceInteractionBatch>{};
-  final Set<String> _scheduledSurfaceInteractionBatches = <String>{};
+  final Set<String> _closedSurfaceInteractionDropLogged = <String>{};
   final ValueNotifier<int> sessionCount = ValueNotifier<int>(0);
   Future<void>? _loadFuture;
   WorkspaceBrowserViewDelegate? _delegate;
@@ -133,6 +74,13 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
       return null;
     }
     return _tabs[_selectedIndex];
+  }
+
+  /// Returns whether workspace can mount the owner WebView directly.
+  bool get usesNativeSurface {
+    return !kIsWeb &&
+        RuntimeConnectionManager.instance.config.mode ==
+            RuntimeConnectionMode.local;
   }
 
   int get activeDownloadCount => stores.downloads.items
@@ -372,7 +320,7 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
 
   /// Resizes the owner compositor surface to the workspace viewport.
   Future<void> resizeSurface(String sessionId, Size size, double scaleFactor) {
-    _queueSurfaceInteraction(sessionId, <String, Object?>{
+    _sendSurfaceInteraction(sessionId, <String, Object?>{
       'type': 'resize',
       'width': size.width,
       'height': size.height,
@@ -381,31 +329,27 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
     return Future<void>.value();
   }
 
-  /// Moves the owner compositor cursor to a workspace-local position.
-  void moveSurfaceCursor(String sessionId, Offset position) {
-    _queueSurfaceInteraction(sessionId, <String, Object?>{
-      'type': 'cursor',
+  /// Sends one raw pointer event to the owner compositor surface.
+  void pointerSurface(
+    String sessionId, {
+    required String eventType,
+    required int pointer,
+    required Offset position,
+    required int buttons,
+  }) {
+    _sendSurfaceInteraction(sessionId, <String, Object?>{
+      'type': 'pointer',
+      'eventType': eventType,
+      'pointer': pointer,
       'x': position.dx,
       'y': position.dy,
-    });
-  }
-
-  /// Changes one owner compositor pointer button state.
-  void setSurfacePointerButton(
-    String sessionId, {
-    required int button,
-    required bool isDown,
-  }) {
-    _queueSurfaceInteraction(sessionId, <String, Object?>{
-      'type': 'button',
-      'button': button,
-      'isDown': isDown,
+      'buttons': buttons,
     });
   }
 
   /// Sends a workspace scroll delta to the owner compositor surface.
   void scrollSurface(String sessionId, double dx, double dy) {
-    _queueSurfaceInteraction(sessionId, <String, Object?>{
+    _sendSurfaceInteraction(sessionId, <String, Object?>{
       'type': 'scroll',
       'dx': dx,
       'dy': dy,
@@ -414,42 +358,27 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
 
   /// Sends a keyboard event to the owner compositor surface.
   void keySurface(String sessionId, Map<String, Object?> event) {
-    _queueSurfaceInteraction(sessionId, <String, Object?>{
+    _sendSurfaceInteraction(sessionId, <String, Object?>{
       'type': 'key',
       ...event,
     });
   }
 
-  /// Queues one compositor interaction for a frame-batched dispatch.
-  void _queueSurfaceInteraction(
+  /// Sends one compositor interaction directly to Core.
+  void _sendSurfaceInteraction(
     String sessionId,
     Map<String, Object?> interaction,
   ) {
-    final batch = _surfaceInteractionBatches.putIfAbsent(
-      sessionId,
-      _SurfaceInteractionBatch.new,
-    );
-    batch.add(interaction);
-    if (_scheduledSurfaceInteractionBatches.add(sessionId)) {
-      SchedulerBinding.instance.scheduleFrameCallback((_) {
-        _flushSurfaceInteractionBatch(sessionId);
-      });
-    }
-  }
-
-  /// Sends all pending compositor interactions for one browser session.
-  void _flushSurfaceInteractionBatch(String sessionId) {
-    _scheduledSurfaceInteractionBatches.remove(sessionId);
-    final batch = _surfaceInteractionBatches.remove(sessionId);
-    if (batch == null || batch.isEmpty) {
+    if (_tabById(sessionId) == null) {
+      if (_closedSurfaceInteractionDropLogged.add(sessionId)) {
+        ClientLogger.d(
+          'drop closed session=$sessionId type=${interaction['type']}',
+          tag: _logTag,
+        );
+      }
       return;
     }
-    unawaited(
-      _sessions.interact(sessionId, <String, Object?>{
-        'type': 'batch',
-        'interactions': batch.toList(),
-      }),
-    );
+    unawaited(_sessions.interact(sessionId, interaction));
   }
 
   /// Loads local stores and attaches every existing Core browser session.
@@ -488,6 +417,7 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
     );
     _applySessionInfo(tab, info);
     _tabs.add(tab);
+    _closedSurfaceInteractionDropLogged.remove(tab.id);
     sessionCount.value = _tabs.length;
     _subscriptions[tab.id] = _sessions
         .watchEvents(tab.id)
@@ -497,11 +427,13 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
             tab.update(errorText: error.toString(), isLoading: false);
           },
         );
-    final snapshot = await _sessions.getSnapshot(
-      tab.id,
-      displayIntent: _surfaceDisplayIntent(),
-    );
-    _applySurfaceDescriptor(tab, snapshot.resultJson);
+    if (!usesNativeSurface) {
+      final snapshot = await _sessions.getSnapshot(
+        tab.id,
+        displayIntent: _surfaceDisplayIntent(),
+      );
+      _applySurfaceDescriptor(tab, snapshot.resultJson);
+    }
     if (select) {
       _selectedIndex = _tabs.length - 1;
     }
@@ -579,8 +511,7 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
     final tab = _tabs.removeAt(index);
     sessionCount.value = _tabs.length;
     unawaited(_subscriptions.remove(sessionId)?.cancel());
-    _surfaceInteractionBatches.remove(sessionId);
-    _scheduledSurfaceInteractionBatches.remove(sessionId);
+    _closedSurfaceInteractionDropLogged.remove(sessionId);
     tab.dispose();
     if (_tabs.isEmpty) {
       _selectedIndex = 0;
@@ -611,24 +542,32 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
     if (decoded is! Map<String, Object?>) {
       throw StateError('Browser surface descriptor is not a JSON object');
     }
-    tab.updateSurfaceDescriptor(
-      WorkspaceBrowserSurfaceDescriptor.fromJson(decoded),
+    final descriptor = WorkspaceBrowserSurfaceDescriptor.fromJson(decoded);
+    ClientLogger.i(
+      'descriptor session=${tab.id} transport=${descriptor.transport} platform=${descriptor.platform} textureId=${descriptor.textureId} streamId=${descriptor.streamId}',
+      tag: _logTag,
     );
+    tab.updateSurfaceDescriptor(descriptor);
   }
 
   /// Builds the compositor transport requested by the current viewer.
   Map<String, Object?> _surfaceDisplayIntent() {
     final platform = defaultTargetPlatform;
+    final mode = RuntimeConnectionManager.instance.config.mode;
     final sameProcessWindows =
         !kIsWeb &&
-        RuntimeConnectionManager.instance.config.mode ==
-            RuntimeConnectionMode.local &&
+        mode == RuntimeConnectionMode.local &&
         platform == TargetPlatform.windows &&
         WidgetsBinding.instance.platformDispatcher.views.isNotEmpty;
+    final transport = sameProcessWindows
+        ? _localTextureTransport
+        : _encodedStreamTransport;
+    ClientLogger.i(
+      'displayIntent mode=${mode.name} platform=${platform.name} transport=$transport',
+      tag: _logTag,
+    );
     return <String, Object?>{
-      'transport': sameProcessWindows
-          ? _localTextureTransport
-          : _encodedStreamTransport,
+      'transport': transport,
       'acceptedCodecs': const <String>['raw/bgra'],
     };
   }

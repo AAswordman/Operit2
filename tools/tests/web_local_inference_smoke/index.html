@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Operit Web Local Inference Smoke Test</title>
+  </head>
+  <body>
+    <pre id="result">RUNNING</pre>
+    <script>
+      globalThis.__OPERIT_LOCAL_INFERENCE_TEST__ = true;
+    </script>
+    <script src="/bridge.js"></script>
+    <script type="module" src="/smoke.js"></script>
+  </body>
+</html>

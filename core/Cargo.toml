@@ -8,8 +8,10 @@ members = [
     "crates/operit-model",
     "crates/operit-util",
     "crates/operit-plugin-sdk",
+    "crates/operit-plugin-sdk-codegen",
     "crates/operit-tools",
     "crates/operit-js-bridge",
+    "crates/operit-local-models",
     "crates/operit-providers",
     "crates/operit-runtime",
 ]
@@ -37,4 +39,7 @@ tokio = { version = "1", default-features = false }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+bzip2 = "0.4"
+bzip2-rs = "0.1.2"
+tar = "0.4"
 lmdb = { package = "lmdb-rkv", version = "0.14" }

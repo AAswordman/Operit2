@@ -1,6 +1,6 @@
 [package]
 name = "operit-plugin-sdk"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 edition.workspace = true
 license.workspace = true
 publish = true
@@ -10,8 +10,13 @@ repository = "https://github.com/AAswordman/Operit2"
 documentation = "https://docs.rs/operit-plugin-sdk"
 
 [dependencies]
+chrono.workspace = true
 json5.workspace = true
 regex.workspace = true
 serde.workspace = true
+serde_bytes = "0.11"
 serde_json.workspace = true
 zip.workspace = true
+
+[build-dependencies]
+operit-plugin-sdk-codegen = { version = "=2.0.0-preview.4", path = "../operit-plugin-sdk-codegen" }

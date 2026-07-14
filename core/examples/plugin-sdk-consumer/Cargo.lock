@@ -148,7 +148,7 @@ dependencies = [
 
 [[package]]
 name = "operit-plugin-sdk"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "json5",
  "regex",

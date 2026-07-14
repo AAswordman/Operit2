@@ -58,7 +58,10 @@ impl FileSystemHost for WebFileSystemHost {
     }
 
     fn readFile(&self, path: &str) -> HostResult<String> {
-        js_string(call_file_system("readFile", &[JsValue::from_str(path)])?, "readFile")
+        js_string(
+            call_file_system("readFile", &[JsValue::from_str(path)])?,
+            "readFile",
+        )
     }
 
     fn readFileWithLimit(&self, path: &str, maxBytes: usize) -> HostResult<String> {
@@ -89,7 +92,10 @@ impl FileSystemHost for WebFileSystemHost {
     }
 
     fn writeFileBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        call_file_system("writeFileBytes", &[JsValue::from_str(path), bytes_to_js(content)])?;
+        call_file_system(
+            "writeFileBytes",
+            &[JsValue::from_str(path), bytes_to_js(content)],
+        )?;
         Ok(())
     }
 
@@ -160,7 +166,8 @@ impl FileSystemHost for WebFileSystemHost {
 
     fn grepCode(&self, request: GrepCodeRequest) -> HostResult<GrepCodeResult> {
         let value = call_file_system("grepCode", &[grep_code_request_to_js(&request)])?;
-        let matches = Array::from(&Reflect::get(&value, &JsValue::from_str("matches")).map_err(js_error)?);
+        let matches =
+            Array::from(&Reflect::get(&value, &JsValue::from_str("matches")).map_err(js_error)?);
         let mut grep_matches = Vec::new();
         for index in 0..matches.length() {
             let file_match = matches.get(index);
@@ -210,7 +217,10 @@ impl FileSystemHost for WebFileSystemHost {
     }
 
     fn shareFile(&self, path: &str, title: &str) -> HostResult<()> {
-        call_file_system("shareFile", &[JsValue::from_str(path), JsValue::from_str(title)])?;
+        call_file_system(
+            "shareFile",
+            &[JsValue::from_str(path), JsValue::from_str(title)],
+        )?;
         Ok(())
     }
 }

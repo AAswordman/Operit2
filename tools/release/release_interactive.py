@@ -32,6 +32,8 @@ class ChoiceKey(ValueEnum):
     BUILD = "build"
     PUBLISH = "publish"
     DRAFT = "draft"
+    APPLE = "apple"
+    NO_APPLE = "no_apple"
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,16 @@ def choose(title: str, choices: list[Choice]) -> Choice:
             if 1 <= index <= len(choices):
                 return choices[index - 1]
         print("输入无效，请重新选择。")
+
+
+# Reads one non-empty interactive text value.
+def read_required_text(title: str) -> str:
+    print()
+    while True:
+        value = input(f"{title}: ").strip()
+        if value:
+            return value
+        print("输入不能为空。")
 
 
 def build_command() -> list[str]:
@@ -99,6 +111,17 @@ def build_command() -> list[str]:
             ],
         )
         command.extend(linux.args)
+
+    if target.key != ChoiceKey.CHECK:
+        apple = choose(
+            "Apple 构建机？",
+            [
+                Choice(ChoiceKey.NO_APPLE, "不使用 Apple SSH 构建机", ()),
+                Choice(ChoiceKey.APPLE, "使用 Apple SSH 构建 macOS/iOS", ()),
+            ],
+        )
+        if apple.key == ChoiceKey.APPLE:
+            command.extend(["--apple-builder", read_required_text("SSH 目标，例如 user@mac-mini.local")])
 
     return command
 

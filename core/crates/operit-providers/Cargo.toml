@@ -1,6 +1,6 @@
 [package]
 name = "operit-providers"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 edition.workspace = true
 license.workspace = true
 publish = true
@@ -16,11 +16,11 @@ chrono.workspace = true
 futures-util.workspace = true
 json5.workspace = true
 operit-host-api = { version = "0.1.0", path = "../operit-host-api" }
-operit-model = { version = "2.0.0-preview.3", path = "../operit-model" }
-operit-plugin-sdk = { version = "2.0.0-preview.3", path = "../operit-plugin-sdk" }
+operit-model = { version = "2.0.0-preview.4", path = "../operit-model" }
+operit-plugin-sdk = { version = "2.0.0-preview.4", path = "../operit-plugin-sdk" }
 operit-store = { version = "0.1.0", path = "../operit-store" }
-operit-tools = { version = "2.0.0-preview.3", path = "../operit-tools", default-features = false }
-operit-util = { version = "2.0.0-preview.3", path = "../operit-util" }
+operit-tools = { version = "2.0.0-preview.4", path = "../operit-tools", default-features = false }
+operit-util = { version = "2.0.0-preview.4", path = "../operit-util" }
 regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true

@@ -4,6 +4,8 @@ mod audio_playback;
 mod bluetooth;
 mod filesystem;
 mod http;
+#[cfg(target_os = "android")]
+mod local_inference;
 mod managed_runtime;
 mod runtime_common;
 mod runtime_storage;
@@ -19,6 +21,8 @@ pub use audio_playback::{AndroidAudioPlaybackHost, AndroidMusicCommand};
 pub use bluetooth::AndroidBluetoothHost;
 pub use filesystem::AndroidFileSystemHost;
 pub use http::AndroidHttpHost;
+#[cfg(target_os = "android")]
+pub use local_inference::AndroidLocalInferenceHost;
 pub use managed_runtime::AndroidManagedRuntimeHost;
 pub use runtime_storage::AndroidRuntimeStorageHost;
 #[cfg(target_os = "android")]

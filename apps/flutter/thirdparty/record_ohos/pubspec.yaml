@@ -1,0 +1,25 @@
+name: record_ohos
+description: OpenHarmony implementation of record maintained for Operit.
+version: 1.0.0+operit.1
+homepage: https://github.com/bruce3x/flutter_record_ohos
+
+environment:
+  sdk: ^3.5.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  record_platform_interface: ^1.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  plugin:
+    implements: record
+    platforms:
+      ohos:
+        package: com.example.record_ohos
+        pluginClass: RecordOhosPlugin

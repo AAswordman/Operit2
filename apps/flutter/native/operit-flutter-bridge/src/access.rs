@@ -1131,12 +1131,15 @@ async fn session_info(
             return encode_link_response(
                 StatusCode::BAD_REQUEST,
                 CoreLinkError::new("BAD_REQUEST", error.to_string()),
-            )
+            );
         }
     };
     let sessions = state.sessions.lock().await;
     let Some(session) = sessions.get(&verified.sessionId) else {
-        return unauthorized("invalid session");
+        return encode_link_response(
+            StatusCode::UNAUTHORIZED,
+            remote_session_auth_error("invalid session", "invalid_session"),
+        );
     };
     encode_link_response(
         StatusCode::OK,
@@ -1357,9 +1360,9 @@ async fn handle_ws_envelope(
         RemoteWsPayload::SessionInfo(request) => {
             let sessions = state.sessions.lock().await;
             let Some(session) = sessions.get(&envelope.sessionId) else {
-                return RemoteWsResponse::Error(CoreLinkError::new(
-                    "UNAUTHORIZED",
+                return RemoteWsResponse::Error(remote_session_auth_error(
                     "invalid session",
+                    "invalid_session",
                 ));
             };
             RemoteWsResponse::SessionInfo(RemoteSessionInfoResponse {
@@ -1498,13 +1501,22 @@ async fn verify_session_parts(
     refresh_accepted_session(state, sessionId).await?;
     let sessions = state.sessions.lock().await;
     let Some(session) = sessions.get(sessionId) else {
-        return Err(CoreLinkError::new("UNAUTHORIZED", "invalid session"));
+        return Err(remote_session_auth_error(
+            "invalid session",
+            "invalid_session",
+        ));
     };
     if session.deviceId != deviceId {
-        return Err(CoreLinkError::new("UNAUTHORIZED", "device mismatch"));
+        return Err(remote_session_auth_error(
+            "device mismatch",
+            "device_mismatch",
+        ));
     }
     if sign(&session.sessionSecret, body) != signature {
-        return Err(CoreLinkError::new("UNAUTHORIZED", "signature mismatch"));
+        return Err(remote_session_auth_error(
+            "signature mismatch",
+            "signature_mismatch",
+        ));
     }
     Ok(VerifiedRemoteSession {
         sessionId: sessionId.to_string(),
@@ -1519,6 +1531,28 @@ impl VerifiedRemoteSession {
             deviceId: self.deviceId.clone(),
         }
     }
+}
+
+/// Creates a structured unauthorized error for a remote session auth failure.
+fn remote_session_auth_error(message: &'static str, auth_reason: &'static str) -> CoreLinkError {
+    CoreLinkError::withDetails(
+        "UNAUTHORIZED",
+        message,
+        operit_link::CoreValue::Map(BTreeMap::from([
+            (
+                "type".to_string(),
+                operit_link::CoreValue::String("remote_session_auth".to_string()),
+            ),
+            (
+                "authReason".to_string(),
+                operit_link::CoreValue::String(auth_reason.to_string()),
+            ),
+            (
+                "resetWebAccessSession".to_string(),
+                operit_link::CoreValue::Bool(true),
+            ),
+        ])),
+    )
 }
 
 fn accepted_session_from_record(

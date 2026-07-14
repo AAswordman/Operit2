@@ -11,6 +11,18 @@
     {
       "name": "EntryAbility_label",
       "value": "operit2"
+    },
+    {
+      "name": "permission_bluetooth_reason",
+      "value": "用于连接和管理附近蓝牙设备。"
+    },
+    {
+      "name": "permission_location_reason",
+      "value": "用于在需要时获取设备位置。"
+    },
+    {
+      "name": "permission_microphone_reason",
+      "value": "用于录制语音并转换为文字。"
     }
   ]
 }

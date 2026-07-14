@@ -12,6 +12,7 @@ grep-regex = "0.1.14"
 grep-searcher = "0.1.16"
 ignore = "0.4.26"
 operit-host-api = { path = "../../core/crates/operit-host-api" }
+operit-host-native-common = { path = "../common/operit-host-native-common", default-features = false, features = ["http"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "multipart", "rustls-tls"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -23,4 +24,4 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 security-framework = "3.7"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-operit-host-native-common = { path = "../common/operit-host-native-common" }
+operit-host-native-common = { path = "../common/operit-host-native-common", default-features = false, features = ["http", "terminal"] }

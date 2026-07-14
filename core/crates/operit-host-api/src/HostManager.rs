@@ -3,8 +3,9 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     AudioPlaybackHost, BluetoothHost, BrowserAutomationHost, BrowserSessionHost,
     ComposeDslWebViewHost, FileSystemHost, HostEnvironmentDescriptor, HostRuntimeEventHost,
-    HostSecretStore, HttpHost, ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost,
-    SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost, WebVisitHost,
+    HostSecretStore, HttpHost, LocalInferenceHost, ManagedRuntimeHost, RuntimeSqliteHost,
+    RuntimeStorageHost, SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost,
+    WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
@@ -41,6 +42,7 @@ pub struct HostManager {
     pub bluetoothHost: Option<Arc<dyn BluetoothHost>>,
     pub ttsSynthesisHost: Option<Arc<dyn TtsSynthesisHost>>,
     pub ttsPlaybackHost: Option<Arc<dyn TtsPlaybackHost>>,
+    pub localInferenceHost: Option<Arc<dyn LocalInferenceHost>>,
     pub managedRuntimeHost: Option<Arc<dyn ManagedRuntimeHost>>,
     pub terminalHost: Option<Arc<dyn TerminalHost>>,
     pub runtimeStorageHost: Option<Arc<dyn RuntimeStorageHost>>,
@@ -66,6 +68,7 @@ impl HostManager {
             bluetoothHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
+            localInferenceHost: None,
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
@@ -93,6 +96,7 @@ impl HostManager {
             bluetoothHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
+            localInferenceHost: None,
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
@@ -123,6 +127,7 @@ impl HostManager {
             bluetoothHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
+            localInferenceHost: None,
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
@@ -154,6 +159,7 @@ impl HostManager {
             bluetoothHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
+            localInferenceHost: None,
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
@@ -189,6 +195,7 @@ impl HostManager {
             bluetoothHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
+            localInferenceHost: None,
             managedRuntimeHost: Some(managedRuntimeHost),
             terminalHost: None,
             runtimeStorageHost: Some(runtimeStorageHost),
@@ -246,6 +253,16 @@ impl HostManager {
     #[allow(non_snake_case)]
     pub fn withTtsPlaybackHost(mut self, ttsPlaybackHost: Arc<dyn TtsPlaybackHost>) -> Self {
         self.ttsPlaybackHost = Some(ttsPlaybackHost);
+        self
+    }
+
+    /// Adds a platform host for local model inference.
+    #[allow(non_snake_case)]
+    pub fn withLocalInferenceHost(
+        mut self,
+        localInferenceHost: Arc<dyn LocalInferenceHost>,
+    ) -> Self {
+        self.localInferenceHost = Some(localInferenceHost);
         self
     }
 

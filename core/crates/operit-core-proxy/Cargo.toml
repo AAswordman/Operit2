@@ -9,6 +9,7 @@ publish.workspace = true
 async-trait.workspace = true
 operit-host-api = { path = "../operit-host-api" }
 operit-link = { path = "../operit-link" }
+operit-local-models = { path = "../operit-local-models" }
 operit-model = { path = "../operit-model" }
 operit-plugin-sdk = { path = "../operit-plugin-sdk" }
 operit-providers = { path = "../operit-providers" }

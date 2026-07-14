@@ -101,6 +101,7 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
   Widget build(BuildContext context) {
     final isHttpTts = _isHttpProviderType(_providerType);
     final isSystemTts = _isSystemProviderType(_providerType);
+    final isLocalModelTts = _isLocalModelProviderType(_providerType);
     return AlertDialog(
       title: const Text('编辑 TTS 供应商'),
       content: SizedBox(
@@ -141,23 +142,20 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
                 ),
                 const SizedBox(height: 10),
                 _field(_nameController, '供应商名称', requiredField: true),
-                if (!isSystemTts) ...[
+                if (!isSystemTts && !isLocalModelTts) ...[
                   _field(_endpointController, 'Endpoint', requiredField: true),
                   _field(_apiKeyController, 'API Key', obscureText: true),
                 ],
                 if (isHttpTts) ...[
-                  _field(
-                    _httpMethodController,
-                    'HTTP 方法',
-                    requiredField: true,
-                  ),
+                  _field(_httpMethodController, 'HTTP 方法', requiredField: true),
                   _field(_contentTypeController, 'Content-Type'),
                   _field(
                     _requestBodyController,
                     '请求体模板',
                     requiredField:
                         isHttpTts &&
-                        _httpMethodController.text.trim().toUpperCase() == 'POST',
+                        _httpMethodController.text.trim().toUpperCase() ==
+                            'POST',
                     minLines: 4,
                   ),
                   _field(_headersController, 'Headers JSON', minLines: 3),
@@ -173,10 +171,7 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
-        FilledButton(
-          onPressed: _submit,
-          child: const Text('保存'),
-        ),
+        FilledButton(onPressed: _submit, child: const Text('保存')),
       ],
     );
   }
@@ -224,9 +219,9 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
             )
           : const <core_proxy.TtsHttpResponsePipelineStep>[];
     } catch (error) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
       return;
     }
     Navigator.of(context).pop(
@@ -431,7 +426,9 @@ class _CustomTtsVoiceDialogState extends State<_CustomTtsVoiceDialog> {
       });
       return;
     }
-    Navigator.of(context).pop(_CustomTtsVoiceValues(model: model, voice: voice));
+    Navigator.of(
+      context,
+    ).pop(_CustomTtsVoiceValues(model: model, voice: voice));
   }
 
   @override
@@ -559,11 +556,9 @@ class _TtsVoiceConfigDialogState extends State<_TtsVoiceConfigDialog> {
     super.dispose();
   }
 
-  bool get _requiresModel =>
-      _ttsConfigUsesPlaceholder(widget.config, 'model');
+  bool get _requiresModel => _ttsConfigUsesPlaceholder(widget.config, 'model');
 
-  bool get _requiresVoice =>
-      _ttsConfigUsesPlaceholder(widget.config, 'voice');
+  bool get _requiresVoice => _ttsConfigUsesPlaceholder(widget.config, 'voice');
 
   String get _modelLabel {
     return switch (widget.config.providerType) {
@@ -739,9 +734,8 @@ class _TtsConfigDialog extends StatefulWidget {
   }) {
     return showDialog<core_proxy.TtsConfig>(
       context: context,
-      builder: (context) => _TtsConfigDialog(
-        providerCatalogEntries: providerCatalogEntries,
-      ),
+      builder: (context) =>
+          _TtsConfigDialog(providerCatalogEntries: providerCatalogEntries),
     );
   }
 
@@ -824,10 +818,13 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
     );
     final isSystemTts = _isSystemProviderType(_providerType);
     final isHttpTts = _isHttpProviderType(_providerType);
+    final isLocalModelTts = _isLocalModelProviderType(_providerType);
     final requireModel =
-        !isSystemTts && _ttsProviderCatalogUsesPlaceholder(catalog, 'model');
+        isLocalModelTts ||
+        (!isSystemTts && _ttsProviderCatalogUsesPlaceholder(catalog, 'model'));
     final requireVoice =
-        !isSystemTts && _ttsProviderCatalogUsesPlaceholder(catalog, 'voice');
+        isLocalModelTts ||
+        (!isSystemTts && _ttsProviderCatalogUsesPlaceholder(catalog, 'voice'));
     return AlertDialog(
       title: const Text('新建 TTS 供应商'),
       content: SizedBox(
@@ -871,10 +868,17 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
                 ),
                 const SizedBox(height: 10),
                 _field(_nameController, '供应商名称', requiredField: true),
-                if (!isSystemTts) ...[
+                if (isLocalModelTts) ...[
+                  _field(_modelController, '模型 ID@版本', requiredField: true),
+                  _field(_voiceController, 'Speaker ID', requiredField: true),
+                ] else if (!isSystemTts) ...[
                   _field(_endpointController, 'Endpoint', requiredField: true),
                   _field(_apiKeyController, 'API Key', obscureText: true),
-                  _field(_modelController, '模型 / Locale', requiredField: requireModel),
+                  _field(
+                    _modelController,
+                    '模型 / Locale',
+                    requiredField: requireModel,
+                  ),
                   _field(_voiceController, '音色', requiredField: requireVoice),
                 ] else ...[
                   _field(_modelController, '语言标签（可选，例如 zh-CN）'),
@@ -891,7 +895,10 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
                   _field(
                     _requestBodyController,
                     '请求体模板',
-                    requiredField: isHttpTts && _httpMethodController.text.trim().toUpperCase() == 'POST',
+                    requiredField:
+                        isHttpTts &&
+                        _httpMethodController.text.trim().toUpperCase() ==
+                            'POST',
                     minLines: 4,
                   ),
                   _field(_headersController, 'Headers JSON', minLines: 3),
@@ -914,10 +921,7 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
-        FilledButton(
-          onPressed: _submit,
-          child: const Text('保存'),
-        ),
+        FilledButton(onPressed: _submit, child: const Text('保存')),
       ],
     );
   }
@@ -975,9 +979,9 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
             )
           : const <core_proxy.TtsHttpResponsePipelineStep>[];
     } catch (error) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
       return;
     }
     final speed = double.parse(_speedController.text.trim());

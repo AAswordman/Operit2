@@ -25,8 +25,9 @@ final class AppleRuntimeChannel: NSObject {
   private var musicState = "idle"
   private var musicMessage = "apple music player idle"
   private let speechSynthesizer = AVSpeechSynthesizer()
+  private var ttsAudioPlayer: AVAudioPlayer?
+  private var ttsAudioPaused = false
   private var ttsPath = ""
-  private var ttsPaused = false
   private var configuredRuntimeRoot: URL?
   private var configuredWorkspaceRoot: URL?
   private lazy var bluetooth = AppleBluetoothController()
@@ -115,6 +116,8 @@ final class AppleRuntimeChannel: NSObject {
       ownerTtsSynthesize(call: call, result: result)
     case "ownerTtsPlayback":
       ownerTtsPlayback(call: call, result: result)
+    case "ownerLocalInference":
+      ownerLocalInference(call: call, result: result)
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -499,6 +502,27 @@ final class AppleRuntimeChannel: NSObject {
     result(FlutterError(code: "OWNER_TTS_SYNTHESIZE_ERROR", message: "Apple TTS file synthesis is not implemented", details: nil))
   }
 
+  /// Handles owner-host local inference commands.
+  private func ownerLocalInference(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard let payload = call.arguments as? [String: Any] else {
+      result(FlutterError(code: "INVALID_ARGS", message: "ownerLocalInference expects payload", details: nil))
+      return
+    }
+    workQueue.async {
+      do {
+        let response = try AppleLocalInferenceRunner.shared.run(payload: payload)
+        DispatchQueue.main.async {
+          result(response)
+        }
+      } catch {
+        DispatchQueue.main.async {
+          result(FlutterError(code: "OWNER_LOCAL_INFERENCE_ERROR", message: error.localizedDescription, details: nil))
+        }
+      }
+    }
+  }
+
+  /// Handles owner-host system speech playback commands.
   private func ownerTtsPlayback(call: FlutterMethodCall, result: @escaping FlutterResult) {
     guard let payload = call.arguments as? [String: Any],
       let command = payload["command"] as? String
@@ -507,6 +531,26 @@ final class AppleRuntimeChannel: NSObject {
       return
     }
     switch command {
+    case "play":
+      guard let path = payload["audioPath"] as? String, !path.isEmpty else {
+        result(FlutterError(code: "INVALID_ARGS", message: "ownerTtsPlayback play expects audioPath", details: nil))
+        return
+      }
+      do {
+        speechSynthesizer.stopSpeaking(at: .immediate)
+        stopTtsAudioPlayback()
+        let player = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: path))
+        player.delegate = self
+        guard player.prepareToPlay(), player.play() else {
+          throw RuntimeChannelError.invalidArgs("Apple TTS audio player failed to start")
+        }
+        ttsAudioPlayer = player
+        ttsAudioPaused = false
+        ttsPath = path
+        result(ttsStatus(details: "apple_tts_audio_started"))
+      } catch {
+        result(FlutterError(code: "OWNER_TTS_PLAYBACK_ERROR", message: error.localizedDescription, details: nil))
+      }
     case "speak":
       guard let text = payload["text"] as? String,
         let speed = payload["speed"] as? NSNumber,
@@ -516,31 +560,97 @@ final class AppleRuntimeChannel: NSObject {
         return
       }
       let utterance = AVSpeechUtterance(string: text)
-      utterance.rate = Float(speed.doubleValue)
-      utterance.pitchMultiplier = Float(pitch.doubleValue)
-      if (payload["interrupt"] as? Bool) == true {
+      do {
+        try configureSpeechUtterance(utterance, payload: payload, speed: speed, pitch: pitch)
+      } catch {
+        result(FlutterError(code: "OWNER_TTS_PLAYBACK_ERROR", message: error.localizedDescription, details: nil))
+        return
+      }
+      let interrupt = (payload["interrupt"] as? Bool) == true
+      if !interrupt, ttsAudioPlayer != nil || speechSynthesizer.isSpeaking {
+        result(FlutterError(code: "OWNER_TTS_PLAYBACK_ERROR", message: "Apple TTS playback is busy", details: nil))
+        return
+      }
+      if interrupt {
         speechSynthesizer.stopSpeaking(at: .immediate)
+        stopTtsAudioPlayback()
       }
       ttsPath = "apple-tts"
-      ttsPaused = false
       speechSynthesizer.speak(utterance)
       result(ttsStatus(details: "apple_tts_started"))
     case "pause":
-      ttsPaused = speechSynthesizer.pauseSpeaking(at: .word)
+      if let player = ttsAudioPlayer {
+        player.pause()
+        ttsAudioPaused = true
+      } else {
+        speechSynthesizer.pauseSpeaking(at: .word)
+      }
       result(ttsStatus(details: "apple_tts_paused"))
     case "resume":
-      speechSynthesizer.continueSpeaking()
-      ttsPaused = false
+      if let player = ttsAudioPlayer {
+        player.play()
+        ttsAudioPaused = false
+      } else {
+        speechSynthesizer.continueSpeaking()
+      }
       result(ttsStatus(details: "apple_tts_resumed"))
     case "stop":
       speechSynthesizer.stopSpeaking(at: .immediate)
-      ttsPaused = false
+      stopTtsAudioPlayback()
       result(ttsStatus(details: "apple_tts_stopped"))
     case "status":
       result(ttsStatus(details: "apple_tts_status"))
     default:
       result(FlutterError(code: "OWNER_TTS_PLAYBACK_ERROR", message: "unsupported tts command: \(command)", details: nil))
     }
+  }
+
+  /// Applies validated cross-platform voice settings to one Apple utterance.
+  private func configureSpeechUtterance(
+    _ utterance: AVSpeechUtterance,
+    payload: [String: Any],
+    speed: NSNumber,
+    pitch: NSNumber
+  ) throws {
+    let speedMultiplier = speed.doubleValue
+    guard speedMultiplier.isFinite, speedMultiplier > 0 else {
+      throw RuntimeChannelError.invalidArgs("tts speed must be positive and finite")
+    }
+    let pitchMultiplier = pitch.doubleValue
+    guard pitchMultiplier.isFinite, pitchMultiplier >= 0.5, pitchMultiplier <= 2.0 else {
+      throw RuntimeChannelError.invalidArgs("tts pitch must be between 0.5 and 2.0")
+    }
+    let voiceName = (payload["voice"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let locale = (payload["locale"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if !voiceName.isEmpty {
+      guard let selectedVoice = AVSpeechSynthesisVoice.speechVoices().first(where: {
+        $0.identifier == voiceName || $0.name == voiceName
+      }) else {
+        throw RuntimeChannelError.invalidArgs("tts voice not found: \(voiceName)")
+      }
+      if !locale.isEmpty,
+        Locale.canonicalIdentifier(from: selectedVoice.language)
+          != Locale.canonicalIdentifier(from: locale)
+      {
+        throw RuntimeChannelError.invalidArgs(
+          "tts voice language \(selectedVoice.language) does not match locale \(locale)"
+        )
+      }
+      utterance.voice = selectedVoice
+    } else if !locale.isEmpty {
+      guard let selectedVoice = AVSpeechSynthesisVoice(language: locale) else {
+        throw RuntimeChannelError.invalidArgs("tts locale not supported: \(locale)")
+      }
+      utterance.voice = selectedVoice
+    }
+    let scaledRate = Double(AVSpeechUtteranceDefaultSpeechRate) * speedMultiplier
+    guard scaledRate >= Double(AVSpeechUtteranceMinimumSpeechRate),
+      scaledRate <= Double(AVSpeechUtteranceMaximumSpeechRate)
+    else {
+      throw RuntimeChannelError.invalidArgs("tts speed is outside the Apple speech rate range")
+    }
+    utterance.rate = Float(scaledRate)
+    utterance.pitchMultiplier = Float(pitchMultiplier)
   }
 
   private func recognizeText(imagePath: String) throws -> String {
@@ -666,13 +776,22 @@ final class AppleRuntimeChannel: NSObject {
     ]
   }
 
+  /// Builds an authoritative Apple speech status snapshot.
   private func ttsStatus(details: String) -> [String: Any] {
-    [
+    let audioActive = ttsAudioPlayer != nil
+    return [
       "path": ttsPath,
-      "active": speechSynthesizer.isSpeaking,
-      "paused": ttsPaused,
+      "active": audioActive || speechSynthesizer.isSpeaking,
+      "paused": audioActive ? ttsAudioPaused : speechSynthesizer.isPaused,
       "details": details,
     ]
+  }
+
+  /// Stops and releases the active Apple TTS audio player.
+  private func stopTtsAudioPlayback() {
+    ttsAudioPlayer?.stop()
+    ttsAudioPlayer = nil
+    ttsAudioPaused = false
   }
 
   private func hasSubscriptionId(_ text: String) -> Bool {
@@ -737,6 +856,10 @@ final class AppleRuntimeChannel: NSObject {
 extension AppleRuntimeChannel: AVAudioPlayerDelegate {
   func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
     audioPlayers = audioPlayers.filter { $0.value !== player }
+    if ttsAudioPlayer === player {
+      ttsAudioPlayer = nil
+      ttsAudioPaused = false
+    }
   }
 }
 

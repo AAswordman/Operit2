@@ -56,6 +56,30 @@ class AppearanceSettingsPanel extends StatelessWidget {
           ],
         ),
         _SectionCard(
+          title: l10n.settingsAppearanceInputSection,
+          children: <Widget>[
+            _InfoLine(
+              label: l10n.settingsAppearanceInputStyle,
+              value: _inputStyleLabel(l10n, snapshot.inputStyle),
+            ),
+            _InputStyleSelector(
+              value: _inputStyleValue(snapshot.inputStyle),
+              onChanged: (value) {
+                unawaited(themeController.saveThemeSettings(inputStyle: value));
+              },
+            ),
+            _SettingSwitch(
+              title: l10n.settingsAppearanceInputFloating,
+              value: snapshot.chatInputFloating,
+              onChanged: (value) {
+                unawaited(
+                  themeController.saveThemeSettings(chatInputFloating: value),
+                );
+              },
+            ),
+          ],
+        ),
+        _SectionCard(
           title: l10n.settingsAppearanceColorSection,
           children: <Widget>[
             _BodyText(l10n.settingsAppearanceColorDescription),
@@ -1629,6 +1653,59 @@ class _MessageStyleSelector extends StatelessWidget {
       ),
     );
   }
+}
+
+class _InputStyleSelector extends StatelessWidget {
+  const _InputStyleSelector({required this.value, required this.onChanged});
+
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  /// Builds the segmented control for input style choices.
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: SegmentedButton<String>(
+        showSelectedIcon: false,
+        segments: <ButtonSegment<String>>[
+          ButtonSegment<String>(
+            value: UserPreferencesManager.INPUT_STYLE_CLASSIC,
+            label: Text(l10n.settingsAppearanceInputStyleClassic),
+          ),
+          ButtonSegment<String>(
+            value: UserPreferencesManager.INPUT_STYLE_AGENT,
+            label: Text(l10n.settingsAppearanceInputStyleAgent),
+          ),
+        ],
+        selected: <String>{value},
+        onSelectionChanged: (selection) => onChanged(selection.single),
+      ),
+    );
+  }
+}
+
+/// Validates and returns the stored input style value.
+String _inputStyleValue(String value) {
+  return switch (value) {
+    UserPreferencesManager.INPUT_STYLE_CLASSIC =>
+      UserPreferencesManager.INPUT_STYLE_CLASSIC,
+    UserPreferencesManager.INPUT_STYLE_AGENT =>
+      UserPreferencesManager.INPUT_STYLE_AGENT,
+    _ => throw FormatException('invalid input style preference: $value'),
+  };
+}
+
+/// Formats the input style label for the appearance settings panel.
+String _inputStyleLabel(AppLocalizations l10n, String value) {
+  return switch (_inputStyleValue(value)) {
+    UserPreferencesManager.INPUT_STYLE_CLASSIC =>
+      l10n.settingsAppearanceInputStyleClassic,
+    UserPreferencesManager.INPUT_STYLE_AGENT =>
+      l10n.settingsAppearanceInputStyleAgent,
+    _ => throw FormatException('invalid input style preference: $value'),
+  };
 }
 
 enum _MessageColorPreset { theme, sky, matcha, ink, custom }

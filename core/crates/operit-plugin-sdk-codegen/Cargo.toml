@@ -1,0 +1,11 @@
+[package]
+name = "operit-plugin-sdk-codegen"
+version = "2.0.0-preview.4"
+edition.workspace = true
+license.workspace = true
+publish = true
+description = "Rust AST based TypeScript declaration generator for operit-plugin-sdk."
+repository = "https://github.com/AAswordman/Operit2"
+
+[dependencies]
+syn = { version = "2", features = ["full", "visit"] }

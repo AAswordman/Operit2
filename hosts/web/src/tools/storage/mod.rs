@@ -51,7 +51,10 @@ impl RuntimeStorageHost for WebRuntimeStorageHost {
     }
 
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        call_storage("writeBytes", &[JsValue::from_str(path), bytes_to_js(content)])?;
+        call_storage(
+            "writeBytes",
+            &[JsValue::from_str(path), bytes_to_js(content)],
+        )?;
         Ok(())
     }
 
@@ -64,7 +67,10 @@ impl RuntimeStorageHost for WebRuntimeStorageHost {
     }
 
     fn exists(&self, path: &str) -> HostResult<bool> {
-        js_bool(call_storage("exists", &[JsValue::from_str(path)])?, "runtimeStorage.exists")
+        js_bool(
+            call_storage("exists", &[JsValue::from_str(path)])?,
+            "runtimeStorage.exists",
+        )
     }
 
     fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
@@ -93,7 +99,10 @@ impl HostSecretStore for WebRuntimeStorageHost {
     }
 
     fn writeSecret(&self, key: &str, content: &[u8]) -> HostResult<()> {
-        call_secret_store("writeSecret", &[JsValue::from_str(key), bytes_to_js(content)])?;
+        call_secret_store(
+            "writeSecret",
+            &[JsValue::from_str(key), bytes_to_js(content)],
+        )?;
         Ok(())
     }
 

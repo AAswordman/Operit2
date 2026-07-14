@@ -22,6 +22,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
+const LINK_SESSION_DISCOVERY_TIMEOUT_MS: u64 = 2000;
+
 pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("serve") => run_link_serve_command(&args[1..]).await,
@@ -35,6 +37,7 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
             run_link_accepted_session_delete_command(&args[1..]).await
         }
         Some("ping") => run_link_ping_command(&args[1..]).await,
+        Some("refresh") => run_link_refresh_command(&args[1..]).await,
         Some("sync") => run_link_sync_command(&args[1..]).await,
         Some("sync-status") => run_link_sync_status_command(&args[1..]).await,
         Some("call") => run_link_call_command(&args[1..]).await,
@@ -319,12 +322,7 @@ async fn run_link_ping_command(args: &[String]) -> Result<(), String> {
     let name = args
         .get(0)
         .ok_or_else(|| "usage: operit2 cli link ping <name>".to_string())?;
-    let sessions = load_link_sessions()?;
-    let record = sessions
-        .get(name)
-        .ok_or_else(|| format!("link session not found: {name}"))?
-        .clone();
-    let session = PairedRemoteSession::fromRecord(record)?;
+    let session = load_link_session_resolved(name).await?;
     let info = session.sessionInfo().await?;
     println!(
         "session active remote={} core={} client={} transports={}",
@@ -336,10 +334,50 @@ async fn run_link_ping_command(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Refreshes saved paired session URLs from current LAN discovery data.
+async fn run_link_refresh_command(args: &[String]) -> Result<(), String> {
+    let (target_name, timeout_ms) = parse_link_refresh_args(args)?;
+    let devices = crate::mdns::discover_devices(timeout_ms)?;
+    let mut sessions = load_link_sessions()?;
+    let mut updated_count = 0usize;
+    match target_name {
+        Some(name) => {
+            let record = sessions
+                .get(&name)
+                .ok_or_else(|| format!("link session not found: {name}"))?
+                .clone();
+            let (updated, changed) =
+                refresh_link_session_record_from_devices(&name, record, &devices).await?;
+            if changed {
+                updated_count += 1;
+            }
+            sessions.insert(name, updated);
+        }
+        None => {
+            let names = sessions.keys().cloned().collect::<Vec<_>>();
+            for name in names {
+                let record = sessions
+                    .get(&name)
+                    .ok_or_else(|| format!("link session not found while refreshing: {name}"))?
+                    .clone();
+                let (updated, changed) =
+                    refresh_link_session_record_from_devices(&name, record, &devices).await?;
+                if changed {
+                    updated_count += 1;
+                }
+                sessions.insert(name, updated);
+            }
+        }
+    }
+    write_link_sessions(sessions)?;
+    println!("sessions refreshed: updated={updated_count}");
+    Ok(())
+}
+
 async fn run_link_sync_command(args: &[String]) -> Result<(), String> {
     let (session_name, limit) = parse_link_sync_args(args)?;
     let mut local = create_local_core();
-    let mut remote = load_link_session(&session_name)?;
+    let mut remote = load_link_session_resolved(&session_name).await?;
     assert_sync_core_versions_match(&mut local, &mut remote).await?;
     let mut rounds = 0usize;
     let mut localApplied = 0usize;
@@ -404,7 +442,7 @@ async fn run_link_sync_command(args: &[String]) -> Result<(), String> {
 async fn run_link_sync_status_command(args: &[String]) -> Result<(), String> {
     let (session_name, limit) = parse_link_sync_status_args(args)?;
     let mut local = create_local_core();
-    let mut remote = load_link_session(&session_name)?;
+    let mut remote = load_link_session_resolved(&session_name).await?;
     let local_version = call_application_core_version(&mut local).await?;
     let remote_version = call_application_core_version(&mut remote).await?;
     println!("localVersion={local_version}");
@@ -479,7 +517,7 @@ async fn run_link_call_command(args: &[String]) -> Result<(), String> {
         "usage: operit2 cli link call <session> <target-path> <method-name> [args-json]".to_string()
     })?;
     let args_json = parse_link_args_json(args.get(3))?;
-    let session = load_link_session(name)?;
+    let session = load_link_session_resolved(name).await?;
     let response = session
         .call(CoreCallRequest::new(
             link_request_id(),
@@ -509,7 +547,7 @@ async fn run_link_watch_command(args: &[String]) -> Result<(), String> {
             .to_string()
     })?;
     let args_json = parse_link_args_json(args.get(3))?;
-    let mut session = load_link_session(name)?;
+    let mut session = load_link_session_resolved(name).await?;
     let event = operit_link::CoreLinkClient::watchSnapshot(
         &mut session,
         CoreWatchRequest::new(
@@ -574,6 +612,31 @@ fn parse_link_sync_status_args(args: &[String]) -> Result<(String, usize), Strin
         return Err("sync status limit must be greater than 0".to_string());
     }
     Ok((session, limit))
+}
+
+/// Parses the optional session name and discovery timeout for link refresh.
+fn parse_link_refresh_args(args: &[String]) -> Result<(Option<String>, u64), String> {
+    let usage = "usage: operit2 cli link refresh [session] [--timeout-ms <ms>]";
+    let mut session_name = None::<String>;
+    let mut timeout_ms = LINK_SESSION_DISCOVERY_TIMEOUT_MS;
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--timeout-ms" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| usage.to_string())?;
+                timeout_ms = value.parse::<u64>().map_err(|error| error.to_string())?;
+            }
+            value => {
+                if session_name.is_some() {
+                    return Err(usage.to_string());
+                }
+                session_name = Some(value.to_string());
+            }
+        }
+        index += 1;
+    }
+    Ok((session_name, timeout_ms))
 }
 
 pub(crate) async fn call_application<C>(
@@ -698,6 +761,7 @@ fn parse_remote_url_token_save(
     Ok((url, token.ok_or_else(|| usage.to_string())?, save_name))
 }
 
+/// Loads all saved paired session records.
 fn load_link_sessions() -> Result<BTreeMap<String, PairedRemoteSessionRecord>, String> {
     let path = crate::client_paths::link_sessions_path();
     if !path.exists() {
@@ -707,13 +771,69 @@ fn load_link_sessions() -> Result<BTreeMap<String, PairedRemoteSessionRecord>, S
     serde_json::from_str(&content).map_err(|error| error.to_string())
 }
 
-pub(crate) fn load_link_session(name: &str) -> Result<PairedRemoteSession, String> {
+/// Loads one saved paired session record by name.
+fn load_link_session_record(name: &str) -> Result<PairedRemoteSessionRecord, String> {
     let sessions = load_link_sessions()?;
-    let record = sessions
+    sessions
         .get(name)
-        .ok_or_else(|| format!("link session not found: {name}"))?
-        .clone();
+        .ok_or_else(|| format!("link session not found: {name}"))
+        .cloned()
+}
+
+/// Loads one paired session after applying verified LAN endpoint discovery.
+pub(crate) async fn load_link_session_resolved(name: &str) -> Result<PairedRemoteSession, String> {
+    let record = load_link_session_record(name)?;
+    let devices = crate::mdns::discover_devices(LINK_SESSION_DISCOVERY_TIMEOUT_MS)?;
+    let (record, changed) =
+        refresh_link_session_record_from_devices(name, record, &devices).await?;
+    if changed {
+        save_link_session(name, record.clone())?;
+    }
     PairedRemoteSession::fromRecord(record)
+}
+
+/// Updates one paired session record when discovery advertises the same core device.
+async fn refresh_link_session_record_from_devices(
+    name: &str,
+    record: PairedRemoteSessionRecord,
+    devices: &[crate::mdns::DiscoveredDevice],
+) -> Result<(PairedRemoteSessionRecord, bool), String> {
+    let Some(device) = discovered_device_for_link_record(&record, devices) else {
+        return Ok((record, false));
+    };
+    let updated = record.withBaseUrl(device.base_url.clone());
+    if updated.baseUrl == record.baseUrl {
+        return Ok((record, false));
+    }
+    verify_link_session_record(&updated).await?;
+    eprintln!("session address updated: {name} {}", updated.baseUrl);
+    Ok((updated, true))
+}
+
+/// Selects the discovered device whose identity matches a paired session record.
+fn discovered_device_for_link_record<'a>(
+    record: &PairedRemoteSessionRecord,
+    devices: &'a [crate::mdns::DiscoveredDevice],
+) -> Option<&'a crate::mdns::DiscoveredDevice> {
+    devices
+        .iter()
+        .find(|device| device.device_id == record.coreDeviceId)
+}
+
+/// Verifies a paired session record against its configured endpoint.
+async fn verify_link_session_record(record: &PairedRemoteSessionRecord) -> Result<(), String> {
+    let session = PairedRemoteSession::fromRecord(record.clone())?;
+    let info = session.sessionInfo().await?;
+    if info.protocolVersion != 3 {
+        return Err(format!(
+            "remote Link protocol version is {}, expected 3",
+            info.protocolVersion
+        ));
+    }
+    if info.coreDeviceId != record.coreDeviceId {
+        return Err("remote runtime identity changed".to_string());
+    }
+    Ok(())
 }
 
 pub(crate) fn parse_link_args_json(value: Option<&String>) -> Result<serde_json::Value, String> {
@@ -731,14 +851,22 @@ pub(crate) fn link_request_id() -> String {
     format!("cli-{millis}")
 }
 
+/// Saves one paired session record by name.
 fn save_link_session(name: &str, record: PairedRemoteSessionRecord) -> Result<(), String> {
+    let mut sessions = load_link_sessions()?;
+    sessions.insert(name.to_string(), record);
+    write_link_sessions(sessions)
+}
+
+/// Writes the complete paired session map to disk.
+fn write_link_sessions(
+    sessions: BTreeMap<String, PairedRemoteSessionRecord>,
+) -> Result<(), String> {
     let path = crate::client_paths::link_sessions_path();
     let parent = path
         .parent()
         .ok_or_else(|| format!("invalid link session path: {}", path.display()))?;
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let mut sessions = load_link_sessions()?;
-    sessions.insert(name.to_string(), record);
     let content = serde_json::to_string_pretty(&sessions).map_err(|error| error.to_string())?;
     fs::write(path, content).map_err(|error| error.to_string())
 }
@@ -797,10 +925,11 @@ fn print_link_usage() {
     println!("operit2 cli link accepted-sessions");
     println!("operit2 cli link accepted-session-delete <session-id>");
     println!("operit2 cli link ping <name>");
+    println!("operit2 cli link refresh [session] [--timeout-ms <ms>]");
     println!("operit2 cli link sync <session> [--limit <n>]");
     println!("operit2 cli link sync-status <session> [--limit <n>]");
     println!("operit2 cli link call <session> <target-path> <method-name> [args-json]");
     println!("operit2 cli link watch <session> <target-path> <property-name> [args-json]");
     println!("operit2 cli link tui <session> [--chat <chat-id>]");
-    println!("operit2 cli link run <session> <version|chat>");
+    println!("operit2 cli link run <session> <version|chat|local-models|stt>");
 }

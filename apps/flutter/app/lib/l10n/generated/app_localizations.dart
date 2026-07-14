@@ -3661,6 +3661,36 @@ abstract class AppLocalizations {
   /// **'Sync failed: {error}'**
   String settingsRuntimeSyncFailed(String error);
 
+  /// No description provided for @settingsRuntimeAutoSyncEnable.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable continuous sync'**
+  String get settingsRuntimeAutoSyncEnable;
+
+  /// No description provided for @settingsRuntimeAutoSyncDisable.
+  ///
+  /// In en, this message translates to:
+  /// **'Disable continuous sync'**
+  String get settingsRuntimeAutoSyncDisable;
+
+  /// No description provided for @settingsRuntimeAutoSyncEnabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Continuous sync is enabled. It will sync automatically when this device is discovered.'**
+  String get settingsRuntimeAutoSyncEnabled;
+
+  /// No description provided for @settingsRuntimeAutoSyncDisabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Continuous sync is disabled.'**
+  String get settingsRuntimeAutoSyncDisabled;
+
+  /// No description provided for @settingsRuntimeAutoSyncFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Continuous sync setting failed: {error}'**
+  String settingsRuntimeAutoSyncFailed(String error);
+
   /// No description provided for @settingsRuntimeDiscoverDevices.
   ///
   /// In en, this message translates to:
@@ -3984,6 +4014,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Dark'**
   String get settingsAppearanceThemeDark;
+
+  /// No description provided for @settingsAppearanceInputSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Input'**
+  String get settingsAppearanceInputSection;
+
+  /// No description provided for @settingsAppearanceInputStyle.
+  ///
+  /// In en, this message translates to:
+  /// **'Input style'**
+  String get settingsAppearanceInputStyle;
+
+  /// No description provided for @settingsAppearanceInputStyleClassic.
+  ///
+  /// In en, this message translates to:
+  /// **'Classic'**
+  String get settingsAppearanceInputStyleClassic;
+
+  /// No description provided for @settingsAppearanceInputStyleAgent.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent'**
+  String get settingsAppearanceInputStyleAgent;
+
+  /// No description provided for @settingsAppearanceInputFloating.
+  ///
+  /// In en, this message translates to:
+  /// **'Floating input'**
+  String get settingsAppearanceInputFloating;
 
   /// No description provided for @settingsAppearanceColorSection.
   ///

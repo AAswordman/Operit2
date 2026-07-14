@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +10,7 @@ import '../bridge/CoreProxy.dart';
 import '../bridge/PlatformCoreProxy.dart';
 import '../link/CoreLinkProtocol.dart';
 import '../link/RemoteRuntimeLinkClient.dart';
+import '../link_host/LinkHostServer.dart';
 import '../logging/ClientLogger.dart';
 import 'RuntimeConnectionConfigStore.dart';
 
@@ -165,6 +167,7 @@ class RuntimeConnectionConfig {
     required this.mode,
     required this.activeRemoteName,
     required this.remoteSessions,
+    required this.autoSyncRemoteNames,
     required this.localStorage,
     required this.updatedAt,
   });
@@ -174,6 +177,7 @@ class RuntimeConnectionConfig {
       mode: RuntimeConnectionMode.local,
       activeRemoteName: '',
       remoteSessions: const <String, PairedRemoteSessionRecord>{},
+      autoSyncRemoteNames: const <String>{},
       localStorage: LocalRuntimeStorageConfig.platformDefault(),
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
@@ -191,6 +195,10 @@ class RuntimeConnectionConfig {
       remoteSessions: Map<String, PairedRemoteSessionRecord>.unmodifiable(
         remoteSessions,
       ),
+      autoSyncRemoteNames: Set<String>.unmodifiable(
+        ((json['autoSyncRemoteNames'] as List<Object?>?) ?? const <Object?>[])
+            .cast<String>(),
+      ),
       localStorage: LocalRuntimeStorageConfig.platformDefault(),
       updatedAt: json['updatedAt'] as int,
     );
@@ -199,6 +207,7 @@ class RuntimeConnectionConfig {
   final RuntimeConnectionMode mode;
   final String activeRemoteName;
   final Map<String, PairedRemoteSessionRecord> remoteSessions;
+  final Set<String> autoSyncRemoteNames;
   final LocalRuntimeStorageConfig localStorage;
   final int updatedAt;
 
@@ -210,6 +219,7 @@ class RuntimeConnectionConfig {
     RuntimeConnectionMode? mode,
     String? activeRemoteName,
     Map<String, PairedRemoteSessionRecord>? remoteSessions,
+    Set<String>? autoSyncRemoteNames,
     LocalRuntimeStorageConfig? localStorage,
     int? updatedAt,
   }) {
@@ -217,6 +227,7 @@ class RuntimeConnectionConfig {
       mode: mode ?? this.mode,
       activeRemoteName: activeRemoteName ?? this.activeRemoteName,
       remoteSessions: remoteSessions ?? this.remoteSessions,
+      autoSyncRemoteNames: autoSyncRemoteNames ?? this.autoSyncRemoteNames,
       localStorage: localStorage ?? this.localStorage,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -226,6 +237,7 @@ class RuntimeConnectionConfig {
     return {
       'mode': mode.name,
       'activeRemoteName': activeRemoteName,
+      'autoSyncRemoteNames': autoSyncRemoteNames.toList(growable: false),
       'updatedAt': updatedAt,
     };
   }
@@ -236,6 +248,7 @@ class RuntimeConnectionManager extends ChangeNotifier {
 
   static final RuntimeConnectionManager instance = RuntimeConnectionManager._();
   static const String _logTag = 'RuntimeConnection';
+  static const int _remoteStartupDiscoveryTimeoutMs = 2000;
   static const Duration _remoteStartupProbeTimeout = Duration(seconds: 4);
   static const Duration _remoteIssueProbeDelay = Duration(milliseconds: 700);
   static const Duration _remoteIssueProbeTimeout = Duration(seconds: 2);
@@ -540,6 +553,7 @@ class RuntimeConnectionManager extends ChangeNotifier {
       remoteSessions: Map<String, PairedRemoteSessionRecord>.unmodifiable(
         remoteSessions,
       ),
+      autoSyncRemoteNames: _config.autoSyncRemoteNames,
       localStorage: _config.localStorage,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
@@ -578,6 +592,61 @@ class RuntimeConnectionManager extends ChangeNotifier {
     return result;
   }
 
+  /// Verifies and stores a changed LAN endpoint for one paired remote runtime.
+  Future<bool> storeVerifiedRemoteBaseUrl({
+    required String name,
+    required String baseUrl,
+  }) async {
+    final existing = _config.remoteSessions[name];
+    if (existing == null) {
+      throw StateError('paired remote runtime does not exist: $name');
+    }
+    final updated = existing.withBaseUrl(baseUrl);
+    if (updated.baseUrl == existing.baseUrl) {
+      return false;
+    }
+    final linkClient = RemoteRuntimeLinkClient(session: updated);
+    try {
+      await _verifyRemoteSession(
+        linkClient,
+        updated,
+        _remoteStartupProbeTimeout,
+      );
+    } finally {
+      linkClient.dispose();
+    }
+    final remoteSessions = Map<String, PairedRemoteSessionRecord>.of(
+      _config.remoteSessions,
+    )..[name] = updated;
+    await _apply(
+      _config.copyWith(
+        remoteSessions: Map<String, PairedRemoteSessionRecord>.unmodifiable(
+          remoteSessions,
+        ),
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+      persist: true,
+    );
+    ClientLogger.i(
+      'paired remote baseUrl updated name=$name baseUrl=${updated.baseUrl}',
+      tag: _logTag,
+    );
+    return true;
+  }
+
+  /// Stores the remote names that should participate in automatic sync.
+  Future<void> storeAutoSyncRemoteNames(Set<String> names) async {
+    final existingNames = _config.remoteSessions.keys.toSet();
+    final retainedNames = names.where(existingNames.contains).toSet();
+    final config = _config.copyWith(
+      autoSyncRemoteNames: Set<String>.unmodifiable(retainedNames),
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    _config = config;
+    await RuntimeConnectionConfigStore.write(config);
+    notifyListeners();
+  }
+
   /// Removes one paired remote runtime record.
   Future<void> removePairedRemote(String name) async {
     ClientLogger.i('remove paired remote start name=$name', tag: _logTag);
@@ -595,6 +664,9 @@ class RuntimeConnectionManager extends ChangeNotifier {
       activeRemoteName: activeRemoved ? '' : _config.activeRemoteName,
       remoteSessions: Map<String, PairedRemoteSessionRecord>.unmodifiable(
         remoteSessions,
+      ),
+      autoSyncRemoteNames: Set<String>.unmodifiable(
+        _config.autoSyncRemoteNames.where((value) => value != name),
       ),
       localStorage: _config.localStorage,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
@@ -657,25 +729,31 @@ class RuntimeConnectionManager extends ChangeNotifier {
     if (session == null) {
       throw StateError('remote runtime session is required');
     }
-    final linkClient = RemoteRuntimeLinkClient(session: session);
+    final resolution = await _remoteConfigWithDiscoveredBaseUrl(config);
+    final resolvedConfig = resolution.config;
+    final resolvedSession = resolvedConfig.activeRemoteSession;
+    if (resolvedSession == null) {
+      throw StateError('remote runtime session is required');
+    }
+    final linkClient = RemoteRuntimeLinkClient(session: resolvedSession);
     try {
       if (verify) {
         await _verifyRemoteSession(
           linkClient,
-          session,
+          resolvedSession,
           _remoteStartupProbeTimeout,
         );
       }
       linkClient.setConnectionIssueHandler(_onRemoteLinkConnectionIssue);
       _remoteLinkClient = linkClient;
-      _config = config;
-      if (persist) {
-        await OutboundLinkSessionStore.write(config.remoteSessions);
-        await RuntimeConnectionConfigStore.write(config);
+      _config = resolvedConfig;
+      if (persist || resolution.baseUrlChanged) {
+        await OutboundLinkSessionStore.write(resolvedConfig.remoteSessions);
+        await RuntimeConnectionConfigStore.write(resolvedConfig);
       }
       notifyListeners();
       ClientLogger.i(
-        'apply remote done name=${config.activeRemoteName} elapsedMs=${stopwatch.elapsedMilliseconds}',
+        'apply remote done name=${resolvedConfig.activeRemoteName} elapsedMs=${stopwatch.elapsedMilliseconds}',
         tag: _logTag,
       );
       return true;
@@ -692,6 +770,7 @@ class RuntimeConnectionManager extends ChangeNotifier {
           mode: RuntimeConnectionMode.local,
           activeRemoteName: '',
           remoteSessions: config.remoteSessions,
+          autoSyncRemoteNames: config.autoSyncRemoteNames,
           localStorage: config.localStorage,
           updatedAt: DateTime.now().millisecondsSinceEpoch,
         ),
@@ -699,5 +778,54 @@ class RuntimeConnectionManager extends ChangeNotifier {
       );
       return false;
     }
+  }
+
+  /// Builds a remote config with the currently announced LAN endpoint.
+  Future<({RuntimeConnectionConfig config, bool baseUrlChanged})>
+  _remoteConfigWithDiscoveredBaseUrl(RuntimeConnectionConfig config) async {
+    final session = config.activeRemoteSession;
+    if (session == null) {
+      throw StateError('remote runtime session is required');
+    }
+    final discoveredBaseUrl = await _discoveredBaseUrlForCoreDevice(
+      session.coreDeviceId,
+    );
+    if (discoveredBaseUrl == null) {
+      return (config: config, baseUrlChanged: false);
+    }
+    final updatedSession = session.withBaseUrl(discoveredBaseUrl);
+    if (updatedSession.baseUrl == session.baseUrl) {
+      return (config: config, baseUrlChanged: false);
+    }
+    final remoteSessions = Map<String, PairedRemoteSessionRecord>.of(
+      config.remoteSessions,
+    )..[config.activeRemoteName] = updatedSession;
+    final resolvedConfig = config.copyWith(
+      remoteSessions: Map<String, PairedRemoteSessionRecord>.unmodifiable(
+        remoteSessions,
+      ),
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    ClientLogger.i(
+      'remote baseUrl resolved name=${config.activeRemoteName} baseUrl=${updatedSession.baseUrl}',
+      tag: _logTag,
+    );
+    return (config: resolvedConfig, baseUrlChanged: true);
+  }
+
+  /// Finds the LAN endpoint announced by a specific core device identity.
+  Future<String?> _discoveredBaseUrlForCoreDevice(String coreDeviceId) async {
+    final json = await LinkHostServer.instance.discoverDevices(
+      _remoteStartupDiscoveryTimeoutMs,
+    );
+    final devices = (jsonDecode(json) as List<dynamic>)
+        .cast<Map<String, Object?>>();
+    for (final device in devices) {
+      final deviceId = device['device_id'] as String;
+      if (deviceId == coreDeviceId) {
+        return device['base_url'] as String;
+      }
+    }
+    return null;
   }
 }

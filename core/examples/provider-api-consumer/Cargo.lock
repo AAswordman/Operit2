@@ -966,7 +966,7 @@ dependencies = [
 
 [[package]]
 name = "operit-model"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "chrono",
  "operit-host-api",
@@ -978,7 +978,7 @@ dependencies = [
 
 [[package]]
 name = "operit-plugin-sdk"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "json5",
  "regex",
@@ -998,7 +998,7 @@ dependencies = [
 
 [[package]]
 name = "operit-providers"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "async-trait",
  "base64",
@@ -1043,7 +1043,7 @@ dependencies = [
 
 [[package]]
 name = "operit-tools"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "aes",
  "async-trait",
@@ -1073,7 +1073,7 @@ dependencies = [
 
 [[package]]
 name = "operit-util"
-version = "2.0.0-preview.3"
+version = "2.0.0-preview.4"
 dependencies = [
  "operit-host-api",
  "regex",

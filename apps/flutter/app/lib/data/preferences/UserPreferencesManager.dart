@@ -22,6 +22,7 @@ class ThemePreferenceSnapshot {
     required this.backgroundBlurRadius,
     required this.transparentSurfaceEnabled,
     required this.chatInputFloating,
+    required this.inputStyle,
     required this.chatStyle,
     required this.bubbleShowAvatar,
     required this.bubbleWideLayoutEnabled,
@@ -103,6 +104,7 @@ class ThemePreferenceSnapshot {
   final double backgroundBlurRadius;
   final bool transparentSurfaceEnabled;
   final bool chatInputFloating;
+  final String inputStyle;
   final String chatStyle;
   final bool bubbleShowAvatar;
   final bool bubbleWideLayoutEnabled;
@@ -196,6 +198,8 @@ class UserPreferencesManager {
   static const String MEDIA_TYPE_VIDEO = 'video';
   static const String CHAT_STYLE_CURSOR = 'cursor';
   static const String CHAT_STYLE_BUBBLE = 'bubble';
+  static const String INPUT_STYLE_CLASSIC = 'classic';
+  static const String INPUT_STYLE_AGENT = 'agent';
   static const String BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE =
       'tiled_nine_slice';
   static const String BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH = 'nine_patch';
@@ -235,6 +239,7 @@ class UserPreferencesManager {
         backgroundBlurRadius: 12,
         transparentSurfaceEnabled: false,
         chatInputFloating: false,
+        inputStyle: INPUT_STYLE_AGENT,
         chatStyle: CHAT_STYLE_CURSOR,
         bubbleShowAvatar: true,
         bubbleWideLayoutEnabled: false,
@@ -315,6 +320,7 @@ class UserPreferencesManager {
   static const String _TRANSPARENT_SURFACE_ENABLED =
       'transparent_surface_enabled';
   static const String _CHAT_INPUT_FLOATING = 'chat_input_floating';
+  static const String _INPUT_STYLE = 'input_style';
   static const String _USE_BACKGROUND_BLUR = 'use_background_blur';
   static const String _BACKGROUND_BLUR_RADIUS = 'background_blur_radius';
   static const String _USE_CUSTOM_FONT = 'use_custom_font';
@@ -417,6 +423,7 @@ class UserPreferencesManager {
     _THEME_MODE,
     _BACKGROUND_IMAGE_URI,
     _BACKGROUND_MEDIA_TYPE,
+    _INPUT_STYLE,
     _CHAT_STYLE,
     _KEY_AVATAR_SHAPE,
     _FONT_TYPE,
@@ -522,7 +529,10 @@ class UserPreferencesManager {
       characterCardId: characterCardId,
       characterGroupId: characterGroupId,
     );
-    final keys = [..._prefixedTargetThemeKeys(prefix), _KEY_CUSTOM_USER_AVATAR_URI];
+    final keys = [
+      ..._prefixedTargetThemeKeys(prefix),
+      _KEY_CUSTOM_USER_AVATAR_URI,
+    ];
     final preferences = await _getStrings(keys);
     final toolCollapseMode = await _clients.preferencesPreferenceStorageManager
         .getPreference(
@@ -569,6 +579,7 @@ class UserPreferencesManager {
         false,
       ),
       chatInputFloating: booleanValue(_CHAT_INPUT_FLOATING, false),
+      inputStyle: stringValue(_INPUT_STYLE) ?? INPUT_STYLE_AGENT,
       chatStyle: stringValue(_CHAT_STYLE) ?? CHAT_STYLE_CURSOR,
       bubbleShowAvatar: booleanValue(_BUBBLE_SHOW_AVATAR, true),
       bubbleWideLayoutEnabled: booleanValue(_BUBBLE_WIDE_LAYOUT_ENABLED, false),
@@ -706,6 +717,7 @@ class UserPreferencesManager {
     double? backgroundBlurRadius,
     bool? transparentSurfaceEnabled,
     bool? chatInputFloating,
+    String? inputStyle,
     String? chatStyle,
     bool? bubbleShowAvatar,
     bool? bubbleWideLayoutEnabled,
@@ -797,6 +809,7 @@ class UserPreferencesManager {
     setIfPresent(_BACKGROUND_BLUR_RADIUS, backgroundBlurRadius);
     setIfPresent(_TRANSPARENT_SURFACE_ENABLED, transparentSurfaceEnabled);
     setIfPresent(_CHAT_INPUT_FLOATING, chatInputFloating);
+    setIfPresent(_INPUT_STYLE, inputStyle);
     setIfPresent(_CHAT_STYLE, chatStyle);
     setIfPresent(_BUBBLE_SHOW_AVATAR, bubbleShowAvatar);
     setIfPresent(_BUBBLE_WIDE_LAYOUT_ENABLED, bubbleWideLayoutEnabled);
@@ -970,6 +983,7 @@ class UserPreferencesManager {
       prefix,
     );
   }
+
   Future<void> saveGlobalUserAvatarSettings({
     required String customUserAvatarUri,
   }) async {
@@ -998,7 +1012,6 @@ class UserPreferencesManager {
       keys: keys,
     );
   }
-
 }
 
 bool _decodeBool(String value) {
@@ -1055,4 +1068,3 @@ bool _containsThemePrefix(Map<String, String> preferences, String prefix) {
   }
   return false;
 }
-

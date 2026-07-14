@@ -83,6 +83,7 @@ class RuntimeBrowserOwner extends ChangeNotifier {
   final Map<String, RuntimeBrowserAutomationController> _automation =
       <String, RuntimeBrowserAutomationController>{};
   final Map<String, String> _defaultUserAgents = <String, String>{};
+  final Set<String> _workspaceSurfaceSessionIds = <String>{};
   final RuntimeBrowserSessionRegistry _sessionRegistry =
       RuntimeBrowserSessionRegistry.instance;
 
@@ -104,6 +105,35 @@ class RuntimeBrowserOwner extends ChangeNotifier {
       return null;
     }
     return _tabs[_selectedIndex];
+  }
+
+  /// Returns the owner tab with the requested session identifier.
+  WorkspaceBrowserTabState? tabForSession(String sessionId) {
+    for (final tab in _tabs) {
+      if (tab.id == sessionId) {
+        return tab;
+      }
+    }
+    return null;
+  }
+
+  /// Returns whether a session is currently mounted in the workspace tree.
+  bool isWorkspaceSurfaceSession(String sessionId) {
+    return _workspaceSurfaceSessionIds.contains(sessionId);
+  }
+
+  /// Marks one owner WebView as mounted by the workspace tree.
+  void attachWorkspaceSurfaceSession(String sessionId) {
+    if (_workspaceSurfaceSessionIds.add(sessionId)) {
+      notifyListeners();
+    }
+  }
+
+  /// Marks one owner WebView as no longer mounted by the workspace tree.
+  void detachWorkspaceSurfaceSession(String sessionId) {
+    if (_workspaceSurfaceSessionIds.remove(sessionId)) {
+      notifyListeners();
+    }
   }
 
   RuntimeBrowserOwnerUiDelegate get _requiredUiDelegate {
@@ -348,7 +378,8 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     _syncSessionRegistry();
   }
 
-  void navigateCurrent(String rawUrl) {
+  /// Navigates the current real owner WebView.
+  Future<void> navigateCurrent(String rawUrl) async {
     final tab = currentTab;
     if (tab == null) {
       throw StateError('No active browser session');
@@ -356,8 +387,9 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     final url = normalizeWorkspaceBrowserUrl(rawUrl);
     tab.update(url: url, addressText: url, errorText: null);
     _syncSessionRegistry();
-    unawaited(
-      tab.controller.loadRequest(Uri.parse(url), headers: tab.requestHeaders),
+    await tab.controller.loadRequest(
+      Uri.parse(url),
+      headers: tab.requestHeaders,
     );
   }
 
@@ -373,54 +405,134 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     await tab.controller.reload();
   }
 
-  void goBack() {
+  /// Navigates the current real owner WebView backward.
+  Future<void> goBack() async {
     final tab = currentTab;
     if (tab == null) {
       throw StateError('No active browser session');
     }
-    unawaited(tab.controller.goBack());
+    await _navigateTabBack(tab);
   }
 
-  void goForward() {
+  /// Navigates the current real owner WebView forward.
+  Future<void> goForward() async {
     final tab = currentTab;
     if (tab == null) {
       throw StateError('No active browser session');
     }
-    unawaited(tab.controller.goForward());
+    await _navigateTabForward(tab);
   }
 
-  void refreshOrStop() {
+  /// Reloads or stops the current real owner WebView.
+  Future<void> refreshOrStop() async {
     final tab = currentTab;
     if (tab == null) {
       throw StateError('No active browser session');
     }
     if (tab.isLoading) {
-      stopCurrentLoad();
+      await stopCurrentLoad();
       return;
     }
-    unawaited(tab.controller.reload());
+    await tab.controller.reload();
   }
 
   /// Reloads the current browser session.
-  void reloadCurrent() {
+  Future<void> reloadCurrent() async {
     final tab = currentTab;
     if (tab == null) {
       throw StateError('No active browser session');
     }
-    unawaited(tab.controller.reload());
+    await tab.controller.reload();
   }
 
   /// Stops loading in the current browser session.
-  void stopCurrentLoad() {
+  Future<void> stopCurrentLoad() async {
     final tab = currentTab;
     if (tab == null) {
       throw StateError('No active browser session');
     }
     if (_supportsPageJavaScript(tab)) {
-      unawaited(tab.controller.runJavaScript('window.stop();'));
+      await tab.controller.runJavaScript('window.stop();');
     }
     tab.update(isLoading: false, progress: 100);
     _syncSessionRegistry(eventType: 'stopped', sessionId: tab.id);
+  }
+
+  /// Sends native WebView back navigation and records history state.
+  Future<void> _navigateTabBack(WorkspaceBrowserTabState tab) async {
+    final beforeRawUrl = await tab.controller.currentUrl();
+    final beforeUrl = beforeRawUrl == null
+        ? tab.url
+        : _logicalUrl(beforeRawUrl);
+    final beforeCanGoBack = await tab.controller.canGoBack();
+    final beforeCanGoForward = await tab.controller.canGoForward();
+    final stopwatch = Stopwatch()..start();
+    try {
+      await tab.controller.goBack();
+      final afterRawUrl = await tab.controller.currentUrl();
+      final afterUrl = afterRawUrl == null ? tab.url : _logicalUrl(afterRawUrl);
+      final afterCanGoBack = await tab.controller.canGoBack();
+      final afterCanGoForward = await tab.controller.canGoForward();
+      _applyNativeNavigationState(
+        tab,
+        url: afterUrl,
+        canGoBack: afterCanGoBack,
+        canGoForward: afterCanGoForward,
+      );
+      stopwatch.stop();
+      ClientLogger.i(
+        'back native tab=${tab.id} beforeCanGoBack=$beforeCanGoBack '
+        'beforeCanGoForward=$beforeCanGoForward '
+        'afterCanGoBack=$afterCanGoBack afterCanGoForward=$afterCanGoForward '
+        'beforeUrl=$beforeUrl afterUrl=$afterUrl '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+        tag: _logTag,
+      );
+    } catch (error, stackTrace) {
+      stopwatch.stop();
+      ClientLogger.e(
+        'back native failed tab=${tab.id} beforeCanGoBack=$beforeCanGoBack '
+        'beforeUrl=$beforeUrl elapsedMs=${stopwatch.elapsedMilliseconds}',
+        tag: _logTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  /// Sends native WebView forward navigation and synchronizes history state.
+  Future<void> _navigateTabForward(WorkspaceBrowserTabState tab) async {
+    await tab.controller.goForward();
+    final afterRawUrl = await tab.controller.currentUrl();
+    final afterUrl = afterRawUrl == null ? tab.url : _logicalUrl(afterRawUrl);
+    final afterCanGoBack = await tab.controller.canGoBack();
+    final afterCanGoForward = await tab.controller.canGoForward();
+    _applyNativeNavigationState(
+      tab,
+      url: afterUrl,
+      canGoBack: afterCanGoBack,
+      canGoForward: afterCanGoForward,
+    );
+  }
+
+  /// Applies native WebView history flags to the runtime session stream.
+  void _applyNativeNavigationState(
+    WorkspaceBrowserTabState tab, {
+    required String url,
+    required bool canGoBack,
+    required bool canGoForward,
+  }) {
+    if (tab.isDisposed) {
+      return;
+    }
+    tab.update(
+      url: url,
+      addressText: url,
+      canGoBack: canGoBack,
+      canGoForward: canGoForward,
+    );
+    _syncSessionRegistry(eventType: 'history', sessionId: tab.id);
   }
 
   void toggleBookmark() {
@@ -676,7 +788,7 @@ class RuntimeBrowserOwner extends ChangeNotifier {
           if (tab.isDisposed) {
             return;
           }
-          await _updateTabState(tab, isLoading: false);
+          await _updateTabState(tab, isLoading: false, eventType: 'finished');
           if (tab.isDisposed) {
             return;
           }
@@ -747,6 +859,7 @@ class RuntimeBrowserOwner extends ChangeNotifier {
   Future<void> _updateTabState(
     WorkspaceBrowserTabState tab, {
     required bool isLoading,
+    String eventType = 'updated',
   }) async {
     if (tab.isDisposed) {
       return;
@@ -777,7 +890,7 @@ class RuntimeBrowserOwner extends ChangeNotifier {
       isLoading: isLoading,
       progress: isLoading ? tab.progress : 100,
     );
-    _syncSessionRegistry();
+    _syncSessionRegistry(eventType: eventType, sessionId: tab.id);
   }
 
   Future<void> _injectUserscripts(

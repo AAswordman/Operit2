@@ -8,12 +8,18 @@ class _TtsSettingsData {
     required this.currentConfigId,
     required this.providerCatalogEntries,
     required this.characterBoundConfigIds,
+    required this.sttConfigs,
+    required this.currentSttConfigId,
+    required this.sttProviderCatalogEntries,
   });
 
   final List<core_proxy.TtsConfig> configs;
   final String currentConfigId;
   final List<core_proxy.TtsProviderCatalogEntry> providerCatalogEntries;
   final Set<String> characterBoundConfigIds;
+  final List<core_proxy.SttConfig> sttConfigs;
+  final String? currentSttConfigId;
+  final List<core_proxy.SttProviderCatalogEntry> sttProviderCatalogEntries;
 }
 
 class _TtsProviderGroup {
@@ -35,6 +41,7 @@ class _TtsProviderTypes {
 
   static const String system = 'SYSTEM_TTS';
   static const String http = 'HTTP_TTS';
+  static const String localModel = 'LOCAL_MODEL';
 }
 
 bool _isSystemProviderType(String providerType) {
@@ -43,6 +50,10 @@ bool _isSystemProviderType(String providerType) {
 
 bool _isHttpProviderType(String providerType) {
   return providerType.trim().toUpperCase() == _TtsProviderTypes.http;
+}
+
+bool _isLocalModelProviderType(String providerType) {
+  return providerType.trim().toUpperCase() == _TtsProviderTypes.localModel;
 }
 
 List<DropdownMenuItem<String>> _providerCatalogItems(
@@ -85,7 +96,9 @@ bool _ttsProviderCatalogUsesPlaceholder(
 bool _ttsConfigUsesPlaceholder(core_proxy.TtsConfig config, String name) {
   return _templateHasPlaceholder(config.endpoint, name) ||
       _templateHasPlaceholder(config.requestBody, name) ||
-      config.headers.any((header) => _templateHasPlaceholder(header.value, name));
+      config.headers.any(
+        (header) => _templateHasPlaceholder(header.value, name),
+      );
 }
 
 bool _templateHasPlaceholder(String template, String name) {
@@ -116,7 +129,10 @@ List<_TtsProviderGroup> _ttsProviderGroups(List<core_proxy.TtsConfig> configs) {
       ),
     );
   }
-  groups.sort((left, right) => left.title.toLowerCase().compareTo(right.title.toLowerCase()));
+  groups.sort(
+    (left, right) =>
+        left.title.toLowerCase().compareTo(right.title.toLowerCase()),
+  );
   return groups;
 }
 
@@ -125,9 +141,9 @@ String _ttsProviderGroupKey(core_proxy.TtsConfig config) {
 }
 
 int _compareTtsConfig(core_proxy.TtsConfig left, core_proxy.TtsConfig right) {
-  return _ttsConfigModelVoiceText(left)
-      .toLowerCase()
-      .compareTo(_ttsConfigModelVoiceText(right).toLowerCase());
+  return _ttsConfigModelVoiceText(
+    left,
+  ).toLowerCase().compareTo(_ttsConfigModelVoiceText(right).toLowerCase());
 }
 
 String _ttsConfigProviderTypeText(core_proxy.TtsConfig config) {
@@ -233,7 +249,8 @@ List<core_proxy.TtsHttpResponsePipelineStep> _decodePipeline(
                     ),
                   )
                   .toList(growable: false);
-        final stepType = (item['stepType'] as String?) ?? (item['type'] as String);
+        final stepType =
+            (item['stepType'] as String?) ?? (item['type'] as String);
         return core_proxy.TtsHttpResponsePipelineStep(
           stepType: stepType,
           path: item['path'] as String,
@@ -260,6 +277,7 @@ List<Map<String, Object?>> _decodeJsonList(String raw, String label) {
 }
 
 String _encodeJsonList(List<Object> value) {
-  return const JsonEncoder.withIndent('  ')
-      .convert(value.map((item) => (item as dynamic).toJson()).toList());
+  return const JsonEncoder.withIndent(
+    '  ',
+  ).convert(value.map((item) => (item as dynamic).toJson()).toList());
 }

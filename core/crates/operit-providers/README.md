@@ -12,12 +12,12 @@ need to import the internal `chat::llmprovider` path.
 External providers implement the public contracts from the crate root:
 
 ```toml
-operit-providers = "2.0.0-preview.3"
+operit-providers = "2.0.0-preview.4"
 ```
 
-The same crate contains the built-in LLM adapters, voice and market services,
-ToolPkg provider integration, conversation orchestration, store access, and
-tool integration.
+The same crate contains the built-in LLM adapters, text-to-speech,
+speech-to-text, and market services, ToolPkg provider integration,
+conversation orchestration, store access, and tool integration.
 
 ## Responsibilities
 
@@ -33,7 +33,8 @@ tool integration.
 - `src/runtime_support.rs`: provider-side contract implemented by
   `operit-runtime`.
 - `src/chat`: built-in chat providers and conversation orchestration.
-- `src/voice`: built-in voice providers.
+- `src/tts`: built-in text-to-speech provider contracts and implementations.
+- `src/stt`: built-in speech-to-text provider contracts and implementations.
 - `src/market`: provider market services.
 
 ## Boundary

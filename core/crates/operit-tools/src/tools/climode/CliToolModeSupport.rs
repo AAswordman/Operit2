@@ -70,8 +70,7 @@ impl ToolExposureMode {
             ApiProviderType::LMSTUDIO
             | ApiProviderType::OLLAMA
             | ApiProviderType::OPENAI_LOCAL
-            | ApiProviderType::MNN
-            | ApiProviderType::LLAMA_CPP => Self::CLI,
+            | ApiProviderType::LOCAL_MODEL => Self::CLI,
             _ => Self::FULL,
         }
     }

@@ -14,6 +14,11 @@ pub const RUNTIME_CLEAN_ON_EXIT_DIR_PATH: &str = "runtime/temp/clean_on_exit";
 pub const RUNTIME_SYNC_DIR_PATH: &str = "runtime/sync";
 pub const RUNTIME_MODEL_CONNECTION_TEST_CACHE_DIR_PATH: &str =
     "runtime/cache/model_connection_test";
+pub const RUNTIME_LOCAL_MODELS_DIR_PATH: &str = "runtime/models/local";
+pub const RUNTIME_LOCAL_ENGINES_DIR_PATH: &str = "runtime/models/local/engines";
+pub const RUNTIME_LOCAL_MODEL_MANIFESTS_DIR_PATH: &str = "runtime/models/local/manifests";
+pub const RUNTIME_LOCAL_MODEL_REGISTRY_PATH: &str =
+    "runtime/config/preferences/local_model_registry.preferences.json";
 pub const RUNTIME_TOOLPKG_CACHE_DIR_PATH: &str = "runtime/cache/toolpkg";
 pub const RUNTIME_TTS_AUDIO_DIR_PATH: &str = "runtime/cache/tts_audio";
 pub const RUNTIME_TOOLPKG_RESOURCE_EXPORTS_DIR_PATH: &str =
@@ -52,6 +57,8 @@ pub const SHARED_MEMORY_STORES_PREFERENCES_PATH: &str =
     "runtime/config/preferences/shared_memory_stores.preferences.json";
 pub const TTS_CONFIGS_PREFERENCES_PATH: &str =
     "runtime/config/preferences/tts_configs.preferences.json";
+pub const STT_CONFIGS_PREFERENCES_PATH: &str =
+    "runtime/config/preferences/stt_configs.preferences.json";
 pub const TOOL_PERMISSIONS_PREFERENCES_PATH: &str =
     "runtime/config/preferences/tool_permissions.preferences.json";
 pub const SKILL_VISIBILITY_PREFERENCES_PATH: &str =

@@ -141,6 +141,24 @@ operit2-cli-linux-x86_64.tar.gz
 operit2-cli-linux-aarch64.tar.gz
 ```
 
+Apple release assets can be built on a macOS SSH worker. The release script
+packages the current working tree, sends it to the Mac, runs the Apple build
+there, and copies the produced assets into `tools/release/dist`.
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release.py --scope full --cli-arches all --apple-builder user@mac-mini.local
+```
+
+The macOS worker must have Xcode, Rust, FVM, Node/npm, and Python 3 available
+from the SSH login environment. Apple outputs include:
+
+```text
+operit2-app-macos-aarch64.zip
+operit2-app-ios-arm64.zip
+operit2-cli-macos-x86_64.tar.gz
+operit2-cli-macos-aarch64.tar.gz
+```
+
 The output directory is:
 
 ```text
@@ -212,6 +230,13 @@ Android release build requires signing values in:
 tools/release/secrets/android-signing.properties
 ```
 
+Keep the Android release keystore and properties outside git and back them up:
+
+```text
+tools/release/secrets/operit2-release.keystore
+tools/release/secrets/android-signing.properties
+```
+
 ## OpenHarmony Flutter App
 
 OpenHarmony builds require the OpenHarmony Flutter SDK maintained at:
@@ -235,6 +260,46 @@ The user environment must provide:
 
 Restart the terminal or IDE after changing user environment variables so new
 processes inherit them.
+
+The Windows user environment used for local OpenHarmony builds should keep
+these values stable:
+
+```text
+HOS_SDK_HOME=%USERPROFILE%\harmony-tools\harmonyos-sdk
+OHOS_SDK_HOME=%USERPROFILE%\harmony-tools\harmonyos-sdk
+DEVECO_SDK_HOME=%USERPROFILE%\harmony-tools\harmonyos-sdk
+```
+
+Add these directories to the user `PATH`:
+
+```text
+%USERPROFILE%\harmony-tools\commandline-tools-2.0.0.2\command-line-tools\bin
+%USERPROFILE%\harmony-tools\ohcommandline-tools-2.0.0.2\oh-command-line-tools\bin
+%LOCALAPPDATA%\Pub\Cache\bin
+```
+
+The project-local OpenHarmony properties file should point at the same SDK and
+the FVM-selected Flutter SDK:
+
+```text
+apps/flutter/app/ohos/local.properties
+hwsdk.dir=<user-home>\\harmony-tools\\harmonyos-sdk
+flutter.sdk=<repo-root>\\apps\\flutter\\app\\.fvm\\flutter_sdk
+```
+
+The SDK root must contain a numeric API directory with all build components.
+The currently validated layout is:
+
+```text
+%USERPROFILE%\harmony-tools\harmonyos-sdk\18\ets
+%USERPROFILE%\harmony-tools\harmonyos-sdk\18\js
+%USERPROFILE%\harmony-tools\harmonyos-sdk\18\native
+%USERPROFILE%\harmony-tools\harmonyos-sdk\18\previewer
+%USERPROFILE%\harmony-tools\harmonyos-sdk\18\toolchains
+```
+
+Do not point this project at `%USERPROFILE%\harmony-tools\openharmony-sdk\9`;
+that older SDK does not match the current OpenHarmony API 18 project files.
 
 The FVM-selected SDK must expose the `ohos` platform and the `hap` build
 command. Verify the selected SDK and DevEco environment from the Flutter app
@@ -284,11 +349,43 @@ Build the HAP through the repository build script from the repository root:
 .\.venv\Scripts\python.exe tools\build_scripts\build_flutter_ohos.py --enforce-lockfile
 ```
 
+The build script stages the Rust bridge, copies the OpenHarmony Flutter engine
+HAR files, patches the embedding HAR for the local API 18 SDK surface, clears
+the unpacked `ohpm` embedding package, runs `flutter build hap`, and signs the
+unsigned HAP with the project OpenHarmony release signing material in:
+
+```text
+tools/release/secrets/ohos-signing/ohos-signing.properties
+```
+
+Keep these OpenHarmony release signing files outside git and back them up:
+
+```text
+tools/release/secrets/ohos-signing/operit-ohos-release-app.p12
+tools/release/secrets/ohos-signing/operit-ohos-release-app.cer
+tools/release/secrets/ohos-signing/operit-ohos-release-profile.p12
+tools/release/secrets/ohos-signing/operit-ohos-release-profile.cer
+tools/release/secrets/ohos-signing/ohos-signing.properties
+```
+
+The generated per-build profile files are written under:
+
+```text
+apps/flutter/app/ohos/signing
+```
+
+That directory is ignored by git and should be treated as local build output.
+
 The signed build output is copied to:
 
 ```text
 tools/release/dist/operit2-app-ohos-arm64.hap
 ```
+
+If the Flutter command reports `Can't load Kernel binary`, clear stale FVM or
+Flutter snapshot state for this app, run `fvm install --skip-pub-get` from
+`apps/flutter/app`, and run the OpenHarmony build script again from the
+repository root.
 
 ## Useful Cleanup
 

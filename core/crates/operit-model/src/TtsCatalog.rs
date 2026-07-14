@@ -12,6 +12,7 @@ pub struct TtsCatalog;
 const TTS_CATALOG_PROVIDER_ROWS: &str = r#"
 SYSTEM_TTS|系统 TTS|||wav|POST|application/json||[]|[]|
 HTTP_TTS|HTTP TTS||||POST|application/json||[]|[]|
+LOCAL_MODEL|本地模型|||wav|POST|application/json||[]|[]|
 OPENAI_COMPATIBLE|OpenAI 兼容|https://api.openai.com/v1/audio/speech|gpt-4o-mini-tts|mp3|POST|application/json|{"model":"{model}","voice":"{voice}","input":"{text}","response_format":"{responseFormat}","speed":{speed}}|[{"name":"Authorization","value":"Bearer {apiKey}"}]|[]|
 MINIMAX_TTS|MiniMax|https://api.minimaxi.com/v1/t2a_v2|speech-2.8-hd|mp3|POST|application/json|{"model":"{model}","text":"{text}","stream":false,"output_format":"url","voice_setting":{"voice_id":"{voice}","speed":{speed},"vol":1,"pitch":0},"audio_setting":{"sample_rate":32000,"bitrate":128000,"format":"{responseFormat}","channel":1},"subtitle_enable":false}|[{"name":"Authorization","value":"Bearer {apiKey}"}]|[{"stepType":"parse_json","path":""},{"stepType":"pick","path":"$.data.audio"},{"stepType":"http_get","path":""}]|
 MIMO_TTS|MiMo|https://api.xiaomimimo.com/v1/chat/completions|mimo-v2.5-tts|wav|POST|application/json|{"model":"{model}","messages":[{"role":"user","content":"请自然朗读。语速设置：{speed}x，音高设置：{pitch}x。"},{"role":"assistant","content":"{text}"}],"audio":{"format":"{responseFormat}","voice":"{voice}"},"stream":false}|[{"name":"api-key","value":"{apiKey}"}]|[{"stepType":"parse_json","path":""},{"stepType":"pick","path":"$.choices[0].message.audio.data"},{"stepType":"base64_decode","path":""}]|

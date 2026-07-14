@@ -86,6 +86,9 @@ apps/flutter/app/android/app/src/main/assets/android-runtime/
 DerivedData/
 *.xcuserstate
 *.xcscmblueprint
+apps/flutter/app/apple/Frameworks/
+apps/flutter/app/apple/downloads/
+apps/flutter/app/apple/.sherpa-staging/
 
 # Rust
 target/
@@ -171,3 +174,4 @@ plugins/**/.sync_hot_reload_state.json
 
 
 AGENTS.md
+.codex*

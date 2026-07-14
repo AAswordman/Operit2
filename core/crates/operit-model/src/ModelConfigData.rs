@@ -36,8 +36,7 @@ pub enum ApiProviderType {
     LMSTUDIO,
     OLLAMA,
     OPENAI_LOCAL,
-    MNN,
-    LLAMA_CPP,
+    LOCAL_MODEL,
     PPINFRA,
     NOVITA,
     OTHER,
@@ -76,8 +75,7 @@ impl ApiProviderType {
             "LMSTUDIO" => Some(Self::LMSTUDIO),
             "OLLAMA" => Some(Self::OLLAMA),
             "OPENAI_LOCAL" => Some(Self::OPENAI_LOCAL),
-            "MNN" => Some(Self::MNN),
-            "LLAMA_CPP" => Some(Self::LLAMA_CPP),
+            "LOCAL_MODEL" => Some(Self::LOCAL_MODEL),
             "PPINFRA" => Some(Self::PPINFRA),
             "NOVITA" => Some(Self::NOVITA),
             "OTHER" => Some(Self::OTHER),
@@ -116,8 +114,7 @@ impl ApiProviderType {
             Self::LMSTUDIO => "LMSTUDIO",
             Self::OLLAMA => "OLLAMA",
             Self::OPENAI_LOCAL => "OPENAI_LOCAL",
-            Self::MNN => "MNN",
-            Self::LLAMA_CPP => "LLAMA_CPP",
+            Self::LOCAL_MODEL => "LOCAL_MODEL",
             Self::PPINFRA => "PPINFRA",
             Self::NOVITA => "NOVITA",
             Self::OTHER => "OTHER",
@@ -411,6 +408,7 @@ pub struct ProviderCatalogEntry {
 pub enum AvailableProviderModelSource {
     Catalog,
     Remote,
+    Local,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -559,6 +557,16 @@ pub fn default_deepseek_provider() -> ProviderProfile {
     );
     provider.models.push(default_deepseek_model());
     provider
+}
+
+/// Builds the fixed provider profile backed by installed local models.
+pub fn local_model_provider() -> ProviderProfile {
+    ProviderProfile::new(
+        ApiProviderType::LOCAL_MODEL.name().to_string(),
+        "Local Models".to_string(),
+        ApiProviderType::LOCAL_MODEL,
+        String::new(),
+    )
 }
 
 pub fn default_deepseek_model() -> ModelProfile {

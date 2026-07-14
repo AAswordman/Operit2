@@ -77,15 +77,26 @@ pub(crate) fn call_bluetooth(method: &str, args: &[JsValue]) -> HostResult<JsVal
     call_function(&module, method, args)
 }
 
+/// Calls one local inference function on the installed JavaScript host bridge.
+pub(crate) fn call_local_inference(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
+    let module = bridge_module("localInference")?;
+    call_function(&module, method, args)
+}
+
 fn bridge_module(name: &str) -> HostResult<JsValue> {
     let global = js_sys::global();
-    let host = Reflect::get(global.as_ref(), &JsValue::from_str("__operitHost")).map_err(js_error)?;
+    let host =
+        Reflect::get(global.as_ref(), &JsValue::from_str("__operitHost")).map_err(js_error)?;
     if host.is_null() || host.is_undefined() {
-        return Err(HostError::new("web host bridge __operitHost is not installed"));
+        return Err(HostError::new(
+            "web host bridge __operitHost is not installed",
+        ));
     }
     let module = Reflect::get(&host, &JsValue::from_str(name)).map_err(js_error)?;
     if module.is_null() || module.is_undefined() {
-        return Err(HostError::new(format!("web host bridge module is not installed: {name}")));
+        return Err(HostError::new(format!(
+            "web host bridge module is not installed: {name}"
+        )));
     }
     Ok(module)
 }
@@ -94,7 +105,11 @@ fn call_function(target: &JsValue, method: &str, args: &[JsValue]) -> HostResult
     let function = Reflect::get(target, &JsValue::from_str(method))
         .map_err(js_error)?
         .dyn_into::<Function>()
-        .map_err(|_| HostError::new(format!("web host bridge method is not a function: {method}")))?;
+        .map_err(|_| {
+            HostError::new(format!(
+                "web host bridge method is not a function: {method}"
+            ))
+        })?;
     let array = Array::new();
     for arg in args {
         array.push(arg);
@@ -112,9 +127,21 @@ pub(crate) fn find_files_request_to_js(request: &FindFilesRequest) -> JsValue {
     let object = Object::new();
     set_property(&object, "path", JsValue::from_str(&request.path));
     set_property(&object, "pattern", JsValue::from_str(&request.pattern));
-    set_property(&object, "maxDepth", JsValue::from_f64(request.maxDepth as f64));
-    set_property(&object, "usePathPattern", JsValue::from_bool(request.usePathPattern));
-    set_property(&object, "caseInsensitive", JsValue::from_bool(request.caseInsensitive));
+    set_property(
+        &object,
+        "maxDepth",
+        JsValue::from_f64(request.maxDepth as f64),
+    );
+    set_property(
+        &object,
+        "usePathPattern",
+        JsValue::from_bool(request.usePathPattern),
+    );
+    set_property(
+        &object,
+        "caseInsensitive",
+        JsValue::from_bool(request.caseInsensitive),
+    );
     object.into()
 }
 
@@ -122,10 +149,26 @@ pub(crate) fn grep_code_request_to_js(request: &GrepCodeRequest) -> JsValue {
     let object = Object::new();
     set_property(&object, "path", JsValue::from_str(&request.path));
     set_property(&object, "pattern", JsValue::from_str(&request.pattern));
-    set_property(&object, "filePattern", JsValue::from_str(&request.filePattern));
-    set_property(&object, "caseInsensitive", JsValue::from_bool(request.caseInsensitive));
-    set_property(&object, "contextLines", JsValue::from_f64(request.contextLines as f64));
-    set_property(&object, "maxResults", JsValue::from_f64(request.maxResults as f64));
+    set_property(
+        &object,
+        "filePattern",
+        JsValue::from_str(&request.filePattern),
+    );
+    set_property(
+        &object,
+        "caseInsensitive",
+        JsValue::from_bool(request.caseInsensitive),
+    );
+    set_property(
+        &object,
+        "contextLines",
+        JsValue::from_f64(request.contextLines as f64),
+    );
+    set_property(
+        &object,
+        "maxResults",
+        JsValue::from_f64(request.maxResults as f64),
+    );
     object.into()
 }
 
@@ -134,17 +177,37 @@ pub(crate) fn web_visit_request_to_js(request: &WebVisitRequest) -> JsValue {
     set_property(&object, "url", JsValue::from_str(&request.url));
     set_property(&object, "headers", string_pairs_to_js(&request.headers));
     set_property(&object, "userAgent", JsValue::from_str(&request.userAgent));
-    set_property(&object, "includeImageLinks", JsValue::from_bool(request.includeImageLinks));
+    set_property(
+        &object,
+        "includeImageLinks",
+        JsValue::from_bool(request.includeImageLinks),
+    );
     object.into()
 }
 
 pub(crate) fn music_playback_request_to_js(request: MusicPlaybackRequest) -> JsValue {
     let object = Object::new();
     set_property(&object, "source", JsValue::from_str(&request.source));
-    set_property(&object, "sourceType", JsValue::from_str(&request.sourceType));
-    set_property(&object, "title", optional_string_to_js(request.title.as_ref()));
-    set_property(&object, "artist", optional_string_to_js(request.artist.as_ref()));
-    set_property(&object, "loopPlayback", JsValue::from_bool(request.loopPlayback));
+    set_property(
+        &object,
+        "sourceType",
+        JsValue::from_str(&request.sourceType),
+    );
+    set_property(
+        &object,
+        "title",
+        optional_string_to_js(request.title.as_ref()),
+    );
+    set_property(
+        &object,
+        "artist",
+        optional_string_to_js(request.artist.as_ref()),
+    );
+    set_property(
+        &object,
+        "loopPlayback",
+        JsValue::from_bool(request.loopPlayback),
+    );
     set_property(&object, "volume", JsValue::from_f64(request.volume));
     set_property(
         &object,
@@ -172,8 +235,16 @@ pub(crate) fn music_playback_status(value: JsValue) -> HostResult<MusicPlaybackS
 
 pub(crate) fn bluetooth_scan_request_to_js(request: BluetoothScanRequest) -> JsValue {
     let object = Object::new();
-    set_property(&object, "durationMs", JsValue::from_f64(request.durationMs as f64));
-    set_property(&object, "includeBle", JsValue::from_bool(request.includeBle));
+    set_property(
+        &object,
+        "durationMs",
+        JsValue::from_f64(request.durationMs as f64),
+    );
+    set_property(
+        &object,
+        "includeBle",
+        JsValue::from_bool(request.includeBle),
+    );
     object.into()
 }
 
@@ -204,13 +275,21 @@ pub(crate) fn bluetooth_classic_accept_request_to_js(
         "listenerSessionId",
         JsValue::from_str(&request.listenerSessionId),
     );
-    set_property(&object, "timeoutMs", JsValue::from_f64(request.timeoutMs as f64));
+    set_property(
+        &object,
+        "timeoutMs",
+        JsValue::from_f64(request.timeoutMs as f64),
+    );
     object.into()
 }
 
 pub(crate) fn bluetooth_payload_to_js(payload: BluetoothPayload) -> JsValue {
     let object = Object::new();
-    set_property(&object, "text", optional_string_to_js(payload.text.as_ref()));
+    set_property(
+        &object,
+        "text",
+        optional_string_to_js(payload.text.as_ref()),
+    );
     set_property(
         &object,
         "dataBase64",
@@ -222,15 +301,27 @@ pub(crate) fn bluetooth_payload_to_js(payload: BluetoothPayload) -> JsValue {
 pub(crate) fn bluetooth_read_request_to_js(request: BluetoothReadRequest) -> JsValue {
     let object = Object::new();
     set_property(&object, "sessionId", JsValue::from_str(&request.sessionId));
-    set_property(&object, "maxBytes", JsValue::from_f64(request.maxBytes as f64));
-    set_property(&object, "timeoutMs", JsValue::from_f64(request.timeoutMs as f64));
+    set_property(
+        &object,
+        "maxBytes",
+        JsValue::from_f64(request.maxBytes as f64),
+    );
+    set_property(
+        &object,
+        "timeoutMs",
+        JsValue::from_f64(request.timeoutMs as f64),
+    );
     object.into()
 }
 
 pub(crate) fn bluetooth_ble_connect_request_to_js(request: BluetoothBleConnectRequest) -> JsValue {
     let object = Object::new();
     set_property(&object, "address", JsValue::from_str(&request.address));
-    set_property(&object, "autoConnect", JsValue::from_bool(request.autoConnect));
+    set_property(
+        &object,
+        "autoConnect",
+        JsValue::from_bool(request.autoConnect),
+    );
     object.into()
 }
 
@@ -239,26 +330,42 @@ pub(crate) fn bluetooth_ble_characteristic_address_to_js(
 ) -> JsValue {
     let object = Object::new();
     set_property(&object, "sessionId", JsValue::from_str(&address.sessionId));
-    set_property(&object, "serviceUuid", JsValue::from_str(&address.serviceUuid));
+    set_property(
+        &object,
+        "serviceUuid",
+        JsValue::from_str(&address.serviceUuid),
+    );
     set_property(
         &object,
         "characteristicUuid",
         JsValue::from_str(&address.characteristicUuid),
     );
-    set_property(&object, "timeoutMs", JsValue::from_f64(address.timeoutMs as f64));
+    set_property(
+        &object,
+        "timeoutMs",
+        JsValue::from_f64(address.timeoutMs as f64),
+    );
     object.into()
 }
 
 pub(crate) fn bluetooth_ble_write_request_to_js(request: BluetoothBleWriteRequest) -> JsValue {
     let object = Object::new();
     set_property(&object, "sessionId", JsValue::from_str(&request.sessionId));
-    set_property(&object, "serviceUuid", JsValue::from_str(&request.serviceUuid));
+    set_property(
+        &object,
+        "serviceUuid",
+        JsValue::from_str(&request.serviceUuid),
+    );
     set_property(
         &object,
         "characteristicUuid",
         JsValue::from_str(&request.characteristicUuid),
     );
-    set_property(&object, "text", optional_string_to_js(request.text.as_ref()));
+    set_property(
+        &object,
+        "text",
+        optional_string_to_js(request.text.as_ref()),
+    );
     set_property(
         &object,
         "dataBase64",
@@ -292,13 +399,21 @@ pub(crate) fn bluetooth_ble_write_and_read_request_to_js(
         "readCharacteristicUuid",
         JsValue::from_str(&request.readCharacteristicUuid),
     );
-    set_property(&object, "text", optional_string_to_js(request.text.as_ref()));
+    set_property(
+        &object,
+        "text",
+        optional_string_to_js(request.text.as_ref()),
+    );
     set_property(
         &object,
         "dataBase64",
         optional_string_to_js(request.dataBase64.as_ref()),
     );
-    set_property(&object, "timeoutMs", JsValue::from_f64(request.timeoutMs as f64));
+    set_property(
+        &object,
+        "timeoutMs",
+        JsValue::from_f64(request.timeoutMs as f64),
+    );
     object.into()
 }
 
@@ -307,7 +422,11 @@ pub(crate) fn bluetooth_ble_subscribe_request_to_js(
 ) -> JsValue {
     let object = Object::new();
     set_property(&object, "sessionId", JsValue::from_str(&request.sessionId));
-    set_property(&object, "serviceUuid", JsValue::from_str(&request.serviceUuid));
+    set_property(
+        &object,
+        "serviceUuid",
+        JsValue::from_str(&request.serviceUuid),
+    );
     set_property(
         &object,
         "characteristicUuid",
@@ -323,8 +442,16 @@ pub(crate) fn http_request_to_js(request: HttpRequestData) -> JsValue {
     set_property(&object, "method", JsValue::from_str(&request.method));
     set_property(&object, "headers", string_pairs_to_js(&request.headers));
     set_property(&object, "body", bytes_to_js(&request.body));
-    set_property(&object, "formFields", string_pairs_to_js(&request.formFields));
-    set_property(&object, "fileParts", http_file_parts_to_js(&request.fileParts));
+    set_property(
+        &object,
+        "formFields",
+        string_pairs_to_js(&request.formFields),
+    );
+    set_property(
+        &object,
+        "fileParts",
+        http_file_parts_to_js(&request.fileParts),
+    );
     set_property(
         &object,
         "connectTimeoutSeconds",
@@ -335,10 +462,18 @@ pub(crate) fn http_request_to_js(request: HttpRequestData) -> JsValue {
         "readTimeoutSeconds",
         JsValue::from_f64(request.readTimeoutSeconds as f64),
     );
-    set_property(&object, "followRedirects", JsValue::from_bool(request.followRedirects));
+    set_property(
+        &object,
+        "followRedirects",
+        JsValue::from_bool(request.followRedirects),
+    );
     set_property(&object, "ignoreSsl", JsValue::from_bool(request.ignoreSsl));
     set_property(&object, "proxyHost", JsValue::from_str(&request.proxyHost));
-    set_property(&object, "proxyPort", JsValue::from_f64(request.proxyPort as f64));
+    set_property(
+        &object,
+        "proxyPort",
+        JsValue::from_f64(request.proxyPort as f64),
+    );
     object.into()
 }
 
@@ -351,17 +486,19 @@ pub(crate) fn js_http_response(value: JsValue) -> HostResult<HttpResponseData> {
             Reflect::get(&value, &JsValue::from_str("headers")).map_err(js_error)?,
             "http response headers",
         )?,
-        body: Uint8Array::new(
-            &Reflect::get(&value, &JsValue::from_str("body")).map_err(js_error)?,
-        )
-        .to_vec(),
+        body: Uint8Array::new(&Reflect::get(&value, &JsValue::from_str("body")).map_err(js_error)?)
+            .to_vec(),
     })
 }
 
 pub(crate) fn runtime_process_request_to_js(request: &RuntimeProcessRequest) -> JsValue {
     let object = Object::new();
     set_property(&object, "program", program_to_js(request.program.clone()));
-    set_property(&object, "executablePath", optional_string_to_js(request.executablePath.as_ref()));
+    set_property(
+        &object,
+        "executablePath",
+        optional_string_to_js(request.executablePath.as_ref()),
+    );
     set_property(&object, "args", strings_to_js(&request.args));
     set_property(&object, "cwd", optional_string_to_js(request.cwd.as_ref()));
     set_property(&object, "env", string_map_to_js(&request.env));
@@ -437,7 +574,9 @@ fn js_to_sqlite_value(value: JsValue) -> HostResult<SqliteValue> {
         "real" => Ok(SqliteValue::Real(js_f64(raw_value, "sqlite real")?)),
         "text" => Ok(SqliteValue::Text(js_string(raw_value, "sqlite text")?)),
         "blob" => Ok(SqliteValue::Blob(Uint8Array::new(&raw_value).to_vec())),
-        other => Err(HostError::new(format!("unknown sqlite value kind: {other}"))),
+        other => Err(HostError::new(format!(
+            "unknown sqlite value kind: {other}"
+        ))),
     }
 }
 
@@ -450,9 +589,8 @@ pub(crate) fn js_rows(value: JsValue) -> HostResult<Vec<SqliteRow>> {
             Reflect::get(&row, &JsValue::from_str("columns")).map_err(js_error)?,
             "sqlite row columns",
         )?;
-        let values = Array::from(
-            &Reflect::get(&row, &JsValue::from_str("values")).map_err(js_error)?,
-        );
+        let values =
+            Array::from(&Reflect::get(&row, &JsValue::from_str("values")).map_err(js_error)?);
         let mut row_values = Vec::new();
         for value_index in 0..values.length() {
             row_values.push(js_to_sqlite_value(values.get(value_index))?);
@@ -522,7 +660,7 @@ pub(crate) fn js_string_map(value: JsValue, context: &str) -> HostResult<BTreeMa
     Ok(values)
 }
 
-fn string_pairs_to_js(values: &[(String, String)]) -> JsValue {
+pub(crate) fn string_pairs_to_js(values: &[(String, String)]) -> JsValue {
     let array = Array::new();
     for (key, value) in values {
         let pair = Array::new();
@@ -539,7 +677,11 @@ fn http_file_parts_to_js(values: &[HttpFilePart]) -> JsValue {
         let object = Object::new();
         set_property(&object, "fieldName", JsValue::from_str(&value.fieldName));
         set_property(&object, "fileName", JsValue::from_str(&value.fileName));
-        set_property(&object, "contentType", JsValue::from_str(&value.contentType));
+        set_property(
+            &object,
+            "contentType",
+            JsValue::from_str(&value.contentType),
+        );
         set_property(&object, "content", bytes_to_js(&value.content));
         array.push(&object);
     }
@@ -587,7 +729,10 @@ pub(crate) fn read_string_property(value: &JsValue, property: &str) -> HostResul
     js_string(property_value, property)
 }
 
-pub(crate) fn read_optional_string_property(value: &JsValue, property: &str) -> HostResult<Option<String>> {
+pub(crate) fn read_optional_string_property(
+    value: &JsValue,
+    property: &str,
+) -> HostResult<Option<String>> {
     let property_value = Reflect::get(value, &JsValue::from_str(property)).map_err(js_error)?;
     js_optional_string(property_value, property)
 }
@@ -602,7 +747,10 @@ pub(crate) fn read_i64_property(value: &JsValue, property: &str) -> HostResult<i
     js_i64(property_value, property)
 }
 
-pub(crate) fn read_optional_i64_property(value: &JsValue, property: &str) -> HostResult<Option<i64>> {
+pub(crate) fn read_optional_i64_property(
+    value: &JsValue,
+    property: &str,
+) -> HostResult<Option<i64>> {
     let property_value = Reflect::get(value, &JsValue::from_str(property)).map_err(js_error)?;
     if property_value.is_null() || property_value.is_undefined() {
         return Ok(None);
@@ -615,13 +763,18 @@ pub(crate) fn read_i32_property(value: &JsValue, property: &str) -> HostResult<i
     i32::try_from(value).map_err(|error| HostError::new(error.to_string()))
 }
 
-pub(crate) fn read_optional_i32_property(value: &JsValue, property: &str) -> HostResult<Option<i32>> {
+pub(crate) fn read_optional_i32_property(
+    value: &JsValue,
+    property: &str,
+) -> HostResult<Option<i32>> {
     let property_value = Reflect::get(value, &JsValue::from_str(property)).map_err(js_error)?;
     if property_value.is_null() || property_value.is_undefined() {
         return Ok(None);
     }
     let value = js_i64(property_value, property)?;
-    Ok(Some(i32::try_from(value).map_err(|error| HostError::new(error.to_string()))?))
+    Ok(Some(
+        i32::try_from(value).map_err(|error| HostError::new(error.to_string()))?,
+    ))
 }
 
 pub(crate) fn read_usize_property(value: &JsValue, property: &str) -> HostResult<usize> {
@@ -664,14 +817,16 @@ pub(crate) fn js_usize(value: JsValue, context: &str) -> HostResult<usize> {
 
 pub(crate) fn js_i64(value: JsValue, context: &str) -> HostResult<i64> {
     if let Some(text) = value.as_string() {
-        return text
-            .parse::<i64>()
-            .map_err(|error| HostError::new(format!("{context} returned invalid integer: {error}")));
+        return text.parse::<i64>().map_err(|error| {
+            HostError::new(format!("{context} returned invalid integer: {error}"))
+        });
     }
     if let Some(number) = value.as_f64() {
         return Ok(number as i64);
     }
-    Err(HostError::new(format!("{context} returned non-integer value")))
+    Err(HostError::new(format!(
+        "{context} returned non-integer value"
+    )))
 }
 
 pub(crate) fn js_f64(value: JsValue, context: &str) -> HostResult<f64> {
@@ -710,8 +865,11 @@ pub(crate) fn bluetooth_device_data(value: JsValue) -> HostResult<BluetoothDevic
     })
 }
 
-pub(crate) fn bluetooth_bonded_devices_data(value: JsValue) -> HostResult<BluetoothBondedDevicesData> {
-    let array = Array::from(&Reflect::get(&value, &JsValue::from_str("devices")).map_err(js_error)?);
+pub(crate) fn bluetooth_bonded_devices_data(
+    value: JsValue,
+) -> HostResult<BluetoothBondedDevicesData> {
+    let array =
+        Array::from(&Reflect::get(&value, &JsValue::from_str("devices")).map_err(js_error)?);
     let mut devices = Vec::new();
     for index in 0..array.length() {
         devices.push(bluetooth_device_data(array.get(index))?);
@@ -719,7 +877,9 @@ pub(crate) fn bluetooth_bonded_devices_data(value: JsValue) -> HostResult<Blueto
     Ok(BluetoothBondedDevicesData { devices })
 }
 
-pub(crate) fn bluetooth_scanned_device_data(value: JsValue) -> HostResult<BluetoothScannedDeviceData> {
+pub(crate) fn bluetooth_scanned_device_data(
+    value: JsValue,
+) -> HostResult<BluetoothScannedDeviceData> {
     Ok(BluetoothScannedDeviceData {
         name: read_optional_string_property(&value, "name")?,
         address: read_string_property(&value, "address")?,
@@ -731,7 +891,8 @@ pub(crate) fn bluetooth_scanned_device_data(value: JsValue) -> HostResult<Blueto
 }
 
 pub(crate) fn bluetooth_scan_result_data(value: JsValue) -> HostResult<BluetoothScanResultData> {
-    let array = Array::from(&Reflect::get(&value, &JsValue::from_str("devices")).map_err(js_error)?);
+    let array =
+        Array::from(&Reflect::get(&value, &JsValue::from_str("devices")).map_err(js_error)?);
     let mut devices = Vec::new();
     for index in 0..array.length() {
         devices.push(bluetooth_scanned_device_data(array.get(index))?);

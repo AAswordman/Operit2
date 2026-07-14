@@ -8,9 +8,12 @@ use operit_util::RuntimeStorageLayout::RUNTIME_TTS_AUDIO_DIR_PATH;
 
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::TtsConfigManager::TtsConfigManager;
+use crate::services::LocalProviderService::LocalProviderService;
 use operit_host_api::HostManager::HostManager;
-use operit_model::TtsConfig::{TtsConfig, TtsSynthesisResult};
-use operit_providers::voice::VoiceServiceFactory::VoiceServiceFactory;
+use operit_local_models::LocalInference::LocalModelSelection;
+use operit_model::TtsConfig::{TtsConfig, TtsProviderType, TtsSynthesisResult};
+use operit_providers::tts::VoiceService::VoiceService;
+use operit_providers::tts::VoiceServiceFactory::VoiceServiceFactory;
 use operit_util::TtsCleaner::TtsCleaner;
 use operit_util::TtsSegmenter::TtsSegmenter;
 
@@ -21,6 +24,40 @@ pub struct TtsSynthesisService {
     characterCardManager: CharacterCardManager,
     ttsConfigManager: TtsConfigManager,
     context: Option<HostManager>,
+}
+
+/// Adapts the runtime local model provider to the shared TTS voice contract.
+struct LocalModelVoiceProvider {
+    service: LocalProviderService,
+    model: LocalModelSelection,
+}
+
+impl LocalModelVoiceProvider {
+    /// Creates a voice provider for one exact installed local model binding.
+    fn new(config: &TtsConfig, context: &HostManager) -> Result<Self, String> {
+        let service = LocalProviderService::getInstance(context)?;
+        let model = LocalProviderService::parseModelBinding(config.model.clone())?;
+        Ok(Self { service, model })
+    }
+}
+
+impl VoiceService for LocalModelVoiceProvider {
+    /// Synthesizes one text segment through the installed local TTS engine.
+    fn synthesize(&self, config: &TtsConfig, text: &str) -> Result<Vec<u8>, String> {
+        let response = self.service.synthesizeAudio(
+            self.model.clone(),
+            text.to_string(),
+            config.voice.clone(),
+            config.speed,
+        )?;
+        if response.outputFormat != "wav" {
+            return Err(format!(
+                "LOCAL_MODEL TTS returned unsupported format: {}",
+                response.outputFormat
+            ));
+        }
+        Ok(response.audioBytes)
+    }
 }
 
 impl TtsSynthesisService {
@@ -102,13 +139,14 @@ impl TtsSynthesisService {
         self.synthesizeWithResolvedConfig(ttsConfigId, &config, &cleanedText)
     }
 
+    /// Synthesizes cleaned text and writes every generated segment to runtime storage.
     fn synthesizeWithResolvedConfig(
         &self,
         audioNamePrefix: &str,
         config: &TtsConfig,
         cleanedText: &str,
     ) -> Result<TtsSynthesisResult, String> {
-        let voiceService = VoiceServiceFactory::createVoiceService(config, self.context.as_ref())?;
+        let voiceService = self.createVoiceService(config)?;
         let segments = TtsSegmenter::segment(&cleanedText, 4000);
         let storageHost = defaultRuntimeStorageHost();
         let mut audioPaths = Vec::new();
@@ -135,5 +173,19 @@ impl TtsSynthesisService {
             audioPaths,
             audioStoragePaths,
         })
+    }
+
+    /// Creates the provider adapter selected by one normalized TTS configuration.
+    fn createVoiceService(&self, config: &TtsConfig) -> Result<Box<dyn VoiceService>, String> {
+        let providerType = TtsProviderType::normalize(&config.providerType);
+        match providerType.as_str() {
+            TtsProviderType::LOCAL_MODEL => {
+                let context = self.context.as_ref().ok_or_else(|| {
+                    "HostManager is required for LOCAL_MODEL TTS synthesis".to_string()
+                })?;
+                Ok(Box::new(LocalModelVoiceProvider::new(config, context)?))
+            }
+            _ => VoiceServiceFactory::createVoiceService(config, self.context.as_ref()),
+        }
     }
 }

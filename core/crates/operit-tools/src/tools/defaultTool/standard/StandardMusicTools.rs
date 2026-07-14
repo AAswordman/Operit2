@@ -3,7 +3,7 @@ use std::sync::Arc;
 use operit_host_api::{AudioPlaybackHost, HostError, MusicPlaybackRequest};
 
 use operit_tools::tools::ToolResultDataClasses::{
-    stringResultData, MusicPlaybackResultData, ToolResultData,
+    stringResultData, FromHostResult, MusicPlaybackResultData, ToolResultData,
 };
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
@@ -58,7 +58,7 @@ impl StandardMusicTools {
         match self.host().and_then(|host| host.playMusic(request)) {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from(data)),
+                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from_host(data)),
             ),
             Err(error) => toolError(tool, format!("Error playing music: {}", error.message)),
         }
@@ -69,7 +69,7 @@ impl StandardMusicTools {
         match self.host().and_then(|host| host.pauseMusic()) {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from(data)),
+                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from_host(data)),
             ),
             Err(error) => toolError(tool, format!("Error pausing music: {}", error.message)),
         }
@@ -80,7 +80,7 @@ impl StandardMusicTools {
         match self.host().and_then(|host| host.resumeMusic()) {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from(data)),
+                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from_host(data)),
             ),
             Err(error) => toolError(tool, format!("Error resuming music: {}", error.message)),
         }
@@ -91,7 +91,7 @@ impl StandardMusicTools {
         match self.host().and_then(|host| host.stopMusic()) {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from(data)),
+                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from_host(data)),
             ),
             Err(error) => toolError(tool, format!("Error stopping music: {}", error.message)),
         }
@@ -103,7 +103,7 @@ impl StandardMusicTools {
         match self.host().and_then(|host| host.seekMusic(positionMs)) {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from(data)),
+                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from_host(data)),
             ),
             Err(error) => toolError(tool, format!("Error seeking music: {}", error.message)),
         }
@@ -115,7 +115,7 @@ impl StandardMusicTools {
         match self.host().and_then(|host| host.setMusicVolume(volume)) {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from(data)),
+                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,
@@ -129,7 +129,7 @@ impl StandardMusicTools {
         match self.host().and_then(|host| host.musicStatus()) {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from(data)),
+                ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from_host(data)),
             ),
             Err(error) => toolError(
                 tool,

@@ -7,6 +7,7 @@ import '../access_links/AccessLinksSettingsPanel.dart';
 import '../characters/CharacterSettingsPanel.dart';
 import '../data/DataSettingsPanel.dart';
 import '../model/ModelSettingsPanel.dart';
+import '../local_models/LocalModelSettingsPanel.dart';
 import '../models/SettingsModels.dart';
 import '../tools/ToolSettingsPanel.dart';
 import '../tts/TtsSettingsPanel.dart';
@@ -26,6 +27,7 @@ class SettingsDetailView extends StatelessWidget {
   Widget build(BuildContext context) {
     return switch (category) {
       SettingsCategory.model => const ModelSettingsPanel(),
+      SettingsCategory.localModels => const LocalModelSettingsPanel(),
       SettingsCategory.tts => const TtsSettingsPanel(),
       SettingsCategory.characters => const CharacterSettingsPanel(),
       SettingsCategory.tools => const ToolSettingsPanel(),

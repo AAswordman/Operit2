@@ -15,6 +15,8 @@ import '../components/SettingsControlStyles.dart';
 part 'TtsProviderWidgets.dart';
 part 'TtsProviderDialogs.dart';
 part 'TtsSettingsModels.dart';
+part 'SttProviderWidgets.dart';
+part 'SttProviderDialogs.dart';
 
 const String _ttsTestText = '你好，我是 Operit 的语音试听。';
 
@@ -48,12 +50,21 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
   }
 
   Future<_TtsSettingsData> _loadData() async {
-    final manager = widget.clients.preferencesTtsConfigManager;
-    final configs = await manager.getAllTtsConfigs();
-    final currentConfigId = await manager.getCurrentTtsConfigId();
-    final providerCatalogEntries = await manager.getProviderCatalogEntries();
-    if (providerCatalogEntries.isEmpty) {
+    final ttsManager = widget.clients.preferencesTtsConfigManager;
+    final ttsConfigs = await ttsManager.getAllTtsConfigs();
+    final currentTtsConfigId = await ttsManager.getCurrentTtsConfigId();
+    final ttsProviderCatalogEntries = await ttsManager
+        .getProviderCatalogEntries();
+    if (ttsProviderCatalogEntries.isEmpty) {
       throw StateError('TTS provider catalog is empty');
+    }
+    final sttManager = widget.clients.preferencesSttConfigManager;
+    final sttConfigs = await sttManager.getAllSttConfigs();
+    final currentSttConfigId = await sttManager.getSelectedSttConfigId();
+    final sttProviderCatalogEntries = await sttManager
+        .getProviderCatalogEntries();
+    if (sttProviderCatalogEntries.isEmpty) {
+      throw StateError('STT provider catalog is empty');
     }
     final characterCards = await widget.clients.preferencesCharacterCardManager
         .getAllCharacterCards();
@@ -63,10 +74,13 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
         .where((id) => id.isNotEmpty)
         .toSet();
     return _TtsSettingsData(
-      configs: configs,
-      currentConfigId: currentConfigId,
-      providerCatalogEntries: providerCatalogEntries,
+      configs: ttsConfigs,
+      currentConfigId: currentTtsConfigId,
+      providerCatalogEntries: ttsProviderCatalogEntries,
       characterBoundConfigIds: characterBoundConfigIds,
+      sttConfigs: sttConfigs,
+      currentSttConfigId: currentSttConfigId,
+      sttProviderCatalogEntries: sttProviderCatalogEntries,
     );
   }
 
@@ -77,12 +91,124 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
     _reload();
   }
 
+  /// Selects the global STT provider configuration.
+  Future<void> _setCurrentSttConfigId(String id) async {
+    await _runSttOperation(() async {
+      await widget.clients.preferencesSttConfigManager.setCurrentSttConfigId(
+        id: id,
+      );
+      _reload();
+    });
+  }
+
+  /// Creates or updates one STT provider configuration.
+  Future<void> _saveSttConfig(core_proxy.SttConfig config) async {
+    await _runSttOperation(() async {
+      final manager = widget.clients.preferencesSttConfigManager;
+      if (config.id.isEmpty) {
+        await manager.createSttConfig(config: config);
+      } else {
+        await manager.updateSttConfig(config: config);
+      }
+      _reload();
+    });
+  }
+
+  /// Opens the STT provider creation dialog.
+  Future<void> _createSttProviderConfig(
+    List<core_proxy.SttProviderCatalogEntry> providerCatalogEntries,
+  ) async {
+    final config = await _SttConfigDialog.show(
+      context: context,
+      config: null,
+      providerCatalogEntries: providerCatalogEntries,
+      loadModels: (providerTypeId) => widget.clients.preferencesSttConfigManager
+          .getAvailableSttModels(providerTypeId: providerTypeId),
+    );
+    if (config == null) {
+      return;
+    }
+    await _saveSttConfig(config);
+  }
+
+  /// Opens the STT provider editor for one persisted configuration.
+  Future<void> _editSttProviderConfig(
+    core_proxy.SttConfig config,
+    List<core_proxy.SttProviderCatalogEntry> providerCatalogEntries,
+  ) async {
+    final edited = await _SttConfigDialog.show(
+      context: context,
+      config: config,
+      providerCatalogEntries: providerCatalogEntries,
+      loadModels: (providerTypeId) => widget.clients.preferencesSttConfigManager
+          .getAvailableSttModels(providerTypeId: providerTypeId),
+    );
+    if (edited == null) {
+      return;
+    }
+    await _saveSttConfig(edited);
+  }
+
+  /// Confirms and deletes one inactive STT provider configuration.
+  Future<void> _deleteSttProviderConfig(
+    core_proxy.SttConfig config,
+    String? currentConfigId,
+  ) async {
+    if (config.id == currentConfigId) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前正在使用的 STT 配置不能删除')));
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除 STT 供应商'),
+        content: Text('删除“${config.name}”及其识别配置？'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton.tonalIcon(
+            onPressed: () => Navigator.of(context).pop(true),
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    await _runSttOperation(() async {
+      await widget.clients.preferencesSttConfigManager.deleteSttConfig(
+        id: config.id,
+      );
+      _reload();
+    });
+  }
+
+  /// Runs one STT mutation and reports its exact runtime error.
+  Future<void> _runSttOperation(Future<void> Function() operation) async {
+    try {
+      await operation();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('STT 操作失败：$error')));
+    }
+  }
+
   Future<void> _testTtsConfig(core_proxy.TtsConfig config) async {
     final configId = config.id.trim();
     if (configId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('TTS 配置 ID 为空，不能试听')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('TTS 配置 ID 为空，不能试听')));
       return;
     }
     setState(() {
@@ -99,16 +225,16 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已开始播放 TTS 试听')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('已开始播放 TTS 试听')));
     } catch (error) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('TTS 试听失败：$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('TTS 试听失败：$error')));
     } finally {
       if (mounted && _testingTtsConfigId == configId) {
         setState(() {
@@ -134,17 +260,17 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
     Set<String> characterBoundConfigIds,
   ) async {
     if (_ttsConfigDeleteBlockedReason(
-      config,
-      currentConfigId,
-      characterBoundConfigIds,
-    )
+          config,
+          currentConfigId,
+          characterBoundConfigIds,
+        )
         case final reason?) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(reason)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(reason)));
       return;
     }
     try {
@@ -156,9 +282,9 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('删除 TTS 配置失败：$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('删除 TTS 配置失败：$error')));
     }
   }
 
@@ -212,8 +338,9 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
           .toSet();
       final selectableVoices = voices
           .where(
-            (voice) =>
-                !existingVoiceKeys.contains(_ttsVoiceKey(voice.model, voice.voice)),
+            (voice) => !existingVoiceKeys.contains(
+              _ttsVoiceKey(voice.model, voice.voice),
+            ),
           )
           .toList(growable: false);
       if (!mounted) {
@@ -250,7 +377,9 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
     return '${model.trim()}\u0000${voice.trim()}';
   }
 
-  Future<void> _createCustomTtsVoice(core_proxy.TtsConfig providerConfig) async {
+  Future<void> _createCustomTtsVoice(
+    core_proxy.TtsConfig providerConfig,
+  ) async {
     final result = await _CustomTtsVoiceDialog.show(
       context: context,
       requireModel: _ttsConfigUsesPlaceholder(providerConfig, 'model'),
@@ -347,7 +476,7 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
           return const Center(child: M3LoadingIndicator());
         }
         if (snapshot.hasError) {
-          return Center(child: Text('TTS 配置加载失败：${snapshot.error}'));
+          return Center(child: Text('语音配置加载失败：${snapshot.error}'));
         }
         final data = snapshot.data!;
         final groups = _ttsProviderGroups(data.configs);
@@ -356,7 +485,7 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           children: <Widget>[
             _SectionCard(
-              title: '供应商',
+              title: 'TTS 供应商',
               action: FilledButton.icon(
                 onPressed: () =>
                     _createProviderConfig(data.providerCatalogEntries),
@@ -381,6 +510,29 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
                   ),
                   onTestConfig: _testTtsConfig,
                   onSetCurrent: _setCurrentTtsConfigId,
+                ),
+              ],
+            ),
+            _SectionCard(
+              title: 'STT 供应商',
+              action: FilledButton.icon(
+                onPressed: () =>
+                    _createSttProviderConfig(data.sttProviderCatalogEntries),
+                style: SettingsControlStyles.sectionFilledButton(),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('创建'),
+              ),
+              children: <Widget>[
+                _SttProviderManager(
+                  configs: data.sttConfigs,
+                  currentConfigId: data.currentSttConfigId,
+                  onEdit: (config) => _editSttProviderConfig(
+                    config,
+                    data.sttProviderCatalogEntries,
+                  ),
+                  onDelete: (config) =>
+                      _deleteSttProviderConfig(config, data.currentSttConfigId),
+                  onSetCurrent: _setCurrentSttConfigId,
                 ),
               ],
             ),

@@ -92,7 +92,7 @@ class CorePushRequest {
 
 abstract class CorePushSink {
   /// Sends one ordered argument value into the input stream.
-  void add(Object? args);
+  Future<void> add(Object? args);
 
   /// Completes the input stream after all queued values are sent.
   Future<void> close();

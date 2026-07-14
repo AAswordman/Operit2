@@ -2,6 +2,7 @@
 
 pub mod execution_result;
 pub mod javascript;
+pub mod js_sdk;
 pub mod package;
 pub mod toolpkg;
 

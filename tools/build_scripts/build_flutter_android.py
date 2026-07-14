@@ -25,8 +25,8 @@ def ensure_android_signing() -> None:
 
     signing = read_properties(signing_properties)
     local = read_properties(ANDROID_LOCAL_PROPERTIES)
+    local["RELEASE_STORE_FILE"] = str(android_release_store_file(signing, signing_properties))
     for key in (
-        "RELEASE_STORE_FILE",
         "RELEASE_STORE_PASSWORD",
         "RELEASE_KEY_ALIAS",
         "RELEASE_KEY_PASSWORD",
@@ -35,6 +35,20 @@ def ensure_android_signing() -> None:
             raise RuntimeError(f"Android signing property missing from {signing_properties}: {key}")
         local[key] = signing[key]
     write_properties(ANDROID_LOCAL_PROPERTIES, local)
+
+
+# Reads the Android release keystore path from signing properties.
+def android_release_store_file(signing: dict[str, str], signing_properties: Path) -> Path:
+    key = "RELEASE_STORE_FILE"
+    value = signing.get(key)
+    if not value:
+        raise RuntimeError(f"Android signing property missing from {signing_properties}: {key}")
+    store_file = Path(value)
+    if not store_file.is_absolute():
+        store_file = signing_properties.parent / store_file
+    if not store_file.is_file():
+        raise RuntimeError(f"Android release keystore not found: {store_file}")
+    return store_file
 
 
 def parse_args() -> argparse.Namespace:

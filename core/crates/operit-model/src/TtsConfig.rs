@@ -100,6 +100,7 @@ pub struct TtsProviderType;
 impl TtsProviderType {
     pub const SYSTEM_TTS: &'static str = "SYSTEM_TTS";
     pub const HTTP_TTS: &'static str = "HTTP_TTS";
+    pub const LOCAL_MODEL: &'static str = "LOCAL_MODEL";
 
     pub fn normalize(providerType: &str) -> String {
         providerType.trim().to_ascii_uppercase()

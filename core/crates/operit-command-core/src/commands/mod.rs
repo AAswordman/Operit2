@@ -1,6 +1,7 @@
 mod approval;
 mod chat;
 mod host;
+mod local_models;
 mod log;
 mod market;
 mod mcp;
@@ -12,6 +13,7 @@ mod plugin;
 mod prefs;
 mod skill;
 mod storage;
+mod stt;
 mod tag;
 mod tool;
 mod update;
@@ -41,6 +43,7 @@ pub fn run_core_command(
         "market" => market::run_market_command(application, &args[1..], output),
         "host" => host::run_host_command(application.hostManager.clone(), &args[1..], output),
         "log" => log::run_log_command(&args[1..], output),
+        "local-models" => local_models::run_local_models_command(application, &args[1..], output),
         "prefs" => prefs::run_prefs_command(application.hostManager.clone(), &args[1..], output),
         "approval" => {
             approval::run_approval_command(application.hostManager.clone(), &args[1..], output)
@@ -54,6 +57,7 @@ pub fn run_core_command(
         "chat" => chat::run_chat_command(application, &args[1..], output),
         "workspace" => workspace::run_workspace_command(application, &args[1..], output),
         "storage" => storage::run_storage_command(application, &args[1..], output),
+        "stt" => stt::run_stt_command(application, &args[1..], output),
         "update" => update::run_update_command(&args[1..], output),
         _ => {
             print_core_usage(output);
@@ -63,7 +67,7 @@ pub fn run_core_command(
 }
 
 fn print_core_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 <tool|package|plugin|skill|mcp|market|host|log|prefs|approval|tag|memory|character|group|active-prompt|model|chat|workspace|storage|update>");
+    output.push_stdout_line("operit2 <tool|package|plugin|skill|mcp|market|host|log|local-models|stt|prefs|approval|tag|memory|character|group|active-prompt|model|chat|workspace|storage|update>");
     output.push_stdout_line("operit2 tool <list|show|exec>");
     output.push_stdout_line(
         "operit2 package <help|dir|list|more|load|show|import|enable|disable|use|exec>",
@@ -79,6 +83,12 @@ fn print_core_usage(output: &mut CoreCommandOutput) {
     );
     output.push_stdout_line("operit2 host <show|capabilities|paths>");
     output.push_stdout_line("operit2 log <show|package|path|clear>");
+    output.push_stdout_line(
+        "operit2 local-models <paths|catalog|show|installed|installed-show|install|verify|delete|engine-delete>",
+    );
+    output.push_stdout_line(
+        "operit2 stt <provider-list|provider-model-list|config|transcribe|transcribe-config>",
+    );
     output.push_stdout_line(
         "operit2 prefs <show|thinking|thinking-quality|stream|media-history|mcp-timeout>",
     );
