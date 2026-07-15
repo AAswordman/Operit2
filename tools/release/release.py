@@ -889,6 +889,7 @@ set -e
 cd {repo}
 cd apps/flutter/app
 fvm install --skip-pub-get
+fvm flutter precache --linux
 fvm dart pub get --enforce-lockfile
 rm -rf build/linux/x64/release
 fvm flutter build linux --release --no-pub --build-name {build_name_arg} --build-number {build_number_arg}
