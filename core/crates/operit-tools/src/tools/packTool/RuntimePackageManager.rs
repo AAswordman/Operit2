@@ -1506,6 +1506,25 @@ impl RuntimePackageManager {
     }
 
     #[allow(non_snake_case)]
+    /// Returns whether the ToolPkg protection secret is configured.
+    pub fn isToolPkgProtectionSecretConfigured(&self) -> bool {
+        operit_plugin_sdk::toolpkg::ToolPkgProtection::isSecretConfigured()
+    }
+
+    #[allow(non_snake_case)]
+    /// Protects a local JS or ToolPkg artifact before marketplace upload.
+    pub fn protectArtifactFile(
+        &self,
+        sourcePath: String,
+        isToolPkg: bool,
+    ) -> Result<Vec<u8>, String> {
+        operit_plugin_sdk::toolpkg::ToolPkgProtection::protectArtifactFile(
+            std::path::Path::new(&sourcePath),
+            isToolPkg,
+        )
+    }
+
+    #[allow(non_snake_case)]
     /// Returns package sources that can be exported or published.
     pub fn getPublishablePackageSources(&mut self) -> Vec<PublishablePackageSource> {
         let mut sources = Vec::new();
@@ -2435,7 +2454,8 @@ impl RuntimePackageManager {
         if !resourceFile.is_file() {
             return None;
         }
-        fs::read(resourceFile).ok()
+        let bytes = fs::read(resourceFile).ok()?;
+        operit_plugin_sdk::toolpkg::ToolPkgProtection::decryptIfNeeded(&bytes).ok()
     }
 
     #[allow(non_snake_case)]

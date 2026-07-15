@@ -156,7 +156,6 @@ impl OperitApplication {
         let mut toolHandler = self.toolHandler.clone();
         toolHandler.registerDefaultTools();
         PluginRegistry::initializeBuiltins(self.toolPkgBridgeRuntime.clone());
-        self.initMcpPlugins();
         self.hostRuntimeEventRegistration =
             crate::services::RuntimeEventIngressService::RuntimeEventIngressService::startHostRuntimeEventSupport(
                 self.hostManager.clone(),
@@ -164,6 +163,7 @@ impl OperitApplication {
             )?
             .map(|registration| Arc::new(Mutex::new(registration)));
         self.initialized = true;
+        self.initMcpPlugins();
         Ok(())
     }
 
@@ -227,11 +227,18 @@ impl OperitApplication {
     /// Starts deployed MCP plugins according to the configured startup timeout.
     #[allow(non_snake_case)]
     pub fn initMcpPlugins(&self) {
-        let starter = MCPStarter::new(self.hostManager.clone(), self.toolHandler.runtimeSupport());
-        let timeoutSeconds = ApiPreferences::getInstance()
-            .getMcpStartupTimeoutSeconds()
-            .expect("api preferences must provide mcp startup timeout seconds");
-        let _ = starter.startAllDeployedPluginsWithTimeout(timeoutSeconds);
+        let hostManager = self.hostManager.clone();
+        let runtimeSupport = self.toolHandler.runtimeSupport();
+        std::thread::Builder::new()
+            .name("operit-mcp-startup".to_string())
+            .spawn(move || {
+                let starter = MCPStarter::new(hostManager, runtimeSupport);
+                let timeoutSeconds = ApiPreferences::getInstance()
+                    .getMcpStartupTimeoutSeconds()
+                    .expect("api preferences must provide mcp startup timeout seconds");
+                let _ = starter.startAllDeployedPluginsWithTimeout(timeoutSeconds);
+            })
+            .expect("MCP startup thread must be created");
     }
 
     /// Returns the initialized tool handler owned by this runtime.

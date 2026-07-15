@@ -254,7 +254,7 @@ class _RemotePushChannel {
         'sessionId': session.sessionId,
         'deviceId': session.deviceId,
         'signature': session.signature(payloadBytes),
-        'payload': payload,
+        'payloadBytes': payloadBytes,
       }),
     );
   }

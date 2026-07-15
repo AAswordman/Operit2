@@ -43,11 +43,17 @@ fn verify_web_access_bundle_when_embedded(manifest_dir: &Path) {
     }
     let bundle_dir = manifest_dir.join("../web_access/build/bundle");
     println!("cargo:rerun-if-changed={}", bundle_dir.display());
-    let index = bundle_dir.join("index.html");
-    if !index.is_file() {
+    let required_files = ["index.html", "web_access_version.json"];
+    let missing_files = required_files
+        .iter()
+        .filter(|name| !bundle_dir.join(name).is_file())
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing_files.is_empty() {
         panic!(
-            "Web Access bundle not found: {}. Run tools/build_scripts/build_flutter_web_access.py before building operit-cli.",
-            bundle_dir.display()
+            "Web Access bundle is incomplete at {}. Missing: {}. Run tools/build_scripts/build_flutter_web_access.py before building operit-cli.",
+            bundle_dir.display(),
+            missing_files.join(", ")
         );
     }
 }

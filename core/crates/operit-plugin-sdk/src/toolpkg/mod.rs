@@ -37,6 +37,9 @@ pub mod ToolPkgPackageService;
 #[path = "ToolPkgParser.rs"]
 pub mod ToolPkgParser;
 
+#[path = "ToolPkgProtection.rs"]
+pub mod ToolPkgProtection;
+
 #[path = "ToolPkgRegistrationBridge.rs"]
 pub mod ToolPkgRegistrationBridge;
 

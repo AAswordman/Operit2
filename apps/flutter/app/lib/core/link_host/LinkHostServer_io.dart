@@ -12,6 +12,11 @@ import '../path/OperitClientPaths.dart';
 import '../runtime/RuntimeDeviceInfoProvider.dart';
 import 'LinkHostConfig.dart';
 
+const String _webAccessAssetPrefix = 'assets/web_access/';
+const String _webAccessVersionFile = 'web_access_version.json';
+const String _webAccessVersionAsset =
+    '$_webAccessAssetPrefix$_webAccessVersionFile';
+
 class LinkHostServer extends ChangeNotifier {
   LinkHostServer._();
 
@@ -165,15 +170,26 @@ class LinkHostServer extends ChangeNotifier {
 
   Future<Directory> _materializeWebAccessBundle() async {
     final directory = await OperitClientPaths.linkHostWebAccessBundleDir();
+    final bundledVersion = await _readBundledWebAccessVersion();
+    if (await _isMaterializedWebAccessCurrent(directory, bundledVersion)) {
+      return directory;
+    }
+    if (await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
+    await directory.create(recursive: true);
     final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
     final assetKeys =
         manifest
             .listAssets()
-            .where((key) => key.startsWith('assets/web_access/'))
+            .where((key) => key.startsWith(_webAccessAssetPrefix))
             .toList(growable: false)
           ..sort();
+    if (!assetKeys.contains(_webAccessVersionAsset)) {
+      throw StateError('Web Access version asset is not bundled');
+    }
     for (final assetKey in assetKeys) {
-      final relativePath = assetKey.substring('assets/web_access/'.length);
+      final relativePath = assetKey.substring(_webAccessAssetPrefix.length);
       final bytes = await rootBundle.load(assetKey);
       final file = File(
         _joinPath(<String>[directory.path, ...relativePath.split('/')]),
@@ -291,6 +307,85 @@ class LinkHostServer extends ChangeNotifier {
       message: 'runtime bridge web access response is invalid',
     );
   }
+}
+
+class _WebAccessBundleVersion {
+  const _WebAccessBundleVersion({
+    required this.version,
+    required this.contentHash,
+  });
+
+  final int version;
+  final String contentHash;
+
+  /// Decodes one Web Access version manifest.
+  factory _WebAccessBundleVersion.fromJsonString(
+    String content,
+    String source,
+  ) {
+    final decoded = jsonDecode(content);
+    if (decoded is! Map) {
+      throw FormatException(
+        'Web Access version manifest must be an object',
+        source,
+      );
+    }
+    final manifest = decoded.cast<String, Object?>();
+    final schemaVersion = manifest['schemaVersion'];
+    final version = manifest['version'];
+    final contentHash = manifest['contentHash'];
+    if (schemaVersion != 1) {
+      throw FormatException(
+        'Unexpected Web Access manifest schema: $schemaVersion',
+        source,
+      );
+    }
+    if (version is! int || version < 1) {
+      throw FormatException('Invalid Web Access version: $version', source);
+    }
+    if (contentHash is! String || contentHash.isEmpty) {
+      throw FormatException('Invalid Web Access content hash', source);
+    }
+    return _WebAccessBundleVersion(version: version, contentHash: contentHash);
+  }
+
+  /// Returns whether two manifests describe the same generated bundle.
+  bool matches(_WebAccessBundleVersion other) {
+    return version == other.version && contentHash == other.contentHash;
+  }
+}
+
+/// Reads the bundled Web Access version manifest from Flutter assets.
+Future<_WebAccessBundleVersion> _readBundledWebAccessVersion() async {
+  return _WebAccessBundleVersion.fromJsonString(
+    await rootBundle.loadString(_webAccessVersionAsset),
+    _webAccessVersionAsset,
+  );
+}
+
+/// Reads the materialized Web Access version manifest from the client data dir.
+Future<_WebAccessBundleVersion?> _readMaterializedWebAccessVersion(
+  Directory directory,
+) async {
+  final file = File(_joinPath(<String>[directory.path, _webAccessVersionFile]));
+  if (!await file.exists()) {
+    return null;
+  }
+  return _WebAccessBundleVersion.fromJsonString(
+    await file.readAsString(),
+    file.path,
+  );
+}
+
+/// Returns whether the client data Web Access bundle matches bundled assets.
+Future<bool> _isMaterializedWebAccessCurrent(
+  Directory directory,
+  _WebAccessBundleVersion bundledVersion,
+) async {
+  final materializedVersion = await _readMaterializedWebAccessVersion(
+    directory,
+  );
+  return materializedVersion?.matches(bundledVersion) ?? false;
 }
 
 class _BindEndpoint {

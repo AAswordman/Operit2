@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import platform
+import hashlib
+import json
 import shutil
 import subprocess
 import sys
@@ -18,6 +20,8 @@ WEB_ACCESS_BUNDLE_DIR = WEB_ACCESS_APP_DIR / "build" / "bundle"
 WEB_ACCESS_FLUTTER_STAGE_DIR = FLUTTER_APP_DIR / "web"
 WEB_ACCESS_EMBEDDED_ASSETS_DIR = FLUTTER_APP_DIR / "assets" / "web_access"
 WEB_ACCESS_ASSET_DECLARATION_PREFIX = "    - path: assets/web_access/"
+WEB_ACCESS_VERSION_FILE = "web_access_version.json"
+WEB_ACCESS_VERSION_SCHEMA = 1
 WEB_ACCESS_REQUIRED_FILES = (
     "index.html",
     "main.dart.js",
@@ -25,6 +29,7 @@ WEB_ACCESS_REQUIRED_FILES = (
     "operit_flutter_bridge_bg.wasm",
     "sql-wasm.js",
     "sql-wasm.wasm",
+    WEB_ACCESS_VERSION_FILE,
 )
 RELEASE_DIR = REPO_ROOT / "tools" / "release"
 DIST_DIR = RELEASE_DIR / "dist"
@@ -52,6 +57,91 @@ def reset_dir(path: Path) -> None:
     if path.exists():
         shutil.rmtree(path)
     path.mkdir(parents=True, exist_ok=True)
+
+
+# Reads and validates one Web Access bundle version manifest.
+def read_web_access_version_manifest(path: Path) -> dict[str, object] | None:
+    if not path.is_file():
+        return None
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise RuntimeError(f"Web Access version manifest must be an object: {path}")
+    schema_version = manifest.get("schemaVersion")
+    version = manifest.get("version")
+    content_hash = manifest.get("contentHash")
+    file_count = manifest.get("fileCount")
+    byte_size = manifest.get("byteSize")
+    if schema_version != WEB_ACCESS_VERSION_SCHEMA:
+        raise RuntimeError(f"Unexpected Web Access manifest schema in {path}: {schema_version}")
+    if not isinstance(version, int) or version < 1:
+        raise RuntimeError(f"Invalid Web Access version in {path}: {version}")
+    if not isinstance(content_hash, str) or not content_hash:
+        raise RuntimeError(f"Invalid Web Access content hash in {path}")
+    if not isinstance(file_count, int) or file_count < 1:
+        raise RuntimeError(f"Invalid Web Access file count in {path}: {file_count}")
+    if not isinstance(byte_size, int) or byte_size < 1:
+        raise RuntimeError(f"Invalid Web Access byte size in {path}: {byte_size}")
+    return manifest
+
+
+# Computes a stable content hash for every generated Web Access bundle file.
+def compute_web_access_bundle_digest(bundle_dir: Path) -> tuple[str, int, int]:
+    if not bundle_dir.is_dir():
+        raise RuntimeError(f"Web Access bundle directory not found: {bundle_dir}")
+    digest = hashlib.sha256()
+    file_count = 0
+    byte_size = 0
+    for path in sorted(candidate for candidate in bundle_dir.rglob("*") if candidate.is_file()):
+        relative_path = path.relative_to(bundle_dir).as_posix()
+        if relative_path == WEB_ACCESS_VERSION_FILE:
+            continue
+        data = path.read_bytes()
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+        file_count += 1
+        byte_size += len(data)
+    if file_count == 0:
+        raise RuntimeError(f"Web Access bundle contains no files: {bundle_dir}")
+    return digest.hexdigest(), file_count, byte_size
+
+
+# Finds the last generated Web Access version manifest from build-owned outputs.
+def read_previous_web_access_version_manifest() -> dict[str, object] | None:
+    embedded_manifest = read_web_access_version_manifest(
+        WEB_ACCESS_EMBEDDED_ASSETS_DIR / WEB_ACCESS_VERSION_FILE
+    )
+    if embedded_manifest is not None:
+        return embedded_manifest
+    return read_web_access_version_manifest(WEB_ACCESS_BUNDLE_DIR / WEB_ACCESS_VERSION_FILE)
+
+
+# Writes the version manifest consumed by Flutter and CLI Web Access launchers.
+def write_web_access_version_manifest() -> dict[str, object]:
+    content_hash, file_count, byte_size = compute_web_access_bundle_digest(WEB_ACCESS_BUNDLE_DIR)
+    previous_manifest = read_previous_web_access_version_manifest()
+    version = 1
+    if previous_manifest is not None:
+        previous_version = previous_manifest["version"]
+        previous_hash = previous_manifest["contentHash"]
+        if previous_hash == content_hash:
+            version = int(previous_version)
+        else:
+            version = int(previous_version) + 1
+    manifest: dict[str, object] = {
+        "schemaVersion": WEB_ACCESS_VERSION_SCHEMA,
+        "version": version,
+        "contentHash": content_hash,
+        "fileCount": file_count,
+        "byteSize": byte_size,
+    }
+    (WEB_ACCESS_BUNDLE_DIR / WEB_ACCESS_VERSION_FILE).write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    return manifest
 
 
 # Copies one generated directory tree into another build-owned directory.

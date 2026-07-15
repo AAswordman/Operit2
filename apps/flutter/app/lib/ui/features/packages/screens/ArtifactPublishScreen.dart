@@ -2,6 +2,7 @@
 
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:file_selector/file_selector.dart';
@@ -15,6 +16,7 @@ import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
 
 const String _forgeRepoName = 'OperitForge';
+const String _artifactProtectionId = 'operit-protected-v1';
 const List<String> _artifactMarketTypes = <String>['script', 'package'];
 
 class ArtifactPublishScreen extends StatefulWidget {
@@ -59,6 +61,7 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
   bool _publishing = false;
   bool _retryingMarketRegistration = false;
   bool _allowPublicUpdates = true;
+  bool _encryptArtifact = false;
   String? _errorMessage;
   String? _progressMessage;
   ArtifactPublishClusterContext? _publishContext;
@@ -176,6 +179,7 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
         detail: _detailController.text,
         categoryId: _selectedCategoryId ?? '',
         allowPublicUpdates: _allowPublicUpdates,
+        encryptArtifact: _encryptArtifact,
         version: _versionController.text,
         minSupportedAppVersion: _minVersionController.text,
         maxSupportedAppVersion: _maxVersionController.text,
@@ -493,6 +497,22 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                 subtitle: const Text('开启后，登录用户可为该插件提交新版本。'),
               ),
               const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _encryptArtifact,
+                onChanged: _publishing
+                    ? null
+                    : (value) {
+                        setState(() {
+                          _encryptArtifact = value;
+                        });
+                      },
+                title: const Text('保护插件文件'),
+                subtitle: const Text(
+                  '开启后上传受保护的 JS/ToolPkg；manifest.resources 下的网页资源保持明文。',
+                ),
+              ),
+              const SizedBox(height: 12),
               TextField(
                 controller: _versionController,
                 enabled: !_publishing,
@@ -753,6 +773,7 @@ Future<_PublishResult> _publishArtifact({
   required String detail,
   required String categoryId,
   required bool allowPublicUpdates,
+  required bool encryptArtifact,
   required String version,
   required String minSupportedAppVersion,
   required String maxSupportedAppVersion,
@@ -844,6 +865,7 @@ Future<_PublishResult> _publishArtifact({
     version: cleanVersion,
     minSupportedAppVersion: normalizedMinVersion,
     maxSupportedAppVersion: normalizedMaxVersion,
+    protection: encryptArtifact ? _artifactProtectionId : null,
   );
 
   onProgress('正在创建 Release');
@@ -856,15 +878,25 @@ Future<_PublishResult> _publishArtifact({
     body: releaseBody,
   );
 
+  if (encryptArtifact) {
+    onProgress('正在保护插件文件');
+  }
+  final Uint8List fileBytes = encryptArtifact
+      ? await clients.application.packageManager().protectArtifactFile(
+          sourcePath: source.sourcePath,
+          isToolPkg: source.isToolPkg,
+        )
+      : await XFile(source.sourcePath).readAsBytes();
   onProgress('正在上传资源文件');
-  final fileBytes = await XFile(source.sourcePath).readAsBytes();
   final asset = await _uploadReleaseAsset(
     clients: clients,
     owner: currentUser.login,
     repo: forgeRepo.repoName,
     release: release,
     assetName: assetName,
-    contentType: _artifactContentType(source.type, extension),
+    contentType: encryptArtifact && source.type == 'script'
+        ? 'application/octet-stream'
+        : _artifactContentType(source.type, extension),
     content: fileBytes,
   );
 
@@ -886,6 +918,7 @@ Future<_PublishResult> _publishArtifact({
     'sourceFileName': source.sourceFileName,
     'minSupportedAppVersion': normalizedMinVersion,
     'maxSupportedAppVersion': normalizedMaxVersion,
+    'protection': encryptArtifact ? _artifactProtectionId : null,
     'normalizedId': '',
     'forgeRepo': forgeRepo.repoName,
   };
@@ -1324,16 +1357,21 @@ String _buildReleaseBody({
   required String version,
   required String? minSupportedAppVersion,
   required String? maxSupportedAppVersion,
+  required String? protection,
 }) {
-  return '''
-${_artifactTitleLabel(type)} artifact published by OperitForge.
-
-Project ID: $projectId
-Runtime package ID: $runtimePackageId
-Display name: $displayName
-Version: $version
-Supported app versions: ${_formatSupportedAppVersions(minSupportedAppVersion, maxSupportedAppVersion)}
-''';
+  final lines = <String>[
+    '${_artifactTitleLabel(type)} artifact published by OperitForge.',
+    '',
+    'Project ID: $projectId',
+    'Runtime package ID: $runtimePackageId',
+    'Display name: $displayName',
+    'Version: $version',
+    if (protection != null && protection.trim().isNotEmpty)
+      'Protection: ${protection.trim()}',
+    'Supported app versions: ${_formatSupportedAppVersions(minSupportedAppVersion, maxSupportedAppVersion)}',
+    '',
+  ];
+  return lines.join('\n');
 }
 
 String _normalizeArtifactVersion(String value) {

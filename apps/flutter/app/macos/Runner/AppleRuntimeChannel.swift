@@ -86,7 +86,7 @@ final class AppleRuntimeChannel: NSObject {
   private func handle(call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "call":
-      callRuntime(call: call, result: result, nativeCall: operit_flutter_bridge_call)
+      callRuntime(call: call, result: result, nativeCall: operit_flutter_bridge_native_call)
     case "pushOpen":
       callRuntime(call: call, result: result, nativeCall: operit_flutter_bridge_push_open)
     case "pushItem":

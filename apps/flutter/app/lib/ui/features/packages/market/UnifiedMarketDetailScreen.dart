@@ -76,6 +76,8 @@ class UnifiedMarketDetailCommentsState {
     required this.onRequestPost,
     this.postHint,
     this.canManageComment,
+    this.canEditComment,
+    this.canDeleteComment,
     this.onRequestEditComment,
     this.onRequestDeleteComment,
   });
@@ -92,6 +94,8 @@ class UnifiedMarketDetailCommentsState {
   final VoidCallback onRequestPost;
   final String? postHint;
   final bool Function(core_proxy.MarketComment comment)? canManageComment;
+  final bool Function(core_proxy.MarketComment comment)? canEditComment;
+  final bool Function(core_proxy.MarketComment comment)? canDeleteComment;
   final void Function(core_proxy.MarketComment comment)? onRequestEditComment;
   final void Function(core_proxy.MarketComment comment)? onRequestDeleteComment;
 }
@@ -699,7 +703,14 @@ class UnifiedMarketDetailCommentsSection extends StatelessWidget {
               for (final comment in state.comments)
                 ArtifactCommentTile(
                   comment: comment,
-                  canManage: state.canManageComment?.call(comment) ?? false,
+                  canEdit:
+                      state.canEditComment?.call(comment) ??
+                      state.canManageComment?.call(comment) ??
+                      false,
+                  canDelete:
+                      state.canDeleteComment?.call(comment) ??
+                      state.canManageComment?.call(comment) ??
+                      false,
                   onRequestEdit: state.onRequestEditComment == null
                       ? null
                       : () => state.onRequestEditComment!(comment),
@@ -859,13 +870,15 @@ class ArtifactCommentTile extends StatelessWidget {
   const ArtifactCommentTile({
     super.key,
     required this.comment,
-    this.canManage = false,
+    this.canEdit = false,
+    this.canDelete = false,
     this.onRequestEdit,
     this.onRequestDelete,
   });
 
   final core_proxy.MarketComment comment;
-  final bool canManage;
+  final bool canEdit;
+  final bool canDelete;
   final VoidCallback? onRequestEdit;
   final VoidCallback? onRequestDelete;
 
@@ -873,78 +886,117 @@ class ArtifactCommentTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final hasActions =
+        (canEdit && onRequestEdit != null) ||
+        (canDelete && onRequestDelete != null);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: OperitGlassSurface(
-        color: colorScheme.surfaceContainerLow,
-        layer: OperitGlassSurfaceLayer.card,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.12),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  CircleAvatar(
-                    radius: 13,
-                    backgroundImage: comment.author.avatar.trim().isEmpty
-                        ? null
-                        : NetworkImage(comment.author.avatar),
-                    child: comment.author.avatar.trim().isEmpty
-                        ? Text(_firstDisplayCharacter(comment.author.login))
-                        : null,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      comment.author.login,
-                      style: textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    formatMarketDate(comment.createdAt),
-                    style: textTheme.labelSmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  if (canManage)
-                    SizedBox(
-                      width: 36,
-                      height: 32,
-                      child: PopupMenuButton<String>(
-                        tooltip: '评论操作',
-                        padding: EdgeInsets.zero,
-                        onSelected: (value) {
-                          if (value == 'edit') {
-                            onRequestEdit?.call();
-                          } else if (value == 'delete') {
-                            onRequestDelete?.call();
-                          }
-                        },
-                        itemBuilder: (context) => <PopupMenuEntry<String>>[
-                          const PopupMenuItem<String>(
-                            value: 'edit',
-                            child: Text('编辑评论'),
-                          ),
-                          const PopupMenuItem<String>(
-                            value: 'delete',
-                            child: Text('删除评论'),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              SelectableText(comment.body, style: textTheme.bodySmall),
-            ],
+      child: GestureDetector(
+        onLongPress: hasActions ? () => _showActionSheet(context) : null,
+        child: OperitGlassSurface(
+          color: colorScheme.surfaceContainerLow,
+          layer: OperitGlassSurfaceLayer.card,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.12),
           ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    CircleAvatar(
+                      radius: 13,
+                      backgroundImage: comment.author.avatar.trim().isEmpty
+                          ? null
+                          : NetworkImage(comment.author.avatar),
+                      child: comment.author.avatar.trim().isEmpty
+                          ? Text(_firstDisplayCharacter(comment.author.login))
+                          : null,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        comment.author.login,
+                        style: textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      formatMarketDate(comment.createdAt),
+                      style: textTheme.labelSmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    if (hasActions)
+                      SizedBox(
+                        width: 36,
+                        height: 32,
+                        child: PopupMenuButton<String>(
+                          tooltip: '评论操作',
+                          padding: EdgeInsets.zero,
+                          onSelected: (value) {
+                            if (value == 'edit') {
+                              onRequestEdit?.call();
+                            } else if (value == 'delete') {
+                              onRequestDelete?.call();
+                            }
+                          },
+                          itemBuilder: (context) => <PopupMenuEntry<String>>[
+                            if (canEdit && onRequestEdit != null)
+                              const PopupMenuItem<String>(
+                                value: 'edit',
+                                child: Text('编辑评论'),
+                              ),
+                            if (canDelete && onRequestDelete != null)
+                              const PopupMenuItem<String>(
+                                value: 'delete',
+                                child: Text('删除评论'),
+                              ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SelectableText(comment.body, style: textTheme.bodySmall),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showActionSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            if (canEdit && onRequestEdit != null)
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('编辑评论'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  onRequestEdit?.call();
+                },
+              ),
+            if (canDelete && onRequestDelete != null)
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('删除评论'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  onRequestDelete?.call();
+                },
+              ),
+          ],
         ),
       ),
     );

@@ -26,7 +26,6 @@ pub enum PluginInitStatus {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StartStatus {
-    NotStarted,
     InProgress(String),
     Success(String),
     Error(String),

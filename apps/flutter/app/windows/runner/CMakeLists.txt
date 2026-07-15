@@ -57,15 +57,13 @@ add_custom_target(operit_flutter_bridge ALL
     "RUSTFLAGS=-Awarnings"
     "CARGO_TERM_COLOR=never"
     "${OPERIT_CARGO_EXECUTABLE}" build --quiet --manifest-path "${OPERIT_FLUTTER_BRIDGE_CRATE}/Cargo.toml" $<$<NOT:$<CONFIG:Debug>>:--release>
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${OPERIT_FLUTTER_BRIDGE_CRATE}/target/$<IF:$<CONFIG:Debug>,debug,release>/operit_flutter_bridge.dll"
+    "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/operit_flutter_bridge.dll"
   WORKING_DIRECTORY "${OPERIT_FLUTTER_BRIDGE_CRATE}"
 )
 add_dependencies(operit_flutter_bridge sync_operit_plugins)
 add_dependencies(${BINARY_NAME} operit_flutter_bridge)
-add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${OPERIT_FLUTTER_BRIDGE_CRATE}/target/$<IF:$<CONFIG:Debug>,debug,release>/operit_flutter_bridge.dll"
-    "$<TARGET_FILE_DIR:${BINARY_NAME}>/operit_flutter_bridge.dll"
-)
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)

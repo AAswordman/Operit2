@@ -1978,9 +1978,11 @@ dependencies = [
  "operit-runtime",
  "operit-store",
  "operit-tools",
+ "operit-util",
  "rand_core 0.6.4",
  "reqwest",
  "serde",
+ "serde_bytes",
  "serde_json",
  "sha2",
  "tokio",
@@ -2198,6 +2200,8 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_json",
+ "sha2",
+ "uuid",
  "zip",
 ]
 

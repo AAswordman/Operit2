@@ -328,6 +328,8 @@ class _AnimatedScreenSlot extends StatefulWidget {
 }
 
 class _AnimatedScreenSlotState extends State<_AnimatedScreenSlot> {
+  static const Duration _exitPageFadeDuration = Duration(milliseconds: 110);
+
   late final SnapshotController _snapshotController;
   bool _visible = false;
   int _showRequestId = 0;
@@ -397,6 +399,12 @@ class _AnimatedScreenSlotState extends State<_AnimatedScreenSlot> {
     final targetOpacity = widget.snapshotDuringExit ? _targetOpacity : 1.0;
     final targetScale = _targetScale;
     final targetTranslationX = _targetTranslationX;
+    final opacityDuration = widget.snapshotDuringExit
+        ? _exitPageFadeDuration
+        : widget.duration;
+    final opacityCurve = widget.snapshotDuringExit
+        ? Curves.easeOutCubic
+        : Curves.fastOutSlowIn;
     final screenChild = SnapshotWidget(
       controller: _snapshotController,
       mode: SnapshotMode.forced,
@@ -408,10 +416,8 @@ class _AnimatedScreenSlotState extends State<_AnimatedScreenSlot> {
       ignoring: !widget.isCurrentScreen,
       child: AnimatedOpacity(
         opacity: targetOpacity,
-        duration: widget.duration,
-        curve: widget.snapshotDuringExit
-            ? Curves.easeInToLinear
-            : Curves.fastOutSlowIn,
+        duration: opacityDuration,
+        curve: opacityCurve,
         child: TweenAnimationBuilder<double>(
           tween: Tween<double>(end: targetTranslationX),
           duration: widget.duration,

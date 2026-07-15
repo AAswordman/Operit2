@@ -334,6 +334,9 @@ synchronized into the native Flutter assets at:
 apps/flutter/app/assets/web_access
 ```
 
+The bundle includes a generated `web_access_version.json`; native launchers use
+that version to reuse an already materialized Web Access directory.
+
 Build the OpenHarmony HAP with the repository script. The script invokes the
 same FVM-selected Flutter SDK and the OpenHarmony native toolchain:
 

@@ -140,10 +140,12 @@ impl ModelConfigManager {
 
     /// Reads all provider profiles in persisted order.
     pub fn getProviderProfiles(&self) -> Result<Vec<ProviderProfile>, ModelConfigError> {
-        self.getProviderIds()?
-            .iter()
-            .map(|providerId| self.getProviderProfile(providerId))
-            .collect()
+        let providerIds = self.getProviderIds()?;
+        let mut providers = Vec::new();
+        for providerId in &providerIds {
+            providers.push(self.getProviderProfile(providerId)?);
+        }
+        Ok(providers)
     }
 
     /// Reads one provider profile by id.

@@ -269,6 +269,11 @@
       return hmacKeyPromise;
     }
 
+    /** Encodes one MessagePack body into an exact-length byte buffer. */
+    function encodeLinkBody(body) {
+      return MessagePack.encode(body).slice();
+    }
+
     async function linkHeaders(bodyBytes) {
       const signature = await crypto.subtle.sign(
         "HMAC",
@@ -285,7 +290,7 @@
     }
 
     async function postLink(path, body, signal) {
-      const bodyBytes = MessagePack.encode(body);
+      const bodyBytes = encodeLinkBody(body);
       const response = await fetch(linkPath(path), {
         method: "POST",
         headers: await linkHeaders(bodyBytes),
@@ -327,15 +332,15 @@
     function sendPushPayload(payload) {
       pushSendTail = pushSendTail.then(async () => {
         if (pushError !== null) throw pushError;
-        const bodyBytes = MessagePack.encode(payload);
+        const bodyBytes = encodeLinkBody(payload);
         const signature = await crypto.subtle.sign("HMAC", await hmacKey(), bodyBytes);
         const socket = await pushSocket();
-        socket.send(MessagePack.encode({
+        socket.send(encodeLinkBody({
           protocolVersion: 3,
           sessionId,
           deviceId,
           signature: bytesToBase64(new Uint8Array(signature)),
-          payload,
+          payloadBytes: bodyBytes,
         }));
       });
       return pushSendTail;
@@ -370,7 +375,7 @@
         subscriptionCount: 0,
       };
       const body = { channelId };
-      const bodyBytes = MessagePack.encode(body);
+      const bodyBytes = encodeLinkBody(body);
       const response = await fetch(linkPath("/link/watch/channel/events"), {
         method: "POST",
         headers: await linkHeaders(bodyBytes),
@@ -406,7 +411,12 @@
             buffer = buffer.slice(4 + frameLength);
             const event = MessagePack.decode(frame);
             const callback = streamCallbacks.get(event.subscriptionId);
-            if (callback) callback(frame);
+            if (callback) {
+              callback(MessagePack.encode([
+                event.subscriptionId,
+                linkEventToNativeTuple(event.event),
+              ]));
+            }
           }
         }
         if (buffer.length !== 0) throw new Error("incomplete Link watch frame");
@@ -415,11 +425,12 @@
           if (channelId === channel.channelId) {
             const callback = streamCallbacks.get(subscriptionId);
             if (callback) {
-              callback(MessagePack.encode({
+              callback(MessagePack.encode([
+                1,
                 subscriptionId,
-                errorCode: "LINK_WATCH_CHANNEL_ERROR",
-                errorMessage: String(error),
-              }));
+                "LINK_WATCH_CHANNEL_ERROR",
+                String(error),
+              ]));
             }
           }
         }
@@ -442,6 +453,94 @@
       return openingChannelPromise;
     }
 
+    /** Converts one compact native call tuple into a Link CoreCallRequest. */
+    function nativeCallTupleToLinkRequest(tuple) {
+      return {
+        requestId: tuple[0],
+        targetPath: { segments: tuple[1] },
+        methodName: tuple[2],
+        args: tuple[3],
+      };
+    }
+
+    /** Converts one compact native push-open tuple into a Link CorePushRequest. */
+    function nativePushOpenTupleToLinkRequest(tuple) {
+      return {
+        requestId: tuple[0],
+        targetPath: { segments: tuple[1] },
+        methodName: tuple[2],
+      };
+    }
+
+    /** Converts one compact native push item tuple into a Link CorePushItem. */
+    function nativePushItemTupleToLinkItem(tuple) {
+      return {
+        pushId: tuple[0],
+        sequence: tuple[1],
+        args: tuple[2],
+      };
+    }
+
+    /** Converts one compact native watch tuple into a Link CoreWatchRequest. */
+    function nativeWatchTupleToLinkRequest(tuple) {
+      return {
+        requestId: tuple[0],
+        targetPath: { segments: tuple[1] },
+        propertyName: tuple[2],
+        args: tuple[3],
+      };
+    }
+
+    /** Converts one compact native watch stream tuple into a Link channel request. */
+    function nativeWatchStreamTupleToLinkOpen(tuple) {
+      return {
+        subscriptionId: tuple[0],
+        request: {
+          requestId: tuple[1],
+          targetPath: { segments: tuple[2] },
+          propertyName: tuple[3],
+          args: tuple[4],
+        },
+      };
+    }
+
+    /** Converts one Link CoreEvent into a compact native event tuple. */
+    function linkEventToNativeTuple(event) {
+      return [
+        event.requestId ?? null,
+        event.targetPath.segments,
+        event.propertyName,
+        event.kind,
+        event.value,
+      ];
+    }
+
+    /** Encodes one Link CoreCallResponse payload as a compact native bridge result. */
+    function encodeCallResponseAsNative(bytes) {
+      const response = MessagePack.decode(bytes);
+      const result = response.result;
+      if (Object.prototype.hasOwnProperty.call(result, "Ok")) {
+        return MessagePack.encode([0, result.Ok]);
+      }
+      const error = result.Err;
+      const location = error.location;
+      return MessagePack.encode([
+        1,
+        error.code,
+        error.message,
+        error.details ?? null,
+        location === null || location === undefined
+          ? null
+          : [location.file, location.line, location.column],
+        error.backtrace ?? null,
+      ]);
+    }
+
+    /** Encodes one Link CoreEvent payload as a compact native watch snapshot result. */
+    function encodeWatchSnapshotAsNative(bytes) {
+      return MessagePack.encode([0, linkEventToNativeTuple(MessagePack.decode(bytes))]);
+    }
+
     const sessionNonce = `web-${crypto.randomUUID()}`;
     const sessionBytes = await postLink("/link/session", { nonce: sessionNonce });
     const sessionInfo = MessagePack.decode(sessionBytes);
@@ -450,35 +549,44 @@
     }
 
     return {
+      /** Forwards one compact native call through authenticated HTTP Link. */
       async call(request) {
-        return postLink("/link/call", {
-          request: MessagePack.decode(request),
-        });
+        return encodeCallResponseAsNative(await postLink("/link/call", {
+          request: nativeCallTupleToLinkRequest(MessagePack.decode(request)),
+        }));
       },
+      /** Opens one compact native push stream through authenticated WebSocket Link. */
       async pushOpen(request) {
-        const decoded = MessagePack.decode(request);
+        const decoded = nativePushOpenTupleToLinkRequest(MessagePack.decode(request));
         await sendPushPayload({ type: "PushOpen", body: decoded });
-        return MessagePack.encode({ pushId: decoded.requestId });
+        return MessagePack.encode([0, decoded.requestId]);
       },
+      /** Sends one compact native push item through authenticated WebSocket Link. */
       async pushItem(item) {
-        await sendPushPayload({ type: "PushItem", body: MessagePack.decode(item) });
-        return MessagePack.encode({});
+        await sendPushPayload({
+          type: "PushItem",
+          body: nativePushItemTupleToLinkItem(MessagePack.decode(item)),
+        });
+        return MessagePack.encode([0, null]);
       },
+      /** Closes one compact native push stream through authenticated WebSocket Link. */
       async pushClose(pushId) {
         await sendPushPayload({ type: "PushClose", body: pushId });
-        return MessagePack.encode({});
+        return MessagePack.encode([0, null]);
       },
+      /** Reads one compact native watch snapshot through authenticated HTTP Link. */
       async watchSnapshot(request) {
-        return postLink("/link/watch/snapshot", {
-          request: MessagePack.decode(request),
-        });
+        return encodeWatchSnapshotAsNative(await postLink("/link/watch/snapshot", {
+          request: nativeWatchTupleToLinkRequest(MessagePack.decode(request)),
+        }));
       },
+      /** Opens one compact native watch stream through authenticated HTTP Link. */
       async watchStream(request, onEvent) {
         if (typeof onEvent !== "function") {
           throw new Error("watchStream expects an event callback");
         }
         const channel = await acquireChannel();
-        const envelope = MessagePack.decode(request);
+        const envelope = nativeWatchStreamTupleToLinkOpen(MessagePack.decode(request));
         const subscriptionId = envelope.subscriptionId;
         streamCallbacks.set(subscriptionId, onEvent);
         streamChannels.set(subscriptionId, channel.channelId);
@@ -493,7 +601,7 @@
           if (response.subscriptionId !== subscriptionId) {
             throw new Error("watch channel subscription id mismatch");
           }
-          return MessagePack.encode({ subscriptionId });
+          return MessagePack.encode([0, subscriptionId]);
         } catch (error) {
           channel.subscriptionCount -= 1;
           streamCallbacks.delete(subscriptionId);
@@ -501,6 +609,7 @@
           throw error;
         }
       },
+      /** Closes one compact native watch stream through authenticated HTTP Link. */
       async closeWatchStream(subscriptionId) {
         const channelId = streamChannels.get(subscriptionId);
         if (!channelId) {
@@ -520,7 +629,7 @@
             channels.delete(channelId);
           }
         }
-        return MessagePack.encode({});
+        return MessagePack.encode([0, null]);
       },
     };
   }

@@ -3,6 +3,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'CoreLinkProtocol.dart';
+
 /// Encodes one Link value using the protocol's only MessagePack representation.
 Uint8List encodeCoreLink(Object? value) {
   final writer = _CoreLinkMessagePackWriter();
@@ -27,6 +29,273 @@ Map<String, Object?> decodeCoreLinkMap(Uint8List bytes) {
     );
   }
   return value.cast<String, Object?>();
+}
+
+/// Encodes a CoreProxy call using the compact native bridge tuple format.
+Uint8List encodeNativeCoreCallRequest(CoreCallRequest request) {
+  final writer = _CoreLinkMessagePackWriter();
+  writer.writeArrayHeader(4);
+  writer.writeValue(request.requestId);
+  writer.writeArrayHeader(request.targetPath.segments.length);
+  for (final segment in request.targetPath.segments) {
+    writer.writeValue(segment);
+  }
+  writer.writeValue(request.methodName);
+  writer.writeValue(request.args);
+  return writer.takeBytes();
+}
+
+/// Encodes a CoreProxy push-open request using the compact native tuple format.
+Uint8List encodeNativeCorePushOpenRequest(CorePushRequest request) {
+  final writer = _CoreLinkMessagePackWriter();
+  writer.writeArrayHeader(3);
+  writer.writeValue(request.requestId);
+  _writeNativeCorePath(writer, request.targetPath);
+  writer.writeValue(request.methodName);
+  return writer.takeBytes();
+}
+
+/// Encodes one ordered CoreProxy push item using the compact native tuple format.
+Uint8List encodeNativeCorePushItem(String pushId, int sequence, Object? args) {
+  final writer = _CoreLinkMessagePackWriter();
+  writer.writeArrayHeader(3);
+  writer.writeValue(pushId);
+  writer.writeValue(sequence);
+  writer.writeValue(args);
+  return writer.takeBytes();
+}
+
+/// Encodes a CoreProxy watch snapshot request using the compact native tuple format.
+Uint8List encodeNativeCoreWatchSnapshotRequest(CoreWatchRequest request) {
+  final writer = _CoreLinkMessagePackWriter();
+  writer.writeArrayHeader(4);
+  writer.writeValue(request.requestId);
+  _writeNativeCorePath(writer, request.targetPath);
+  writer.writeValue(request.propertyName);
+  writer.writeValue(request.args);
+  return writer.takeBytes();
+}
+
+/// Encodes a CoreProxy watch stream open request using the compact native tuple format.
+Uint8List encodeNativeCoreWatchStreamRequest(
+  String subscriptionId,
+  CoreWatchRequest request,
+) {
+  final writer = _CoreLinkMessagePackWriter();
+  writer.writeArrayHeader(5);
+  writer.writeValue(subscriptionId);
+  writer.writeValue(request.requestId);
+  _writeNativeCorePath(writer, request.targetPath);
+  writer.writeValue(request.propertyName);
+  writer.writeValue(request.args);
+  return writer.takeBytes();
+}
+
+/// Writes one Core object path as its compact segment tuple field.
+void _writeNativeCorePath(
+  _CoreLinkMessagePackWriter writer,
+  CoreObjectPath path,
+) {
+  writer.writeArrayHeader(path.segments.length);
+  for (final segment in path.segments) {
+    writer.writeValue(segment);
+  }
+}
+
+/// Decodes a compact native bridge result and returns its successful value.
+Object? decodeNativeCoreResult(Uint8List bytes) {
+  final reader = _CoreLinkMessagePackReader(bytes);
+  final value = _readNativeCoreResult(reader, () => reader.readValue());
+  reader.expectDone();
+  return value;
+}
+
+/// Decodes one compact native bridge push-open result.
+String decodeNativeCorePushOpenResult(Uint8List bytes) {
+  return _decodeNativeCoreStringResult(bytes, 'push open');
+}
+
+/// Decodes one compact native bridge watch stream open result.
+String decodeNativeCoreWatchStreamResult(Uint8List bytes) {
+  return _decodeNativeCoreStringResult(bytes, 'watch stream open');
+}
+
+/// Decodes one compact native bridge watch snapshot result.
+CoreEvent decodeNativeCoreWatchSnapshotResult(Uint8List bytes) {
+  final reader = _CoreLinkMessagePackReader(bytes);
+  final event = _readNativeCoreResult(
+    reader,
+    () => _readNativeCoreEvent(reader),
+  );
+  reader.expectDone();
+  return event;
+}
+
+/// Decodes one compact native bridge acknowledgement result.
+void decodeNativeCoreVoidResult(Uint8List bytes) {
+  final value = decodeNativeCoreResult(bytes);
+  if (value != null) {
+    throw FormatException('Native core acknowledgement value must be null');
+  }
+}
+
+/// Decodes one compact native bridge watch channel event frame.
+NativeCoreWatchFrame decodeNativeCoreWatchFrame(Uint8List bytes) {
+  final reader = _CoreLinkMessagePackReader(bytes);
+  final itemCount = reader.readArrayLength();
+  if (itemCount == 4) {
+    final status = reader.readValue();
+    final subscriptionId = reader.readValue();
+    final code = reader.readValue();
+    final message = reader.readValue();
+    reader.expectDone();
+    if (status != 1 ||
+        subscriptionId is! String ||
+        code is! String ||
+        message is! String) {
+      throw const FormatException(
+        'Native core watch error frame fields have invalid types',
+      );
+    }
+    throw CoreLinkError(code: code, message: message);
+  }
+  if (itemCount != 2) {
+    throw FormatException(
+      'Native core watch event must contain two values, got $itemCount',
+    );
+  }
+  final subscriptionId = reader.readValue();
+  if (subscriptionId is! String) {
+    throw FormatException('Native core watch subscription id must be a string');
+  }
+  final event = _readNativeCoreEvent(reader);
+  reader.expectDone();
+  return NativeCoreWatchFrame(subscriptionId: subscriptionId, event: event);
+}
+
+/// Decodes one compact native bridge string result.
+String _decodeNativeCoreStringResult(Uint8List bytes, String operation) {
+  final value = decodeNativeCoreResult(bytes);
+  if (value is! String) {
+    throw FormatException('Native core $operation result must be a string');
+  }
+  return value;
+}
+
+/// Reads one native bridge result header and dispatches its success payload reader.
+T _readNativeCoreResult<T>(
+  _CoreLinkMessagePackReader reader,
+  T Function() readSuccess,
+) {
+  final itemCount = reader.readArrayLength();
+  final status = reader.readValue();
+  if (status == 0) {
+    if (itemCount != 2) {
+      throw FormatException(
+        'Native core success response must contain two values, got $itemCount',
+      );
+    }
+    return readSuccess();
+  }
+  if (status == 1) {
+    if (itemCount != 6) {
+      throw FormatException(
+        'Native core error response must contain six values, got $itemCount',
+      );
+    }
+    final code = reader.readValue();
+    final message = reader.readValue();
+    final details = reader.readValue();
+    final location = _readNativeCoreErrorLocation(reader);
+    final backtrace = reader.readValue();
+    if (code is! String || message is! String || backtrace is! String?) {
+      throw FormatException('Native core error fields have invalid types');
+    }
+    reader.expectDone();
+    throw CoreLinkError(
+      code: code,
+      message: message,
+      details: details,
+      location: location,
+      backtrace: backtrace,
+    );
+  }
+  throw FormatException('Native core response status is invalid: $status');
+}
+
+/// Reads one compact native CoreProxy event tuple.
+CoreEvent _readNativeCoreEvent(_CoreLinkMessagePackReader reader) {
+  final itemCount = reader.readArrayLength();
+  if (itemCount != 5) {
+    throw FormatException(
+      'Native core event must contain five values, got $itemCount',
+    );
+  }
+  final requestId = reader.readValue();
+  if (requestId is! String?) {
+    throw FormatException(
+      'Native core event request id must be a string or null',
+    );
+  }
+  final targetPath = CoreObjectPath(_readNativeCorePath(reader));
+  final propertyName = reader.readValue();
+  final kind = reader.readValue();
+  final value = reader.readValue();
+  if (propertyName is! String || kind is! String) {
+    throw FormatException('Native core event fields have invalid types');
+  }
+  return CoreEvent(
+    requestId: requestId,
+    targetPath: targetPath,
+    propertyName: propertyName,
+    kind: kind,
+    value: value,
+  );
+}
+
+/// Reads one compact native Core object path tuple.
+List<String> _readNativeCorePath(_CoreLinkMessagePackReader reader) {
+  final length = reader.readArrayLength();
+  return List<String>.generate(length, (_) {
+    final segment = reader.readValue();
+    if (segment is! String) {
+      throw FormatException('Native core path segment must be a string');
+    }
+    return segment;
+  }, growable: false);
+}
+
+/// Reads one compact native CoreProxy error location.
+CoreLinkErrorLocation? _readNativeCoreErrorLocation(
+  _CoreLinkMessagePackReader reader,
+) {
+  final itemCount = reader.readArrayLengthOrNull();
+  if (itemCount == null) {
+    return null;
+  }
+  if (itemCount != 3) {
+    throw FormatException(
+      'Native core error location must contain three values, got $itemCount',
+    );
+  }
+  final file = reader.readValue();
+  final line = reader.readValue();
+  final column = reader.readValue();
+  if (file is! String || line is! int || column is! int) {
+    throw FormatException('Native core error location has invalid fields');
+  }
+  return CoreLinkErrorLocation(file: file, line: line, column: column);
+}
+
+/// Represents one compact native bridge watch channel event.
+class NativeCoreWatchFrame {
+  const NativeCoreWatchFrame({
+    required this.subscriptionId,
+    required this.event,
+  });
+
+  final String subscriptionId;
+  final CoreEvent event;
 }
 
 /// Writes the Link protocol's MessagePack value set without dart2js uint64 accessors.
@@ -73,6 +342,19 @@ class _CoreLinkMessagePackWriter {
   /// Returns the encoded bytes accumulated by this writer.
   Uint8List takeBytes() {
     return _bytes.takeBytes();
+  }
+
+  /// Writes an array header with the requested item count.
+  void writeArrayHeader(int length) {
+    if (length <= 15) {
+      _writeByte(0x90 | length);
+    } else if (length <= 0xffff) {
+      _writeByte(0xdc);
+      _writeUnsigned(2, length);
+    } else {
+      _writeByte(0xdd);
+      _writeUnsigned(4, length);
+    }
   }
 
   /// Writes one byte after validating its range.
@@ -194,16 +476,7 @@ class _CoreLinkMessagePackWriter {
 
   /// Writes a Link array.
   void _writeArray(List<Object?> value) {
-    final length = value.length;
-    if (length <= 15) {
-      _writeByte(0x90 | length);
-    } else if (length <= 0xffff) {
-      _writeByte(0xdc);
-      _writeUnsigned(2, length);
-    } else {
-      _writeByte(0xdd);
-      _writeUnsigned(4, length);
-    }
+    writeArrayHeader(value.length);
     for (final item in value) {
       writeValue(item);
     }
@@ -312,6 +585,37 @@ class _CoreLinkMessagePackReader {
 
     throw FormatException(
       'Unsupported MessagePack marker 0x${marker.toRadixString(16)}',
+    );
+  }
+
+  /// Reads one MessagePack array header and returns its item count.
+  int readArrayLength() {
+    final marker = _readByte();
+    return _readArrayLengthForMarker(marker);
+  }
+
+  /// Reads one MessagePack array header or a nil marker.
+  int? readArrayLengthOrNull() {
+    final marker = _readByte();
+    if (marker == 0xc0) {
+      return null;
+    }
+    return _readArrayLengthForMarker(marker);
+  }
+
+  /// Decodes one MessagePack array marker into its element count.
+  int _readArrayLengthForMarker(int marker) {
+    if ((marker & 0xf0) == 0x90) {
+      return marker & 0x0f;
+    }
+    switch (marker) {
+      case 0xdc:
+        return _readUnsigned(2);
+      case 0xdd:
+        return _readUnsigned(4);
+    }
+    throw FormatException(
+      'Expected MessagePack array, got marker 0x${marker.toRadixString(16)}',
     );
   }
 

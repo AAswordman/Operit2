@@ -15,8 +15,10 @@ operit-link = { path = "../../../../core/crates/operit-link" }
 operit-runtime = { path = "../../../../core/crates/operit-runtime", default-features = false, features = ["javascript"] }
 operit-store = { path = "../../../../core/crates/operit-store" }
 operit-tools = { path = "../../../../core/crates/operit-tools", default-features = false }
+operit-util = { path = "../../../../core/crates/operit-util" }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
 serde_json = "1"
 base64 = "0.22"
 

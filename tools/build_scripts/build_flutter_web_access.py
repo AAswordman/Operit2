@@ -21,6 +21,7 @@ from common import (
     reset_dir,
     run,
     stage_web_access_source,
+    write_web_access_version_manifest,
 )
 
 
@@ -226,6 +227,13 @@ def main() -> int:
     finally:
         restore_pubspec(pubspec, original_pubspec)
     stage_web_runtime_files(wasm_bindgen_bin)
+    manifest = write_web_access_version_manifest()
+    print(
+        "Web Access version "
+        f"{manifest['version']} hash={manifest['contentHash']} "
+        f"files={manifest['fileCount']} bytes={manifest['byteSize']}",
+        flush=True,
+    )
     prepare_web_access_embedded_assets()
     return 0
 

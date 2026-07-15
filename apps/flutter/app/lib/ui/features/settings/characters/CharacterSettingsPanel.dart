@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/link/CoreLinkProtocol.dart';
+import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
@@ -34,6 +35,8 @@ class CharacterSettingsPanel extends StatefulWidget {
 }
 
 class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
+  static const String _diagnosticLogTag = 'CharacterSettings';
+
   Future<_CharacterSettingsData>? _future;
 
   GeneratedRepositoryUserMarkdownRepositoryCoreProxy _userMarkdownRepository(
@@ -68,77 +71,168 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     final permissionsMcpRuntimeMcpLocalServer =
         widget.clients.permissionsMcpRuntimeMcpLocalServer;
     final promptTagManager = widget.clients.preferencesPromptTagManager;
-    await cardManager.initializeIfNeeded();
-    await groupManager.initializeIfNeeded();
-    await modelManager.initializeIfNeeded();
-    await toolHandler.registerDefaultTools();
-    final toolNames =
-        (await toolHandler.getAllToolNames())
-            .where((toolName) => !_hiddenToolNames.contains(toolName))
-            .toList(growable: false)
-          ..sort(
-            (left, right) => left.toLowerCase().compareTo(right.toLowerCase()),
-          );
-    final enabledPackageNames = await packageManager.getEnabledPackageNames();
-    final packageOptions = <_ToolAccessOption>[];
-    for (final packageName in enabledPackageNames) {
-      final isContainer = await packageManager.isToolPkgContainer(
-        packageName: packageName,
+    try {
+      await _timeLoadStep(
+        'cardManager.initializeIfNeeded',
+        cardManager.initializeIfNeeded,
       );
-      if (!isContainer) {
-        packageOptions.add(
-          _ToolAccessOption(key: packageName, title: packageName),
+      await _timeLoadStep(
+        'groupManager.initializeIfNeeded',
+        groupManager.initializeIfNeeded,
+      );
+      await _timeLoadStep(
+        'modelManager.initializeIfNeeded',
+        modelManager.initializeIfNeeded,
+      );
+      await _timeLoadStep(
+        'toolHandler.registerDefaultTools',
+        toolHandler.registerDefaultTools,
+      );
+      final rawToolNames = await _timeLoadStep(
+        'toolHandler.getAllToolNames',
+        toolHandler.getAllToolNames,
+      );
+      final toolNames =
+          rawToolNames
+              .where((toolName) => !_hiddenToolNames.contains(toolName))
+              .toList(growable: false)
+            ..sort(
+              (left, right) =>
+                  left.toLowerCase().compareTo(right.toLowerCase()),
+            );
+      final enabledPackageNames = await _timeLoadStep(
+        'packageManager.getEnabledPackageNames',
+        packageManager.getEnabledPackageNames,
+      );
+      final packageOptions = <_ToolAccessOption>[];
+      for (final packageName in enabledPackageNames) {
+        final isContainer = await _timeLoadStep(
+          'packageManager.isToolPkgContainer name=$packageName',
+          () => packageManager.isToolPkgContainer(packageName: packageName),
         );
+        if (!isContainer) {
+          packageOptions.add(
+            _ToolAccessOption(key: packageName, title: packageName),
+          );
+        }
       }
+      packageOptions.sort(_compareToolAccessOption);
+      final rawSkillPackages = await _timeLoadStep(
+        'skillRepository.getAiVisibleSkillPackages',
+        skillRepository.getAiVisibleSkillPackages,
+      );
+      final skillOptions =
+          rawSkillPackages.entries
+              .map(
+                (entry) => _ToolAccessOption(
+                  key: entry.key,
+                  title: entry.key,
+                  subtitle: entry.value.description,
+                ),
+              )
+              .toList(growable: false)
+            ..sort(_compareToolAccessOption);
+      final rawMcpServers = await _timeLoadStep(
+        'mcpLocalServer.getAllMcpServers',
+        permissionsMcpRuntimeMcpLocalServer.getAllMcpServers,
+      );
+      final mcpOptions =
+          rawMcpServers.entries
+              .map(
+                (entry) => _ToolAccessOption(
+                  key: entry.key,
+                  title: entry.key,
+                  subtitle: _mcpServerSubtitle(entry.value),
+                ),
+              )
+              .toList(growable: false)
+            ..sort(_compareToolAccessOption);
+      final cards = await _timeLoadStep(
+        'cardManager.getAllCharacterCards',
+        cardManager.getAllCharacterCards,
+      );
+      final groups = await _timeLoadStep(
+        'groupManager.getAllCharacterGroupCards',
+        groupManager.getAllCharacterGroupCards,
+      );
+      final activePrompt = _activePromptSelection(
+        await _timeLoadStep(
+          'activePromptManager.getActivePrompt',
+          widget.clients.preferencesActivePromptManager.getActivePrompt,
+        ),
+      );
+      final sharedMemoryStores = await _timeLoadStep(
+        'sharedMemoryManager.getAllSharedMemoryStores',
+        sharedMemoryManager.getAllSharedMemoryStores,
+      );
+      final tags = await _timeLoadStep(
+        'promptTagManager.getAllTags',
+        promptTagManager.getAllTags,
+      );
+      final modelSummaries = await _timeLoadStep(
+        'modelManager.getAllModelSummaries',
+        modelManager.getAllModelSummaries,
+      );
+      final ttsConfigs = await _timeLoadStep(
+        'ttsConfigManager.getAllTtsConfigs',
+        _loadTtsConfigs,
+      );
+      final enableMemoryAutoUpdate = await _timeLoadStep(
+        'apiPreferences.enableMemoryAutoUpdateFlowSnapshot',
+        apiPreferences.enableMemoryAutoUpdateFlowSnapshot,
+      );
+      final disableUserPreferenceDescription = await _timeLoadStep(
+        'apiPreferences.disableUserPreferenceDescriptionFlowSnapshot',
+        apiPreferences.disableUserPreferenceDescriptionFlowSnapshot,
+      );
+      final data = _CharacterSettingsData(
+        cards: cards,
+        groups: groups,
+        sharedMemoryStores: sharedMemoryStores,
+        tags: tags,
+        modelSummaries: modelSummaries,
+        ttsConfigs: ttsConfigs,
+        builtinToolOptions: toolNames
+            .map(
+              (toolName) => _ToolAccessOption(key: toolName, title: toolName),
+            )
+            .toList(growable: false),
+        packageToolOptions: packageOptions,
+        skillToolOptions: skillOptions,
+        mcpToolOptions: mcpOptions,
+        activeCardId: activePrompt.cardId,
+        activeGroupId: activePrompt.groupId,
+        enableMemoryAutoUpdate: enableMemoryAutoUpdate,
+        disableUserPreferenceDescription: disableUserPreferenceDescription,
+      );
+      return data;
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'load failed',
+        tag: _diagnosticLogTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     }
-    packageOptions.sort(_compareToolAccessOption);
-    final skillOptions =
-        (await skillRepository.getAiVisibleSkillPackages()).entries
-            .map(
-              (entry) => _ToolAccessOption(
-                key: entry.key,
-                title: entry.key,
-                subtitle: entry.value.description,
-              ),
-            )
-            .toList(growable: false)
-          ..sort(_compareToolAccessOption);
-    final mcpOptions =
-        (await permissionsMcpRuntimeMcpLocalServer.getAllMcpServers()).entries
-            .map(
-              (entry) => _ToolAccessOption(
-                key: entry.key,
-                title: entry.key,
-                subtitle: _mcpServerSubtitle(entry.value),
-              ),
-            )
-            .toList(growable: false)
-          ..sort(_compareToolAccessOption);
-    final cards = await cardManager.getAllCharacterCards();
-    final groups = await groupManager.getAllCharacterGroupCards();
-    final activePrompt = _activePromptSelection(
-      await widget.clients.preferencesActivePromptManager.getActivePrompt(),
-    );
-    return _CharacterSettingsData(
-      cards: cards,
-      groups: groups,
-      sharedMemoryStores: await sharedMemoryManager.getAllSharedMemoryStores(),
-      tags: await promptTagManager.getAllTags(),
-      modelSummaries: await modelManager.getAllModelSummaries(),
-      ttsConfigs: await _loadTtsConfigs(),
-      builtinToolOptions: toolNames
-          .map((toolName) => _ToolAccessOption(key: toolName, title: toolName))
-          .toList(growable: false),
-      packageToolOptions: packageOptions,
-      skillToolOptions: skillOptions,
-      mcpToolOptions: mcpOptions,
-      activeCardId: activePrompt.cardId,
-      activeGroupId: activePrompt.groupId,
-      enableMemoryAutoUpdate: await apiPreferences
-          .enableMemoryAutoUpdateFlowSnapshot(),
-      disableUserPreferenceDescription: await apiPreferences
-          .disableUserPreferenceDescriptionFlowSnapshot(),
-    );
+  }
+
+  /// Runs one character settings load step with failure diagnostics.
+  Future<T> _timeLoadStep<T>(
+    String stepName,
+    Future<T> Function() operation,
+  ) async {
+    try {
+      return await operation();
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'load step failed name=$stepName',
+        tag: _diagnosticLogTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
   }
 
   Future<List<core_proxy.TtsConfig>> _loadTtsConfigs() {

@@ -14,7 +14,7 @@ typedef struct OperitByteBuffer {
     uint8_t *ptr;
     uintptr_t len;
 } OperitByteBuffer;
-OperitByteBuffer operit_flutter_bridge_call(void *handle, const uint8_t *request_ptr, uintptr_t request_len);
+OperitByteBuffer operit_flutter_bridge_native_call(void *handle, const uint8_t *request_ptr, uintptr_t request_len);
 OperitByteBuffer operit_flutter_bridge_push_open(void *handle, const uint8_t *request_ptr, uintptr_t request_len);
 OperitByteBuffer operit_flutter_bridge_push_item(void *handle, const uint8_t *item_ptr, uintptr_t item_len);
 OperitByteBuffer operit_flutter_bridge_push_close(void *handle, const char *push_id);

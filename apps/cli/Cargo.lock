@@ -2173,6 +2173,7 @@ dependencies = [
  "ratatui",
  "reqwest",
  "serde",
+ "serde_bytes",
  "serde_json",
  "sha2",
  "tar",
@@ -2368,6 +2369,8 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_json",
+ "sha2",
+ "uuid",
  "zip",
 ]
 

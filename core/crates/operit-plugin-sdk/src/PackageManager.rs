@@ -327,6 +327,7 @@ mod tests {
     use serde_json::Value;
 
     use super::{PackageStateResolver, PluginPackageManager};
+    use crate::execution_result::JsExecutionResult;
     use crate::javascript::{JsExecutionEngine, ToolPkgMainRegistrationCapture};
     use crate::package::{LocalizedText, PackageTool, ToolPackage, ToolPackageState};
     use crate::toolpkg::ToolPkgHooks::{ToolPkgHookDispatcher, ToolPkgHookInvocation};
@@ -350,11 +351,11 @@ mod tests {
             _onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
             _dispatchIntermediateOnMain: bool,
             _timeoutSec: u64,
-        ) -> Option<String> {
-            params
+        ) -> JsExecutionResult<Option<String>> {
+            Ok(params
                 .get("event")
                 .and_then(Value::as_str)
-                .map(str::to_string)
+                .map(str::to_string))
         }
 
         /// Returns an empty registration capture for tests.
@@ -365,7 +366,7 @@ mod tests {
             _functionName: &str,
             _params: &BTreeMap<String, Value>,
             _textResources: Option<Arc<BTreeMap<String, String>>>,
-        ) -> Result<ToolPkgMainRegistrationCapture, String> {
+        ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
             Ok(ToolPkgMainRegistrationCapture::default())
         }
 
@@ -376,8 +377,8 @@ mod tests {
             script: &str,
             _runtimeOptions: &BTreeMap<String, Value>,
             _envOverrides: &BTreeMap<String, String>,
-        ) -> Option<String> {
-            Some(script.to_string())
+        ) -> JsExecutionResult<Option<String>> {
+            Ok(Some(script.to_string()))
         }
 
         /// Returns the dispatched action id.
@@ -389,8 +390,8 @@ mod tests {
             _runtimeOptions: &BTreeMap<String, Value>,
             _envOverrides: &BTreeMap<String, String>,
             _onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
-        ) -> Option<String> {
-            Some(actionId.to_string())
+        ) -> JsExecutionResult<Option<String>> {
+            Ok(Some(actionId.to_string()))
         }
 
         /// Releases no resources for the test engine.

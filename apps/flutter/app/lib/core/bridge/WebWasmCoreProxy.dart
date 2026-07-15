@@ -15,33 +15,18 @@ class WebWasmCoreProxy extends CoreProxy {
   @override
   Future<Object?> call(CoreCallRequest request) async {
     final responseBytes = await _invokeBytes('call', <JSAny?>[
-      encodeCoreLink(request.toJson()).toJS,
+      encodeNativeCoreCallRequest(request).toJS,
     ]);
-    final response = decodeCoreLinkMap(responseBytes);
-    final result = response['result'] as Map<String, Object?>;
-    if (result.containsKey('Ok')) {
-      return result['Ok'];
-    }
-    if (result.containsKey('Err')) {
-      final error = CoreLinkError.fromJson(
-        result['Err'] as Map<String, Object?>,
-      );
-      throw error;
-    }
-    throw const CoreLinkError(
-      code: 'INVALID_RESPONSE',
-      message: 'wasm runtime response result is invalid',
-    );
+    return decodeNativeCoreResult(responseBytes);
   }
 
   /// Opens a client-owned Link input stream through the web runtime carrier.
   @override
   Future<CorePushSink> push(CorePushRequest request) async {
     final responseBytes = await _invokeBytes('pushOpen', <JSAny?>[
-      encodeCoreLink(request.toJson()).toJS,
+      encodeNativeCorePushOpenRequest(request).toJS,
     ]);
-    final response = decodeCoreLinkMap(responseBytes);
-    final pushId = response['pushId'] as String;
+    final pushId = decodeNativeCorePushOpenResult(responseBytes);
     if (pushId != request.requestId) {
       throw CoreLinkError(
         code: 'INVALID_RESPONSE',
@@ -54,14 +39,9 @@ class WebWasmCoreProxy extends CoreProxy {
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
     final responseBytes = await _invokeBytes('watchSnapshot', <JSAny?>[
-      encodeCoreLink(request.toJson()).toJS,
+      encodeNativeCoreWatchSnapshotRequest(request).toJS,
     ]);
-    final response = decodeCoreLinkMap(responseBytes);
-    if (response.containsKey('code') && response.containsKey('message')) {
-      final error = CoreLinkError.fromJson(response);
-      throw error;
-    }
-    return CoreEvent.fromJson(response);
+    return decodeNativeCoreWatchSnapshotResult(responseBytes);
   }
 
   @override
@@ -73,44 +53,29 @@ class WebWasmCoreProxy extends CoreProxy {
     var canceled = false;
     late final JSFunction onEvent;
     onEvent = ((JSUint8Array frameBytes) {
-      _dispatchWatchFrame(
-        controller,
-        subscriptionId,
-        frameBytes.toDart,
-        onTransportError: () {
-          opened = false;
-        },
-      );
+      _dispatchWatchFrame(controller, subscriptionId, frameBytes.toDart);
     }).toJS;
 
     controller.onListen = () {
       unawaited(() async {
         try {
           final subscriptionBytes = await _invokeBytes('watchStream', <JSAny?>[
-            encodeCoreLink(<String, Object?>{
-              'channelId': 'web-watch-channel',
-              'subscriptionId': subscriptionId,
-              'request': request.toJson(),
-            }).toJS,
+            encodeNativeCoreWatchStreamRequest(subscriptionId, request).toJS,
             onEvent,
           ]);
-          final subscriptionJson = decodeCoreLinkMap(subscriptionBytes);
-          if (subscriptionJson.containsKey('code') &&
-              subscriptionJson.containsKey('message')) {
-            throw CoreLinkError.fromJson(subscriptionJson);
-          }
-          if (subscriptionJson['subscriptionId'] != subscriptionId) {
+          final openedSubscriptionId = decodeNativeCoreWatchStreamResult(
+            subscriptionBytes,
+          );
+          if (openedSubscriptionId != subscriptionId) {
             throw CoreLinkError(
               code: 'INVALID_RESPONSE',
               message:
-                  'web watch subscription id mismatch: ${subscriptionJson['subscriptionId']}',
+                  'web watch subscription id mismatch: $openedSubscriptionId',
             );
           }
           opened = true;
           if (canceled) {
-            await _invokeBytes('closeWatchStream', <JSAny?>[
-              subscriptionId.toJS,
-            ]);
+            await _closeNativeWebWatchStream(subscriptionId);
           }
         } catch (error, stackTrace) {
           if (!controller.isClosed) {
@@ -123,7 +88,7 @@ class WebWasmCoreProxy extends CoreProxy {
     controller.onCancel = () async {
       canceled = true;
       if (opened) {
-        await _invokeBytes('closeWatchStream', <JSAny?>[subscriptionId.toJS]);
+        await _closeNativeWebWatchStream(subscriptionId);
       }
     };
     return controller.stream;
@@ -147,13 +112,10 @@ class _WebCorePushSink implements CorePushSink {
     }
     final sequence = _sequence++;
     _tail = _tail.then((_) async {
-      await _invokeBytes('pushItem', <JSAny?>[
-        encodeCoreLink(<String, Object?>{
-          'pushId': _pushId,
-          'sequence': sequence,
-          'args': args,
-        }).toJS,
+      final responseBytes = await _invokeBytes('pushItem', <JSAny?>[
+        encodeNativeCorePushItem(_pushId, sequence, args).toJS,
       ]);
+      decodeNativeCoreVoidResult(responseBytes);
     });
     return _tail;
   }
@@ -166,7 +128,10 @@ class _WebCorePushSink implements CorePushSink {
     }
     _closed = true;
     await _tail;
-    await _invokeBytes('pushClose', <JSAny?>[_pushId.toJS]);
+    final responseBytes = await _invokeBytes('pushClose', <JSAny?>[
+      _pushId.toJS,
+    ]);
+    decodeNativeCoreVoidResult(responseBytes);
   }
 }
 
@@ -175,35 +140,23 @@ int _nextWebWatchSubscriptionIndex = 0;
 void _dispatchWatchFrame(
   StreamController<CoreEvent> controller,
   String subscriptionId,
-  Uint8List frameBytes, {
-  required void Function() onTransportError,
-}) {
+  Uint8List frameBytes,
+) {
   if (controller.isClosed) {
     return;
   }
   try {
-    final frame = decodeCoreLinkMap(frameBytes);
-    if (frame['subscriptionId'] != subscriptionId) {
+    final frame = decodeNativeCoreWatchFrame(frameBytes);
+    if (frame.subscriptionId != subscriptionId) {
       throw CoreLinkError(
         code: 'INVALID_RESPONSE',
-        message:
-            'web watch subscription id mismatch: ${frame['subscriptionId']}',
+        message: 'web watch subscription id mismatch: ${frame.subscriptionId}',
       );
     }
-    final errorCode = frame['errorCode'];
-    if (errorCode is String) {
-      onTransportError();
-      throw CoreLinkError(
-        code: errorCode,
-        message: frame['errorMessage'] as String,
-      );
-    }
-    final event = CoreEvent.fromJson(frame['event'] as Map<String, Object?>);
+    final event = frame.event;
     controller.add(event);
     if (event.kind == 'Completed') {
-      unawaited(
-        _invokeBytes('closeWatchStream', <JSAny?>[subscriptionId.toJS]),
-      );
+      unawaited(_closeNativeWebWatchStream(subscriptionId));
       unawaited(controller.close());
     }
   } catch (error, stackTrace) {
@@ -212,6 +165,15 @@ void _dispatchWatchFrame(
   }
 }
 
+/// Closes one wasm watch subscription and validates its direct acknowledgement.
+Future<void> _closeNativeWebWatchStream(String subscriptionId) async {
+  final responseBytes = await _invokeBytes('closeWatchStream', <JSAny?>[
+    subscriptionId.toJS,
+  ]);
+  decodeNativeCoreVoidResult(responseBytes);
+}
+
+/// Invokes one binary wasm runtime method.
 Future<Uint8List> _invokeBytes(String method, List<JSAny?> args) async {
   final runtime = globalContext.getProperty<JSAny?>('__operitRuntime'.toJS);
   if (runtime.isUndefinedOrNull) {

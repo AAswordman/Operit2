@@ -17,6 +17,8 @@ serde.workspace = true
 serde_bytes = "0.11"
 serde_json.workspace = true
 zip.workspace = true
+sha2.workspace = true
+uuid.workspace = true
 
 [build-dependencies]
 operit-plugin-sdk-codegen = { version = "=2.0.0-preview.4", path = "../operit-plugin-sdk-codegen" }

@@ -21,6 +21,8 @@ struct OperitByteBuffer {
 };
 
 using BridgeCall = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
+using BridgeNativeCall =
+    OperitByteBuffer (*)(const void*, const unsigned char*, size_t);
 using BridgePushClose = OperitByteBuffer (*)(BridgeHandle, const char*);
 using BridgeNextWatchChannelEvent = OperitByteBuffer (*)(BridgeHandle);
 using BridgeCloseWatchStream = OperitByteBuffer (*)(BridgeHandle, const char*);
@@ -59,7 +61,7 @@ class OperitBridgeLibrary {
         "operit_flutter_bridge_create_with_storage_roots");
     create_error_ = Load<BridgeCreateError>("operit_flutter_bridge_create_error");
     destroy_ = Load<BridgeDestroy>("operit_flutter_bridge_destroy");
-    call_ = Load<BridgeCall>("operit_flutter_bridge_call");
+    native_call_ = Load<BridgeNativeCall>("operit_flutter_bridge_native_call");
     push_open_ = Load<BridgeCall>("operit_flutter_bridge_push_open");
     push_item_ = Load<BridgeCall>("operit_flutter_bridge_push_item");
     push_close_ = Load<BridgePushClose>("operit_flutter_bridge_push_close");
@@ -79,7 +81,7 @@ class OperitBridgeLibrary {
     free_bytes_ = Load<BridgeFreeBytes>("operit_flutter_bridge_free_bytes");
     free_string_ = Load<BridgeFreeString>("operit_flutter_bridge_free_string");
     if (create_with_storage_roots_ == nullptr || create_error_ == nullptr || destroy_ == nullptr ||
-        call_ == nullptr || push_open_ == nullptr || push_item_ == nullptr ||
+        native_call_ == nullptr || push_open_ == nullptr || push_item_ == nullptr ||
         push_close_ == nullptr || watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
         next_watch_channel_event_ == nullptr || close_watch_stream_ == nullptr ||
         start_web_access_server_ == nullptr || discover_devices_ == nullptr ||
@@ -105,7 +107,7 @@ class OperitBridgeLibrary {
 
   /// Dispatches a Core Link call through the Rust bridge.
   OperitByteBuffer Call(BridgeHandle handle, const unsigned char* data, size_t len) {
-    return call_(handle, data, len);
+    return native_call_(handle, data, len);
   }
 
   /// Opens a local Link push stream through the Rust bridge.
@@ -223,7 +225,7 @@ class OperitBridgeLibrary {
   BridgeCreateWithStorageRoots create_with_storage_roots_ = nullptr;
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
-  BridgeCall call_ = nullptr;
+  BridgeNativeCall native_call_ = nullptr;
   BridgeCall push_open_ = nullptr;
   BridgeCall push_item_ = nullptr;
   BridgePushClose push_close_ = nullptr;

@@ -6,13 +6,16 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -24,6 +27,8 @@ using BridgeCreateWithStorageRoots = BridgeHandle (*)(const char*, const char*);
 using BridgeCreateError = char* (*)();
 using BridgeDestroy = void (*)(BridgeHandle);
 struct OperitByteBuffer { unsigned char* ptr; size_t len; };
+using BridgeNativeCall =
+    OperitByteBuffer (*)(const void*, const unsigned char*, size_t);
 using BridgeCall = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
 using BridgePushOpen = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
 using BridgePushItem = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
@@ -175,8 +180,8 @@ class OperitRuntimeLibrary {
           dlsym(library_, "operit_flutter_bridge_create_error"));
       destroy_ = reinterpret_cast<BridgeDestroy>(
           dlsym(library_, "operit_flutter_bridge_destroy"));
-      call_ = reinterpret_cast<BridgeCall>(
-          dlsym(library_, "operit_flutter_bridge_call"));
+      native_call_ = reinterpret_cast<BridgeNativeCall>(
+          dlsym(library_, "operit_flutter_bridge_native_call"));
       push_open_ = reinterpret_cast<BridgePushOpen>(
           dlsym(library_, "operit_flutter_bridge_push_open"));
       push_item_ = reinterpret_cast<BridgePushItem>(
@@ -196,7 +201,7 @@ class OperitRuntimeLibrary {
       free_string_ = reinterpret_cast<BridgeFreeString>(
           dlsym(library_, "operit_flutter_bridge_free_string"));
       if (create_ == nullptr || create_with_storage_roots_ == nullptr ||
-          destroy_ == nullptr || call_ == nullptr || push_open_ == nullptr ||
+          destroy_ == nullptr || native_call_ == nullptr || push_open_ == nullptr ||
           push_item_ == nullptr || push_close_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
           next_watch_channel_event_ == nullptr ||
@@ -225,7 +230,8 @@ class OperitRuntimeLibrary {
     if (!EnsureReady(error)) {
       return false;
     }
-    return TakeBridgeBytes(call_(handle_, request.data(), request.size()), response, error);
+    return TakeBridgeBytes(
+        native_call_(handle_, request.data(), request.size()), response, error);
   }
 
   /// Opens one local Link push stream.
@@ -375,7 +381,7 @@ class OperitRuntimeLibrary {
   BridgeCreateWithStorageRoots create_with_storage_roots_ = nullptr;
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
-  BridgeCall call_ = nullptr;
+  BridgeNativeCall native_call_ = nullptr;
   BridgePushOpen push_open_ = nullptr;
   BridgePushItem push_item_ = nullptr;
   BridgePushClose push_close_ = nullptr;
@@ -388,6 +394,102 @@ class OperitRuntimeLibrary {
 };
 
 std::shared_ptr<OperitRuntimeLibrary> g_operit_runtime_library;
+
+/// Owns move-only tasks executed by the persistent runtime worker threads.
+class OperitRuntimeWorkerTask {
+ public:
+  virtual ~OperitRuntimeWorkerTask() = default;
+  virtual void Run() = 0;
+};
+
+/// Stores one move-only callable for the runtime worker queue.
+template <typename Callback>
+class OperitRuntimeWorkerTaskImpl final : public OperitRuntimeWorkerTask {
+ public:
+  explicit OperitRuntimeWorkerTaskImpl(Callback callback)
+      : callback_(std::move(callback)) {}
+
+  void Run() override { callback_(); }
+
+ private:
+  Callback callback_;
+};
+
+/// Executes runtime bridge work on a fixed set of reusable native threads.
+class OperitRuntimeWorkerQueue {
+ public:
+  /// Starts the requested number of reusable worker threads.
+  explicit OperitRuntimeWorkerQueue(size_t worker_count) {
+    workers_.reserve(worker_count);
+    for (size_t index = 0; index < worker_count; ++index) {
+      workers_.emplace_back([this]() { RunWorker(); });
+    }
+  }
+
+  /// Stops the queue after every already-submitted task completes.
+  ~OperitRuntimeWorkerQueue() { Shutdown(); }
+
+  /// Adds one callable to the runtime worker queue.
+  template <typename Callback>
+  bool Post(Callback&& callback) {
+    auto task = std::make_unique<
+        OperitRuntimeWorkerTaskImpl<std::decay_t<Callback>>>(
+        std::forward<Callback>(callback));
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (stopping_) {
+        return false;
+      }
+      tasks_.push_back(std::move(task));
+    }
+    condition_.notify_one();
+    return true;
+  }
+
+  /// Waits for workers to drain submitted work and terminate.
+  void Shutdown() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (stopping_) {
+        return;
+      }
+      stopping_ = true;
+    }
+    condition_.notify_all();
+    for (auto& worker : workers_) {
+      if (worker.joinable()) {
+        worker.join();
+      }
+    }
+    workers_.clear();
+  }
+
+ private:
+  /// Runs the task loop for one persistent runtime worker.
+  void RunWorker() {
+    while (true) {
+      std::unique_ptr<OperitRuntimeWorkerTask> task;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        condition_.wait(lock, [this]() { return stopping_ || !tasks_.empty(); });
+        if (stopping_ && tasks_.empty()) {
+          return;
+        }
+        task = std::move(tasks_.front());
+        tasks_.pop_front();
+      }
+      task->Run();
+    }
+  }
+
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  std::deque<std::unique_ptr<OperitRuntimeWorkerTask>> tasks_;
+  std::vector<std::thread> workers_;
+  bool stopping_ = false;
+};
+
+std::unique_ptr<OperitRuntimeWorkerQueue> g_operit_runtime_workers;
 
 void respond_error(FlMethodCall* method_call,
                    const char* code,
@@ -477,8 +579,15 @@ struct RuntimeBytesResponse {
 template <typename Operation>
 void respond_runtime_bytes_async(FlMethodCall* method_call,
                                  Operation operation) {
+  auto* workers = g_operit_runtime_workers.get();
+  if (workers == nullptr) {
+    respond_error(method_call, "RUNTIME_WORKER_QUEUE_CLOSED",
+                  "runtime worker queue is not available");
+    return;
+  }
   g_object_ref(method_call);
-  std::thread([method_call, operation = std::move(operation)]() mutable {
+  const bool submitted = workers->Post(
+      [method_call, operation = std::move(operation)]() mutable {
     std::vector<uint8_t> response;
     std::string error;
     const bool ok = operation(&response, &error);
@@ -500,15 +609,27 @@ void respond_runtime_bytes_async(FlMethodCall* method_call,
           return G_SOURCE_REMOVE;
         },
         result);
-  }).detach();
+  });
+  if (!submitted) {
+    g_object_unref(method_call);
+    respond_error(method_call, "RUNTIME_WORKER_QUEUE_CLOSED",
+                  "runtime worker queue is not accepting work");
+  }
 }
 
 /// Runs one Rust bridge operation off the Linux platform thread.
 template <typename Operation>
 void respond_runtime_string_async(FlMethodCall* method_call,
                                   Operation operation) {
+  auto* workers = g_operit_runtime_workers.get();
+  if (workers == nullptr) {
+    respond_error(method_call, "RUNTIME_WORKER_QUEUE_CLOSED",
+                  "runtime worker queue is not available");
+    return;
+  }
   g_object_ref(method_call);
-  std::thread([method_call, operation = std::move(operation)]() mutable {
+  const bool submitted = workers->Post(
+      [method_call, operation = std::move(operation)]() mutable {
     std::string response;
     std::string error;
     const bool ok = operation(&response, &error);
@@ -529,7 +650,12 @@ void respond_runtime_string_async(FlMethodCall* method_call,
           return G_SOURCE_REMOVE;
         },
         result);
-  }).detach();
+  });
+  if (!submitted) {
+    g_object_unref(method_call);
+    respond_error(method_call, "RUNTIME_WORKER_QUEUE_CLOSED",
+                  "runtime worker queue is not accepting work");
+  }
 }
 
 const gchar* string_map_value(FlValue* map, const char* key) {
@@ -781,6 +907,9 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
 void register_operit_runtime_channel(FlView* view) {
   if (!g_operit_runtime_library) {
     g_operit_runtime_library = std::make_shared<OperitRuntimeLibrary>();
+  }
+  if (!g_operit_runtime_workers) {
+    g_operit_runtime_workers = std::make_unique<OperitRuntimeWorkerQueue>(4);
   }
   if (g_operit_runtime_channel != nullptr) {
     fl_method_channel_set_method_call_handler(

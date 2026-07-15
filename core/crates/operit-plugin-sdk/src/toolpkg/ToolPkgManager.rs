@@ -396,7 +396,7 @@ impl ToolPkgManager {
         resourcePath: &str,
     ) -> Option<String> {
         let bytes = self.readToolPkgResourceBytes(runtime, resourcePath)?;
-        String::from_utf8(bytes).ok()
+        crate::toolpkg::ToolPkgProtection::decodeUtf8(&bytes).ok()
     }
 
     /// Reads one ToolPkg resource as raw bytes.
@@ -411,7 +411,8 @@ impl ToolPkgManager {
             ToolPkgSourceType::EXTERNAL => {
                 let sourcePath = PathBuf::from(&runtime.sourcePath);
                 if sourcePath.is_dir() {
-                    return fs::read(sourcePath.join(&normalizedResourcePath)).ok();
+                    let bytes = fs::read(sourcePath.join(&normalizedResourcePath)).ok()?;
+                    return crate::toolpkg::ToolPkgProtection::decryptIfNeeded(&bytes).ok();
                 }
                 if sourcePath.is_file()
                     && sourcePath
@@ -424,7 +425,7 @@ impl ToolPkgManager {
                     let mut entry = archive.by_name(&normalizedResourcePath).ok()?;
                     let mut bytes = Vec::new();
                     entry.read_to_end(&mut bytes).ok()?;
-                    return Some(bytes);
+                    return crate::toolpkg::ToolPkgProtection::decryptIfNeeded(&bytes).ok();
                 }
                 None
             }
@@ -435,7 +436,7 @@ impl ToolPkgManager {
                 let mut entry = archive.by_name(&normalizedResourcePath).ok()?;
                 let mut bytes = Vec::new();
                 entry.read_to_end(&mut bytes).ok()?;
-                Some(bytes)
+                crate::toolpkg::ToolPkgProtection::decryptIfNeeded(&bytes).ok()
             }
         }
     }

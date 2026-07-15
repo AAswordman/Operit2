@@ -28,6 +28,7 @@ class MarketEntryDetailScreen extends StatefulWidget {
 class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
   final TextEditingController _commentController = TextEditingController();
   String? _currentGithubLogin;
+  String? _currentGithubAuthorId;
   bool _communityLoading = true;
   bool _postingComment = false;
   bool _reacting = false;
@@ -86,6 +87,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       if (!mounted) return;
       setState(() {
         _currentGithubLogin = currentUser.login.trim().toLowerCase();
+        _currentGithubAuthorId = 'gh_${currentUser.id}';
       });
     } catch (error, stackTrace) {
       debugPrint('Failed to load current GitHub user: $error\n$stackTrace');
@@ -247,8 +249,9 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
                             );
                             if (!mounted) return;
                             setState(() => _comments = page.items);
-                            if (dialogContext.mounted)
+                            if (dialogContext.mounted) {
                               Navigator.of(dialogContext).pop();
+                            }
                           } catch (error, stackTrace) {
                             debugPrint(
                               'Failed to edit market comment: $error\n$stackTrace',
@@ -311,8 +314,9 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
                             );
                             if (!mounted) return;
                             setState(() => _comments = page.items);
-                            if (dialogContext.mounted)
+                            if (dialogContext.mounted) {
                               Navigator.of(dialogContext).pop();
+                            }
                           } catch (error, stackTrace) {
                             debugPrint(
                               'Failed to delete market comment: $error\n$stackTrace',
@@ -689,7 +693,8 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
         isPosting: _postingComment,
         onRequestPost: _showCommentDialog,
         postHint: null,
-        canManageComment: _canManageComment,
+        canEditComment: _canEditComment,
+        canDeleteComment: _canDeleteComment,
         onRequestEditComment: _showEditCommentDialog,
         onRequestDeleteComment: _confirmDeleteComment,
       ),
@@ -712,11 +717,32 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
     );
   }
 
-  bool _canManageComment(core_proxy.MarketComment comment) {
-    final current = _currentGithubLogin;
-    return current != null &&
-        current.isNotEmpty &&
-        comment.author.login.trim().toLowerCase() == current;
+  bool _canEditComment(core_proxy.MarketComment comment) {
+    return _sameMarketLogin(comment.author.login, _currentGithubLogin) ||
+        _sameMarketAuthorId(comment.author.id, _currentGithubAuthorId);
+  }
+
+  bool _canDeleteComment(core_proxy.MarketComment comment) {
+    if (_canEditComment(comment)) return true;
+    final publisher = widget.entry.publisher;
+    return _sameMarketLogin(publisher?.login ?? '', _currentGithubLogin) ||
+        _sameMarketAuthorId(publisher?.id ?? '', _currentGithubAuthorId);
+  }
+
+  bool _sameMarketLogin(String candidate, String? current) {
+    final normalizedCandidate = candidate.trim().toLowerCase();
+    final normalizedCurrent = current?.trim().toLowerCase() ?? '';
+    return normalizedCandidate.isNotEmpty &&
+        normalizedCurrent.isNotEmpty &&
+        normalizedCandidate == normalizedCurrent;
+  }
+
+  bool _sameMarketAuthorId(String candidate, String? current) {
+    final normalizedCandidate = candidate.trim().toLowerCase();
+    final normalizedCurrent = current?.trim().toLowerCase() ?? '';
+    return normalizedCandidate.isNotEmpty &&
+        normalizedCurrent.isNotEmpty &&
+        normalizedCandidate == normalizedCurrent;
   }
 
   List<ArtifactInfoRow> _metadataRows(core_proxy.MarketEntrySummary entry) {

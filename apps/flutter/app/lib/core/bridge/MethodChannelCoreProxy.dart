@@ -3,7 +3,6 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 
-import '../concurrency/AppWorkers.dart';
 import '../link/CoreLinkProtocol.dart';
 import '../link/CoreLinkCodec.dart';
 import 'CoreProxy.dart';
@@ -17,14 +16,9 @@ class MethodChannelCoreProxy extends CoreProxy {
 
   @override
   Future<Object?> call(CoreCallRequest request) async {
-    final requestJson = request.toJson();
-    final requestBytes = await AppWorkers.run(
-      () => encodeCoreLink(requestJson),
-      debugName: 'core-link-call-encode',
-    );
     final responseBytes = await _channel.invokeMethod<Uint8List>(
       'call',
-      requestBytes,
+      encodeNativeCoreCallRequest(request),
     );
     if (responseBytes == null) {
       throw const CoreLinkError(
@@ -32,24 +26,7 @@ class MethodChannelCoreProxy extends CoreProxy {
         message: 'runtime bridge returned empty response',
       );
     }
-    final response = await AppWorkers.run(
-      () => decodeCoreLinkMap(responseBytes),
-      debugName: 'core-link-call-decode',
-    );
-    final result = response['result'] as Map<String, Object?>;
-    if (result.containsKey('Ok')) {
-      return result['Ok'];
-    }
-    if (result.containsKey('Err')) {
-      final error = CoreLinkError.fromJson(
-        result['Err'] as Map<String, Object?>,
-      );
-      throw error;
-    }
-    throw const CoreLinkError(
-      code: 'INVALID_RESPONSE',
-      message: 'runtime bridge response result is invalid',
-    );
+    return decodeNativeCoreResult(responseBytes);
   }
 
   /// Opens a client-owned stream on the local platform carrier.
@@ -57,7 +34,7 @@ class MethodChannelCoreProxy extends CoreProxy {
   Future<CorePushSink> push(CorePushRequest request) async {
     final responseBytes = await _channel.invokeMethod<Uint8List>(
       'pushOpen',
-      encodeCoreLink(request.toJson()),
+      encodeNativeCorePushOpenRequest(request),
     );
     if (responseBytes == null) {
       throw const CoreLinkError(
@@ -65,11 +42,7 @@ class MethodChannelCoreProxy extends CoreProxy {
         message: 'runtime push open returned empty response',
       );
     }
-    final response = decodeCoreLinkMap(responseBytes);
-    if (response.containsKey('code') && response.containsKey('message')) {
-      throw CoreLinkError.fromJson(response);
-    }
-    final pushId = response['pushId'] as String;
+    final pushId = decodeNativeCorePushOpenResult(responseBytes);
     return _MethodChannelCorePushSink(channel: _channel, pushId: pushId);
   }
 
@@ -77,7 +50,7 @@ class MethodChannelCoreProxy extends CoreProxy {
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
     final responseBytes = await _channel.invokeMethod<Uint8List>(
       'watchSnapshot',
-      encodeCoreLink(request.toJson()),
+      encodeNativeCoreWatchSnapshotRequest(request),
     );
     if (responseBytes == null) {
       throw const CoreLinkError(
@@ -85,12 +58,7 @@ class MethodChannelCoreProxy extends CoreProxy {
         message: 'runtime bridge returned empty watch response',
       );
     }
-    final response = decodeCoreLinkMap(responseBytes);
-    if (response.containsKey('code') && response.containsKey('message')) {
-      final error = CoreLinkError.fromJson(response);
-      throw error;
-    }
-    return CoreEvent.fromJson(response);
+    return decodeNativeCoreWatchSnapshotResult(responseBytes);
   }
 
   @override
@@ -123,18 +91,20 @@ class MethodChannelCoreProxy extends CoreProxy {
         message: 'runtime bridge returned empty stream subscription',
       );
     }
-    final subscriptionJson = decodeCoreLinkMap(subscriptionBytes);
-    if (subscriptionJson.containsKey('code') &&
-        subscriptionJson.containsKey('message')) {
-      final error = CoreLinkError.fromJson(subscriptionJson);
-      await watchChannel.fail(subscriptionId, error, StackTrace.current);
-      throw error;
+    final String openedSubscriptionId;
+    try {
+      openedSubscriptionId = decodeNativeCoreWatchStreamResult(
+        subscriptionBytes,
+      );
+    } catch (error, stackTrace) {
+      await watchChannel.fail(subscriptionId, error, stackTrace);
+      rethrow;
     }
-    if (subscriptionJson['subscriptionId'] != subscriptionId) {
+    if (openedSubscriptionId != subscriptionId) {
       final error = CoreLinkError(
         code: 'INVALID_RESPONSE',
         message:
-            'runtime watch subscription id mismatch: ${subscriptionJson['subscriptionId']}',
+            'runtime watch subscription id mismatch: $openedSubscriptionId',
       );
       await watchChannel.fail(subscriptionId, error, StackTrace.current);
       throw error;
@@ -163,11 +133,7 @@ class _MethodChannelCorePushSink implements CorePushSink {
     _tail = _tail.then((_) async {
       final responseBytes = await channel.invokeMethod<Uint8List>(
         'pushItem',
-        encodeCoreLink(<String, Object?>{
-          'pushId': pushId,
-          'sequence': sequence,
-          'args': args,
-        }),
+        encodeNativeCorePushItem(pushId, sequence, args),
       );
       if (responseBytes == null) {
         throw const CoreLinkError(
@@ -175,10 +141,7 @@ class _MethodChannelCorePushSink implements CorePushSink {
           message: 'runtime push carrier returned empty response',
         );
       }
-      final response = decodeCoreLinkMap(responseBytes);
-      if (response.containsKey('code') && response.containsKey('message')) {
-        throw CoreLinkError.fromJson(response);
-      }
+      decodeNativeCoreVoidResult(responseBytes);
     });
     return _tail;
   }
@@ -201,10 +164,7 @@ class _MethodChannelCorePushSink implements CorePushSink {
         message: 'runtime push close returned empty response',
       );
     }
-    final response = decodeCoreLinkMap(responseBytes);
-    if (response.containsKey('code') && response.containsKey('message')) {
-      throw CoreLinkError.fromJson(response);
-    }
+    decodeNativeCoreVoidResult(responseBytes);
   }
 }
 
@@ -284,9 +244,7 @@ class _MethodChannelWatchChannel {
         _controllers.remove(subscriptionId);
         controller.onCancel = null;
         unawaited(controller.close());
-        unawaited(
-          _channel.invokeMethod<Uint8List>('closeWatchStream', subscriptionId),
-        );
+        unawaited(_closeNativeWatchStream(_channel, subscriptionId));
       }
     } catch (error, stackTrace) {
       _failAll(error, stackTrace);
@@ -297,9 +255,7 @@ class _MethodChannelWatchChannel {
     final entries = _controllers.entries.toList(growable: false);
     _controllers.clear();
     for (final entry in entries) {
-      unawaited(
-        _channel.invokeMethod<Uint8List>('closeWatchStream', entry.key),
-      );
+      unawaited(_closeNativeWatchStream(_channel, entry.key));
       final controller = entry.value;
       controller.addError(error, stackTrace);
       controller.onCancel = null;
@@ -309,7 +265,7 @@ class _MethodChannelWatchChannel {
 
   Future<void> _closeSubscription(String subscriptionId) async {
     _controllers.remove(subscriptionId);
-    await _channel.invokeMethod<Uint8List>('closeWatchStream', subscriptionId);
+    await _closeNativeWatchStream(_channel, subscriptionId);
   }
 }
 
@@ -324,10 +280,10 @@ class _MethodChannelWatchFrame {
 }
 
 _MethodChannelWatchFrame _parseMethodChannelWatchFrame(Uint8List frameBytes) {
-  final frame = decodeCoreLinkMap(frameBytes);
+  final frame = decodeNativeCoreWatchFrame(frameBytes);
   return _MethodChannelWatchFrame(
-    subscriptionId: frame['subscriptionId'] as String,
-    event: CoreEvent.fromJson(frame['event'] as Map<String, Object?>),
+    subscriptionId: frame.subscriptionId,
+    event: frame.event,
   );
 }
 
@@ -339,13 +295,27 @@ Future<Uint8List?> _invokeWatchStream(
   try {
     return await channel.invokeMethod<Uint8List>(
       'watchStream',
-      encodeCoreLink(<String, Object?>{
-        'channelId': 'method-channel-watch',
-        'subscriptionId': subscriptionId,
-        'request': request.toJson(),
-      }),
+      encodeNativeCoreWatchStreamRequest(subscriptionId, request),
     );
   } on MissingPluginException {
     rethrow;
   }
+}
+
+/// Closes one native watch subscription and validates its direct acknowledgement.
+Future<void> _closeNativeWatchStream(
+  MethodChannel channel,
+  String subscriptionId,
+) async {
+  final responseBytes = await channel.invokeMethod<Uint8List>(
+    'closeWatchStream',
+    subscriptionId,
+  );
+  if (responseBytes == null) {
+    throw const CoreLinkError(
+      code: 'EMPTY_RESPONSE',
+      message: 'runtime watch close returned empty response',
+    );
+  }
+  decodeNativeCoreVoidResult(responseBytes);
 }

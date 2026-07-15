@@ -28,6 +28,7 @@ FLUTTER_APP_DIR = REPO_ROOT / "apps" / "flutter" / "app"
 WEB_ACCESS_BUNDLE_DIR = REPO_ROOT / "apps" / "web_access" / "build" / "bundle"
 WEB_ACCESS_EMBEDDED_ASSETS_DIR = FLUTTER_APP_DIR / "assets" / "web_access"
 WEB_ACCESS_ASSET_DECLARATION_PREFIX = "    - path: assets/web_access/"
+WEB_ACCESS_VERSION_FILE = "web_access_version.json"
 WEB_ACCESS_REQUIRED_FILES = (
     "index.html",
     "main.dart.js",
@@ -35,6 +36,7 @@ WEB_ACCESS_REQUIRED_FILES = (
     "operit_flutter_bridge_bg.wasm",
     "sql-wasm.js",
     "sql-wasm.wasm",
+    WEB_ACCESS_VERSION_FILE,
 )
 PUBSPEC_PATH = FLUTTER_APP_DIR / "pubspec.yaml"
 ANDROID_DIR = FLUTTER_APP_DIR / "android"

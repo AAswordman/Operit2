@@ -6,11 +6,14 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -28,7 +31,8 @@ using BridgeCreateWithStorageRoots = BridgeHandle (*)(const char*, const char*);
 using BridgeCreateError = char* (*)();
 using BridgeDestroy = void (*)(BridgeHandle);
 struct OperitByteBuffer { unsigned char* ptr; size_t len; };
-using BridgeCall = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
+using BridgeNativeCall =
+    OperitByteBuffer (*)(const void*, const unsigned char*, size_t);
 using BridgePushOpen = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
 using BridgePushItem = OperitByteBuffer (*)(BridgeHandle, const unsigned char*, size_t);
 using BridgePushClose = OperitByteBuffer (*)(BridgeHandle, const char*);
@@ -170,21 +174,134 @@ class OperitRuntimePlatformTaskImpl final : public OperitRuntimePlatformTask {
   Callback callback_;
 };
 
+/// Owns move-only tasks executed by the persistent runtime worker threads.
+class OperitRuntimeWorkerTask {
+ public:
+  virtual ~OperitRuntimeWorkerTask() = default;
+  virtual void Run() = 0;
+};
+
+/// Stores one move-only callable for the runtime worker queue.
+template <typename Callback>
+class OperitRuntimeWorkerTaskImpl final : public OperitRuntimeWorkerTask {
+ public:
+  explicit OperitRuntimeWorkerTaskImpl(Callback callback)
+      : callback_(std::move(callback)) {}
+
+  void Run() override { callback_(); }
+
+ private:
+  Callback callback_;
+};
+
+/// Executes runtime bridge work on a fixed set of reusable native threads.
+class OperitRuntimeWorkerQueue {
+ public:
+  /// Starts the requested number of reusable worker threads.
+  explicit OperitRuntimeWorkerQueue(size_t worker_count) {
+    workers_.reserve(worker_count);
+    for (size_t index = 0; index < worker_count; ++index) {
+      workers_.emplace_back([this]() { RunWorker(); });
+    }
+  }
+
+  /// Stops the queue after every already-submitted task completes.
+  ~OperitRuntimeWorkerQueue() { Shutdown(); }
+
+  /// Adds one callable to the runtime worker queue.
+  template <typename Callback>
+  bool Post(Callback&& callback) {
+    auto task = std::make_unique<
+        OperitRuntimeWorkerTaskImpl<std::decay_t<Callback>>>(
+        std::forward<Callback>(callback));
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (stopping_) {
+        return false;
+      }
+      tasks_.push_back(std::move(task));
+    }
+    condition_.notify_one();
+    return true;
+  }
+
+  /// Waits for workers to drain submitted work and terminate.
+  void Shutdown() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (stopping_) {
+        return;
+      }
+      stopping_ = true;
+    }
+    condition_.notify_all();
+    for (auto& worker : workers_) {
+      if (worker.joinable()) {
+        worker.join();
+      }
+    }
+    workers_.clear();
+  }
+
+ private:
+  /// Runs the task loop for one persistent runtime worker.
+  void RunWorker() {
+    while (true) {
+      std::unique_ptr<OperitRuntimeWorkerTask> task;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        condition_.wait(lock, [this]() { return stopping_ || !tasks_.empty(); });
+        if (stopping_ && tasks_.empty()) {
+          return;
+        }
+        task = std::move(tasks_.front());
+        tasks_.pop_front();
+      }
+      task->Run();
+    }
+  }
+
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  std::deque<std::unique_ptr<OperitRuntimeWorkerTask>> tasks_;
+  std::vector<std::thread> workers_;
+  bool stopping_ = false;
+};
+
+std::mutex g_operit_runtime_platform_tasks_mutex;
+std::deque<std::unique_ptr<OperitRuntimePlatformTask>>
+    g_operit_runtime_platform_tasks;
+bool g_operit_runtime_platform_task_message_pending = false;
+std::unique_ptr<OperitRuntimeWorkerQueue> g_operit_runtime_workers;
+
+/// Queues a task for the Windows platform thread and coalesces wake-up messages.
 template <typename Callback>
 bool PostOperitRuntimePlatformTask(Callback&& callback) {
-  if (g_operit_runtime_window == nullptr) {
-    return false;
-  }
   auto task = std::make_unique<
       OperitRuntimePlatformTaskImpl<std::decay_t<Callback>>>(
       std::forward<Callback>(callback));
-  auto raw_task = task.release();
-  if (::PostMessage(g_operit_runtime_window, kOperitRuntimePlatformTaskMessage,
-                    reinterpret_cast<WPARAM>(raw_task), 0) == 0) {
-    delete raw_task;
+  std::lock_guard<std::mutex> lock(g_operit_runtime_platform_tasks_mutex);
+  if (g_operit_runtime_window == nullptr) {
     return false;
   }
+  g_operit_runtime_platform_tasks.push_back(std::move(task));
+  if (g_operit_runtime_platform_task_message_pending) {
+    return true;
+  }
+  if (::PostMessage(g_operit_runtime_window, kOperitRuntimePlatformTaskMessage,
+                    0, 0) == 0) {
+    g_operit_runtime_platform_tasks.pop_back();
+    return false;
+  }
+  g_operit_runtime_platform_task_message_pending = true;
   return true;
+}
+
+/// Drops platform tasks that can no longer run during process shutdown.
+void ClearOperitRuntimePlatformTasks() {
+  std::lock_guard<std::mutex> lock(g_operit_runtime_platform_tasks_mutex);
+  g_operit_runtime_platform_tasks.clear();
+  g_operit_runtime_platform_task_message_pending = false;
 }
 
 class OperitRuntimeLibrary {
@@ -222,8 +339,8 @@ class OperitRuntimeLibrary {
           GetProcAddress(library_, "operit_flutter_bridge_create_error"));
       destroy_ = reinterpret_cast<BridgeDestroy>(
           GetProcAddress(library_, "operit_flutter_bridge_destroy"));
-      call_ = reinterpret_cast<BridgeCall>(
-          GetProcAddress(library_, "operit_flutter_bridge_call"));
+      native_call_ = reinterpret_cast<BridgeNativeCall>(
+          GetProcAddress(library_, "operit_flutter_bridge_native_call"));
       push_open_ = reinterpret_cast<BridgePushOpen>(
           GetProcAddress(library_, "operit_flutter_bridge_push_open"));
       push_item_ = reinterpret_cast<BridgePushItem>(
@@ -255,7 +372,7 @@ class OperitRuntimeLibrary {
       free_bytes_ = reinterpret_cast<BridgeFreeBytes>(
           GetProcAddress(library_, "operit_flutter_bridge_free_bytes"));
       if (create_ == nullptr || create_with_storage_roots_ == nullptr ||
-          destroy_ == nullptr || call_ == nullptr || push_open_ == nullptr ||
+          destroy_ == nullptr || native_call_ == nullptr || push_open_ == nullptr ||
           push_item_ == nullptr || push_close_ == nullptr ||
           watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
           next_watch_channel_event_ == nullptr ||
@@ -286,7 +403,8 @@ class OperitRuntimeLibrary {
     if (!EnsureReadyThreadSafe(error)) {
       return false;
     }
-    return TakeBridgeBytes(call_(handle_, request.data(), request.size()), response, error);
+    return TakeBridgeBytes(
+        native_call_(handle_, request.data(), request.size()), response, error);
   }
 
   /// Opens one local Link push stream.
@@ -493,7 +611,7 @@ class OperitRuntimeLibrary {
   BridgeCreateWithStorageRoots create_with_storage_roots_ = nullptr;
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
-  BridgeCall call_ = nullptr;
+  BridgeNativeCall native_call_ = nullptr;
   BridgePushOpen push_open_ = nullptr;
   BridgePushItem push_item_ = nullptr;
   BridgePushClose push_close_ = nullptr;
@@ -652,13 +770,23 @@ template <typename Operation>
 void RespondRuntimeStringAsync(
     Operation operation,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  std::thread([operation = std::move(operation),
-               result = std::move(result)]() mutable {
+  auto* workers = g_operit_runtime_workers.get();
+  if (workers == nullptr) {
+    result->Error("RUNTIME_WORKER_QUEUE_CLOSED",
+                  "runtime worker queue is not available");
+    return;
+  }
+  auto result_holder = std::make_shared<
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>>(
+      std::move(result));
+  const bool submitted = workers->Post(
+      [operation = std::move(operation), result_holder]() mutable {
     std::string response;
     std::string error;
     const bool ok = operation(&response, &error);
+    auto platform_result = std::move(*result_holder);
     PostOperitRuntimePlatformTask(
-        [result = std::move(result), ok, response = std::move(response),
+        [result = std::move(platform_result), ok, response = std::move(response),
          error = std::move(error)]() mutable {
           if (ok) {
             result->Success(flutter::EncodableValue(response));
@@ -666,7 +794,12 @@ void RespondRuntimeStringAsync(
             result->Error("RUNTIME_BRIDGE_ERROR", error);
           }
         });
-  }).detach();
+  });
+  if (!submitted) {
+    auto platform_result = std::move(*result_holder);
+    platform_result->Error("RUNTIME_WORKER_QUEUE_CLOSED",
+                           "runtime worker queue is not accepting work");
+  }
 }
 
 /// Runs one binary Link bridge operation off the Windows platform thread.
@@ -674,32 +807,72 @@ template <typename Operation>
 void RespondRuntimeBytesAsync(
     Operation operation,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  std::thread([operation = std::move(operation), result = std::move(result)]() mutable {
+  auto* workers = g_operit_runtime_workers.get();
+  if (workers == nullptr) {
+    result->Error("RUNTIME_WORKER_QUEUE_CLOSED",
+                  "runtime worker queue is not available");
+    return;
+  }
+  auto result_holder = std::make_shared<
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>>(
+      std::move(result));
+  const bool submitted = workers->Post(
+      [operation = std::move(operation), result_holder]() mutable {
     std::vector<uint8_t> response;
     std::string error;
     const bool ok = operation(&response, &error);
+    auto platform_result = std::move(*result_holder);
     PostOperitRuntimePlatformTask(
-        [result = std::move(result), ok, response = std::move(response), error = std::move(error)]() mutable {
+        [result = std::move(platform_result), ok, response = std::move(response), error = std::move(error)]() mutable {
           if (ok) {
             result->Success(flutter::EncodableValue(response));
           } else {
             result->Error("RUNTIME_BRIDGE_ERROR", error);
           }
         });
-  }).detach();
+  });
+  if (!submitted) {
+    auto platform_result = std::move(*result_holder);
+    platform_result->Error("RUNTIME_WORKER_QUEUE_CLOSED",
+                           "runtime worker queue is not accepting work");
+  }
 }
 
 /// Runs a core proxy call off the Windows platform thread.
 void RespondRuntimeCallAsync(
     std::vector<uint8_t> request,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  auto* workers = g_operit_runtime_workers.get();
+  if (workers == nullptr) {
+    result->Error("RUNTIME_WORKER_QUEUE_CLOSED",
+                  "runtime worker queue is not available");
+    return;
+  }
   auto library = g_operit_runtime_library;
-  RespondRuntimeBytesAsync(
-      [library, request = std::move(request)](
-          std::vector<uint8_t>* response, std::string* error) {
-        return library->Call(request, response, error);
-      },
+  auto result_holder = std::make_shared<
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>>(
       std::move(result));
+  const bool submitted = workers->Post(
+      [library, request = std::move(request), result_holder]() mutable {
+    std::vector<uint8_t> response;
+    std::string error;
+    const bool ok = library->Call(request, &response, &error);
+    auto platform_result = std::move(*result_holder);
+    PostOperitRuntimePlatformTask(
+        [result = std::move(platform_result), ok, response = std::move(response),
+         error = std::move(error)]() mutable {
+          if (ok) {
+            result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+        });
+  });
+  if (!submitted) {
+    auto platform_result = std::move(*result_holder);
+    platform_result->Error("RUNTIME_WORKER_QUEUE_CLOSED",
+                           "runtime worker queue is not accepting work");
+  }
 }
 
 }  // namespace
@@ -711,9 +884,13 @@ bool HandleOperitRuntimeChannelWindowMessage(UINT message,
   if (message != kOperitRuntimePlatformTaskMessage) {
     return false;
   }
-  std::unique_ptr<OperitRuntimePlatformTask> task(
-      reinterpret_cast<OperitRuntimePlatformTask*>(wparam));
-  if (task) {
+  std::deque<std::unique_ptr<OperitRuntimePlatformTask>> tasks;
+  {
+    std::lock_guard<std::mutex> lock(g_operit_runtime_platform_tasks_mutex);
+    g_operit_runtime_platform_task_message_pending = false;
+    tasks.swap(g_operit_runtime_platform_tasks);
+  }
+  for (const auto& task : tasks) {
     task->Run();
   }
   if (result != nullptr) {
@@ -729,6 +906,9 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
   }
   if (!g_operit_runtime_library) {
     g_operit_runtime_library = std::make_shared<OperitRuntimeLibrary>();
+  }
+  if (!g_operit_runtime_workers) {
+    g_operit_runtime_workers = std::make_unique<OperitRuntimeWorkerQueue>(4);
   }
   auto channel =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
@@ -1059,7 +1239,9 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
 
 void ShutdownOperitRuntimeChannel() {
   g_watch_channel_pump_running.store(false);
+  g_operit_runtime_workers.reset();
   g_operit_runtime_channels.clear();
+  ClearOperitRuntimePlatformTasks();
   g_operit_runtime_library.reset();
   g_operit_runtime_window = nullptr;
   g_operit_runtime_platform_thread_id = 0;

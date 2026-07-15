@@ -271,6 +271,13 @@ function readWatchChannelEvent(handle: bigint): ArrayBuffer {
   return bridge.nextWatchChannelEvent(handle);
 }
 
+/// Dispatches one CoreProxy call on an ArkTS taskpool worker.
+@Concurrent
+function dispatchRuntimeCoreCall(handle: bigint, request: ArrayBuffer): ArrayBuffer {
+  const bridge = runtimeNative as RuntimeNativeModule;
+  return bridge.call(handle, request);
+}
+
 export class OperitRuntimeChannel {
   private channel: MethodChannel;
   private context: common.UIAbilityContext;
@@ -382,9 +389,18 @@ export class OperitRuntimeChannel {
           this.ensureRuntimeHandle();
           result.success(null);
           return;
-        case 'call':
-          result.success(nativeBridge.call(this.ensureRuntimeHandle(), this.requiredArrayBuffer(call, call.method)));
+        case 'call': {
+          const handle = this.ensureRuntimeHandle();
+          const request = this.requiredArrayBuffer(call, call.method);
+          taskpool.execute(dispatchRuntimeCoreCall, handle, request)
+            .then((response: Object): void => {
+              result.success(response as ArrayBuffer);
+            })
+            .catch((error: Object): void => {
+              result.error('RUNTIME_BRIDGE_ERROR', `${error}`, null);
+            });
           return;
+        }
         case 'pushOpen':
           result.success(nativeBridge.pushOpen(this.ensureRuntimeHandle(), this.requiredArrayBuffer(call, call.method)));
           return;

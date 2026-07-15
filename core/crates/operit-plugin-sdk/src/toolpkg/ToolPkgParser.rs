@@ -1155,9 +1155,24 @@ impl ToolPkgArchiveParser {
     ) -> Option<String> {
         let archiveEntryName = entryIndex.resolveEntryName(rawPath)?;
         let mut entry = archive.by_name(&archiveEntryName).ok()?;
-        let mut text = String::new();
-        std::io::Read::read_to_string(&mut entry, &mut text).ok()?;
-        Some(text)
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut bytes).ok()?;
+        crate::toolpkg::ToolPkgProtection::decodeUtf8(&bytes).ok()
+    }
+
+    /// Reads the ToolPkg manifest entry and returns the parsed manifest plus entry path.
+    #[allow(non_snake_case)]
+    pub fn readToolPkgManifestPreview<R: std::io::Read + std::io::Seek>(
+        archive: &mut zip::ZipArchive<R>,
+        entryIndex: &ToolPkgEntryIndex,
+    ) -> Option<ToolPkgManifestPreview> {
+        let entryName = findManifestEntry(&entryIndex.entryNames)?;
+        let manifestText = Self::readZipEntryText(archive, entryIndex, &entryName)?;
+        let manifest = parseToolPkgManifest(&manifestText, &entryName).ok()?;
+        Some(ToolPkgManifestPreview {
+            entryName,
+            manifest,
+        })
     }
 
     /// Reads one indexed directory entry as UTF-8 text.
@@ -1168,7 +1183,8 @@ impl ToolPkgArchiveParser {
         rawPath: &str,
     ) -> Option<String> {
         let relativePath = entryIndex.resolveEntryName(rawPath)?;
-        std::fs::read_to_string(rootDir.join(relativePath)).ok()
+        let bytes = std::fs::read(rootDir.join(relativePath)).ok()?;
+        crate::toolpkg::ToolPkgProtection::decodeUtf8(&bytes).ok()
     }
 
     /// Extracts normalized ToolPkg entries from an external ZIP file.

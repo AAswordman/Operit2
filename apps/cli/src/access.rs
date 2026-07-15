@@ -352,7 +352,8 @@ pub struct RemoteWsEnvelope {
     pub sessionId: String,
     pub deviceId: String,
     pub signature: String,
-    pub payload: RemoteWsPayload,
+    #[serde(with = "serde_bytes")]
+    pub payloadBytes: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1384,6 +1385,7 @@ async fn handle_ws(mut socket: WebSocket, state: RemoteLinkState) {
     }
 }
 
+/// Decodes one signed websocket envelope and encodes its response.
 async fn handle_ws_binary(
     state: &RemoteLinkState,
     pushes: &mut BTreeMap<String, RemotePushState>,
@@ -1396,6 +1398,7 @@ async fn handle_ws_binary(
     operit_link::encodeLink(&response).expect("RemoteWsResponse must serialize")
 }
 
+/// Verifies the raw websocket payload bytes and dispatches the decoded payload.
 async fn handle_ws_envelope(
     state: &RemoteLinkState,
     pushes: &mut BTreeMap<String, RemotePushState>,
@@ -1407,10 +1410,10 @@ async fn handle_ws_envelope(
             "Link protocol version 3 is required",
         ));
     }
-    let body = match operit_link::encodeLink(&envelope.payload) {
+    let payload = match operit_link::decodeLink::<RemoteWsPayload>(&envelope.payloadBytes) {
         Ok(value) => value,
         Err(error) => {
-            return RemoteWsResponse::Error(CoreLinkError::internal(error.to_string()));
+            return RemoteWsResponse::Error(CoreLinkError::new("BAD_REQUEST", error.to_string()))
         }
     };
     let verified = match verify_session_parts(
@@ -1418,14 +1421,14 @@ async fn handle_ws_envelope(
         &envelope.sessionId,
         &envelope.deviceId,
         &envelope.signature,
-        &body,
+        &envelope.payloadBytes,
     )
     .await
     {
         Ok(value) => value,
         Err(error) => return RemoteWsResponse::Error(error),
     };
-    match envelope.payload {
+    match payload {
         RemoteWsPayload::SessionInfo(request) => {
             let sessions = state.sessions.lock().await;
             let Some(session) = sessions.get(&envelope.sessionId) else {

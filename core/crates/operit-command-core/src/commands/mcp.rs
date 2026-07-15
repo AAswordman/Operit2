@@ -535,7 +535,6 @@ fn print_optional_status(server: &MCPLocalServer, id: &str, output: &mut CoreCom
 
 fn print_start_status(status: &StartStatus, output: &mut CoreCommandOutput) {
     match status {
-        StartStatus::NotStarted => output.push_stdout_line("status=not_started"),
         StartStatus::InProgress(message) => {
             output.push_stdout_line(format!("status=in_progress\tmessage={message}"))
         }

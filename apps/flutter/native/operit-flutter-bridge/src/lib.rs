@@ -27,8 +27,7 @@ use access::{
 use operit_host_api::HostManager::HostManager;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
-    CoreLinkError, CoreLinkSharedClient, CorePushItem, CorePushRequest, CoreRequestId,
-    CoreWatchRequest,
+    CoreLinkError, CoreLinkSharedClient, CorePushItem, CorePushRequest, CoreWatchRequest,
 };
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
@@ -52,7 +51,7 @@ use operit_runtime::services::RuntimeHostInteractionService::{
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_tools::ToolExecutionManager::AITool;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 #[cfg(target_arch = "wasm32")]
 use js_sys::Function;
@@ -75,10 +74,10 @@ use operit_host_apple_native::AppleLocalInferenceHost as NativeLocalInferenceHos
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use operit_host_apple_native::{
     AppleAudioPlaybackHost as NativeAudioPlaybackHost, AppleBluetoothHost as NativeBluetoothHost,
-    AppleFileSystemHost as NativeFileSystemHost, AppleHttpHost as NativeHttpHost,
+    AppleFileSystemHost as NativeFileSystemHost,
     AppleHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
-    AppleManagedRuntimeHost as NativeManagedRuntimeHost, AppleMusicCommand as NativeMusicCommand,
-    AppleRuntimeStorageHost as NativeRuntimeStorageHost,
+    AppleHttpHost as NativeHttpHost, AppleManagedRuntimeHost as NativeManagedRuntimeHost,
+    AppleMusicCommand as NativeMusicCommand, AppleRuntimeStorageHost as NativeRuntimeStorageHost,
     AppleSystemOperationHost as NativeSystemOperationHost,
     AppleTtsPlaybackHost as NativeTtsPlaybackHost, AppleTtsSynthesisHost as NativeTtsSynthesisHost,
 };
@@ -91,7 +90,7 @@ use operit_host_apple_native::{
 use operit_host_linux_native::{
     LinuxAudioPlaybackHost as NativeAudioPlaybackHost, LinuxBluetoothHost as NativeBluetoothHost,
     LinuxFileSystemHost as NativeFileSystemHost,
-    LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost, LinuxHttpHost as NativeHttpHost,
+    LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost,
     LinuxHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
@@ -104,9 +103,9 @@ use operit_host_linux_native::{
 #[cfg(target_env = "ohos")]
 use operit_host_ohos_native::{
     OhosAudioPlaybackHost as NativeAudioPlaybackHost, OhosBluetoothHost as NativeBluetoothHost,
-    OhosFileSystemHost as NativeFileSystemHost, OhosHttpHost as NativeHttpHost,
+    OhosFileSystemHost as NativeFileSystemHost,
     OhosHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
-    OhosLocalInferenceHost as NativeLocalInferenceHost,
+    OhosHttpHost as NativeHttpHost, OhosLocalInferenceHost as NativeLocalInferenceHost,
     OhosManagedRuntimeHost as NativeManagedRuntimeHost, OhosMusicCommand as NativeMusicCommand,
     OhosRuntimeStorageHost as NativeRuntimeStorageHost,
     OhosSystemOperationHost as NativeSystemOperationHost, OhosTerminalHost as NativeTerminalHost,
@@ -115,11 +114,11 @@ use operit_host_ohos_native::{
 #[cfg(target_arch = "wasm32")]
 use operit_host_web::{
     WebAudioPlaybackHost as NativeAudioPlaybackHost, WebBluetoothHost as NativeBluetoothHost,
-    WebFileSystemHost as NativeFileSystemHost, WebHttpHost as NativeHttpHost,
-    WebLocalInferenceHost as NativeLocalInferenceHost,
-    WebManagedRuntimeHost as NativeManagedRuntimeHost,
+    WebFileSystemHost as NativeFileSystemHost,
     WebHostRuntimeEventHost as NativeHostRuntimeEventHost,
     WebHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    WebHttpHost as NativeHttpHost, WebLocalInferenceHost as NativeLocalInferenceHost,
+    WebManagedRuntimeHost as NativeManagedRuntimeHost,
     WebRuntimeStorageHost as NativeRuntimeStorageHost,
     WebSystemOperationHost as NativeSystemOperationHost,
     WebTtsPlaybackHost as NativeTtsPlaybackHost,
@@ -128,9 +127,9 @@ use operit_host_web::{
 use operit_host_windows_native::{
     WindowsAudioPlaybackHost as NativeAudioPlaybackHost,
     WindowsBluetoothHost as NativeBluetoothHost, WindowsFileSystemHost as NativeFileSystemHost,
-    WindowsHostRuntimeEventHost as NativeHostRuntimeEventHost, WindowsHttpHost as NativeHttpHost,
+    WindowsHostRuntimeEventHost as NativeHostRuntimeEventHost,
     WindowsHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
-    WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
+    WindowsHttpHost as NativeHttpHost, WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
     WindowsTerminalHost as NativeTerminalHost,
@@ -173,36 +172,6 @@ pub struct OperitFlutterBridge {
 struct NativePushState {
     request: CorePushRequest,
     nextSequence: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct FlutterWatchChannelOpenEnvelope {
-    #[allow(dead_code)]
-    channelId: String,
-    subscriptionId: String,
-    request: CoreWatchRequest,
-}
-
-#[derive(Debug, Serialize)]
-struct FlutterPushOpenResponse {
-    pushId: String,
-}
-
-#[derive(Debug, Serialize)]
-struct FlutterPushItemResponse {
-    pushId: String,
-    sequence: u64,
-}
-
-#[derive(Debug, Serialize)]
-struct FlutterWatchChannelOpenResponse {
-    subscriptionId: String,
-}
-
-#[derive(Debug, Serialize)]
-struct FlutterWatchChannelEvent {
-    subscriptionId: String,
-    event: CoreEvent,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -800,26 +769,20 @@ impl OperitFlutterBridge {
 
     /// Dispatches one native push item in stream order.
     #[cfg(not(target_arch = "wasm32"))]
-    fn pushItem(&self, item: CorePushItem) -> Result<FlutterPushItemResponse, CoreLinkError> {
+    fn pushItem(&self, item: CorePushItem) -> Result<(), CoreLinkError> {
         let request = self.takePushItemRequest(&item)?;
         let response = self.call(request.itemCall(item.sequence, item.args));
         response.result?;
-        Ok(FlutterPushItemResponse {
-            pushId: item.pushId,
-            sequence: item.sequence,
-        })
+        Ok(())
     }
 
     /// Dispatches one wasm push item in stream order.
     #[cfg(target_arch = "wasm32")]
-    async fn pushItem(&self, item: CorePushItem) -> Result<FlutterPushItemResponse, CoreLinkError> {
+    async fn pushItem(&self, item: CorePushItem) -> Result<(), CoreLinkError> {
         let request = self.takePushItemRequest(&item)?;
         let response = self.call(request.itemCall(item.sequence, item.args)).await;
         response.result?;
-        Ok(FlutterPushItemResponse {
-            pushId: item.pushId,
-            sequence: item.sequence,
-        })
+        Ok(())
     }
 
     /// Closes one client-owned input stream.
@@ -904,13 +867,7 @@ impl OperitFlutterBridge {
             let mut receiver = receiver;
             while let Some(event) = receiver.recv().await {
                 let completed = event.kind == CoreEventKind::Completed;
-                channel.send(
-                    operit_link::encodeLink(&FlutterWatchChannelEvent {
-                        subscriptionId: taskSubscriptionId.clone(),
-                        event,
-                    })
-                    .expect("Flutter watch channel event must encode"),
-                );
+                channel.send(native_watch_event_vec(&taskSubscriptionId, event));
                 if completed {
                     break;
                 }
@@ -966,11 +923,7 @@ impl OperitFlutterBridge {
                             break;
                         };
                         let completed = event.kind == CoreEventKind::Completed;
-                        let frame = operit_link::encodeLink(&FlutterWatchChannelEvent {
-                            subscriptionId: taskSubscriptionId.clone(),
-                            event,
-                        })
-                        .expect("Flutter watch channel event must encode");
+                        let frame = native_watch_event_vec(&taskSubscriptionId, event);
                         let frame = js_sys::Uint8Array::from(frame.as_slice());
                         let _ = onEvent.call1(&JsValue::NULL, &frame.into());
                         if completed {
@@ -1826,9 +1779,8 @@ fn create_local_core(
             })
         },
     ))));
-    context = context.withHostRuntimeEventSchedulerHost(Arc::new(
-        NativeHostRuntimeEventSchedulerHost::new(),
-    ));
+    context = context
+        .withHostRuntimeEventSchedulerHost(Arc::new(NativeHostRuntimeEventSchedulerHost::new()));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
@@ -2056,9 +2008,8 @@ fn create_local_core(
             })
         }),
     )));
-    context = context.withHostRuntimeEventSchedulerHost(Arc::new(
-        NativeHostRuntimeEventSchedulerHost::new(),
-    ));
+    context = context
+        .withHostRuntimeEventSchedulerHost(Arc::new(NativeHostRuntimeEventSchedulerHost::new()));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
@@ -2098,9 +2049,8 @@ fn create_local_core(
     context = context.withBluetoothHost(Arc::new(NativeBluetoothHost::new()));
     context = context.withLocalInferenceHost(Arc::new(NativeLocalInferenceHost::new()));
     context = context.withTtsPlaybackHost(Arc::new(NativeTtsPlaybackHost::new()));
-    context = context.withHostRuntimeEventSchedulerHost(Arc::new(
-        NativeHostRuntimeEventSchedulerHost::new(),
-    ));
+    context = context
+        .withHostRuntimeEventSchedulerHost(Arc::new(NativeHostRuntimeEventSchedulerHost::new()));
     context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
@@ -2214,112 +2164,430 @@ pub unsafe extern "C" fn operit_flutter_bridge_destroy(handle: *mut OperitFlutte
     }
 }
 
+/// Dispatches one compact native CoreProxy call for every native platform channel.
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
-pub unsafe extern "C" fn operit_flutter_bridge_call(
-    handle: *mut OperitFlutterBridge,
+pub unsafe extern "C" fn operit_flutter_bridge_native_call(
+    handle: *const OperitFlutterBridge,
     request_ptr: *const u8,
     request_len: usize,
 ) -> OperitByteBuffer {
     if handle.is_null() {
-        return call_error_bytes("flutter-bridge-null", "runtime bridge is not initialized");
+        return bytes_to_buffer(native_result_error_vec(
+            "flutter-bridge-null",
+            "runtime bridge is not initialized",
+        ));
     }
     if request_ptr.is_null() {
-        return call_error_bytes(
+        return bytes_to_buffer(native_result_error_vec(
             "flutter-bridge-null-request",
             "runtime request pointer is null",
-        );
+        ));
     }
     let request_bytes = std::slice::from_raw_parts(request_ptr, request_len);
-    bytes_to_buffer(bridge_call(&mut *handle, request_bytes))
+    bytes_to_buffer(bridge_native_call(&*handle, request_bytes))
 }
 
+/// Decodes and dispatches one compact native CoreProxy call.
 #[cfg(not(target_arch = "wasm32"))]
-fn bridge_call(handle: &mut OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
-    let request: CoreCallRequest = match operit_link::decodeLink(request_bytes) {
+fn bridge_native_call(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
+    let request = match decode_native_call_request(request_bytes) {
         Ok(request) => request,
-        Err(error) => {
-            return call_error_vec(
-                "flutter-bridge-invalid-request",
-                format!("invalid core request: {error}"),
-            );
-        }
+        Err(error) => return native_result_vec(Err::<operit_link::CoreValue, _>(error)),
     };
-    let response = handle.call(request);
-    operit_link::encodeLink(&response).expect("CoreCallResponse must encode")
+    native_result_vec(handle.call(request).result)
 }
 
-#[cfg(target_arch = "wasm32")]
-async fn bridge_call_async(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
-    let request: CoreCallRequest = match operit_link::decodeLink(request_bytes) {
-        Ok(request) => request,
-        Err(error) => {
-            return call_error_vec(
-                "flutter-bridge-invalid-request",
-                format!("invalid core request: {error}"),
-            );
-        }
-    };
-    let response = handle.call(request).await;
-    operit_link::encodeLink(&response).expect("CoreCallResponse must encode")
+/// Decodes one compact native CoreProxy request into the shared Link model.
+fn decode_native_call_request(request_bytes: &[u8]) -> Result<CoreCallRequest, CoreLinkError> {
+    let (request_id, target_segments, method_name, args): (
+        String,
+        Vec<String>,
+        String,
+        operit_link::CoreValue,
+    ) = operit_link::decodeLink(request_bytes).map_err(|error| {
+        CoreLinkError::new(
+            "flutter-bridge-invalid-request",
+            format!("invalid compact core request: {error}"),
+        )
+    })?;
+    Ok(CoreCallRequest::new(
+        request_id,
+        operit_link::CoreObjectPath {
+            segments: target_segments,
+        },
+        method_name,
+        args,
+    ))
 }
 
-/// Decodes and opens one local Link push stream.
-fn bridge_push_open(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
-    let request = match operit_link::decodeLink::<CorePushRequest>(request_bytes) {
-        Ok(value) => value,
-        Err(error) => {
-            return operit_link::encodeLink(CoreLinkError::internal(format!(
-                "invalid core push request: {error}"
-            )))
-            .expect("CoreLinkError must encode");
-        }
-    };
-    match handle.pushOpen(request) {
-        Ok(pushId) => operit_link::encodeLink(FlutterPushOpenResponse { pushId })
-            .expect("FlutterPushOpenResponse must encode"),
-        Err(error) => operit_link::encodeLink(error).expect("CoreLinkError must encode"),
+/// Decodes one compact native CoreProxy push-open request.
+fn decode_native_push_open_request(request_bytes: &[u8]) -> Result<CorePushRequest, CoreLinkError> {
+    let (request_id, target_segments, method_name): (String, Vec<String>, String) =
+        operit_link::decodeLink(request_bytes).map_err(|error| {
+            CoreLinkError::new(
+                "flutter-bridge-invalid-request",
+                format!("invalid compact push-open request: {error}"),
+            )
+        })?;
+    Ok(CorePushRequest::new(
+        request_id,
+        operit_link::CoreObjectPath {
+            segments: target_segments,
+        },
+        method_name,
+    ))
+}
+
+/// Decodes one compact native CoreProxy push item.
+fn decode_native_push_item(request_bytes: &[u8]) -> Result<CorePushItem, CoreLinkError> {
+    let (push_id, sequence, args): (String, u64, operit_link::CoreValue) =
+        operit_link::decodeLink(request_bytes).map_err(|error| {
+            CoreLinkError::new(
+                "flutter-bridge-invalid-request",
+                format!("invalid compact push item: {error}"),
+            )
+        })?;
+    Ok(CorePushItem {
+        pushId: push_id,
+        sequence,
+        args,
+    })
+}
+
+/// Decodes one compact native CoreProxy watch snapshot request.
+fn decode_native_watch_snapshot_request(
+    request_bytes: &[u8],
+) -> Result<CoreWatchRequest, CoreLinkError> {
+    let (request_id, target_segments, property_name, args): (
+        String,
+        Vec<String>,
+        String,
+        operit_link::CoreValue,
+    ) = operit_link::decodeLink(request_bytes).map_err(|error| {
+        CoreLinkError::new(
+            "flutter-bridge-invalid-request",
+            format!("invalid compact watch snapshot request: {error}"),
+        )
+    })?;
+    Ok(CoreWatchRequest::new(
+        request_id,
+        operit_link::CoreObjectPath {
+            segments: target_segments,
+        },
+        property_name,
+        args,
+    ))
+}
+
+/// Decodes one compact native CoreProxy watch stream open request.
+fn decode_native_watch_stream_request(
+    request_bytes: &[u8],
+) -> Result<(String, CoreWatchRequest), CoreLinkError> {
+    let (subscription_id, request_id, target_segments, property_name, args): (
+        String,
+        String,
+        Vec<String>,
+        String,
+        operit_link::CoreValue,
+    ) = operit_link::decodeLink(request_bytes).map_err(|error| {
+        CoreLinkError::new(
+            "flutter-bridge-invalid-request",
+            format!("invalid compact watch stream request: {error}"),
+        )
+    })?;
+    Ok((
+        subscription_id,
+        CoreWatchRequest::new(
+            request_id,
+            operit_link::CoreObjectPath {
+                segments: target_segments,
+            },
+            property_name,
+            args,
+        ),
+    ))
+}
+
+/// Encodes one compact native CoreProxy result without a field-name map.
+fn native_result_vec<T>(result: Result<T, CoreLinkError>) -> Vec<u8>
+where
+    T: Serialize,
+{
+    match result {
+        Ok(value) => operit_link::encodeLink((0u8, value))
+            .expect("compact native success response must encode"),
+        Err(error) => operit_link::encodeLink((
+            1u8,
+            error.code,
+            error.message,
+            error.details,
+            error
+                .location
+                .map(|location| (location.file, location.line, location.column)),
+            error.backtrace,
+        ))
+        .expect("compact native error response must encode"),
     }
 }
 
-/// Decodes and dispatches one native Link push item.
+/// Encodes one compact native CoreProxy error result.
+fn native_result_error_vec(code: &str, message: impl Into<String>) -> Vec<u8> {
+    native_result_vec(Err::<(), _>(CoreLinkError::new(code, message.into())))
+}
+
+/// Encodes one compact native CoreProxy watch channel event.
+fn native_watch_event_vec(subscription_id: &str, event: CoreEvent) -> Vec<u8> {
+    operit_link::encodeLink((subscription_id, native_watch_event_payload(event)))
+        .expect("compact native watch event must encode")
+}
+
+/// Converts one CoreProxy event into its compact native payload tuple.
+fn native_watch_event_payload(
+    event: CoreEvent,
+) -> (
+    Option<String>,
+    Vec<String>,
+    String,
+    &'static str,
+    operit_link::CoreValue,
+) {
+    let CoreEvent {
+        requestId,
+        targetPath,
+        propertyName,
+        kind,
+        value,
+    } = event;
+    (
+        requestId.map(|request_id| request_id.0),
+        targetPath.segments,
+        propertyName,
+        native_event_kind_name(kind),
+        value,
+    )
+}
+
+/// Converts one native CoreProxy event kind into its direct wire literal.
+fn native_event_kind_name(kind: CoreEventKind) -> &'static str {
+    match kind {
+        CoreEventKind::Snapshot => "Snapshot",
+        CoreEventKind::Changed => "Changed",
+        CoreEventKind::Completed => "Completed",
+    }
+}
+
+#[cfg(test)]
+mod native_call_codec_tests {
+    use super::*;
+
+    /// Verifies the compact request tuple decodes without a Link envelope map.
+    #[test]
+    fn decodes_compact_request_tuple() {
+        let bytes = operit_link::encodeLink((
+            "request-1",
+            vec!["preferences", "cardManager"],
+            "getCards",
+            operit_link::CoreValue::Bool(true),
+        ))
+        .expect("compact request must encode");
+
+        let request = decode_native_call_request(&bytes).expect("compact request must decode");
+
+        assert_eq!(request.requestId.0, "request-1");
+        assert_eq!(
+            request.targetPath.segments,
+            vec!["preferences", "cardManager"]
+        );
+        assert_eq!(request.methodName, "getCards");
+        assert_eq!(request.args, operit_link::CoreValue::Bool(true));
+    }
+
+    /// Verifies every local stream request decodes from a compact tuple.
+    #[test]
+    fn decodes_compact_push_and_watch_tuples() {
+        let push_open = operit_link::encodeLink(("push-1", vec!["runtime", "browser"], "interact"))
+            .expect("compact push open must encode");
+        let push_request =
+            decode_native_push_open_request(&push_open).expect("compact push open must decode");
+        assert_eq!(push_request.requestId.0, "push-1");
+        assert_eq!(push_request.targetPath.segments, vec!["runtime", "browser"]);
+        assert_eq!(push_request.methodName, "interact");
+
+        let push_item = operit_link::encodeLink((
+            "push-1",
+            2u64,
+            operit_link::CoreValue::String("click".to_string()),
+        ))
+        .expect("compact push item must encode");
+        let item = decode_native_push_item(&push_item).expect("compact push item must decode");
+        assert_eq!(item.pushId, "push-1");
+        assert_eq!(item.sequence, 2);
+        assert_eq!(
+            item.args,
+            operit_link::CoreValue::String("click".to_string())
+        );
+
+        let snapshot = operit_link::encodeLink((
+            "watch-1",
+            vec!["preferences", "cardManager"],
+            "cards",
+            operit_link::CoreValue::Null,
+        ))
+        .expect("compact watch snapshot must encode");
+        let snapshot_request = decode_native_watch_snapshot_request(&snapshot)
+            .expect("compact watch snapshot must decode");
+        assert_eq!(snapshot_request.requestId.0, "watch-1");
+        assert_eq!(snapshot_request.propertyName, "cards");
+
+        let stream = operit_link::encodeLink((
+            "subscription-1",
+            "watch-1",
+            vec!["preferences", "cardManager"],
+            "cards",
+            operit_link::CoreValue::Null,
+        ))
+        .expect("compact watch stream must encode");
+        let (subscription_id, stream_request) =
+            decode_native_watch_stream_request(&stream).expect("compact watch stream must decode");
+        assert_eq!(subscription_id, "subscription-1");
+        assert_eq!(stream_request.requestId.0, "watch-1");
+        assert_eq!(stream_request.propertyName, "cards");
+    }
+
+    /// Verifies the compact success response retains its status and value fields.
+    #[test]
+    fn encodes_compact_success_tuple() {
+        let bytes = native_result_vec(Ok(operit_link::CoreValue::String("ready".to_string())));
+
+        let (status, value): (u8, operit_link::CoreValue) =
+            operit_link::decodeLink(&bytes).expect("compact success must decode");
+
+        assert_eq!(status, 0);
+        assert_eq!(value, operit_link::CoreValue::String("ready".to_string()));
+    }
+
+    /// Verifies the compact error response retains every error field without a map envelope.
+    #[test]
+    fn encodes_compact_error_tuple() {
+        let bytes = native_result_vec(Err::<(), _>(CoreLinkError {
+            code: "CARD_NOT_FOUND".to_string(),
+            message: "Card does not exist".to_string(),
+            details: Some(operit_link::CoreValue::String("card-1".to_string())),
+            location: Some(operit_link::protocol::CoreLinkErrorLocation {
+                file: "CharacterCardManager.rs".to_string(),
+                line: 28,
+                column: 7,
+            }),
+            backtrace: Some("native backtrace".to_string()),
+        }));
+
+        let (status, code, message, details, location, backtrace): (
+            u8,
+            String,
+            String,
+            Option<operit_link::CoreValue>,
+            Option<(String, u32, u32)>,
+            Option<String>,
+        ) = operit_link::decodeLink(&bytes).expect("compact error must decode");
+
+        assert_eq!(status, 1);
+        assert_eq!(code, "CARD_NOT_FOUND");
+        assert_eq!(message, "Card does not exist");
+        assert_eq!(
+            details,
+            Some(operit_link::CoreValue::String("card-1".to_string()))
+        );
+        assert_eq!(
+            location,
+            Some(("CharacterCardManager.rs".to_string(), 28, 7))
+        );
+        assert_eq!(backtrace.as_deref(), Some("native backtrace"));
+    }
+
+    /// Verifies watch snapshots and channel events keep fixed tuple field order.
+    #[test]
+    fn encodes_compact_watch_tuples() {
+        let event = CoreEvent {
+            requestId: Some(operit_link::CoreRequestId::new("watch-1")),
+            targetPath: operit_link::CoreObjectPath {
+                segments: vec!["preferences".to_string(), "cardManager".to_string()],
+            },
+            propertyName: "cards".to_string(),
+            kind: CoreEventKind::Snapshot,
+            value: operit_link::CoreValue::String("card-1".to_string()),
+        };
+        let snapshot = native_result_vec(Ok(native_watch_event_payload(event.clone())));
+        let (status, payload): (
+            u8,
+            (
+                Option<String>,
+                Vec<String>,
+                String,
+                String,
+                operit_link::CoreValue,
+            ),
+        ) = operit_link::decodeLink(&snapshot).expect("compact watch snapshot must decode");
+        assert_eq!(status, 0);
+        assert_eq!(payload.0.as_deref(), Some("watch-1"));
+        assert_eq!(payload.1, vec!["preferences", "cardManager"]);
+        assert_eq!(payload.2, "cards");
+        assert_eq!(payload.3, "Snapshot");
+
+        let frame = native_watch_event_vec("subscription-1", event);
+        let (subscription_id, frame_payload): (
+            String,
+            (
+                Option<String>,
+                Vec<String>,
+                String,
+                String,
+                operit_link::CoreValue,
+            ),
+        ) = operit_link::decodeLink(&frame).expect("compact watch frame must decode");
+        assert_eq!(subscription_id, "subscription-1");
+        assert_eq!(frame_payload.0.as_deref(), Some("watch-1"));
+        assert_eq!(frame_payload.3, "Snapshot");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+/// Decodes and dispatches one compact wasm CoreProxy call.
+async fn bridge_native_call_async(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
+    let request = match decode_native_call_request(request_bytes) {
+        Ok(request) => request,
+        Err(error) => return native_result_vec(Err::<operit_link::CoreValue, _>(error)),
+    };
+    native_result_vec(handle.call(request).await.result)
+}
+
+/// Decodes and opens one compact native CoreProxy push stream.
+fn bridge_push_open(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
+    let request = match decode_native_push_open_request(request_bytes) {
+        Ok(request) => request,
+        Err(error) => return native_result_vec(Err::<String, _>(error)),
+    };
+    native_result_vec(handle.pushOpen(request))
+}
+
+/// Decodes and dispatches one compact native CoreProxy push item.
 #[cfg(not(target_arch = "wasm32"))]
 fn bridge_push_item(handle: &OperitFlutterBridge, item_bytes: &[u8]) -> Vec<u8> {
-    let item = match operit_link::decodeLink::<CorePushItem>(item_bytes) {
-        Ok(value) => value,
-        Err(error) => {
-            return operit_link::encodeLink(CoreLinkError::internal(format!(
-                "invalid core push item: {error}"
-            )))
-            .expect("CoreLinkError must encode");
-        }
+    let item = match decode_native_push_item(item_bytes) {
+        Ok(item) => item,
+        Err(error) => return native_result_vec(Err::<(), _>(error)),
     };
-    match handle.pushItem(item) {
-        Ok(response) => {
-            operit_link::encodeLink(response).expect("FlutterPushItemResponse must encode")
-        }
-        Err(error) => operit_link::encodeLink(error).expect("CoreLinkError must encode"),
-    }
+    native_result_vec(handle.pushItem(item))
 }
 
-/// Decodes and dispatches one wasm Link push item.
+/// Decodes and dispatches one compact wasm CoreProxy push item.
 #[cfg(target_arch = "wasm32")]
 async fn bridge_push_item_async(handle: &OperitFlutterBridge, item_bytes: &[u8]) -> Vec<u8> {
-    let item = match operit_link::decodeLink::<CorePushItem>(item_bytes) {
-        Ok(value) => value,
-        Err(error) => {
-            return operit_link::encodeLink(CoreLinkError::internal(format!(
-                "invalid core push item: {error}"
-            )))
-            .expect("CoreLinkError must encode");
-        }
+    let item = match decode_native_push_item(item_bytes) {
+        Ok(item) => item,
+        Err(error) => return native_result_vec(Err::<(), _>(error)),
     };
-    match handle.pushItem(item).await {
-        Ok(response) => {
-            operit_link::encodeLink(response).expect("FlutterPushItemResponse must encode")
-        }
-        Err(error) => operit_link::encodeLink(error).expect("CoreLinkError must encode"),
-    }
+    native_result_vec(handle.pushItem(item).await)
 }
 
 #[no_mangle]
@@ -2329,7 +2597,10 @@ pub unsafe extern "C" fn operit_flutter_bridge_push_open(
     request_len: usize,
 ) -> OperitByteBuffer {
     if handle.is_null() || request_ptr.is_null() {
-        return link_error_buffer("runtime push open arguments are invalid");
+        return bytes_to_buffer(native_result_error_vec(
+            "flutter-bridge-invalid-request",
+            "runtime push open arguments are invalid",
+        ));
     }
     bytes_to_buffer(bridge_push_open(
         &*handle,
@@ -2345,7 +2616,10 @@ pub unsafe extern "C" fn operit_flutter_bridge_push_item(
     item_len: usize,
 ) -> OperitByteBuffer {
     if handle.is_null() || item_ptr.is_null() {
-        return link_error_buffer("runtime push item arguments are invalid");
+        return bytes_to_buffer(native_result_error_vec(
+            "flutter-bridge-invalid-request",
+            "runtime push item arguments are invalid",
+        ));
     }
     bytes_to_buffer(bridge_push_item(
         &*handle,
@@ -2359,21 +2633,21 @@ pub unsafe extern "C" fn operit_flutter_bridge_push_close(
     push_id_ptr: *const c_char,
 ) -> OperitByteBuffer {
     if handle.is_null() || push_id_ptr.is_null() {
-        return link_error_buffer("runtime push close arguments are invalid");
+        return bytes_to_buffer(native_result_error_vec(
+            "flutter-bridge-invalid-request",
+            "runtime push close arguments are invalid",
+        ));
     }
     let pushId = match CStr::from_ptr(push_id_ptr).to_str() {
         Ok(value) => value,
-        Err(error) => return link_error_buffer(error.to_string()),
-    };
-    match (*handle).pushClose(pushId) {
-        Ok(()) => bytes_to_buffer(
-            operit_link::encodeLink(BTreeMap::<String, operit_link::CoreValue>::new())
-                .expect("push close response must encode"),
-        ),
         Err(error) => {
-            bytes_to_buffer(operit_link::encodeLink(error).expect("CoreLinkError must encode"))
+            return bytes_to_buffer(native_result_error_vec(
+                "flutter-bridge-invalid-request",
+                error.to_string(),
+            ));
         }
-    }
+    };
+    bytes_to_buffer(native_result_vec((*handle).pushClose(pushId)))
 }
 
 #[no_mangle]
@@ -2383,10 +2657,16 @@ pub unsafe extern "C" fn operit_flutter_bridge_watch_snapshot(
     request_len: usize,
 ) -> OperitByteBuffer {
     if handle.is_null() {
-        return link_error_buffer("runtime bridge is not initialized");
+        return bytes_to_buffer(native_result_error_vec(
+            "flutter-bridge-null",
+            "runtime bridge is not initialized",
+        ));
     }
     if request_ptr.is_null() {
-        return link_error_buffer("runtime request pointer is null");
+        return bytes_to_buffer(native_result_error_vec(
+            "flutter-bridge-null-request",
+            "runtime request pointer is null",
+        ));
     }
     let request_bytes = std::slice::from_raw_parts(request_ptr, request_len);
     bytes_to_buffer(bridge_watch_snapshot(&mut *handle, request_bytes))
@@ -2400,57 +2680,43 @@ pub unsafe extern "C" fn operit_flutter_bridge_watch_stream(
     request_len: usize,
 ) -> OperitByteBuffer {
     if handle.is_null() {
-        return link_error_buffer("runtime bridge is not initialized");
+        return bytes_to_buffer(native_result_error_vec(
+            "flutter-bridge-null",
+            "runtime bridge is not initialized",
+        ));
     }
     if request_ptr.is_null() {
-        return link_error_buffer("runtime request pointer is null");
+        return bytes_to_buffer(native_result_error_vec(
+            "flutter-bridge-null-request",
+            "runtime request pointer is null",
+        ));
     }
     let request_bytes = std::slice::from_raw_parts(request_ptr, request_len);
     bytes_to_buffer(bridge_watch_stream(&mut *handle, request_bytes))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+/// Decodes and opens one compact native CoreProxy watch stream.
 fn bridge_watch_stream(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
-    let envelope: FlutterWatchChannelOpenEnvelope = match operit_link::decodeLink(request_bytes) {
+    let (subscription_id, request) = match decode_native_watch_stream_request(request_bytes) {
         Ok(request) => request,
-        Err(error) => {
-            return operit_link::encodeLink(CoreLinkError::internal(format!(
-                "invalid core watch open envelope: {error}"
-            )))
-            .expect("CoreLinkError must encode");
-        }
+        Err(error) => return native_result_vec(Err::<String, _>(error)),
     };
-    match handle.watchStream(envelope.subscriptionId, envelope.request) {
-        Ok(subscriptionId) => {
-            operit_link::encodeLink(&FlutterWatchChannelOpenResponse { subscriptionId })
-                .expect("FlutterWatchChannelOpenResponse must encode")
-        }
-        Err(error) => operit_link::encodeLink(&error).expect("CoreLinkError must encode"),
-    }
+    native_result_vec(handle.watchStream(subscription_id, request))
 }
 
 #[cfg(target_arch = "wasm32")]
+/// Decodes and opens one compact wasm CoreProxy watch stream.
 fn bridge_watch_stream_wasm(
     handle: &OperitFlutterBridge,
     request_bytes: &[u8],
     onEvent: Function,
 ) -> Vec<u8> {
-    let envelope: FlutterWatchChannelOpenEnvelope = match operit_link::decodeLink(request_bytes) {
+    let (subscription_id, request) = match decode_native_watch_stream_request(request_bytes) {
         Ok(request) => request,
-        Err(error) => {
-            return operit_link::encodeLink(CoreLinkError::internal(format!(
-                "invalid core watch open envelope: {error}"
-            )))
-            .expect("CoreLinkError must encode");
-        }
+        Err(error) => return native_result_vec(Err::<String, _>(error)),
     };
-    match handle.watchStream(envelope.subscriptionId, envelope.request, onEvent) {
-        Ok(subscriptionId) => {
-            operit_link::encodeLink(&FlutterWatchChannelOpenResponse { subscriptionId })
-                .expect("FlutterWatchChannelOpenResponse must encode")
-        }
-        Err(error) => operit_link::encodeLink(&error).expect("CoreLinkError must encode"),
-    }
+    native_result_vec(handle.watchStream(subscription_id, request, onEvent))
 }
 
 #[no_mangle]
@@ -2473,20 +2739,28 @@ pub unsafe extern "C" fn operit_flutter_bridge_close_watch_stream(
     subscription_ptr: *const c_char,
 ) -> OperitByteBuffer {
     if handle.is_null() {
-        return link_error_buffer("runtime bridge is not initialized");
+        return bytes_to_buffer(native_result_error_vec(
+            "flutter-bridge-null",
+            "runtime bridge is not initialized",
+        ));
     }
     if subscription_ptr.is_null() {
-        return link_error_buffer("watch subscription pointer is null");
+        return bytes_to_buffer(native_result_error_vec(
+            "flutter-bridge-null-request",
+            "watch subscription pointer is null",
+        ));
     }
-    if let Ok(subscriptionId) = CStr::from_ptr(subscription_ptr).to_str() {
-        (*handle).closeWatchStream(subscriptionId);
-    }
-    bytes_to_buffer(
-        operit_link::encodeLink(
-            std::collections::BTreeMap::<String, operit_link::CoreValue>::new(),
-        )
-        .expect("close response must encode"),
-    )
+    let subscription_id = match CStr::from_ptr(subscription_ptr).to_str() {
+        Ok(value) => value,
+        Err(error) => {
+            return bytes_to_buffer(native_result_error_vec(
+                "flutter-bridge-invalid-request",
+                error.to_string(),
+            ));
+        }
+    };
+    (*handle).closeWatchStream(subscription_id);
+    bytes_to_buffer(native_result_vec(Ok::<(), CoreLinkError>(())))
 }
 
 #[no_mangle]
@@ -2656,20 +2930,17 @@ pub unsafe extern "C" fn operit_flutter_bridge_stop_web_access_server(
     string_to_ptr("{\"ok\":true}")
 }
 
+/// Decodes and reads one compact native CoreProxy watch snapshot.
 fn bridge_watch_snapshot(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
-    let request: CoreWatchRequest = match operit_link::decodeLink(request_bytes) {
+    let request = match decode_native_watch_snapshot_request(request_bytes) {
         Ok(request) => request,
-        Err(error) => {
-            return operit_link::encodeLink(CoreLinkError::internal(format!(
-                "invalid core watch request: {error}"
-            )))
-            .expect("CoreLinkError must encode");
-        }
+        Err(error) => return native_result_vec(Err::<CoreEvent, _>(error)),
     };
-    match handle.watchSnapshot(request) {
-        Ok(event) => operit_link::encodeLink(&event).expect("CoreEvent must encode"),
-        Err(error) => operit_link::encodeLink(&error).expect("CoreLinkError must encode"),
-    }
+    native_result_vec(
+        handle
+            .watchSnapshot(request)
+            .map(native_watch_event_payload),
+    )
 }
 
 #[no_mangle]
@@ -2875,7 +3146,7 @@ impl OperitFlutterBridgeWasm {
     }
 
     pub async fn call(&self, request: &[u8]) -> Vec<u8> {
-        bridge_call_async(&self.inner, request).await
+        bridge_native_call_async(&self.inner, request).await
     }
 
     /// Opens one wasm Link push stream.
@@ -2893,11 +3164,7 @@ impl OperitFlutterBridgeWasm {
     /// Closes one wasm Link push stream.
     #[allow(non_snake_case)]
     pub fn pushClose(&self, pushId: &str) -> Vec<u8> {
-        match self.inner.pushClose(pushId) {
-            Ok(()) => operit_link::encodeLink(BTreeMap::<String, operit_link::CoreValue>::new())
-                .expect("push close response must encode"),
-            Err(error) => operit_link::encodeLink(error).expect("CoreLinkError must encode"),
-        }
+        native_result_vec(self.inner.pushClose(pushId))
     }
 
     #[allow(non_snake_case)]
@@ -2913,34 +3180,8 @@ impl OperitFlutterBridgeWasm {
     #[allow(non_snake_case)]
     pub fn closeWatchStream(&self, subscriptionId: &str) -> Vec<u8> {
         self.inner.closeWatchStream(subscriptionId);
-        operit_link::encodeLink(std::collections::BTreeMap::<String, operit_link::CoreValue>::new())
-            .expect("close response must encode")
+        native_result_vec(Ok::<(), CoreLinkError>(()))
     }
-}
-
-/// Encodes a failed call response into an owned native byte buffer.
-fn call_error_bytes(requestId: impl Into<String>, message: impl Into<String>) -> OperitByteBuffer {
-    bytes_to_buffer(call_error_vec(requestId, message))
-}
-
-/// Encodes a failed call response into Link bytes.
-fn call_error_vec(requestId: impl Into<String>, message: impl Into<String>) -> Vec<u8> {
-    let response = CoreCallResponse::err(
-        CoreRequestId::new(requestId),
-        CoreLinkError::internal(message.into()),
-    );
-    operit_link::encodeLink(response).expect("CoreCallResponse must encode")
-}
-
-/// Encodes a Link error into an owned native byte buffer.
-fn link_error_buffer(message: impl Into<String>) -> OperitByteBuffer {
-    bytes_to_buffer(link_error_vec(message))
-}
-
-/// Encodes an internal Link error into protocol bytes.
-fn link_error_vec(message: impl Into<String>) -> Vec<u8> {
-    operit_link::encodeLink(CoreLinkError::internal(message.into()))
-        .expect("CoreLinkError must encode")
 }
 
 /// Transfers ownership of a Rust byte vector to the C ABI.
@@ -3103,10 +3344,13 @@ mod android_jni {
         handle: jlong,
         request: JByteArray,
     ) -> jbyteArray {
-        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_mut() else {
+        let Some(bridge) = (handle as *const OperitFlutterBridge).as_ref() else {
             return new_java_bytes(
                 &mut env,
-                &call_error_vec("flutter-bridge-null", "runtime bridge is not initialized"),
+                &native_result_error_vec(
+                    "flutter-bridge-null",
+                    "runtime bridge is not initialized",
+                ),
             );
         };
         let bytes = match env.convert_byte_array(request) {
@@ -3114,14 +3358,14 @@ mod android_jni {
             Err(error) => {
                 return new_java_bytes(
                     &mut env,
-                    &call_error_vec(
+                    &native_result_error_vec(
                         "flutter-bridge-invalid-request",
                         format!("invalid JNI request bytes: {error}"),
                     ),
                 );
             }
         };
-        new_java_bytes(&mut env, &bridge_call(bridge, &bytes))
+        new_java_bytes(&mut env, &bridge_native_call(bridge, &bytes))
     }
 
     #[no_mangle]
@@ -3134,12 +3378,20 @@ mod android_jni {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
             return new_java_bytes(
                 &mut env,
-                &link_error_vec("runtime bridge is not initialized"),
+                &native_result_error_vec(
+                    "flutter-bridge-null",
+                    "runtime bridge is not initialized",
+                ),
             );
         };
         let bytes = match env.convert_byte_array(request) {
             Ok(value) => value,
-            Err(error) => return new_java_bytes(&mut env, &link_error_vec(error.to_string())),
+            Err(error) => {
+                return new_java_bytes(
+                    &mut env,
+                    &native_result_error_vec("flutter-bridge-invalid-request", error.to_string()),
+                );
+            }
         };
         new_java_bytes(&mut env, &bridge_push_open(bridge, &bytes))
     }
@@ -3154,12 +3406,20 @@ mod android_jni {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
             return new_java_bytes(
                 &mut env,
-                &link_error_vec("runtime bridge is not initialized"),
+                &native_result_error_vec(
+                    "flutter-bridge-null",
+                    "runtime bridge is not initialized",
+                ),
             );
         };
         let bytes = match env.convert_byte_array(item) {
             Ok(value) => value,
-            Err(error) => return new_java_bytes(&mut env, &link_error_vec(error.to_string())),
+            Err(error) => {
+                return new_java_bytes(
+                    &mut env,
+                    &native_result_error_vec("flutter-bridge-invalid-request", error.to_string()),
+                );
+            }
         };
         new_java_bytes(&mut env, &bridge_push_item(bridge, &bytes))
     }
@@ -3174,18 +3434,22 @@ mod android_jni {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
             return new_java_bytes(
                 &mut env,
-                &link_error_vec("runtime bridge is not initialized"),
+                &native_result_error_vec(
+                    "flutter-bridge-null",
+                    "runtime bridge is not initialized",
+                ),
             );
         };
         let pushId = match env.get_string(&push_id) {
             Ok(value) => String::from(value),
-            Err(error) => return new_java_bytes(&mut env, &link_error_vec(error.to_string())),
+            Err(error) => {
+                return new_java_bytes(
+                    &mut env,
+                    &native_result_error_vec("flutter-bridge-invalid-request", error.to_string()),
+                );
+            }
         };
-        let response = match bridge.pushClose(&pushId) {
-            Ok(()) => operit_link::encodeLink(BTreeMap::<String, operit_link::CoreValue>::new())
-                .expect("push close response must encode"),
-            Err(error) => operit_link::encodeLink(error).expect("CoreLinkError must encode"),
-        };
+        let response = native_result_vec(bridge.pushClose(&pushId));
         new_java_bytes(&mut env, &response)
     }
 
@@ -3199,10 +3463,10 @@ mod android_jni {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_mut() else {
             return new_java_bytes(
                 &mut env,
-                &operit_link::encodeLink(CoreLinkError::internal(
+                &native_result_error_vec(
+                    "flutter-bridge-null",
                     "runtime bridge is not initialized",
-                ))
-                .expect("CoreLinkError must encode"),
+                ),
             );
         };
         let bytes = match env.convert_byte_array(request) {
@@ -3210,10 +3474,10 @@ mod android_jni {
             Err(error) => {
                 return new_java_bytes(
                     &mut env,
-                    &operit_link::encodeLink(CoreLinkError::internal(format!(
-                        "invalid JNI watch request bytes: {error}"
-                    )))
-                    .expect("CoreLinkError must encode"),
+                    &native_result_error_vec(
+                        "flutter-bridge-invalid-request",
+                        format!("invalid JNI watch request bytes: {error}"),
+                    ),
                 );
             }
         };
@@ -3230,10 +3494,10 @@ mod android_jni {
         let Some(bridge) = (handle as *mut OperitFlutterBridge).as_mut() else {
             return new_java_bytes(
                 &mut env,
-                &operit_link::encodeLink(CoreLinkError::internal(
+                &native_result_error_vec(
+                    "flutter-bridge-null",
                     "runtime bridge is not initialized",
-                ))
-                .expect("CoreLinkError must encode"),
+                ),
             );
         };
         let bytes = match env.convert_byte_array(request) {
@@ -3241,10 +3505,10 @@ mod android_jni {
             Err(error) => {
                 return new_java_bytes(
                     &mut env,
-                    &operit_link::encodeLink(CoreLinkError::internal(format!(
-                        "invalid JNI watch request bytes: {error}"
-                    )))
-                    .expect("CoreLinkError must encode"),
+                    &native_result_error_vec(
+                        "flutter-bridge-invalid-request",
+                        format!("invalid JNI watch request bytes: {error}"),
+                    ),
                 );
             }
         };
@@ -3273,18 +3537,26 @@ mod android_jni {
         handle: jlong,
         subscriptionId: JString,
     ) -> jbyteArray {
-        if let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() {
-            if let Ok(subscriptionId) = env.get_string(&subscriptionId) {
-                bridge.closeWatchStream(&String::from(subscriptionId));
+        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_ref() else {
+            return new_java_bytes(
+                &mut env,
+                &native_result_error_vec(
+                    "flutter-bridge-null",
+                    "runtime bridge is not initialized",
+                ),
+            );
+        };
+        let subscription_id = match env.get_string(&subscriptionId) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_bytes(
+                    &mut env,
+                    &native_result_error_vec("flutter-bridge-invalid-request", error.to_string()),
+                );
             }
-        }
-        new_java_bytes(
-            &mut env,
-            &operit_link::encodeLink(
-                std::collections::BTreeMap::<String, operit_link::CoreValue>::new(),
-            )
-            .expect("close response must encode"),
-        )
+        };
+        bridge.closeWatchStream(&subscription_id);
+        new_java_bytes(&mut env, &native_result_vec(Ok::<(), CoreLinkError>(())))
     }
 
     #[no_mangle]
