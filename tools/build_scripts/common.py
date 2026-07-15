@@ -267,6 +267,11 @@ def prepare_fvm_flutter_sdk() -> None:
         return
     fvm = require_command("fvm")
     run([fvm, "install", "--skip-pub-get"], cwd=FLUTTER_APP_DIR)
+    executable_name = "flutter.bat" if host_platform() == "windows" else "flutter"
+    executable = FLUTTER_APP_DIR / ".fvm" / "flutter_sdk" / "bin" / executable_name
+    if not executable.is_file():
+        raise RuntimeError(f"FVM SDK command not found: {executable}")
+    run([str(executable), "precache", "--web"], cwd=FLUTTER_APP_DIR)
     _fvm_sdk_prepared = True
 
 
