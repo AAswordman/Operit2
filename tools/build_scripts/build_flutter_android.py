@@ -37,6 +37,14 @@ def ensure_android_signing() -> None:
     write_properties(ANDROID_LOCAL_PROPERTIES, local)
 
 
+# Configures Android Gradle to use the official Flutter SDK selected by FVM.
+def configure_android_flutter_sdk(flutter: str) -> None:
+    flutter_sdk = Path(flutter).parent.parent
+    local = read_properties(ANDROID_LOCAL_PROPERTIES)
+    local["flutter.sdk"] = str(flutter_sdk)
+    write_properties(ANDROID_LOCAL_PROPERTIES, local)
+
+
 # Reads the Android release keystore path from signing properties.
 def android_release_store_file(signing: dict[str, str], signing_properties: Path) -> Path:
     key = "RELEASE_STORE_FILE"
@@ -66,10 +74,12 @@ def main() -> int:
     prepare_web_access_embedded_assets()
     if not args.skip_signing:
         ensure_android_signing()
+    flutter = flutter_command()
+    configure_android_flutter_sdk(flutter)
     dart_pub_get(enforce_lockfile=args.enforce_lockfile)
     run(
         [
-            flutter_command(),
+            flutter,
             "build",
             "apk",
             "--release",
