@@ -35,7 +35,11 @@ RELEASE_DIR = REPO_ROOT / "tools" / "release"
 DIST_DIR = RELEASE_DIR / "dist"
 ANDROID_DIR = FLUTTER_APP_DIR / "android"
 ANDROID_LOCAL_PROPERTIES = ANDROID_DIR / "local.properties"
+OHOS_FVM_CACHE_DIR = REPO_ROOT / ".ci-tools" / "fvm-ohos"
+OHOS_FLUTTER_REF = "8c403dd30158e63b8efccf988b129093820886c9"
+OHOS_FLUTTER_GIT_URL = "https://gitcode.com/openharmony-sig/flutter_flutter.git"
 _fvm_sdk_prepared = False
+_ohos_fvm_sdk_prepared = False
 
 
 def run(command: list[str | Path], cwd: Path = REPO_ROOT, env: dict[str, str] | None = None) -> None:
@@ -293,6 +297,48 @@ def flutter_command() -> str:
 def dart_command() -> str:
     """Returns Dart from the SDK pinned by the app FVM configuration."""
     return fvm_sdk_command("dart")
+
+
+def ohos_fvm_env(env: dict[str, str]) -> dict[str, str]:
+    """Builds the isolated FVM environment for OpenHarmony Flutter commands."""
+    configured = env.copy()
+    configured["FLUTTER_GIT_URL"] = OHOS_FLUTTER_GIT_URL
+    configured["FVM_CACHE_PATH"] = str(OHOS_FVM_CACHE_DIR)
+    return configured
+
+
+def prepare_ohos_fvm_flutter_sdk(env: dict[str, str]) -> None:
+    """Installs and precaches the fixed OpenHarmony Flutter SDK through FVM."""
+    global _ohos_fvm_sdk_prepared
+    if _ohos_fvm_sdk_prepared:
+        return
+    fvm = require_command("fvm")
+    run(
+        [fvm, "spawn", OHOS_FLUTTER_REF, "precache", "--ohos"],
+        cwd=FLUTTER_APP_DIR,
+        env=ohos_fvm_env(env),
+    )
+    executable_name = "flutter.bat" if host_platform() == "windows" else "flutter"
+    executable = ohos_fvm_flutter_sdk_dir() / "bin" / executable_name
+    if not executable.is_file():
+        raise RuntimeError(f"OpenHarmony FVM SDK command not found: {executable}")
+    _ohos_fvm_sdk_prepared = True
+
+
+def ohos_fvm_flutter_sdk_dir() -> Path:
+    """Returns the isolated FVM cache directory for the OpenHarmony Flutter SDK."""
+    return OHOS_FVM_CACHE_DIR / "versions" / OHOS_FLUTTER_REF
+
+
+def run_ohos_fvm_flutter(args: list[str], env: dict[str, str]) -> None:
+    """Runs one OpenHarmony Flutter command through its dedicated FVM SDK."""
+    prepare_ohos_fvm_flutter_sdk(env)
+    fvm = require_command("fvm")
+    run(
+        [fvm, "spawn", OHOS_FLUTTER_REF, *args],
+        cwd=FLUTTER_APP_DIR,
+        env=ohos_fvm_env(env),
+    )
 
 
 def node_package_command(name: str) -> str:

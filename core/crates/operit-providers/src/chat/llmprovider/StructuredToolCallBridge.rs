@@ -578,9 +578,7 @@ impl StructuredToolCallBridge {
         let mut schema = Map::new();
         schema.insert("type".to_string(), json!("object"));
         schema.insert("properties".to_string(), Value::Object(properties));
-        if !required.is_empty() {
-            schema.insert("required".to_string(), Value::Array(required));
-        }
+        schema.insert("required".to_string(), Value::Array(required));
         Value::Object(schema)
     }
 
