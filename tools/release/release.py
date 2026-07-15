@@ -1358,6 +1358,7 @@ def main():
     parser.add_argument("--apple-builder", default="", help="macOS SSH target used to build macOS assets")
     parser.add_argument("--apple-remote-root", default="operit2-apple-release")
     parser.add_argument("--apple-include-ios", action="store_true", help="Build the unsigned iOS app package on the Apple worker.")
+    parser.add_argument("--apple-optional", action="store_true", help="Continue when the Apple SSH worker is unreachable.")
     parser.add_argument("--cli-arches", default=CliArchMode.HOST.value, choices=[item.value for item in CliArchMode],
                         help="CLI target architectures: host (current only) or all (all desktop arches)")
     args = parser.parse_args()
@@ -1373,6 +1374,8 @@ def main():
         raise RuntimeError("--prerelease was set for a stable release version")
     if args.apple_include_ios and not args.apple_builder:
         raise RuntimeError("--apple-include-ios requires --apple-builder")
+    if args.apple_optional and not args.apple_builder:
+        raise RuntimeError("--apple-optional requires --apple-builder")
     products = products_for_scope(args.scope, args.products)
 
     publish_auth = None
@@ -1405,15 +1408,20 @@ def main():
         )
 
     if args.apple_builder:
-        build_remote_apple(
-            products,
-            platform_version.build_name,
-            platform_version.build_number,
-            args.cli_arches,
-            args.apple_builder,
-            args.apple_remote_root,
-            args.apple_include_ios,
-        )
+        try:
+            build_remote_apple(
+                products,
+                platform_version.build_name,
+                platform_version.build_number,
+                args.cli_arches,
+                args.apple_builder,
+                args.apple_remote_root,
+                args.apple_include_ios,
+            )
+        except subprocess.CalledProcessError as error:
+            if not args.apple_optional or error.returncode != 255:
+                raise
+            print("Apple SSH worker is unreachable; skipping Apple release assets", flush=True)
 
     next_platform_version = None
     if ReleaseProduct.APP in products and not args.build_only:

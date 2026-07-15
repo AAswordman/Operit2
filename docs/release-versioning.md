@@ -199,6 +199,10 @@ building, so the worker's existing Operit2 checkout is not used. After the
 remote build finishes, its archives are copied back into the local
 `tools/release/dist` directory before the GitHub Release upload begins.
 
+Use `--apple-optional` to continue the non-Apple release builds when the SSH
+worker is unreachable. It does not ignore Apple build failures after a worker
+connection has been established.
+
 The iOS package is opt-in because it requires the iOS Xcode platform component:
 
 ```powershell
