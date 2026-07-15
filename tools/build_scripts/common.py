@@ -413,6 +413,9 @@ def prepare_python_command() -> None:
     else:
         target = REPO_ROOT / ".venv" / "bin" / "python"
         target.parent.mkdir(parents=True, exist_ok=True)
+        if python.absolute() == target.absolute():
+            run([str(python), "--version"])
+            return
         if target.exists() or target.is_symlink():
             target.unlink()
         target.symlink_to(python)
