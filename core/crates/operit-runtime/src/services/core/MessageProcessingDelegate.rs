@@ -616,28 +616,34 @@ impl MessageProcessingDelegate {
         aiMessage
     }
 
-    /// Persists the current streaming response snapshot for one chat.
+    /// Claims the next streaming persistence interval before allocating a snapshot.
     #[allow(non_snake_case)]
-    fn persistStreamingSnapshot(
-        chatHistoryDelegate: &mut ChatHistoryDelegate,
+    fn claimStreamingSnapshot(
         turnOptions: &ChatTurnOptions,
-        chatId: &str,
-        aiMessage: &ChatMessage,
-        contentSnapshot: String,
         lastStreamingPersistAt: &Arc<Mutex<i64>>,
-    ) {
+    ) -> bool {
         if !turnOptions.persistTurn {
-            return;
+            return false;
         }
         let now = messageTimingNow().startedAtMs as i64;
         let mut lastPersistAt = lastStreamingPersistAt
             .lock()
             .expect("streaming persist timestamp mutex poisoned");
         if now - *lastPersistAt < STREAM_PERSIST_INTERVAL_MS {
-            return;
+            return false;
         }
         *lastPersistAt = now;
-        drop(lastPersistAt);
+        true
+    }
+
+    /// Persists one already-claimed streaming response snapshot for a chat.
+    #[allow(non_snake_case)]
+    fn persistStreamingSnapshot(
+        chatHistoryDelegate: &mut ChatHistoryDelegate,
+        chatId: &str,
+        aiMessage: &ChatMessage,
+        contentSnapshot: String,
+    ) {
         chatHistoryDelegate.addMessageToChat(
             ChatMessage {
                 content: contentSnapshot,
@@ -1178,22 +1184,30 @@ impl MessageProcessingDelegate {
                 let mut events = workerEventCollector;
                 events.collect(&mut |event| match event.event_type {
                     TextStreamEventType::Savepoint => {
-                        if let Ok(mut tracker) = workerEventTracker.lock() {
-                            tracker.savepoint(&event.id);
-                        }
+                        workerEventTracker
+                            .lock()
+                            .expect("revision tracker mutex poisoned")
+                            .savepoint(&event.id);
                     }
                     TextStreamEventType::Rollback => {
-                        if let Ok(mut tracker) = workerEventTracker.lock() {
-                            if let Some(snapshot) = tracker.rollback(&event.id) {
-                                MessageProcessingDelegate::persistStreamingSnapshot(
-                                    &mut workerEventChatHistoryDelegate,
-                                    &workerEventTurnOptions,
-                                    &workerEventChatId,
-                                    &workerEventAiMessage,
-                                    snapshot,
-                                    &workerEventSnapshotPersistAt,
-                                );
-                            }
+                        let mut tracker = workerEventTracker
+                            .lock()
+                            .expect("revision tracker mutex poisoned");
+                        let rolled_back = tracker.rollback(&event.id).is_some();
+                        if rolled_back
+                            && MessageProcessingDelegate::claimStreamingSnapshot(
+                                &workerEventTurnOptions,
+                                &workerEventSnapshotPersistAt,
+                            )
+                        {
+                            let snapshot = tracker.current_content().to_owned();
+                            drop(tracker);
+                            MessageProcessingDelegate::persistStreamingSnapshot(
+                                &mut workerEventChatHistoryDelegate,
+                                &workerEventChatId,
+                                &workerEventAiMessage,
+                                snapshot,
+                            );
                         }
                     }
                 });
@@ -1208,20 +1222,29 @@ impl MessageProcessingDelegate {
                         &[("chatId", workerChatId.clone())],
                     );
                 }
-                let content = if let Ok(mut tracker) = workerRevisionTracker.lock() {
-                    tracker.append(&chunk)
-                } else {
-                    workerAiMessage.content.clone()
+                let contentSnapshot = {
+                    let mut tracker = workerRevisionTracker
+                        .lock()
+                        .expect("revision tracker mutex poisoned");
+                    let _ = tracker.append(&chunk);
+                    if MessageProcessingDelegate::claimStreamingSnapshot(
+                        &workerTurnOptions,
+                        &workerStreamingSnapshotPersistAt,
+                    ) {
+                        Some(tracker.current_content().to_owned())
+                    } else {
+                        None
+                    }
                 };
-                workerAiMessage.content = content.clone();
-                MessageProcessingDelegate::persistStreamingSnapshot(
-                    &mut workerChatHistoryDelegate,
-                    &workerTurnOptions,
-                    &workerChatId,
-                    &workerAiMessage,
-                    content,
-                    &workerStreamingSnapshotPersistAt,
-                );
+                if let Some(content) = contentSnapshot {
+                    workerAiMessage.content = content.clone();
+                    MessageProcessingDelegate::persistStreamingSnapshot(
+                        &mut workerChatHistoryDelegate,
+                        &workerChatId,
+                        &workerAiMessage,
+                        content,
+                    );
+                }
             });
             if let Some(session) = workerWorkspaceToolHookSession.as_ref() {
                 workerWorkspaceToolHookHandler.removeToolHook(session.hookId());
@@ -1230,8 +1253,9 @@ impl MessageProcessingDelegate {
             let _ = eventWorker.join();
             let finalContent = workerRevisionTracker
                 .lock()
-                .map(|tracker| tracker.current_content())
-                .unwrap_or_else(|_| workerAiMessage.content.clone());
+                .expect("revision tracker mutex poisoned")
+                .current_content()
+                .to_owned();
             let providerModel = workerService.getLastProviderModel().unwrap_or_default();
             let (provider, modelName) = split_provider_model(&providerModel);
             let tokenSnapshot = workerService.getLastTurnTokenSnapshot().unwrap_or(

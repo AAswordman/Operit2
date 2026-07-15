@@ -98,12 +98,16 @@ impl JsPackageRuntime for PackageManagerJsRuntime {
             .resolveToolPkgSubpackageRuntimeInternal(package_name)
     }
 
-    /// Returns the shared ToolPkg engine for one execution context.
-    fn toolpkg_execution_engine(&self, context_key: &str) -> Arc<dyn JsExecutionEngine> {
+    /// Returns the shared ToolPkg engine for one explicitly owned execution context.
+    fn toolpkg_execution_engine(
+        &self,
+        context_key: &str,
+        container_package_name: &str,
+    ) -> Arc<dyn JsExecutionEngine> {
         self.package_manager
             .lock()
             .expect("package manager mutex poisoned")
-            .getToolPkgExecutionEngine(context_key)
+            .getToolPkgExecutionEngine(context_key, container_package_name)
     }
 }
 
@@ -255,10 +259,10 @@ pub fn invokeToolPkgIpc(
         ));
     }
     let engine = if isMainTarget {
-        managerSnapshot.getToolPkgExecutionEngine(&targetContextKey)
+        managerSnapshot.getToolPkgExecutionEngine(&targetContextKey, &packageTarget)
     } else {
         managerSnapshot
-            .findToolPkgExecutionEngine(&targetContextKey)
+            .findToolPkgExecutionEngine(&targetContextKey, &packageTarget)
             .ok_or_else(|| format!("ToolPkg runtime is not active: {targetContextKey}"))?
     };
     let (scriptPath, script) = if isMainTarget {

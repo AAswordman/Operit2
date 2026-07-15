@@ -40,26 +40,10 @@ class SelectableMathSelectionGestureDetectorBuilder
   void onSingleTapUp(TapDragUpDetails details) {
     delegate.hide();
     if (delegate.selectionEnabled) {
-      switch (Theme.of(delegate.context).platform) {
-        case TargetPlatform.iOS:
-        case TargetPlatform.macOS:
-          delegate.selectPositionAt(
-            from: lastTapDownPosition!,
-            cause: SelectionChangedCause.tap,
-          );
-          // Should select word edge here, but not supporting now
-          break;
-        case TargetPlatform.android:
-        case TargetPlatform.fuchsia:
-        case TargetPlatform.linux:
-        case TargetPlatform.ohos:
-        case TargetPlatform.windows:
-          delegate.selectPositionAt(
-            from: lastTapDownPosition!,
-            cause: SelectionChangedCause.tap,
-          );
-          break;
-      }
+      delegate.selectPositionAt(
+        from: lastTapDownPosition!,
+        cause: SelectionChangedCause.tap,
+      );
     }
     // if (_state.widget.onTap != null)
     //   _state.widget.onTap();

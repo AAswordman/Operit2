@@ -188,14 +188,22 @@ sudo cp -a lib64/libgcc_s*.so* /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64
 sudo ln -sf libgcc_s.so.1 /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64/libgcc_s.so
 ```
 
-Apple assets are built on a macOS SSH worker by passing `--apple-builder`:
+macOS App and CLI assets are built on a macOS SSH worker by passing `--apple-builder`:
 
 ```powershell
 .\.venv\Scripts\python.exe tools\release\release.py --scope full --cli-arches all --apple-builder user@mac-mini.local
 ```
 
 The release script transfers the current working tree to the macOS worker before
-building, so the worker's existing Operit2 checkout is not used.
+building, so the worker's existing Operit2 checkout is not used. After the
+remote build finishes, its archives are copied back into the local
+`tools/release/dist` directory before the GitHub Release upload begins.
+
+The iOS package is opt-in because it requires the iOS Xcode platform component:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release.py --scope app --apple-builder user@mac-mini.local --apple-include-ios
+```
 
 The script reads GitHub credentials from:
 

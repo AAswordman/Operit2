@@ -57,13 +57,25 @@ def download_archive() -> None:
     temporary_path.replace(ARCHIVE_PATH)
 
 
-# Rejects archive members outside the dedicated staging directory.
-def validate_archive_members(archive: tarfile.TarFile) -> None:
+# Rejects unsafe archive members before extraction into the staging directory.
+def validate_archive_members(members: list[tarfile.TarInfo]) -> None:
     staging_root = STAGING_DIR.resolve()
-    for member in archive.getmembers():
+    for member in members:
         target = (STAGING_DIR / member.name).resolve()
         if target != staging_root and staging_root not in target.parents:
             raise RuntimeError(f"Sherpa archive entry escapes staging: {member.name}")
+        if member.issym():
+            link_target = (target.parent / member.linkname).resolve()
+            if link_target != staging_root and staging_root not in link_target.parents:
+                raise RuntimeError(f"Sherpa archive link escapes staging: {member.name}")
+            continue
+        if member.islnk():
+            link_target = (STAGING_DIR / member.linkname).resolve()
+            if link_target != staging_root and staging_root not in link_target.parents:
+                raise RuntimeError(f"Sherpa archive link escapes staging: {member.name}")
+            continue
+        if not member.isfile() and not member.isdir():
+            raise RuntimeError(f"Sherpa archive entry has an unsupported type: {member.name}")
 
 
 # Extracts and installs the two XCFrameworks required by the Apple runner.
@@ -71,8 +83,9 @@ def install_frameworks() -> None:
     shutil.rmtree(STAGING_DIR, ignore_errors=True)
     STAGING_DIR.mkdir(parents=True, exist_ok=True)
     with tarfile.open(ARCHIVE_PATH, "r:bz2") as archive:
-        validate_archive_members(archive)
-        archive.extractall(STAGING_DIR, filter="data")
+        members = archive.getmembers()
+        validate_archive_members(members)
+        archive.extractall(STAGING_DIR, members=members)
 
     sherpa_source = STAGING_DIR / "build-ios" / "sherpa-onnx.xcframework"
     onnx_source = (

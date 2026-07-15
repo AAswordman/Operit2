@@ -113,7 +113,6 @@ pub(super) struct OperitTui {
     pub(super) last_runtime_status_refresh_at: Option<Instant>,
     pub(super) typewriter_state: TypewriterState,
     pub(super) response_stream_subscription_chat_ids: HashSet<String>,
-    pub(super) response_stream_text_by_chat_id: HashMap<String, String>,
     pub(super) response_stream_markdown_by_chat_id: HashMap<String, TuiMarkdownStreamState>,
     pub(super) response_stream_revision_tracker_by_chat_id:
         HashMap<String, TextStreamRevisionTracker>,
@@ -351,7 +350,6 @@ impl OperitTui {
             last_runtime_status_refresh_at: None,
             typewriter_state: TypewriterState::default(),
             response_stream_subscription_chat_ids: HashSet::new(),
-            response_stream_text_by_chat_id: HashMap::new(),
             response_stream_markdown_by_chat_id: HashMap::new(),
             response_stream_revision_tracker_by_chat_id: HashMap::new(),
             approval_bridge,
@@ -2150,9 +2148,13 @@ impl OperitTui {
         let Some(chat_id) = self.current_chat_id_cache.as_ref() else {
             return messages;
         };
-        let Some(content) = self.response_stream_text_by_chat_id.get(chat_id) else {
+        let Some(tracker) = self
+            .response_stream_revision_tracker_by_chat_id
+            .get(chat_id)
+        else {
             return messages;
         };
+        let content = tracker.current_content();
         if content.is_empty() {
             return messages;
         }
@@ -2161,7 +2163,7 @@ impl OperitTui {
             .rev()
             .find(|message| message.sender == "ai")
         {
-            message.content = content.clone();
+            message.content = content.to_owned();
         }
         messages
     }

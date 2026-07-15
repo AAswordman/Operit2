@@ -19,9 +19,9 @@ impl ConversationRoundManager {
     }
 
     /// Replaces the raw content for the current conversation round.
-    pub fn update_content(&mut self, content: String) -> String {
+    pub fn update_content(&mut self, content: String) -> &str {
         self.raw_content = content;
-        self.raw_content.clone()
+        &self.raw_content
     }
 
     /// Advances to the next conversation round and returns its index.
@@ -31,24 +31,24 @@ impl ConversationRoundManager {
     }
 
     /// Appends text to the raw content and returns the updated content.
-    pub fn append_content(&mut self, content: &str) -> String {
+    pub fn append_content(&mut self, content: &str) -> &str {
         self.raw_content.push_str(content);
-        self.raw_content.clone()
+        &self.raw_content
     }
 
     /// Returns the current content prepared for display.
-    pub fn get_display_content(&self) -> String {
-        self.raw_content.clone()
+    pub fn get_display_content(&self) -> &str {
+        &self.raw_content
     }
 
     /// Returns the raw content for the current conversation round.
-    pub fn get_current_round_content(&self) -> String {
-        self.raw_content.clone()
+    pub fn get_current_round_content(&self) -> &str {
+        &self.raw_content
     }
 
     /// Returns the full raw conversation content buffer.
-    pub fn get_raw_content(&self) -> String {
-        self.raw_content.clone()
+    pub fn get_raw_content(&self) -> &str {
+        &self.raw_content
     }
 
     /// Returns the current conversation round index.

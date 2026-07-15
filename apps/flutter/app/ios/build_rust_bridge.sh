@@ -26,10 +26,12 @@ for arch in $ARCHS; do
   mkdir -p "$out_dir/$arch"
   rustup target add "$rust_target"
 
-  RUSTFLAGS="-Awarnings" cargo build \
+  RUSTFLAGS="-Awarnings" cargo rustc \
     --manifest-path "$crate_dir/Cargo.toml" \
     --release \
-    --target "$rust_target"
+    --target "$rust_target" \
+    -- \
+    --crate-type staticlib
 
-  cp "$crate_dir/target/$rust_target/release/$lib_name" "$out_dir/$arch/$lib_name"
+  cp "$crate_dir/target/$rust_target/release/deps/$lib_name" "$out_dir/$arch/$lib_name"
 done

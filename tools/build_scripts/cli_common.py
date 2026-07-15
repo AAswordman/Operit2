@@ -117,7 +117,8 @@ def cli_target_binary_path(target: CliBuildTarget) -> Path:
 
 def write_text_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8", newline="\n")
+    with path.open("w", encoding="utf-8", newline="\n") as output:
+        output.write(content)
 
 
 def write_windows_cli_installer_files(package_dir: Path) -> None:

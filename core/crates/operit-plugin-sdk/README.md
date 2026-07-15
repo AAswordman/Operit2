@@ -41,7 +41,8 @@ implementation. Applications implement the SDK traits and inject their own host 
 - `PackageManager::PluginPackageManager`: registers, enables, activates, removes, and resolves
   JavaScript packages and ToolPkg containers.
 - `toolpkg::ToolPkgManager::ToolPkgManager`: owns ToolPkg runtime metadata, resources, listeners,
-  and execution-engine instances.
+  and container-scoped execution-engine instances. Callers supply the container separately from
+  the opaque context key, and container cleanup destroys every context recorded under that owner.
 - `toolpkg::ToolPkgPackageService::ToolPkgPackageService`: exposes container details, UI routes,
   workspace templates, resources, and Compose DSL scripts through a caller-implemented host.
 - `toolpkg::ToolPkgLoader::ToolPkgLoader`: loads external or embedded `.toolpkg` archives.
@@ -115,9 +116,13 @@ impl JsPackageRuntime for ApplicationPackages {
         todo!("resolve ToolPkg subpackage {package_name}")
     }
 
-    /// Returns the shared ToolPkg engine for one execution context.
-    fn toolpkg_execution_engine(&self, context_key: &str) -> Arc<dyn JsExecutionEngine> {
-        todo!("return the engine owned by {context_key}")
+    /// Returns the shared ToolPkg engine for one explicitly owned execution context.
+    fn toolpkg_execution_engine(
+        &self,
+        context_key: &str,
+        container_package_name: &str,
+    ) -> Arc<dyn JsExecutionEngine> {
+        todo!("return {context_key} owned by {container_package_name}")
     }
 }
 ```

@@ -30,13 +30,20 @@ pub trait ToolPkgAssetSource: Send + Sync {
     fn toolPkgAssetBytes(&self, assetName: &str) -> Option<Vec<u8>>;
 }
 
+/// Associates one cached JavaScript engine with its owning ToolPkg container.
+#[derive(Clone)]
+struct ToolPkgExecutionEngineEntry {
+    containerPackageName: String,
+    engine: Arc<dyn JsExecutionEngine>,
+}
+
 /// Manages loaded ToolPkg runtimes, resources, listeners, and execution engines.
 #[derive(Clone)]
 pub struct ToolPkgManager {
     containers: BTreeMap<String, ToolPkgContainerRuntime>,
     subpackageByPackageName: BTreeMap<String, ToolPkgSubpackageRuntime>,
     runtimeChangeListeners: Arc<Mutex<Vec<ToolPkgRuntimeChangeListener>>>,
-    toolPkgExecutionEngines: Arc<Mutex<BTreeMap<String, Arc<dyn JsExecutionEngine>>>>,
+    toolPkgExecutionEngines: Arc<Mutex<BTreeMap<String, ToolPkgExecutionEngineEntry>>>,
     executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
     assetSource: Arc<dyn ToolPkgAssetSource>,
 }
@@ -171,7 +178,7 @@ impl ToolPkgManager {
             self.subpackageByPackageName
                 .remove(subpackage.packageName.trim());
         }
-        self.releaseToolPkgExecutionEngine(&format!("toolpkg_main:{}", runtime.packageName));
+        self.destroyToolPkgExecutionEngines(&runtime.packageName);
         Some(runtime)
     }
 
@@ -289,22 +296,42 @@ impl ToolPkgManager {
         self.readToolPkgResourceText(runtime, resourcePath)
     }
 
-    /// Returns a cached execution engine or creates one for the supplied context key.
+    /// Returns a cached execution engine or creates one with explicit container ownership.
     #[allow(non_snake_case)]
-    pub fn getToolPkgExecutionEngine(&self, contextKey: &str) -> Arc<dyn JsExecutionEngine> {
-        let normalizedKey = match contextKey.trim() {
-            "" => "toolpkg_main:default",
-            value => value,
-        };
+    pub fn getToolPkgExecutionEngine(
+        &self,
+        contextKey: &str,
+        containerPackageName: &str,
+    ) -> Arc<dyn JsExecutionEngine> {
+        let normalizedKey = contextKey.trim();
+        let normalizedContainer = containerPackageName.trim();
+        assert!(
+            !normalizedKey.is_empty(),
+            "ToolPkg execution context key is required"
+        );
+        assert!(
+            !normalizedContainer.is_empty(),
+            "ToolPkg execution container is required"
+        );
         let mut engines = self
             .toolPkgExecutionEngines
             .lock()
             .expect("toolpkg execution engine mutex poisoned");
-        if let Some(engine) = engines.get(normalizedKey) {
-            return engine.clone();
+        if let Some(entry) = engines.get(normalizedKey) {
+            assert_eq!(
+                entry.containerPackageName, normalizedContainer,
+                "ToolPkg execution context belongs to a different container"
+            );
+            return entry.engine.clone();
         }
         let engine = self.executionEngineFactory.createToolPkgExecutionEngine();
-        engines.insert(normalizedKey.to_string(), engine.clone());
+        engines.insert(
+            normalizedKey.to_string(),
+            ToolPkgExecutionEngineEntry {
+                containerPackageName: normalizedContainer.to_string(),
+                engine: engine.clone(),
+            },
+        );
         engine
     }
 
@@ -313,57 +340,74 @@ impl ToolPkgManager {
     pub fn findToolPkgExecutionEngine(
         &self,
         contextKey: &str,
+        containerPackageName: &str,
     ) -> Option<Arc<dyn JsExecutionEngine>> {
         let normalizedKey = contextKey.trim();
-        if normalizedKey.is_empty() {
+        let normalizedContainer = containerPackageName.trim();
+        if normalizedKey.is_empty() || normalizedContainer.is_empty() {
             return None;
         }
-        self.toolPkgExecutionEngines
+        let engines = self
+            .toolPkgExecutionEngines
             .lock()
-            .expect("toolpkg execution engine mutex poisoned")
-            .get(normalizedKey)
-            .cloned()
+            .expect("toolpkg execution engine mutex poisoned");
+        let entry = engines.get(normalizedKey)?;
+        assert_eq!(
+            entry.containerPackageName, normalizedContainer,
+            "ToolPkg execution context belongs to a different container"
+        );
+        Some(entry.engine.clone())
     }
 
     /// Releases a cached ToolPkg JavaScript execution engine.
     #[allow(non_snake_case)]
-    pub fn releaseToolPkgExecutionEngine(&self, contextKey: &str) {
+    pub fn releaseToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) {
         let normalizedKey = contextKey.trim();
-        if normalizedKey.is_empty() {
+        let normalizedContainer = containerPackageName.trim();
+        if normalizedKey.is_empty() || normalizedContainer.is_empty() {
             return;
         }
-        if let Some(engine) = self
-            .toolPkgExecutionEngines
-            .lock()
-            .expect("toolpkg execution engine mutex poisoned")
-            .remove(normalizedKey)
-        {
-            engine.destroy();
-        }
-    }
-
-    /// Destroys main and provider execution engines associated with one ToolPkg container.
-    #[allow(non_snake_case)]
-    pub fn destroyDefaultToolPkgExecutionEngine(&self, packageName: &str) {
-        let normalizedPackageName = packageName.trim();
-        if normalizedPackageName.is_empty() {
-            return;
-        }
-        self.releaseToolPkgExecutionEngine(&format!("toolpkg_main:{normalizedPackageName}"));
-        let providerPrefix = format!("toolpkg_provider:{normalizedPackageName}:");
-        let keys = {
-            let engines = self
+        let removed = {
+            let mut engines = self
                 .toolPkgExecutionEngines
                 .lock()
                 .expect("toolpkg execution engine mutex poisoned");
-            engines
-                .keys()
-                .filter(|key| key.starts_with(&providerPrefix))
-                .cloned()
+            if let Some(entry) = engines.get(normalizedKey) {
+                assert_eq!(
+                    entry.containerPackageName, normalizedContainer,
+                    "ToolPkg execution context belongs to a different container"
+                );
+            }
+            engines.remove(normalizedKey)
+        };
+        if let Some(entry) = removed {
+            entry.engine.destroy();
+        }
+    }
+
+    /// Destroys every execution engine owned by one ToolPkg container.
+    #[allow(non_snake_case)]
+    pub fn destroyToolPkgExecutionEngines(&self, containerPackageName: &str) {
+        let normalizedContainer = containerPackageName.trim();
+        if normalizedContainer.is_empty() {
+            return;
+        }
+        let removed = {
+            let mut engines = self
+                .toolPkgExecutionEngines
+                .lock()
+                .expect("toolpkg execution engine mutex poisoned");
+            let keys = engines
+                .iter()
+                .filter(|(_, entry)| entry.containerPackageName == normalizedContainer)
+                .map(|(key, _)| key.clone())
+                .collect::<Vec<_>>();
+            keys.into_iter()
+                .filter_map(|key| engines.remove(&key))
                 .collect::<Vec<_>>()
         };
-        for key in keys {
-            self.releaseToolPkgExecutionEngine(&key);
+        for entry in removed {
+            entry.engine.destroy();
         }
     }
 
@@ -383,8 +427,8 @@ impl ToolPkgManager {
                 .expect("toolpkg execution engine mutex poisoned");
             std::mem::take(&mut *stored)
         };
-        for (_, engine) in engines {
-            engine.destroy();
+        for (_, entry) in engines {
+            entry.engine.destroy();
         }
     }
 
@@ -561,7 +605,7 @@ impl ToolPkgHookDispatcher for ToolPkgManager {
         }
 
         let contextKey = resolveToolPkgExecutionContextKey(&runtime.packageName, &params);
-        let engine = self.getToolPkgExecutionEngine(&contextKey);
+        let engine = self.getToolPkgExecutionEngine(&contextKey, &runtime.packageName);
         engine
             .execute_script_function(
                 &script,
@@ -608,4 +652,144 @@ fn normalizeToolPkgEntryPath(rawPath: &str) -> Option<String> {
         return None;
     }
     Some(normalized)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use super::*;
+    use crate::execution_result::JsExecutionResult;
+    use crate::javascript::ToolPkgMainRegistrationCapture;
+
+    /// Records whether a test execution engine was destroyed.
+    #[derive(Default)]
+    struct RecordingExecutionEngine {
+        destroyed: AtomicBool,
+    }
+
+    impl JsExecutionEngine for RecordingExecutionEngine {
+        /// Returns no script result for registry tests.
+        fn execute_script_function(
+            &self,
+            _script: &str,
+            _function_name: &str,
+            _params: &BTreeMap<String, Value>,
+            _env_overrides: &BTreeMap<String, String>,
+            _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+            _dispatch_intermediate_on_main: bool,
+            _timeout_sec: u64,
+        ) -> JsExecutionResult<Option<String>> {
+            Ok(None)
+        }
+
+        /// Returns an empty ToolPkg registration capture for registry tests.
+        fn execute_toolpkg_main_registration_function_with_text_resources(
+            &self,
+            _script: &str,
+            _function_name: &str,
+            _params: &BTreeMap<String, Value>,
+            _text_resources: Option<Arc<BTreeMap<String, String>>>,
+        ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
+            Ok(ToolPkgMainRegistrationCapture::default())
+        }
+
+        /// Returns no Compose DSL result for registry tests.
+        fn execute_compose_dsl_script(
+            &self,
+            _script: &str,
+            _runtime_options: &BTreeMap<String, Value>,
+            _env_overrides: &BTreeMap<String, String>,
+        ) -> JsExecutionResult<Option<String>> {
+            Ok(None)
+        }
+
+        /// Returns no Compose DSL action result for registry tests.
+        fn dispatch_compose_dsl_action(
+            &self,
+            _action_id: &str,
+            _payload: Option<Value>,
+            _runtime_options: &BTreeMap<String, Value>,
+            _env_overrides: &BTreeMap<String, String>,
+            _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        ) -> JsExecutionResult<Option<String>> {
+            Ok(None)
+        }
+
+        /// Marks this test execution engine as destroyed.
+        fn destroy(&self) {
+            self.destroyed.store(true, Ordering::Release);
+        }
+    }
+
+    /// Creates recording engines and retains them for lifecycle assertions.
+    #[derive(Default)]
+    struct RecordingExecutionEngineFactory {
+        engines: Mutex<Vec<Arc<RecordingExecutionEngine>>>,
+    }
+
+    impl ToolPkgExecutionEngineFactory for RecordingExecutionEngineFactory {
+        /// Creates one recording execution engine.
+        #[allow(non_snake_case)]
+        fn createToolPkgExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
+            let engine = Arc::new(RecordingExecutionEngine::default());
+            self.engines
+                .lock()
+                .expect("recording engine factory mutex poisoned")
+                .push(engine.clone());
+            engine
+        }
+    }
+
+    /// Supplies no assets because registry tests only exercise engine ownership.
+    struct EmptyAssetSource;
+
+    impl ToolPkgAssetSource for EmptyAssetSource {
+        /// Returns no embedded ToolPkg archive.
+        #[allow(non_snake_case)]
+        fn toolPkgAssetBytes(&self, _assetName: &str) -> Option<Vec<u8>> {
+            None
+        }
+    }
+
+    /// Creates one manager and its recording engine factory.
+    fn recordingManager() -> (ToolPkgManager, Arc<RecordingExecutionEngineFactory>) {
+        let factory = Arc::new(RecordingExecutionEngineFactory::default());
+        let manager = ToolPkgManager::new(factory.clone(), Arc::new(EmptyAssetSource));
+        (manager, factory)
+    }
+
+    /// Verifies an opaque context key cannot be reused under a different container owner.
+    #[test]
+    #[should_panic(expected = "belongs to a different container")]
+    fn rejectsContextOwnershipMismatch() {
+        let (manager, _) = recordingManager();
+        manager.getToolPkgExecutionEngine("opaque-main-context", "package_a");
+        manager.getToolPkgExecutionEngine("opaque-main-context", "package_b");
+    }
+
+    /// Verifies container cleanup covers main, provider, and UI execution contexts.
+    #[test]
+    fn destroysEveryContextOwnedByContainer() {
+        let (manager, factory) = recordingManager();
+        manager.getToolPkgExecutionEngine("package-a-main", "package_a");
+        manager.getToolPkgExecutionEngine("package-a-xml-node", "package_a");
+        manager.getToolPkgExecutionEngine("package-b-provider", "package_b");
+
+        manager.destroyToolPkgExecutionEngines("package_a");
+
+        let engines = factory
+            .engines
+            .lock()
+            .expect("recording engine factory mutex poisoned");
+        assert!(engines[0].destroyed.load(Ordering::Acquire));
+        assert!(engines[1].destroyed.load(Ordering::Acquire));
+        assert!(!engines[2].destroyed.load(Ordering::Acquire));
+        assert!(manager
+            .findToolPkgExecutionEngine("package-a-main", "package_a")
+            .is_none());
+        assert!(manager
+            .findToolPkgExecutionEngine("package-b-provider", "package_b")
+            .is_some());
+    }
 }

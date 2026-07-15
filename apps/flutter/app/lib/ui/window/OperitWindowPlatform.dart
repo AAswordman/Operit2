@@ -10,15 +10,10 @@ bool get operitSupportsDesktopMultiWindow {
   if (kIsWeb) {
     return false;
   }
-  return switch (defaultTargetPlatform) {
-    TargetPlatform.linux ||
-    TargetPlatform.macOS ||
-    TargetPlatform.windows => true,
-    TargetPlatform.android ||
-    TargetPlatform.fuchsia ||
-    TargetPlatform.iOS ||
-    TargetPlatform.ohos => false,
-  };
+  final platform = defaultTargetPlatform;
+  return platform == TargetPlatform.linux ||
+      platform == TargetPlatform.macOS ||
+      platform == TargetPlatform.windows;
 }
 
 /// Reads the arguments associated with the current desktop window.

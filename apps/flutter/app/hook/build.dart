@@ -507,55 +507,85 @@ String _targetOs(BuildInput input) {
 }
 
 Future<Map<String, String>> _wasmCargoEnvironment(Directory repoRoot) async {
-  final environment = {'RUSTFLAGS': '-Awarnings'};
-  if (!Platform.isWindows) {
+  final environment = Map<String, String>.from(Platform.environment)
+    ..['RUSTFLAGS'] = '-Awarnings';
+  if (!Platform.isWindows && !Platform.isMacOS) {
     return environment;
   }
 
   final toolsDir = Directory.fromUri(
     repoRoot.uri.resolve('target/operit-build-tools/'),
   );
-  final wasiSdk = Directory.fromUri(
-    toolsDir.uri.resolve('wasi-sdk-20.0.m-mingw/'),
-  );
-  final libclangDir = Directory.fromUri(
-    toolsDir.uri.resolve(
-      'libclang.runtime.win-x64.21.1.8/runtimes/win-x64/native/',
-    ),
-  );
+  final wasiSdkName = Platform.isWindows
+      ? 'wasi-sdk-20.0.m-mingw'
+      : 'wasi-sdk-20.0-macos';
+  final wasiSdk = Directory.fromUri(toolsDir.uri.resolve('$wasiSdkName/'));
+  final clangName = Platform.isWindows ? 'clang.exe' : 'clang';
 
   await _ensureExtractedArchive(
     archiveUrl:
-        'https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-20/wasi-sdk-20.0.m-mingw.tar.gz',
-    archiveFile: File.fromUri(
-      toolsDir.uri.resolve('wasi-sdk-20.0.m-mingw.tar.gz'),
-    ),
+        'https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-20/$wasiSdkName.tar.gz',
+    archiveFile: File.fromUri(toolsDir.uri.resolve('$wasiSdkName.tar.gz')),
     destination: wasiSdk,
-    requiredFile: File.fromUri(wasiSdk.uri.resolve('bin/clang.exe')),
+    requiredFile: File.fromUri(wasiSdk.uri.resolve('bin/$clangName')),
     stripComponents: 1,
-  );
-  await _ensureExtractedArchive(
-    archiveUrl:
-        'https://www.nuget.org/api/v2/package/libclang.runtime.win-x64/21.1.8',
-    archiveFile: File.fromUri(
-      toolsDir.uri.resolve('libclang.runtime.win-x64.21.1.8.nupkg'),
-    ),
-    destination: Directory.fromUri(
-      toolsDir.uri.resolve('libclang.runtime.win-x64.21.1.8/'),
-    ),
-    requiredFile: File.fromUri(libclangDir.uri.resolve('libclang.dll')),
-    stripComponents: 0,
   );
 
   environment['QUICKJS_WASM_SYS_WASI_SDK_PATH'] = wasiSdk.path;
-  environment['LIBCLANG_PATH'] = libclangDir.path;
   final clangResourceDir = File.fromUri(
     wasiSdk.uri.resolve('lib/clang/16'),
   ).path.replaceAll(r'\', '/');
   final bindgenClangArgs = '-resource-dir=$clangResourceDir';
-  environment['BINDGEN_EXTRA_CLANG_ARGS'] = bindgenClangArgs;
-  environment['BINDGEN_EXTRA_CLANG_ARGS_wasm32_unknown_unknown'] =
-      bindgenClangArgs;
+  final wasiLibDir = Directory.fromUri(
+    wasiSdk.uri.resolve('share/wasi-sysroot/lib/wasm32-wasi/'),
+  );
+  final wasiBuiltinsDir = Directory.fromUri(
+    wasiSdk.uri.resolve('lib/clang/16/lib/wasi/'),
+  );
+  final wasiLibc = File.fromUri(wasiLibDir.uri.resolve('libc.a'));
+  final wasiBuiltins = File.fromUri(
+    wasiBuiltinsDir.uri.resolve('libclang_rt.builtins-wasm32.a'),
+  );
+  if (!wasiLibc.existsSync() || !wasiBuiltins.existsSync()) {
+    throw StateError(
+      'WASI SDK is missing the WebAssembly libc or compiler builtins required '
+      'by QuickJS: libc=${wasiLibc.path} builtins=${wasiBuiltins.path}',
+    );
+  }
+  environment['RUSTFLAGS'] = <String>[
+    '-Awarnings',
+    '-L',
+    'native=${wasiLibDir.path}',
+    '-L',
+    'native=${wasiBuiltinsDir.path}',
+    '-l',
+    'static=c',
+    '-l',
+    'static=clang_rt.builtins-wasm32',
+  ].join(' ');
+  if (Platform.isWindows) {
+    final libclangDir = Directory.fromUri(
+      toolsDir.uri.resolve(
+        'libclang.runtime.win-x64.21.1.8/runtimes/win-x64/native/',
+      ),
+    );
+    await _ensureExtractedArchive(
+      archiveUrl:
+          'https://www.nuget.org/api/v2/package/libclang.runtime.win-x64/21.1.8',
+      archiveFile: File.fromUri(
+        toolsDir.uri.resolve('libclang.runtime.win-x64.21.1.8.nupkg'),
+      ),
+      destination: Directory.fromUri(
+        toolsDir.uri.resolve('libclang.runtime.win-x64.21.1.8/'),
+      ),
+      requiredFile: File.fromUri(libclangDir.uri.resolve('libclang.dll')),
+      stripComponents: 0,
+    );
+    environment['LIBCLANG_PATH'] = libclangDir.path;
+    environment['BINDGEN_EXTRA_CLANG_ARGS'] = bindgenClangArgs;
+    environment['BINDGEN_EXTRA_CLANG_ARGS_wasm32_unknown_unknown'] =
+        bindgenClangArgs;
+  }
   return environment;
 }
 

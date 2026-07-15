@@ -100,7 +100,7 @@ Future<String> _resolveLogFilePath() async {
   if (Platform.isIOS) {
     return _clientLogPath();
   }
-  if (Platform.isOhos) {
+  if (Platform.operatingSystem == 'ohos') {
     return _clientLogPath();
   }
   throw UnsupportedError(

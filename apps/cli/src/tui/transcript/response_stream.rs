@@ -72,9 +72,7 @@ impl OperitTui {
                     .response_stream_revision_tracker_by_chat_id
                     .entry(chat_id.clone())
                     .or_insert_with(|| TextStreamRevisionTracker::new(""));
-                let content = tracker.append(&chunk);
-                self.response_stream_text_by_chat_id
-                    .insert(chat_id, content);
+                let _ = tracker.append(&chunk);
             }
             "savepoint" => {
                 let id = event.id.expect("savepoint event must include id");
@@ -94,10 +92,7 @@ impl OperitTui {
                     .response_stream_revision_tracker_by_chat_id
                     .get_mut(&chat_id)
                 {
-                    if let Some(content) = tracker.rollback(&id) {
-                        self.response_stream_text_by_chat_id
-                            .insert(chat_id.clone(), content);
-                    }
+                    let _ = tracker.rollback(&id);
                 }
                 if let Some(markdown) = self.response_stream_markdown_by_chat_id.get_mut(&chat_id) {
                     markdown.rollback(&id);
@@ -166,8 +161,6 @@ impl OperitTui {
         let active = &self.active_streaming_chat_ids_cache;
         self.response_stream_subscription_chat_ids
             .retain(|chat_id| active.contains(chat_id));
-        self.response_stream_text_by_chat_id
-            .retain(|chat_id, _| active.contains(chat_id));
         self.response_stream_markdown_by_chat_id
             .retain(|chat_id, _| active.contains(chat_id));
         self.response_stream_revision_tracker_by_chat_id

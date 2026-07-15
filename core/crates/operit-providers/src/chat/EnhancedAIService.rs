@@ -1510,9 +1510,7 @@ impl EnhancedAIService {
                 lastLogTime = currentTime;
             }
             execContext.streamBuffer.push_str(&content);
-            execContext
-                .roundManager
-                .updateContent(execContext.streamBuffer.clone());
+            execContext.roundManager.appendContent(&content);
             responseStream.upstream.emit(content.clone());
             responseChunks.push(content);
         });
@@ -1949,9 +1947,7 @@ impl EnhancedAIService {
             chunkCount += 1;
             totalChars += content.len();
             context.streamBuffer.push_str(&content);
-            context
-                .roundManager
-                .updateContent(context.streamBuffer.clone());
+            context.roundManager.appendContent(&content);
             collector.upstream.emit(content);
         });
         let _ = eventForwarder.join();
@@ -2212,9 +2208,7 @@ impl EnhancedAIService {
             );
             if !recovery.appendedSuffix.is_empty() {
                 context.streamBuffer.push_str(&recovery.appendedSuffix);
-                context
-                    .roundManager
-                    .updateContent(context.streamBuffer.clone());
+                context.roundManager.appendContent(&recovery.appendedSuffix);
             }
         } else if finalContent != content {
             AppLogger::d(
@@ -2510,9 +2504,7 @@ impl EnhancedAIService {
                 return Ok(());
             }
             context.streamBuffer.push_str(&content);
-            context
-                .roundManager
-                .updateContent(context.streamBuffer.clone());
+            context.roundManager.appendContent(&content);
             collector.upstream.emit(content);
         }
 

@@ -113,17 +113,28 @@ class CoreApplicationService with WidgetsBindingObserver {
     if (kIsWeb) {
       return RuntimeEventPlatform.web;
     }
-    return switch (defaultTargetPlatform) {
-      TargetPlatform.android => RuntimeEventPlatform.android,
-      TargetPlatform.iOS => RuntimeEventPlatform.ios,
-      TargetPlatform.linux => RuntimeEventPlatform.linux,
-      TargetPlatform.macOS => RuntimeEventPlatform.macos,
-      TargetPlatform.windows => RuntimeEventPlatform.windows,
-      TargetPlatform.ohos => RuntimeEventPlatform.ohos,
-      TargetPlatform.fuchsia => throw UnsupportedError(
-        'Fuchsia runtime events are not supported',
-      ),
-    };
+    final platform = defaultTargetPlatform;
+    if (platform.name == 'ohos') {
+      return RuntimeEventPlatform.ohos;
+    }
+    if (platform == TargetPlatform.android) {
+      return RuntimeEventPlatform.android;
+    }
+    if (platform == TargetPlatform.iOS) {
+      return RuntimeEventPlatform.ios;
+    }
+    if (platform == TargetPlatform.linux) {
+      return RuntimeEventPlatform.linux;
+    }
+    if (platform == TargetPlatform.macOS) {
+      return RuntimeEventPlatform.macos;
+    }
+    if (platform == TargetPlatform.windows) {
+      return RuntimeEventPlatform.windows;
+    }
+    throw UnsupportedError(
+      'Runtime events are not supported on ${platform.name}',
+    );
   }
 
   /// Starts Core services when runtime configuration becomes usable.

@@ -34,6 +34,8 @@ class ChoiceKey(ValueEnum):
     DRAFT = "draft"
     APPLE = "apple"
     NO_APPLE = "no_apple"
+    IOS = "ios"
+    NO_IOS = "no_ios"
 
 
 @dataclass(frozen=True)
@@ -117,11 +119,19 @@ def build_command() -> list[str]:
             "Apple 构建机？",
             [
                 Choice(ChoiceKey.NO_APPLE, "不使用 Apple SSH 构建机", ()),
-                Choice(ChoiceKey.APPLE, "使用 Apple SSH 构建 macOS/iOS", ()),
+                Choice(ChoiceKey.APPLE, "使用 Apple SSH 构建 macOS App 和 CLI", ()),
             ],
         )
         if apple.key == ChoiceKey.APPLE:
             command.extend(["--apple-builder", read_required_text("SSH 目标，例如 user@mac-mini.local")])
+            ios = choose(
+                "额外构建 iOS 包？",
+                [
+                    Choice(ChoiceKey.NO_IOS, "暂不构建 iOS", ()),
+                    Choice(ChoiceKey.IOS, "构建 unsigned iOS 包", ("--apple-include-ios",)),
+                ],
+            )
+            command.extend(ios.args)
 
     return command
 

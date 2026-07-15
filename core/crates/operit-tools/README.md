@@ -11,6 +11,8 @@ surfaces live here.
   tool access rules.
 - Own ToolPkg package loading, package manager behavior, package hook models,
   and package resource helpers.
+- Isolate every ToolPkg main-script registration in a temporary JavaScript engine so one package
+  cannot retain registration state or block later package scans.
 - Own MCP package models, MCP runtime repository code, MCP bridge helpers, and
   MCP tool execution.
 - Own skill package models, skill manager behavior, and skill repository code.

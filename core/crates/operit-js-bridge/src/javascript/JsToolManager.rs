@@ -70,7 +70,9 @@ impl JsToolManager {
         let toolPkgRuntime = self.packageRuntime.resolve_toolpkg_subpackage(packageName);
         if let Some(runtime) = toolPkgRuntime {
             let contextKey = format!("toolpkg_main:{}", runtime.containerPackageName);
-            let engine = self.packageRuntime.toolpkg_execution_engine(&contextKey);
+            let engine = self
+                .packageRuntime
+                .toolpkg_execution_engine(&contextKey, &runtime.containerPackageName);
             return block(engine);
         }
         self.withEngine(block)
@@ -599,13 +601,17 @@ mod tests {
                 .resolveToolPkgSubpackageRuntimeInternal(package_name)
         }
 
-        /// Returns the shared execution engine for one ToolPkg context.
-        fn toolpkg_execution_engine(&self, context_key: &str) -> Arc<dyn JsExecutionEngine> {
+        /// Returns the shared execution engine for one explicitly owned ToolPkg context.
+        fn toolpkg_execution_engine(
+            &self,
+            context_key: &str,
+            container_package_name: &str,
+        ) -> Arc<dyn JsExecutionEngine> {
             self.package_manager
                 .lock()
                 .expect("test package manager mutex poisoned")
                 .toolPkgManager()
-                .getToolPkgExecutionEngine(context_key)
+                .getToolPkgExecutionEngine(context_key, container_package_name)
         }
     }
 
@@ -677,7 +683,8 @@ mod tests {
             };
         "#;
         let (manager, packageRuntime) = toolpkg_manager(script);
-        let engine = packageRuntime.toolpkg_execution_engine("toolpkg_main:test_toolpkg");
+        let engine =
+            packageRuntime.toolpkg_execution_engine("toolpkg_main:test_toolpkg", "test_toolpkg");
         let seedScript = r#"
             exports.seed = function(_params) {
                 globalThis.__toolpkg_engine_marker = "same-engine";

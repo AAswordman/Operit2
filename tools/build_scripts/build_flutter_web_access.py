@@ -136,13 +136,15 @@ def remove_web_access_native_assets_from_pubspec(pubspec: Path) -> str:
         index += 1
     if len(staged) == len(lines):
         raise RuntimeError("No Web Access native asset declarations were removed.")
-    pubspec.write_text("".join(staged), encoding="utf-8", newline="")
+    with pubspec.open("w", encoding="utf-8", newline="") as output:
+        output.write("".join(staged))
     return original
 
 
 # Restores the pubspec after the temporary Web Access build view is finished.
 def restore_pubspec(pubspec: Path, content: str) -> None:
-    pubspec.write_text(content, encoding="utf-8", newline="")
+    with pubspec.open("w", encoding="utf-8", newline="") as output:
+        output.write(content)
 
 
 # Writes bridge and SQL.js runtime files after Flutter finalizes its output.
@@ -195,11 +197,33 @@ def main() -> int:
         raise RuntimeError(
             "Expected exactly one Clang resource include directory in the WASI SDK, "
             f"found {len(clang_resource_includes)}"
+    )
+    wasi_lib_dir = wasi_sdk / "share" / "wasi-sysroot" / "lib" / "wasm32-wasi"
+    wasi_builtins_dir = clang_resource_includes[0].parent / "lib" / "wasi"
+    wasi_libc = wasi_lib_dir / "libc.a"
+    wasi_builtins = wasi_builtins_dir / "libclang_rt.builtins-wasm32.a"
+    if not wasi_libc.is_file() or not wasi_builtins.is_file():
+        raise RuntimeError(
+            "WASI SDK is missing the WebAssembly libc or compiler builtins required "
+            f"by QuickJS: libc={wasi_libc} builtins={wasi_builtins}"
         )
     env["PATH"] = f"{typescript_bin}{os.pathsep}{wasm_bindgen_bin}{os.pathsep}{env['PATH']}"
     env["QUICKJS_WASM_SYS_WASI_SDK_PATH"] = str(wasi_sdk)
     env["BINDGEN_EXTRA_CLANG_ARGS_wasm32_unknown_unknown"] = (
         f'-I"{clang_resource_includes[0].as_posix()}"'
+    )
+    env["RUSTFLAGS"] = " ".join(
+        [
+            env.get("RUSTFLAGS", "-Awarnings"),
+            "-L",
+            f"native={wasi_lib_dir}",
+            "-L",
+            f"native={wasi_builtins_dir}",
+            "-l",
+            "static=c",
+            "-l",
+            "static=clang_rt.builtins-wasm32",
+        ]
     )
 
     generate_dart_proxy_artifacts()

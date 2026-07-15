@@ -65,6 +65,18 @@ impl ToolPkgExecutionEngineFactory for RuntimeToolPkgExecutionEngineFactory {
     }
 }
 
+/// Destroys one temporary ToolPkg registration engine when its load scope ends.
+struct ToolPkgRegistrationEngineGuard {
+    engine: Arc<dyn JsExecutionEngine>,
+}
+
+impl Drop for ToolPkgRegistrationEngineGuard {
+    /// Interrupts and destroys the temporary registration engine.
+    fn drop(&mut self) {
+        self.engine.destroy();
+    }
+}
+
 /// Exposes runtime-owned embedded plugin assets to the SDK package manager.
 #[derive(Clone)]
 struct RuntimeToolPkgAssetSource {
@@ -160,7 +172,7 @@ pub struct RuntimePackageManager {
     externalPackageScanCache: BTreeMap<String, ExternalPackageScanCacheEntry>,
     bundledExternalPackageScanCache: BTreeMap<String, ExternalPackageScanCacheEntry>,
     toolPkgCacheLock: Arc<Mutex<()>>,
-    jsEngine: Arc<dyn JsExecutionEngine>,
+    toolPkgExecutionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
     dataStore: PreferencesDataStore,
     storePaths: RuntimeStorePaths,
     context: HostManager,
@@ -176,12 +188,14 @@ impl RuntimePackageManager {
     ) -> Self {
         let context = toolHandler.getContext();
         let runtimeDependencies = toolHandler.runtimeDependencies();
+        let toolPkgExecutionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory> =
+            Arc::new(RuntimeToolPkgExecutionEngineFactory {
+                toolHandler: toolHandler.clone(),
+                jsExecutionProvider: runtimeDependencies.shared_js_execution_provider(),
+            });
         let mut manager = Self {
             pluginPackageManager: PluginPackageManager::new(
-                Arc::new(RuntimeToolPkgExecutionEngineFactory {
-                    toolHandler: toolHandler.clone(),
-                    jsExecutionProvider: runtimeDependencies.shared_js_execution_provider(),
-                }),
+                toolPkgExecutionEngineFactory.clone(),
                 Arc::new(RuntimeToolPkgAssetSource {
                     runtimeSupport: runtimeDependencies.shared_runtime_support(),
                 }),
@@ -191,9 +205,7 @@ impl RuntimePackageManager {
             externalPackageScanCache: BTreeMap::new(),
             bundledExternalPackageScanCache: BTreeMap::new(),
             toolPkgCacheLock: Arc::new(Mutex::new(())),
-            jsEngine: runtimeDependencies
-                .js_execution_provider()
-                .create_execution_engine(Arc::new(toolHandler.clone())),
+            toolPkgExecutionEngineFactory,
             dataStore: PreferencesDataStore::new(paths.package_manager_preferences_path()),
             storePaths: paths,
             mcpManager: MCPManager::getInstance(context.clone()),
@@ -210,16 +222,21 @@ impl RuntimePackageManager {
     }
 
     #[allow(non_snake_case)]
-    /// Releases the ToolPkg execution engine for a context key.
-    pub fn releaseToolPkgExecutionEngine(&self, contextKey: &str) {
+    /// Releases one explicitly owned ToolPkg execution engine.
+    pub fn releaseToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) {
         self.toolPkgManager()
-            .releaseToolPkgExecutionEngine(contextKey);
+            .releaseToolPkgExecutionEngine(contextKey, containerPackageName);
     }
 
     #[allow(non_snake_case)]
-    /// Returns the ToolPkg execution engine for a context key.
-    pub fn getToolPkgExecutionEngine(&self, contextKey: &str) -> Arc<dyn JsExecutionEngine> {
-        self.toolPkgManager().getToolPkgExecutionEngine(contextKey)
+    /// Returns the ToolPkg execution engine for one explicitly owned context.
+    pub fn getToolPkgExecutionEngine(
+        &self,
+        contextKey: &str,
+        containerPackageName: &str,
+    ) -> Arc<dyn JsExecutionEngine> {
+        self.toolPkgManager()
+            .getToolPkgExecutionEngine(contextKey, containerPackageName)
     }
 
     #[allow(non_snake_case)]
@@ -227,11 +244,12 @@ impl RuntimePackageManager {
     pub fn executeToolPkgComposeDslScript(
         &self,
         contextKey: &str,
+        containerPackageName: &str,
         script: &str,
         runtimeOptions: BTreeMap<String, serde_json::Value>,
         envOverrides: BTreeMap<String, String>,
     ) -> Result<Option<String>, String> {
-        self.getToolPkgExecutionEngine(contextKey)
+        self.getToolPkgExecutionEngine(contextKey, containerPackageName)
             .execute_compose_dsl_script(script, &runtimeOptions, &envOverrides)
             .map_err(|error| error.to_string())
     }
@@ -241,6 +259,7 @@ impl RuntimePackageManager {
     pub fn dispatchToolPkgComposeDslActionEvents(
         &self,
         contextKey: &str,
+        containerPackageName: &str,
         actionId: &str,
         payload: Option<serde_json::Value>,
         runtimeOptions: BTreeMap<String, serde_json::Value>,
@@ -249,7 +268,7 @@ impl RuntimePackageManager {
         let events = Arc::new(Mutex::new(Vec::<String>::new()));
         let eventCollector = events.clone();
         let finalEvent = self
-            .getToolPkgExecutionEngine(contextKey)
+            .getToolPkgExecutionEngine(contextKey, containerPackageName)
             .dispatch_compose_dsl_action(
                 actionId,
                 payload,
@@ -277,18 +296,15 @@ impl RuntimePackageManager {
     pub fn findToolPkgExecutionEngine(
         &self,
         contextKey: &str,
+        containerPackageName: &str,
     ) -> Option<Arc<dyn JsExecutionEngine>> {
-        self.toolPkgManager().findToolPkgExecutionEngine(contextKey)
+        self.toolPkgManager()
+            .findToolPkgExecutionEngine(contextKey, containerPackageName)
     }
 
     #[allow(non_snake_case)]
     pub(crate) fn contextInternal(&self) -> &HostManager {
         &self.context
-    }
-
-    #[allow(non_snake_case)]
-    pub(crate) fn jsEngineInternal(&self) -> &dyn JsExecutionEngine {
-        self.jsEngine.as_ref()
     }
 
     #[allow(non_snake_case)]
@@ -906,7 +922,7 @@ impl RuntimePackageManager {
             }
             self.deleteToolPkgCacheDir(&normalizedPackageName);
             self.toolPkgManager()
-                .destroyDefaultToolPkgExecutionEngine(&normalizedPackageName);
+                .destroyToolPkgExecutionEngines(&normalizedPackageName);
             self.notifyToolPkgRuntimeChangeListeners();
             if packageWasRemoved {
                 return format!(
@@ -1499,7 +1515,7 @@ impl RuntimePackageManager {
             .collect::<BTreeSet<_>>();
         for packageName in previousContainerNames.union(&nextContainerNames) {
             self.toolPkgManager()
-                .destroyDefaultToolPkgExecutionEngine(packageName);
+                .destroyToolPkgExecutionEngines(packageName);
         }
         self.applyPackageScanSnapshot(mergedSnapshot);
         self.notifyToolPkgRuntimeChangeListeners();
@@ -2941,16 +2957,18 @@ impl RuntimePackageManager {
 
     #[allow(non_snake_case)]
     fn loadToolPkgFromExternalFile(&self, file: &Path) -> Result<ToolPkgLoadResult, String> {
-        ToolPkgLoader::loadToolPkgFromExternalFile(
-            file,
-            self.jsEngine.as_ref(),
-            |packageName, error| {
-                AppLogger::e(
-                    PACKAGE_MANAGER_LOG_TAG,
-                    &format!("ToolPkg package load error [{packageName}]: {error}"),
-                );
-            },
-        )
+        self.withToolPkgRegistrationEngine(|registrationEngine| {
+            ToolPkgLoader::loadToolPkgFromExternalFile(
+                file,
+                registrationEngine,
+                |packageName, error| {
+                    AppLogger::e(
+                        PACKAGE_MANAGER_LOG_TAG,
+                        &format!("ToolPkg package load error [{packageName}]: {error}"),
+                    );
+                },
+            )
+        })
     }
 
     #[allow(non_snake_case)]
@@ -2959,17 +2977,35 @@ impl RuntimePackageManager {
         assetName: &str,
         bytes: &'static [u8],
     ) -> Result<ToolPkgLoadResult, String> {
-        ToolPkgLoader::loadToolPkgFromBuiltInAsset(
-            assetName,
-            bytes,
-            self.jsEngine.as_ref(),
-            |packageName, error| {
-                AppLogger::e(
-                    PACKAGE_MANAGER_LOG_TAG,
-                    &format!("Built-in ToolPkg package load error [{packageName}]: {error}"),
-                );
-            },
-        )
+        self.withToolPkgRegistrationEngine(|registrationEngine| {
+            ToolPkgLoader::loadToolPkgFromBuiltInAsset(
+                assetName,
+                bytes,
+                registrationEngine,
+                |packageName, error| {
+                    AppLogger::e(
+                        PACKAGE_MANAGER_LOG_TAG,
+                        &format!("Built-in ToolPkg package load error [{packageName}]: {error}"),
+                    );
+                },
+            )
+        })
+    }
+
+    /// Executes one ToolPkg load with a dedicated registration engine.
+    #[allow(non_snake_case)]
+    fn withToolPkgRegistrationEngine<T>(
+        &self,
+        operation: impl FnOnce(&dyn JsExecutionEngine) -> T,
+    ) -> T {
+        // Registration runs package-owned code; per-load ownership prevents one timed-out
+        // package from retaining state or blocking registration of the next package.
+        let registrationEngine = ToolPkgRegistrationEngineGuard {
+            engine: self
+                .toolPkgExecutionEngineFactory
+                .createToolPkgExecutionEngine(),
+        };
+        operation(registrationEngine.engine.as_ref())
     }
 
     #[allow(non_snake_case)]

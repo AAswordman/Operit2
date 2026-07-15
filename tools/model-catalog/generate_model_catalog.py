@@ -283,7 +283,8 @@ def main() -> int:
         print(f"{TARGET} is up to date")
         return 0
 
-    TARGET.write_text(generated, encoding="utf-8", newline="\n")
+    with TARGET.open("w", encoding="utf-8", newline="\n") as output:
+        output.write(generated)
     print(f"wrote {TARGET}")
     return 0
 

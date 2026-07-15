@@ -467,28 +467,22 @@ class RenderEditableLine extends RenderLine {
 
     Rect _caretPrototype;
 
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.iOS:
-      case TargetPlatform.macOS:
-        _caretPrototype = Rect.fromLTWH(
-          0.0,
-          0.0,
-          _cursorWidth,
-          cursorHeight + 2,
-        );
-        break;
-      case TargetPlatform.android:
-      case TargetPlatform.fuchsia:
-      case TargetPlatform.linux:
-      case TargetPlatform.ohos:
-      case TargetPlatform.windows:
-        _caretPrototype = Rect.fromLTWH(
-          0.0,
-          0.0, // _kCaretHeightOffset,
-          _cursorWidth,
-          cursorHeight, // - 2.0 * _kCaretHeightOffset,
-        );
-        break;
+    final useAppleCaret = defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+    if (useAppleCaret) {
+      _caretPrototype = Rect.fromLTWH(
+        0.0,
+        0.0,
+        _cursorWidth,
+        cursorHeight + 2,
+      );
+    } else {
+      _caretPrototype = Rect.fromLTWH(
+        0.0,
+        0.0, // _kCaretHeightOffset,
+        _cursorWidth,
+        cursorHeight, // - 2.0 * _kCaretHeightOffset,
+      );
     }
 
     var caretRect = _caretPrototype

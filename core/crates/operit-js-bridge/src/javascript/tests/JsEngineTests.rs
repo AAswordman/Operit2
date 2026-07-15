@@ -1,5 +1,6 @@
 use super::JsEngineState;
 use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorageHost};
+use operit_plugin_sdk::execution_result::JsExecutionErrorKind;
 use operit_plugin_sdk::javascript::{
     JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolNameResolutionRequest,
     JsToolPkgIpcRequest, JsToolPkgResourceRequest,
@@ -11,6 +12,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 struct TestPluginConfigExecutionHost;
 
@@ -104,6 +107,78 @@ fn testParams() -> BTreeMap<String, Value> {
         Value::String("zh-CN".to_string()),
     );
     params
+}
+
+/// Verifies a synchronous loop is interrupted and does not pin the worker afterward.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn synchronous_timeout_interrupts_quickjs_worker() {
+    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    let params = testParams();
+    let started = Instant::now();
+    let error = engine
+        .execute_script_function(
+            "exports.block = function() { while (true) {} };",
+            "block",
+            &params,
+            &BTreeMap::new(),
+            None,
+            true,
+            1,
+            None,
+        )
+        .expect_err("synchronous loop must time out");
+
+    assert_eq!(error.kind, JsExecutionErrorKind::Timeout);
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+
+    let output = engine
+        .execute_script_function(
+            "exports.next = function() { return 'ready'; };",
+            "next",
+            &params,
+            &BTreeMap::new(),
+            None,
+            true,
+            2,
+            None,
+        )
+        .expect("worker must accept execution after an interrupt");
+
+    assert_eq!(output.as_deref(), Some("\"ready\""));
+    engine.destroy();
+}
+
+/// Verifies ToolPkg registration timeout interrupts synchronous code and releases the worker.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn toolpkg_registration_timeout_interrupts_quickjs_worker() {
+    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    let params = testParams();
+    let error = engine
+        .executeToolPkgMainRegistrationWithTimeout(
+            "exports.registerToolPkg = function() { while (true) {} };",
+            "registerToolPkg",
+            &params,
+            None,
+            1,
+        )
+        .expect_err("synchronous ToolPkg registration must time out");
+
+    assert_eq!(error.kind, JsExecutionErrorKind::Timeout);
+
+    let capture = engine
+        .executeToolPkgMainRegistrationWithTimeout(
+            "exports.registerToolPkg = function() { return true; };",
+            "registerToolPkg",
+            &params,
+            None,
+            2,
+        )
+        .expect("worker must accept ToolPkg registration after an interrupt");
+
+    assert!(capture.toolboxUiModules.is_empty());
+    engine.destroy();
 }
 
 #[derive(Clone, Debug)]

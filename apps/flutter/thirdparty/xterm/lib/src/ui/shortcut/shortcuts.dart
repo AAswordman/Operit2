@@ -4,17 +4,11 @@ import 'package:flutter/widgets.dart';
 
 /// Returns the terminal shortcuts for the current target platform.
 Map<ShortcutActivator, Intent> get defaultTerminalShortcuts {
-  switch (defaultTargetPlatform) {
-    case TargetPlatform.android:
-    case TargetPlatform.fuchsia:
-    case TargetPlatform.linux:
-    case TargetPlatform.ohos:
-    case TargetPlatform.windows:
-      return _defaultShortcuts;
-    case TargetPlatform.iOS:
-    case TargetPlatform.macOS:
-      return _defaultAppleShortcuts;
+  final platform = defaultTargetPlatform;
+  if (platform == TargetPlatform.iOS || platform == TargetPlatform.macOS) {
+    return _defaultAppleShortcuts;
   }
+  return _defaultShortcuts;
 }
 
 final _defaultShortcuts = {

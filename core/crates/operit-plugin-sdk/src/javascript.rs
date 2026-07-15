@@ -191,8 +191,12 @@ pub trait JsPackageRuntime: Send + Sync {
     /// Resolves ToolPkg runtime metadata for one executable subpackage.
     fn resolve_toolpkg_subpackage(&self, package_name: &str) -> Option<ToolPkgSubpackageRuntime>;
 
-    /// Returns the shared ToolPkg engine for one execution context.
-    fn toolpkg_execution_engine(&self, context_key: &str) -> Arc<dyn JsExecutionEngine>;
+    /// Returns the shared ToolPkg engine for one explicitly owned execution context.
+    fn toolpkg_execution_engine(
+        &self,
+        context_key: &str,
+        container_package_name: &str,
+    ) -> Arc<dyn JsExecutionEngine>;
 }
 
 /// Captured metadata emitted by a package's main registration script.

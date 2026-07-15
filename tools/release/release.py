@@ -590,7 +590,8 @@ def compress_tar_gz(source_dir, destination):
 
 def write_text_file(path, content):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8", newline="\n")
+    with path.open("w", encoding="utf-8", newline="\n") as output:
+        output.write(content)
 
 
 def write_windows_cli_installer_files(package_dir):
@@ -1204,30 +1205,31 @@ def build_host_cli(cli_arches="host"):
 
 
 # Builds Apple release assets on a macOS SSH worker.
-def build_remote_apple(products, build_name, build_number, cli_arches, apple_builder, apple_remote_root):
+def build_remote_apple(products, build_name, build_number, cli_arches, apple_builder, apple_remote_root, include_ios):
     selected = [product.value for product in sorted(products, key=lambda item: item.value) if product != ReleaseProduct.NONE]
     if not selected:
         return
-    run(
-        [
-            sys.executable,
-            SCRIPT_DIR / "build_apple_remote.py",
-            "--ssh",
-            apple_builder,
-            "--remote-root",
-            apple_remote_root,
-            "--build-name",
-            build_name,
-            "--build-number",
-            build_number,
-            "--cli-arches",
-            cli_arches,
-            "--products",
-            *selected,
-            "--dist-dir",
-            DIST_DIR,
-        ]
-    )
+    command = [
+        sys.executable,
+        SCRIPT_DIR / "build_apple_remote.py",
+        "--ssh",
+        apple_builder,
+        "--remote-root",
+        apple_remote_root,
+        "--build-name",
+        build_name,
+        "--build-number",
+        build_number,
+        "--cli-arches",
+        cli_arches,
+        "--products",
+        *selected,
+        "--dist-dir",
+        DIST_DIR,
+    ]
+    if include_ios:
+        command.append("--include-ios")
+    run(command)
 
 
 def publish_release(tag, repo_value, draft, prerelease, auth):
@@ -1353,8 +1355,9 @@ def main():
     parser.add_argument("--products", nargs="+", choices=[item.value for item in ReleaseProduct])
     parser.add_argument("--wsl-distro", default="FedoraLinux-43")
     parser.add_argument("--no-wsl", action="store_true")
-    parser.add_argument("--apple-builder", default="", help="macOS SSH target used to build macOS and iOS assets")
+    parser.add_argument("--apple-builder", default="", help="macOS SSH target used to build macOS assets")
     parser.add_argument("--apple-remote-root", default="operit2-apple-release")
+    parser.add_argument("--apple-include-ios", action="store_true", help="Build the unsigned iOS app package on the Apple worker.")
     parser.add_argument("--cli-arches", default=CliArchMode.HOST.value, choices=[item.value for item in CliArchMode],
                         help="CLI target architectures: host (current only) or all (all desktop arches)")
     args = parser.parse_args()
@@ -1368,6 +1371,8 @@ def main():
         raise RuntimeError(f"--tag {tag} does not match release version {version.text}")
     if args.prerelease and not version.is_prerelease:
         raise RuntimeError("--prerelease was set for a stable release version")
+    if args.apple_include_ios and not args.apple_builder:
+        raise RuntimeError("--apple-include-ios requires --apple-builder")
     products = products_for_scope(args.scope, args.products)
 
     publish_auth = None
@@ -1407,6 +1412,7 @@ def main():
             args.cli_arches,
             args.apple_builder,
             args.apple_remote_root,
+            args.apple_include_ios,
         )
 
     next_platform_version = None

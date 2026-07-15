@@ -8,6 +8,7 @@ and Rust execution contracts live in `operit-plugin-sdk`.
 
 - Provide the concrete `JsEngine` implementation.
 - Execute ToolPkg JavaScript hooks and Compose DSL scripts.
+- Enforce request-scoped native QuickJS deadlines, including synchronous script execution.
 - Install SDK-owned JavaScript package, ToolPkg, and Compose DSL definitions.
 - Load engine-specific embedded JavaScript libraries and native bridge scripts.
 - Expose JS execution through traits defined by `operit-plugin-sdk`.

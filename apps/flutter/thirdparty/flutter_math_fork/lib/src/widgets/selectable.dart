@@ -275,37 +275,29 @@ class SelectableMath extends StatelessWidget {
     var cursorRadius = this.cursorRadius;
     bool forcePressEnabled;
 
-    switch (theme.platform) {
-      case TargetPlatform.iOS:
-      case TargetPlatform.macOS:
-        forcePressEnabled = true;
-        textSelectionControls ??= cupertinoTextSelectionControls;
-        paintCursorAboveText = true;
-        cursorOpacityAnimates = true;
-        cursorColor ??= selectionTheme.cursorColor ??
-            CupertinoTheme.of(context).primaryColor;
-        selectionColor = selectionTheme.selectionColor ??
-            CupertinoTheme.of(context).primaryColor;
+    final useCupertinoSelection = theme.platform == TargetPlatform.iOS ||
+        theme.platform == TargetPlatform.macOS;
+    if (useCupertinoSelection) {
+      forcePressEnabled = true;
+      textSelectionControls ??= cupertinoTextSelectionControls;
+      paintCursorAboveText = true;
+      cursorOpacityAnimates = true;
+      cursorColor ??=
+          selectionTheme.cursorColor ?? CupertinoTheme.of(context).primaryColor;
+      selectionColor = selectionTheme.selectionColor ??
+          CupertinoTheme.of(context).primaryColor;
 
-        cursorRadius ??= const Radius.circular(2.0);
-        cursorOffset = Offset(
-            iOSHorizontalOffset / MediaQuery.of(context).devicePixelRatio, 0);
-        break;
-
-      case TargetPlatform.android:
-      case TargetPlatform.fuchsia:
-      case TargetPlatform.linux:
-      case TargetPlatform.ohos:
-      case TargetPlatform.windows:
-        forcePressEnabled = false;
-        textSelectionControls ??= materialTextSelectionControls;
-        paintCursorAboveText = false;
-        cursorOpacityAnimates = false;
-        cursorColor ??= selectionTheme.cursorColor ?? theme.colorScheme.primary;
-        selectionColor =
-            selectionTheme.selectionColor ?? theme.colorScheme.primary;
-
-        break;
+      cursorRadius ??= const Radius.circular(2.0);
+      cursorOffset = Offset(
+          iOSHorizontalOffset / MediaQuery.of(context).devicePixelRatio, 0);
+    } else {
+      forcePressEnabled = false;
+      textSelectionControls ??= materialTextSelectionControls;
+      paintCursorAboveText = false;
+      cursorOpacityAnimates = false;
+      cursorColor ??= selectionTheme.cursorColor ?? theme.colorScheme.primary;
+      selectionColor =
+          selectionTheme.selectionColor ?? theme.colorScheme.primary;
     }
 
     return RepaintBoundary(
@@ -474,19 +466,10 @@ class InternalSelectableMathState extends State<InternalSelectableMath>
   /// Responds to selection changes for the active platform.
   void onSelectionChanged(
       TextSelection selection, SelectionChangedCause? cause) {
-    switch (Theme.of(context).platform) {
-      case TargetPlatform.iOS:
-      case TargetPlatform.macOS:
-        if (cause == SelectionChangedCause.longPress) {
-          bringIntoView(selection.base);
-        }
-        return;
-      case TargetPlatform.android:
-      case TargetPlatform.fuchsia:
-      case TargetPlatform.linux:
-      case TargetPlatform.ohos:
-      case TargetPlatform.windows:
-      // Do nothing.
+    final platform = Theme.of(context).platform;
+    if ((platform == TargetPlatform.iOS || platform == TargetPlatform.macOS) &&
+        cause == SelectionChangedCause.longPress) {
+      bringIntoView(selection.base);
     }
   }
 

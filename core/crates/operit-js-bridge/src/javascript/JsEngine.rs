@@ -2,12 +2,17 @@ use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
-#[cfg(target_arch = "wasm32")]
-use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
-use std::sync::mpsc;
+use std::sync::atomic::AtomicBool;
+#[cfg(target_arch = "wasm32")]
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{mpsc, Mutex};
 use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 #[cfg(target_arch = "wasm32")]
 use quickjs_wasm_rs::{
@@ -87,6 +92,7 @@ pub struct JsComposeDslActionEventStream {
 #[cfg(not(target_arch = "wasm32"))]
 struct JsEngineWorker {
     sender: mpsc::Sender<JsEngineRequest>,
+    control: Arc<JsEngineWorkerControl>,
 }
 
 #[derive(Clone)]
@@ -106,6 +112,7 @@ enum JsEngineRequest {
         dispatchIntermediateOnMain: bool,
         executionListener: Option<JsExecutionListenerRef>,
         timeoutSec: u64,
+        interrupt: Arc<JsExecutionInterrupt>,
         response: mpsc::Sender<JsExecutionResult<Option<String>>>,
     },
     ExecuteToolPkgMainRegistration {
@@ -113,8 +120,115 @@ enum JsEngineRequest {
         functionName: String,
         params: BTreeMap<String, Value>,
         textResources: Option<Arc<ToolPkgTextResources>>,
+        timeoutSec: u64,
+        interrupt: Arc<JsExecutionInterrupt>,
         response: mpsc::Sender<JsExecutionResult<ToolPkgMainRegistrationCapture>>,
     },
+    Shutdown,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct JsExecutionInterrupt {
+    deadline: Instant,
+    cancelled: AtomicBool,
+    timedOut: AtomicBool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl JsExecutionInterrupt {
+    /// Creates one execution interrupt with an absolute deadline.
+    fn new(timeout: Duration) -> Self {
+        Self {
+            deadline: Instant::now() + timeout,
+            cancelled: AtomicBool::new(false),
+            timedOut: AtomicBool::new(false),
+        }
+    }
+
+    /// Requests interruption of this exact JavaScript execution.
+    fn interrupt(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// Returns whether QuickJS must stop the current execution.
+    fn shouldInterrupt(&self) -> bool {
+        if self.cancelled.load(Ordering::Acquire) {
+            return true;
+        }
+        if Instant::now() >= self.deadline {
+            self.timedOut.store(true, Ordering::Release);
+            return true;
+        }
+        false
+    }
+
+    /// Returns whether the interrupt was caused by the execution deadline.
+    fn didTimeOut(&self) -> bool {
+        self.timedOut.load(Ordering::Acquire)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct JsEngineWorkerControl {
+    destroyed: AtomicBool,
+    activeInterrupt: Mutex<Option<Arc<JsExecutionInterrupt>>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl JsEngineWorkerControl {
+    /// Creates control state shared by the engine handle and worker thread.
+    fn new() -> Self {
+        Self {
+            destroyed: AtomicBool::new(false),
+            activeInterrupt: Mutex::new(None),
+        }
+    }
+
+    /// Marks one interrupt token as the execution currently owned by the worker.
+    fn beginExecution(&self, interrupt: Arc<JsExecutionInterrupt>) {
+        *self
+            .activeInterrupt
+            .lock()
+            .expect("JavaScript worker interrupt mutex poisoned") = Some(interrupt.clone());
+        if self.destroyed.load(Ordering::Acquire) {
+            interrupt.interrupt();
+        }
+    }
+
+    /// Clears the active token only when it still identifies the completed execution.
+    fn finishExecution(&self, interrupt: &Arc<JsExecutionInterrupt>) {
+        let mut active = self
+            .activeInterrupt
+            .lock()
+            .expect("JavaScript worker interrupt mutex poisoned");
+        if active
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, interrupt))
+        {
+            *active = None;
+        }
+    }
+
+    /// Returns whether this worker has entered terminal destruction.
+    fn isDestroyed(&self) -> bool {
+        self.destroyed.load(Ordering::Acquire)
+    }
+
+    /// Enters terminal destruction and interrupts the execution currently in QuickJS.
+    fn destroy(&self) -> bool {
+        if self.destroyed.swap(true, Ordering::AcqRel) {
+            return false;
+        }
+        if let Some(interrupt) = self
+            .activeInterrupt
+            .lock()
+            .expect("JavaScript worker interrupt mutex poisoned")
+            .as_ref()
+        {
+            interrupt.interrupt();
+        }
+        true
+    }
 }
 
 struct JsEngineState {
@@ -173,7 +287,16 @@ impl JsEngine {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
+            if self.worker.control.isDestroyed() {
+                let reason = "JS execution worker was destroyed";
+                if let Some(listener) = executionListener.as_ref() {
+                    listener.on_failed("", reason);
+                }
+                return Err(JsExecutionError::worker_unavailable(reason));
+            }
             let (response, receiver) = mpsc::channel();
+            let timeout = Duration::from_secs(safeTimeoutSec);
+            let interrupt = Arc::new(JsExecutionInterrupt::new(timeout));
             let request = JsEngineRequest::ExecuteScript {
                 script: script.to_string(),
                 functionName: functionName.to_string(),
@@ -183,6 +306,7 @@ impl JsEngine {
                 dispatchIntermediateOnMain,
                 executionListener: executionListener.clone(),
                 timeoutSec: safeTimeoutSec,
+                interrupt: interrupt.clone(),
                 response,
             };
             if let Err(error) = self.worker.sender.send(request) {
@@ -201,9 +325,10 @@ impl JsEngine {
                 }
                 return Err(JsExecutionError::worker_unavailable(error.to_string()));
             }
-            match receiver.recv_timeout(Duration::from_secs(safeTimeoutSec)) {
+            match receiver.recv_timeout(timeout) {
                 Ok(value) => value,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
+                    interrupt.interrupt();
                     let reason =
                         format!("Script execution timed out after {safeTimeoutSec} seconds");
                     if let Some(listener) = executionListener.as_ref() {
@@ -248,6 +373,7 @@ impl JsEngine {
         )
     }
 
+    /// Executes ToolPkg registration with archive text resources and the standard deadline.
     #[allow(non_snake_case)]
     pub(crate) fn execute_toolpkg_main_registration_function_with_text_resources(
         &self,
@@ -256,6 +382,26 @@ impl JsEngine {
         params: &BTreeMap<String, Value>,
         textResources: Option<Arc<ToolPkgTextResources>>,
     ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
+        self.executeToolPkgMainRegistrationWithTimeout(
+            script,
+            functionName,
+            params,
+            textResources,
+            TOOLPKG_SCRIPT_TIMEOUT_SECONDS,
+        )
+    }
+
+    /// Executes ToolPkg registration with one explicit native deadline.
+    #[allow(non_snake_case)]
+    fn executeToolPkgMainRegistrationWithTimeout(
+        &self,
+        script: &str,
+        functionName: &str,
+        params: &BTreeMap<String, Value>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
+        timeoutSec: u64,
+    ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
+        let safeTimeoutSec = timeoutSec.max(1);
         #[cfg(target_arch = "wasm32")]
         {
             return self.worker.execute_toolpkg_main_registration_function(
@@ -267,12 +413,21 @@ impl JsEngine {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
+            if self.worker.control.isDestroyed() {
+                return Err(JsExecutionError::worker_unavailable(
+                    "JS execution worker was destroyed",
+                ));
+            }
             let (response, receiver) = mpsc::channel();
+            let timeout = Duration::from_secs(safeTimeoutSec);
+            let interrupt = Arc::new(JsExecutionInterrupt::new(timeout));
             let request = JsEngineRequest::ExecuteToolPkgMainRegistration {
                 script: script.to_string(),
                 functionName: functionName.to_string(),
                 params: params.clone(),
                 textResources,
+                timeoutSec: safeTimeoutSec,
+                interrupt: interrupt.clone(),
                 response,
             };
             if let Err(error) = self.worker.sender.send(request) {
@@ -288,20 +443,27 @@ impl JsEngine {
                 );
                 return Err(JsExecutionError::worker_unavailable(error.to_string()));
             }
-            match receiver.recv() {
+            match receiver.recv_timeout(timeout) {
                 Ok(value) => value,
-                Err(error) => {
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    interrupt.interrupt();
+                    Err(JsExecutionError::timeout(format!(
+                        "ToolPkg registration timed out after {safeTimeoutSec} seconds"
+                    )))
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
                     AppLogger::e(
                         TAG,
                         &format!(
-                            "registration-recv-error function={} scriptLen={} params={} error={}",
+                            "registration-recv-error function={} scriptLen={} params={} error=disconnected",
                             functionName,
                             script.len(),
-                            summarizeParams(params),
-                            error
+                            summarizeParams(params)
                         ),
                     );
-                    Err(JsExecutionError::worker_unavailable(error.to_string()))
+                    Err(JsExecutionError::worker_unavailable(
+                        "JS execution worker disconnected",
+                    ))
                 }
             }
         }
@@ -529,12 +691,17 @@ impl JsEngineWorker {
     /// Starts a worker containing one isolated JavaScript runtime state.
     fn new(executionHost: Option<Arc<dyn JsExecutionHost>>) -> Self {
         let (sender, receiver) = mpsc::channel::<JsEngineRequest>();
+        let control = Arc::new(JsEngineWorkerControl::new());
+        let workerControl = control.clone();
         std::thread::Builder::new()
             .name("OperitQuickJsEngine".to_string())
             .stack_size(16 * 1024 * 1024)
             .spawn(move || {
                 let mut state = JsEngineState::new(executionHost);
                 for request in receiver {
+                    if workerControl.isDestroyed() {
+                        break;
+                    }
                     match request {
                         JsEngineRequest::ExecuteScript {
                             script,
@@ -545,17 +712,27 @@ impl JsEngineWorker {
                             dispatchIntermediateOnMain,
                             executionListener,
                             timeoutSec,
+                            interrupt,
                             response,
                         } => {
-                            let output = state.execute_script_function_on_current_thread(
-                                &script,
-                                &functionName,
-                                &params,
-                                &envOverrides,
-                                on_intermediate_result,
-                                dispatchIntermediateOnMain,
+                            let output = executeWithInterrupt(
+                                &mut state,
+                                &workerControl,
+                                interrupt,
                                 timeoutSec,
-                                executionListener,
+                                "Script execution",
+                                |state| {
+                                    state.execute_script_function_on_current_thread(
+                                        &script,
+                                        &functionName,
+                                        &params,
+                                        &envOverrides,
+                                        on_intermediate_result,
+                                        dispatchIntermediateOnMain,
+                                        timeoutSec,
+                                        executionListener,
+                                    )
+                                },
                             );
                             if let Err(error) = response.send(output) {
                                 AppLogger::e(
@@ -572,15 +749,26 @@ impl JsEngineWorker {
                             functionName,
                             params,
                             textResources,
+                            timeoutSec,
+                            interrupt,
                             response,
                         } => {
-                            let output = state
-                                .execute_toolpkg_main_registration_function_on_current_thread(
-                                    &script,
-                                    &functionName,
-                                    &params,
-                                    textResources,
-                                );
+                            let output = executeWithInterrupt(
+                                &mut state,
+                                &workerControl,
+                                interrupt,
+                                timeoutSec,
+                                "ToolPkg registration",
+                                |state| {
+                                    state
+                                        .execute_toolpkg_main_registration_function_on_current_thread(
+                                            &script,
+                                            &functionName,
+                                            &params,
+                                            textResources,
+                                        )
+                                },
+                            );
                             if let Err(error) = response.send(output) {
                                 AppLogger::e(
                                     TAG,
@@ -591,12 +779,37 @@ impl JsEngineWorker {
                                 );
                             }
                         }
+                        JsEngineRequest::Shutdown => break,
                     }
                 }
             })
             .expect("OperitQuickJsEngine worker thread must start");
-        Self { sender }
+        Self { sender, control }
     }
+}
+
+/// Executes one worker operation under its exact interrupt token and deadline.
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(non_snake_case)]
+fn executeWithInterrupt<T>(
+    state: &mut JsEngineState,
+    control: &JsEngineWorkerControl,
+    interrupt: Arc<JsExecutionInterrupt>,
+    timeoutSec: u64,
+    timeoutLabel: &str,
+    operation: impl FnOnce(&mut JsEngineState) -> JsExecutionResult<T>,
+) -> JsExecutionResult<T> {
+    control.beginExecution(interrupt.clone());
+    state.installExecutionInterrupt(interrupt.clone());
+    let output = operation(state);
+    state.clearExecutionInterrupt();
+    control.finishExecution(&interrupt);
+    if interrupt.didTimeOut() {
+        return Err(JsExecutionError::timeout(format!(
+            "{timeoutLabel} timed out after {timeoutSec} seconds"
+        )));
+    }
+    output
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -697,6 +910,21 @@ impl JsEngineState {
                 .expect("NativeInterface bridge must register");
             state
         }
+    }
+
+    /// Installs the interrupt handler for one native QuickJS execution.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(non_snake_case)]
+    fn installExecutionInterrupt(&self, interrupt: Arc<JsExecutionInterrupt>) {
+        self.runtime
+            .set_interrupt_handler(Some(Box::new(move || interrupt.shouldInterrupt())));
+    }
+
+    /// Removes the completed execution's native QuickJS interrupt handler.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(non_snake_case)]
+    fn clearExecutionInterrupt(&self) {
+        self.runtime.set_interrupt_handler(None);
     }
 
     #[allow(non_snake_case)]
@@ -1700,6 +1928,12 @@ fn summarizeJsonValue(value: &Value) -> String {
 impl JsEngine {
     /// Releases the engine worker and associated JavaScript runtime state.
     pub fn destroy(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if self.worker.control.destroy() {
+                let _ = self.worker.sender.send(JsEngineRequest::Shutdown);
+            }
+        }
         #[cfg(target_arch = "wasm32")]
         {
             WASM_JS_ENGINE_STATES.with(|states| {

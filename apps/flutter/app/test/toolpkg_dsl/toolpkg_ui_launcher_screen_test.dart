@@ -39,13 +39,18 @@ void main() {
     final renderCall = bridge.calls.singleWhere(
       (request) => request.methodName == 'executeComposeDslScript',
     );
-    expect(renderCall.targetPath.segments, <String>[
+    expect(renderCall.targetPath.segments.take(4).toList(), <String>[
       'permissions',
       'packTool',
       'packageManager',
       'getToolPkgExecutionEngine',
-      'toolpkg_compose_dsl:demo_toolpkg:main:screen:demo_toolpkg:main',
     ]);
+    expect(
+      renderCall.targetPath.segments[4],
+      startsWith(
+        'toolpkg_compose_dsl:demo_toolpkg:main:screen:demo_toolpkg:main:',
+      ),
+    );
   });
 
   testWidgets('opens compose dsl module when plugin has no routes', (
@@ -78,7 +83,9 @@ void main() {
     );
     expect(
       runtimeOptions['executionContextKey'],
-      'toolpkg_compose_dsl:module_only_toolpkg:toolbox:legacy:module_only_toolpkg:toolbox',
+      startsWith(
+        'toolpkg_compose_dsl:module_only_toolpkg:toolbox:legacy:module_only_toolpkg:toolbox:',
+      ),
     );
     final moduleSpec = runtimeOptions['moduleSpec'] as Map<String, Object?>;
     expect(moduleSpec['id'], 'toolbox');
@@ -105,13 +112,18 @@ void main() {
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'increment');
     expect(args['payload'], isNull);
-    expect(actionCall.targetPath.segments, <String>[
+    expect(actionCall.targetPath.segments.take(4).toList(), <String>[
       'permissions',
       'packTool',
       'packageManager',
       'getToolPkgExecutionEngine',
-      'toolpkg_compose_dsl:demo_toolpkg:main:screen:demo_toolpkg:main',
     ]);
+    expect(
+      actionCall.targetPath.segments[4],
+      startsWith(
+        'toolpkg_compose_dsl:demo_toolpkg:main:screen:demo_toolpkg:main:',
+      ),
+    );
 
     final runtimeOptions = args['runtimeOptions'] as Map<String, Object?>;
     expect(runtimeOptions['routeInstanceId'], 'screen:demo_toolpkg:main');

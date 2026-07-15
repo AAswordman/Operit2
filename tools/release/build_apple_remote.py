@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--build-number", required=True)
     parser.add_argument("--cli-arches", default="all", choices=["host", "all", "x86_64", "aarch64"])
     parser.add_argument("--products", nargs="+", choices=["app", "cli"], required=True)
+    parser.add_argument("--include-ios", action="store_true", help="Build the unsigned iOS app package.")
     parser.add_argument("--dist-dir", type=Path, default=DIST_DIR)
     return parser.parse_args()
 
@@ -102,23 +103,52 @@ def download_file(ssh_target: str, remote_path: str, destination: Path) -> None:
 
 
 # Extracts Apple build assets into the local release dist directory.
-def extract_apple_dist(dist_dir: Path) -> None:
+def extract_apple_dist(dist_dir: Path) -> list[Path]:
     if APPLE_DIST_STAGE.exists():
         shutil.rmtree(APPLE_DIST_STAGE)
     APPLE_DIST_STAGE.mkdir(parents=True, exist_ok=True)
     with tarfile.open(APPLE_DIST_ARCHIVE, "r:gz") as archive:
         archive.extractall(APPLE_DIST_STAGE)
     dist_dir.mkdir(parents=True, exist_ok=True)
+    extracted: list[Path] = []
     for asset in sorted(APPLE_DIST_STAGE.iterdir(), key=lambda path: path.name):
         if asset.is_file():
-            shutil.copy2(asset, dist_dir / asset.name)
+            destination = dist_dir / asset.name
+            shutil.copy2(asset, destination)
+            extracted.append(destination)
+    return extracted
+
+
+# Verifies every selected Apple release product was returned to the local dist directory.
+def verify_returned_assets(args: argparse.Namespace, assets: list[Path]) -> None:
+    names = {asset.name for asset in assets}
+    products = set(args.products)
+    if "app" in products and not any(name.startswith("operit2-app-macos-") and name.endswith(".zip") for name in names):
+        raise RuntimeError("The macOS app archive was not returned by the Apple build worker")
+    if "cli" in products:
+        expected_cli_count = 2 if args.cli_arches == "all" else 1
+        returned_cli_count = sum(name.startswith("operit2-cli-macos-") and name.endswith(".tar.gz") for name in names)
+        if returned_cli_count != expected_cli_count:
+            raise RuntimeError(
+                f"Expected {expected_cli_count} macOS CLI archive(s) from the Apple build worker, got {returned_cli_count}"
+            )
+    if args.include_ios and "app" in products and "operit2-app-ios-arm64.zip" not in names:
+        raise RuntimeError("The iOS app archive was not returned by the Apple build worker")
 
 
 # Builds the shell script executed by the macOS worker.
 def remote_build_script(args: argparse.Namespace, remote_archive: str, remote_source: str, remote_dist: str, remote_result: str) -> str:
     products = " ".join(shlex.quote(product) for product in args.products)
+    ios_option = " --include-ios" if args.include_ios else ""
     return f"""
 set -euo pipefail
+export PATH="$HOME/.rustup/toolchains/stable-$(uname -m)-apple-darwin/bin:$HOME/.pub-cache/bin:$HOME/flutter/bin:/usr/local/bin:$PATH"
+command -v python3
+command -v cargo
+command -v rustup
+command -v fvm
+command -v node
+command -v npm
 rm -rf {shlex.quote(remote_source)} {shlex.quote(remote_dist)}
 mkdir -p {shlex.quote(remote_source)} {shlex.quote(remote_dist)}
 tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(remote_source)}
@@ -128,7 +158,7 @@ python3 tools/build_scripts/build_apple_release.py \
   --build-number {shlex.quote(args.build_number)} \
   --dist-dir {shlex.quote(remote_dist)} \
   --cli-arches {shlex.quote(args.cli_arches)} \
-  --products {products}
+  --products {products}{ios_option}
 tar -czf {shlex.quote(remote_result)} -C {shlex.quote(remote_dist)} .
 """
 
@@ -154,7 +184,7 @@ def main() -> int:
     upload_file(args.ssh, SOURCE_ARCHIVE, remote_archive)
     run_remote(args.ssh, remote_build_script(args, remote_archive, remote_source, remote_dist, remote_result))
     download_file(args.ssh, remote_result, APPLE_DIST_ARCHIVE)
-    extract_apple_dist(args.dist_dir)
+    verify_returned_assets(args, extract_apple_dist(args.dist_dir))
     return 0
 
 

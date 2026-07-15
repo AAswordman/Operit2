@@ -1,5 +1,6 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -35,9 +36,13 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
 }
 
 class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
+  static int _nextExecutionOwnerId = 0;
+
+  late final int _executionOwnerId = _nextExecutionOwnerId++;
   late String _selectedRouteId = _initialRouteId();
   _ComposeDslRenderResult? _renderResult;
   String? _scriptScreenPath;
+  ({String contextKey, String containerPackageName})? _activeExecutionContext;
   bool _loading = true;
   bool _loadedInitialRoute = false;
   int _routeLoadGeneration = 0;
@@ -103,11 +108,25 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       uiModuleId: uiModuleId,
       routeInstanceId: routeInstanceId,
     );
+    final executionContext = (
+      contextKey: executionContextKey,
+      containerPackageName: widget.plugin.packageName,
+    );
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
+      final previousExecutionContext = _activeExecutionContext;
+      if (previousExecutionContext != null &&
+          previousExecutionContext != executionContext) {
+        _activeExecutionContext = null;
+        await _releaseExecutionContext(previousExecutionContext);
+        if (!_isCurrentRouteLoad(routeLoadGeneration)) {
+          return;
+        }
+      }
+      _activeExecutionContext = executionContext;
       final script = await _packageManager.getToolPkgComposeDslScript(
         containerPackageName: widget.plugin.packageName,
         uiModuleId: uiModuleId,
@@ -127,6 +146,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       _scriptScreenPath = screenPath;
       final raw = await _packageManager.executeToolPkgComposeDslScript(
         contextKey: executionContextKey,
+        containerPackageName: widget.plugin.packageName,
         script: script,
         runtimeOptions: _runtimeOptions(
           uiModuleId: uiModuleId,
@@ -165,6 +185,35 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     return mounted && routeLoadGeneration == _routeLoadGeneration;
   }
 
+  /// Releases one page-owned ToolPkg execution context.
+  Future<void> _releaseExecutionContext(
+    ({String contextKey, String containerPackageName}) executionContext,
+  ) async {
+    await _packageManager.releaseToolPkgExecutionEngine(
+      contextKey: executionContext.contextKey,
+      containerPackageName: executionContext.containerPackageName,
+    );
+  }
+
+  /// Releases the active ToolPkg context when this page leaves the widget tree.
+  @override
+  void dispose() {
+    _routeLoadGeneration += 1;
+    final executionContext = _activeExecutionContext;
+    _activeExecutionContext = null;
+    if (executionContext != null) {
+      unawaited(
+        _releaseExecutionContext(executionContext).catchError((
+          Object error,
+          StackTrace stackTrace,
+        ) {
+          _printComposeError('release', error, stackTrace);
+        }),
+      );
+    }
+    super.dispose();
+  }
+
   Future<Object?> _dispatchAction(String actionId, [Object? payload]) {
     return _dispatchActionCore(
       actionId,
@@ -197,6 +246,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       final events = await _packageManager
           .dispatchToolPkgComposeDslActionEvents(
             contextKey: executionContextKey,
+            containerPackageName: widget.plugin.packageName,
             actionId: actionId,
             payload: payload,
             runtimeOptions: _runtimeOptions(
@@ -321,7 +371,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     final route = routeInstanceId.trim().isEmpty
         ? 'default'
         : routeInstanceId.trim();
-    return 'toolpkg_compose_dsl:$container:$module:$route';
+    return 'toolpkg_compose_dsl:$container:$module:$route:$_executionOwnerId';
   }
 
   String _currentLanguage() {

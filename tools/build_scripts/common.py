@@ -140,11 +140,10 @@ def write_web_access_version_manifest() -> dict[str, object]:
         "fileCount": file_count,
         "byteSize": byte_size,
     }
-    (WEB_ACCESS_BUNDLE_DIR / WEB_ACCESS_VERSION_FILE).write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    with (WEB_ACCESS_BUNDLE_DIR / WEB_ACCESS_VERSION_FILE).open(
+        "w", encoding="utf-8", newline="\n"
+    ) as output:
+        output.write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return manifest
 
 
@@ -367,9 +366,11 @@ def read_properties(path: Path) -> dict[str, str]:
 
 
 def write_properties(path: Path, values: dict[str, str]) -> None:
+    """Writes sorted Java properties with LF line endings."""
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"{key}={java_properties_value(value)}" for key, value in sorted(values.items())]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    with path.open("w", encoding="utf-8", newline="\n") as output:
+        output.write("\n".join(lines) + "\n")
 
 
 def java_properties_value(value: str) -> str:

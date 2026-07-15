@@ -2475,15 +2475,22 @@ self.onmessage = (event) => {
 
   let bridgePromise;
 
+  /** Initializes the WebAssembly bridge with its browser WASI host. */
+  async function initializeWasmBridge(module, wasi) {
+    await ensureBrowserStorage();
+    await ensureSqlite();
+    await ensureWebLocalInference();
+    const wasm = await module.default({ module_or_path: "./operit_flutter_bridge_bg.wasm" });
+    wasi.setWasiMemory(wasm.memory);
+    return new module.OperitFlutterBridgeWasm();
+  }
+
   async function bridge() {
     if (!bridgePromise) {
-      bridgePromise = import("./operit_flutter_bridge.js").then(async (module) => {
-        await ensureBrowserStorage();
-        await ensureSqlite();
-        await ensureWebLocalInference();
-        await module.default({ module_or_path: "./operit_flutter_bridge_bg.wasm" });
-        return new module.OperitFlutterBridgeWasm();
-      });
+      bridgePromise = Promise.all([
+        import("./operit_flutter_bridge.js"),
+        import("./wasi_snapshot_preview1.js"),
+      ]).then(([module, wasi]) => initializeWasmBridge(module, wasi));
     }
     return bridgePromise;
   }
