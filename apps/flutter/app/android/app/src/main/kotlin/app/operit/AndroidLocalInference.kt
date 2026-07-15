@@ -125,9 +125,9 @@ internal object AndroidLocalInference {
     /** Builds one Sherpa ONNX TTS config from an exact driver tag. */
     private fun ttsConfigForDriver(driverName: String, driver: JSONObject, modelDirectory: File): OfflineTtsConfig {
         return when (driverName) {
-            "SherpaOnnxVits" => vitsTtsConfig(driver, modelDirectory)
-            "SherpaOnnxMatcha" => matchaTtsConfig(driver, modelDirectory)
-            "SherpaOnnxKitten" => kittenTtsConfig(driver, modelDirectory)
+            "SherpaOnnxVits" -> vitsTtsConfig(driver, modelDirectory)
+            "SherpaOnnxMatcha" -> matchaTtsConfig(driver, modelDirectory)
+            "SherpaOnnxKitten" -> kittenTtsConfig(driver, modelDirectory)
             else -> throw IllegalArgumentException("LOCAL_MODEL Android TTS driver is unsupported: $driverName")
         }
     }

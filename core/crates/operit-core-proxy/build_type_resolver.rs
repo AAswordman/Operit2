@@ -372,7 +372,7 @@ fn serializable_enum_type(
         .iter()
         .map(|variant| {
             let name = variant.ident.to_string();
-            let (fields_are_unnamed, fields) = match &variant.fields {
+            let (fields_are_unnamed, fields_are_unit, fields) = match &variant.fields {
                 Fields::Named(fields) => {
                     let fields = fields
                         .named
@@ -388,7 +388,7 @@ fn serializable_enum_type(
                             })
                         })
                         .collect::<Vec<_>>();
-                    (false, fields)
+                    (false, false, fields)
                 }
                 Fields::Unnamed(fields) => {
                     let fields = fields
@@ -408,19 +408,20 @@ fn serializable_enum_type(
                             }
                         })
                         .collect::<Vec<_>>();
-                    (true, fields)
+                    (true, false, fields)
                 }
-                Fields::Unit => (false, Vec::new()),
+                Fields::Unit => (false, true, Vec::new()),
             };
             SerializableEnumVariant {
                 json_name: serde_rename(&variant.attrs).unwrap_or_else(|| name.clone()),
                 fields_are_unnamed,
+                fields_are_unit,
                 fields,
                 name,
             }
         })
         .collect();
-    let unit_only = mapped.iter().all(|variant| variant.fields.is_empty());
+    let unit_only = mapped.iter().all(|variant| variant.fields_are_unit);
     if unit_only {
         return SerializableType {
             full_type: full_type.clone(),
@@ -432,12 +433,14 @@ fn serializable_enum_type(
             },
         };
     }
-    let (tag_name, content_name) = serde_tag_content(&item_enum.attrs).unwrap_or_else(|| {
-        (
+    let (tag_name, content_name, externally_tagged) = match serde_tag_content(&item_enum.attrs) {
+        Some((tag_name, content_name)) => (tag_name, content_name, false),
+        None => (
             full_type.rsplit("::").next().unwrap_or("type").to_string(),
             None,
-        )
-    });
+            true,
+        ),
+    };
     SerializableType {
         full_type,
         supports_serialize: derives_serialize(&item_enum.attrs),
@@ -445,6 +448,7 @@ fn serializable_enum_type(
         kind: SerializableTypeKind::TaggedEnum {
             tag_name,
             content_name,
+            externally_tagged,
             variants: mapped,
         },
     }

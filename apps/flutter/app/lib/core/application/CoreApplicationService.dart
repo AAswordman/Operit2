@@ -4,19 +4,25 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 
+import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../host/RuntimeHostInteractionSubscriber.dart';
 import '../link_host/LinkHostServer.dart';
 import '../logging/ClientLogger.dart';
+import '../proxy/generated/CoreProxyClients.g.dart';
+import '../proxy/generated/CoreProxyModels.g.dart';
 import '../runtime/RuntimeAutoSyncManager.dart';
 import '../runtime/RuntimeConnectionManager.dart';
 
-class CoreApplicationService {
+class CoreApplicationService with WidgetsBindingObserver {
   CoreApplicationService._();
 
   static final CoreApplicationService instance = CoreApplicationService._();
   static const String _logTag = 'CoreApplication';
   static const MethodChannel _runtimeChannel = MethodChannel('operit/runtime');
+  static const GeneratedCoreProxyClients _coreClients =
+      GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
 
   final RuntimeConnectionManager _runtimeManager =
       RuntimeConnectionManager.instance;
@@ -53,12 +59,71 @@ class CoreApplicationService {
     final stopwatch = Stopwatch()..start();
     ClientLogger.i('initialize start', tag: _logTag);
     _initialized = true;
+    WidgetsBinding.instance.addObserver(this);
     _runtimeManager.addListener(_handleRuntimeConnectionChanged);
     unawaited(_startRuntimeServices());
     ClientLogger.i(
       'initialize done elapsedMs=${stopwatch.elapsedMilliseconds}',
       tag: _logTag,
     );
+  }
+
+  /// Forwards Flutter lifecycle changes through the normalized runtime event ingress.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    unawaited(_emitLifecycleEvent(state));
+  }
+
+  /// Emits one lifecycle event after the selected runtime becomes callable.
+  Future<void> _emitLifecycleEvent(AppLifecycleState state) async {
+    if (!_runtimeManager.runtimeConfigured) {
+      return;
+    }
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final topic = switch (state) {
+      AppLifecycleState.resumed => RuntimeEventTopic.appLifecycleResumed,
+      AppLifecycleState.inactive => RuntimeEventTopic.appLifecycleInactive,
+      AppLifecycleState.paused => RuntimeEventTopic.appLifecyclePaused,
+      AppLifecycleState.detached => RuntimeEventTopic.appLifecycleDetached,
+      AppLifecycleState.hidden => RuntimeEventTopic.appLifecycleHidden,
+    };
+    try {
+      await _coreClients.application.ingestRuntimeEvent(
+        event: RuntimeEvent(
+          domain: RuntimeEventDomain.host,
+          source: RuntimeEventSource.flutterLifecycle,
+          topic: topic,
+          platform: _runtimeEventPlatform,
+          payload: <String, Object?>{'state': state.name},
+          occurredAtMillis: timestamp,
+        ),
+      );
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'lifecycle event delivery failed state=${state.name}',
+        tag: _logTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  /// Returns the stable runtime platform identifier for this Flutter process.
+  RuntimeEventPlatform get _runtimeEventPlatform {
+    if (kIsWeb) {
+      return RuntimeEventPlatform.web;
+    }
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.android => RuntimeEventPlatform.android,
+      TargetPlatform.iOS => RuntimeEventPlatform.ios,
+      TargetPlatform.linux => RuntimeEventPlatform.linux,
+      TargetPlatform.macOS => RuntimeEventPlatform.macos,
+      TargetPlatform.windows => RuntimeEventPlatform.windows,
+      TargetPlatform.ohos => RuntimeEventPlatform.ohos,
+      TargetPlatform.fuchsia => throw UnsupportedError(
+        'Fuchsia runtime events are not supported',
+      ),
+    };
   }
 
   /// Starts Core services when runtime configuration becomes usable.

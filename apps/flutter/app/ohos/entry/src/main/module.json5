@@ -35,8 +35,17 @@
     ],
     "requestPermissions": [
       {"name" :  "ohos.permission.INTERNET"},
+      {"name" :  "ohos.permission.GET_NETWORK_INFO"},
       {
         "name": "ohos.permission.USE_BLUETOOTH",
+        "reason": "$string:permission_bluetooth_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      },
+      {
+        "name": "ohos.permission.ACCESS_BLUETOOTH",
         "reason": "$string:permission_bluetooth_reason",
         "usedScene": {
           "abilities": ["EntryAbility"],

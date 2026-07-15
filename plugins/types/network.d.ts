@@ -1,9 +1,9 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
-import type { HttpResponseData, StringResultData, VisitWebResultData } from "./results";
+import type { HttpResponseData, VisitWebResultData } from "./results";
 
 /**
- * Performs HTTP requests and controls persistent browser sessions.
+ * Performs HTTP requests and controls the browser automation tools available at runtime.
  */
 export namespace Net {
   /**
@@ -719,113 +719,112 @@ export namespace Net {
    * Click an element by snapshot ref or selector.
    * Only accepts one options object.
    */
-  function browserClick(options: HostBrowserClickOptions): Promise<StringResultData>;
+  function browserClick(options: HostBrowserClickOptions): Promise<string>;
   /**
    * Close the current browser tab.
    */
-  function browserClose(options?: Record<string, never>): Promise<StringResultData>;
+  function browserClose(options?: Record<string, never>): Promise<string>;
   /**
    * Close all browser tabs.
    */
-  function browserCloseAll(options?: Record<string, never>): Promise<StringResultData>;
+  function browserCloseAll(options?: Record<string, never>): Promise<string>;
   /**
    * Read console messages from the browser session.
    */
-  function browserConsoleMessages(options?: HostBrowserConsoleMessagesOptions): Promise<StringResultData>;
+  function browserConsoleMessages(options?: HostBrowserConsoleMessagesOptions): Promise<string>;
   /**
    * Drag between two elements by snapshot refs.
    */
-  function browserDrag(options: HostBrowserDragOptions): Promise<StringResultData>;
+  function browserDrag(options: HostBrowserDragOptions): Promise<string>;
   /**
    * Evaluate JavaScript in the browser session.
    */
-  function browserEvaluate(options: HostBrowserEvaluateOptions): Promise<StringResultData>;
+  function browserEvaluate(options: HostBrowserEvaluateOptions): Promise<string>;
   /**
    * Resolve an active file chooser in the browser session.
    * If `paths` is omitted, the file chooser is cancelled.
    */
-  function browserFileUpload(options?: HostBrowserFileUploadOptions): Promise<StringResultData>;
+  function browserFileUpload(options?: HostBrowserFileUploadOptions): Promise<string>;
   /**
    * Fill multiple form fields in the browser session.
    */
-  function browserFillForm(options: HostBrowserFillFormOptions): Promise<StringResultData>;
+  function browserFillForm(options: HostBrowserFillFormOptions): Promise<string>;
   /**
    * Handle an active dialog.
    */
-  function browserHandleDialog(options: HostBrowserHandleDialogOptions): Promise<StringResultData>;
+  function browserHandleDialog(options: HostBrowserHandleDialogOptions): Promise<string>;
   /**
    * Hover over an element by snapshot ref.
    */
-  function browserHover(options: HostBrowserHoverOptions): Promise<StringResultData>;
+  function browserHover(options: HostBrowserHoverOptions): Promise<string>;
   /**
    * Navigate a browser session to a target URL.
    */
-  function browserNavigate(urlOrOptions: HostBrowserNavigateUrlOrOptions): Promise<StringResultData>;
+  function browserNavigate(urlOrOptions: HostBrowserNavigateUrlOrOptions): Promise<string>;
   /**
    * Go back in browser history.
    */
-  function browserNavigateBack(options?: Record<string, never>): Promise<StringResultData>;
+  function browserNavigateBack(options?: Record<string, never>): Promise<string>;
   /**
    * Read network requests from the browser session.
    */
-  function browserNetworkRequests(options?: HostBrowserNetworkRequestsOptions): Promise<StringResultData>;
+  function browserNetworkRequests(options?: HostBrowserNetworkRequestsOptions): Promise<string>;
   /**
    * Press a keyboard key in the browser session.
    */
-  function browserPressKey(keyOrOptions: HostBrowserPressKeyKeyOrOptions): Promise<StringResultData>;
+  function browserPressKey(keyOrOptions: HostBrowserPressKeyKeyOrOptions): Promise<string>;
   /**
    * Resize the browser viewport.
    */
-  function browserResize(options: HostBrowserResizeOptions): Promise<StringResultData>;
+  function browserResize(options: HostBrowserResizeOptions): Promise<string>;
   /**
    * Run Playwright-style code in the browser session.
    */
-  function browserRunCode(options: HostBrowserRunCodeOptions): Promise<StringResultData>;
+  function browserRunCode(options: HostBrowserRunCodeOptions): Promise<string>;
   /**
    * Select options in a dropdown by snapshot ref.
    */
-  function browserSelectOption(options: HostBrowserSelectOptionOptions): Promise<StringResultData>;
+  function browserSelectOption(options: HostBrowserSelectOptionOptions): Promise<string>;
   /**
    * Capture a text snapshot of current page.
    */
-  function browserSnapshot(options?: HostBrowserSnapshotOptions): Promise<StringResultData>;
+  function browserSnapshot(options?: HostBrowserSnapshotOptions): Promise<string>;
   /**
    * Manage browser tabs.
    */
-  function browserTabs(options: HostBrowserTabsOptions): Promise<StringResultData>;
+  function browserTabs(options: HostBrowserTabsOptions): Promise<string>;
   /**
    * Take a screenshot of the current page or a target element.
    */
-  function browserTakeScreenshot(options: HostBrowserTakeScreenshotOptions): Promise<StringResultData>;
+  function browserTakeScreenshot(options: HostBrowserTakeScreenshotOptions): Promise<string>;
   /**
    * Type text into an element by snapshot ref.
    */
-  function browserType(options: HostBrowserTypeOptions): Promise<StringResultData>;
+  function browserType(options: HostBrowserTypeOptions): Promise<string>;
   /**
-   * Install a browser session userscript from a remote URL, local file path, or inline source text.
-   * Exactly one of `url`, `path`, or `source` is required.
+   * Installs a browser userscript from exactly one supported source.
    */
-  function browserUserscriptInstall(options: HostBrowserUserscriptInstallOptions): Promise<StringResultData>;
+  function browserUserscriptInstall(options: HostBrowserUserscriptInstallOptions): Promise<string>;
   /**
-   * List installed browser session userscripts.
+   * Lists installed browser session userscripts.
    */
-  function browserUserscriptList(options?: HostBrowserUserscriptListOptions): Promise<StringResultData>;
+  function browserUserscriptList(options?: HostBrowserUserscriptListOptions): Promise<string>;
   /**
-   * Enable an installed browser session userscript.
+   * Enables one installed browser session userscript.
    */
-  function browserUserscriptStart(options: HostBrowserUserscriptStartOptions): Promise<StringResultData>;
+  function browserUserscriptStart(options: HostBrowserUserscriptStartOptions): Promise<string>;
   /**
-   * Disable an installed browser session userscript.
+   * Disables one installed browser session userscript.
    */
-  function browserUserscriptStop(options: HostBrowserUserscriptStopOptions): Promise<StringResultData>;
+  function browserUserscriptStop(options: HostBrowserUserscriptStopOptions): Promise<string>;
   /**
-   * Uninstall an installed browser session userscript.
+   * Uninstalls one browser session userscript.
    */
-  function browserUserscriptUninstall(options: HostBrowserUserscriptUninstallOptions): Promise<StringResultData>;
+  function browserUserscriptUninstall(options: HostBrowserUserscriptUninstallOptions): Promise<string>;
   /**
    * Wait for text or time in the browser session.
    */
-  function browserWaitFor(options: HostBrowserWaitForOptions): Promise<StringResultData>;
+  function browserWaitFor(options: HostBrowserWaitForOptions): Promise<string>;
   /**
    * Enhanced HTTP request with flexible options
    * @param options - HTTP request options
@@ -843,15 +842,13 @@ export namespace Net {
    */
   function httpPost(url: string, body: HostHttpPostBody, ignore_ssl?: boolean): Promise<HttpResponseData>;
   /**
-   * Start a persistent browser session (floating window WebView).
-   * Returns StringResultData whose `value` is a JSON string payload.
+   * Starts a persistent browser session hosted in a floating WebView.
    */
-  function startBrowser(options?: HostStartBrowserOptions): Promise<StringResultData>;
+  function startBrowser(options?: HostStartBrowserOptions): Promise<string>;
   /**
-   * Stop one browser session or all browser sessions.
-   * Returns StringResultData whose `value` is a JSON string payload.
+   * Stops one persistent browser session or every active session.
    */
-  function stopBrowser(sessionIdOrOptions?: HostStopBrowserSessionIdOrOptions): Promise<StringResultData>;
+  function stopBrowser(sessionIdOrOptions?: HostStopBrowserSessionIdOrOptions): Promise<string>;
   /**
    * Upload file using multipart request
    * @param options - Upload options

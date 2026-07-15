@@ -3,7 +3,8 @@ package app.operit
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.Intent
-import android.net.wifi.WifiManager
+import android.os.BatteryManager
+import java.util.TimeZone
 import org.json.JSONObject
 
 object RuntimeEvents {
@@ -56,6 +57,14 @@ object RuntimeEvents {
         .put("platform", Platform.ANDROID)
         .put("payload", data)
         .put("occurredAtMillis", System.currentTimeMillis())
+
+    /** Delivers one normalized event and requires Core to accept its canonical payload. */
+    fun emit(runtimeHandle: Long, event: JSONObject) {
+        val response = JSONObject(OperitRuntimeNative.emitRuntimeEvent(runtimeHandle, event.toString()))
+        check(response.getBoolean("ok")) {
+            response.optString("error", "Core rejected Android runtime event")
+        }
+    }
 }
 
 object AndroidRuntimeEvents {
@@ -72,7 +81,6 @@ object AndroidRuntimeEvents {
         Intent.ACTION_DATE_CHANGED,
         Intent.ACTION_TIMEZONE_CHANGED,
         Intent.ACTION_AIRPLANE_MODE_CHANGED,
-        WifiManager.WIFI_STATE_CHANGED_ACTION,
         Intent.ACTION_HEADSET_PLUG,
     )
 
@@ -90,9 +98,7 @@ object AndroidRuntimeEvents {
         val action = requireNotNull(intent.action) {
             "android broadcast action is required"
         }
-        val data = JSONObject()
-            .put("action", action)
-            .put("extras", extras)
+        val data = systemData(action, extras)
         return RuntimeEvents.androidBroadcast(systemTopic(action), data)
     }
 
@@ -100,13 +106,20 @@ object AndroidRuntimeEvents {
         val action = requireNotNull(intent.action) {
             "bluetooth broadcast action is required"
         }
-        val data = JSONObject()
-            .put("action", action)
-            .put("deviceName", device?.name)
-            .put("deviceAddress", device?.address)
-            .put("extras", extras)
+        val data = bluetoothData(action, device, extras)
         return RuntimeEvents.androidBroadcast(bluetoothTopic(action), data)
     }
+
+    /** Builds one platform-independent network change payload. */
+    fun networkChanged(
+        connected: Boolean,
+        networkType: String,
+        metered: Boolean?,
+    ): JSONObject = JSONObject()
+        .put("connected", connected)
+        .put("networkType", networkType)
+        .put("metered", metered)
+        .put("interfaceName", JSONObject.NULL)
 
     private fun systemTopic(action: String): String = when (action) {
         Intent.ACTION_BOOT_COMPLETED -> RuntimeEvents.Topic.SYSTEM_BOOT_COMPLETED
@@ -122,7 +135,6 @@ object AndroidRuntimeEvents {
         Intent.ACTION_TIMEZONE_CHANGED -> RuntimeEvents.Topic.SYSTEM_TIMEZONE_CHANGED
         Intent.ACTION_AIRPLANE_MODE_CHANGED -> RuntimeEvents.Topic.SYSTEM_AIRPLANE_MODE_CHANGED
         Intent.ACTION_HEADSET_PLUG -> RuntimeEvents.Topic.SYSTEM_HEADSET_PLUG
-        WifiManager.WIFI_STATE_CHANGED_ACTION -> RuntimeEvents.Topic.SYSTEM_NETWORK_CHANGED
         else -> error("Unsupported Android broadcast action: $action")
     }
 
@@ -135,5 +147,107 @@ object AndroidRuntimeEvents {
         BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED -> RuntimeEvents.Topic.BLUETOOTH_ADAPTER_CONNECTION_STATE_CHANGED
         BluetoothAdapter.ACTION_STATE_CHANGED -> RuntimeEvents.Topic.BLUETOOTH_ADAPTER_POWERED_CHANGED
         else -> error("Unsupported Bluetooth broadcast action: $action")
+    }
+
+    /** Converts one Android system broadcast into its canonical topic data. */
+    private fun systemData(action: String, extras: JSONObject): JSONObject = when (action) {
+        Intent.ACTION_BOOT_COMPLETED -> JSONObject().put("bootCompleted", true)
+        Intent.ACTION_POWER_CONNECTED -> JSONObject()
+            .put("connected", true)
+            .put("source", powerSource(extras))
+            .put("batteryLevel", batteryLevel(extras))
+        Intent.ACTION_POWER_DISCONNECTED -> JSONObject()
+            .put("connected", false)
+            .put("source", "battery")
+            .put("batteryLevel", batteryLevel(extras))
+        Intent.ACTION_BATTERY_LOW -> JSONObject()
+            .put("low", true)
+            .put("level", batteryLevel(extras))
+            .put("charging", batteryCharging(extras))
+        Intent.ACTION_BATTERY_OKAY -> JSONObject()
+            .put("low", false)
+            .put("level", batteryLevel(extras))
+            .put("charging", batteryCharging(extras))
+        Intent.ACTION_SCREEN_ON -> JSONObject().put("screenOn", true)
+        Intent.ACTION_SCREEN_OFF -> JSONObject().put("screenOn", false)
+        Intent.ACTION_USER_PRESENT -> JSONObject().put("present", true)
+        Intent.ACTION_TIME_TICK,
+        Intent.ACTION_DATE_CHANGED -> JSONObject()
+            .put("timestampMillis", System.currentTimeMillis())
+            .put("timezone", TimeZone.getDefault().id)
+        Intent.ACTION_TIMEZONE_CHANGED -> JSONObject()
+            .put("timestampMillis", System.currentTimeMillis())
+            .put("timezone", extras.optString("time-zone", TimeZone.getDefault().id))
+        Intent.ACTION_AIRPLANE_MODE_CHANGED -> JSONObject()
+            .put("enabled", extras.getBoolean("state"))
+        Intent.ACTION_HEADSET_PLUG -> JSONObject()
+            .put("connected", extras.getInt("state") == 1)
+            .put("deviceName", extras.optString("name").takeIf { it.isNotEmpty() })
+            .put("hasMicrophone", extras.optInt("microphone", -1).takeIf { it >= 0 }?.let { it == 1 })
+        else -> error("Unsupported Android system broadcast action: $action")
+    }
+
+    /** Converts one Android Bluetooth broadcast into its canonical topic data. */
+    private fun bluetoothData(
+        action: String,
+        device: BluetoothDevice?,
+        extras: JSONObject,
+    ): JSONObject {
+        if (action == BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED) {
+            val state = extras.getInt(BluetoothAdapter.EXTRA_CONNECTION_STATE)
+            return JSONObject()
+                .put("powered", JSONObject.NULL)
+                .put("connected", state == BluetoothAdapter.STATE_CONNECTED)
+        }
+        if (action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+            val state = extras.getInt(BluetoothAdapter.EXTRA_STATE)
+            return JSONObject()
+                .put("powered", state == BluetoothAdapter.STATE_ON)
+                .put("connected", JSONObject.NULL)
+        }
+        val data = JSONObject()
+            .put("deviceName", device?.name)
+            .put("deviceAddress", device?.address)
+            .put("connected", JSONObject.NULL)
+            .put("bonded", JSONObject.NULL)
+            .put("rssi", extras.optInt(BluetoothDevice.EXTRA_RSSI, Int.MIN_VALUE).takeIf { it != Int.MIN_VALUE })
+        when (action) {
+            BluetoothDevice.ACTION_ACL_CONNECTED -> data.put("connected", true)
+            BluetoothDevice.ACTION_ACL_DISCONNECTED -> data.put("connected", false)
+            BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
+                val bondState = extras.getInt(BluetoothDevice.EXTRA_BOND_STATE)
+                data.put("bonded", bondState == BluetoothDevice.BOND_BONDED)
+            }
+        }
+        return data
+    }
+
+    /** Reads a normalized Android battery percentage from broadcast extras. */
+    private fun batteryLevel(extras: JSONObject): Double? {
+        val level = extras.optInt(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = extras.optInt(BatteryManager.EXTRA_SCALE, -1)
+        return if (level >= 0 && scale > 0) level * 100.0 / scale else null
+    }
+
+    /** Reads Android battery charging state when the broadcast provides it. */
+    private fun batteryCharging(extras: JSONObject): Boolean? {
+        val status = extras.optInt(BatteryManager.EXTRA_STATUS, -1)
+        return when (status) {
+            BatteryManager.BATTERY_STATUS_CHARGING,
+            BatteryManager.BATTERY_STATUS_FULL -> true
+            BatteryManager.BATTERY_STATUS_DISCHARGING,
+            BatteryManager.BATTERY_STATUS_NOT_CHARGING -> false
+            else -> null
+        }
+    }
+
+    /** Maps Android's plugged source code to the shared power source vocabulary. */
+    private fun powerSource(extras: JSONObject): String? = when (extras.optInt(BatteryManager.EXTRA_PLUGGED, -1)) {
+        BatteryManager.BATTERY_PLUGGED_AC -> "ac"
+        BatteryManager.BATTERY_PLUGGED_USB -> "usb"
+        BatteryManager.BATTERY_PLUGGED_WIRELESS -> "wireless"
+        0 -> "battery"
+        -1 -> null
+        else -> "unknown"
     }
 }

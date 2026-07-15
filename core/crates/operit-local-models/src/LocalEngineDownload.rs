@@ -768,9 +768,7 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use operit_host_api::{
-        HostResult, HttpDownloadResult, HttpRequestData, HttpResponseData,
-    };
+    use operit_host_api::{HostResult, HttpDownloadResult, HttpRequestData, HttpResponseData};
 
     use crate::LocalEngineCatalog::LocalEngineCatalog;
     use crate::LocalEngineManifest::{LocalArchitecture, LocalPlatform};
@@ -806,11 +804,9 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir_all(&runtimeRoot).unwrap();
-        let installer = LocalEngineInstaller::forRuntimeRoot(
-            runtimeRoot.clone(),
-            Arc::new(RejectingHttpHost),
-        )
-        .unwrap();
+        let installer =
+            LocalEngineInstaller::forRuntimeRoot(runtimeRoot.clone(), Arc::new(RejectingHttpHost))
+                .unwrap();
         let target = LocalPlatformTarget {
             platform: LocalPlatform::Ios,
             architecture: LocalArchitecture::Aarch64,
@@ -829,7 +825,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.downloadedBytes, 0);
-        assert_eq!(result.installedEngine.artifact.delivery, LocalEngineDelivery::Embedded);
+        assert_eq!(
+            result.installedEngine.artifact.delivery,
+            LocalEngineDelivery::Embedded
+        );
         assert!(installer
             .verifyInstalledEngine(&manifest.id, &manifest.version, &target, 43)
             .is_ok());

@@ -285,7 +285,11 @@ fn handle_upower_daemon_changed(
             true => "system.power.disconnected",
             false => "system.power.connected",
         };
-        emit(sink, topic, upower_payload(path, UPOWER_DAEMON_INTERFACE, changed));
+        emit(sink, topic, serde_json::json!({
+            "connected": !onBattery,
+            "source": if onBattery { "battery" } else { "ac" },
+            "batteryLevel": prop_f64(changed, "Percentage"),
+        }));
     }
 }
 
@@ -300,7 +304,12 @@ fn handle_upower_device_changed(
             1 | 2 => "system.battery.okay",
             _ => return,
         };
-        emit(sink, topic, upower_payload(path, UPOWER_DEVICE_INTERFACE, changed));
+        let low = matches!(warningLevel, 3 | 4 | 5);
+        emit(sink, topic, serde_json::json!({
+            "low": low,
+            "level": prop_f64(changed, "Percentage"),
+            "charging": upower_charging(changed),
+        }));
     }
 }
 
@@ -310,18 +319,14 @@ fn handle_logind_session_changed(
     changed: &HashMap<String, OwnedValue>,
 ) {
     if let Some(lockedHint) = prop_bool(changed, "LockedHint") {
-        let payload = serde_json::json!({
-            "path": path,
-            "interface": LOGIND_SESSION_INTERFACE,
-            "lockedHint": lockedHint,
-        });
+        let payload = serde_json::json!({"locked": lockedHint});
         let topic = match lockedHint {
             true => "system.session.lock",
             false => "system.session.unlock",
         };
         emit(sink, topic, payload.clone());
         if !lockedHint {
-            emit(sink, "system.user.present", payload);
+            emit(sink, "system.user.present", serde_json::json!({"present": true}));
         }
     }
 }
@@ -336,23 +341,21 @@ fn handle_network_manager_changed(
             sink,
             "system.network.changed",
             serde_json::json!({
-                "path": path,
-                "interface": NETWORK_MANAGER_INTERFACE,
-                "state": state,
+                "connected": state >= 50,
+                "networkType": if state >= 50 { "other" } else { "none" },
+                "metered": null,
+                "interfaceName": null,
             }),
         );
     }
     let wirelessEnabled = prop_bool(changed, "WirelessEnabled");
     let wwanEnabled = prop_bool(changed, "WwanEnabled");
-    if wirelessEnabled.is_some() || wwanEnabled.is_some() {
+    if let (Some(wirelessEnabled), Some(wwanEnabled)) = (wirelessEnabled, wwanEnabled) {
         emit(
             sink,
             "system.airplane_mode.changed",
             serde_json::json!({
-                "path": path,
-                "interface": NETWORK_MANAGER_INTERFACE,
-                "wirelessEnabled": wirelessEnabled,
-                "wwanEnabled": wwanEnabled,
+                "enabled": !wirelessEnabled && !wwanEnabled,
             }),
         );
     }
@@ -372,9 +375,7 @@ fn handle_screensaver_active_changed(
         sink,
         topic,
         serde_json::json!({
-            "path": path,
-            "interface": interface,
-            "active": active,
+            "screenOn": !active,
         }),
     );
 }
@@ -389,8 +390,7 @@ fn handle_timedate_changed(
             sink,
             "system.timezone.changed",
             serde_json::json!({
-                "path": path,
-                "interface": TIMEDATE_INTERFACE,
+                "timestampMillis": unix_millis(),
                 "timezone": timezone,
             }),
         );
@@ -400,9 +400,8 @@ fn handle_timedate_changed(
             sink,
             "system.date.changed",
             serde_json::json!({
-                "path": path,
-                "interface": TIMEDATE_INTERFACE,
-                "ntp": ntp,
+                "timestampMillis": unix_millis(),
+                "timezone": null,
             }),
         );
     }
@@ -417,8 +416,6 @@ fn handle_prepare_for_sleep(sink: &HostRuntimeEventSink, path: &str, sleeping: b
         sink,
         topic,
         serde_json::json!({
-            "path": path,
-            "interface": LOGIND_MANAGER_INTERFACE,
             "sleeping": sleeping,
         }),
     );
@@ -440,8 +437,11 @@ fn handle_interfaces_removed(sink: &HostRuntimeEventSink, path: &str, interfaces
             sink,
             "bluetooth.device.disconnected",
             serde_json::json!({
-                "path": path,
-                "interface": BLUEZ_DEVICE_INTERFACE,
+                "deviceAddress": null,
+                "deviceName": null,
+                "connected": false,
+                "bonded": null,
+                "rssi": null,
             }),
         );
     }
@@ -457,9 +457,8 @@ fn handle_bluez_adapter_changed(
             sink,
             "bluetooth.adapter.powered_changed",
             serde_json::json!({
-                "path": path,
-                "interface": BLUEZ_ADAPTER_INTERFACE,
                 "powered": powered,
+                "connected": null,
             }),
         );
     }
@@ -482,9 +481,11 @@ fn handle_bluez_device_changed(
             sink,
             "bluetooth.device.name_changed",
             serde_json::json!({
-                "path": path,
-                "interface": BLUEZ_DEVICE_INTERFACE,
-                "name": name,
+                "deviceAddress": prop_string(changed, "Address"),
+                "deviceName": name,
+                "connected": prop_bool(changed, "Connected"),
+                "bonded": prop_bool(changed, "Paired"),
+                "rssi": null,
             }),
         );
     }
@@ -493,9 +494,11 @@ fn handle_bluez_device_changed(
             sink,
             "bluetooth.device.bond_state_changed",
             serde_json::json!({
-                "path": path,
-                "interface": BLUEZ_DEVICE_INTERFACE,
+                "deviceAddress": prop_string(changed, "Address"),
+                "deviceName": prop_string(changed, "Name"),
+                "connected": prop_bool(changed, "Connected"),
                 "bonded": bonded,
+                "rssi": null,
             }),
         );
     }
@@ -512,26 +515,23 @@ fn emit(sink: &HostRuntimeEventSink, topic: &str, payload: Value) {
     }));
 }
 
-fn upower_payload(path: &str, interface: &str, changed: &HashMap<String, OwnedValue>) -> Value {
+fn bluez_device_payload(path: &str, changed: &HashMap<String, OwnedValue>) -> Value {
     serde_json::json!({
-        "path": path,
-        "interface": interface,
-        "onBattery": prop_bool(changed, "OnBattery"),
-        "warningLevel": prop_u64(changed, "WarningLevel"),
-        "percentage": prop_f64(changed, "Percentage"),
-        "state": prop_u64(changed, "State"),
+        "deviceAddress": prop_string(changed, "Address"),
+        "deviceName": prop_string(changed, "Name"),
+        "connected": prop_bool(changed, "Connected"),
+        "bonded": prop_bool(changed, "Paired"),
+        "rssi": null,
     })
 }
 
-fn bluez_device_payload(path: &str, changed: &HashMap<String, OwnedValue>) -> Value {
-    serde_json::json!({
-        "path": path,
-        "interface": BLUEZ_DEVICE_INTERFACE,
-        "connected": prop_bool(changed, "Connected"),
-        "name": prop_string(changed, "Name"),
-        "address": prop_string(changed, "Address"),
-        "paired": prop_bool(changed, "Paired"),
-    })
+/// Maps UPower's device state into the shared optional charging field.
+fn upower_charging(changed: &HashMap<String, OwnedValue>) -> Option<bool> {
+    match prop_u64(changed, "State") {
+        Some(1) | Some(4) => Some(true),
+        Some(2) | Some(3) | Some(5) | Some(6) => Some(false),
+        _ => None,
+    }
 }
 
 fn prop_bool(properties: &HashMap<String, OwnedValue>, key: &str) -> Option<bool> {

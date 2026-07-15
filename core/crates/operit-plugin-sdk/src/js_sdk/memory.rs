@@ -58,10 +58,7 @@ pub trait MemoryHost: Send + Sync {
         targetOwnerKey: Option<String>,
     ) -> JsFuture<MemoryQueryResultData>;
     /// Queries memory using a structured set of owner, time, folder, and relevance filters.
-    fn query_overload_2(
-        &self,
-        options: MemoryQueryOptions,
-    ) -> JsFuture<MemoryQueryResultData>;
+    fn query_overload_2(&self, options: MemoryQueryOptions) -> JsFuture<MemoryQueryResultData>;
     ///
     ///Get a memory by exact title from one memory owner.
     ///
@@ -104,10 +101,7 @@ pub trait MemoryHost: Send + Sync {
         updates: Option<MemoryUpdateOptions>,
     ) -> JsFuture<String>;
     /// Updates a memory using a structured request that includes its current title.
-    fn update_overload_2(
-        &self,
-        options: MemoryHostUpdateOptionsIntersection,
-    ) -> JsFuture<String>;
+    fn update_overload_2(&self, options: MemoryHostUpdateOptionsIntersection) -> JsFuture<String>;
     ///
     ///Overwrite USER.md for one memory owner.
     ///
@@ -124,11 +118,7 @@ pub trait MemoryHost: Send + Sync {
     ///
     ///Delete a memory from one memory owner.
     ///
-    fn deleteMemory_overload_1(
-        &self,
-        title: String,
-        targetOwnerKey: String,
-    ) -> JsFuture<String>;
+    fn deleteMemory_overload_1(&self, title: String, targetOwnerKey: String) -> JsFuture<String>;
     /// Deletes an exact-titled memory using a structured owner-scoped request.
     fn deleteMemory_overload_2(&self, options: MemoryDeleteOptions) -> JsFuture<String>;
     ///
@@ -156,10 +146,7 @@ pub trait MemoryHost: Send + Sync {
         description: Option<String>,
     ) -> JsFuture<MemoryLinkResultData>;
     /// Creates a typed, weighted relationship between two memories from structured options.
-    fn link_overload_2(
-        &self,
-        options: MemoryLinkOptions,
-    ) -> JsFuture<MemoryLinkResultData>;
+    fn link_overload_2(&self, options: MemoryLinkOptions) -> JsFuture<MemoryLinkResultData>;
     ///
     ///Query memory links inside one memory owner.
     ///
@@ -208,10 +195,7 @@ pub trait MemoryHost: Send + Sync {
         linkType: Option<String>,
     ) -> JsFuture<String>;
     /// Locates and removes a memory relationship using structured options.
-    fn deleteLink_overload_2(
-        &self,
-        options: MemoryDeleteLinkOptions,
-    ) -> JsFuture<String>;
+    fn deleteLink_overload_2(&self, options: MemoryDeleteLinkOptions) -> JsFuture<String>;
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Optionally restricts a memory query to one owner store.

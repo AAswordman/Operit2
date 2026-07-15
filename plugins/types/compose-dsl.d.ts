@@ -85,7 +85,7 @@ export type ComposeWebViewLifecycleEventType = "Created" | "Disposed" | "PageCom
 /**
  * Discriminator for allowing a WebView navigation unchanged.
  */
-export type ComposeWebViewNavigationDecisionVariant1Action = "Allow";
+export type ComposeWebViewNavigationDecisionVariant1Action = "allow";
 
 /**
  * Navigation decision that permits the original request.
@@ -100,7 +100,7 @@ export interface ComposeWebViewNavigationDecisionVariant1 {
 /**
  * Discriminator for cancelling a WebView navigation.
  */
-export type ComposeWebViewNavigationDecisionVariant2Action = "Cancel";
+export type ComposeWebViewNavigationDecisionVariant2Action = "cancel";
 
 /**
  * Navigation decision that prevents the requested page from loading.
@@ -115,7 +115,7 @@ export interface ComposeWebViewNavigationDecisionVariant2 {
 /**
  * Discriminator for replacing a WebView navigation request.
  */
-export type ComposeWebViewNavigationDecisionVariant3Action = "Rewrite";
+export type ComposeWebViewNavigationDecisionVariant3Action = "rewrite";
 
 /**
  * Navigation decision that redirects the WebView to a replacement request.
@@ -138,7 +138,7 @@ export interface ComposeWebViewNavigationDecisionVariant3 {
 /**
  * Discriminator for handing navigation to an external application.
  */
-export type ComposeWebViewNavigationDecisionVariant4Action = "External";
+export type ComposeWebViewNavigationDecisionVariant4Action = "external";
 
 /**
  * Navigation decision that delegates a target to the host platform.
@@ -271,7 +271,7 @@ export interface ComposeWebViewResourceResponseVariant3 {
 /**
  * Discriminator for allowing a resource request unchanged.
  */
-export type ComposeWebViewResourceDecisionVariant1Action = "Allow";
+export type ComposeWebViewResourceDecisionVariant1Action = "allow";
 
 /**
  * Resource interception decision that permits the original request.
@@ -286,7 +286,7 @@ export interface ComposeWebViewResourceDecisionVariant1 {
 /**
  * Discriminator for blocking a resource request.
  */
-export type ComposeWebViewResourceDecisionVariant2Action = "Block";
+export type ComposeWebViewResourceDecisionVariant2Action = "block";
 
 /**
  * Resource interception decision that suppresses a request.
@@ -301,7 +301,7 @@ export interface ComposeWebViewResourceDecisionVariant2 {
 /**
  * Discriminator for replacing a resource request.
  */
-export type ComposeWebViewResourceDecisionVariant3Action = "Rewrite";
+export type ComposeWebViewResourceDecisionVariant3Action = "rewrite";
 
 /**
  * Resource interception decision that redirects a request.
@@ -324,7 +324,7 @@ export interface ComposeWebViewResourceDecisionVariant3 {
 /**
  * Discriminator for supplying a synthetic resource response.
  */
-export type ComposeWebViewResourceDecisionVariant4Action = "Respond";
+export type ComposeWebViewResourceDecisionVariant4Action = "respond";
 
 /**
  * Resource interception decision that returns plugin-provided content.
@@ -543,20 +543,7 @@ export type ComposeTemplateValuesAdditionalValue = string | number | boolean;
 /**
  * Complete node-factory surface exposed through `ComposeDslContext::UI`.
  */
-export interface ComposeDslContextUIIntersection {
-  /**
-   * Factories for the core Compose DSL components.
-   */
-  member_1: ComposeUiFactoryRegistry;
-  /**
-   * Factories generated for Material 3 components.
-   */
-  member_2: ComposeMaterial3GeneratedUiFactoryRegistry;
-  /**
-   * Additional host-registered component factories keyed by element name.
-   */
-  member_3: Record<string, ComposeNodeFactory<Record<string, unknown>>>;
-}
+export type ComposeDslContextUIIntersection = ComposeUiFactoryRegistry & ComposeMaterial3GeneratedUiFactoryRegistry & Record<string, ComposeNodeFactory<Record<string, unknown>>>;
 
 /**
  * Stable mutable reference retained across renders for a keyed screen instance.
@@ -631,22 +618,22 @@ export type ComposeDslScreenOutput = ComposeNode | Promise<ComposeNode>;
 /**
  * Material typography role used to select themed text metrics.
  */
-export type ComposeTextStyle = "HeadlineSmall" | "HeadlineMedium" | "TitleLarge" | "TitleMedium" | "TitleSmall" | "BodyLarge" | "BodyMedium" | "BodySmall" | "LabelLarge" | "LabelMedium" | "LabelSmall";
+export type ComposeTextStyle = "headlineSmall" | "headlineMedium" | "titleLarge" | "titleMedium" | "titleSmall" | "bodyLarge" | "bodyMedium" | "bodySmall" | "labelLarge" | "labelMedium" | "labelSmall";
 
 /**
  * Distribution strategy for children along a layout's main axis.
  */
-export type ComposeArrangement = "Start" | "Center" | "End" | "SpaceBetween" | "SpaceAround" | "SpaceEvenly";
+export type ComposeArrangement = "start" | "center" | "end" | "spaceBetween" | "spaceAround" | "spaceEvenly";
 
 /**
  * Cross-axis placement for children inside a layout container.
  */
-export type ComposeAlignment = "Start" | "Center" | "End";
+export type ComposeAlignment = "start" | "center" | "end";
 
 /**
  * Geometry used to clip or outline a Compose component.
  */
-export type ComposeShapeType = "Rounded" | "Cut" | "Circle" | "Pill";
+export type ComposeShapeType = "rounded" | "cut" | "circle" | "pill";
 
 /**
  * Shape geometry with optional uniform, logical, or physical corner radii.
@@ -733,7 +720,7 @@ export interface ComposePadding {
 /**
  * Coordinate unit accepted by canvas drawing commands.
  */
-export type ComposeCanvasUnit = "Px" | "Dp" | "Fraction";
+export type ComposeCanvasUnit = "px" | "dp" | "fraction";
 
 /**
  * Numeric canvas quantity paired with an explicit coordinate unit.
@@ -757,12 +744,12 @@ export type ComposeCanvasNumber = number | ComposeUnitValue;
 /**
  * Rendering behavior when laid-out text exceeds its bounds.
  */
-export type ComposeTextOverflow = "Clip" | "Ellipsis";
+export type ComposeTextOverflow = "clip" | "ellipsis";
 
 /**
  * Scaling strategy for fitting visual content into destination bounds.
  */
-export type ComposeContentScale = "Fit" | "Crop" | "FillBounds" | "FillWidth" | "FillHeight" | "Inside" | "None";
+export type ComposeContentScale = "fit" | "crop" | "fillBounds" | "fillWidth" | "fillHeight" | "inside" | "none";
 
 /**
  * Constraints used to measure text before constructing a canvas layout.
@@ -873,17 +860,17 @@ export interface ComposeCanvasBrush {
 /**
  * Horizontal placement used by width and box-layout modifiers.
  */
-export type ComposeHorizontalAlignment = "Start" | "Center" | "End" | "Left" | "Right" | "CenterHorizontally";
+export type ComposeHorizontalAlignment = "start" | "center" | "end" | "left" | "right" | "centerHorizontally";
 
 /**
  * Vertical placement used by height and box-layout modifiers.
  */
-export type ComposeVerticalAlignment = "Top" | "Center" | "Bottom" | "Start" | "End" | "CenterVertically";
+export type ComposeVerticalAlignment = "top" | "center" | "bottom" | "start" | "end" | "centerVertically";
 
 /**
  * Two-dimensional placement of content inside a box.
  */
-export type ComposeBoxAlignment = "Center" | "TopStart" | "StartTop" | "TopCenter" | "CenterTop" | "TopEnd" | "EndTop" | "CenterStart" | "StartCenter" | "CenterEnd" | "EndCenter" | "BottomStart" | "StartBottom" | "BottomCenter" | "CenterBottom" | "BottomEnd" | "EndBottom";
+export type ComposeBoxAlignment = "center" | "topStart" | "startTop" | "topCenter" | "centerTop" | "topEnd" | "endTop" | "centerStart" | "startCenter" | "centerEnd" | "endCenter" | "bottomStart" | "startBottom" | "bottomCenter" | "centerBottom" | "bottomEnd" | "endBottom";
 
 /**
  * Alignment accepted by a modifier in horizontal, vertical, or box scope.
@@ -1095,15 +1082,15 @@ export interface ComposeModifierCombinedClickableOptions {
   /**
    * Handles a recognized primary click.
    */
-  on_click: () => ComposeModifierCombinedClickableOptionsOnClickOutput;
+  onClick: () => ComposeModifierCombinedClickableOptionsOnClickOutput;
   /**
    * Handles a recognized long press when supplied.
    */
-  on_long_click?: () => ComposeModifierCombinedClickableOptionsOnLongClickOutput;
+  onLongClick?: () => ComposeModifierCombinedClickableOptionsOnLongClickOutput;
   /**
    * Handles a recognized double click when supplied.
    */
-  on_double_click?: () => ComposeModifierCombinedClickableOptionsOnDoubleClickOutput;
+  onDoubleClick?: () => ComposeModifierCombinedClickableOptionsOnDoubleClickOutput;
 }
 
 /**
@@ -1185,19 +1172,19 @@ export interface ComposeModifierTapGesturesOptions {
   /**
    * Runs as soon as a pointer press is recognized.
    */
-  on_press?: (arg0: ComposePointerOffsetEvent) => ComposeModifierTapGesturesOptionsOnPressOutput;
+  onPress?: (arg0: ComposePointerOffsetEvent) => ComposeModifierTapGesturesOptionsOnPressOutput;
   /**
    * Runs after a single tap is recognized.
    */
-  on_tap?: (arg0: ComposePointerOffsetEvent) => ComposeModifierTapGesturesOptionsOnTapOutput;
+  onTap?: (arg0: ComposePointerOffsetEvent) => ComposeModifierTapGesturesOptionsOnTapOutput;
   /**
    * Runs after two taps are recognized within the gesture interval.
    */
-  on_double_tap?: (arg0: ComposePointerOffsetEvent) => ComposeModifierTapGesturesOptionsOnDoubleTapOutput;
+  onDoubleTap?: (arg0: ComposePointerOffsetEvent) => ComposeModifierTapGesturesOptionsOnDoubleTapOutput;
   /**
    * Runs when a press exceeds the long-press threshold.
    */
-  on_long_press?: (arg0: ComposePointerOffsetEvent) => ComposeModifierTapGesturesOptionsOnLongPressOutput;
+  onLongPress?: (arg0: ComposePointerOffsetEvent) => ComposeModifierTapGesturesOptionsOnLongPressOutput;
 }
 
 /**
@@ -1207,19 +1194,19 @@ export interface ComposeModifierDragGesturesOptions {
   /**
    * Receives the pointer location where dragging begins.
    */
-  on_drag_start?: (arg0: ComposePointerOffsetEvent) => ComposeModifierDragGesturesOptionsOnDragStartOutput;
+  onDragStart?: (arg0: ComposePointerOffsetEvent) => ComposeModifierDragGesturesOptionsOnDragStartOutput;
   /**
    * Receives each pointer position and incremental movement during dragging.
    */
-  on_drag?: (arg0: ComposeDragGestureEvent) => ComposeModifierDragGesturesOptionsOnDragOutput;
+  onDrag?: (arg0: ComposeDragGestureEvent) => ComposeModifierDragGesturesOptionsOnDragOutput;
   /**
    * Runs when the pointer is released after a successful drag.
    */
-  on_drag_end?: () => ComposeModifierDragGesturesOptionsOnDragEndOutput;
+  onDragEnd?: () => ComposeModifierDragGesturesOptionsOnDragEndOutput;
   /**
    * Runs when another gesture or lifecycle event cancels the drag.
    */
-  on_drag_cancel?: () => ComposeModifierDragGesturesOptionsOnDragCancelOutput;
+  onDragCancel?: () => ComposeModifierDragGesturesOptionsOnDragCancelOutput;
 }
 
 /**
@@ -1229,11 +1216,11 @@ export interface ComposeModifierTransformGesturesOptions {
   /**
    * Locks gesture recognition to pan and zoom after those motions win the slop race.
    */
-  pan_zoom_lock?: boolean;
+  panZoomLock?: boolean;
   /**
    * Receives the centroid and incremental pan, zoom, and rotation deltas.
    */
-  on_gesture: (arg0: ComposeCanvasTransformEvent) => ComposeModifierTransformGesturesOptionsOnGestureOutput;
+  onGesture: (arg0: ComposeCanvasTransformEvent) => ComposeModifierTransformGesturesOptionsOnGestureOutput;
 }
 
 /**
@@ -1702,12 +1689,12 @@ export interface ComposeWebViewController {
 /**
  * Policy for HTTP subresources requested by an HTTPS page.
  */
-export type ComposeWebViewMixedContentMode = "AlwaysAllow" | "NeverAllow" | "CompatibilityMode";
+export type ComposeWebViewMixedContentMode = "alwaysAllow" | "neverAllow" | "compatibilityMode";
 
 /**
  * Cache policy applied to WebView network requests.
  */
-export type ComposeWebViewCacheMode = "Default" | "NoCache" | "CacheElseNetwork" | "CacheOnly";
+export type ComposeWebViewCacheMode = "default" | "noCache" | "cacheElseNetwork" | "cacheOnly";
 
 /**
  * Command that strokes a straight segment between two canvas points.
@@ -2073,7 +2060,7 @@ export type ComposeCanvasPathOp = ComposeCanvasMoveToOp | ComposeCanvasLineToOp 
 /**
  * Whether canvas path geometry is filled or outlined.
  */
-export type ComposeCanvasDrawStyle = "Fill" | "Stroke";
+export type ComposeCanvasDrawStyle = "fill" | "stroke";
 
 /**
  * Command that assembles path operations and renders the resulting geometry.
@@ -2275,7 +2262,7 @@ export type ComposeCanvasCommand = ComposeCanvasLineCommand | ComposeCanvasRectC
 /**
  * Serialized operation name stored in a Compose modifier chain.
  */
-export type ComposeModifierName = "FillMaxSize" | "FillMaxWidth" | "FillMaxHeight" | "Width" | "Height" | "RequiredWidth" | "RequiredHeight" | "Size" | "RequiredSize" | "Padding" | "Offset" | "WidthIn" | "HeightIn" | "SizeIn" | "RequiredWidthIn" | "RequiredHeightIn" | "RequiredSizeIn" | "DefaultMinSize" | "WrapContentWidth" | "WrapContentHeight" | "WrapContentSize" | "AspectRatio" | "Alpha" | "Rotate" | "Scale" | "ZIndex" | "Background" | "Border" | "Clip" | "ClipToBounds" | "Shadow" | "Clickable" | "CombinedClickable" | "TapGestures" | "DragGestures" | "TransformGestures" | "OnSizeChanged" | "OnGloballyPositioned" | "ImePadding" | "StatusBarsPadding" | "NavigationBarsPadding" | "SystemBarsPadding" | "SafeDrawingPadding" | "Weight" | "Align" | "MatchParentSize";
+export type ComposeModifierName = "fillMaxSize" | "fillMaxWidth" | "fillMaxHeight" | "width" | "height" | "requiredWidth" | "requiredHeight" | "size" | "requiredSize" | "padding" | "offset" | "widthIn" | "heightIn" | "sizeIn" | "requiredWidthIn" | "requiredHeightIn" | "requiredSizeIn" | "defaultMinSize" | "wrapContentWidth" | "wrapContentHeight" | "wrapContentSize" | "aspectRatio" | "alpha" | "rotate" | "scale" | "zIndex" | "background" | "border" | "clip" | "clipToBounds" | "shadow" | "clickable" | "combinedClickable" | "tapGestures" | "dragGestures" | "transformGestures" | "onSizeChanged" | "onGloballyPositioned" | "imePadding" | "statusBarsPadding" | "navigationBarsPadding" | "systemBarsPadding" | "safeDrawingPadding" | "weight" | "align" | "matchParentSize";
 
 /**
  * One serialized operation in an immutable Compose modifier chain.
@@ -2621,11 +2608,11 @@ export interface ComposeCommonProps {
   /**
    * Runs after the host has created and loaded the node.
    */
-  on_load?: () => ComposeCommonPropsOnLoadOutput;
+  onLoad?: () => ComposeCommonPropsOnLoadOutput;
   /**
    * Content presented as the host screen's top-bar title.
    */
-  top_bar_title?: ComposeChildren;
+  topBarTitle?: ComposeChildren;
   /**
    * Ordered modifier operations applied to layout, drawing, and input.
    */
@@ -2633,7 +2620,7 @@ export interface ComposeCommonProps {
   /**
    * Sibling draw order, with larger values rendered above smaller ones.
    */
-  z_index?: number;
+  zIndex?: number;
   /**
    * Share of remaining main-axis space inside a row or column.
    */
@@ -2641,7 +2628,7 @@ export interface ComposeCommonProps {
   /**
    * Whether weighted content expands to occupy its entire allocated share.
    */
-  weight_fill?: boolean;
+  weightFill?: boolean;
   /**
    * Requested node width before parent constraints are applied.
    */
@@ -2653,7 +2640,7 @@ export interface ComposeCommonProps {
   /**
    * Whether the node expands to the maximum available height.
    */
-  fill_max_height?: boolean;
+  fillMaxHeight?: boolean;
   /**
    * Uniform or axis-specific space between node bounds and content.
    */
@@ -2661,27 +2648,27 @@ export interface ComposeCommonProps {
   /**
    * Content inset on the layout-direction start edge.
    */
-  padding_start?: number;
+  paddingStart?: number;
   /**
    * Content inset on the top edge.
    */
-  padding_top?: number;
+  paddingTop?: number;
   /**
    * Content inset on the layout-direction end edge.
    */
-  padding_end?: number;
+  paddingEnd?: number;
   /**
    * Content inset applied to both start and end edges.
    */
-  padding_horizontal?: number;
+  paddingHorizontal?: number;
   /**
    * Content inset applied to both top and bottom edges.
    */
-  padding_vertical?: number;
+  paddingVertical?: number;
   /**
    * Content inset on the bottom edge.
    */
-  padding_bottom?: number;
+  paddingBottom?: number;
   /**
    * Gap inserted between adjacent child nodes.
    */
@@ -2689,11 +2676,11 @@ export interface ComposeCommonProps {
   /**
    * Whether the node expands to the maximum available width.
    */
-  fill_max_width?: boolean;
+  fillMaxWidth?: boolean;
   /**
    * Whether the node expands to both maximum available dimensions.
    */
-  fill_max_size?: boolean;
+  fillMaxSize?: boolean;
   /**
    * Solid background paint behind node content.
    */
@@ -2701,23 +2688,23 @@ export interface ComposeCommonProps {
   /**
    * Alternate explicit background color accepted by legacy component props.
    */
-  background_color?: ComposeColor;
+  backgroundColor?: ComposeColor;
   /**
    * Material container color used by surface-like components.
    */
-  container_color?: ComposeColor;
+  containerColor?: ComposeColor;
   /**
    * Opacity multiplier applied to background paint.
    */
-  background_alpha?: number;
+  backgroundAlpha?: number;
   /**
    * Gradient brush used instead of a solid background color.
    */
-  background_brush?: ComposeCanvasBrush;
+  backgroundBrush?: ComposeCanvasBrush;
   /**
    * Shape that bounds and optionally clips the background paint.
    */
-  background_shape?: ComposeShape;
+  backgroundShape?: ComposeShape;
 }
 
 /**
@@ -2749,15 +2736,15 @@ export interface RowProps extends ComposeCommonProps {
   /**
    * Main-axis distribution of children within the row width.
    */
-  horizontal_arrangement?: ComposeArrangement;
+  horizontalArrangement?: ComposeArrangement;
   /**
    * Cross-axis alignment of children within the row height.
    */
-  vertical_alignment?: ComposeAlignment;
+  verticalAlignment?: ComposeAlignment;
   /**
    * Optional click action for the row as one interactive target.
    */
-  on_click?: () => RowPropsOnClickOutput;
+  onClick?: () => RowPropsOnClickOutput;
 }
 
 /**
@@ -2875,11 +2862,11 @@ export interface TextFieldProps extends ComposeCommonProps {
   /**
    * Decoration placed before the editable text.
    */
-  leading_icon?: ComposeChildren;
+  leadingIcon?: ComposeChildren;
   /**
    * Decoration placed after the editable text.
    */
-  trailing_icon?: ComposeChildren;
+  trailingIcon?: ComposeChildren;
   /**
    * Content rendered immediately before the entered value.
    */
@@ -2891,7 +2878,7 @@ export interface TextFieldProps extends ComposeCommonProps {
   /**
    * Helper or validation content rendered beneath the field.
    */
-  supporting_text?: ComposeChildren;
+  supportingText?: ComposeChildren;
   /**
    * Current controlled text value.
    */
@@ -2899,31 +2886,31 @@ export interface TextFieldProps extends ComposeCommonProps {
   /**
    * Receives each user-proposed value for controlled-state updates.
    */
-  on_value_change: (arg0: string) => void;
+  onValueChange: (arg0: string) => void;
   /**
    * Restricts input and layout to one visual line.
    */
-  single_line?: boolean;
+  singleLine?: boolean;
   /**
    * Minimum visible line count reserved by the field.
    */
-  min_lines?: number;
+  minLines?: number;
   /**
    * Maximum visible line count before internal scrolling.
    */
-  max_lines?: number;
+  maxLines?: number;
   /**
    * Allows selection without accepting user edits.
    */
-  read_only?: boolean;
+  readOnly?: boolean;
   /**
    * Applies error-state semantics and styling.
    */
-  is_error?: boolean;
+  isError?: boolean;
   /**
    * Obscures entered characters as sensitive password input.
    */
-  is_password?: boolean;
+  isPassword?: boolean;
   /**
    * Typography and foreground overrides for the entered value.
    */
@@ -2941,7 +2928,7 @@ export interface SwitchProps extends ComposeCommonProps {
   /**
    * Receives the state requested by user interaction.
    */
-  on_checked_change: (arg0: boolean) => void;
+  onCheckedChange: (arg0: boolean) => void;
   /**
    * Whether the switch accepts pointer and accessibility actions.
    */
@@ -2949,23 +2936,23 @@ export interface SwitchProps extends ComposeCommonProps {
   /**
    * Optional content rendered inside the movable thumb.
    */
-  thumb_content?: ComposeChildren;
+  thumbContent?: ComposeChildren;
   /**
    * Thumb color while the switch is on.
    */
-  checked_thumb_color?: ComposeColor;
+  checkedThumbColor?: ComposeColor;
   /**
    * Track color while the switch is on.
    */
-  checked_track_color?: ComposeColor;
+  checkedTrackColor?: ComposeColor;
   /**
    * Thumb color while the switch is off.
    */
-  unchecked_thumb_color?: ComposeColor;
+  uncheckedThumbColor?: ComposeColor;
   /**
    * Track color while the switch is off.
    */
-  unchecked_track_color?: ComposeColor;
+  uncheckedTrackColor?: ComposeColor;
 }
 
 /**
@@ -2979,7 +2966,7 @@ export interface CheckboxProps extends ComposeCommonProps {
   /**
    * Receives the state requested by user interaction.
    */
-  on_checked_change: (arg0: boolean) => void;
+  onCheckedChange: (arg0: boolean) => void;
   /**
    * Whether the checkbox accepts pointer and accessibility actions.
    */
@@ -3005,11 +2992,11 @@ export interface ButtonProps extends ComposeCommonProps {
   /**
    * Action invoked when the button is activated.
    */
-  on_click: () => ButtonPropsOnClickOutput;
+  onClick: () => ButtonPropsOnClickOutput;
   /**
    * Horizontal and vertical inset around the button content.
    */
-  content_padding?: ComposePadding;
+  contentPadding?: ComposePadding;
   /**
    * Outline used for button background, border, and clipping.
    */
@@ -3035,7 +3022,7 @@ export interface IconButtonProps extends ComposeCommonProps {
   /**
    * Action invoked when the icon button is activated.
    */
-  on_click: () => IconButtonPropsOnClickOutput;
+  onClick: () => IconButtonPropsOnClickOutput;
   /**
    * Outline used for interaction feedback and clipping.
    */
@@ -3091,11 +3078,11 @@ export interface SurfaceProps extends ComposeCommonProps {
   /**
    * Background color of the surface.
    */
-  container_color?: ComposeColor;
+  containerColor?: ComposeColor;
   /**
    * Default foreground color inherited by surface content.
    */
-  content_color?: ComposeColor;
+  contentColor?: ComposeColor;
   /**
    * Outline used for surface painting, clipping, and interaction feedback.
    */
@@ -3107,7 +3094,7 @@ export interface SurfaceProps extends ComposeCommonProps {
   /**
    * Optional action that turns the surface into an interactive target.
    */
-  on_click?: () => SurfacePropsOnClickOutput;
+  onClick?: () => SurfacePropsOnClickOutput;
 }
 
 /**
@@ -3195,11 +3182,11 @@ export interface CanvasProps extends ComposeCommonProps {
   /**
    * Receives incremental pan, zoom, and rotation gestures over the canvas.
    */
-  on_transform?: (arg0: ComposeCanvasTransformEvent) => void;
+  onTransform?: (arg0: ComposeCanvasTransformEvent) => void;
   /**
    * Receives measured canvas dimensions after layout changes.
    */
-  on_size_changed?: (arg0: ComposeCanvasSizeEvent) => void;
+  onSizeChanged?: (arg0: ComposeCanvasSizeEvent) => void;
 }
 
 /**
@@ -3217,11 +3204,11 @@ export interface WebViewProps extends ComposeCommonProps {
   /**
    * Origin and relative-link base for inline HTML content.
    */
-  base_url?: string;
+  baseUrl?: string;
   /**
    * Media type assigned to inline content.
    */
-  mime_type?: string;
+  mimeType?: string;
   /**
    * Character encoding used to decode inline content.
    */
@@ -3233,91 +3220,91 @@ export interface WebViewProps extends ComposeCommonProps {
   /**
    * Whether page scripts may execute.
    */
-  java_script_enabled?: boolean;
+  javaScriptEnabled?: boolean;
   /**
    * Whether DOM local and session storage APIs are available.
    */
-  dom_storage_enabled?: boolean;
+  domStorageEnabled?: boolean;
   /**
    * Whether page database storage is enabled by the platform WebView.
    */
-  database_enabled?: boolean;
+  databaseEnabled?: boolean;
   /**
    * Whether scripts may open windows without a user gesture.
    */
-  java_script_can_open_windows_automatically?: boolean;
+  javaScriptCanOpenWindowsAutomatically?: boolean;
   /**
    * Whether the WebView handles requests for additional browser windows.
    */
-  support_multiple_windows?: boolean;
+  supportMultipleWindows?: boolean;
   /**
    * Whether pages may read resources through file URLs.
    */
-  allow_file_access?: boolean;
+  allowFileAccess?: boolean;
   /**
    * Whether pages may access platform content-provider URLs.
    */
-  allow_content_access?: boolean;
+  allowContentAccess?: boolean;
   /**
    * Whether a file-origin page may read other file URLs.
    */
-  allow_file_access_from_file_urls?: boolean;
+  allowFileAccessFromFileURLs?: boolean;
   /**
    * Whether a file-origin page may request resources from any origin.
    */
-  allow_universal_access_from_file_urls?: boolean;
+  allowUniversalAccessFromFileURLs?: boolean;
   /**
    * User-Agent string sent with WebView requests.
    */
-  user_agent?: string;
+  userAgent?: string;
   /**
    * Whether WebView scrolling participates in the surrounding Compose scroll chain.
    */
-  nested_scroll_interop?: boolean;
+  nestedScrollInterop?: boolean;
   /**
    * Whether the page supports zoom gestures and controls.
    */
-  support_zoom?: boolean;
+  supportZoom?: boolean;
   /**
    * Whether platform-provided zoom controls are enabled.
    */
-  built_in_zoom_controls?: boolean;
+  builtInZoomControls?: boolean;
   /**
    * Whether platform zoom controls are visibly overlaid on the page.
    */
-  display_zoom_controls?: boolean;
+  displayZoomControls?: boolean;
   /**
    * Whether layout uses a wide viewport based on page metadata.
    */
-  use_wide_view_port?: boolean;
+  useWideViewPort?: boolean;
   /**
    * Whether an oversized page initially scales down to fit the viewport.
    */
-  load_with_overview_mode?: boolean;
+  loadWithOverviewMode?: boolean;
   /**
    * Policy for HTTP subresources requested by HTTPS pages.
    */
-  mixed_content_mode?: ComposeWebViewMixedContentMode;
+  mixedContentMode?: ComposeWebViewMixedContentMode;
   /**
    * Whether audio and video playback must begin from a user gesture.
    */
-  media_playback_requires_user_gesture?: boolean;
+  mediaPlaybackRequiresUserGesture?: boolean;
   /**
    * Percentage scale applied to page text independently of page zoom.
    */
-  text_zoom?: number;
+  textZoom?: number;
   /**
    * Network cache policy for page and resource requests.
    */
-  cache_mode?: ComposeWebViewCacheMode;
+  cacheMode?: ComposeWebViewCacheMode;
   /**
    * Whether platform safe-browsing checks protect navigation.
    */
-  safe_browsing_enabled?: boolean;
+  safeBrowsingEnabled?: boolean;
   /**
    * Whether embedded third-party origins may store and send cookies.
    */
-  accept_third_party_cookies?: boolean;
+  acceptThirdPartyCookies?: boolean;
   /**
    * Imperative handle associated with this WebView across renders.
    */
@@ -3325,55 +3312,55 @@ export interface WebViewProps extends ComposeCommonProps {
   /**
    * Runs when the main page begins navigating.
    */
-  on_page_started?: (arg0: ComposeWebViewPageEvent) => WebViewPropsOnPageStartedOutput;
+  onPageStarted?: (arg0: ComposeWebViewPageEvent) => WebViewPropsOnPageStartedOutput;
   /**
    * Runs when the main page finishes loading.
    */
-  on_page_finished?: (arg0: ComposeWebViewPageEvent) => WebViewPropsOnPageFinishedOutput;
+  onPageFinished?: (arg0: ComposeWebViewPageEvent) => WebViewPropsOnPageFinishedOutput;
   /**
    * Runs for network or content-loading failures.
    */
-  on_received_error?: (arg0: ComposeWebViewErrorEvent) => WebViewPropsOnReceivedErrorOutput;
+  onReceivedError?: (arg0: ComposeWebViewErrorEvent) => WebViewPropsOnReceivedErrorOutput;
   /**
    * Runs when a requested resource returns an HTTP error status.
    */
-  on_received_http_error?: (arg0: ComposeWebViewHttpErrorEvent) => WebViewPropsOnReceivedHttpErrorOutput;
+  onReceivedHttpError?: (arg0: ComposeWebViewHttpErrorEvent) => WebViewPropsOnReceivedHttpErrorOutput;
   /**
    * Runs when TLS certificate validation fails.
    */
-  on_received_ssl_error?: (arg0: ComposeWebViewSslErrorEvent) => WebViewPropsOnReceivedSslErrorOutput;
+  onReceivedSslError?: (arg0: ComposeWebViewSslErrorEvent) => WebViewPropsOnReceivedSslErrorOutput;
   /**
    * Runs when page content initiates a file download.
    */
-  on_download_start?: (arg0: ComposeWebViewDownloadEvent) => WebViewPropsOnDownloadStartOutput;
+  onDownloadStart?: (arg0: ComposeWebViewDownloadEvent) => WebViewPropsOnDownloadStartOutput;
   /**
    * Receives messages emitted by the page's JavaScript console.
    */
-  on_console_message?: (arg0: ComposeWebViewConsoleEvent) => WebViewPropsOnConsoleMessageOutput;
+  onConsoleMessage?: (arg0: ComposeWebViewConsoleEvent) => WebViewPropsOnConsoleMessageOutput;
   /**
    * Runs when the active or requested URL changes.
    */
-  on_url_changed?: (arg0: ComposeWebViewNavigationEvent) => WebViewPropsOnUrlChangedOutput;
+  onUrlChanged?: (arg0: ComposeWebViewNavigationEvent) => WebViewPropsOnUrlChangedOutput;
   /**
    * Runs as page loading completion advances.
    */
-  on_progress_changed?: (arg0: ComposeWebViewProgressEvent) => WebViewPropsOnProgressChangedOutput;
+  onProgressChanged?: (arg0: ComposeWebViewProgressEvent) => WebViewPropsOnProgressChangedOutput;
   /**
    * Receives complete navigation and loading state snapshots.
    */
-  on_state_changed?: (arg0: ComposeWebViewState) => WebViewPropsOnStateChangedOutput;
+  onStateChanged?: (arg0: ComposeWebViewState) => WebViewPropsOnStateChangedOutput;
   /**
    * Receives native WebView creation, disposal, commit, and renderer events.
    */
-  on_lifecycle_event?: (arg0: ComposeWebViewLifecycleEvent) => WebViewPropsOnLifecycleEventOutput;
+  onLifecycleEvent?: (arg0: ComposeWebViewLifecycleEvent) => WebViewPropsOnLifecycleEventOutput;
   /**
    * Selects whether a navigation is allowed, cancelled, rewritten, or opened externally.
    */
-  on_should_override_url_loading?: (arg0: ComposeWebViewNavigationRequest) => WebViewPropsOnShouldOverrideUrlLoadingOutput | null | undefined;
+  onShouldOverrideUrlLoading?: (arg0: ComposeWebViewNavigationRequest) => WebViewPropsOnShouldOverrideUrlLoadingOutput | null | undefined;
   /**
    * Selects whether a resource request is allowed, blocked, rewritten, or answered locally.
    */
-  on_intercept_request?: (arg0: ComposeWebViewResourceRequest) => WebViewPropsOnInterceptRequestOutput | null | undefined;
+  onInterceptRequest?: (arg0: ComposeWebViewResourceRequest) => WebViewPropsOnInterceptRequestOutput | null | undefined;
 }
 
 /**
@@ -3402,7 +3389,7 @@ export type ComposeChildren = ComposeNode | ComposeNode[] | null | undefined;
 /**
  * Factory that encodes component properties and children as a Compose node.
  */
-export type ComposeNodeFactory<TProps = Record<string, unknown>> = (arg0: TProps | undefined, arg1: ComposeChildren | undefined) => ComposeNode;
+export type ComposeNodeFactory<TProps = Record<string, unknown>> = (arg0?: TProps, arg1?: ComposeChildren) => ComposeNode;
 
 /**
  * Core component factories available through `ComposeDslContext::UI`.

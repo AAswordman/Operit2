@@ -108,10 +108,7 @@ pub trait UIHost: Send + Sync {
     ///Click on an element by resource ID
     ///@param resourceId - Element resource ID to click
     ///
-    fn clickElement_overload_3(
-        &self,
-        resourceId: String,
-    ) -> JsFuture<UIActionResultData>;
+    fn clickElement_overload_3(&self, resourceId: String) -> JsFuture<UIActionResultData>;
     ///
     ///Click on an element by bounds
     ///@param bounds - Element bounds in format "[x1,y1][x2,y2]"
@@ -153,11 +150,7 @@ pub trait UIHost: Send + Sync {
     ///Set text in input field
     ///@param text - Text to input
     ///
-    fn setText(
-        &self,
-        text: String,
-        resourceId: Option<String>,
-    ) -> JsFuture<UIActionResultData>;
+    fn setText(&self, text: String, resourceId: Option<String>) -> JsFuture<UIActionResultData>;
     ///
     ///Press a key
     ///@param keyCode - Key code to press
@@ -291,11 +284,7 @@ pub trait UINodeMethods: Send + Sync {
     ///@param criteria - Search criteria or predicate function
     ///@param deep - Whether to search recursively
     ///
-    fn find(
-        &self,
-        criteria: UINodeCriteria,
-        deep: Option<bool>,
-    ) -> JsUndefined<Arc<UINode>>;
+    fn find(&self, criteria: UINodeCriteria, deep: Option<bool>) -> JsUndefined<Arc<UINode>>;
     ///
     ///Find all descendant nodes matching the criteria
     ///@param criteria - Search criteria or predicate function
@@ -317,11 +306,8 @@ pub trait UINodeMethods: Send + Sync {
     ///@param text - Text to search for
     ///@param options - Search options
     ///
-    fn findAllByText(
-        &self,
-        text: String,
-        options: Option<UINodeSearchOptions>,
-    ) -> Vec<Arc<UINode>>;
+    fn findAllByText(&self, text: String, options: Option<UINodeSearchOptions>)
+        -> Vec<Arc<UINode>>;
     ///
     ///Find a node by resource ID
     ///@param id - Resource ID to search for
@@ -337,11 +323,7 @@ pub trait UINodeMethods: Send + Sync {
     ///@param id - Resource ID to search for
     ///@param options - Search options
     ///
-    fn findAllById(
-        &self,
-        id: String,
-        options: Option<UINodeSearchOptions>,
-    ) -> Vec<Arc<UINode>>;
+    fn findAllById(&self, id: String, options: Option<UINodeSearchOptions>) -> Vec<Arc<UINode>>;
     ///
     ///Find a node by class name
     ///@param className - Class name to search for
@@ -466,17 +448,11 @@ pub trait UINodeMethods: Send + Sync {
     ///@param query - Element to click (search parameters)
     ///@param delayMs - Milliseconds to wait
     ///
-    fn clickAndWait_overload_2(
-        query: JsObject,
-        delayMs: Option<f64>,
-    ) -> JsFuture<Arc<UINode>>;
+    fn clickAndWait_overload_2(query: JsObject, delayMs: Option<f64>) -> JsFuture<Arc<UINode>>;
     ///
     ///Long press an element, wait, and return updated UI state
     ///@param query - Element to long press (search parameters)
     ///@param delayMs - Milliseconds to wait
     ///
-    fn longPressAndWait_overload_2(
-        query: JsObject,
-        delayMs: Option<f64>,
-    ) -> JsFuture<Arc<UINode>>;
+    fn longPressAndWait_overload_2(query: JsObject, delayMs: Option<f64>) -> JsFuture<Arc<UINode>>;
 }

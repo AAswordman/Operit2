@@ -516,17 +516,13 @@ pub enum NetCookieManagerSetCookies {
     Variant1(String),
     Variant2(BTreeMap<String, String>),
 }
-/// Performs HTTP requests and controls persistent browser sessions.
+/// Performs HTTP requests and controls the browser automation tools available at runtime.
 pub trait NetHost: Send + Sync {
     ///
     ///Perform HTTP GET request
     ///@param url - URL to request
     ///
-    fn httpGet(
-        &self,
-        url: String,
-        ignore_ssl: Option<bool>,
-    ) -> JsFuture<HttpResponseData>;
+    fn httpGet(&self, url: String, ignore_ssl: Option<bool>) -> JsFuture<HttpResponseData>;
     ///
     ///Perform HTTP POST request
     ///@param url - URL to request
@@ -545,83 +541,50 @@ pub trait NetHost: Send + Sync {
     ///otherwise this may return empty or incomplete content.
     ///@param urlOrParams - URL to visit, or an object with visit parameters.
     ///
-    fn visit(
-        &self,
-        urlOrParams: NetHostVisitUrlOrParams,
-    ) -> JsFuture<VisitWebResultData>;
-    ///
-    ///Start a persistent browser session (floating window WebView).
-    ///Returns StringResultData whose `value` is a JSON string payload.
-    ///
-    fn startBrowser(
-        &self,
-        options: Option<NetHostStartBrowserOptions>,
-    ) -> JsFuture<StringResultData>;
-    ///
-    ///Stop one browser session or all browser sessions.
-    ///Returns StringResultData whose `value` is a JSON string payload.
-    ///
-    fn stopBrowser(
-        &self,
-        sessionIdOrOptions: Option<NetHostStopBrowserSessionIdOrOptions>,
-    ) -> JsFuture<StringResultData>;
+    fn visit(&self, urlOrParams: NetHostVisitUrlOrParams) -> JsFuture<VisitWebResultData>;
     ///
     ///Navigate a browser session to a target URL.
     ///
-    fn browserNavigate(
-        &self,
-        urlOrOptions: NetHostBrowserNavigateUrlOrOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserNavigate(&self, urlOrOptions: NetHostBrowserNavigateUrlOrOptions)
+        -> JsFuture<String>;
     ///
     ///Go back in browser history.
     ///
     fn browserNavigateBack(
         &self,
         options: Option<BTreeMap<String, super::JsNever>>,
-    ) -> JsFuture<StringResultData>;
+    ) -> JsFuture<String>;
     ///
     ///Click an element by snapshot ref or selector.
     ///Only accepts one options object.
     ///
-    fn browserClick(
-        &self,
-        options: NetHostBrowserClickOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserClick(&self, options: NetHostBrowserClickOptions) -> JsFuture<String>;
     ///
     ///Close the current browser tab.
     ///
-    fn browserClose(
-        &self,
-        options: Option<BTreeMap<String, super::JsNever>>,
-    ) -> JsFuture<StringResultData>;
+    fn browserClose(&self, options: Option<BTreeMap<String, super::JsNever>>) -> JsFuture<String>;
     ///
     ///Close all browser tabs.
     ///
     fn browserCloseAll(
         &self,
         options: Option<BTreeMap<String, super::JsNever>>,
-    ) -> JsFuture<StringResultData>;
+    ) -> JsFuture<String>;
     ///
     ///Read console messages from the browser session.
     ///
     fn browserConsoleMessages(
         &self,
         options: Option<NetHostBrowserConsoleMessagesOptions>,
-    ) -> JsFuture<StringResultData>;
+    ) -> JsFuture<String>;
     ///
     ///Drag between two elements by snapshot refs.
     ///
-    fn browserDrag(
-        &self,
-        options: NetHostBrowserDragOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserDrag(&self, options: NetHostBrowserDragOptions) -> JsFuture<String>;
     ///
     ///Evaluate JavaScript in the browser session.
     ///
-    fn browserEvaluate(
-        &self,
-        options: NetHostBrowserEvaluateOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserEvaluate(&self, options: NetHostBrowserEvaluateOptions) -> JsFuture<String>;
     ///
     ///Resolve an active file chooser in the browser session.
     ///If `paths` is omitted, the file chooser is cancelled.
@@ -629,134 +592,66 @@ pub trait NetHost: Send + Sync {
     fn browserFileUpload(
         &self,
         options: Option<NetHostBrowserFileUploadOptions>,
-    ) -> JsFuture<StringResultData>;
+    ) -> JsFuture<String>;
     ///
     ///Fill multiple form fields in the browser session.
     ///
-    fn browserFillForm(
-        &self,
-        options: NetHostBrowserFillFormOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserFillForm(&self, options: NetHostBrowserFillFormOptions) -> JsFuture<String>;
     ///
     ///Handle an active dialog.
     ///
-    fn browserHandleDialog(
-        &self,
-        options: NetHostBrowserHandleDialogOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserHandleDialog(&self, options: NetHostBrowserHandleDialogOptions) -> JsFuture<String>;
     ///
     ///Hover over an element by snapshot ref.
     ///
-    fn browserHover(
-        &self,
-        options: NetHostBrowserHoverOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserHover(&self, options: NetHostBrowserHoverOptions) -> JsFuture<String>;
     ///
     ///Read network requests from the browser session.
     ///
     fn browserNetworkRequests(
         &self,
         options: Option<NetHostBrowserNetworkRequestsOptions>,
-    ) -> JsFuture<StringResultData>;
+    ) -> JsFuture<String>;
     ///
     ///Press a keyboard key in the browser session.
     ///
-    fn browserPressKey(
-        &self,
-        keyOrOptions: NetHostBrowserPressKeyKeyOrOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserPressKey(&self, keyOrOptions: NetHostBrowserPressKeyKeyOrOptions)
+        -> JsFuture<String>;
     ///
     ///Resize the browser viewport.
     ///
-    fn browserResize(
-        &self,
-        options: NetHostBrowserResizeOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserResize(&self, options: NetHostBrowserResizeOptions) -> JsFuture<String>;
     ///
     ///Run Playwright-style code in the browser session.
     ///
-    fn browserRunCode(
-        &self,
-        options: NetHostBrowserRunCodeOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserRunCode(&self, options: NetHostBrowserRunCodeOptions) -> JsFuture<String>;
     ///
     ///Select options in a dropdown by snapshot ref.
     ///
-    fn browserSelectOption(
-        &self,
-        options: NetHostBrowserSelectOptionOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserSelectOption(&self, options: NetHostBrowserSelectOptionOptions) -> JsFuture<String>;
     ///
     ///Capture a text snapshot of current page.
     ///
-    fn browserSnapshot(
-        &self,
-        options: Option<NetHostBrowserSnapshotOptions>,
-    ) -> JsFuture<StringResultData>;
+    fn browserSnapshot(&self, options: Option<NetHostBrowserSnapshotOptions>) -> JsFuture<String>;
     ///
     ///Take a screenshot of the current page or a target element.
     ///
     fn browserTakeScreenshot(
         &self,
         options: NetHostBrowserTakeScreenshotOptions,
-    ) -> JsFuture<StringResultData>;
+    ) -> JsFuture<String>;
     ///
     ///Manage browser tabs.
     ///
-    fn browserTabs(
-        &self,
-        options: NetHostBrowserTabsOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserTabs(&self, options: NetHostBrowserTabsOptions) -> JsFuture<String>;
     ///
     ///Type text into an element by snapshot ref.
     ///
-    fn browserType(
-        &self,
-        options: NetHostBrowserTypeOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserType(&self, options: NetHostBrowserTypeOptions) -> JsFuture<String>;
     ///
     ///Wait for text or time in the browser session.
     ///
-    fn browserWaitFor(
-        &self,
-        options: NetHostBrowserWaitForOptions,
-    ) -> JsFuture<StringResultData>;
-    ///
-    ///List installed browser session userscripts.
-    ///
-    fn browserUserscriptList(
-        &self,
-        options: Option<NetHostBrowserUserscriptListOptions>,
-    ) -> JsFuture<StringResultData>;
-    ///
-    ///Install a browser session userscript from a remote URL, local file path, or inline source text.
-    ///Exactly one of `url`, `path`, or `source` is required.
-    ///
-    fn browserUserscriptInstall(
-        &self,
-        options: NetHostBrowserUserscriptInstallOptions,
-    ) -> JsFuture<StringResultData>;
-    ///
-    ///Enable an installed browser session userscript.
-    ///
-    fn browserUserscriptStart(
-        &self,
-        options: NetHostBrowserUserscriptStartOptions,
-    ) -> JsFuture<StringResultData>;
-    ///
-    ///Disable an installed browser session userscript.
-    ///
-    fn browserUserscriptStop(
-        &self,
-        options: NetHostBrowserUserscriptStopOptions,
-    ) -> JsFuture<StringResultData>;
-    ///
-    ///Uninstall an installed browser session userscript.
-    ///
-    fn browserUserscriptUninstall(
-        &self,
-        options: NetHostBrowserUserscriptUninstallOptions,
-    ) -> JsFuture<StringResultData>;
+    fn browserWaitFor(&self, options: NetHostBrowserWaitForOptions) -> JsFuture<String>;
     ///
     ///Enhanced HTTP request with flexible options
     ///@param options - HTTP request options
@@ -766,10 +661,42 @@ pub trait NetHost: Send + Sync {
     ///Upload file using multipart request
     ///@param options - Upload options
     ///
-    fn uploadFile(
+    fn uploadFile(&self, options: NetHostUploadFileOptions) -> JsFuture<HttpResponseData>;
+}
+/// Declares browser session and userscript APIs reserved for a future runtime capability.
+pub trait NetFutureHost: Send + Sync {
+    /// Starts a persistent browser session hosted in a floating WebView.
+    fn startBrowser(&self, options: Option<NetHostStartBrowserOptions>) -> JsFuture<String>;
+    /// Stops one persistent browser session or every active session.
+    fn stopBrowser(
         &self,
-        options: NetHostUploadFileOptions,
-    ) -> JsFuture<HttpResponseData>;
+        sessionIdOrOptions: Option<NetHostStopBrowserSessionIdOrOptions>,
+    ) -> JsFuture<String>;
+    /// Lists installed browser session userscripts.
+    fn browserUserscriptList(
+        &self,
+        options: Option<NetHostBrowserUserscriptListOptions>,
+    ) -> JsFuture<String>;
+    /// Installs a browser userscript from exactly one supported source.
+    fn browserUserscriptInstall(
+        &self,
+        options: NetHostBrowserUserscriptInstallOptions,
+    ) -> JsFuture<String>;
+    /// Enables one installed browser session userscript.
+    fn browserUserscriptStart(
+        &self,
+        options: NetHostBrowserUserscriptStartOptions,
+    ) -> JsFuture<String>;
+    /// Disables one installed browser session userscript.
+    fn browserUserscriptStop(
+        &self,
+        options: NetHostBrowserUserscriptStopOptions,
+    ) -> JsFuture<String>;
+    /// Uninstalls one browser session userscript.
+    fn browserUserscriptUninstall(
+        &self,
+        options: NetHostBrowserUserscriptUninstallOptions,
+    ) -> JsFuture<String>;
 }
 /// Reads, writes, and clears cookies associated with network domains.
 pub trait NetCookieManager: Send + Sync {

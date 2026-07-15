@@ -8,6 +8,8 @@ mod http;
 mod local_inference;
 mod managed_runtime;
 mod runtime_common;
+#[cfg(target_os = "android")]
+mod runtime_event_scheduler;
 mod runtime_storage;
 #[cfg(target_os = "android")]
 mod secret_store;
@@ -25,6 +27,10 @@ pub use http::AndroidHttpHost;
 pub use local_inference::AndroidLocalInferenceHost;
 pub use managed_runtime::AndroidManagedRuntimeHost;
 pub use runtime_storage::AndroidRuntimeStorageHost;
+#[cfg(target_os = "android")]
+pub use runtime_event_scheduler::{
+    emitAndroidHostRuntimeEventSchedule, AndroidHostRuntimeEventSchedulerHost,
+};
 #[cfg(target_os = "android")]
 pub use secret_store::{clearAndroidHostSecretStoreBridge, setAndroidHostSecretStoreBridge};
 pub use system_operation::AndroidSystemOperationHost;

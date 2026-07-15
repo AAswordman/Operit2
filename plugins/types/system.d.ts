@@ -1,6 +1,6 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
-import type { AppListData, AppOperationData, AppUsageTimeResultData, BluetoothBleNotificationData, BluetoothBleServicesData, BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData, DeviceInfoResultData, HiddenTerminalCommandResultData, LocationData, MusicPlaybackResultData, NotificationData, SleepResultData, StringResultData, SystemSettingData, TerminalCommandResultData, TerminalCreateType, TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData, TerminalSessionScreenResultData, TerminalStreamEventData } from "./results";
+import type { AppListData, AppOperationData, AppUsageTimeResultData, BluetoothBleNotificationData, BluetoothBleServicesData, BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData, DeviceInfoResultData, HiddenTerminalCommandResultData, LocationData, MusicPlaybackResultData, NotificationData, SleepResultData, SystemSettingData, TerminalCommandResultData, TerminalCreateType, TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData, TerminalSessionScreenResultData, TerminalStreamEventData } from "./results";
 
 /**
  * Provides device settings, application control, notifications, usage, and location services.
@@ -455,7 +455,7 @@ export namespace System {
    * @param message - Notification content
    * @param title - Optional notification title
    */
-  function sendNotification(message: string, title?: string): Promise<StringResultData>;
+  function sendNotification(message: string, title?: string): Promise<string>;
   /**
    * Modify a system setting
    * @param setting - Setting name
@@ -483,7 +483,7 @@ export namespace System {
    * Show a toast message on device.
    * @param message - The message to show
    */
-  function toast(message: string): Promise<StringResultData>;
+  function toast(message: string): Promise<string>;
   /**
    * Uninstall an application
    * @param packageName - Package name of the app to uninstall
@@ -505,7 +505,7 @@ export namespace System {
     /**
      * Close a Bluetooth classic, listener, or BLE session.
      */
-    function close(sessionId: string): Promise<StringResultData>;
+    function close(sessionId: string): Promise<string>;
     /**
      * Connect to a Bluetooth classic device.
      */
@@ -529,11 +529,11 @@ export namespace System {
     /**
      * Open the system dialog to enable Bluetooth.
      */
-    function requestEnable(): Promise<StringResultData>;
+    function requestEnable(): Promise<string>;
     /**
      * Request Bluetooth nearby devices permission.
      */
-    function requestPermission(): Promise<StringResultData>;
+    function requestPermission(): Promise<string>;
     /**
      * Scan nearby Bluetooth classic and BLE devices.
      */
@@ -638,7 +638,7 @@ export namespace System {
      * @param options Input options for this write.
      * @returns Promise resolving to the write result message.
      */
-    function input(sessionId: string, options?: System.TerminalHostInputOptions): Promise<StringResultData>;
+    function input(sessionId: string, options?: System.TerminalHostInputOptions): Promise<string>;
     /**
      * Get the current visible terminal screen content for a session (single screen only, no history).
      * @param sessionId The ID of the session.

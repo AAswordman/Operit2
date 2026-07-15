@@ -455,12 +455,51 @@ impl<'a> EmitContext<'a> {
         match group.kind.as_str() {
             "interface" | "class" => self.emit_interface_group(output, group, scope, indent),
             "type" => self.emit_type_group(output, group, scope, indent),
+            "type_map" => self.emit_type_map_group(output, group, scope, indent),
             "variable" => self.emit_variable_group(output, group, scope, indent),
             kind => panic!(
                 "unsupported TypeScript declaration kind `{kind}` for {:?}",
                 group.path
             ),
         }
+    }
+
+    /// Emits a string-keyed TypeScript type map represented by a Rust enum.
+    fn emit_type_map_group(
+        &self,
+        output: &mut String,
+        group: &DeclarationGroup<'a>,
+        scope: &[String],
+        indent: &str,
+    ) {
+        let ItemRef::Enum(item) = group.items[0] else {
+            panic!("Rust TypeMap declarations must be enums");
+        };
+        emit_jsdoc(output, &item.attrs, indent);
+        output.push_str(indent);
+        output.push_str("export interface ");
+        output.push_str(group.path.last().expect("type map paths are non-empty"));
+        output.push_str(" {\n");
+        let child_indent = format!("{indent}  ");
+        for variant in &item.variants {
+            let Fields::Unnamed(fields) = &variant.fields else {
+                panic!("Rust TypeMap variants must carry one unnamed value type");
+            };
+            let field = fields
+                .unnamed
+                .first()
+                .filter(|_| fields.unnamed.len() == 1)
+                .expect("Rust TypeMap variants must carry exactly one value type");
+            emit_jsdoc(output, &variant.attrs, &child_indent);
+            output.push_str(&child_indent);
+            output.push_str(&format!(
+                "{:?}: {};\n",
+                renamed_identifier(&variant.attrs, &variant.ident.to_string()),
+                self.emit_type(&field.ty, scope)
+            ));
+        }
+        output.push_str(indent);
+        output.push_str("}\n\n");
     }
 
     /// Emits one interface or class assembled from data, behavior, and inherent Rust items.
@@ -651,23 +690,19 @@ impl<'a> EmitContext<'a> {
         match item {
             ItemRef::Enum(item_enum) => output.push_str(&self.emit_enum_union(item_enum, scope)),
             ItemRef::Type(item_type) => output.push_str(&self.emit_type(&item_type.ty, scope)),
-            ItemRef::Struct(item_struct) => {
-                match &item_struct.fields {
-                    Fields::Unnamed(fields) => {
-                        let field = fields
-                            .unnamed
-                            .first()
-                            .expect("Rust type wrapper structs require one tuple field");
-                        output.push_str(&self.emit_type(&field.ty, scope));
-                    }
-                    Fields::Named(_) if is_flattened_intersection(item_struct) => {
-                        output.push_str(
-                            &flattened_bases(item_struct, self, scope).join(" & "),
-                        );
-                    }
-                    _ => panic!("Rust type wrapper structs require tuple or intersection fields"),
+            ItemRef::Struct(item_struct) => match &item_struct.fields {
+                Fields::Unnamed(fields) => {
+                    let field = fields
+                        .unnamed
+                        .first()
+                        .expect("Rust type wrapper structs require one tuple field");
+                    output.push_str(&self.emit_type(&field.ty, scope));
                 }
-            }
+                Fields::Named(_) if is_flattened_intersection(item_struct) => {
+                    output.push_str(&flattened_bases(item_struct, self, scope).join(" & "));
+                }
+                _ => panic!("Rust type wrapper structs require tuple or intersection fields"),
+            },
             ItemRef::Trait(_) => {
                 panic!("traits cannot directly represent TypeScript type aliases")
             }
@@ -719,9 +754,11 @@ impl<'a> EmitContext<'a> {
                         .expect("binding field type paths have a segment")
                         .ident
                         .to_string();
-                    if let Some(parameter) = item_struct.generics.type_params().find(|parameter| {
-                        parameter.ident == field_name
-                    }) {
+                    if let Some(parameter) = item_struct
+                        .generics
+                        .type_params()
+                        .find(|parameter| parameter.ident == field_name)
+                    {
                         let bound = parameter
                             .bounds
                             .iter()
@@ -949,6 +986,11 @@ impl<'a> EmitContext<'a> {
                 self.emit_argument(arguments, 0, scope),
                 self.emit_argument(arguments, 1, scope)
             ),
+            "JsTypeIndex" => {
+                let map = self.emit_argument(arguments, 0, scope);
+                let key = self.emit_argument(arguments, 1, scope);
+                format!("{map}[{key} & keyof {map}]")
+            }
             "PhantomData" => self.emit_first_argument(arguments, scope),
             _ => {
                 if let Some(item) = self.inline_items.get(&rust_name) {
@@ -1150,7 +1192,13 @@ impl<'a> EmitContext<'a> {
                 .inputs
                 .iter()
                 .enumerate()
-                .map(|(index, argument)| format!("arg{index}: {}", self.emit_type(argument, scope)))
+                .map(|(index, argument)| {
+                    let (optional, parameter_type) = self.emit_parameter_type(argument, scope);
+                    format!(
+                        "arg{index}{}: {parameter_type}",
+                        if optional { "?" } else { "" }
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             let output = match &arguments.output {
@@ -1253,7 +1301,6 @@ impl MethodRef<'_> {
             Self::Impl(method) => &method.sig,
         }
     }
-
 }
 
 /// Returns a public declaration item reference.
@@ -1299,12 +1346,28 @@ fn is_flattened_intersection(item: &ItemStruct) -> bool {
     let Fields::Named(fields) = &item.fields else {
         return false;
     };
-    fields.named.len() > 1 && fields.named.iter().all(|field| has_serde_flatten(&field.attrs))
+    if fields.named.len() <= 1 {
+        return false;
+    }
+    let explicitly_flattened = fields
+        .named
+        .iter()
+        .all(|field| has_serde_flatten(&field.attrs));
+    let numbered_members = fields.named.iter().enumerate().all(|(index, field)| {
+        field
+            .ident
+            .as_ref()
+            .is_some_and(|ident| ident == &format!("member_{}", index + 1))
+    });
+    explicitly_flattened || numbered_members
 }
 
 /// Infers one TypeScript declaration path directly from the Rust module and identifier.
 fn infer_declaration(item: ItemRef<'_>, ts_file: &str) -> Option<(Vec<String>, String)> {
     let rust_name = item.rust_name();
+    if rust_name == "ToolPkgBroadcastTopicKey" {
+        return None;
+    }
     let variable = match rust_name.as_str() {
         "LodashGlobal" => Some(vec!["_".to_string()]),
         "DataUtilsGlobal" => Some(vec!["dataUtils".to_string()]),
@@ -1316,6 +1379,13 @@ fn infer_declaration(item: ItemRef<'_>, ts_file: &str) -> Option<(Vec<String>, S
     if let Some(path) = variable {
         return Some((path, "variable".to_string()));
     }
+    if matches!(item, ItemRef::Enum(_)) && rust_name.ends_with("TypeMap") {
+        let path = match ts_file {
+            "toolpkg.d.ts" => prefixed_path(&rust_name, "ToolPkg"),
+            _ => vec![rust_name],
+        };
+        return Some((path, "type_map".to_string()));
+    }
     if rust_name == "ComposeNumberExtensions" {
         return Some((
             vec!["global".to_string(), "Number".to_string()],
@@ -1326,18 +1396,15 @@ fn infer_declaration(item: ItemRef<'_>, ts_file: &str) -> Option<(Vec<String>, S
         let namespace = match rust_name.as_str() {
             "FilesHost" => Some(vec!["Files".to_string()]),
             "NetHost" => Some(vec!["Net".to_string()]),
+            "NetFutureHost" => Some(vec!["Net".to_string()]),
             "SystemHost" => Some(vec!["System".to_string()]),
-            "SystemBluetoothHost" => {
-                Some(vec!["System".to_string(), "bluetooth".to_string()])
-            }
+            "SystemBluetoothHost" => Some(vec!["System".to_string(), "bluetooth".to_string()]),
             "SystemBluetoothBleHost" => Some(vec![
                 "System".to_string(),
                 "bluetooth".to_string(),
                 "ble".to_string(),
             ]),
-            "SystemTerminalHost" => {
-                Some(vec!["System".to_string(), "terminal".to_string()])
-            }
+            "SystemTerminalHost" => Some(vec!["System".to_string(), "terminal".to_string()]),
             "SystemMusicHost" => Some(vec!["System".to_string(), "music".to_string()]),
             "SoftwareSettingsHost" => Some(vec!["SoftwareSettings".to_string()]),
             "UIHost" => Some(vec!["UI".to_string()]),
@@ -1401,15 +1468,16 @@ fn group_primary_attrs<'a>(group: &DeclarationGroup<'a>) -> &'a [Attribute] {
         .unwrap_or_else(|| group.items[0].attrs())
 }
 
-/// Collects flattened base interfaces from a Rust struct.
+/// Collects flattened base interfaces or every member of an intersection struct.
 fn flattened_bases(item: &ItemStruct, context: &EmitContext<'_>, scope: &[String]) -> Vec<String> {
     let Fields::Named(fields) = &item.fields else {
         return Vec::new();
     };
+    let intersection = is_flattened_intersection(item);
     fields
         .named
         .iter()
-        .filter(|field| is_inherited_base_field(field))
+        .filter(|field| intersection || is_inherited_base_field(field))
         .map(|field| context.emit_type(&field.ty, scope))
         .collect()
 }
@@ -1488,6 +1556,7 @@ fn typescript_generic_bound(bound: &TypeParamBound) -> Option<String> {
                 _ => panic!("unsupported AsRef SDK target `{target}`"),
             }
         }
+        "ToolPkgBroadcastTopicKey" => Some("ToolPkg.BroadcastTopic".to_string()),
         "Send" | "Sync" | "Sized" => None,
         name => panic!("unsupported Rust SDK generic bound `{name}`"),
     }
@@ -1587,10 +1656,7 @@ fn doc_value(attribute: &Attribute) -> Option<String> {
 
 /// Emits ordinary Rust documentation as a TypeScript JSDoc block.
 fn emit_jsdoc(output: &mut String, attrs: &[Attribute], indent: &str) {
-    let docs = attrs
-        .iter()
-        .filter_map(doc_value)
-        .collect::<Vec<_>>();
+    let docs = attrs.iter().filter_map(doc_value).collect::<Vec<_>>();
     let Some(first_content) = docs.iter().position(|doc| !doc.is_empty()) else {
         return;
     };
@@ -1653,10 +1719,7 @@ mod tests {
 
         emit_jsdoc(&mut output, &attrs, "  ");
 
-        assert_eq!(
-            output,
-            "  /**\n   * Summary.\n   *\n   * Details.\n   */\n"
-        );
+        assert_eq!(output, "  /**\n   * Summary.\n   *\n   * Details.\n   */\n");
     }
 
     /// Verifies that ordinary Rust composition fields retain interface and open-object semantics.

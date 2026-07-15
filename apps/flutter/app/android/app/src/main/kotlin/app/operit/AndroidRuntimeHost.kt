@@ -163,6 +163,11 @@ class AndroidRuntimeHost(context: Context) {
         AndroidHostSecretStore.delete(applicationContext, key)
     }
 
+    /** Reconciles ToolPkg timers and intervals with Android AlarmManager. */
+    fun replaceHostRuntimeEventSchedules(schedulesJson: String) {
+        AndroidHostEventScheduler.replaceSchedules(applicationContext, schedulesJson)
+    }
+
     /** Executes one installed local speech-to-text model request. */
     fun transcribeLocalSpeech(requestJson: String): String {
         return AndroidLocalInference.transcribe(requestJson)

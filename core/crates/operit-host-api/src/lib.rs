@@ -18,6 +18,9 @@ pub type HostResult<T> = Result<T, HostError>;
 
 pub type HostRuntimeEventSink = Arc<dyn Fn(Value) + Send + Sync + 'static>;
 
+pub type HostRuntimeEventScheduleSink =
+    Arc<dyn Fn(HostRuntimeEventScheduleFire) + Send + Sync + 'static>;
+
 type HostLogSink = Arc<dyn Fn(&str, &str) + Send + Sync + 'static>;
 static HOST_LOG_SINK: OnceLock<RwLock<Option<HostLogSink>>> = OnceLock::new();
 
@@ -594,6 +597,51 @@ fn hostCapabilities(ids: &[&str]) -> Vec<HostCapability> {
 
 fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
     vec![
+        HostOnboardingRequirement {
+            id: "android.fileManagement".to_string(),
+            title: "文件管理".to_string(),
+            description: "Host 需要文件管理授权来读取和写入用户选择的 Android 共享存储目录。".to_string(),
+            capabilityIds: vec![
+                "fs.read".to_string(),
+                "fs.write".to_string(),
+                "fs.search".to_string(),
+                "fs.archive".to_string(),
+            ],
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::OpenSystemSettings,
+        },
+        HostOnboardingRequirement {
+            id: "android.notifications".to_string(),
+            title: "通知".to_string(),
+            description: "Host 需要通知授权来显示前台服务、任务进度和工具执行结果。".to_string(),
+            capabilityIds: vec!["system.notifications.send".to_string()],
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::RuntimePermission,
+        },
+        HostOnboardingRequirement {
+            id: "android.appList".to_string(),
+            title: "应用列表".to_string(),
+            description: "Host 需要包可见性声明来列出、启动和停止 Android 应用。".to_string(),
+            capabilityIds: vec!["system.app.list".to_string()],
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::None,
+        },
+        HostOnboardingRequirement {
+            id: "android.usageStats".to_string(),
+            title: "应用使用统计".to_string(),
+            description: "Host 需要使用情况访问权限来读取应用前台使用时长。".to_string(),
+            capabilityIds: vec!["system.app_usage".to_string()],
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::OpenSystemSettings,
+        },
+        HostOnboardingRequirement {
+            id: "android.writeSettings".to_string(),
+            title: "系统设置修改".to_string(),
+            description: "Host 需要修改系统设置权限来写入允许的 Android 系统设置项。".to_string(),
+            capabilityIds: vec!["system.settings".to_string()],
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::OpenSystemSettings,
+        },
         HostOnboardingRequirement {
             id: "android.location".to_string(),
             title: "附近设备定位".to_string(),
@@ -1295,6 +1343,40 @@ pub trait HostRuntimeEventHost: Send + Sync {
         &self,
         sink: HostRuntimeEventSink,
     ) -> HostResult<Box<dyn HostRuntimeEventRegistration>>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HostRuntimeEventScheduleKind {
+    #[serde(rename = "timer")]
+    Timer,
+    #[serde(rename = "interval")]
+    Interval,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostRuntimeEventSchedule {
+    pub scheduleId: String,
+    pub containerPackageName: String,
+    pub hookId: String,
+    pub kind: HostRuntimeEventScheduleKind,
+    pub delayMs: u64,
+    pub intervalMs: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostRuntimeEventScheduleFire {
+    pub scheduleId: String,
+    pub scheduledAtMillis: u64,
+    pub firedAtMillis: u64,
+}
+
+pub trait HostRuntimeEventSchedulerHost: Send + Sync {
+    /// Replaces all active ToolPkg schedules and installs their firing callback.
+    fn replaceHostRuntimeEventSchedules(
+        &self,
+        schedules: Vec<HostRuntimeEventSchedule>,
+        sink: HostRuntimeEventScheduleSink,
+    ) -> HostResult<()>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

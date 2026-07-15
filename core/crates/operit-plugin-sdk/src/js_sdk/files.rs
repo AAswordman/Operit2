@@ -63,10 +63,7 @@ pub trait FilesHost: Send + Sync {
     ///
     fn read_overload_1(&self, path: String) -> JsFuture<FileContentData>;
     /// Reads a file using options that can include semantic intent and direct image handling.
-    fn read_overload_2(
-        &self,
-        options: FilesReadFileOptions,
-    ) -> JsFuture<FileContentData>;
+    fn read_overload_2(&self, options: FilesReadFileOptions) -> JsFuture<FileContentData>;
     ///
     ///Read file content by line range
     ///@param path - VFS file path
@@ -96,11 +93,7 @@ pub trait FilesHost: Send + Sync {
     ///@param path - VFS file path
     ///@param base64Content - Base64 encoded content to write
     ///
-    fn writeBinary(
-        &self,
-        path: String,
-        base64Content: String,
-    ) -> JsFuture<FileOperationData>;
+    fn writeBinary(&self, path: String, base64Content: String) -> JsFuture<FileOperationData>;
     ///
     ///Read binary file content as a structured result with Base64 data
     ///@param path - VFS file path
@@ -111,11 +104,7 @@ pub trait FilesHost: Send + Sync {
     ///@param path - VFS file or directory path
     ///@param recursive - Delete recursively
     ///
-    fn deleteFile(
-        &self,
-        path: String,
-        recursive: Option<bool>,
-    ) -> JsFuture<FileOperationData>;
+    fn deleteFile(&self, path: String, recursive: Option<bool>) -> JsFuture<FileOperationData>;
     ///
     ///Check if file exists
     ///@param path - VFS path to check
@@ -144,11 +133,7 @@ pub trait FilesHost: Send + Sync {
     ///@param path - VFS directory path
     ///@param create_parents - Create parent directories
     ///
-    fn mkdir(
-        &self,
-        path: String,
-        create_parents: Option<bool>,
-    ) -> JsFuture<FileOperationData>;
+    fn mkdir(&self, path: String, create_parents: Option<bool>) -> JsFuture<FileOperationData>;
     ///
     ///Find files matching a pattern
     ///@param path - VFS base directory
@@ -270,10 +255,8 @@ pub trait FilesHost: Send + Sync {
         headers: Option<BTreeMap<String, String>>,
     ) -> JsFuture<FileOperationData>;
     /// Downloads a direct URL or a resource selected from stored web-visit context.
-    fn download_overload_2(
-        &self,
-        options: FilesHostDownloadOptions,
-    ) -> JsFuture<FileOperationData>;
+    fn download_overload_2(&self, options: FilesHostDownloadOptions)
+        -> JsFuture<FileOperationData>;
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Configures content extraction when reading a virtual file.

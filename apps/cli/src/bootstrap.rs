@@ -11,6 +11,7 @@ use operit_host_linux_native::{
     LinuxBrowserAutomationHost as NativeBrowserAutomationHost,
     LinuxFileSystemHost as NativeFileSystemHost,
     LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost, LinuxHttpHost as NativeHttpHost,
+    LinuxHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
     LinuxSystemOperationHost as NativeSystemOperationHost, LinuxTerminalHost as NativeTerminalHost,
@@ -23,6 +24,7 @@ use operit_host_windows_native::{
     WindowsBrowserAutomationHost as NativeBrowserAutomationHost,
     WindowsFileSystemHost as NativeFileSystemHost,
     WindowsHostRuntimeEventHost as NativeHostRuntimeEventHost, WindowsHttpHost as NativeHttpHost,
+    WindowsHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
     WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
@@ -60,6 +62,9 @@ pub(crate) fn create_cli_application() -> OperitApplication {
     context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::new()));
     context = context.withBluetoothHost(Arc::new(NativeBluetoothHost::new()));
     context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
+    context = context.withHostRuntimeEventSchedulerHost(Arc::new(
+        NativeHostRuntimeEventSchedulerHost::new(),
+    ));
     context = context.withBrowserAutomationHost(Arc::new(NativeBrowserAutomationHost::new()));
     let commandContext = context.clone();
     OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(

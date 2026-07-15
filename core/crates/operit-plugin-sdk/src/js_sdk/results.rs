@@ -258,9 +258,16 @@ impl SimplifiedUINode {
     /// Reports whether the node contains information relevant to UI automation.
     #[allow(non_snake_case)]
     pub fn shouldKeepNode(&self) -> bool {
-        self.is_clickable || self.text.as_ref().is_some_and(|value| !value.is_empty())
-            || self.content_desc.as_ref().is_some_and(|value| !value.is_empty())
-            || self.resource_id.as_ref().is_some_and(|value| !value.is_empty())
+        self.is_clickable
+            || self.text.as_ref().is_some_and(|value| !value.is_empty())
+            || self
+                .content_desc
+                .as_ref()
+                .is_some_and(|value| !value.is_empty())
+            || self
+                .resource_id
+                .as_ref()
+                .is_some_and(|value| !value.is_empty())
             || !self.children.is_empty()
     }
 }
@@ -279,8 +286,10 @@ impl UIPageResultData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         format!(
-            "Package: {}\nActivity: {}\n{}", self.package_name, self.activity_name, self
-            .ui_elements.toTreeString(None)
+            "Package: {}\nActivity: {}\n{}",
+            self.package_name,
+            self.activity_name,
+            self.ui_elements.toTreeString(None)
         )
     }
 }
@@ -388,7 +397,7 @@ pub struct BooleanResultData {
     pub value: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
-/// Wraps a string value returned by a built-in tool.
+/// Wraps a string inside the Rust tool runtime before the JavaScript bridge emits a primitive string.
 pub struct StringResultData {
     /// Contains the returned string value.
     #[serde(rename = "value")]
@@ -1440,8 +1449,12 @@ impl FilePartContentData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         let partInfo = format!(
-            "Part {} of {} (Lines {}-{} of {})", self.partIndex + 1, self.totalParts,
-            self.startLine + 1, self.endLine, self.totalLines
+            "Part {} of {} (Lines {}-{} of {})",
+            self.partIndex + 1,
+            self.totalParts,
+            self.startLine + 1,
+            self.endLine,
+            self.totalLines
         );
         format!("{partInfo}\n\n{}", self.content)
     }
@@ -1454,12 +1467,10 @@ impl DirectoryListingData {
         sb.push_str(&format!("Directory listing for {}:\n", self.path));
         for entry in &self.entries {
             let typeIndicator = if entry.isDirectory { "d" } else { "-" };
-            sb.push_str(
-                &format!(
-                    "{typeIndicator}{} {:>8} {} {}\n", entry.permissions, entry.size,
-                    entry.lastModified, entry.name
-                ),
-            );
+            sb.push_str(&format!(
+                "{typeIndicator}{} {:>8} {} {}\n",
+                entry.permissions, entry.size, entry.lastModified, entry.name
+            ));
         }
         sb
     }
@@ -1476,7 +1487,9 @@ impl BinaryFileContentData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         format!(
-            "Binary content of {} ({} bytes, base64 length={})", self.path, self.size,
+            "Binary content of {} ({} bytes, base64 length={})",
+            self.path,
+            self.size,
             self.contentBase64.chars().count()
         )
     }
@@ -1486,9 +1499,14 @@ impl FileExistsData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         if self.exists {
-            let fileType = if self.isDirectory { "Directory" } else { "File" };
+            let fileType = if self.isDirectory {
+                "Directory"
+            } else {
+                "File"
+            };
             format!(
-                "{fileType} exists at path: {} (size: {} bytes)", self.path, self.size
+                "{fileType} exists at path: {} (size: {} bytes)",
+                self.path, self.size
             )
         } else {
             format!("No file or directory exists at path: {}", self.path)
@@ -1528,24 +1546,18 @@ impl FileApplyResultData {
         sb.push_str(&self.operation.toString());
         sb.push('\n');
         if let Some(diffContent) = &self.diffContent {
-            sb.push_str(
-                &format!(
-                    "<file-diff path=\"{}\" details=\"{}\"><![CDATA[{}]]></file-diff>",
-                    self.operation.path, self.operation.details, diffContent
-                ),
-            );
+            sb.push_str(&format!(
+                "<file-diff path=\"{}\" details=\"{}\"><![CDATA[{}]]></file-diff>",
+                self.operation.path, self.operation.details, diffContent
+            ));
         }
         let requestContent = self.buildRequestContent();
         if !requestContent.trim().is_empty() {
-            sb.push_str(
-                &format!(
-                    "<file-request-content><![CDATA[{requestContent}]]></file-request-content>"
-                ),
-            );
+            sb.push_str(&format!(
+                "<file-request-content><![CDATA[{requestContent}]]></file-request-content>"
+            ));
         }
-        if !self.aiDiffInstructions.is_empty()
-            && !self.aiDiffInstructions.starts_with("Error")
-        {
+        if !self.aiDiffInstructions.is_empty() && !self.aiDiffInstructions.starts_with("Error") {
             sb.push_str("\n--- AI-Generated Diff ---\n");
             sb.push_str(&self.aiDiffInstructions);
             sb.push('\n');
@@ -1573,10 +1585,7 @@ impl FileApplyResultData {
             for line in candidate.lines() {
                 let trimmed = line.trim();
                 if trimmed.starts_with("Changes: +")
-                    || trimmed
-                        .eq_ignore_ascii_case(
-                            "No changes detected (files are identical)",
-                        )
+                    || trimmed.eq_ignore_ascii_case("No changes detected (files are identical)")
                 {
                     return Some(trimmed.to_string());
                 }
@@ -1592,7 +1601,10 @@ impl HttpResponseData {
         let mut sb = String::new();
         sb.push_str("HTTP Response:\n");
         sb.push_str(&format!("URL: {}\n", self.url));
-        sb.push_str(&format!("Status: {} {}\n", self.statusCode, self.statusMessage));
+        sb.push_str(&format!(
+            "Status: {} {}\n",
+            self.statusCode, self.statusMessage
+        ));
         sb.push_str(&format!("Content-Type: {}\n", self.contentType));
         sb.push_str(&format!("Size: {} bytes\n", self.size));
         if !self.cookies.is_empty() {
@@ -1601,13 +1613,18 @@ impl HttpResponseData {
             entries.sort_by(|a, b| a.0.cmp(b.0));
             for (name, value) in entries.into_iter().take(5) {
                 let preview = value.chars().take(30).collect::<String>();
-                let suffix = if value.chars().count() > 30 { "..." } else { "" };
+                let suffix = if value.chars().count() > 30 {
+                    "..."
+                } else {
+                    ""
+                };
                 sb.push_str(&format!("  {name}: {preview}{suffix}\n"));
             }
             if self.cookies.len() > 5 {
-                sb.push_str(
-                    &format!("  ... and {} more cookies\n", self.cookies.len() - 5),
-                );
+                sb.push_str(&format!(
+                    "  ... and {} more cookies\n",
+                    self.cookies.len() - 5
+                ));
             }
         }
         sb.push('\n');
@@ -1640,7 +1657,10 @@ impl SystemSettingData {
     /// Formats the namespaced setting name and its current value.
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
-        format!("Current value of {}.{}: {}", self.namespace, self.setting, self.value)
+        format!(
+            "Current value of {}.{}: {}",
+            self.namespace, self.setting, self.value
+        )
     }
 }
 impl AppOperationData {
@@ -1650,22 +1670,26 @@ impl AppOperationData {
         match self.operationType.as_str() {
             "install" => {
                 format!(
-                    "Successfully installed app: {} {}", self.packageName, self.details
+                    "Successfully installed app: {} {}",
+                    self.packageName, self.details
                 )
             }
             "uninstall" => {
                 format!(
-                    "Successfully uninstalled app: {} {}", self.packageName, self.details
+                    "Successfully uninstalled app: {} {}",
+                    self.packageName, self.details
                 )
             }
             "start" => {
                 format!(
-                    "Successfully started app: {} {}", self.packageName, self.details
+                    "Successfully started app: {} {}",
+                    self.packageName, self.details
                 )
             }
             "stop" => {
                 format!(
-                    "Successfully stopped app: {} {}", self.packageName, self.details
+                    "Successfully stopped app: {} {}",
+                    self.packageName, self.details
                 )
             }
             _ => self.details.clone(),
@@ -1704,7 +1728,9 @@ impl AppUsageTimeResultData {
             .iter()
             .map(|entry| {
                 format!(
-                    "- {} ({}): {}", entry.appName, entry.packageName,
+                    "- {} ({}): {}",
+                    entry.appName,
+                    entry.packageName,
                     formatDuration(entry.totalForegroundTimeMs)
                 )
             })
@@ -1718,13 +1744,16 @@ impl NotificationData {
     /// Formats a numbered list of notification package names and text content.
     pub fn toString(&self) -> String {
         let mut sb = String::new();
-        sb.push_str(
-            &format!("Device Notifications ({} total):\n", self.notifications.len()),
-        );
+        sb.push_str(&format!(
+            "Device Notifications ({} total):\n",
+            self.notifications.len()
+        ));
         for (index, notification) in self.notifications.iter().enumerate() {
-            sb.push_str(
-                &format!("{}. Package: {}\n", index + 1, notification.packageName),
-            );
+            sb.push_str(&format!(
+                "{}. Package: {}\n",
+                index + 1,
+                notification.packageName
+            ));
             sb.push_str(&format!("   Content: {}\n\n", notification.text));
         }
         if self.notifications.is_empty() {
@@ -1804,10 +1833,7 @@ impl MemoryQueryResultData {
         if self.snapshotCreated.is_some_and(|created| created) {
             snapshotSummary.push("Snapshot created: true".to_string());
         }
-        if let Some(excluded_count) = self
-            .excludedBySnapshotCount
-            .filter(|count| *count > 0)
-        {
+        if let Some(excluded_count) = self.excludedBySnapshotCount.filter(|count| *count > 0) {
             snapshotSummary.push(format!("Excluded by snapshot: {excluded_count}"));
         }
         let snapshotSummary = snapshotSummary.join("\n");
@@ -1824,8 +1850,12 @@ impl MemoryQueryResultData {
             .map(|memory| {
                 format!(
                     "Owner: {}\nTitle: {}\nContent: {}\nSource: {}\nTags: {}\nCreated: {}",
-                    memory.ownerKey, memory.title, memory.content, memory.source, memory
-                    .tags.join(", "), memory.createdAt
+                    memory.ownerKey,
+                    memory.title,
+                    memory.content,
+                    memory.source,
+                    memory.tags.join(", "),
+                    memory.createdAt
                 )
             })
             .collect::<Vec<_>>()
@@ -1860,12 +1890,10 @@ impl ChatListResultData {
                         sb.push_str(&format!("Character Card: {characterCardName}\n"));
                     }
                 }
-                sb.push_str(
-                    &format!(
-                        "Token Statistics: Input {} / Output {}\n", chat.inputTokens,
-                        chat.outputTokens
-                    ),
-                );
+                sb.push_str(&format!(
+                    "Token Statistics: Input {} / Output {}\n",
+                    chat.inputTokens, chat.outputTokens
+                ));
                 sb.push_str(&format!("Created: {}\n", chat.createdAt));
                 sb.push_str(&format!("Updated: {}\n", chat.updatedAt));
                 sb.push_str("---\n");
@@ -1894,9 +1922,7 @@ impl AgentStatusResultData {
             JsOptional::Value(message) if !message.trim().is_empty() => {
                 format!(" ({message})")
             }
-            JsOptional::Value(_) | JsOptional::Null | JsOptional::Undefined => {
-                String::new()
-            }
+            JsOptional::Value(_) | JsOptional::Null | JsOptional::Undefined => String::new(),
         };
         format!("Chat {} status: {}{}", self.chatId, self.state, detail)
     }
@@ -1906,7 +1932,10 @@ impl ChatSwitchResultData {
     /// Formats the selected chat title and identifier.
     pub fn toString(&self) -> String {
         if !self.chatTitle.trim().is_empty() {
-            format!("Switched to chat: {}\nChat ID: {}", self.chatTitle, self.chatId)
+            format!(
+                "Switched to chat: {}\nChat ID: {}",
+                self.chatTitle, self.chatId
+            )
         } else {
             format!("Switched to chat: {}", self.chatId)
         }
@@ -1917,26 +1946,26 @@ impl MessageSendResultData {
     /// Formats bounded previews of the sent message and optional AI reply.
     pub fn toString(&self) -> String {
         let messagePreview = if self.message.chars().count() > 50 {
-            format!("{}...", self.message.chars().take(50).collect::< String > ())
+            format!("{}...", self.message.chars().take(50).collect::<String>())
         } else {
             self.message.clone()
         };
         match &self.aiResponse {
             JsOptional::Value(response) if !response.trim().is_empty() => {
                 let responsePreview = if response.chars().count() > 200 {
-                    format!("{}...", response.chars().take(200).collect::< String > ())
+                    format!("{}...", response.chars().take(200).collect::<String>())
                 } else {
                     response.clone()
                 };
                 format!(
-                    "Message sent to chat: {}\nMessage content: {}\nAI Reply: {}", self
-                    .chatId, messagePreview, responsePreview
+                    "Message sent to chat: {}\nMessage content: {}\nAI Reply: {}",
+                    self.chatId, messagePreview, responsePreview
                 )
             }
             JsOptional::Value(_) | JsOptional::Null | JsOptional::Undefined => {
                 format!(
-                    "Message sent to chat: {}\nMessage content: {}", self.chatId,
-                    messagePreview
+                    "Message sent to chat: {}\nMessage content: {}",
+                    self.chatId, messagePreview
                 )
             }
         }
@@ -1977,12 +2006,10 @@ impl TerminalInfoResultData {
         if !self.types.is_empty() {
             sb.push_str("Types:\n");
             for terminalType in &self.types {
-                sb.push_str(
-                    &format!(
-                        "- {}: available={} ({})\n", terminalType.terminalType,
-                        terminalType.available, terminalType.description
-                    ),
-                );
+                sb.push_str(&format!(
+                    "- {}: available={} ({})\n",
+                    terminalType.terminalType, terminalType.available, terminalType.description
+                ));
             }
         }
         sb.trim_end().to_string()
@@ -2012,13 +2039,11 @@ impl TerminalStreamEventData {
     /// Returns an output chunk directly or labels the stream lifecycle event.
     pub fn toString(&self) -> String {
         match self.r#type.as_str() {
-            "chunk" => {
-                match &self.chunk {
-                    JsOptional::Value(chunk) => chunk.clone(),
-                    JsOptional::Null => "null".to_string(),
-                    JsOptional::Undefined => "undefined".to_string(),
-                }
-            }
+            "chunk" => match &self.chunk {
+                JsOptional::Value(chunk) => chunk.clone(),
+                JsOptional::Null => "null".to_string(),
+                JsOptional::Undefined => "undefined".to_string(),
+            },
             "start" => "Terminal stream started".to_string(),
             value => format!("Terminal stream event: {value}"),
         }
@@ -2106,7 +2131,10 @@ impl MusicPlaybackResultData {
         if let Some(durationMs) = self.durationMs.as_value() {
             sb.push_str(&format!("Duration: {durationMs}ms\n"));
         }
-        sb.push_str(&format!("Buffered Position: {}ms\n", self.bufferedPositionMs));
+        sb.push_str(&format!(
+            "Buffered Position: {}ms\n",
+            self.bufferedPositionMs
+        ));
         sb.push_str(&format!("Volume: {:.2}\n", self.volume));
         sb.push_str(&format!("Loop: {}\n", self.r#loop));
         if !self.message.trim().is_empty() {
@@ -2120,8 +2148,8 @@ impl BluetoothStateData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         format!(
-            "Bluetooth State:\nSupported: {}\nEnabled: {}\nState: {}", self.supported,
-            self.enabled, self.state
+            "Bluetooth State:\nSupported: {}\nEnabled: {}\nState: {}",
+            self.supported, self.enabled, self.state
         )
     }
 }
@@ -2130,15 +2158,18 @@ impl BluetoothBondedDevicesData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         let mut sb = String::new();
-        sb.push_str(&format!("Bluetooth Bonded Devices ({}):\n", self.devices.len()));
+        sb.push_str(&format!(
+            "Bluetooth Bonded Devices ({}):\n",
+            self.devices.len()
+        ));
         for device in &self.devices {
-            sb.push_str(
-                &format!(
-                    "- {} [{}] type={} bond={}\n", device.name.as_deref()
-                    .unwrap_or("Unnamed"), device.address, device.r#type, device
-                    .bondState
-                ),
-            );
+            sb.push_str(&format!(
+                "- {} [{}] type={} bond={}\n",
+                device.name.as_deref().unwrap_or("Unnamed"),
+                device.address,
+                device.r#type,
+                device.bondState
+            ));
         }
         sb.trim_end().to_string()
     }
@@ -2148,24 +2179,26 @@ impl BluetoothScanResultData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         let mut sb = String::new();
-        sb.push_str(
-            &format!(
-                "Bluetooth Scan Result ({} devices, {}ms, includes BLE={}):\n", self
-                .devices.len(), self.durationMs, self.includesBle
-            ),
-        );
+        sb.push_str(&format!(
+            "Bluetooth Scan Result ({} devices, {}ms, includes BLE={}):\n",
+            self.devices.len(),
+            self.durationMs,
+            self.includesBle
+        ));
         for device in &self.devices {
             let rssi = device
                 .rssi
                 .map(|value| format!(" rssi={value}"))
                 .unwrap_or_default();
-            sb.push_str(
-                &format!(
-                    "- {} [{}] type={} bond={} source={}{}\n", device.name.as_deref()
-                    .unwrap_or("Unnamed"), device.address, device.r#type, device
-                    .bondState, device.source, rssi
-                ),
-            );
+            sb.push_str(&format!(
+                "- {} [{}] type={} bond={} source={}{}\n",
+                device.name.as_deref().unwrap_or("Unnamed"),
+                device.address,
+                device.r#type,
+                device.bondState,
+                device.source,
+                rssi
+            ));
         }
         sb.trim_end().to_string()
     }
@@ -2175,8 +2208,8 @@ impl BluetoothSessionData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         format!(
-            "Bluetooth Session:\nSession ID: {}\nAddress: {}\nMode: {}", self.sessionId,
-            self.address, self.mode
+            "Bluetooth Session:\nSession ID: {}\nAddress: {}\nMode: {}",
+            self.sessionId, self.address, self.mode
         )
     }
 }
@@ -2185,8 +2218,8 @@ impl BluetoothTransferData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         format!(
-            "Bluetooth Transfer:\nSession ID: {}\nBytes Written: {}", self.sessionId,
-            self.bytesWritten
+            "Bluetooth Transfer:\nSession ID: {}\nBytes Written: {}",
+            self.sessionId, self.bytesWritten
         )
     }
 }
@@ -2218,21 +2251,19 @@ impl BluetoothBleServicesData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         let mut sb = String::new();
-        sb.push_str(
-            &format!(
-                "BLE Services for session {} ({} services):\n", self.sessionId, self
-                .services.len()
-            ),
-        );
+        sb.push_str(&format!(
+            "BLE Services for session {} ({} services):\n",
+            self.sessionId,
+            self.services.len()
+        ));
         for service in &self.services {
             sb.push_str(&format!("- Service {}\n", service.uuid));
             for characteristic in &service.characteristics {
-                sb.push_str(
-                    &format!(
-                        "  - Characteristic {} [{}]\n", characteristic.uuid,
-                        characteristic.properties.join(", ")
-                    ),
-                );
+                sb.push_str(&format!(
+                    "  - Characteristic {} [{}]\n",
+                    characteristic.uuid,
+                    characteristic.properties.join(", ")
+                ));
             }
         }
         sb.trim_end().to_string()
@@ -2243,19 +2274,16 @@ impl BluetoothBleNotificationData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         let mut sb = String::new();
-        sb.push_str(
-            &format!(
-                "BLE Notifications for session {} ({}):\n", self.sessionId, self
-                .notifications.len()
-            ),
-        );
+        sb.push_str(&format!(
+            "BLE Notifications for session {} ({}):\n",
+            self.sessionId,
+            self.notifications.len()
+        ));
         for item in &self.notifications {
-            sb.push_str(
-                &format!(
-                    "- {} bytes from {} at {}\n", item.bytesRead, item
-                    .characteristicUuid, item.timestamp
-                ),
-            );
+            sb.push_str(&format!(
+                "- {} bytes from {} at {}\n",
+                item.bytesRead, item.characteristicUuid, item.timestamp
+            ));
             if let Some(text) = &item.text {
                 if !text.is_empty() {
                     sb.push_str(&format!("  Text: {text}\n"));
@@ -2297,12 +2325,11 @@ impl GrepResultData {
         sb.push_str("Grep Search Result:\n");
         sb.push_str(&format!("Search Path: {}\n", self.searchPath));
         sb.push_str(&format!("Pattern: {}\n", self.pattern));
-        sb.push_str(
-            &format!(
-                "Total Matches: {} (in {} files)\n", self.totalMatches, self.matches
-                .len()
-            ),
-        );
+        sb.push_str(&format!(
+            "Total Matches: {} (in {} files)\n",
+            self.totalMatches,
+            self.matches.len()
+        ));
         sb.push_str(&format!("Files Searched: {}\n\n", self.filesSearched));
         if self.matches.is_empty() {
             sb.push_str("No matches found\n");
@@ -2330,20 +2357,16 @@ impl GrepResultData {
                     match &lineMatch.matchContext {
                         Some(context) if !context.trim().is_empty() => {
                             let contextLines = context.lines().collect::<Vec<_>>();
-                            let isPreNumberedContext = contextLines
-                                .iter()
-                                .any(|line| !line.trim().is_empty())
-                                && contextLines
-                                    .iter()
-                                    .all(|line| {
+                            let isPreNumberedContext =
+                                contextLines.iter().any(|line| !line.trim().is_empty())
+                                    && contextLines.iter().all(|line| {
                                         line.trim().is_empty()
                                             || parsePreNumberedLineNumber(line).is_some()
                                     });
                             if isPreNumberedContext {
                                 for contextLine in contextLines {
-                                    let renderedLine = if parsePreNumberedLineNumber(
-                                        contextLine,
-                                    ) == Some(lineMatch.lineNumber)
+                                    let renderedLine = if parsePreNumberedLineNumber(contextLine)
+                                        == Some(lineMatch.lineNumber)
                                     {
                                         markPreNumberedContextLine(contextLine)
                                     } else {
@@ -2354,29 +2377,27 @@ impl GrepResultData {
                                 }
                             } else {
                                 let centerIndex = (contextLines.len() / 2) as i32;
-                                for (index, contextLine) in contextLines.iter().enumerate()
-                                {
-                                    let actualLineNumber = lineMatch.lineNumber - centerIndex
-                                        + index as i32;
+                                for (index, contextLine) in contextLines.iter().enumerate() {
+                                    let actualLineNumber =
+                                        lineMatch.lineNumber - centerIndex + index as i32;
                                     if index as i32 == centerIndex {
-                                        sb.push_str(
-                                            &format!("{actualLineNumber:>6}|>{contextLine}\n"),
-                                        );
+                                        sb.push_str(&format!(
+                                            "{actualLineNumber:>6}|>{contextLine}\n"
+                                        ));
                                     } else {
-                                        sb.push_str(
-                                            &format!("{actualLineNumber:>6}| {contextLine}\n"),
-                                        );
+                                        sb.push_str(&format!(
+                                            "{actualLineNumber:>6}| {contextLine}\n"
+                                        ));
                                     }
                                 }
                             }
                             sb.push('\n');
                         }
                         _ => {
-                            sb.push_str(
-                                &format!(
-                                    "{:>6}| {}\n", lineMatch.lineNumber, lineMatch.lineContent
-                                ),
-                            );
+                            sb.push_str(&format!(
+                                "{:>6}| {}\n",
+                                lineMatch.lineNumber, lineMatch.lineContent
+                            ));
                         }
                     }
                     displayedMatches += 1;
@@ -2393,17 +2414,13 @@ impl GrepResultData {
             }
             if collapsedMatches > 0 {
                 sb.push_str(&format!("{}\n", "=".repeat(60)));
-                sb.push_str(
-                    &format!(
-                        "To save space, {collapsedMatches} match groups were collapsed\n"
-                    ),
-                );
-                sb.push_str(
-                    &format!(
-                        "Displayed {displayedMatches} match groups, total {} matches\n",
-                        self.totalMatches
-                    ),
-                );
+                sb.push_str(&format!(
+                    "To save space, {collapsedMatches} match groups were collapsed\n"
+                ));
+                sb.push_str(&format!(
+                    "Displayed {displayedMatches} match groups, total {} matches\n",
+                    self.totalMatches
+                ));
             }
         }
         sb
@@ -2414,8 +2431,8 @@ impl MemoryLinkResultData {
     /// Formats the source, target, relationship type, and strength of the created memory link.
     pub fn toString(&self) -> String {
         format!(
-            "Successfully linked memory: '{}' -> '{}' (Type: {}, Strength: {})", self
-            .sourceTitle, self.targetTitle, self.linkType, self.weight
+            "Successfully linked memory: '{}' -> '{}' (Type: {}, Strength: {})",
+            self.sourceTitle, self.targetTitle, self.linkType, self.weight
         )
     }
 }
@@ -2429,12 +2446,10 @@ impl MemoryLinkQueryResultData {
         let mut sb = String::new();
         sb.push_str(&format!("Memory Links ({}):\n", self.totalCount));
         for link in &self.links {
-            sb.push_str(
-                &format!(
-                    "- #{}: '{}' -> '{}' (Type: {}, Weight: {})\n", link.linkId, link
-                    .sourceTitle, link.targetTitle, link.linkType, link.weight
-                ),
-            );
+            sb.push_str(&format!(
+                "- #{}: '{}' -> '{}' (Type: {}, Weight: {})\n",
+                link.linkId, link.sourceTitle, link.targetTitle, link.linkType, link.weight
+            ));
             if !link.description.trim().is_empty() {
                 sb.push_str(&format!("  Description: {}\n", link.description));
             }
@@ -2459,22 +2474,15 @@ impl VisitWebResultData {
             }
             let omittedCount = self.links.len().saturating_sub(MAX_INLINE_LINKS);
             if omittedCount > 0 {
-                sb.push_str(
-                    &format!(
-                        "... ({omittedCount} more links omitted from inline preview)\n"
-                    ),
-                );
+                sb.push_str(&format!(
+                    "... ({omittedCount} more links omitted from inline preview)\n"
+                ));
             }
             sb.push('\n');
         }
         if !self.imageLinks.is_empty() {
             sb.push_str("Images:\n");
-            for (index, link) in self
-                .imageLinks
-                .iter()
-                .take(MAX_INLINE_IMAGES)
-                .enumerate()
-            {
+            for (index, link) in self.imageLinks.iter().take(MAX_INLINE_IMAGES).enumerate() {
                 let name = link
                     .rsplit('/')
                     .next()
@@ -2485,11 +2493,9 @@ impl VisitWebResultData {
             }
             let omittedCount = self.imageLinks.len().saturating_sub(MAX_INLINE_IMAGES);
             if omittedCount > 0 {
-                sb.push_str(
-                    &format!(
-                        "... ({omittedCount} more images omitted from inline preview)\n"
-                    ),
-                );
+                sb.push_str(&format!(
+                    "... ({omittedCount} more images omitted from inline preview)\n"
+                ));
             }
             sb.push('\n');
         }
@@ -2499,9 +2505,7 @@ impl VisitWebResultData {
                 sb.push_str(&format!("Original content length: {totalChars} chars\n"));
             }
             if self.contentTruncated {
-                sb.push_str(
-                    "Use read_file_part or grep_code to inspect the saved file.\n",
-                );
+                sb.push_str("Use read_file_part or grep_code to inspect the saved file.\n");
             }
             sb.push('\n');
         }
@@ -2530,7 +2534,11 @@ fn markPreNumberedContextLine(line: &str) -> String {
     let Some(separatorIndex) = line.find('|') else {
         return line.to_string();
     };
-    if line.as_bytes().get(separatorIndex + 1).is_some_and(|value| *value == b'>') {
+    if line
+        .as_bytes()
+        .get(separatorIndex + 1)
+        .is_some_and(|value| *value == b'>')
+    {
         return line.to_string();
     }
     let mut output = String::with_capacity(line.len() + 1);

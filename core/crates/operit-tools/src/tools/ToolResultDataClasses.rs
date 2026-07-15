@@ -1,20 +1,18 @@
-use std::collections::{BTreeMap, HashMap};
 use chrono::{Local, TimeZone};
 use operit_host_api::{
     BluetoothBleNotificationData as HostBluetoothBleNotificationData,
     BluetoothBleNotificationEntry as HostBluetoothBleNotificationEntry,
     BluetoothBleServiceData as HostBluetoothBleServiceData,
     BluetoothBleServicesData as HostBluetoothBleServicesData,
-    BluetoothDeviceData as HostBluetoothDeviceData,
-    BluetoothReadData as HostBluetoothReadData,
+    BluetoothDeviceData as HostBluetoothDeviceData, BluetoothReadData as HostBluetoothReadData,
     BluetoothScanResultData as HostBluetoothScanResultData,
     BluetoothScannedDeviceData as HostBluetoothScannedDeviceData,
-    BluetoothSessionData as HostBluetoothSessionData,
-    BluetoothStateData as HostBluetoothStateData,
+    BluetoothSessionData as HostBluetoothSessionData, BluetoothStateData as HostBluetoothStateData,
     BluetoothTransferData as HostBluetoothTransferData,
     MusicPlaybackStatus as HostMusicPlaybackStatus, WebVisitLinkData,
 };
 pub use operit_plugin_sdk::js_sdk::results::*;
+use std::collections::{BTreeMap, HashMap};
 pub trait FromHostResult<T>: Sized {
     /// Converts a host result into its public plugin SDK representation.
     fn from_host(value: T) -> Self;
@@ -153,8 +151,7 @@ impl FromHostResult<HostBluetoothBleServicesData> for BluetoothBleServicesData {
         }
     }
 }
-impl FromHostResult<HostBluetoothBleNotificationEntry>
-for BluetoothBleNotificationEntry {
+impl FromHostResult<HostBluetoothBleNotificationEntry> for BluetoothBleNotificationEntry {
     ///Converts the host value into its public SDK result type.
     fn from_host(value: HostBluetoothBleNotificationEntry) -> Self {
         Self {

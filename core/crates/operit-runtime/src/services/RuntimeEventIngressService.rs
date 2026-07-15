@@ -54,11 +54,17 @@ impl RuntimeEventIngressService {
 
     /// Dispatches one runtime event into registered tool package host-event hooks.
     pub fn ingestEvent(&self, event: RuntimeEvent) -> Value {
-        ToolPkgHostEventHookBridge::dispatchHostEvent(
-            &self.toolpkg_runtime,
-            "broadcast",
-            event.hostEventPayload(),
-        );
+        let payload = match event.hostEventPayload() {
+            Ok(payload) => payload,
+            Err(error) => {
+                operit_util::AppLogger::AppLogger::e("RuntimeEventIngress", &error);
+                return serde_json::json!({
+                    "ok": false,
+                    "error": error,
+                });
+            }
+        };
+        ToolPkgHostEventHookBridge::dispatchHostEvent(&self.toolpkg_runtime, "broadcast", payload);
         serde_json::json!({
             "ok": true,
         })

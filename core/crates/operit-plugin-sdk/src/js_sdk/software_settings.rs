@@ -10,10 +10,7 @@ pub trait SoftwareSettingsHost: Send + Sync {
     ///Read current value of an environment variable.
     ///@param key - Environment variable key
     ///
-    fn readEnvironmentVariable(
-        &self,
-        key: String,
-    ) -> JsFuture<EnvironmentVariableReadResultData>;
+    fn readEnvironmentVariable(&self, key: String) -> JsFuture<EnvironmentVariableReadResultData>;
     ///
     ///Write an environment variable; empty value clears the variable.
     ///@param key - Environment variable key

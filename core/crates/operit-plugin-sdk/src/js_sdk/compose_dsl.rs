@@ -110,8 +110,10 @@ pub enum ComposeWebViewLifecycleEventType {
     RenderProcessGone,
 }
 /// Discriminator for allowing a WebView navigation unchanged.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeWebViewNavigationDecisionVariant1Action {
     /// Lets the WebView continue with the requested navigation.
+    #[serde(rename = "allow")]
     Allow,
 }
 /// Navigation decision that permits the original request.
@@ -120,8 +122,10 @@ pub struct ComposeWebViewNavigationDecisionVariant1 {
     pub action: ComposeWebViewNavigationDecisionVariant1Action,
 }
 /// Discriminator for cancelling a WebView navigation.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeWebViewNavigationDecisionVariant2Action {
     /// Stops the requested navigation.
+    #[serde(rename = "cancel")]
     Cancel,
 }
 /// Navigation decision that prevents the requested page from loading.
@@ -130,8 +134,10 @@ pub struct ComposeWebViewNavigationDecisionVariant2 {
     pub action: ComposeWebViewNavigationDecisionVariant2Action,
 }
 /// Discriminator for replacing a WebView navigation request.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeWebViewNavigationDecisionVariant3Action {
     /// Loads a replacement URL instead of the original request.
+    #[serde(rename = "rewrite")]
     Rewrite,
 }
 /// Navigation decision that redirects the WebView to a replacement request.
@@ -144,8 +150,10 @@ pub struct ComposeWebViewNavigationDecisionVariant3 {
     pub headers: Option<BTreeMap<String, String>>,
 }
 /// Discriminator for handing navigation to an external application.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeWebViewNavigationDecisionVariant4Action {
     /// Opens the target outside the embedded WebView.
+    #[serde(rename = "external")]
     External,
 }
 /// Navigation decision that delegates a target to the host platform.
@@ -213,8 +221,10 @@ pub struct ComposeWebViewResourceResponseVariant3 {
     pub base64: Option<super::JsNever>,
 }
 /// Discriminator for allowing a resource request unchanged.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeWebViewResourceDecisionVariant1Action {
     /// Lets the WebView fetch the original resource.
+    #[serde(rename = "allow")]
     Allow,
 }
 /// Resource interception decision that permits the original request.
@@ -223,8 +233,10 @@ pub struct ComposeWebViewResourceDecisionVariant1 {
     pub action: ComposeWebViewResourceDecisionVariant1Action,
 }
 /// Discriminator for blocking a resource request.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeWebViewResourceDecisionVariant2Action {
     /// Prevents the WebView from loading the resource.
+    #[serde(rename = "block")]
     Block,
 }
 /// Resource interception decision that suppresses a request.
@@ -233,8 +245,10 @@ pub struct ComposeWebViewResourceDecisionVariant2 {
     pub action: ComposeWebViewResourceDecisionVariant2Action,
 }
 /// Discriminator for replacing a resource request.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeWebViewResourceDecisionVariant3Action {
     /// Fetches a replacement URL in place of the original resource.
+    #[serde(rename = "rewrite")]
     Rewrite,
 }
 /// Resource interception decision that redirects a request.
@@ -247,8 +261,10 @@ pub struct ComposeWebViewResourceDecisionVariant3 {
     pub headers: Option<BTreeMap<String, String>>,
 }
 /// Discriminator for supplying a synthetic resource response.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeWebViewResourceDecisionVariant4Action {
     /// Completes the request with plugin-provided response data.
+    #[serde(rename = "respond")]
     Respond,
 }
 /// Resource interception decision that returns plugin-provided content.
@@ -519,10 +535,7 @@ pub struct ComposeDslContextUIIntersection {
     /// Factories generated for Material 3 components.
     pub member_2: ComposeMaterial3GeneratedUiFactoryRegistry,
     /// Additional host-registered component factories keyed by element name.
-    pub member_3: BTreeMap<
-        String,
-        ComposeNodeFactory<BTreeMap<String, serde_json::Value>>,
-    >,
+    pub member_3: BTreeMap<String, ComposeNodeFactory<BTreeMap<String, serde_json::Value>>>,
 }
 /// Stable mutable reference retained across renders for a keyed screen instance.
 pub struct ComposeDslContextMethodsUseRefReturn<T> {
@@ -614,63 +627,91 @@ pub enum ComposeDslScreenOutput {
     Variant2(JsFuture<ComposeNode>),
 }
 /// Material typography role used to select themed text metrics.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeTextStyle {
     /// Small headline typography.
+    #[serde(rename = "headlineSmall")]
     HeadlineSmall,
     /// Medium headline typography.
+    #[serde(rename = "headlineMedium")]
     HeadlineMedium,
     /// Large title typography.
+    #[serde(rename = "titleLarge")]
     TitleLarge,
     /// Medium title typography.
+    #[serde(rename = "titleMedium")]
     TitleMedium,
     /// Small title typography.
+    #[serde(rename = "titleSmall")]
     TitleSmall,
     /// Large body-copy typography.
+    #[serde(rename = "bodyLarge")]
     BodyLarge,
     /// Medium body-copy typography.
+    #[serde(rename = "bodyMedium")]
     BodyMedium,
     /// Small body-copy typography.
+    #[serde(rename = "bodySmall")]
     BodySmall,
     /// Large label typography for prominent controls.
+    #[serde(rename = "labelLarge")]
     LabelLarge,
     /// Medium label typography for controls and annotations.
+    #[serde(rename = "labelMedium")]
     LabelMedium,
     /// Small label typography for compact annotations.
+    #[serde(rename = "labelSmall")]
     LabelSmall,
 }
 /// Distribution strategy for children along a layout's main axis.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeArrangement {
     /// Packs children against the main-axis start.
+    #[serde(rename = "start")]
     Start,
     /// Packs children around the main-axis center.
+    #[serde(rename = "center")]
     Center,
     /// Packs children against the main-axis end.
+    #[serde(rename = "end")]
     End,
     /// Places equal gaps only between adjacent children.
+    #[serde(rename = "spaceBetween")]
     SpaceBetween,
     /// Places equal space around every child, including outer edges.
+    #[serde(rename = "spaceAround")]
     SpaceAround,
     /// Places equal gaps between children and both outer edges.
+    #[serde(rename = "spaceEvenly")]
     SpaceEvenly,
 }
 /// Cross-axis placement for children inside a layout container.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeAlignment {
     /// Aligns children with the cross-axis start edge.
+    #[serde(rename = "start")]
     Start,
     /// Centers children on the cross axis.
+    #[serde(rename = "center")]
     Center,
     /// Aligns children with the cross-axis end edge.
+    #[serde(rename = "end")]
     End,
 }
 /// Geometry used to clip or outline a Compose component.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeShapeType {
     /// Uses smoothly rounded corners.
+    #[serde(rename = "rounded")]
     Rounded,
     /// Uses diagonally cut corners.
+    #[serde(rename = "cut")]
     Cut,
     /// Clips content to a circle.
+    #[serde(rename = "circle")]
     Circle,
     /// Uses fully rounded ends based on component height.
+    #[serde(rename = "pill")]
     Pill,
 }
 /// Shape geometry with optional uniform, logical, or physical corner radii.
@@ -715,12 +756,16 @@ pub struct ComposePadding {
     pub vertical: Option<f64>,
 }
 /// Coordinate unit accepted by canvas drawing commands.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeCanvasUnit {
     /// Physical display pixels.
+    #[serde(rename = "px")]
     Px,
     /// Density-independent pixels.
+    #[serde(rename = "dp")]
     Dp,
     /// Fraction of the relevant canvas dimension.
+    #[serde(rename = "fraction")]
     Fraction,
 }
 /// Numeric canvas quantity paired with an explicit coordinate unit.
@@ -738,27 +783,38 @@ pub enum ComposeCanvasNumber {
     Variant2(ComposeUnitValue),
 }
 /// Rendering behavior when laid-out text exceeds its bounds.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeTextOverflow {
     /// Cuts off glyphs outside the layout bounds.
+    #[serde(rename = "clip")]
     Clip,
     /// Replaces the truncated tail with an ellipsis.
+    #[serde(rename = "ellipsis")]
     Ellipsis,
 }
 /// Scaling strategy for fitting visual content into destination bounds.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeContentScale {
     /// Preserves aspect ratio while fitting entirely inside the bounds.
+    #[serde(rename = "fit")]
     Fit,
     /// Preserves aspect ratio while covering the bounds and cropping overflow.
+    #[serde(rename = "crop")]
     Crop,
     /// Stretches independently on both axes to fill the bounds.
+    #[serde(rename = "fillBounds")]
     FillBounds,
     /// Scales to fill the width while preserving aspect ratio.
+    #[serde(rename = "fillWidth")]
     FillWidth,
     /// Scales to fill the height while preserving aspect ratio.
+    #[serde(rename = "fillHeight")]
     FillHeight,
     /// Shrinks oversized content to fit without enlarging smaller content.
+    #[serde(rename = "inside")]
     Inside,
     /// Draws content at its intrinsic size.
+    #[serde(rename = "none")]
     None,
 }
 /// Constraints used to measure text before constructing a canvas layout.
@@ -824,70 +880,102 @@ pub struct ComposeCanvasBrush {
     pub colors: Vec<ComposeColor>,
 }
 /// Horizontal placement used by width and box-layout modifiers.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeHorizontalAlignment {
     /// Aligns to the logical start edge.
+    #[serde(rename = "start")]
     Start,
     /// Centers on the horizontal axis.
+    #[serde(rename = "center")]
     Center,
     /// Aligns to the logical end edge.
+    #[serde(rename = "end")]
     End,
     /// Aligns to the physical left edge.
+    #[serde(rename = "left")]
     Left,
     /// Aligns to the physical right edge.
+    #[serde(rename = "right")]
     Right,
     /// Uses Compose's explicit horizontal-center alignment.
+    #[serde(rename = "centerHorizontally")]
     CenterHorizontally,
 }
 /// Vertical placement used by height and box-layout modifiers.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeVerticalAlignment {
     /// Aligns to the top edge.
+    #[serde(rename = "top")]
     Top,
     /// Centers on the vertical axis.
+    #[serde(rename = "center")]
     Center,
     /// Aligns to the bottom edge.
+    #[serde(rename = "bottom")]
     Bottom,
     /// Aligns to the logical start of the vertical axis.
+    #[serde(rename = "start")]
     Start,
     /// Aligns to the logical end of the vertical axis.
+    #[serde(rename = "end")]
     End,
     /// Uses Compose's explicit vertical-center alignment.
+    #[serde(rename = "centerVertically")]
     CenterVertically,
 }
 /// Two-dimensional placement of content inside a box.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeBoxAlignment {
     /// Centers content on both axes.
+    #[serde(rename = "center")]
     Center,
     /// Aligns content to the top-start corner.
+    #[serde(rename = "topStart")]
     TopStart,
     /// Alias for top-start alignment.
+    #[serde(rename = "startTop")]
     StartTop,
     /// Centers content along the top edge.
+    #[serde(rename = "topCenter")]
     TopCenter,
     /// Alias for top-center alignment.
+    #[serde(rename = "centerTop")]
     CenterTop,
     /// Aligns content to the top-end corner.
+    #[serde(rename = "topEnd")]
     TopEnd,
     /// Alias for top-end alignment.
+    #[serde(rename = "endTop")]
     EndTop,
     /// Centers content along the start edge.
+    #[serde(rename = "centerStart")]
     CenterStart,
     /// Alias for center-start alignment.
+    #[serde(rename = "startCenter")]
     StartCenter,
     /// Centers content along the end edge.
+    #[serde(rename = "centerEnd")]
     CenterEnd,
     /// Alias for center-end alignment.
+    #[serde(rename = "endCenter")]
     EndCenter,
     /// Aligns content to the bottom-start corner.
+    #[serde(rename = "bottomStart")]
     BottomStart,
     /// Alias for bottom-start alignment.
+    #[serde(rename = "startBottom")]
     StartBottom,
     /// Centers content along the bottom edge.
+    #[serde(rename = "bottomCenter")]
     BottomCenter,
     /// Alias for bottom-center alignment.
+    #[serde(rename = "centerBottom")]
     CenterBottom,
     /// Aligns content to the bottom-end corner.
+    #[serde(rename = "bottomEnd")]
     BottomEnd,
     /// Alias for bottom-end alignment.
+    #[serde(rename = "endBottom")]
     EndBottom,
 }
 /// Alignment accepted by a modifier in horizontal, vertical, or box scope.
@@ -1005,22 +1093,15 @@ pub struct ComposeModifierShadowOptions {
 /// Primary, long-press, and double-click callbacks installed as one gesture detector.
 pub struct ComposeModifierCombinedClickableOptions {
     /// Handles a recognized primary click.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeModifierCombinedClickableOptionsOnClickOutput + Send + Sync,
-    >,
+    pub onClick:
+        Arc<dyn Fn() -> ComposeModifierCombinedClickableOptionsOnClickOutput + Send + Sync>,
     /// Handles a recognized long press when supplied.
-    pub on_long_click: Option<
-        Arc<
-            dyn Fn(
-            ) -> ComposeModifierCombinedClickableOptionsOnLongClickOutput + Send + Sync,
-        >,
+    pub onLongClick: Option<
+        Arc<dyn Fn() -> ComposeModifierCombinedClickableOptionsOnLongClickOutput + Send + Sync>,
     >,
     /// Handles a recognized double click when supplied.
-    pub on_double_click: Option<
-        Arc<
-            dyn Fn(
-            ) -> ComposeModifierCombinedClickableOptionsOnDoubleClickOutput + Send + Sync,
-        >,
+    pub onDoubleClick: Option<
+        Arc<dyn Fn() -> ComposeModifierCombinedClickableOptionsOnDoubleClickOutput + Send + Sync>,
     >,
 }
 /// Pointer location reported in the target node's local coordinate space.
@@ -1064,77 +1145,74 @@ pub struct ComposeGloballyPositionedEvent {
 /// Callbacks for distinct press and tap gestures on a node.
 pub struct ComposeModifierTapGesturesOptions {
     /// Runs as soon as a pointer press is recognized.
-    pub on_press: Option<
+    pub onPress: Option<
         Arc<
-            dyn Fn(
-                ComposePointerOffsetEvent,
-            ) -> ComposeModifierTapGesturesOptionsOnPressOutput + Send + Sync,
+            dyn Fn(ComposePointerOffsetEvent) -> ComposeModifierTapGesturesOptionsOnPressOutput
+                + Send
+                + Sync,
         >,
     >,
     /// Runs after a single tap is recognized.
-    pub on_tap: Option<
+    pub onTap: Option<
         Arc<
-            dyn Fn(
-                ComposePointerOffsetEvent,
-            ) -> ComposeModifierTapGesturesOptionsOnTapOutput + Send + Sync,
+            dyn Fn(ComposePointerOffsetEvent) -> ComposeModifierTapGesturesOptionsOnTapOutput
+                + Send
+                + Sync,
         >,
     >,
     /// Runs after two taps are recognized within the gesture interval.
-    pub on_double_tap: Option<
+    pub onDoubleTap: Option<
         Arc<
-            dyn Fn(
-                ComposePointerOffsetEvent,
-            ) -> ComposeModifierTapGesturesOptionsOnDoubleTapOutput + Send + Sync,
+            dyn Fn(ComposePointerOffsetEvent) -> ComposeModifierTapGesturesOptionsOnDoubleTapOutput
+                + Send
+                + Sync,
         >,
     >,
     /// Runs when a press exceeds the long-press threshold.
-    pub on_long_press: Option<
+    pub onLongPress: Option<
         Arc<
-            dyn Fn(
-                ComposePointerOffsetEvent,
-            ) -> ComposeModifierTapGesturesOptionsOnLongPressOutput + Send + Sync,
+            dyn Fn(ComposePointerOffsetEvent) -> ComposeModifierTapGesturesOptionsOnLongPressOutput
+                + Send
+                + Sync,
         >,
     >,
 }
 /// Callbacks describing the start, updates, and termination of a drag gesture.
 pub struct ComposeModifierDragGesturesOptions {
     /// Receives the pointer location where dragging begins.
-    pub on_drag_start: Option<
+    pub onDragStart: Option<
         Arc<
-            dyn Fn(
-                ComposePointerOffsetEvent,
-            ) -> ComposeModifierDragGesturesOptionsOnDragStartOutput + Send + Sync,
+            dyn Fn(ComposePointerOffsetEvent) -> ComposeModifierDragGesturesOptionsOnDragStartOutput
+                + Send
+                + Sync,
         >,
     >,
     /// Receives each pointer position and incremental movement during dragging.
-    pub on_drag: Option<
+    pub onDrag: Option<
         Arc<
-            dyn Fn(
-                ComposeDragGestureEvent,
-            ) -> ComposeModifierDragGesturesOptionsOnDragOutput + Send + Sync,
+            dyn Fn(ComposeDragGestureEvent) -> ComposeModifierDragGesturesOptionsOnDragOutput
+                + Send
+                + Sync,
         >,
     >,
     /// Runs when the pointer is released after a successful drag.
-    pub on_drag_end: Option<
-        Arc<dyn Fn() -> ComposeModifierDragGesturesOptionsOnDragEndOutput + Send + Sync>,
-    >,
+    pub onDragEnd:
+        Option<Arc<dyn Fn() -> ComposeModifierDragGesturesOptionsOnDragEndOutput + Send + Sync>>,
     /// Runs when another gesture or lifecycle event cancels the drag.
-    pub on_drag_cancel: Option<
-        Arc<
-            dyn Fn(
-            ) -> ComposeModifierDragGesturesOptionsOnDragCancelOutput + Send + Sync,
-        >,
-    >,
+    pub onDragCancel:
+        Option<Arc<dyn Fn() -> ComposeModifierDragGesturesOptionsOnDragCancelOutput + Send + Sync>>,
 }
 /// Configuration for combined pan, pinch-zoom, and rotation gestures.
 pub struct ComposeModifierTransformGesturesOptions {
     /// Locks gesture recognition to pan and zoom after those motions win the slop race.
-    pub pan_zoom_lock: Option<bool>,
+    pub panZoomLock: Option<bool>,
     /// Receives the centroid and incremental pan, zoom, and rotation deltas.
-    pub on_gesture: Arc<
+    pub onGesture: Arc<
         dyn Fn(
-            ComposeCanvasTransformEvent,
-        ) -> ComposeModifierTransformGesturesOptionsOnGestureOutput + Send + Sync,
+                ComposeCanvasTransformEvent,
+            ) -> ComposeModifierTransformGesturesOptionsOnGestureOutput
+            + Send
+            + Sync,
     >,
 }
 /// Persistent scale and translation applied while drawing a canvas.
@@ -1355,15 +1433,11 @@ pub enum ComposeWebViewResourceDecision {
 }
 /// Callable method exposed by the host object to JavaScript inside a WebView.
 pub type ComposeWebViewJavascriptInterfaceMethod = Arc<
-    dyn Fn(
-        Vec<serde_json::Value>,
-    ) -> ComposeWebViewJavascriptInterfaceMethodOutput + Send + Sync,
+    dyn Fn(Vec<serde_json::Value>) -> ComposeWebViewJavascriptInterfaceMethodOutput + Send + Sync,
 >;
 /// Named methods installed together as one WebView JavaScript interface object.
-pub type ComposeWebViewJavascriptInterface = BTreeMap<
-    String,
-    ComposeWebViewJavascriptInterfaceMethod,
->;
+pub type ComposeWebViewJavascriptInterface =
+    BTreeMap<String, ComposeWebViewJavascriptInterfaceMethod>;
 /// Origin and decoding metadata used when loading an inline HTML document.
 pub struct ComposeWebViewLoadHtmlOptions {
     /// Base URL used to resolve relative links and establish document origin.
@@ -1383,11 +1457,7 @@ pub trait ComposeWebViewControllerMethods: Send + Sync {
     /// Loads a URL with optional request headers in the controlled WebView.
     fn loadUrl(&self, url: String, headers: Option<BTreeMap<String, String>>) -> ();
     /// Loads an inline HTML document using optional origin and encoding metadata.
-    fn loadHtml(
-        &self,
-        html: String,
-        options: Option<ComposeWebViewLoadHtmlOptions>,
-    ) -> ();
+    fn loadHtml(&self, html: String, options: Option<ComposeWebViewLoadHtmlOptions>) -> ();
     /// Reloads the currently active document.
     fn reload(&self) -> ();
     /// Cancels the current page load.
@@ -1399,39 +1469,42 @@ pub trait ComposeWebViewControllerMethods: Send + Sync {
     /// Removes stored back and forward history entries.
     fn clearHistory(&self) -> ();
     /// Evaluates a script in the active page and resolves its decoded result.
-    fn evaluateJavascript<TResult>(
-        &self,
-        script: String,
-    ) -> JsFuture<JsOptional<TResult>>;
+    fn evaluateJavascript<TResult>(&self, script: String) -> JsFuture<JsOptional<TResult>>;
     /// Returns the latest navigation and loading state known by the controller.
     fn getState(&self) -> JsOptional<ComposeWebViewState>;
     /// Installs a named host object callable by JavaScript in the page.
-    fn addJavascriptInterface(
-        &self,
-        name: String,
-        object: ComposeWebViewJavascriptInterface,
-    ) -> ();
+    fn addJavascriptInterface(&self, name: String, object: ComposeWebViewJavascriptInterface)
+        -> ();
     /// Removes a previously installed JavaScript interface object.
     fn removeJavascriptInterface(&self, name: String) -> ();
 }
 /// Policy for HTTP subresources requested by an HTTPS page.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeWebViewMixedContentMode {
     /// Allows insecure subresources without restriction.
+    #[serde(rename = "alwaysAllow")]
     AlwaysAllow,
     /// Blocks all insecure subresources.
+    #[serde(rename = "neverAllow")]
     NeverAllow,
     /// Applies the platform's compatibility policy for legacy pages.
+    #[serde(rename = "compatibilityMode")]
     CompatibilityMode,
 }
 /// Cache policy applied to WebView network requests.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeWebViewCacheMode {
     /// Uses the platform's normal protocol cache behavior.
+    #[serde(rename = "default")]
     Default,
     /// Bypasses cached responses and does not store the result.
+    #[serde(rename = "noCache")]
     NoCache,
     /// Uses cached content when available and otherwise requests the network.
+    #[serde(rename = "cacheElseNetwork")]
     CacheElseNetwork,
     /// Serves only cached content and avoids network access.
+    #[serde(rename = "cacheOnly")]
     CacheOnly,
 }
 /// Command that strokes a straight segment between two canvas points.
@@ -1626,10 +1699,13 @@ pub enum ComposeCanvasPathOp {
     Variant5(ComposeCanvasCloseOp),
 }
 /// Whether canvas path geometry is filled or outlined.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeCanvasDrawStyle {
     /// Paints the interior of the geometry.
+    #[serde(rename = "fill")]
     Fill,
     /// Paints an outline centered on the geometry boundary.
+    #[serde(rename = "stroke")]
     Stroke,
 }
 /// Command that assembles path operations and renders the resulting geometry.
@@ -1750,52 +1826,99 @@ pub enum ComposeCanvasCommand {
     Variant9(ComposeCanvasDrawIconCommand),
 }
 /// Serialized operation name stored in a Compose modifier chain.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeModifierName {
+    #[serde(rename = "fillMaxSize")]
     FillMaxSize,
+    #[serde(rename = "fillMaxWidth")]
     FillMaxWidth,
+    #[serde(rename = "fillMaxHeight")]
     FillMaxHeight,
+    #[serde(rename = "width")]
     Width,
+    #[serde(rename = "height")]
     Height,
+    #[serde(rename = "requiredWidth")]
     RequiredWidth,
+    #[serde(rename = "requiredHeight")]
     RequiredHeight,
+    #[serde(rename = "size")]
     Size,
+    #[serde(rename = "requiredSize")]
     RequiredSize,
+    #[serde(rename = "padding")]
     Padding,
+    #[serde(rename = "offset")]
     Offset,
+    #[serde(rename = "widthIn")]
     WidthIn,
+    #[serde(rename = "heightIn")]
     HeightIn,
+    #[serde(rename = "sizeIn")]
     SizeIn,
+    #[serde(rename = "requiredWidthIn")]
     RequiredWidthIn,
+    #[serde(rename = "requiredHeightIn")]
     RequiredHeightIn,
+    #[serde(rename = "requiredSizeIn")]
     RequiredSizeIn,
+    #[serde(rename = "defaultMinSize")]
     DefaultMinSize,
+    #[serde(rename = "wrapContentWidth")]
     WrapContentWidth,
+    #[serde(rename = "wrapContentHeight")]
     WrapContentHeight,
+    #[serde(rename = "wrapContentSize")]
     WrapContentSize,
+    #[serde(rename = "aspectRatio")]
     AspectRatio,
+    #[serde(rename = "alpha")]
     Alpha,
+    #[serde(rename = "rotate")]
     Rotate,
+    #[serde(rename = "scale")]
     Scale,
+    #[serde(rename = "zIndex")]
     ZIndex,
+    #[serde(rename = "background")]
     Background,
+    #[serde(rename = "border")]
     Border,
+    #[serde(rename = "clip")]
     Clip,
+    #[serde(rename = "clipToBounds")]
     ClipToBounds,
+    #[serde(rename = "shadow")]
     Shadow,
+    #[serde(rename = "clickable")]
     Clickable,
+    #[serde(rename = "combinedClickable")]
     CombinedClickable,
+    #[serde(rename = "tapGestures")]
     TapGestures,
+    #[serde(rename = "dragGestures")]
     DragGestures,
+    #[serde(rename = "transformGestures")]
     TransformGestures,
+    #[serde(rename = "onSizeChanged")]
     OnSizeChanged,
+    #[serde(rename = "onGloballyPositioned")]
     OnGloballyPositioned,
+    #[serde(rename = "imePadding")]
     ImePadding,
+    #[serde(rename = "statusBarsPadding")]
     StatusBarsPadding,
+    #[serde(rename = "navigationBarsPadding")]
     NavigationBarsPadding,
+    #[serde(rename = "systemBarsPadding")]
     SystemBarsPadding,
+    #[serde(rename = "safeDrawingPadding")]
     SafeDrawingPadding,
+    #[serde(rename = "weight")]
     Weight,
+    #[serde(rename = "align")]
     Align,
+    #[serde(rename = "matchParentSize")]
     MatchParentSize,
 }
 /// One serialized operation in an immutable Compose modifier chain.
@@ -1855,27 +1978,13 @@ pub trait ComposeModifierProxyApi: Send + Sync {
     /// Translates the laid-out node using structured axis offsets.
     fn offset_overload_2(&self, values: ComposeModifierOffset) -> ComposeModifierProxy;
     /// Constrains measured width to optional minimum and maximum values.
-    fn widthIn_overload_1(
-        &self,
-        min: Option<f64>,
-        max: Option<f64>,
-    ) -> ComposeModifierProxy;
+    fn widthIn_overload_1(&self, min: Option<f64>, max: Option<f64>) -> ComposeModifierProxy;
     /// Constrains measured width using shorthand and explicit width bounds.
-    fn widthIn_overload_2(
-        &self,
-        bounds: ComposeModifierWidthBounds,
-    ) -> ComposeModifierProxy;
+    fn widthIn_overload_2(&self, bounds: ComposeModifierWidthBounds) -> ComposeModifierProxy;
     /// Constrains measured height to optional minimum and maximum values.
-    fn heightIn_overload_1(
-        &self,
-        min: Option<f64>,
-        max: Option<f64>,
-    ) -> ComposeModifierProxy;
+    fn heightIn_overload_1(&self, min: Option<f64>, max: Option<f64>) -> ComposeModifierProxy;
     /// Constrains measured height using shorthand and explicit height bounds.
-    fn heightIn_overload_2(
-        &self,
-        bounds: ComposeModifierHeightBounds,
-    ) -> ComposeModifierProxy;
+    fn heightIn_overload_2(&self, bounds: ComposeModifierHeightBounds) -> ComposeModifierProxy;
     /// Constrains width and height with four explicit bounds.
     fn sizeIn_overload_1(
         &self,
@@ -1885,10 +1994,7 @@ pub trait ComposeModifierProxyApi: Send + Sync {
         maxHeight: f64,
     ) -> ComposeModifierProxy;
     /// Constrains both dimensions using a structured bounds object.
-    fn sizeIn_overload_2(
-        &self,
-        bounds: ComposeModifierSizeBounds,
-    ) -> ComposeModifierProxy;
+    fn sizeIn_overload_2(&self, bounds: ComposeModifierSizeBounds) -> ComposeModifierProxy;
     /// Forces width into the supplied optional range despite parent constraints.
     fn requiredWidthIn_overload_1(
         &self,
@@ -1920,10 +2026,7 @@ pub trait ComposeModifierProxyApi: Send + Sync {
         maxHeight: f64,
     ) -> ComposeModifierProxy;
     /// Forces both dimensions into a structured set of bounds.
-    fn requiredSizeIn_overload_2(
-        &self,
-        bounds: ComposeModifierSizeBounds,
-    ) -> ComposeModifierProxy;
+    fn requiredSizeIn_overload_2(&self, bounds: ComposeModifierSizeBounds) -> ComposeModifierProxy;
     /// Supplies preferred minimum width and optional minimum height.
     fn defaultMinSize_overload_1(
         &self,
@@ -2022,16 +2125,11 @@ pub trait ComposeModifierProxyApi: Send + Sync {
         clip: Option<bool>,
     ) -> ComposeModifierProxy;
     /// Casts a shadow using structured elevation and outline options.
-    fn shadow_overload_2(
-        &self,
-        options: ComposeModifierShadowOptions,
-    ) -> ComposeModifierProxy;
+    fn shadow_overload_2(&self, options: ComposeModifierShadowOptions) -> ComposeModifierProxy;
     /// Makes the node respond to a primary click callback.
     fn clickable(
         &self,
-        onClick: Arc<
-            dyn Fn() -> ComposeModifierProxyClickableOnClickOutput + Send + Sync,
-        >,
+        onClick: Arc<dyn Fn() -> ComposeModifierProxyClickableOnClickOutput + Send + Sync>,
     ) -> ComposeModifierProxy;
     /// Installs primary, long-press, and double-click recognition together.
     fn combinedClickable(
@@ -2039,15 +2137,9 @@ pub trait ComposeModifierProxyApi: Send + Sync {
         options: ComposeModifierCombinedClickableOptions,
     ) -> ComposeModifierProxy;
     /// Installs callbacks for press, tap, double-tap, and long-press gestures.
-    fn tapGestures(
-        &self,
-        options: ComposeModifierTapGesturesOptions,
-    ) -> ComposeModifierProxy;
+    fn tapGestures(&self, options: ComposeModifierTapGesturesOptions) -> ComposeModifierProxy;
     /// Installs callbacks for drag start, updates, completion, and cancellation.
-    fn dragGestures(
-        &self,
-        options: ComposeModifierDragGesturesOptions,
-    ) -> ComposeModifierProxy;
+    fn dragGestures(&self, options: ComposeModifierDragGesturesOptions) -> ComposeModifierProxy;
     /// Installs combined pan, pinch-zoom, and rotation recognition.
     fn transformGestures(
         &self,
@@ -2057,9 +2149,9 @@ pub trait ComposeModifierProxyApi: Send + Sync {
     fn onSizeChanged(
         &self,
         onSizeChanged: Arc<
-            dyn Fn(
-                ComposeSizeChangedEvent,
-            ) -> ComposeModifierProxyOnSizeChangedOnSizeChangedOutput + Send + Sync,
+            dyn Fn(ComposeSizeChangedEvent) -> ComposeModifierProxyOnSizeChangedOnSizeChangedOutput
+                + Send
+                + Sync,
         >,
     ) -> ComposeModifierProxy;
     /// Observes node bounds in root and host-window coordinates after layout.
@@ -2067,8 +2159,11 @@ pub trait ComposeModifierProxyApi: Send + Sync {
         &self,
         onGloballyPositioned: Arc<
             dyn Fn(
-                ComposeGloballyPositionedEvent,
-            ) -> ComposeModifierProxyOnGloballyPositionedOnGloballyPositionedOutput + Send + Sync,
+                    ComposeGloballyPositionedEvent,
+                )
+                    -> ComposeModifierProxyOnGloballyPositionedOnGloballyPositionedOutput
+                + Send
+                + Sync,
         >,
     ) -> ComposeModifierProxy;
     /// Adds padding matching the visible on-screen keyboard inset.
@@ -2106,55 +2201,55 @@ pub struct ComposeCommonProps {
     /// Stable identity used to preserve node state across render passes.
     pub key: Option<String>,
     /// Runs after the host has created and loaded the node.
-    pub on_load: Option<Arc<dyn Fn() -> ComposeCommonPropsOnLoadOutput + Send + Sync>>,
+    pub onLoad: Option<Arc<dyn Fn() -> ComposeCommonPropsOnLoadOutput + Send + Sync>>,
     /// Content presented as the host screen's top-bar title.
-    pub top_bar_title: Option<ComposeChildren>,
+    pub topBarTitle: Option<ComposeChildren>,
     /// Ordered modifier operations applied to layout, drawing, and input.
     pub modifier: Option<ComposeModifierValue>,
     /// Sibling draw order, with larger values rendered above smaller ones.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
     /// Share of remaining main-axis space inside a row or column.
     pub weight: Option<f64>,
     /// Whether weighted content expands to occupy its entire allocated share.
-    pub weight_fill: Option<bool>,
+    pub weightFill: Option<bool>,
     /// Requested node width before parent constraints are applied.
     pub width: Option<f64>,
     /// Requested node height before parent constraints are applied.
     pub height: Option<f64>,
     /// Whether the node expands to the maximum available height.
-    pub fill_max_height: Option<bool>,
+    pub fillMaxHeight: Option<bool>,
     /// Uniform or axis-specific space between node bounds and content.
     pub padding: Option<ComposeCommonPropsPadding>,
     /// Content inset on the layout-direction start edge.
-    pub padding_start: Option<f64>,
+    pub paddingStart: Option<f64>,
     /// Content inset on the top edge.
-    pub padding_top: Option<f64>,
+    pub paddingTop: Option<f64>,
     /// Content inset on the layout-direction end edge.
-    pub padding_end: Option<f64>,
+    pub paddingEnd: Option<f64>,
     /// Content inset applied to both start and end edges.
-    pub padding_horizontal: Option<f64>,
+    pub paddingHorizontal: Option<f64>,
     /// Content inset applied to both top and bottom edges.
-    pub padding_vertical: Option<f64>,
+    pub paddingVertical: Option<f64>,
     /// Content inset on the bottom edge.
-    pub padding_bottom: Option<f64>,
+    pub paddingBottom: Option<f64>,
     /// Gap inserted between adjacent child nodes.
     pub spacing: Option<f64>,
     /// Whether the node expands to the maximum available width.
-    pub fill_max_width: Option<bool>,
+    pub fillMaxWidth: Option<bool>,
     /// Whether the node expands to both maximum available dimensions.
-    pub fill_max_size: Option<bool>,
+    pub fillMaxSize: Option<bool>,
     /// Solid background paint behind node content.
     pub background: Option<ComposeColor>,
     /// Alternate explicit background color accepted by legacy component props.
-    pub background_color: Option<ComposeColor>,
+    pub backgroundColor: Option<ComposeColor>,
     /// Material container color used by surface-like components.
-    pub container_color: Option<ComposeColor>,
+    pub containerColor: Option<ComposeColor>,
     /// Opacity multiplier applied to background paint.
-    pub background_alpha: Option<f64>,
+    pub backgroundAlpha: Option<f64>,
     /// Gradient brush used instead of a solid background color.
-    pub background_brush: Option<ComposeCanvasBrush>,
+    pub backgroundBrush: Option<ComposeCanvasBrush>,
     /// Shape that bounds and optionally clips the background paint.
-    pub background_shape: Option<ComposeShape>,
+    pub backgroundShape: Option<ComposeShape>,
 }
 /// Properties for laying out child nodes vertically.
 pub struct ColumnProps {
@@ -2174,11 +2269,11 @@ pub struct RowProps {
     /// Child nodes placed from start to end.
     pub content: Option<ComposeChildren>,
     /// Main-axis distribution of children within the row width.
-    pub horizontal_arrangement: Option<ComposeArrangement>,
+    pub horizontalArrangement: Option<ComposeArrangement>,
     /// Cross-axis alignment of children within the row height.
-    pub vertical_alignment: Option<ComposeAlignment>,
+    pub verticalAlignment: Option<ComposeAlignment>,
     /// Optional click action for the row as one interactive target.
-    pub on_click: Option<Arc<dyn Fn() -> RowPropsOnClickOutput + Send + Sync>>,
+    pub onClick: Option<Arc<dyn Fn() -> RowPropsOnClickOutput + Send + Sync>>,
 }
 /// Properties for stacking child nodes in the same layout bounds.
 pub struct BoxProps {
@@ -2245,31 +2340,31 @@ pub struct TextFieldProps {
     /// Plain or composed hint shown while the value is empty.
     pub placeholder: Option<TextFieldPropsPlaceholder>,
     /// Decoration placed before the editable text.
-    pub leading_icon: Option<ComposeChildren>,
+    pub leadingIcon: Option<ComposeChildren>,
     /// Decoration placed after the editable text.
-    pub trailing_icon: Option<ComposeChildren>,
+    pub trailingIcon: Option<ComposeChildren>,
     /// Content rendered immediately before the entered value.
     pub prefix: Option<ComposeChildren>,
     /// Content rendered immediately after the entered value.
     pub suffix: Option<ComposeChildren>,
     /// Helper or validation content rendered beneath the field.
-    pub supporting_text: Option<ComposeChildren>,
+    pub supportingText: Option<ComposeChildren>,
     /// Current controlled text value.
     pub value: String,
     /// Receives each user-proposed value for controlled-state updates.
-    pub on_value_change: Arc<dyn Fn(String) -> () + Send + Sync>,
+    pub onValueChange: Arc<dyn Fn(String) -> () + Send + Sync>,
     /// Restricts input and layout to one visual line.
-    pub single_line: Option<bool>,
+    pub singleLine: Option<bool>,
     /// Minimum visible line count reserved by the field.
-    pub min_lines: Option<f64>,
+    pub minLines: Option<f64>,
     /// Maximum visible line count before internal scrolling.
-    pub max_lines: Option<f64>,
+    pub maxLines: Option<f64>,
     /// Allows selection without accepting user edits.
-    pub read_only: Option<bool>,
+    pub readOnly: Option<bool>,
     /// Applies error-state semantics and styling.
-    pub is_error: Option<bool>,
+    pub isError: Option<bool>,
     /// Obscures entered characters as sensitive password input.
-    pub is_password: Option<bool>,
+    pub isPassword: Option<bool>,
     /// Typography and foreground overrides for the entered value.
     pub style: Option<ComposeTextFieldStyle>,
 }
@@ -2280,19 +2375,19 @@ pub struct SwitchProps {
     /// Current on or off state.
     pub checked: bool,
     /// Receives the state requested by user interaction.
-    pub on_checked_change: Arc<dyn Fn(bool) -> () + Send + Sync>,
+    pub onCheckedChange: Arc<dyn Fn(bool) -> () + Send + Sync>,
     /// Whether the switch accepts pointer and accessibility actions.
     pub enabled: Option<bool>,
     /// Optional content rendered inside the movable thumb.
-    pub thumb_content: Option<ComposeChildren>,
+    pub thumbContent: Option<ComposeChildren>,
     /// Thumb color while the switch is on.
-    pub checked_thumb_color: Option<ComposeColor>,
+    pub checkedThumbColor: Option<ComposeColor>,
     /// Track color while the switch is on.
-    pub checked_track_color: Option<ComposeColor>,
+    pub checkedTrackColor: Option<ComposeColor>,
     /// Thumb color while the switch is off.
-    pub unchecked_thumb_color: Option<ComposeColor>,
+    pub uncheckedThumbColor: Option<ComposeColor>,
     /// Track color while the switch is off.
-    pub unchecked_track_color: Option<ComposeColor>,
+    pub uncheckedTrackColor: Option<ComposeColor>,
 }
 /// Controlled state and interaction for a binary checkbox.
 pub struct CheckboxProps {
@@ -2301,7 +2396,7 @@ pub struct CheckboxProps {
     /// Current selected or unselected state.
     pub checked: bool,
     /// Receives the state requested by user interaction.
-    pub on_checked_change: Arc<dyn Fn(bool) -> () + Send + Sync>,
+    pub onCheckedChange: Arc<dyn Fn(bool) -> () + Send + Sync>,
     /// Whether the checkbox accepts pointer and accessibility actions.
     pub enabled: Option<bool>,
 }
@@ -2316,9 +2411,9 @@ pub struct ButtonProps {
     /// Whether the button accepts pointer and accessibility actions.
     pub enabled: Option<bool>,
     /// Action invoked when the button is activated.
-    pub on_click: Arc<dyn Fn() -> ButtonPropsOnClickOutput + Send + Sync>,
+    pub onClick: Arc<dyn Fn() -> ButtonPropsOnClickOutput + Send + Sync>,
     /// Horizontal and vertical inset around the button content.
-    pub content_padding: Option<ComposePadding>,
+    pub contentPadding: Option<ComposePadding>,
     /// Outline used for button background, border, and clipping.
     pub shape: Option<ComposeShape>,
 }
@@ -2333,7 +2428,7 @@ pub struct IconButtonProps {
     /// Whether the control accepts pointer and accessibility actions.
     pub enabled: Option<bool>,
     /// Action invoked when the icon button is activated.
-    pub on_click: Arc<dyn Fn() -> IconButtonPropsOnClickOutput + Send + Sync>,
+    pub onClick: Arc<dyn Fn() -> IconButtonPropsOnClickOutput + Send + Sync>,
     /// Outline used for interaction feedback and clipping.
     pub shape: Option<ComposeShape>,
 }
@@ -2365,15 +2460,15 @@ pub struct SurfaceProps {
     /// Child nodes rendered inside the surface.
     pub content: Option<ComposeChildren>,
     /// Background color of the surface.
-    pub container_color: Option<ComposeColor>,
+    pub containerColor: Option<ComposeColor>,
     /// Default foreground color inherited by surface content.
-    pub content_color: Option<ComposeColor>,
+    pub contentColor: Option<ComposeColor>,
     /// Outline used for surface painting, clipping, and interaction feedback.
     pub shape: Option<ComposeShape>,
     /// Opacity multiplier applied to the surface.
     pub alpha: Option<f64>,
     /// Optional action that turns the surface into an interactive target.
-    pub on_click: Option<Arc<dyn Fn() -> SurfacePropsOnClickOutput + Send + Sync>>,
+    pub onClick: Option<Arc<dyn Fn() -> SurfacePropsOnClickOutput + Send + Sync>>,
 }
 /// Properties for rendering and optionally animating a Material icon.
 pub struct IconProps {
@@ -2429,11 +2524,9 @@ pub struct CanvasProps {
     /// Scale, translation, and pivot applied to canvas content.
     pub transform: Option<ComposeCanvasTransform>,
     /// Receives incremental pan, zoom, and rotation gestures over the canvas.
-    pub on_transform: Option<
-        Arc<dyn Fn(ComposeCanvasTransformEvent) -> () + Send + Sync>,
-    >,
+    pub onTransform: Option<Arc<dyn Fn(ComposeCanvasTransformEvent) -> () + Send + Sync>>,
     /// Receives measured canvas dimensions after layout changes.
-    pub on_size_changed: Option<Arc<dyn Fn(ComposeCanvasSizeEvent) -> () + Send + Sync>>,
+    pub onSizeChanged: Option<Arc<dyn Fn(ComposeCanvasSizeEvent) -> () + Send + Sync>>,
 }
 /// Content source, platform settings, controller, and event hooks for an embedded WebView.
 pub struct WebViewProps {
@@ -2444,159 +2537,136 @@ pub struct WebViewProps {
     /// Inline HTML loaded instead of a URL.
     pub html: Option<String>,
     /// Origin and relative-link base for inline HTML content.
-    pub base_url: Option<String>,
+    pub baseUrl: Option<String>,
     /// Media type assigned to inline content.
-    pub mime_type: Option<String>,
+    pub mimeType: Option<String>,
     /// Character encoding used to decode inline content.
     pub encoding: Option<String>,
     /// Additional HTTP headers attached to the initial URL request.
     pub headers: Option<BTreeMap<String, String>>,
     /// Whether page scripts may execute.
-    pub java_script_enabled: Option<bool>,
+    pub javaScriptEnabled: Option<bool>,
     /// Whether DOM local and session storage APIs are available.
-    pub dom_storage_enabled: Option<bool>,
+    pub domStorageEnabled: Option<bool>,
     /// Whether page database storage is enabled by the platform WebView.
-    pub database_enabled: Option<bool>,
+    pub databaseEnabled: Option<bool>,
     /// Whether scripts may open windows without a user gesture.
-    pub java_script_can_open_windows_automatically: Option<bool>,
+    pub javaScriptCanOpenWindowsAutomatically: Option<bool>,
     /// Whether the WebView handles requests for additional browser windows.
-    pub support_multiple_windows: Option<bool>,
+    pub supportMultipleWindows: Option<bool>,
     /// Whether pages may read resources through file URLs.
-    pub allow_file_access: Option<bool>,
+    pub allowFileAccess: Option<bool>,
     /// Whether pages may access platform content-provider URLs.
-    pub allow_content_access: Option<bool>,
+    pub allowContentAccess: Option<bool>,
     /// Whether a file-origin page may read other file URLs.
-    pub allow_file_access_from_file_urls: Option<bool>,
+    pub allowFileAccessFromFileURLs: Option<bool>,
     /// Whether a file-origin page may request resources from any origin.
-    pub allow_universal_access_from_file_urls: Option<bool>,
+    pub allowUniversalAccessFromFileURLs: Option<bool>,
     /// User-Agent string sent with WebView requests.
-    pub user_agent: Option<String>,
+    pub userAgent: Option<String>,
     /// Whether WebView scrolling participates in the surrounding Compose scroll chain.
-    pub nested_scroll_interop: Option<bool>,
+    pub nestedScrollInterop: Option<bool>,
     /// Whether the page supports zoom gestures and controls.
-    pub support_zoom: Option<bool>,
+    pub supportZoom: Option<bool>,
     /// Whether platform-provided zoom controls are enabled.
-    pub built_in_zoom_controls: Option<bool>,
+    pub builtInZoomControls: Option<bool>,
     /// Whether platform zoom controls are visibly overlaid on the page.
-    pub display_zoom_controls: Option<bool>,
+    pub displayZoomControls: Option<bool>,
     /// Whether layout uses a wide viewport based on page metadata.
-    pub use_wide_view_port: Option<bool>,
+    pub useWideViewPort: Option<bool>,
     /// Whether an oversized page initially scales down to fit the viewport.
-    pub load_with_overview_mode: Option<bool>,
+    pub loadWithOverviewMode: Option<bool>,
     /// Policy for HTTP subresources requested by HTTPS pages.
-    pub mixed_content_mode: Option<ComposeWebViewMixedContentMode>,
+    pub mixedContentMode: Option<ComposeWebViewMixedContentMode>,
     /// Whether audio and video playback must begin from a user gesture.
-    pub media_playback_requires_user_gesture: Option<bool>,
+    pub mediaPlaybackRequiresUserGesture: Option<bool>,
     /// Percentage scale applied to page text independently of page zoom.
-    pub text_zoom: Option<f64>,
+    pub textZoom: Option<f64>,
     /// Network cache policy for page and resource requests.
-    pub cache_mode: Option<ComposeWebViewCacheMode>,
+    pub cacheMode: Option<ComposeWebViewCacheMode>,
     /// Whether platform safe-browsing checks protect navigation.
-    pub safe_browsing_enabled: Option<bool>,
+    pub safeBrowsingEnabled: Option<bool>,
     /// Whether embedded third-party origins may store and send cookies.
-    pub accept_third_party_cookies: Option<bool>,
+    pub acceptThirdPartyCookies: Option<bool>,
     /// Imperative handle associated with this WebView across renders.
     pub controller: Option<ComposeWebViewController>,
     /// Runs when the main page begins navigating.
-    pub on_page_started: Option<
-        Arc<
-            dyn Fn(
-                ComposeWebViewPageEvent,
-            ) -> WebViewPropsOnPageStartedOutput + Send + Sync,
-        >,
+    pub onPageStarted: Option<
+        Arc<dyn Fn(ComposeWebViewPageEvent) -> WebViewPropsOnPageStartedOutput + Send + Sync>,
     >,
     /// Runs when the main page finishes loading.
-    pub on_page_finished: Option<
-        Arc<
-            dyn Fn(
-                ComposeWebViewPageEvent,
-            ) -> WebViewPropsOnPageFinishedOutput + Send + Sync,
-        >,
+    pub onPageFinished: Option<
+        Arc<dyn Fn(ComposeWebViewPageEvent) -> WebViewPropsOnPageFinishedOutput + Send + Sync>,
     >,
     /// Runs for network or content-loading failures.
-    pub on_received_error: Option<
-        Arc<
-            dyn Fn(
-                ComposeWebViewErrorEvent,
-            ) -> WebViewPropsOnReceivedErrorOutput + Send + Sync,
-        >,
+    pub onReceivedError: Option<
+        Arc<dyn Fn(ComposeWebViewErrorEvent) -> WebViewPropsOnReceivedErrorOutput + Send + Sync>,
     >,
     /// Runs when a requested resource returns an HTTP error status.
-    pub on_received_http_error: Option<
+    pub onReceivedHttpError: Option<
         Arc<
-            dyn Fn(
-                ComposeWebViewHttpErrorEvent,
-            ) -> WebViewPropsOnReceivedHttpErrorOutput + Send + Sync,
+            dyn Fn(ComposeWebViewHttpErrorEvent) -> WebViewPropsOnReceivedHttpErrorOutput
+                + Send
+                + Sync,
         >,
     >,
     /// Runs when TLS certificate validation fails.
-    pub on_received_ssl_error: Option<
+    pub onReceivedSslError: Option<
         Arc<
-            dyn Fn(
-                ComposeWebViewSslErrorEvent,
-            ) -> WebViewPropsOnReceivedSslErrorOutput + Send + Sync,
+            dyn Fn(ComposeWebViewSslErrorEvent) -> WebViewPropsOnReceivedSslErrorOutput
+                + Send
+                + Sync,
         >,
     >,
     /// Runs when page content initiates a file download.
-    pub on_download_start: Option<
-        Arc<
-            dyn Fn(
-                ComposeWebViewDownloadEvent,
-            ) -> WebViewPropsOnDownloadStartOutput + Send + Sync,
-        >,
+    pub onDownloadStart: Option<
+        Arc<dyn Fn(ComposeWebViewDownloadEvent) -> WebViewPropsOnDownloadStartOutput + Send + Sync>,
     >,
     /// Receives messages emitted by the page's JavaScript console.
-    pub on_console_message: Option<
-        Arc<
-            dyn Fn(
-                ComposeWebViewConsoleEvent,
-            ) -> WebViewPropsOnConsoleMessageOutput + Send + Sync,
-        >,
+    pub onConsoleMessage: Option<
+        Arc<dyn Fn(ComposeWebViewConsoleEvent) -> WebViewPropsOnConsoleMessageOutput + Send + Sync>,
     >,
     /// Runs when the active or requested URL changes.
-    pub on_url_changed: Option<
-        Arc<
-            dyn Fn(
-                ComposeWebViewNavigationEvent,
-            ) -> WebViewPropsOnUrlChangedOutput + Send + Sync,
-        >,
+    pub onUrlChanged: Option<
+        Arc<dyn Fn(ComposeWebViewNavigationEvent) -> WebViewPropsOnUrlChangedOutput + Send + Sync>,
     >,
     /// Runs as page loading completion advances.
-    pub on_progress_changed: Option<
+    pub onProgressChanged: Option<
         Arc<
-            dyn Fn(
-                ComposeWebViewProgressEvent,
-            ) -> WebViewPropsOnProgressChangedOutput + Send + Sync,
+            dyn Fn(ComposeWebViewProgressEvent) -> WebViewPropsOnProgressChangedOutput
+                + Send
+                + Sync,
         >,
     >,
     /// Receives complete navigation and loading state snapshots.
-    pub on_state_changed: Option<
-        Arc<
-            dyn Fn(ComposeWebViewState) -> WebViewPropsOnStateChangedOutput + Send + Sync,
-        >,
-    >,
+    pub onStateChanged:
+        Option<Arc<dyn Fn(ComposeWebViewState) -> WebViewPropsOnStateChangedOutput + Send + Sync>>,
     /// Receives native WebView creation, disposal, commit, and renderer events.
-    pub on_lifecycle_event: Option<
+    pub onLifecycleEvent: Option<
         Arc<
-            dyn Fn(
-                ComposeWebViewLifecycleEvent,
-            ) -> WebViewPropsOnLifecycleEventOutput + Send + Sync,
+            dyn Fn(ComposeWebViewLifecycleEvent) -> WebViewPropsOnLifecycleEventOutput
+                + Send
+                + Sync,
         >,
     >,
     /// Selects whether a navigation is allowed, cancelled, rewritten, or opened externally.
-    pub on_should_override_url_loading: Option<
+    pub onShouldOverrideUrlLoading: Option<
         Arc<
             dyn Fn(
-                ComposeWebViewNavigationRequest,
-            ) -> JsOptional<WebViewPropsOnShouldOverrideUrlLoadingOutput> + Send + Sync,
+                    ComposeWebViewNavigationRequest,
+                ) -> JsOptional<WebViewPropsOnShouldOverrideUrlLoadingOutput>
+                + Send
+                + Sync,
         >,
     >,
     /// Selects whether a resource request is allowed, blocked, rewritten, or answered locally.
-    pub on_intercept_request: Option<
+    pub onInterceptRequest: Option<
         Arc<
             dyn Fn(
-                ComposeWebViewResourceRequest,
-            ) -> JsOptional<WebViewPropsOnInterceptRequestOutput> + Send + Sync,
+                    ComposeWebViewResourceRequest,
+                ) -> JsOptional<WebViewPropsOnInterceptRequestOutput>
+                + Send
+                + Sync,
         >,
     >,
 }
@@ -2621,9 +2691,8 @@ pub enum ComposeChildren {
     Undefined,
 }
 /// Factory that encodes component properties and children as a Compose node.
-pub type ComposeNodeFactory<TProps = BTreeMap<String, serde_json::Value>> = Arc<
-    dyn Fn(Option<TProps>, Option<ComposeChildren>) -> ComposeNode + Send + Sync,
->;
+pub type ComposeNodeFactory<TProps = BTreeMap<String, serde_json::Value>> =
+    Arc<dyn Fn(Option<TProps>, Option<ComposeChildren>) -> ComposeNode + Send + Sync>;
 /// Core component factories available through `ComposeDslContext::UI`.
 pub struct ComposeUiFactoryRegistry {
     /// Creates a vertical layout container.
@@ -2670,10 +2739,7 @@ pub struct ComposeUiFactoryRegistry {
 /// Named scalar substitutions used by runtime message templates.
 pub struct ComposeTemplateValues {
     /// Maps placeholder names to text, numeric, boolean, null, or undefined values.
-    pub additional_properties: BTreeMap<
-        String,
-        JsOptional<ComposeTemplateValuesAdditionalValue>,
-    >,
+    pub additional_properties: BTreeMap<String, JsOptional<ComposeTemplateValuesAdditionalValue>>,
 }
 /// Runtime-module metadata available to a Compose DSL screen.
 pub struct ComposeUiModuleSpec {
@@ -2758,11 +2824,7 @@ pub struct ComposeDslContext {
 /// Stateful rendering and host-service operations available to Compose screens.
 pub trait ComposeDslContextMethods: Send + Sync {
     /// Retains a keyed value across renders and returns a setter that schedules updates.
-    fn useState<T>(
-        &self,
-        key: String,
-        initialValue: T,
-    ) -> (T, Arc<dyn Fn(T) -> () + Send + Sync>);
+    fn useState<T>(&self, key: String, initialValue: T) -> (T, Arc<dyn Fn(T) -> () + Send + Sync>);
     /// Retains a keyed mutable value and returns a callback for replacing it.
     fn useMutable<T>(
         &self,
@@ -2770,11 +2832,7 @@ pub trait ComposeDslContextMethods: Send + Sync {
         initialValue: T,
     ) -> (T, Arc<dyn Fn(T) -> () + Send + Sync>);
     /// Returns a keyed stable reference whose current value survives rerenders.
-    fn useRef<T>(
-        &self,
-        key: String,
-        initialValue: T,
-    ) -> ComposeDslContextMethodsUseRefReturn<T>;
+    fn useRef<T>(&self, key: String, initialValue: T) -> ComposeDslContextMethodsUseRefReturn<T>;
     /// Reuses a keyed computed value until its dependency list changes.
     fn useMemo<T>(
         &self,
@@ -2783,10 +2841,7 @@ pub trait ComposeDslContextMethods: Send + Sync {
         deps: Option<Vec<serde_json::Value>>,
     ) -> T;
     /// Measures text using host font metrics and the supplied layout constraints.
-    fn measureText(
-        &self,
-        request: ComposeTextMeasureRequest,
-    ) -> ComposeTextMeasureResult;
+    fn measureText(&self, request: ComposeTextMeasureRequest) -> ComposeTextMeasureResult;
     /// Invokes a resolved tool by name and asynchronously decodes its result.
     fn callTool<T>(
         &self,
@@ -2806,10 +2861,7 @@ pub trait ComposeDslContextMethods: Send + Sync {
     /// Presents a short host toast message.
     fn showToast(&self, message: String) -> ComposeDslContextMethodsShowToastReturn;
     /// Forwards a screen error to host diagnostics and user-facing handling.
-    fn reportError(
-        &self,
-        error: serde_json::Value,
-    ) -> ComposeDslContextMethodsReportErrorReturn;
+    fn reportError(&self, error: serde_json::Value) -> ComposeDslContextMethodsReportErrorReturn;
     /// Creates or retrieves the keyed imperative controller for a WebView node.
     fn createWebViewController(&self, key: String) -> ComposeWebViewController;
     /// Opens the host file picker and resolves selected file metadata.
@@ -2828,10 +2880,7 @@ pub trait ComposeDslContextMethods: Send + Sync {
     /// Interpolates named scalar values into placeholders in a message template.
     fn formatTemplate(&self, template: String, values: ComposeTemplateValues) -> String;
     /// Writes a batch of runtime environment entries.
-    fn setEnvs(
-        &self,
-        values: BTreeMap<String, String>,
-    ) -> ComposeDslContextMethodsSetEnvsReturn;
+    fn setEnvs(&self, values: BTreeMap<String, String>) -> ComposeDslContextMethodsSetEnvsReturn;
     /// Lists navigation targets currently available to the screen.
     fn listRoutes(&self) -> Vec<ComposeRouteInfo>;
     /// Lists routes owned directly by the host rather than plugin packages.
@@ -2857,20 +2906,11 @@ pub trait ComposeDslContextMethods: Send + Sync {
         packageName: String,
     ) -> ComposeDslContextMethodsIsPackageImportedReturn;
     /// Imports a package and returns the resulting package identifier.
-    fn importPackage(
-        &self,
-        packageName: String,
-    ) -> ComposeDslContextMethodsImportPackageReturn;
+    fn importPackage(&self, packageName: String) -> ComposeDslContextMethodsImportPackageReturn;
     /// Removes an imported package and returns the removed identifier.
-    fn removePackage(
-        &self,
-        packageName: String,
-    ) -> ComposeDslContextMethodsRemovePackageReturn;
+    fn removePackage(&self, packageName: String) -> ComposeDslContextMethodsRemovePackageReturn;
     /// Selects an imported package for subsequent resolution and returns its identifier.
-    fn usePackage(
-        &self,
-        packageName: String,
-    ) -> ComposeDslContextMethodsUsePackageReturn;
+    fn usePackage(&self, packageName: String) -> ComposeDslContextMethodsUsePackageReturn;
     /// Lists package names imported into the current runtime.
     fn listImportedPackages(&self) -> ComposeDslContextMethodsListImportedPackagesReturn;
     /// Resolves a package-scoped public tool name to its callable runtime name.
@@ -2887,9 +2927,7 @@ pub trait ComposeDslContextMethods: Send + Sync {
     ) -> ComposeNode;
 }
 /// Screen renderer that receives a host context and produces a root node tree.
-pub type ComposeDslScreen = Arc<
-    dyn Fn(ComposeDslContext) -> ComposeDslScreenOutput + Send + Sync,
->;
+pub type ComposeDslScreen = Arc<dyn Fn(ComposeDslContext) -> ComposeDslScreenOutput + Send + Sync>;
 /// Defines numeric unit accessors installed on the JavaScript `Number` interface.
 pub struct ComposeNumberExtensions {
     /// Converts the number to a pixel unit value.

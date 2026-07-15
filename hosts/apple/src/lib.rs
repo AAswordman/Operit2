@@ -6,6 +6,7 @@ pub use tools::audio::{AppleAudioPlaybackHost, AppleMusicCommand};
 pub use tools::bluetooth::AppleBluetoothHost;
 pub use tools::fs::AppleFileSystemHost;
 pub use tools::host_runtime_event::AppleHostRuntimeEventHost;
+pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as AppleHostRuntimeEventSchedulerHost;
 pub use tools::http::AppleHttpHost;
 pub use tools::local_inference::{AppleLocalInferenceCommand, AppleLocalInferenceHost};
 pub use tools::runtime::AppleManagedRuntimeHost;

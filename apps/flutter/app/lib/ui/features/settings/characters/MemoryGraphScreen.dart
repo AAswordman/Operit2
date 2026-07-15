@@ -738,17 +738,20 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
               Expanded(
                 child: Row(
                   children: <Widget>[
-                    AnimatedContainer(
+                    AnimatedSize(
                       duration: const Duration(milliseconds: 180),
                       curve: Curves.easeOutCubic,
-                      width: _folderPanelOpen ? 260 : 0,
-                      child: _folderPanelOpen
-                          ? _MemoryFolderPanel(
-                              folders: data.folders,
-                              selectedFolderPath: _folderPath,
-                              onSelected: _selectFolder,
-                            )
-                          : const SizedBox.shrink(),
+                      alignment: Alignment.centerLeft,
+                      child: SizedBox(
+                        width: _folderPanelOpen ? 260 : 0,
+                        child: _folderPanelOpen
+                            ? _MemoryFolderPanel(
+                                folders: data.folders,
+                                selectedFolderPath: _folderPath,
+                                onSelected: _selectFolder,
+                              )
+                            : const SizedBox.shrink(),
+                      ),
                     ),
                     Expanded(
                       child: graph.nodes.isEmpty

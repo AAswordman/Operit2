@@ -8,8 +8,8 @@ use operit_model::CharacterCard::CharacterCardMemoryBindingMode;
 use operit_store::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepository};
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_tools::tools::ToolResultDataClasses::{
-    stringResultData, LinkInfo, MemoryInfo, MemoryLinkQueryResultData, MemoryLinkResultData,
-    JsOptional, MemoryQueryResultData, ToolResultData,
+    stringResultData, JsOptional, LinkInfo, MemoryInfo, MemoryLinkQueryResultData,
+    MemoryLinkResultData, MemoryQueryResultData, ToolResultData,
 };
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{

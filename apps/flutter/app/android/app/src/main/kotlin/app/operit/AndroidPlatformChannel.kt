@@ -1,11 +1,13 @@
 package app.operit
 
 import android.Manifest
+import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
 import io.flutter.plugin.common.MethodCall
@@ -110,6 +112,26 @@ class AndroidPlatformChannel(
     private fun onboardingPermissionSnapshot(result: MethodChannel.Result) {
         result.success(
             mapOf(
+                "android.fileManagement" to requirement(
+                    "android.fileManagement",
+                    hasFileManagementPermission(),
+                ),
+                "android.notifications" to requirement(
+                    "android.notifications",
+                    hasNotificationPermission(),
+                ),
+                "android.appList" to requirement(
+                    "android.appList",
+                    hasPackageQueryVisibilityPermission(),
+                ),
+                "android.usageStats" to requirement(
+                    "android.usageStats",
+                    hasUsageStatsPermission(),
+                ),
+                "android.writeSettings" to requirement(
+                    "android.writeSettings",
+                    canWriteSystemSettings(),
+                ),
                 "android.location" to requirement(
                     "android.location",
                     hasPermission(Manifest.permission.ACCESS_FINE_LOCATION),
@@ -129,6 +151,17 @@ class AndroidPlatformChannel(
 
     private fun onboardingRequestPermission(call: MethodCall, result: MethodChannel.Result) {
         when (call.argument<String>("requirementId")) {
+            "android.fileManagement" -> requestFileManagementPermission(result)
+            "android.notifications" -> requestNotificationPermission(result)
+            "android.appList" -> acknowledgeManifestManagedPermission(result)
+            "android.usageStats" -> {
+                openUsageAccessSettings()
+                result.success(null)
+            }
+            "android.writeSettings" -> {
+                openWriteSettings()
+                result.success(null)
+            }
             "android.location" -> requestRuntimePermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), result)
             "android.bluetooth" -> requestBluetoothPermissions(result)
             "android.overlay" -> {
@@ -144,6 +177,44 @@ class AndroidPlatformChannel(
                 return
             }
         }
+    }
+
+    /** Requests broad shared-storage access for Android file tools. */
+    private fun requestFileManagementPermission(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val intent =
+                Intent(
+                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:${activity.packageName}"),
+                )
+            activity.startActivity(intent)
+            result.success(null)
+            return
+        }
+        val permissions =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            } else {
+                arrayOf(
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                )
+            }
+        requestRuntimePermissions(permissions, result)
+    }
+
+    /** Requests notification posting access required by Android task status surfaces. */
+    private fun requestNotificationPermission(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            result.success(null)
+            return
+        }
+        requestRuntimePermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), result)
+    }
+
+    /** Acknowledges permissions controlled by the Android manifest rather than a user runtime dialog. */
+    private fun acknowledgeManifestManagedPermission(result: MethodChannel.Result) {
+        result.success(null)
     }
 
     fun onRequestPermissionsResult(
@@ -213,6 +284,24 @@ class AndroidPlatformChannel(
         }
     }
 
+    /** Opens Android usage-access settings for app foreground-time statistics. */
+    private fun openUsageAccessSettings() {
+        val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+        activity.startActivity(intent)
+    }
+
+    /** Opens Android write-settings access for system setting mutations. */
+    private fun openWriteSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val intent =
+                Intent(
+                    Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                    Uri.parse("package:${activity.packageName}"),
+                )
+            activity.startActivity(intent)
+        }
+    }
+
     private fun hasBluetoothConnectPermission(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             return true
@@ -225,6 +314,65 @@ class AndroidPlatformChannel(
             return true
         }
         return hasPermission(Manifest.permission.BLUETOOTH_SCAN)
+    }
+
+    /** Returns whether Android shared-storage access is available to file tools. */
+    private fun hasFileManagementPermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return Environment.isExternalStorageManager()
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        return hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE) &&
+            hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+    }
+
+    /** Returns whether Android notification posting access is available. */
+    private fun hasNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return true
+        }
+        return hasPermission(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    /** Returns whether package visibility for Android app listing is granted by the manifest. */
+    private fun hasPackageQueryVisibilityPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return true
+        }
+        return hasPermission(Manifest.permission.QUERY_ALL_PACKAGES)
+    }
+
+    /** Returns whether Android usage-access statistics are available to this app. */
+    private fun hasUsageStatsPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            return true
+        }
+        val appOps = activity.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appOps.unsafeCheckOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    activity.packageName,
+                )
+            } else {
+                appOps.checkOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    activity.packageName,
+                )
+            }
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    /** Returns whether Android system settings can be modified by this app. */
+    private fun canWriteSystemSettings(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return true
+        }
+        return Settings.System.canWrite(activity)
     }
 
     private fun hasPermission(permission: String): Boolean {

@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use jni::objects::{GlobalRef, JByteArray, JObject, JValue};
 use jni::JavaVM;
-use operit_host_api::{HostError, HostResult};
+use operit_host_api::{HostError, HostResult, HostRuntimeEventSchedule};
 
 pub(crate) struct AndroidHostSecretStoreBridge {
     pub(crate) vm: JavaVM,
@@ -37,6 +37,7 @@ pub fn clearAndroidHostSecretStoreBridge() {
         .lock()
         .expect("Android host secret store bridge lock must not be poisoned");
     *guard = None;
+    crate::runtime_event_scheduler::clearAndroidHostRuntimeEventScheduleSink();
 }
 
 /// Returns the registered Android host secret store bridge.
@@ -121,6 +122,31 @@ impl AndroidHostSecretStoreBridge {
             &[JValue::Object(&keyObject)],
         )
         .map_err(|error| jniHostError("deleting secret", error))?;
+        Ok(())
+    }
+
+    /// Reconciles Android AlarmManager schedules through the application host.
+    pub fn replaceHostRuntimeEventSchedules(
+        &self,
+        schedules: &[HostRuntimeEventSchedule],
+    ) -> HostResult<()> {
+        let mut env = self
+            .vm
+            .attach_current_thread()
+            .map_err(|error| jniHostError("attaching current thread", error))?;
+        let schedulesJson = serde_json::to_string(schedules)
+            .map_err(|error| jniHostError("encoding runtime event schedules", error))?;
+        let schedulesJson = env
+            .new_string(schedulesJson)
+            .map_err(|error| jniHostError("allocating runtime event schedules", error))?;
+        let schedulesObject = JObject::from(schedulesJson);
+        env.call_method(
+            self.host.as_obj(),
+            "replaceHostRuntimeEventSchedules",
+            "(Ljava/lang/String;)V",
+            &[JValue::Object(&schedulesObject)],
+        )
+        .map_err(|error| jniHostError("reconciling runtime event schedules", error))?;
         Ok(())
     }
 }

@@ -10,7 +10,8 @@ use operit_host_api::{
 use operit_tools::tools::ToolResultDataClasses::{
     stringResultData, BluetoothBleNotificationData, BluetoothBleServicesData,
     BluetoothBondedDevicesData, BluetoothDeviceData, BluetoothReadData, BluetoothScanResultData,
-    BluetoothSessionData, BluetoothStateData, BluetoothTransferData, FromHostResult, ToolResultData,
+    BluetoothSessionData, BluetoothStateData, BluetoothTransferData, FromHostResult,
+    ToolResultData,
 };
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
@@ -416,9 +417,9 @@ impl StandardBluetoothTools {
         {
             Ok(data) => toolSuccessData(
                 tool,
-                ToolResultData::BluetoothBleNotificationData(BluetoothBleNotificationData::from_host(
-                    data,
-                )),
+                ToolResultData::BluetoothBleNotificationData(
+                    BluetoothBleNotificationData::from_host(data),
+                ),
             ),
             Err(error) => toolError(
                 tool,

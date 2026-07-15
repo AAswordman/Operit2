@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use operit_host_api::HostManager::HostManager;
+use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_plugin_sdk::package::ToolPackage;
 use operit_tools::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, PACKAGE_PROXY_TOOL_NAME, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
@@ -37,7 +38,9 @@ use operit_tools::tools::defaultTool::ToolGetter::ToolGetter;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
 use operit_tools::tools::mcp::MCPToolExecutor::MCPToolExecutor;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
-use operit_tools::tools::AIToolHandler::{AIToolHandler, FnToolExecutor};
+use operit_tools::tools::AIToolHandler::{
+    AIToolHandler, FnToolExecutor, ToolRegistrationVisibility,
+};
 use operit_tools::tools::PackageToolExecutor::PackageToolExecutor;
 use operit_tools::tools::ToolResultDataClasses::{
     stringResultData, EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData,
@@ -48,6 +51,58 @@ use operit_tools::ToolExecutionManager::{
     AITool, ToolEffect, ToolExecutionManager, ToolParameter, ToolValidationResult,
 };
 
+const FILE_SYSTEM_BUILTIN_TOOLS: &[BuiltinToolName] = &[
+    BuiltinToolName::ListFiles,
+    BuiltinToolName::ReadFile,
+    BuiltinToolName::ReadFilePart,
+    BuiltinToolName::ReadFileFull,
+    BuiltinToolName::ReadFileBinary,
+    BuiltinToolName::WriteFile,
+    BuiltinToolName::WriteFileBinary,
+    BuiltinToolName::DeleteFile,
+    BuiltinToolName::FileExists,
+    BuiltinToolName::MoveFile,
+    BuiltinToolName::CopyFile,
+    BuiltinToolName::MakeDirectory,
+    BuiltinToolName::FindFiles,
+    BuiltinToolName::GrepCode,
+    BuiltinToolName::GrepContext,
+    BuiltinToolName::FileInfo,
+    BuiltinToolName::ZipFiles,
+    BuiltinToolName::UnzipFiles,
+    BuiltinToolName::OpenFile,
+    BuiltinToolName::ShareFile,
+    BuiltinToolName::DownloadFile,
+    BuiltinToolName::ApplyFile,
+    BuiltinToolName::CreateFile,
+    BuiltinToolName::EditFile,
+];
+
+const BROWSER_AUTOMATION_BUILTIN_TOOLS: &[BuiltinToolName] = &[
+    BuiltinToolName::BrowserClick,
+    BuiltinToolName::BrowserClose,
+    BuiltinToolName::BrowserCloseAll,
+    BuiltinToolName::BrowserConsoleMessages,
+    BuiltinToolName::BrowserDrag,
+    BuiltinToolName::BrowserEvaluate,
+    BuiltinToolName::BrowserFileUpload,
+    BuiltinToolName::BrowserFillForm,
+    BuiltinToolName::BrowserHandleDialog,
+    BuiltinToolName::BrowserHover,
+    BuiltinToolName::BrowserNavigate,
+    BuiltinToolName::BrowserNavigateBack,
+    BuiltinToolName::BrowserNetworkRequests,
+    BuiltinToolName::BrowserPressKey,
+    BuiltinToolName::BrowserResize,
+    BuiltinToolName::BrowserRunCode,
+    BuiltinToolName::BrowserSelectOption,
+    BuiltinToolName::BrowserSnapshot,
+    BuiltinToolName::BrowserTabs,
+    BuiltinToolName::BrowserTakeScreenshot,
+    BuiltinToolName::BrowserType,
+    BuiltinToolName::BrowserWaitFor,
+];
+
 /// Registers every built-in public and internal tool on the handler.
 #[allow(non_snake_case)]
 pub fn registerAllTools(handler: &mut AIToolHandler, context: &HostManager) {
@@ -57,10 +112,9 @@ pub fn registerAllTools(handler: &mut AIToolHandler, context: &HostManager) {
 
 #[allow(non_snake_case)]
 fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
-    handler.registerTool(
-        "sleep".to_string(),
+    handler.registerBuiltinTool(
+        BuiltinToolName::Sleep,
         Box::new(FnToolExecutor {
-            name: "sleep".to_string(),
             effect: ToolEffect::READ,
             validate: Arc::new(|_| ToolValidationResult {
                 valid: true,
@@ -86,14 +140,21 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
                 }
             }),
         }),
+        ToolRegistrationVisibility::PUBLIC,
     );
     if let Some(fileSystemTools) = ToolGetter::getFileSystemTools(context, handler.runtimeSupport())
     {
         registerFileSystemTools(handler, fileSystemTools);
+    } else {
+        handler.markBuiltinToolsUnavailable(
+            FILE_SYSTEM_BUILTIN_TOOLS,
+            "File-system host capability is unavailable",
+        );
     }
-    handler.registerTool(
-        "visit_web".to_string(),
+    handler.registerBuiltinTool(
+        BuiltinToolName::VisitWeb,
         Box::new(ToolGetter::getWebVisitTool(context)),
+        ToolRegistrationVisibility::PUBLIC,
     );
     registerSystemOperationTools(handler, ToolGetter::getSystemOperationTools(context));
     registerMusicTools(handler, ToolGetter::getMusicTools(context));
@@ -107,10 +168,9 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
     let packageManager = handler.getOrCreatePackageManager();
     let usePackageManager = packageManager.clone();
     let usePackageHandler = handler.clone();
-    handler.registerTool(
-        "use_package".to_string(),
+    handler.registerBuiltinTool(
+        BuiltinToolName::UsePackage,
         Box::new(FnToolExecutor {
-            name: "use_package".to_string(),
             effect: ToolEffect::WRITE,
             validate: Arc::new(|_| ToolValidationResult {
                 valid: true,
@@ -142,6 +202,7 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
                 result
             }),
         }),
+        ToolRegistrationVisibility::PUBLIC,
     );
     let searchContext = context.clone();
     let searchPackageManager = packageManager.clone();
@@ -149,7 +210,6 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
     handler.registerTool(
         SEARCH_TOOL_NAME.to_string(),
         Box::new(FnToolExecutor {
-            name: SEARCH_TOOL_NAME.to_string(),
             effect: ToolEffect::READ,
             validate: Arc::new(|_| ToolValidationResult {
                 valid: true,
@@ -217,7 +277,6 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
     handler.registerTool(
         PROXY_TOOL_NAME.to_string(),
         Box::new(FnToolExecutor {
-            name: PROXY_TOOL_NAME.to_string(),
             effect: ToolEffect::WRITE,
             validate: Arc::new(|_| ToolValidationResult {
                 valid: true,
@@ -318,79 +377,79 @@ fn registerChatTools(handler: &mut AIToolHandler, chatTools: StandardChatManager
     registerChatTool(
         handler,
         &chatTools,
-        "start_chat_service",
+        BuiltinToolName::StartChatService,
         ChatManagerToolOperation::StartChatService,
     );
     registerChatTool(
         handler,
         &chatTools,
-        "stop_chat_service",
+        BuiltinToolName::StopChatService,
         ChatManagerToolOperation::StopChatService,
     );
     registerChatTool(
         handler,
         &chatTools,
-        "create_new_chat",
+        BuiltinToolName::CreateNewChat,
         ChatManagerToolOperation::CreateNewChat,
     );
     registerChatTool(
         handler,
         &chatTools,
-        "list_chats",
+        BuiltinToolName::ListChats,
         ChatManagerToolOperation::ListChats,
     );
     registerChatTool(
         handler,
         &chatTools,
-        "find_chat",
+        BuiltinToolName::FindChat,
         ChatManagerToolOperation::FindChat,
     );
     registerChatTool(
         handler,
         &chatTools,
-        "agent_status",
+        BuiltinToolName::AgentStatus,
         ChatManagerToolOperation::AgentStatus,
     );
     registerChatTool(
         handler,
         &chatTools,
-        "switch_chat",
+        BuiltinToolName::SwitchChat,
         ChatManagerToolOperation::SwitchChat,
     );
     registerChatTool(
         handler,
         &chatTools,
-        "update_chat_title",
+        BuiltinToolName::UpdateChatTitle,
         ChatManagerToolOperation::UpdateChatTitle,
     );
     registerChatTool(
         handler,
         &chatTools,
-        "delete_chat",
+        BuiltinToolName::DeleteChat,
         ChatManagerToolOperation::DeleteChat,
     );
     registerChatTool(
         handler,
         &chatTools,
-        "send_message_to_ai",
+        BuiltinToolName::SendMessageToAi,
         ChatManagerToolOperation::SendMessageToAi,
     );
     registerChatTool(
         handler,
         &chatTools,
-        "send_message_to_ai_streaming",
+        BuiltinToolName::SendMessageToAiStreaming,
         ChatManagerToolOperation::SendMessageToAiStreaming,
     );
     registerChatTool(
         handler,
         &chatTools,
-        "list_character_cards",
+        BuiltinToolName::ListCharacterCards,
         ChatManagerToolOperation::ListCharacterCards,
     );
     registerChatTool(
         handler,
         &chatTools,
-        "get_chat_messages",
+        BuiltinToolName::GetChatMessages,
         ChatManagerToolOperation::GetChatMessages,
     );
 }
@@ -399,15 +458,16 @@ fn registerChatTools(handler: &mut AIToolHandler, chatTools: StandardChatManager
 fn registerChatTool(
     handler: &mut AIToolHandler,
     chatTools: &StandardChatManagerTool,
-    name: &str,
+    name: BuiltinToolName,
     operation: ChatManagerToolOperation,
 ) {
-    handler.registerTool(
-        name.to_string(),
+    handler.registerBuiltinTool(
+        name,
         Box::new(ChatManagerToolExecutor {
             tools: chatTools.clone(),
             operation,
         }),
+        ToolRegistrationVisibility::PUBLIC,
     );
 }
 
@@ -419,85 +479,85 @@ fn registerSystemOperationTools(
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "toast",
+        BuiltinToolName::Toast,
         SystemOperationToolOperation::Toast,
     );
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "send_notification",
+        BuiltinToolName::SendNotification,
         SystemOperationToolOperation::SendNotification,
     );
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "modify_system_setting",
+        BuiltinToolName::ModifySystemSetting,
         SystemOperationToolOperation::ModifySystemSetting,
     );
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "get_system_setting",
+        BuiltinToolName::GetSystemSetting,
         SystemOperationToolOperation::GetSystemSetting,
     );
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "install_app",
+        BuiltinToolName::InstallApp,
         SystemOperationToolOperation::InstallApp,
     );
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "uninstall_app",
+        BuiltinToolName::UninstallApp,
         SystemOperationToolOperation::UninstallApp,
     );
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "list_installed_apps",
+        BuiltinToolName::ListInstalledApps,
         SystemOperationToolOperation::ListInstalledApps,
     );
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "start_app",
+        BuiltinToolName::StartApp,
         SystemOperationToolOperation::StartApp,
     );
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "stop_app",
+        BuiltinToolName::StopApp,
         SystemOperationToolOperation::StopApp,
     );
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "get_notifications",
+        BuiltinToolName::GetNotifications,
         SystemOperationToolOperation::GetNotifications,
     );
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "get_app_usage_time",
+        BuiltinToolName::GetAppUsageTime,
         SystemOperationToolOperation::GetAppUsageTime,
     );
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "get_device_location",
+        BuiltinToolName::GetDeviceLocation,
         SystemOperationToolOperation::GetDeviceLocation,
     );
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "device_info",
+        BuiltinToolName::DeviceInfo,
         SystemOperationToolOperation::GetDeviceInfo,
     );
     registerSystemOperationTool(
         handler,
         &systemOperationTools,
-        "capture_screenshot",
+        BuiltinToolName::CaptureScreenshot,
         SystemOperationToolOperation::CaptureScreenshot,
     );
 }
@@ -506,15 +566,16 @@ fn registerSystemOperationTools(
 fn registerSystemOperationTool(
     handler: &mut AIToolHandler,
     systemOperationTools: &StandardSystemOperationTools,
-    name: &str,
+    name: BuiltinToolName,
     operation: SystemOperationToolOperation,
 ) {
-    handler.registerInternalTool(
-        name.to_string(),
+    handler.registerBuiltinTool(
+        name,
         Box::new(SystemOperationToolExecutor {
             tools: systemOperationTools.clone(),
             operation,
         }),
+        ToolRegistrationVisibility::INTERNAL,
     );
 }
 
@@ -523,49 +584,49 @@ fn registerTerminalTools(handler: &mut AIToolHandler, terminalTools: StandardTer
     registerTerminalTool(
         handler,
         &terminalTools,
-        "get_terminal_info",
+        BuiltinToolName::GetTerminalInfo,
         TerminalToolOperation::GetTerminalInfo,
     );
     registerTerminalTool(
         handler,
         &terminalTools,
-        "create_terminal_session",
+        BuiltinToolName::CreateTerminalSession,
         TerminalToolOperation::CreateSession,
     );
     registerTerminalTool(
         handler,
         &terminalTools,
-        "execute_in_terminal_session",
+        BuiltinToolName::ExecuteInTerminalSession,
         TerminalToolOperation::ExecuteInSession,
     );
     registerTerminalTool(
         handler,
         &terminalTools,
-        "execute_in_terminal_session_streaming",
+        BuiltinToolName::ExecuteInTerminalSessionStreaming,
         TerminalToolOperation::ExecuteInSessionStreaming,
     );
     registerTerminalTool(
         handler,
         &terminalTools,
-        "execute_hidden_terminal_command",
+        BuiltinToolName::ExecuteHiddenTerminalCommand,
         TerminalToolOperation::ExecuteHiddenCommand,
     );
     registerTerminalTool(
         handler,
         &terminalTools,
-        "close_terminal_session",
+        BuiltinToolName::CloseTerminalSession,
         TerminalToolOperation::CloseSession,
     );
     registerTerminalTool(
         handler,
         &terminalTools,
-        "input_in_terminal_session",
+        BuiltinToolName::InputInTerminalSession,
         TerminalToolOperation::InputInSession,
     );
     registerTerminalTool(
         handler,
         &terminalTools,
-        "get_terminal_session_screen",
+        BuiltinToolName::GetTerminalSessionScreen,
         TerminalToolOperation::GetSessionScreen,
     );
 }
@@ -574,45 +635,61 @@ fn registerTerminalTools(handler: &mut AIToolHandler, terminalTools: StandardTer
 fn registerTerminalTool(
     handler: &mut AIToolHandler,
     terminalTools: &StandardTerminalTools,
-    name: &str,
+    name: BuiltinToolName,
     operation: TerminalToolOperation,
 ) {
-    handler.registerTool(
-        name.to_string(),
+    handler.registerBuiltinTool(
+        name,
         Box::new(TerminalToolExecutor {
             tools: terminalTools.clone(),
             operation,
         }),
+        ToolRegistrationVisibility::PUBLIC,
     );
 }
 
 #[allow(non_snake_case)]
 fn registerMusicTools(handler: &mut AIToolHandler, musicTools: StandardMusicTools) {
-    registerMusicTool(handler, &musicTools, "music_play", MusicToolOperation::Play);
     registerMusicTool(
         handler,
         &musicTools,
-        "music_pause",
+        BuiltinToolName::MusicPlay,
+        MusicToolOperation::Play,
+    );
+    registerMusicTool(
+        handler,
+        &musicTools,
+        BuiltinToolName::MusicPause,
         MusicToolOperation::Pause,
     );
     registerMusicTool(
         handler,
         &musicTools,
-        "music_resume",
+        BuiltinToolName::MusicResume,
         MusicToolOperation::Resume,
     );
-    registerMusicTool(handler, &musicTools, "music_stop", MusicToolOperation::Stop);
-    registerMusicTool(handler, &musicTools, "music_seek", MusicToolOperation::Seek);
     registerMusicTool(
         handler,
         &musicTools,
-        "music_set_volume",
+        BuiltinToolName::MusicStop,
+        MusicToolOperation::Stop,
+    );
+    registerMusicTool(
+        handler,
+        &musicTools,
+        BuiltinToolName::MusicSeek,
+        MusicToolOperation::Seek,
+    );
+    registerMusicTool(
+        handler,
+        &musicTools,
+        BuiltinToolName::MusicSetVolume,
         MusicToolOperation::SetVolume,
     );
     registerMusicTool(
         handler,
         &musicTools,
-        "music_status",
+        BuiltinToolName::MusicStatus,
         MusicToolOperation::Status,
     );
 }
@@ -621,15 +698,16 @@ fn registerMusicTools(handler: &mut AIToolHandler, musicTools: StandardMusicTool
 fn registerMusicTool(
     handler: &mut AIToolHandler,
     musicTools: &StandardMusicTools,
-    name: &str,
+    name: BuiltinToolName,
     operation: MusicToolOperation,
 ) {
-    handler.registerTool(
-        name.to_string(),
+    handler.registerBuiltinTool(
+        name,
         Box::new(MusicToolExecutor {
             tools: musicTools.clone(),
             operation,
         }),
+        ToolRegistrationVisibility::PUBLIC,
     );
 }
 
@@ -638,115 +716,115 @@ fn registerBluetoothTools(handler: &mut AIToolHandler, bluetoothTools: StandardB
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "request_bluetooth_permission",
+        BuiltinToolName::RequestBluetoothPermission,
         BluetoothToolOperation::RequestPermission,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "get_bluetooth_state",
+        BuiltinToolName::GetBluetoothState,
         BluetoothToolOperation::GetState,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "request_enable_bluetooth",
+        BuiltinToolName::RequestEnableBluetooth,
         BluetoothToolOperation::RequestEnable,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "list_bluetooth_bonded_devices",
+        BuiltinToolName::ListBluetoothBondedDevices,
         BluetoothToolOperation::ListBondedDevices,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "scan_bluetooth_devices",
+        BuiltinToolName::ScanBluetoothDevices,
         BluetoothToolOperation::ScanDevices,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_connect",
+        BuiltinToolName::BluetoothConnect,
         BluetoothToolOperation::Connect,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_listen",
+        BuiltinToolName::BluetoothListen,
         BluetoothToolOperation::Listen,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_accept",
+        BuiltinToolName::BluetoothAccept,
         BluetoothToolOperation::Accept,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_send",
+        BuiltinToolName::BluetoothSend,
         BluetoothToolOperation::Send,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_read",
+        BuiltinToolName::BluetoothRead,
         BluetoothToolOperation::Read,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_send_and_read",
+        BuiltinToolName::BluetoothSendAndRead,
         BluetoothToolOperation::SendAndRead,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_close",
+        BuiltinToolName::BluetoothClose,
         BluetoothToolOperation::Close,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_ble_connect",
+        BuiltinToolName::BluetoothBleConnect,
         BluetoothToolOperation::BleConnect,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_ble_discover_services",
+        BuiltinToolName::BluetoothBleDiscoverServices,
         BluetoothToolOperation::BleDiscoverServices,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_ble_read_characteristic",
+        BuiltinToolName::BluetoothBleReadCharacteristic,
         BluetoothToolOperation::BleReadCharacteristic,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_ble_write_characteristic",
+        BuiltinToolName::BluetoothBleWriteCharacteristic,
         BluetoothToolOperation::BleWriteCharacteristic,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_ble_write_and_read_characteristic",
+        BuiltinToolName::BluetoothBleWriteAndReadCharacteristic,
         BluetoothToolOperation::BleWriteAndReadCharacteristic,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_ble_subscribe_characteristic",
+        BuiltinToolName::BluetoothBleSubscribeCharacteristic,
         BluetoothToolOperation::BleSubscribeCharacteristic,
     );
     registerBluetoothTool(
         handler,
         &bluetoothTools,
-        "bluetooth_ble_read_notifications",
+        BuiltinToolName::BluetoothBleReadNotifications,
         BluetoothToolOperation::BleReadNotifications,
     );
 }
@@ -755,15 +833,16 @@ fn registerBluetoothTools(handler: &mut AIToolHandler, bluetoothTools: StandardB
 fn registerBluetoothTool(
     handler: &mut AIToolHandler,
     bluetoothTools: &StandardBluetoothTools,
-    name: &str,
+    name: BuiltinToolName,
     operation: BluetoothToolOperation,
 ) {
-    handler.registerTool(
-        name.to_string(),
+    handler.registerBuiltinTool(
+        name,
         Box::new(BluetoothToolExecutor {
             tools: bluetoothTools.clone(),
             operation,
         }),
+        ToolRegistrationVisibility::PUBLIC,
     );
 }
 
@@ -773,25 +852,18 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
     registerHttpTools(handler, ToolGetter::getHttpTools(context));
     if let Some(browserTools) = ToolGetter::getBrowserAutomationTools(context) {
         registerBrowserAutomationTools(handler, browserTools);
+    } else {
+        handler.markBuiltinToolsUnavailable(
+            BROWSER_AUTOMATION_BUILTIN_TOOLS,
+            "Browser automation host capability is unavailable",
+        );
     }
     registerMemoryInternalTools(handler);
 
-    if let Some(fileSystemTools) = ToolGetter::getFileSystemTools(context, handler.runtimeSupport())
-    {
-        handler.registerInternalTool(
-            "apply_file".to_string(),
-            Box::new(FileSystemToolExecutor {
-                tools: fileSystemTools,
-                operation: FileSystemToolOperation::ApplyFile,
-            }),
-        );
-    }
-
     let packageProxyHandler = handler.clone();
-    handler.registerInternalTool(
-        "package_proxy".to_string(),
+    handler.registerBuiltinTool(
+        BuiltinToolName::PackageProxy,
         Box::new(FnToolExecutor {
-            name: "package_proxy".to_string(),
             effect: ToolEffect::WRITE,
             validate: Arc::new(|_| ToolValidationResult {
                 valid: true,
@@ -826,12 +898,12 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                 }
             }),
         }),
+        ToolRegistrationVisibility::INTERNAL,
     );
     let cliCommandHandler = handler.clone();
-    handler.registerInternalTool(
-        "execute_cli_command".to_string(),
+    handler.registerBuiltinTool(
+        BuiltinToolName::ExecuteCliCommand,
         Box::new(FnToolExecutor {
-            name: "execute_cli_command".to_string(),
             effect: ToolEffect::WRITE,
             validate: Arc::new(|_| ToolValidationResult {
                 valid: true,
@@ -866,11 +938,11 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                 }
             }),
         }),
+        ToolRegistrationVisibility::INTERNAL,
     );
-    handler.registerInternalTool(
-        "read_environment_variable".to_string(),
+    handler.registerBuiltinTool(
+        BuiltinToolName::ReadEnvironmentVariable,
         Box::new(FnToolExecutor {
-            name: "read_environment_variable".to_string(),
             effect: ToolEffect::READ,
             validate: Arc::new(|_| ToolValidationResult {
                 valid: true,
@@ -920,12 +992,12 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                 }
             }),
         }),
+        ToolRegistrationVisibility::INTERNAL,
     );
     let writeEnvironmentRuntimeSupport = handler.runtimeSupport();
-    handler.registerInternalTool(
-        "write_environment_variable".to_string(),
+    handler.registerBuiltinTool(
+        BuiltinToolName::WriteEnvironmentVariable,
         Box::new(FnToolExecutor {
-            name: "write_environment_variable".to_string(),
             effect: ToolEffect::WRITE,
             validate: Arc::new(|_| ToolValidationResult {
                 valid: true,
@@ -1010,6 +1082,7 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
                 }
             }),
         }),
+        ToolRegistrationVisibility::INTERNAL,
     );
 }
 
@@ -1019,34 +1092,35 @@ fn registerBrowserAutomationTools(
     browserTools: StandardBrowserAutomationTools,
 ) {
     for name in [
-        "browser_click",
-        "browser_close",
-        "browser_close_all",
-        "browser_console_messages",
-        "browser_drag",
-        "browser_evaluate",
-        "browser_file_upload",
-        "browser_fill_form",
-        "browser_handle_dialog",
-        "browser_hover",
-        "browser_navigate",
-        "browser_navigate_back",
-        "browser_network_requests",
-        "browser_press_key",
-        "browser_resize",
-        "browser_run_code",
-        "browser_select_option",
-        "browser_snapshot",
-        "browser_tabs",
-        "browser_take_screenshot",
-        "browser_type",
-        "browser_wait_for",
+        BuiltinToolName::BrowserClick,
+        BuiltinToolName::BrowserClose,
+        BuiltinToolName::BrowserCloseAll,
+        BuiltinToolName::BrowserConsoleMessages,
+        BuiltinToolName::BrowserDrag,
+        BuiltinToolName::BrowserEvaluate,
+        BuiltinToolName::BrowserFileUpload,
+        BuiltinToolName::BrowserFillForm,
+        BuiltinToolName::BrowserHandleDialog,
+        BuiltinToolName::BrowserHover,
+        BuiltinToolName::BrowserNavigate,
+        BuiltinToolName::BrowserNavigateBack,
+        BuiltinToolName::BrowserNetworkRequests,
+        BuiltinToolName::BrowserPressKey,
+        BuiltinToolName::BrowserResize,
+        BuiltinToolName::BrowserRunCode,
+        BuiltinToolName::BrowserSelectOption,
+        BuiltinToolName::BrowserSnapshot,
+        BuiltinToolName::BrowserTabs,
+        BuiltinToolName::BrowserTakeScreenshot,
+        BuiltinToolName::BrowserType,
+        BuiltinToolName::BrowserWaitFor,
     ] {
-        handler.registerInternalTool(
-            name.to_string(),
+        handler.registerBuiltinTool(
+            name,
             Box::new(BrowserAutomationToolExecutor {
                 tools: browserTools.clone(),
             }),
+            ToolRegistrationVisibility::INTERNAL,
         );
     }
 }
@@ -1055,13 +1129,13 @@ fn registerBrowserAutomationTools(
 fn registerMemoryPublicTools(handler: &mut AIToolHandler) {
     registerMemoryTool(
         handler,
-        "query_memory",
+        BuiltinToolName::QueryMemory,
         MemoryToolOperation::QueryMemory,
         false,
     );
     registerMemoryTool(
         handler,
-        "get_memory_by_title",
+        BuiltinToolName::GetMemoryByTitle,
         MemoryToolOperation::GetMemoryByTitle,
         false,
     );
@@ -1071,55 +1145,55 @@ fn registerMemoryPublicTools(handler: &mut AIToolHandler) {
 fn registerMemoryInternalTools(handler: &mut AIToolHandler) {
     registerMemoryTool(
         handler,
-        "create_memory",
+        BuiltinToolName::CreateMemory,
         MemoryToolOperation::CreateMemory,
         true,
     );
     registerMemoryTool(
         handler,
-        "update_memory",
+        BuiltinToolName::UpdateMemory,
         MemoryToolOperation::UpdateMemory,
         true,
     );
     registerMemoryTool(
         handler,
-        "delete_memory",
+        BuiltinToolName::DeleteMemory,
         MemoryToolOperation::DeleteMemory,
         true,
     );
     registerMemoryTool(
         handler,
-        "move_memory",
+        BuiltinToolName::MoveMemory,
         MemoryToolOperation::MoveMemory,
         true,
     );
     registerMemoryTool(
         handler,
-        "update_user_preferences",
+        BuiltinToolName::UpdateUserPreferences,
         MemoryToolOperation::UpdateUserPreferences,
         true,
     );
     registerMemoryTool(
         handler,
-        "link_memories",
+        BuiltinToolName::LinkMemories,
         MemoryToolOperation::LinkMemories,
         true,
     );
     registerMemoryTool(
         handler,
-        "query_memory_links",
+        BuiltinToolName::QueryMemoryLinks,
         MemoryToolOperation::QueryMemoryLinks,
         true,
     );
     registerMemoryTool(
         handler,
-        "update_memory_link",
+        BuiltinToolName::UpdateMemoryLink,
         MemoryToolOperation::UpdateMemoryLink,
         true,
     );
     registerMemoryTool(
         handler,
-        "delete_memory_link",
+        BuiltinToolName::DeleteMemoryLink,
         MemoryToolOperation::DeleteMemoryLink,
         true,
     );
@@ -1128,7 +1202,7 @@ fn registerMemoryInternalTools(handler: &mut AIToolHandler) {
 #[allow(non_snake_case)]
 fn registerMemoryTool(
     handler: &mut AIToolHandler,
-    name: &str,
+    name: BuiltinToolName,
     operation: MemoryToolOperation,
     internal: bool,
 ) {
@@ -1136,11 +1210,12 @@ fn registerMemoryTool(
         operation,
         runtimeSupport: handler.runtimeSupport(),
     });
-    if internal {
-        handler.registerInternalTool(name.to_string(), executor);
+    let visibility = if internal {
+        ToolRegistrationVisibility::INTERNAL
     } else {
-        handler.registerTool(name.to_string(), executor);
-    }
+        ToolRegistrationVisibility::PUBLIC
+    };
+    handler.registerBuiltinTool(name, executor, visibility);
 }
 
 #[allow(non_snake_case)]
@@ -1148,19 +1223,19 @@ fn registerHttpTools(handler: &mut AIToolHandler, httpTools: StandardHttpTools) 
     registerHttpTool(
         handler,
         &httpTools,
-        "http_request",
+        BuiltinToolName::HttpRequest,
         HttpToolOperation::HttpRequest,
     );
     registerHttpTool(
         handler,
         &httpTools,
-        "multipart_request",
+        BuiltinToolName::MultipartRequest,
         HttpToolOperation::MultipartRequest,
     );
     registerHttpTool(
         handler,
         &httpTools,
-        "manage_cookies",
+        BuiltinToolName::ManageCookies,
         HttpToolOperation::ManageCookies,
     );
 }
@@ -1169,15 +1244,16 @@ fn registerHttpTools(handler: &mut AIToolHandler, httpTools: StandardHttpTools) 
 fn registerHttpTool(
     handler: &mut AIToolHandler,
     httpTools: &StandardHttpTools,
-    name: &str,
+    name: BuiltinToolName,
     operation: HttpToolOperation,
 ) {
-    handler.registerInternalTool(
-        name.to_string(),
+    handler.registerBuiltinTool(
+        name,
         Box::new(HttpToolExecutor {
             tools: httpTools.clone(),
             operation,
         }),
+        ToolRegistrationVisibility::INTERNAL,
     );
 }
 
@@ -1186,140 +1262,148 @@ fn registerFileSystemTools(handler: &mut AIToolHandler, fileSystemTools: Standar
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "list_files",
+        BuiltinToolName::ListFiles,
         FileSystemToolOperation::ListFiles,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "read_file",
+        BuiltinToolName::ReadFile,
         FileSystemToolOperation::ReadFile,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "read_file_part",
+        BuiltinToolName::ReadFilePart,
         FileSystemToolOperation::ReadFilePart,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "read_file_full",
+        BuiltinToolName::ReadFileFull,
         FileSystemToolOperation::ReadFileFull,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "read_file_binary",
+        BuiltinToolName::ReadFileBinary,
         FileSystemToolOperation::ReadFileBinary,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "write_file",
+        BuiltinToolName::WriteFile,
         FileSystemToolOperation::WriteFile,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "write_file_binary",
+        BuiltinToolName::WriteFileBinary,
         FileSystemToolOperation::WriteFileBinary,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "delete_file",
+        BuiltinToolName::DeleteFile,
         FileSystemToolOperation::DeleteFile,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "file_exists",
+        BuiltinToolName::FileExists,
         FileSystemToolOperation::FileExists,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "move_file",
+        BuiltinToolName::MoveFile,
         FileSystemToolOperation::MoveFile,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "copy_file",
+        BuiltinToolName::CopyFile,
         FileSystemToolOperation::CopyFile,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "make_directory",
+        BuiltinToolName::MakeDirectory,
         FileSystemToolOperation::MakeDirectory,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "find_files",
+        BuiltinToolName::FindFiles,
         FileSystemToolOperation::FindFiles,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "file_info",
+        BuiltinToolName::FileInfo,
         FileSystemToolOperation::FileInfo,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "create_file",
+        BuiltinToolName::CreateFile,
         FileSystemToolOperation::CreateFile,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "edit_file",
+        BuiltinToolName::EditFile,
         FileSystemToolOperation::EditFile,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "zip_files",
+        BuiltinToolName::ZipFiles,
         FileSystemToolOperation::ZipFiles,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "unzip_files",
+        BuiltinToolName::UnzipFiles,
         FileSystemToolOperation::UnzipFiles,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "open_file",
+        BuiltinToolName::OpenFile,
         FileSystemToolOperation::OpenFile,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "share_file",
+        BuiltinToolName::ShareFile,
         FileSystemToolOperation::ShareFile,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "grep_code",
+        BuiltinToolName::GrepCode,
         FileSystemToolOperation::GrepCode,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "grep_context",
+        BuiltinToolName::GrepContext,
         FileSystemToolOperation::GrepContext,
     );
     registerFileSystemTool(
         handler,
         &fileSystemTools,
-        "download_file",
+        BuiltinToolName::DownloadFile,
         FileSystemToolOperation::DownloadFile,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::ApplyFile,
+        Box::new(FileSystemToolExecutor {
+            tools: fileSystemTools,
+            operation: FileSystemToolOperation::ApplyFile,
+        }),
+        ToolRegistrationVisibility::INTERNAL,
     );
 }
 
@@ -1327,15 +1411,16 @@ fn registerFileSystemTools(handler: &mut AIToolHandler, fileSystemTools: Standar
 fn registerFileSystemTool(
     handler: &mut AIToolHandler,
     fileSystemTools: &StandardFileSystemTools,
-    name: &str,
+    name: BuiltinToolName,
     operation: FileSystemToolOperation,
 ) {
-    handler.registerTool(
-        name.to_string(),
+    handler.registerBuiltinTool(
+        name,
         Box::new(FileSystemToolExecutor {
             tools: fileSystemTools.clone(),
             operation,
         }),
+        ToolRegistrationVisibility::PUBLIC,
     );
 }
 

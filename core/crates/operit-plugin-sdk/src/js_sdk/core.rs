@@ -333,11 +333,8 @@ pub trait NativeInterfaceHost: Send + Sync {
     ///
     ///Decompress native deflate data from a base64 string or binary handle.
     ///
-    fn decompress(
-        &self,
-        data: String,
-        algorithm: NativeInterfaceHostDecompressAlgorithm,
-    ) -> String;
+    fn decompress(&self, data: String, algorithm: NativeInterfaceHostDecompressAlgorithm)
+        -> String;
     ///
     ///Execute native crypto operations used by the CryptoJS bridge.
     ///
@@ -350,12 +347,7 @@ pub trait NativeInterfaceHost: Send + Sync {
     ///
     ///Execute native image operations used by the Jimp bridge.
     ///
-    fn image_processing(
-        &self,
-        callbackId: String,
-        operation: String,
-        argsJson: String,
-    ) -> ();
+    fn image_processing(&self, callbackId: String, operation: String, argsJson: String) -> ();
     ///
     ///Register an input menu toggle plugin for current toolpkg main registration session.
     ///@param specJson - JSON object string describing an input menu toggle plugin

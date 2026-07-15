@@ -21,17 +21,49 @@ pub mod material_icons;
 pub mod memory;
 pub mod network;
 pub mod results;
+pub mod runtime_bindings;
 pub mod software_settings;
 pub mod system;
 pub mod tool_types;
 pub mod toolpkg;
 pub mod ui;
 
+/// Describes a rejected JavaScript host operation without erasing its message.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JsHostError {
+    /// Contains the stable rejection message exposed to the JavaScript caller.
+    pub message: String,
+}
+
+impl JsHostError {
+    /// Creates a host rejection from its stable message.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for JsHostError {
+    /// Formats the host rejection message.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for JsHostError {}
+
+/// Represents the resolved or rejected output of one JavaScript host operation.
+pub type JsHostResult<T> = Result<T, JsHostError>;
+
 /// Represents a JavaScript promise returned by an SDK operation.
-pub type JsFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+pub type JsFuture<T> = Pin<Box<dyn Future<Output = JsHostResult<T>> + Send>>;
 
 /// Represents a JavaScript Date value on the SDK boundary.
 pub type JsDate = String;
+
+/// Selects a value type from a Rust-declared type map by its key type.
+pub struct JsTypeIndex<TMap, TKey>(std::marker::PhantomData<(TMap, TKey)>);
 
 /// Represents a TypeScript `never` position that cannot contain a value.
 pub enum JsNever {}
@@ -243,7 +275,6 @@ pub trait JsToolsHost:
     + system::SystemTerminalHost
     + system::SystemMusicHost
     + software_settings::SoftwareSettingsHost
-    + ui::UIHost
     + chat::ChatHost
     + memory::MemoryHost
     + Send
@@ -261,7 +292,6 @@ impl<T> JsToolsHost for T where
         + system::SystemTerminalHost
         + system::SystemMusicHost
         + software_settings::SoftwareSettingsHost
-        + ui::UIHost
         + chat::ChatHost
         + memory::MemoryHost
         + Send
@@ -269,13 +299,14 @@ impl<T> JsToolsHost for T where
 {
 }
 
+/// Collects declarations reserved for host capabilities that are not active runtime Tools yet.
+pub trait JsFutureToolsHost: network::NetFutureHost + ui::UIHost + Send + Sync {}
+
+impl<T> JsFutureToolsHost for T where T: network::NetFutureHost + ui::UIHost + Send + Sync {}
+
 /// Requires an embedding host to implement the complete ToolPkg runtime API.
 pub trait ToolPkgHost:
-    toolpkg::ToolPkgRegistryMethods
-    + toolpkg::ToolPkgIpcApiMethods
-    + toolpkg::GlobalHost
-    + Send
-    + Sync
+    toolpkg::ToolPkgRegistryMethods + toolpkg::ToolPkgIpcApiMethods + toolpkg::GlobalHost + Send + Sync
 {
 }
 

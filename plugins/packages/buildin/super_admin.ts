@@ -523,7 +523,7 @@ const superAdmin = (function () {
                 sessionId: sessionId,
                 input: params.input,
                 control: params.control,
-                result: result.value
+                result
             };
         }
         catch (error) {

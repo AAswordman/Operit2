@@ -1,5 +1,7 @@
 #[path = "AIToolHandler.rs"]
 pub mod AIToolHandler;
+#[path = "AIToolHandlerJsToolsHost.rs"]
+mod AIToolHandlerJsToolsHost;
 
 #[path = "AIToolHook.rs"]
 pub mod AIToolHook;

@@ -4,6 +4,7 @@ import CoreBluetooth
 import CoreMedia
 import Foundation
 import FlutterMacOS
+import Network
 import Vision
 
 final class AppleRuntimeChannel: NSObject {
@@ -30,7 +31,14 @@ final class AppleRuntimeChannel: NSObject {
   private var ttsPath = ""
   private var configuredRuntimeRoot: URL?
   private var configuredWorkspaceRoot: URL?
-  private lazy var bluetooth = AppleBluetoothController()
+  private lazy var bluetooth = AppleBluetoothController { [weak self] topic, data in
+    self?.emitHostEvent(topic: topic, data: data)
+  }
+  private let hostEventQueue = DispatchQueue(label: "operit.runtime.apple.host-events", qos: .utility)
+  private let networkMonitor = NWPathMonitor()
+  private var workspaceEventObservers: [NSObjectProtocol] = []
+  private var systemEventObservers: [NSObjectProtocol] = []
+  private var hostEventMonitoringInstalled = false
 
   /// Attaches the process-level Runtime channel to the current Flutter engine.
   static func register(binaryMessenger: FlutterBinaryMessenger) {
@@ -63,6 +71,13 @@ final class AppleRuntimeChannel: NSObject {
   }
 
   deinit {
+    networkMonitor.cancel()
+    for observer in workspaceEventObservers {
+      NSWorkspace.shared.notificationCenter.removeObserver(observer)
+    }
+    for observer in systemEventObservers {
+      NotificationCenter.default.removeObserver(observer)
+    }
     if let handle = handle {
       operit_flutter_bridge_destroy(handle)
     }
@@ -137,7 +152,140 @@ final class AppleRuntimeChannel: NSObject {
       throw RuntimeChannelError.createFailed(error)
     }
     handle = created
+    installHostEventMonitoring()
     return created
+  }
+
+  /// Installs macOS network, power, display, session, and Bluetooth event producers once.
+  private func installHostEventMonitoring() {
+    guard !hostEventMonitoringInstalled else { return }
+    hostEventMonitoringInstalled = true
+    networkMonitor.pathUpdateHandler = { [weak self] path in
+      self?.emitNetworkPath(path)
+    }
+    networkMonitor.start(queue: hostEventQueue)
+    let center = NSWorkspace.shared.notificationCenter
+    workspaceEventObservers.append(
+      center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: nil) {
+        [weak self] _ in self?.emitHostEvent(topic: "system.power.sleep", data: ["sleeping": true])
+      }
+    )
+    workspaceEventObservers.append(
+      center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: nil) {
+        [weak self] _ in self?.emitHostEvent(topic: "system.power.wake", data: ["sleeping": false])
+      }
+    )
+    workspaceEventObservers.append(
+      center.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: nil) {
+        [weak self] _ in self?.emitHostEvent(topic: "system.screen.off", data: ["screenOn": false])
+      }
+    )
+    workspaceEventObservers.append(
+      center.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: nil) {
+        [weak self] _ in self?.emitHostEvent(topic: "system.screen.on", data: ["screenOn": true])
+      }
+    )
+    workspaceEventObservers.append(
+      center.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: nil) {
+        [weak self] _ in self?.emitHostEvent(topic: "system.session.lock", data: ["locked": true])
+      }
+    )
+    workspaceEventObservers.append(
+      center.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: nil) {
+        [weak self] _ in
+        self?.emitHostEvent(topic: "system.session.unlock", data: ["locked": false])
+        self?.emitHostEvent(topic: "system.user.present", data: ["present": true])
+      }
+    )
+    systemEventObservers.append(
+      NotificationCenter.default.addObserver(
+        forName: Notification.Name.NSSystemClockDidChange,
+        object: nil,
+        queue: nil
+      ) { [weak self] _ in self?.emitMacosTimeEvent(topic: "system.time.tick") }
+    )
+    systemEventObservers.append(
+      NotificationCenter.default.addObserver(
+        forName: Notification.Name.NSCalendarDayChanged,
+        object: nil,
+        queue: nil
+      ) { [weak self] _ in self?.emitMacosTimeEvent(topic: "system.date.changed") }
+    )
+    systemEventObservers.append(
+      NotificationCenter.default.addObserver(
+        forName: Notification.Name.NSSystemTimeZoneDidChange,
+        object: nil,
+        queue: nil
+      ) { [weak self] _ in self?.emitMacosTimeEvent(topic: "system.timezone.changed") }
+    )
+    _ = bluetooth
+  }
+
+  /// Emits one canonical macOS clock, date, or timezone event.
+  private func emitMacosTimeEvent(topic: String) {
+    emitHostEvent(
+      topic: topic,
+      data: [
+        "timestampMillis": Date().timeIntervalSince1970 * 1000,
+        "timezone": TimeZone.current.identifier,
+      ]
+    )
+  }
+
+  /// Converts one Apple Network path into the shared network-change structure.
+  private func emitNetworkPath(_ path: NWPath) {
+    let networkType: String
+    if path.status != .satisfied {
+      networkType = "none"
+    } else if path.usesInterfaceType(.wifi) {
+      networkType = "wifi"
+    } else if path.usesInterfaceType(.cellular) {
+      networkType = "cellular"
+    } else if path.usesInterfaceType(.wiredEthernet) {
+      networkType = "ethernet"
+    } else {
+      networkType = "other"
+    }
+    let interfaceName = path.availableInterfaces.first(where: { path.usesInterfaceType($0.type) })?.name
+    emitHostEvent(
+      topic: "system.network.changed",
+      data: [
+        "connected": path.status == .satisfied,
+        "networkType": networkType,
+        "metered": path.isExpensive,
+        "interfaceName": interfaceName ?? NSNull(),
+      ]
+    )
+  }
+
+  /// Serializes and forwards one canonical macOS event through the existing native bridge.
+  private func emitHostEvent(topic: String, data: [String: Any]) {
+    workQueue.async { [weak self] in
+      guard let self, let handle = self.handle else { return }
+      let event: [String: Any] = [
+        "domain": "host",
+        "source": "macos.system",
+        "topic": topic,
+        "platform": "macos",
+        "payload": data,
+        "occurredAtMillis": Int64(Date().timeIntervalSince1970 * 1000),
+      ]
+      do {
+        let encoded = try JSONSerialization.data(withJSONObject: event)
+        guard let json = String(data: encoded, encoding: .utf8) else {
+          throw RuntimeChannelError.invalidState("macOS host event JSON is not UTF-8")
+        }
+        let response = json.withCString { pointer in
+          self.takeString(operit_flutter_bridge_emit_runtime_event(handle, pointer))
+        }
+        guard let value = try JSONSerialization.jsonObject(with: Data(response.utf8)) as? [String: Any],
+              value["ok"] as? Bool == true else {
+          throw RuntimeChannelError.invalidState("macOS host event delivery failed: \(response)")
+        }
+      } catch {
+        NSLog("Operit macOS host event failed: %@", error.localizedDescription)
+      }
+    }
   }
 
   /// Returns the default Apple runtime and workspace roots.
@@ -847,6 +995,14 @@ private final class AppleBluetoothController: NSObject, CBCentralManagerDelegate
   private var pendingDiscoveries: [String: AppleBluetoothWaiter<Void>] = [:]
   private var pendingReads: [String: AppleBluetoothWaiter<Data>] = [:]
   private var pendingWrites: [String: AppleBluetoothWaiter<Void>] = [:]
+  private var connectedPeripheralIds: Set<UUID> = []
+  private let eventSink: (String, [String: Any]) -> Void
+
+  /// Creates the Apple Bluetooth controller with normalized event delivery.
+  init(eventSink: @escaping (String, [String: Any]) -> Void) {
+    self.eventSink = eventSink
+    super.init()
+  }
 
   func handle(command: String, params: [String: Any]) throws -> Any {
     switch command {
@@ -897,15 +1053,31 @@ private final class AppleBluetoothController: NSObject, CBCentralManagerDelegate
     }
   }
 
-  func centralManagerDidUpdateState(_ central: CBCentralManager) {}
+  /// Emits the normalized Bluetooth adapter power state.
+  func centralManagerDidUpdateState(_ central: CBCentralManager) {
+    eventSink(
+      "bluetooth.adapter.powered_changed",
+      ["powered": central.state == .poweredOn, "connected": !connectedPeripheralIds.isEmpty]
+    )
+  }
 
   func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
     withLock {
       discovered[peripheral.identifier] = peripheral
     }
+    eventSink(
+      "bluetooth.device.found",
+      bluetoothEventData(peripheral: peripheral, connected: peripheral.state == .connected, rssi: RSSI)
+    )
   }
 
   func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+    withLock { connectedPeripheralIds.insert(peripheral.identifier) }
+    eventSink(
+      "bluetooth.device.connected",
+      bluetoothEventData(peripheral: peripheral, connected: true, rssi: nil)
+    )
+    emitAdapterConnectionState()
     let waiter = withLock {
       pendingConnects.removeValue(forKey: peripheral.identifier)
     }
@@ -917,6 +1089,40 @@ private final class AppleBluetoothController: NSObject, CBCentralManagerDelegate
       pendingConnects.removeValue(forKey: peripheral.identifier)
     }
     waiter?.fail(error?.localizedDescription ?? "Apple BLE connect failed")
+  }
+
+  /// Emits normalized device and adapter state after a BLE disconnection.
+  func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+    withLock { connectedPeripheralIds.remove(peripheral.identifier) }
+    eventSink(
+      "bluetooth.device.disconnected",
+      bluetoothEventData(peripheral: peripheral, connected: false, rssi: nil)
+    )
+    emitAdapterConnectionState()
+  }
+
+  /// Builds the shared Bluetooth device event structure from CoreBluetooth state.
+  private func bluetoothEventData(
+    peripheral: CBPeripheral,
+    connected: Bool,
+    rssi: NSNumber?
+  ) -> [String: Any] {
+    return [
+      "deviceAddress": peripheral.identifier.uuidString,
+      "deviceName": peripheral.name ?? NSNull(),
+      "connected": connected,
+      "bonded": NSNull(),
+      "rssi": rssi ?? NSNull(),
+    ]
+  }
+
+  /// Emits whether any CoreBluetooth peripheral remains connected.
+  private func emitAdapterConnectionState() {
+    let connected = withLock { !connectedPeripheralIds.isEmpty }
+    eventSink(
+      "bluetooth.adapter.connection_state_changed",
+      ["powered": central.state == .poweredOn, "connected": connected]
+    )
   }
 
   func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {

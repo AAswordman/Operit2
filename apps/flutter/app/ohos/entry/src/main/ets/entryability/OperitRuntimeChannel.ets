@@ -1,4 +1,5 @@
 import common from '@ohos.app.ability.common';
+import commonEventManager from '@ohos.commonEventManager';
 import Want from '@ohos.app.ability.Want';
 import abilityAccessCtrl, { Permissions } from '@ohos.abilityAccessCtrl';
 import wantConstant from '@ohos.ability.wantConstant';
@@ -14,8 +15,10 @@ import fileUri from '@ohos.file.fileuri';
 import geoLocationManager from '@ohos.geoLocationManager';
 import i18n from '@ohos.i18n';
 import image from '@ohos.multimedia.image';
+import audio from '@ohos.multimedia.audio';
 import media from '@ohos.multimedia.media';
 import notificationManager from '@ohos.notificationManager';
+import connection from '@ohos.net.connection';
 import promptAction from '@ohos.promptAction';
 import taskpool from '@ohos.taskpool';
 import util from '@ohos.util';
@@ -251,6 +254,12 @@ interface RuntimeNativeModule {
   stopWebAccessServer(handle: bigint): string;
   remotePairStart(handle: bigint, baseUrl: string, tokenHash: string, clientDeviceInfo: string): string;
   remotePairFinish(handle: bigint, pairingId: string, pairingCode: string): string;
+  emitRuntimeEvent(handle: bigint, eventJson: string): string;
+}
+
+interface RuntimeEventDeliveryResponse {
+  ok: boolean;
+  error?: string;
 }
 
 const nativeBridge = runtimeNative as RuntimeNativeModule;
@@ -284,6 +293,49 @@ export class OperitRuntimeChannel {
   private bluetoothSessionSeq: number = 1;
   private classicBluetoothSessions: Map<string, ClassicBluetoothSession> = new Map();
   private bleBluetoothSessions: Map<string, BleBluetoothSession> = new Map();
+  private hostEventMonitoringInstalled: boolean = false;
+  private commonEventSubscriber: commonEventManager.CommonEventSubscriber | null = null;
+  private networkConnection: connection.NetConnection | null = null;
+  private readonly audioRoutingManager: audio.AudioRoutingManager = audio.getAudioManager().getRoutingManager();
+  private readonly bluetoothStateCallback = (state: bluetoothManager.BluetoothState): void => {
+    this.emitHostEvent('bluetooth.adapter.powered_changed', {
+      'powered': state === bluetoothManager.BluetoothState.STATE_ON ||
+        state === bluetoothManager.BluetoothState.STATE_BLE_ON,
+      'connected': null
+    });
+  };
+  private readonly bluetoothDeviceFindCallback = (deviceIds: Array<string>): void => {
+    deviceIds.forEach((deviceId: string): void => {
+      this.emitHostEvent('bluetooth.device.found', {
+        'deviceAddress': deviceId,
+        'deviceName': bluetoothManager.getRemoteDeviceName(deviceId),
+        'connected': null,
+        'bonded': null,
+        'rssi': null
+      });
+    });
+  };
+  private readonly bluetoothBondStateCallback = (state: bluetoothManager.BondStateParam): void => {
+    this.emitHostEvent('bluetooth.device.bond_state_changed', {
+      'deviceAddress': state.deviceId,
+      'deviceName': bluetoothManager.getRemoteDeviceName(state.deviceId),
+      'connected': null,
+      'bonded': state.state === bluetoothManager.BondState.BOND_STATE_BONDED,
+      'rssi': null
+    });
+  };
+  private readonly audioDeviceChangeCallback = (action: audio.DeviceChangeAction): void => {
+    action.deviceDescriptors.forEach((device: audio.AudioDeviceDescriptor): void => {
+      if (!this.isOhosHeadsetDevice(device.deviceType)) {
+        return;
+      }
+      this.emitHostEvent('system.headset.plug', {
+        'connected': action.type === audio.DeviceChangeType.CONNECT,
+        'deviceName': device.name,
+        'hasMicrophone': this.ohosHeadsetHasMicrophone(device.deviceType)
+      });
+    });
+  };
 
   /// Creates the OpenHarmony runtime channel.
   constructor(channel: MethodChannel, context: common.UIAbilityContext, windowStage: window.WindowStage | null) {
@@ -469,6 +521,7 @@ export class OperitRuntimeChannel {
   /// Releases the native runtime bridge handle.
   destroy(): void {
     this.watchPumpRunning = false;
+    this.releaseHostEventMonitoring();
     if (this.runtimeHandle !== BigInt(0)) {
       nativeBridge.destroy(this.runtimeHandle);
       this.runtimeHandle = BigInt(0);
@@ -513,7 +566,335 @@ export class OperitRuntimeChannel {
       this.workspaceRoot = roots.workspaceRoot;
     }
     this.runtimeHandle = nativeBridge.create(this.runtimeRoot, this.workspaceRoot);
+    this.installHostEventMonitoring();
     return this.runtimeHandle;
+  }
+
+  /// Installs OpenHarmony common-event, network, battery, and Bluetooth producers once.
+  private installHostEventMonitoring(): void {
+    if (this.hostEventMonitoringInstalled) {
+      return;
+    }
+    this.hostEventMonitoringInstalled = true;
+    this.installCommonEventSubscriber();
+    this.installNetworkMonitoring();
+    bluetoothManager.on('stateChange', this.bluetoothStateCallback);
+    bluetoothManager.on('bluetoothDeviceFind', this.bluetoothDeviceFindCallback);
+    bluetoothManager.on('bondStateChange', this.bluetoothBondStateCallback);
+    this.audioRoutingManager.on(
+      'deviceChange',
+      audio.DeviceFlag.OUTPUT_DEVICES_FLAG,
+      this.audioDeviceChangeCallback
+    );
+  }
+
+  /// Releases every OpenHarmony host event subscription owned by this runtime.
+  private releaseHostEventMonitoring(): void {
+    if (!this.hostEventMonitoringInstalled) {
+      return;
+    }
+    this.hostEventMonitoringInstalled = false;
+    if (this.commonEventSubscriber !== null) {
+      commonEventManager.unsubscribe(this.commonEventSubscriber);
+      this.commonEventSubscriber = null;
+    }
+    if (this.networkConnection !== null) {
+      this.networkConnection.unregister((error: Object): void => {
+        if (error) {
+          console.error(`OpenHarmony network monitor unregister failed: ${error}`);
+        }
+      });
+      this.networkConnection = null;
+    }
+    bluetoothManager.off('stateChange', this.bluetoothStateCallback);
+    bluetoothManager.off('bluetoothDeviceFind', this.bluetoothDeviceFindCallback);
+    bluetoothManager.off('bondStateChange', this.bluetoothBondStateCallback);
+    this.audioRoutingManager.off('deviceChange', this.audioDeviceChangeCallback);
+  }
+
+  /// Subscribes to documented OpenHarmony system common events.
+  private installCommonEventSubscriber(): void {
+    const events: Array<string> = [
+      commonEventManager.Support.COMMON_EVENT_BOOT_COMPLETED,
+      commonEventManager.Support.COMMON_EVENT_POWER_CONNECTED,
+      commonEventManager.Support.COMMON_EVENT_POWER_DISCONNECTED,
+      commonEventManager.Support.COMMON_EVENT_BATTERY_LOW,
+      commonEventManager.Support.COMMON_EVENT_BATTERY_OKAY,
+      commonEventManager.Support.COMMON_EVENT_SCREEN_ON,
+      commonEventManager.Support.COMMON_EVENT_SCREEN_OFF,
+      commonEventManager.Support.COMMON_EVENT_USER_PRESENT,
+      commonEventManager.Support.COMMON_EVENT_TIME_TICK,
+      commonEventManager.Support.COMMON_EVENT_TIME_CHANGED,
+      commonEventManager.Support.COMMON_EVENT_DATE_CHANGED,
+      commonEventManager.Support.COMMON_EVENT_TIMEZONE_CHANGED,
+      commonEventManager.Support.COMMON_EVENT_ENTER_FORCE_SLEEP,
+      commonEventManager.Support.COMMON_EVENT_EXIT_FORCE_SLEEP,
+      commonEventManager.Support.COMMON_EVENT_ENTER_HIBERNATE,
+      commonEventManager.Support.COMMON_EVENT_EXIT_HIBERNATE,
+      commonEventManager.Support.COMMON_EVENT_SCREEN_LOCKED,
+      commonEventManager.Support.COMMON_EVENT_SCREEN_UNLOCKED,
+      commonEventManager.Support.COMMON_EVENT_AIRPLANE_MODE_CHANGED,
+      commonEventManager.Support.COMMON_EVENT_BLUETOOTH_REMOTEDEVICE_ACL_CONNECTED,
+      commonEventManager.Support.COMMON_EVENT_BLUETOOTH_REMOTEDEVICE_ACL_DISCONNECTED
+    ];
+    commonEventManager.createSubscriber({ 'events': events }).then((subscriber): void => {
+      this.commonEventSubscriber = subscriber;
+      commonEventManager.subscribe(subscriber, (error, data): void => {
+        if (error) {
+          console.error(`OpenHarmony common event subscription failed: ${error}`);
+          return;
+        }
+        this.handleCommonEvent(data);
+      });
+    }).catch((error: Object): void => {
+      console.error(`OpenHarmony common event subscriber creation failed: ${error}`);
+    });
+  }
+
+  /// Maps one documented OpenHarmony common event to its canonical topic data.
+  private handleCommonEvent(data: commonEventManager.CommonEventData): void {
+    switch (data.event) {
+      case commonEventManager.Support.COMMON_EVENT_BOOT_COMPLETED:
+        this.emitHostEvent('system.boot.completed', { 'bootCompleted': true });
+        return;
+      case commonEventManager.Support.COMMON_EVENT_POWER_CONNECTED:
+        this.emitHostEvent('system.power.connected', this.ohosPowerData(true));
+        return;
+      case commonEventManager.Support.COMMON_EVENT_POWER_DISCONNECTED:
+        this.emitHostEvent('system.power.disconnected', this.ohosPowerData(false));
+        return;
+      case commonEventManager.Support.COMMON_EVENT_BATTERY_LOW:
+        this.emitHostEvent('system.battery.low', this.ohosBatteryData(true));
+        return;
+      case commonEventManager.Support.COMMON_EVENT_BATTERY_OKAY:
+        this.emitHostEvent('system.battery.okay', this.ohosBatteryData(false));
+        return;
+      case commonEventManager.Support.COMMON_EVENT_SCREEN_ON:
+        this.emitHostEvent('system.screen.on', { 'screenOn': true });
+        return;
+      case commonEventManager.Support.COMMON_EVENT_SCREEN_OFF:
+        this.emitHostEvent('system.screen.off', { 'screenOn': false });
+        return;
+      case commonEventManager.Support.COMMON_EVENT_USER_PRESENT:
+        this.emitHostEvent('system.user.present', { 'present': true });
+        return;
+      case commonEventManager.Support.COMMON_EVENT_TIME_TICK:
+      case commonEventManager.Support.COMMON_EVENT_TIME_CHANGED:
+        this.emitHostEvent('system.time.tick', this.ohosTimeData());
+        return;
+      case commonEventManager.Support.COMMON_EVENT_DATE_CHANGED:
+        this.emitHostEvent('system.date.changed', this.ohosTimeData());
+        return;
+      case commonEventManager.Support.COMMON_EVENT_TIMEZONE_CHANGED:
+        this.emitHostEvent('system.timezone.changed', this.ohosTimeData());
+        return;
+      case commonEventManager.Support.COMMON_EVENT_ENTER_FORCE_SLEEP:
+      case commonEventManager.Support.COMMON_EVENT_ENTER_HIBERNATE:
+        this.emitHostEvent('system.power.sleep', { 'sleeping': true });
+        return;
+      case commonEventManager.Support.COMMON_EVENT_EXIT_FORCE_SLEEP:
+      case commonEventManager.Support.COMMON_EVENT_EXIT_HIBERNATE:
+        this.emitHostEvent('system.power.wake', { 'sleeping': false });
+        return;
+      case commonEventManager.Support.COMMON_EVENT_SCREEN_LOCKED:
+        this.emitHostEvent('system.session.lock', { 'locked': true });
+        return;
+      case commonEventManager.Support.COMMON_EVENT_SCREEN_UNLOCKED:
+        this.emitHostEvent('system.session.unlock', { 'locked': false });
+        this.emitHostEvent('system.user.present', { 'present': true });
+        return;
+      case commonEventManager.Support.COMMON_EVENT_AIRPLANE_MODE_CHANGED:
+        this.emitOhosAirplaneMode();
+        return;
+      case commonEventManager.Support.COMMON_EVENT_BLUETOOTH_REMOTEDEVICE_ACL_CONNECTED:
+        this.emitOhosBluetoothConnection(true);
+        return;
+      case commonEventManager.Support.COMMON_EVENT_BLUETOOTH_REMOTEDEVICE_ACL_DISCONNECTED:
+        this.emitOhosBluetoothConnection(false);
+        return;
+    }
+  }
+
+  /// Reads and emits the canonical OpenHarmony airplane-mode state.
+  private async emitOhosAirplaneMode(): Promise<void> {
+    const value = await settings.getValue(this.context, settings.general.AIRPLANE_MODE_STATUS);
+    if (value !== '0' && value !== '1') {
+      throw new Error(`OpenHarmony returned an invalid airplane-mode value: ${value}`);
+    }
+    this.emitHostEvent('system.airplane_mode.changed', { 'enabled': value === '1' });
+  }
+
+  /// Emits one canonical OpenHarmony Bluetooth ACL connection transition.
+  private emitOhosBluetoothConnection(connected: boolean): void {
+    this.emitHostEvent(
+      connected ? 'bluetooth.device.connected' : 'bluetooth.device.disconnected',
+      {
+        'deviceAddress': null,
+        'deviceName': null,
+        'connected': connected,
+        'bonded': null,
+        'rssi': null
+      }
+    );
+  }
+
+  /// Reports whether one OpenHarmony audio device is a headset route.
+  private isOhosHeadsetDevice(deviceType: audio.DeviceType): boolean {
+    switch (deviceType) {
+      case audio.DeviceType.WIRED_HEADSET:
+      case audio.DeviceType.WIRED_HEADPHONES:
+      case audio.DeviceType.BLUETOOTH_SCO:
+      case audio.DeviceType.BLUETOOTH_A2DP:
+      case audio.DeviceType.USB_HEADSET:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /// Reports microphone capability for one OpenHarmony headset route.
+  private ohosHeadsetHasMicrophone(deviceType: audio.DeviceType): boolean {
+    switch (deviceType) {
+      case audio.DeviceType.WIRED_HEADSET:
+      case audio.DeviceType.BLUETOOTH_SCO:
+      case audio.DeviceType.USB_HEADSET:
+        return true;
+      case audio.DeviceType.WIRED_HEADPHONES:
+      case audio.DeviceType.BLUETOOTH_A2DP:
+        return false;
+      default:
+        throw new Error(`OpenHarmony audio device is not a headset route: ${deviceType}`);
+    }
+  }
+
+  /// Builds the shared OpenHarmony external-power structure from batteryInfo.
+  private ohosPowerData(connected: boolean): Record<string, Object | null> {
+    const source = connected ? this.ohosPowerSource() : 'battery';
+    return {
+      'connected': connected,
+      'source': source,
+      'batteryLevel': batteryInfo.batterySOC
+    };
+  }
+
+  /// Builds the shared OpenHarmony battery threshold structure from batteryInfo.
+  private ohosBatteryData(low: boolean): Record<string, Object | null> {
+    const charging = batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.ENABLE ||
+      batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.FULL;
+    return {
+      'low': low,
+      'level': batteryInfo.batterySOC,
+      'charging': charging
+    };
+  }
+
+  /// Maps OpenHarmony's charger enum to the shared power source vocabulary.
+  private ohosPowerSource(): string {
+    switch (batteryInfo.pluggedType) {
+      case batteryInfo.BatteryPluggedType.AC:
+        return 'ac';
+      case batteryInfo.BatteryPluggedType.USB:
+        return 'usb';
+      case batteryInfo.BatteryPluggedType.WIRELESS:
+        return 'wireless';
+      case batteryInfo.BatteryPluggedType.NONE:
+        return 'battery';
+      default:
+        throw new Error(`OpenHarmony battery plugged type is unsupported: ${batteryInfo.pluggedType}`);
+    }
+  }
+
+  /// Builds the shared OpenHarmony clock and timezone structure.
+  private ohosTimeData(): Record<string, Object | null> {
+    return {
+      'timestampMillis': Date.now(),
+      'timezone': i18n.getTimeZone().getID()
+    };
+  }
+
+  /// Installs OpenHarmony's default-network capability observer.
+  private installNetworkMonitoring(): void {
+    const monitor = connection.createNetConnection();
+    monitor.on('netCapabilitiesChange', (event): void => {
+      this.emitOhosNetwork(event.netHandle, event.netCap);
+    });
+    monitor.on('netLost', (): void => {
+      this.emitHostEvent('system.network.changed', {
+        'connected': false,
+        'networkType': 'none',
+        'metered': null,
+        'interfaceName': null
+      });
+    });
+    monitor.on('netUnavailable', (): void => {
+      this.emitHostEvent('system.network.changed', {
+        'connected': false,
+        'networkType': 'none',
+        'metered': null,
+        'interfaceName': null
+      });
+    });
+    monitor.register((error: Object): void => {
+      if (error) {
+        console.error(`OpenHarmony network monitor registration failed: ${error}`);
+      }
+    });
+    this.networkConnection = monitor;
+  }
+
+  /// Resolves OpenHarmony network metadata and emits the canonical network structure.
+  private emitOhosNetwork(
+    netHandle: connection.NetHandle,
+    capabilities: connection.NetCapabilities
+  ): void {
+    connection.getConnectionProperties(netHandle).then((properties: connection.ConnectionProperties): void => {
+      const caps = capabilities.networkCap ?? [];
+      const connected = caps.includes(connection.NetCap.NET_CAPABILITY_INTERNET);
+      const metered = !caps.includes(connection.NetCap.NET_CAPABILITY_NOT_METERED);
+      this.emitHostEvent('system.network.changed', {
+        'connected': connected,
+        'networkType': connected ? this.ohosNetworkType(capabilities.bearerTypes) : 'none',
+        'metered': metered,
+        'interfaceName': properties.interfaceName
+      });
+    }).catch((error: Object): void => {
+      console.error(`OpenHarmony network metadata query failed: ${error}`);
+    });
+  }
+
+  /// Maps OpenHarmony bearer types to the shared network vocabulary.
+  private ohosNetworkType(bearerTypes: Array<connection.NetBearType>): string {
+    if (bearerTypes.includes(connection.NetBearType.BEARER_WIFI)) {
+      return 'wifi';
+    }
+    if (bearerTypes.includes(connection.NetBearType.BEARER_CELLULAR)) {
+      return 'cellular';
+    }
+    if (bearerTypes.includes(connection.NetBearType.BEARER_ETHERNET)) {
+      return 'ethernet';
+    }
+    return 'other';
+  }
+
+  /// Serializes and forwards one canonical OpenHarmony event into Core.
+  private emitHostEvent(topic: string, data: Record<string, Object | null>): void {
+    if (this.runtimeHandle === BigInt(0)) {
+      return;
+    }
+    const response = JSON.parse(nativeBridge.emitRuntimeEvent(
+      this.runtimeHandle,
+      JSON.stringify({
+        'domain': 'host',
+        'source': 'ohos.system',
+        'topic': topic,
+        'platform': 'ohos',
+        'payload': data,
+        'occurredAtMillis': Date.now()
+      })
+    )) as RuntimeEventDeliveryResponse;
+    if (!response.ok) {
+      throw new Error(response.error ?? 'OpenHarmony host event delivery failed');
+    }
   }
 
   /// Starts the watch-channel event pump.

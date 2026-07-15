@@ -570,7 +570,7 @@ def patch_staged_ohos_plugin_package(plugin_dir: Path) -> None:
 # Writes OHOS package dependencies and overrides for Flutter and staged plugins.
 def write_ohos_package_dependencies(plugin_names: list[str]) -> None:
     root_config = read_json_package(OHOS_ROOT_PACKAGE)
-    root_dependencies = root_config.get("dependencies", {})
+    root_dependencies = clean_generated_ohos_dependencies(root_config.get("dependencies", {}), "./")
     root_dependencies.update(
         {
             "@ohos/flutter_ohos": "file:./har/flutter_embedding_release.har",
@@ -581,7 +581,7 @@ def write_ohos_package_dependencies(plugin_names: list[str]) -> None:
         root_dependencies[name] = f"file:./.flutter_ohos_plugins/{name}"
     root_config["dependencies"] = root_dependencies
 
-    root_overrides = root_config.get("overrides", {})
+    root_overrides = clean_generated_ohos_dependencies(root_config.get("overrides", {}), "./")
     root_overrides.update(
         {
             "@ohos/flutter_ohos": "file:./har/flutter_embedding_release.har",
@@ -594,7 +594,7 @@ def write_ohos_package_dependencies(plugin_names: list[str]) -> None:
     write_json_package(OHOS_ROOT_PACKAGE, root_config)
 
     entry_config = read_json_package(OHOS_ENTRY_PACKAGE)
-    entry_dependencies = entry_config.get("dependencies", {})
+    entry_dependencies = clean_generated_ohos_dependencies(entry_config.get("dependencies", {}), "../")
     entry_dependencies.update(
         {
             "@ohos/flutter_ohos": "file:../har/flutter_embedding_release.har",
@@ -605,6 +605,20 @@ def write_ohos_package_dependencies(plugin_names: list[str]) -> None:
         entry_dependencies[name] = f"file:../.flutter_ohos_plugins/{name}"
     entry_config["dependencies"] = entry_dependencies
     write_json_package(OHOS_ENTRY_PACKAGE, entry_config)
+
+
+# Removes generated Flutter OHOS package links before writing the current plugin graph.
+def clean_generated_ohos_dependencies(dependencies: dict, relative_prefix: str) -> dict:
+    generated_values = {
+        f"file:{relative_prefix}har/flutter_embedding_release.har",
+        f"file:{relative_prefix}har/arm64_v8a_release.har",
+    }
+    generated_plugin_prefix = f"file:{relative_prefix}.flutter_ohos_plugins/"
+    return {
+        key: value
+        for key, value in dependencies.items()
+        if value not in generated_values and not str(value).startswith(generated_plugin_prefix)
+    }
 
 
 # Reads one JSON-compatible OHOS package file.

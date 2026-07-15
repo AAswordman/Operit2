@@ -134,10 +134,7 @@ pub trait ChatHost: Send + Sync {
     ///
     ///List chat conversations with filters
     ///
-    fn listChats(
-        &self,
-        params: Option<ChatHostListChatsParams>,
-    ) -> JsFuture<ChatListResultData>;
+    fn listChats(&self, params: Option<ChatHostListChatsParams>) -> JsFuture<ChatListResultData>;
     ///
     ///Find a chat by title or id
     ///
@@ -155,11 +152,7 @@ pub trait ChatHost: Send + Sync {
     ///
     ///Update chat title
     ///
-    fn updateTitle(
-        &self,
-        chatId: String,
-        title: String,
-    ) -> JsFuture<ChatTitleUpdateResultData>;
+    fn updateTitle(&self, chatId: String, title: String) -> JsFuture<ChatTitleUpdateResultData>;
     ///
     ///Delete a chat conversation by id
     ///
@@ -269,7 +262,5 @@ pub struct ChatSendMessageStreamingOptions {
     /// Enables waifu-style aggregation of streamed reply chunks.
     pub waifu: Option<bool>,
     /// Receives each intermediate event emitted while the assistant reply is generated.
-    pub on_intermediate_result: Option<
-        Arc<dyn Fn(MessageSendStreamEventData) -> () + Send + Sync>,
-    >,
+    pub onIntermediateResult: Option<Arc<dyn Fn(MessageSendStreamEventData) -> () + Send + Sync>>,
 }

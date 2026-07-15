@@ -1,5 +1,6 @@
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
+use crate::core::events::RuntimeEvent::RuntimeEvent;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::data::backup::Operit1SnapshotImportManager::{
     observeOperit1SnapshotImportProgress, publishOperit1SnapshotImportProgress,
@@ -111,7 +112,8 @@ impl OperitApplication {
             Arc::new(QuickJsExecutionProvider::new()),
         );
         let toolHandler = AIToolHandler::new(hostManager.clone(), toolRuntimeDependencies.clone());
-        let toolPkgBridgeRuntime = ToolPkgBridgeRuntime::new(toolHandler.clone());
+        let toolPkgBridgeRuntime =
+            ToolPkgBridgeRuntime::new(toolHandler.clone(), hostManager.clone());
         let providerRuntimeContext = ProviderRuntimeSupportService::create(toolHandler.clone());
         runtimeToolSupport
             .bindRuntimeServices(toolHandler.clone(), providerRuntimeContext.clone())
@@ -163,6 +165,16 @@ impl OperitApplication {
             .map(|registration| Arc::new(Mutex::new(registration)));
         self.initialized = true;
         Ok(())
+    }
+
+    /// Delivers one normalized host event to registered ToolPkg host-event hooks.
+    #[allow(non_snake_case)]
+    pub fn ingestRuntimeEvent(&self, event: RuntimeEvent) -> serde_json::Value {
+        crate::services::RuntimeEventIngressService::RuntimeEventIngressService::getInstance(
+            &self.hostManager,
+            self.toolPkgBridgeRuntime.clone(),
+        )
+        .ingestEvent(event)
     }
 
     /// Applies host-specific OpenMP environment setup before runtime services start.

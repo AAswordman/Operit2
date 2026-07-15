@@ -60,6 +60,7 @@ use js_sys::Function;
 use operit_host_android_native::{
     AndroidAudioPlaybackHost as NativeAudioPlaybackHost,
     AndroidBluetoothHost as NativeBluetoothHost, AndroidFileSystemHost as NativeFileSystemHost,
+    AndroidHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
     AndroidHttpHost as NativeHttpHost, AndroidManagedRuntimeHost as NativeManagedRuntimeHost,
     AndroidMusicCommand as NativeMusicCommand,
     AndroidRuntimeStorageHost as NativeRuntimeStorageHost,
@@ -75,6 +76,7 @@ use operit_host_apple_native::AppleLocalInferenceHost as NativeLocalInferenceHos
 use operit_host_apple_native::{
     AppleAudioPlaybackHost as NativeAudioPlaybackHost, AppleBluetoothHost as NativeBluetoothHost,
     AppleFileSystemHost as NativeFileSystemHost, AppleHttpHost as NativeHttpHost,
+    AppleHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
     AppleManagedRuntimeHost as NativeManagedRuntimeHost, AppleMusicCommand as NativeMusicCommand,
     AppleRuntimeStorageHost as NativeRuntimeStorageHost,
     AppleSystemOperationHost as NativeSystemOperationHost,
@@ -90,6 +92,7 @@ use operit_host_linux_native::{
     LinuxAudioPlaybackHost as NativeAudioPlaybackHost, LinuxBluetoothHost as NativeBluetoothHost,
     LinuxFileSystemHost as NativeFileSystemHost,
     LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost, LinuxHttpHost as NativeHttpHost,
+    LinuxHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
     LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
     LinuxSystemOperationHost as NativeSystemOperationHost, LinuxTerminalHost as NativeTerminalHost,
@@ -102,6 +105,7 @@ use operit_host_linux_native::{
 use operit_host_ohos_native::{
     OhosAudioPlaybackHost as NativeAudioPlaybackHost, OhosBluetoothHost as NativeBluetoothHost,
     OhosFileSystemHost as NativeFileSystemHost, OhosHttpHost as NativeHttpHost,
+    OhosHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
     OhosLocalInferenceHost as NativeLocalInferenceHost,
     OhosManagedRuntimeHost as NativeManagedRuntimeHost, OhosMusicCommand as NativeMusicCommand,
     OhosRuntimeStorageHost as NativeRuntimeStorageHost,
@@ -114,6 +118,8 @@ use operit_host_web::{
     WebFileSystemHost as NativeFileSystemHost, WebHttpHost as NativeHttpHost,
     WebLocalInferenceHost as NativeLocalInferenceHost,
     WebManagedRuntimeHost as NativeManagedRuntimeHost,
+    WebHostRuntimeEventHost as NativeHostRuntimeEventHost,
+    WebHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
     WebRuntimeStorageHost as NativeRuntimeStorageHost,
     WebSystemOperationHost as NativeSystemOperationHost,
     WebTtsPlaybackHost as NativeTtsPlaybackHost,
@@ -123,6 +129,7 @@ use operit_host_windows_native::{
     WindowsAudioPlaybackHost as NativeAudioPlaybackHost,
     WindowsBluetoothHost as NativeBluetoothHost, WindowsFileSystemHost as NativeFileSystemHost,
     WindowsHostRuntimeEventHost as NativeHostRuntimeEventHost, WindowsHttpHost as NativeHttpHost,
+    WindowsHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
     WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
@@ -1392,6 +1399,15 @@ fn create_local_core(
         context = context.withLocalInferenceHost(Arc::new(
             operit_host_android_native::AndroidLocalInferenceHost::new(),
         ));
+        context = context.withHostRuntimeEventSchedulerHost(Arc::new(
+            NativeHostRuntimeEventSchedulerHost::new(),
+        ));
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        context = context.withHostRuntimeEventSchedulerHost(Arc::new(
+            NativeHostRuntimeEventSchedulerHost::new(),
+        ));
     }
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
@@ -1810,6 +1826,9 @@ fn create_local_core(
             })
         },
     ))));
+    context = context.withHostRuntimeEventSchedulerHost(Arc::new(
+        NativeHostRuntimeEventSchedulerHost::new(),
+    ));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
@@ -2037,6 +2056,9 @@ fn create_local_core(
             })
         }),
     )));
+    context = context.withHostRuntimeEventSchedulerHost(Arc::new(
+        NativeHostRuntimeEventSchedulerHost::new(),
+    ));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
@@ -2076,6 +2098,10 @@ fn create_local_core(
     context = context.withBluetoothHost(Arc::new(NativeBluetoothHost::new()));
     context = context.withLocalInferenceHost(Arc::new(NativeLocalInferenceHost::new()));
     context = context.withTtsPlaybackHost(Arc::new(NativeTtsPlaybackHost::new()));
+    context = context.withHostRuntimeEventSchedulerHost(Arc::new(
+        NativeHostRuntimeEventSchedulerHost::new(),
+    ));
+    context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
@@ -3649,6 +3675,43 @@ mod android_jni {
             Err(_) => return new_java_string(env, &serde_json::json!({"ok": false}).to_string()),
         };
         new_java_string(env, &bridge.emitRuntimeEvent(&eventJson))
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_emitHostRuntimeEventSchedule(
+        env: JNIEnv,
+        _class: JClass,
+        _handle: jlong,
+        scheduleId: JString,
+        scheduledAtMillis: jlong,
+        firedAtMillis: jlong,
+    ) -> jstring {
+        let mut env = env;
+        let scheduleId = match env.get_string(&scheduleId) {
+            Ok(value) => String::from(value),
+            Err(error) => {
+                return new_java_string(
+                    env,
+                    &serde_json::json!({
+                        "ok": false,
+                        "error": format!("invalid JNI scheduleId: {error}"),
+                    })
+                    .to_string(),
+                );
+            }
+        };
+        let fire = operit_host_api::HostRuntimeEventScheduleFire {
+            scheduleId,
+            scheduledAtMillis: scheduledAtMillis as u64,
+            firedAtMillis: firedAtMillis as u64,
+        };
+        match operit_host_android_native::emitAndroidHostRuntimeEventSchedule(fire) {
+            Ok(()) => new_java_string(env, &serde_json::json!({"ok": true}).to_string()),
+            Err(error) => new_java_string(
+                env,
+                &serde_json::json!({"ok": false, "error": error.to_string()}).to_string(),
+            ),
+        }
     }
 
     fn new_java_string(mut env: JNIEnv, value: &str) -> jstring {

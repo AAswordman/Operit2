@@ -11,6 +11,8 @@ pub mod host_runtime_event;
 
 #[cfg(target_os = "linux")]
 pub use host_runtime_event::LinuxHostRuntimeEventHost;
+#[cfg(target_os = "linux")]
+pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as LinuxHostRuntimeEventSchedulerHost;
 pub use tools::audio::LinuxAudioPlaybackHost;
 pub use tools::bluetooth::LinuxBluetoothHost;
 pub use tools::tts::{LinuxTtsPlaybackHost, LinuxTtsSynthesisHost};

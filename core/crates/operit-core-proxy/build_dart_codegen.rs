@@ -70,8 +70,17 @@ fn render_dart_models(
             } => {
                 output.push_str(&render_dart_enum(ty, variants, serializable_types));
             }
-            SerializableTypeKind::TaggedEnum { variants, .. } => {
-                output.push_str(&render_dart_tagged_enum(ty, variants, serializable_types));
+            SerializableTypeKind::TaggedEnum {
+                externally_tagged,
+                variants,
+                ..
+            } => {
+                output.push_str(&render_dart_tagged_enum(
+                    ty,
+                    variants,
+                    *externally_tagged,
+                    serializable_types,
+                ));
             }
             SerializableTypeKind::Enum {
                 unit_only: false, ..
@@ -472,6 +481,7 @@ fn render_dart_enum(
 fn render_dart_tagged_enum(
     ty: &SerializableType,
     variants: &[SerializableEnumVariant],
+    externally_tagged: bool,
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
     let enum_name = dart_class_name(&ty.full_type, serializable_types);
@@ -538,67 +548,155 @@ fn render_dart_tagged_enum(
             }
         }
     }
-    output.push_str(&format!(
-        "\n  factory {enum_name}.fromJson(Object? json) {{\n"
-    ));
-    output.push_str(&format!("    final map = json as Map<String, Object?>;\n"));
-    // externally tagged: {{\"CharacterCard\": {{\"id\": \"...\"}}}}
-    output.push_str("    final tag = map.keys.first;\n");
-    output.push_str("    final data = map[tag] as Map<String, Object?>? ?? <String, Object?>{};\n");
-    output.push_str("    return switch (tag) {\n");
-    for variant in variants {
-        let variant_name = dart_identifier(&variant.name);
+    let has_external_unit_variants =
+        externally_tagged && variants.iter().any(|variant| variant.fields_are_unit);
+    if has_external_unit_variants {
         output.push_str(&format!(
-            "      '{}' => {enum_name}.{variant_name}(",
-            dart_string_literal(&variant.json_name)
+            "\n  factory {enum_name}.fromJson(Object? json) {{\n"
         ));
-        for field in &variant.fields {
+        output.push_str("    switch (json) {\n");
+        for variant in variants.iter().filter(|variant| variant.fields_are_unit) {
             output.push_str(&format!(
-                "{}: {}, ",
-                dart_identifier(&field.name),
-                dart_decode_expr(
-                    &format!("data['{}']", field.json_name),
-                    &dart_type(&field.ty, serializable_types),
-                    serializable_types
-                )
+                "      case '{}':\n        return {enum_name}.{}();\n",
+                dart_string_literal(&variant.json_name),
+                dart_identifier(&variant.name)
             ));
         }
-        output.push_str("),\n");
-    }
-    output.push_str(&format!(
-        "      _ => throw ArgumentError('Unknown {enum_name} tag: $tag'),\n"
-    ));
-    output.push_str("    };\n  }\n\n");
-    output.push_str("  Map<String, Object?> toJson() {\n");
-    output.push_str("    final data = <String, Object?>{\n");
-    for variant in variants {
-        output.push_str(&format!(
-            "      if (tag == '{}') ...<String, Object?>{{\n",
-            dart_string_literal(&variant.json_name)
-        ));
-        for field in &variant.fields {
-            let field_name = dart_identifier(&field.name);
-            let field_type = dart_type(&field.ty, serializable_types);
+        output.push_str("      case Map<String, Object?> map:\n");
+        output.push_str("        final tag = map.keys.single;\n");
+        output.push_str("        final data = map[tag] as Map<String, Object?>;\n");
+        output.push_str("        return switch (tag) {\n");
+        for variant in variants.iter().filter(|variant| !variant.fields_are_unit) {
+            let variant_name = dart_identifier(&variant.name);
             output.push_str(&format!(
-                "        '{}': {},\n",
-                field.json_name,
-                dart_encode_expr(
-                    &dart_tagged_enum_encode_value(
-                        &field.name,
-                        &field_type,
-                        variants,
+                "          '{}' => {enum_name}.{variant_name}(",
+                dart_string_literal(&variant.json_name)
+            ));
+            for field in &variant.fields {
+                output.push_str(&format!(
+                    "{}: {}, ",
+                    dart_identifier(&field.name),
+                    dart_decode_expr(
+                        &format!("data['{}']", field.json_name),
+                        &dart_type(&field.ty, serializable_types),
                         serializable_types
-                    ),
-                    &field_type,
-                    serializable_types,
-                )
-            ));
+                    )
+                ));
+            }
+            output.push_str("),\n");
         }
-        output.push_str("      },\n");
+        output.push_str(&format!(
+            "          _ => throw ArgumentError('Unknown {enum_name} tag: $tag'),\n"
+        ));
+        output.push_str("        };\n");
+        output.push_str(&format!(
+            "      default:\n        throw ArgumentError('Unknown {enum_name} representation: $json');\n"
+        ));
+        output.push_str("    }\n  }\n\n");
+        output.push_str("  Object toJson() {\n");
+        output.push_str("    return switch (tag) {\n");
+        for variant in variants {
+            if variant.fields_are_unit {
+                output.push_str(&format!(
+                    "      '{}' => '{}',\n",
+                    dart_string_literal(&variant.json_name),
+                    dart_string_literal(&variant.json_name)
+                ));
+            } else {
+                output.push_str(&format!(
+                    "      '{}' => <String, Object?>{{'{}': <String, Object?>{{\n",
+                    dart_string_literal(&variant.json_name),
+                    dart_string_literal(&variant.json_name)
+                ));
+                for field in &variant.fields {
+                    let field_type = dart_type(&field.ty, serializable_types);
+                    output.push_str(&format!(
+                        "        '{}': {},\n",
+                        field.json_name,
+                        dart_encode_expr(
+                            &dart_tagged_enum_encode_value(
+                                &field.name,
+                                &field_type,
+                                variants,
+                                serializable_types
+                            ),
+                            &field_type,
+                            serializable_types,
+                        )
+                    ));
+                }
+                output.push_str("      }},\n");
+            }
+        }
+        output.push_str(&format!(
+            "      _ => throw StateError('Unknown {enum_name} tag: $tag'),\n"
+        ));
+        output.push_str("    };\n  }\n");
+    } else {
+        output.push_str(&format!(
+            "\n  factory {enum_name}.fromJson(Object? json) {{\n"
+        ));
+        output.push_str(&format!("    final map = json as Map<String, Object?>;\n"));
+        // externally tagged: {{\"CharacterCard\": {{\"id\": \"...\"}}}}
+        output.push_str("    final tag = map.keys.first;\n");
+        output.push_str(
+            "    final data = map[tag] as Map<String, Object?>? ?? <String, Object?>{};\n",
+        );
+        output.push_str("    return switch (tag) {\n");
+        for variant in variants {
+            let variant_name = dart_identifier(&variant.name);
+            output.push_str(&format!(
+                "      '{}' => {enum_name}.{variant_name}(",
+                dart_string_literal(&variant.json_name)
+            ));
+            for field in &variant.fields {
+                output.push_str(&format!(
+                    "{}: {}, ",
+                    dart_identifier(&field.name),
+                    dart_decode_expr(
+                        &format!("data['{}']", field.json_name),
+                        &dart_type(&field.ty, serializable_types),
+                        serializable_types
+                    )
+                ));
+            }
+            output.push_str("),\n");
+        }
+        output.push_str(&format!(
+            "      _ => throw ArgumentError('Unknown {enum_name} tag: $tag'),\n"
+        ));
+        output.push_str("    };\n  }\n\n");
+        output.push_str("  Map<String, Object?> toJson() {\n");
+        output.push_str("    final data = <String, Object?>{\n");
+        for variant in variants {
+            output.push_str(&format!(
+                "      if (tag == '{}') ...<String, Object?>{{\n",
+                dart_string_literal(&variant.json_name)
+            ));
+            for field in &variant.fields {
+                let field_name = dart_identifier(&field.name);
+                let field_type = dart_type(&field.ty, serializable_types);
+                output.push_str(&format!(
+                    "        '{}': {},\n",
+                    field.json_name,
+                    dart_encode_expr(
+                        &dart_tagged_enum_encode_value(
+                            &field.name,
+                            &field_type,
+                            variants,
+                            serializable_types
+                        ),
+                        &field_type,
+                        serializable_types,
+                    )
+                ));
+            }
+            output.push_str("      },\n");
+        }
+        output.push_str("    };\n");
+        output.push_str("    return <String, Object?>{tag: data};\n");
+        output.push_str("  }\n");
     }
-    output.push_str("    };\n");
-    output.push_str("    return <String, Object?>{tag: data};\n");
-    output.push_str("  }\n");
     output.push_str("}\n\n");
     output
 }

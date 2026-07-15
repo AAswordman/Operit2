@@ -207,15 +207,13 @@ pub struct ComposeGeneratedRowProps {
     /// Child nodes rendered inside the component.
     pub content: Option<ComposeChildren>,
     /// Horizontal spacing and placement strategy for child nodes.
-    pub horizontal_arrangement: Option<ComposeArrangement>,
+    pub horizontalArrangement: Option<ComposeArrangement>,
     /// Called when the user activates the component.
-    pub on_click: Option<
-        Arc<dyn Fn() -> ComposeGeneratedRowPropsOnClickOutput + Send + Sync>,
-    >,
+    pub onClick: Option<Arc<dyn Fn() -> ComposeGeneratedRowPropsOnClickOutput + Send + Sync>>,
     /// Vertical alignment applied to child nodes.
-    pub vertical_alignment: Option<ComposeAlignment>,
+    pub verticalAlignment: Option<ComposeAlignment>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a stacking layout that aligns child nodes within the same bounds.
 pub struct ComposeGeneratedBoxProps {
@@ -303,39 +301,39 @@ pub struct ComposeGeneratedTextFieldProps {
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Marks the input as invalid and enables its error presentation.
-    pub is_error: Option<bool>,
+    pub isError: Option<bool>,
     /// Masks the entered value as password text when true.
-    pub is_password: Option<bool>,
+    pub isPassword: Option<bool>,
     /// Label content identifying the control or destination.
     pub label: Option<ComposeGeneratedTextFieldPropsLabel>,
     /// Icon content rendered before the component's label or value.
-    pub leading_icon: Option<ComposeChildren>,
+    pub leadingIcon: Option<ComposeChildren>,
     /// Maximum number of text lines that may be displayed.
-    pub max_lines: Option<f64>,
+    pub maxLines: Option<f64>,
     /// Minimum number of text lines reserved by the input.
-    pub min_lines: Option<f64>,
+    pub minLines: Option<f64>,
     /// Called with the newly entered text whenever the input value changes.
-    pub on_value_change: Arc<dyn Fn(String) -> () + Send + Sync>,
+    pub onValueChange: Arc<dyn Fn(String) -> () + Send + Sync>,
     /// Hint content shown while the text field value is empty.
     pub placeholder: Option<ComposeGeneratedTextFieldPropsPlaceholder>,
     /// Content rendered immediately before the editable text.
     pub prefix: Option<ComposeChildren>,
     /// Prevents editing while preserving focus and text selection behavior.
-    pub read_only: Option<bool>,
+    pub readOnly: Option<bool>,
     /// Constrains the text field to a single horizontal line.
-    pub single_line: Option<bool>,
+    pub singleLine: Option<bool>,
     /// Typography or component style applied to the rendered content.
     pub style: Option<ComposeTextFieldStyle>,
     /// Content rendered immediately after the editable text.
     pub suffix: Option<ComposeChildren>,
     /// Supporting or validation content rendered below the text field.
-    pub supporting_text: Option<ComposeChildren>,
+    pub supportingText: Option<ComposeChildren>,
     /// Icon content rendered after the component's label or value.
-    pub trailing_icon: Option<ComposeChildren>,
+    pub trailingIcon: Option<ComposeChildren>,
     /// Controlled text currently displayed by the input.
     pub value: String,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a binary Material switch with controlled checked state and track and thumb styling.
 pub struct ComposeGeneratedSwitchProps {
@@ -344,21 +342,21 @@ pub struct ComposeGeneratedSwitchProps {
     /// Controlled toggle state indicating whether the control is checked.
     pub checked: bool,
     /// Color of the switch thumb while checked.
-    pub checked_thumb_color: Option<ComposeColor>,
+    pub checkedThumbColor: Option<ComposeColor>,
     /// Color of the switch track while checked.
-    pub checked_track_color: Option<ComposeColor>,
+    pub checkedTrackColor: Option<ComposeColor>,
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Called with the requested checked state after a toggle interaction.
-    pub on_checked_change: Arc<dyn Fn(bool) -> () + Send + Sync>,
+    pub onCheckedChange: Arc<dyn Fn(bool) -> () + Send + Sync>,
     /// Content rendered inside the switch thumb.
-    pub thumb_content: Option<ComposeChildren>,
+    pub thumbContent: Option<ComposeChildren>,
     /// Color of the switch thumb while unchecked.
-    pub unchecked_thumb_color: Option<ComposeColor>,
+    pub uncheckedThumbColor: Option<ComposeColor>,
     /// Color of the switch track while unchecked.
-    pub unchecked_track_color: Option<ComposeColor>,
+    pub uncheckedTrackColor: Option<ComposeColor>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a binary Material checkbox with controlled checked state.
 pub struct ComposeGeneratedCheckboxProps {
@@ -369,38 +367,36 @@ pub struct ComposeGeneratedCheckboxProps {
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Called with the requested checked state after a toggle interaction.
-    pub on_checked_change: Arc<dyn Fn(bool) -> () + Send + Sync>,
+    pub onCheckedChange: Arc<dyn Fn(bool) -> () + Send + Sync>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a filled Material action button with configurable content, colors, padding, and click handling.
 pub struct ComposeGeneratedButtonProps {
     /// Common layout, sizing, semantics, and modifier properties applied to this node.
     pub base_compose_common_props: ComposeCommonProps,
     /// Background color of the component's container.
-    pub container_color: Option<ComposeColor>,
+    pub containerColor: Option<ComposeColor>,
     /// Child nodes rendered inside the component.
     pub content: Option<ComposeChildren>,
     /// Default foreground color supplied to child content.
-    pub content_color: Option<ComposeColor>,
+    pub contentColor: Option<ComposeColor>,
     /// Padding between the container boundary and its child content.
-    pub content_padding: Option<ComposePadding>,
+    pub contentPadding: Option<ComposePadding>,
     /// Background color used when the component is disabled.
-    pub disabled_container_color: Option<ComposeColor>,
+    pub disabledContainerColor: Option<ComposeColor>,
     /// Foreground color supplied to content while the component is disabled.
-    pub disabled_content_color: Option<ComposeColor>,
+    pub disabledContentColor: Option<ComposeColor>,
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedButtonPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedButtonPropsOnClickOutput + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Text content displayed by the component.
     pub text: Option<String>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a compact Material action button intended for an icon or custom content.
 pub struct ComposeGeneratedIconButtonProps {
@@ -413,13 +409,11 @@ pub struct ComposeGeneratedIconButtonProps {
     /// Icon resource or composed icon content displayed by the component.
     pub icon: Option<String>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedIconButtonPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedIconButtonPropsOnClickOutput + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a Material card surface that groups related content with shape, border, color, and elevation.
 pub struct ComposeGeneratedCardProps {
@@ -458,23 +452,21 @@ pub struct ComposeGeneratedSurfaceProps {
     /// Primary color used to render the component.
     pub color: Option<ComposeColor>,
     /// Background color of the component's container.
-    pub container_color: Option<ComposeColor>,
+    pub containerColor: Option<ComposeColor>,
     /// Child nodes rendered inside the component.
     pub content: Option<ComposeChildren>,
     /// Default foreground color supplied to child content.
-    pub content_color: Option<ComposeColor>,
+    pub contentColor: Option<ComposeColor>,
     /// Called when the user activates the component.
-    pub on_click: Option<
-        Arc<dyn Fn() -> ComposeGeneratedSurfacePropsOnClickOutput + Send + Sync>,
-    >,
+    pub onClick: Option<Arc<dyn Fn() -> ComposeGeneratedSurfacePropsOnClickOutput + Send + Sync>>,
     /// Physical shadow elevation cast by the surface.
-    pub shadow_elevation: Option<f64>,
+    pub shadowElevation: Option<f64>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Tonal elevation used to adjust the surface color against its background.
-    pub tonal_elevation: Option<f64>,
+    pub tonalElevation: Option<f64>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a Material icon node with accessibility description, size, and tint.
 pub struct ComposeGeneratedIconProps {
@@ -529,15 +521,13 @@ pub struct ComposeGeneratedAssistChipProps {
     /// Label content identifying the control or destination.
     pub label: ComposeChildren,
     /// Icon content rendered before the component's label or value.
-    pub leading_icon: Option<ComposeChildren>,
+    pub leadingIcon: Option<ComposeChildren>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedAssistChipPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedAssistChipPropsOnClickOutput + Send + Sync>,
     /// Icon content rendered after the component's label or value.
-    pub trailing_icon: Option<ComposeChildren>,
+    pub trailingIcon: Option<ComposeChildren>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a small status or count indicator rendered over associated content.
 pub struct ComposeGeneratedBadgeProps {
@@ -607,13 +597,12 @@ pub struct ComposeGeneratedDropdownMenuProps {
     /// Position offset applied to the popup relative to its anchor.
     pub offset: Option<f64>,
     /// Called when user interaction requests that the popup or dialog close.
-    pub on_dismiss_request: Arc<
-        dyn Fn() -> ComposeGeneratedDropdownMenuPropsOnDismissRequestOutput + Send + Sync,
-    >,
+    pub onDismissRequest:
+        Arc<dyn Fn() -> ComposeGeneratedDropdownMenuPropsOnDismissRequestOutput + Send + Sync>,
     /// Popup-window focus, dismissal, clipping, and sizing behavior.
     pub properties: Option<ComposeGeneratedDropdownMenuPropsProperties>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring an elevated assist action chip with label, optional icons, enabled state, and click handling.
 pub struct ComposeGeneratedElevatedAssistChipProps {
@@ -624,42 +613,39 @@ pub struct ComposeGeneratedElevatedAssistChipProps {
     /// Label content identifying the control or destination.
     pub label: ComposeChildren,
     /// Icon content rendered before the component's label or value.
-    pub leading_icon: Option<ComposeChildren>,
+    pub leadingIcon: Option<ComposeChildren>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedElevatedAssistChipPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick:
+        Arc<dyn Fn() -> ComposeGeneratedElevatedAssistChipPropsOnClickOutput + Send + Sync>,
     /// Icon content rendered after the component's label or value.
-    pub trailing_icon: Option<ComposeChildren>,
+    pub trailingIcon: Option<ComposeChildren>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring an elevated Material action button with configurable content, colors, padding, shape, and click handling.
 pub struct ComposeGeneratedElevatedButtonProps {
     /// Common layout, sizing, semantics, and modifier properties applied to this node.
     pub base_compose_common_props: ComposeCommonProps,
     /// Background color of the component's container.
-    pub container_color: Option<ComposeColor>,
+    pub containerColor: Option<ComposeColor>,
     /// Child nodes rendered inside the component.
     pub content: Option<ComposeChildren>,
     /// Default foreground color supplied to child content.
-    pub content_color: Option<ComposeColor>,
+    pub contentColor: Option<ComposeColor>,
     /// Padding between the container boundary and its child content.
-    pub content_padding: Option<ComposePadding>,
+    pub contentPadding: Option<ComposePadding>,
     /// Background color used when the component is disabled.
-    pub disabled_container_color: Option<ComposeColor>,
+    pub disabledContainerColor: Option<ComposeColor>,
     /// Foreground color supplied to content while the component is disabled.
-    pub disabled_content_color: Option<ComposeColor>,
+    pub disabledContentColor: Option<ComposeColor>,
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedElevatedButtonPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedElevatedButtonPropsOnClickOutput + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring an elevated Material card that groups related content above its surrounding surface.
 pub struct ComposeGeneratedElevatedCardProps {
@@ -689,17 +675,16 @@ pub struct ComposeGeneratedElevatedFilterChipProps {
     /// Label content identifying the control or destination.
     pub label: ComposeChildren,
     /// Icon content rendered before the component's label or value.
-    pub leading_icon: Option<ComposeChildren>,
+    pub leadingIcon: Option<ComposeChildren>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedElevatedFilterChipPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick:
+        Arc<dyn Fn() -> ComposeGeneratedElevatedFilterChipPropsOnClickOutput + Send + Sync>,
     /// Controlled state indicating whether this option or destination is selected.
     pub selected: bool,
     /// Icon content rendered after the component's label or value.
-    pub trailing_icon: Option<ComposeChildren>,
+    pub trailingIcon: Option<ComposeChildren>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring an elevated suggestion chip that presents a recommended action.
 pub struct ComposeGeneratedElevatedSuggestionChipProps {
@@ -712,12 +697,10 @@ pub struct ComposeGeneratedElevatedSuggestionChipProps {
     /// Label content identifying the control or destination.
     pub label: ComposeChildren,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn(
-        ) -> ComposeGeneratedElevatedSuggestionChipPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick:
+        Arc<dyn Fn() -> ComposeGeneratedElevatedSuggestionChipPropsOnClickOutput + Send + Sync>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring an extended floating action button for a prominent screen-level action.
 pub struct ComposeGeneratedExtendedFloatingActionButtonProps {
@@ -726,16 +709,15 @@ pub struct ComposeGeneratedExtendedFloatingActionButtonProps {
     /// Child nodes rendered inside the component.
     pub content: Option<ComposeChildren>,
     /// Default foreground color supplied to child content.
-    pub content_color: Option<ComposeColor>,
+    pub contentColor: Option<ComposeColor>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn(
-        ) -> ComposeGeneratedExtendedFloatingActionButtonPropsOnClickOutput + Send + Sync,
+    pub onClick: Arc<
+        dyn Fn() -> ComposeGeneratedExtendedFloatingActionButtonPropsOnClickOutput + Send + Sync,
     >,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a filled compact Material action button intended for an icon or custom content.
 pub struct ComposeGeneratedFilledIconButtonProps {
@@ -748,13 +730,11 @@ pub struct ComposeGeneratedFilledIconButtonProps {
     /// Icon resource or composed icon content displayed by the component.
     pub icon: Option<String>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedFilledIconButtonPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedFilledIconButtonPropsOnClickOutput + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a filled icon button with controlled checked state.
 pub struct ComposeGeneratedFilledIconToggleButtonProps {
@@ -767,38 +747,36 @@ pub struct ComposeGeneratedFilledIconToggleButtonProps {
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Called with the requested checked state after a toggle interaction.
-    pub on_checked_change: Arc<dyn Fn(bool) -> () + Send + Sync>,
+    pub onCheckedChange: Arc<dyn Fn(bool) -> () + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a tonal filled Material action button with configurable content, colors, padding, and click handling.
 pub struct ComposeGeneratedFilledTonalButtonProps {
     /// Common layout, sizing, semantics, and modifier properties applied to this node.
     pub base_compose_common_props: ComposeCommonProps,
     /// Background color of the component's container.
-    pub container_color: Option<ComposeColor>,
+    pub containerColor: Option<ComposeColor>,
     /// Child nodes rendered inside the component.
     pub content: Option<ComposeChildren>,
     /// Default foreground color supplied to child content.
-    pub content_color: Option<ComposeColor>,
+    pub contentColor: Option<ComposeColor>,
     /// Padding between the container boundary and its child content.
-    pub content_padding: Option<ComposePadding>,
+    pub contentPadding: Option<ComposePadding>,
     /// Background color used when the component is disabled.
-    pub disabled_container_color: Option<ComposeColor>,
+    pub disabledContainerColor: Option<ComposeColor>,
     /// Foreground color supplied to content while the component is disabled.
-    pub disabled_content_color: Option<ComposeColor>,
+    pub disabledContentColor: Option<ComposeColor>,
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedFilledTonalButtonPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedFilledTonalButtonPropsOnClickOutput + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a tonal filled compact Material action button intended for an icon or custom content.
 pub struct ComposeGeneratedFilledTonalIconButtonProps {
@@ -811,13 +789,12 @@ pub struct ComposeGeneratedFilledTonalIconButtonProps {
     /// Icon resource or composed icon content displayed by the component.
     pub icon: Option<String>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedFilledTonalIconButtonPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick:
+        Arc<dyn Fn() -> ComposeGeneratedFilledTonalIconButtonPropsOnClickOutput + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a tonal filled icon button with controlled checked state.
 pub struct ComposeGeneratedFilledTonalIconToggleButtonProps {
@@ -830,11 +807,11 @@ pub struct ComposeGeneratedFilledTonalIconToggleButtonProps {
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Called with the requested checked state after a toggle interaction.
-    pub on_checked_change: Arc<dyn Fn(bool) -> () + Send + Sync>,
+    pub onCheckedChange: Arc<dyn Fn(bool) -> () + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a selectable filter chip with controlled selection, optional icons, and click handling.
 pub struct ComposeGeneratedFilterChipProps {
@@ -845,17 +822,15 @@ pub struct ComposeGeneratedFilterChipProps {
     /// Label content identifying the control or destination.
     pub label: ComposeChildren,
     /// Icon content rendered before the component's label or value.
-    pub leading_icon: Option<ComposeChildren>,
+    pub leadingIcon: Option<ComposeChildren>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedFilterChipPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedFilterChipPropsOnClickOutput + Send + Sync>,
     /// Controlled state indicating whether this option or destination is selected.
     pub selected: bool,
     /// Icon content rendered after the component's label or value.
-    pub trailing_icon: Option<ComposeChildren>,
+    pub trailingIcon: Option<ComposeChildren>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a floating action button for a prominent screen-level action.
 pub struct ComposeGeneratedFloatingActionButtonProps {
@@ -864,15 +839,14 @@ pub struct ComposeGeneratedFloatingActionButtonProps {
     /// Child nodes rendered inside the component.
     pub content: Option<ComposeChildren>,
     /// Default foreground color supplied to child content.
-    pub content_color: Option<ComposeColor>,
+    pub contentColor: Option<ComposeColor>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedFloatingActionButtonPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick:
+        Arc<dyn Fn() -> ComposeGeneratedFloatingActionButtonPropsOnClickOutput + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a horizontal separator with configurable thickness and color.
 pub struct ComposeGeneratedHorizontalDividerProps {
@@ -898,11 +872,11 @@ pub struct ComposeGeneratedIconToggleButtonProps {
     /// Icon resource or composed icon content displayed by the component.
     pub icon: Option<String>,
     /// Called with the requested checked state after a toggle interaction.
-    pub on_checked_change: Arc<dyn Fn(bool) -> () + Send + Sync>,
+    pub onCheckedChange: Arc<dyn Fn(bool) -> () + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring an input chip representing user-supplied information, with avatar, label, icons, and selection state.
 pub struct ComposeGeneratedInputChipProps {
@@ -915,17 +889,15 @@ pub struct ComposeGeneratedInputChipProps {
     /// Label content identifying the control or destination.
     pub label: ComposeChildren,
     /// Icon content rendered before the component's label or value.
-    pub leading_icon: Option<ComposeChildren>,
+    pub leadingIcon: Option<ComposeChildren>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedInputChipPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedInputChipPropsOnClickOutput + Send + Sync>,
     /// Controlled state indicating whether this option or destination is selected.
     pub selected: bool,
     /// Icon content rendered after the component's label or value.
-    pub trailing_icon: Option<ComposeChildren>,
+    pub trailingIcon: Option<ComposeChildren>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a large floating action button for a prominent screen-level action.
 pub struct ComposeGeneratedLargeFloatingActionButtonProps {
@@ -934,16 +906,14 @@ pub struct ComposeGeneratedLargeFloatingActionButtonProps {
     /// Child nodes rendered inside the component.
     pub content: Option<ComposeChildren>,
     /// Default foreground color supplied to child content.
-    pub content_color: Option<ComposeColor>,
+    pub contentColor: Option<ComposeColor>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn(
-        ) -> ComposeGeneratedLargeFloatingActionButtonPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick:
+        Arc<dyn Fn() -> ComposeGeneratedLargeFloatingActionButtonPropsOnClickOutput + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a selectable tab that displays a leading icon beside its label.
 pub struct ComposeGeneratedLeadingIconTabProps {
@@ -954,15 +924,13 @@ pub struct ComposeGeneratedLeadingIconTabProps {
     /// Icon resource or composed icon content displayed by the component.
     pub icon: ComposeChildren,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedLeadingIconTabPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedLeadingIconTabPropsOnClickOutput + Send + Sync>,
     /// Controlled state indicating whether this option or destination is selected.
     pub selected: bool,
     /// Text content displayed by the component.
     pub text: ComposeChildren,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a Material list row with headline, supporting, overline, leading, and trailing content slots.
 pub struct ComposeGeneratedListItemProps {
@@ -1050,13 +1018,12 @@ pub struct ComposeGeneratedNavigationDrawerItemProps {
     /// Label content identifying the control or destination.
     pub label: ComposeChildren,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedNavigationDrawerItemPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick:
+        Arc<dyn Fn() -> ComposeGeneratedNavigationDrawerItemPropsOnClickOutput + Send + Sync>,
     /// Controlled state indicating whether this option or destination is selected.
     pub selected: bool,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a vertical navigation rail with an optional header and destination content.
 pub struct ComposeGeneratedNavigationRailProps {
@@ -1076,7 +1043,7 @@ pub struct ComposeGeneratedNavigationRailItemProps {
     /// Common layout, sizing, semantics, and modifier properties applied to this node.
     pub base_compose_common_props: ComposeCommonProps,
     /// Keeps the destination label visible even when the item is not selected.
-    pub always_show_label: Option<bool>,
+    pub alwaysShowLabel: Option<bool>,
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Icon resource or composed icon content displayed by the component.
@@ -1084,40 +1051,37 @@ pub struct ComposeGeneratedNavigationRailItemProps {
     /// Label content identifying the control or destination.
     pub label: Option<ComposeChildren>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedNavigationRailItemPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick:
+        Arc<dyn Fn() -> ComposeGeneratedNavigationRailItemPropsOnClickOutput + Send + Sync>,
     /// Controlled state indicating whether this option or destination is selected.
     pub selected: bool,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring an outlined Material action button with configurable content, colors, padding, shape, and click handling.
 pub struct ComposeGeneratedOutlinedButtonProps {
     /// Common layout, sizing, semantics, and modifier properties applied to this node.
     pub base_compose_common_props: ComposeCommonProps,
     /// Background color of the component's container.
-    pub container_color: Option<ComposeColor>,
+    pub containerColor: Option<ComposeColor>,
     /// Child nodes rendered inside the component.
     pub content: Option<ComposeChildren>,
     /// Default foreground color supplied to child content.
-    pub content_color: Option<ComposeColor>,
+    pub contentColor: Option<ComposeColor>,
     /// Padding between the container boundary and its child content.
-    pub content_padding: Option<ComposePadding>,
+    pub contentPadding: Option<ComposePadding>,
     /// Background color used when the component is disabled.
-    pub disabled_container_color: Option<ComposeColor>,
+    pub disabledContainerColor: Option<ComposeColor>,
     /// Foreground color supplied to content while the component is disabled.
-    pub disabled_content_color: Option<ComposeColor>,
+    pub disabledContentColor: Option<ComposeColor>,
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedOutlinedButtonPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedOutlinedButtonPropsOnClickOutput + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring an outlined Material card that groups related content within a bordered surface.
 pub struct ComposeGeneratedOutlinedCardProps {
@@ -1149,13 +1113,12 @@ pub struct ComposeGeneratedOutlinedIconButtonProps {
     /// Icon resource or composed icon content displayed by the component.
     pub icon: Option<String>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedOutlinedIconButtonPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick:
+        Arc<dyn Fn() -> ComposeGeneratedOutlinedIconButtonPropsOnClickOutput + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring an outlined icon button with controlled checked state.
 pub struct ComposeGeneratedOutlinedIconToggleButtonProps {
@@ -1168,11 +1131,11 @@ pub struct ComposeGeneratedOutlinedIconToggleButtonProps {
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Called with the requested checked state after a toggle interaction.
-    pub on_checked_change: Arc<dyn Fn(bool) -> () + Send + Sync>,
+    pub onCheckedChange: Arc<dyn Fn(bool) -> () + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring the always-visible sheet surface and content of a permanent navigation drawer.
 pub struct ComposeGeneratedPermanentDrawerSheetProps {
@@ -1250,17 +1213,16 @@ pub struct ComposeGeneratedPullToRefreshBoxProps {
     /// Child nodes rendered inside the component.
     pub content: Option<ComposeChildren>,
     /// Alignment used to position child content within the available bounds.
-    pub content_alignment: Option<ComposeAlignment>,
+    pub contentAlignment: Option<ComposeAlignment>,
     /// Custom indicator content showing selection or refresh state.
     pub indicator: Option<ComposeChildren>,
     /// Controlled state indicating that refresh work is currently active.
-    pub is_refreshing: bool,
+    pub isRefreshing: bool,
     /// Called when the pull gesture requests a content refresh.
-    pub on_refresh: Arc<
-        dyn Fn() -> ComposeGeneratedPullToRefreshBoxPropsOnRefreshOutput + Send + Sync,
-    >,
+    pub onRefresh:
+        Arc<dyn Fn() -> ComposeGeneratedPullToRefreshBoxPropsOnRefreshOutput + Send + Sync>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a selectable Material radio control for choosing one option from a group.
 pub struct ComposeGeneratedRadioButtonProps {
@@ -1269,15 +1231,13 @@ pub struct ComposeGeneratedRadioButtonProps {
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedRadioButtonPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedRadioButtonPropsOnClickOutput + Send + Sync>,
     /// Controlled state indicating whether this option or destination is selected.
     pub selected: bool,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a Material screen layout coordinating top bar, bottom bar, body, snackbar host, and floating action button.
 pub struct ComposeGeneratedScaffoldProps {
@@ -1358,14 +1318,12 @@ pub struct ComposeGeneratedShortNavigationBarItemProps {
     /// Label content identifying the control or destination.
     pub label: ComposeChildren,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn(
-        ) -> ComposeGeneratedShortNavigationBarItemPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick:
+        Arc<dyn Fn() -> ComposeGeneratedShortNavigationBarItemPropsOnClickOutput + Send + Sync>,
     /// Controlled state indicating whether this option or destination is selected.
     pub selected: bool,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a small floating action button for a prominent screen-level action.
 pub struct ComposeGeneratedSmallFloatingActionButtonProps {
@@ -1374,16 +1332,14 @@ pub struct ComposeGeneratedSmallFloatingActionButtonProps {
     /// Child nodes rendered inside the component.
     pub content: Option<ComposeChildren>,
     /// Default foreground color supplied to child content.
-    pub content_color: Option<ComposeColor>,
+    pub contentColor: Option<ComposeColor>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn(
-        ) -> ComposeGeneratedSmallFloatingActionButtonPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick:
+        Arc<dyn Fn() -> ComposeGeneratedSmallFloatingActionButtonPropsOnClickOutput + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a transient message surface with optional action and dismissal content.
 pub struct ComposeGeneratedSnackbarProps {
@@ -1413,11 +1369,9 @@ pub struct ComposeGeneratedSuggestionChipProps {
     /// Label content identifying the control or destination.
     pub label: ComposeChildren,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedSuggestionChipPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedSuggestionChipPropsOnClickOutput + Send + Sync>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a selectable tab with custom content and controlled selection state.
 pub struct ComposeGeneratedTabProps {
@@ -1428,60 +1382,56 @@ pub struct ComposeGeneratedTabProps {
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Called when the user activates the component.
-    pub on_click: Arc<dyn Fn() -> ComposeGeneratedTabPropsOnClickOutput + Send + Sync>,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedTabPropsOnClickOutput + Send + Sync>,
     /// Controlled state indicating whether this option or destination is selected.
     pub selected: bool,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a low-emphasis text action button with configurable content, colors, padding, and click handling.
 pub struct ComposeGeneratedTextButtonProps {
     /// Common layout, sizing, semantics, and modifier properties applied to this node.
     pub base_compose_common_props: ComposeCommonProps,
     /// Background color of the component's container.
-    pub container_color: Option<ComposeColor>,
+    pub containerColor: Option<ComposeColor>,
     /// Child nodes rendered inside the component.
     pub content: Option<ComposeChildren>,
     /// Default foreground color supplied to child content.
-    pub content_color: Option<ComposeColor>,
+    pub contentColor: Option<ComposeColor>,
     /// Padding between the container boundary and its child content.
-    pub content_padding: Option<ComposePadding>,
+    pub contentPadding: Option<ComposePadding>,
     /// Background color used when the component is disabled.
-    pub disabled_container_color: Option<ComposeColor>,
+    pub disabledContainerColor: Option<ComposeColor>,
     /// Foreground color supplied to content while the component is disabled.
-    pub disabled_content_color: Option<ComposeColor>,
+    pub disabledContentColor: Option<ComposeColor>,
     /// Controls whether the component accepts user interaction.
     pub enabled: Option<bool>,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn() -> ComposeGeneratedTextButtonPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick: Arc<dyn Fn() -> ComposeGeneratedTextButtonPropsOnClickOutput + Send + Sync>,
     /// Shape used for the component's container outline.
     pub shape: Option<ComposeShape>,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a Material time-picker dialog with title, controls, confirmation, dismissal, and mode switching slots.
 pub struct ComposeGeneratedTimePickerDialogProps {
     /// Common layout, sizing, semantics, and modifier properties applied to this node.
     pub base_compose_common_props: ComposeCommonProps,
     /// Confirmation action displayed by the time-picker dialog.
-    pub confirm_button: ComposeChildren,
+    pub confirmButton: ComposeChildren,
     /// Child nodes rendered inside the component.
     pub content: Option<ComposeChildren>,
     /// Optional dismissal action displayed by the time-picker dialog.
-    pub dismiss_button: Option<ComposeChildren>,
+    pub dismissButton: Option<ComposeChildren>,
     /// Optional control for switching the time picker's input mode.
-    pub mode_toggle_button: Option<ComposeChildren>,
+    pub modeToggleButton: Option<ComposeChildren>,
     /// Called when user interaction requests that the popup or dialog close.
-    pub on_dismiss_request: Arc<
-        dyn Fn(
-        ) -> ComposeGeneratedTimePickerDialogPropsOnDismissRequestOutput + Send + Sync,
-    >,
+    pub onDismissRequest:
+        Arc<dyn Fn() -> ComposeGeneratedTimePickerDialogPropsOnDismissRequestOutput + Send + Sync>,
     /// Title content displayed at the top of the time-picker dialog.
     pub title: ComposeChildren,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a vertical separator with configurable thickness and color.
 pub struct ComposeGeneratedVerticalDividerProps {
@@ -1525,16 +1475,14 @@ pub struct ComposeGeneratedWideNavigationRailItemProps {
     /// Label content identifying the control or destination.
     pub label: ComposeChildren,
     /// Called when the user activates the component.
-    pub on_click: Arc<
-        dyn Fn(
-        ) -> ComposeGeneratedWideNavigationRailItemPropsOnClickOutput + Send + Sync,
-    >,
+    pub onClick:
+        Arc<dyn Fn() -> ComposeGeneratedWideNavigationRailItemPropsOnClickOutput + Send + Sync>,
     /// Indicates whether the containing wide navigation rail is expanded.
-    pub rail_expanded: bool,
+    pub railExpanded: bool,
     /// Controlled state indicating whether this option or destination is selected.
     pub selected: bool,
     /// Drawing order relative to sibling nodes; larger values render above smaller values.
-    pub z_index: Option<f64>,
+    pub zIndex: Option<f64>,
 }
 /// Properties configuring a stacking layout that exposes its available constraints while aligning child content.
 pub struct ComposeGeneratedBoxWithConstraintsProps {
@@ -1661,13 +1609,10 @@ pub struct ComposeMaterial3GeneratedUiFactoryRegistry {
     /// Factory used to construct Icon nodes from their typed properties.
     pub Icon: ComposeNodeFactory<ComposeGeneratedIconProps>,
     /// Factory used to construct Linear Progress Indicator nodes from their typed properties.
-    pub LinearProgressIndicator: ComposeNodeFactory<
-        ComposeGeneratedLinearProgressIndicatorProps,
-    >,
+    pub LinearProgressIndicator: ComposeNodeFactory<ComposeGeneratedLinearProgressIndicatorProps>,
     /// Factory used to construct Circular Progress Indicator nodes from their typed properties.
-    pub CircularProgressIndicator: ComposeNodeFactory<
-        ComposeGeneratedCircularProgressIndicatorProps,
-    >,
+    pub CircularProgressIndicator:
+        ComposeNodeFactory<ComposeGeneratedCircularProgressIndicatorProps>,
     /// Factory used to construct Snackbar Host nodes from their typed properties.
     pub SnackbarHost: ComposeNodeFactory<ComposeGeneratedSnackbarHostProps>,
     /// Factory used to construct Assist Chip nodes from their typed properties.
@@ -1677,13 +1622,10 @@ pub struct ComposeMaterial3GeneratedUiFactoryRegistry {
     /// Factory used to construct Badged Box nodes from their typed properties.
     pub BadgedBox: ComposeNodeFactory<ComposeGeneratedBadgedBoxProps>,
     /// Factory used to construct Dismissible Drawer Sheet nodes from their typed properties.
-    pub DismissibleDrawerSheet: ComposeNodeFactory<
-        ComposeGeneratedDismissibleDrawerSheetProps,
-    >,
+    pub DismissibleDrawerSheet: ComposeNodeFactory<ComposeGeneratedDismissibleDrawerSheetProps>,
     /// Factory used to construct Dismissible Navigation Drawer nodes from their typed properties.
-    pub DismissibleNavigationDrawer: ComposeNodeFactory<
-        ComposeGeneratedDismissibleNavigationDrawerProps,
-    >,
+    pub DismissibleNavigationDrawer:
+        ComposeNodeFactory<ComposeGeneratedDismissibleNavigationDrawerProps>,
     /// Factory used to construct Divider nodes from their typed properties.
     pub Divider: ComposeNodeFactory<ComposeGeneratedDividerProps>,
     /// Factory used to construct Dropdown Menu nodes from their typed properties.
@@ -1697,35 +1639,25 @@ pub struct ComposeMaterial3GeneratedUiFactoryRegistry {
     /// Factory used to construct Elevated Filter Chip nodes from their typed properties.
     pub ElevatedFilterChip: ComposeNodeFactory<ComposeGeneratedElevatedFilterChipProps>,
     /// Factory used to construct Elevated Suggestion Chip nodes from their typed properties.
-    pub ElevatedSuggestionChip: ComposeNodeFactory<
-        ComposeGeneratedElevatedSuggestionChipProps,
-    >,
+    pub ElevatedSuggestionChip: ComposeNodeFactory<ComposeGeneratedElevatedSuggestionChipProps>,
     /// Factory used to construct Extended Floating Action Button nodes from their typed properties.
-    pub ExtendedFloatingActionButton: ComposeNodeFactory<
-        ComposeGeneratedExtendedFloatingActionButtonProps,
-    >,
+    pub ExtendedFloatingActionButton:
+        ComposeNodeFactory<ComposeGeneratedExtendedFloatingActionButtonProps>,
     /// Factory used to construct Filled Icon Button nodes from their typed properties.
     pub FilledIconButton: ComposeNodeFactory<ComposeGeneratedFilledIconButtonProps>,
     /// Factory used to construct Filled Icon Toggle Button nodes from their typed properties.
-    pub FilledIconToggleButton: ComposeNodeFactory<
-        ComposeGeneratedFilledIconToggleButtonProps,
-    >,
+    pub FilledIconToggleButton: ComposeNodeFactory<ComposeGeneratedFilledIconToggleButtonProps>,
     /// Factory used to construct Filled Tonal Button nodes from their typed properties.
     pub FilledTonalButton: ComposeNodeFactory<ComposeGeneratedFilledTonalButtonProps>,
     /// Factory used to construct Filled Tonal Icon Button nodes from their typed properties.
-    pub FilledTonalIconButton: ComposeNodeFactory<
-        ComposeGeneratedFilledTonalIconButtonProps,
-    >,
+    pub FilledTonalIconButton: ComposeNodeFactory<ComposeGeneratedFilledTonalIconButtonProps>,
     /// Factory used to construct Filled Tonal Icon Toggle Button nodes from their typed properties.
-    pub FilledTonalIconToggleButton: ComposeNodeFactory<
-        ComposeGeneratedFilledTonalIconToggleButtonProps,
-    >,
+    pub FilledTonalIconToggleButton:
+        ComposeNodeFactory<ComposeGeneratedFilledTonalIconToggleButtonProps>,
     /// Factory used to construct Filter Chip nodes from their typed properties.
     pub FilterChip: ComposeNodeFactory<ComposeGeneratedFilterChipProps>,
     /// Factory used to construct Floating Action Button nodes from their typed properties.
-    pub FloatingActionButton: ComposeNodeFactory<
-        ComposeGeneratedFloatingActionButtonProps,
-    >,
+    pub FloatingActionButton: ComposeNodeFactory<ComposeGeneratedFloatingActionButtonProps>,
     /// Factory used to construct Horizontal Divider nodes from their typed properties.
     pub HorizontalDivider: ComposeNodeFactory<ComposeGeneratedHorizontalDividerProps>,
     /// Factory used to construct Icon Toggle Button nodes from their typed properties.
@@ -1733,9 +1665,8 @@ pub struct ComposeMaterial3GeneratedUiFactoryRegistry {
     /// Factory used to construct Input Chip nodes from their typed properties.
     pub InputChip: ComposeNodeFactory<ComposeGeneratedInputChipProps>,
     /// Factory used to construct Large Floating Action Button nodes from their typed properties.
-    pub LargeFloatingActionButton: ComposeNodeFactory<
-        ComposeGeneratedLargeFloatingActionButtonProps,
-    >,
+    pub LargeFloatingActionButton:
+        ComposeNodeFactory<ComposeGeneratedLargeFloatingActionButtonProps>,
     /// Factory used to construct Leading Icon Tab nodes from their typed properties.
     pub LeadingIconTab: ComposeNodeFactory<ComposeGeneratedLeadingIconTabProps>,
     /// Factory used to construct List Item nodes from their typed properties.
@@ -1743,19 +1674,13 @@ pub struct ComposeMaterial3GeneratedUiFactoryRegistry {
     /// Factory used to construct Modal Drawer Sheet nodes from their typed properties.
     pub ModalDrawerSheet: ComposeNodeFactory<ComposeGeneratedModalDrawerSheetProps>,
     /// Factory used to construct Modal Navigation Drawer nodes from their typed properties.
-    pub ModalNavigationDrawer: ComposeNodeFactory<
-        ComposeGeneratedModalNavigationDrawerProps,
-    >,
+    pub ModalNavigationDrawer: ComposeNodeFactory<ComposeGeneratedModalNavigationDrawerProps>,
     /// Factory used to construct Modal Wide Navigation Rail nodes from their typed properties.
-    pub ModalWideNavigationRail: ComposeNodeFactory<
-        ComposeGeneratedModalWideNavigationRailProps,
-    >,
+    pub ModalWideNavigationRail: ComposeNodeFactory<ComposeGeneratedModalWideNavigationRailProps>,
     /// Factory used to construct Navigation Bar nodes from their typed properties.
     pub NavigationBar: ComposeNodeFactory<ComposeGeneratedNavigationBarProps>,
     /// Factory used to construct Navigation Drawer Item nodes from their typed properties.
-    pub NavigationDrawerItem: ComposeNodeFactory<
-        ComposeGeneratedNavigationDrawerItemProps,
-    >,
+    pub NavigationDrawerItem: ComposeNodeFactory<ComposeGeneratedNavigationDrawerItemProps>,
     /// Factory used to construct Navigation Rail nodes from their typed properties.
     pub NavigationRail: ComposeNodeFactory<ComposeGeneratedNavigationRailProps>,
     /// Factory used to construct Navigation Rail Item nodes from their typed properties.
@@ -1767,21 +1692,14 @@ pub struct ComposeMaterial3GeneratedUiFactoryRegistry {
     /// Factory used to construct Outlined Icon Button nodes from their typed properties.
     pub OutlinedIconButton: ComposeNodeFactory<ComposeGeneratedOutlinedIconButtonProps>,
     /// Factory used to construct Outlined Icon Toggle Button nodes from their typed properties.
-    pub OutlinedIconToggleButton: ComposeNodeFactory<
-        ComposeGeneratedOutlinedIconToggleButtonProps,
-    >,
+    pub OutlinedIconToggleButton: ComposeNodeFactory<ComposeGeneratedOutlinedIconToggleButtonProps>,
     /// Factory used to construct Permanent Drawer Sheet nodes from their typed properties.
-    pub PermanentDrawerSheet: ComposeNodeFactory<
-        ComposeGeneratedPermanentDrawerSheetProps,
-    >,
+    pub PermanentDrawerSheet: ComposeNodeFactory<ComposeGeneratedPermanentDrawerSheetProps>,
     /// Factory used to construct Permanent Navigation Drawer nodes from their typed properties.
-    pub PermanentNavigationDrawer: ComposeNodeFactory<
-        ComposeGeneratedPermanentNavigationDrawerProps,
-    >,
+    pub PermanentNavigationDrawer:
+        ComposeNodeFactory<ComposeGeneratedPermanentNavigationDrawerProps>,
     /// Factory used to construct Primary Scrollable Tab Row nodes from their typed properties.
-    pub PrimaryScrollableTabRow: ComposeNodeFactory<
-        ComposeGeneratedPrimaryScrollableTabRowProps,
-    >,
+    pub PrimaryScrollableTabRow: ComposeNodeFactory<ComposeGeneratedPrimaryScrollableTabRowProps>,
     /// Factory used to construct Primary Tab Row nodes from their typed properties.
     pub PrimaryTabRow: ComposeNodeFactory<ComposeGeneratedPrimaryTabRowProps>,
     /// Factory used to construct Provide Text Style nodes from their typed properties.
@@ -1793,21 +1711,17 @@ pub struct ComposeMaterial3GeneratedUiFactoryRegistry {
     /// Factory used to construct Scaffold nodes from their typed properties.
     pub Scaffold: ComposeNodeFactory<ComposeGeneratedScaffoldProps>,
     /// Factory used to construct Secondary Scrollable Tab Row nodes from their typed properties.
-    pub SecondaryScrollableTabRow: ComposeNodeFactory<
-        ComposeGeneratedSecondaryScrollableTabRowProps,
-    >,
+    pub SecondaryScrollableTabRow:
+        ComposeNodeFactory<ComposeGeneratedSecondaryScrollableTabRowProps>,
     /// Factory used to construct Secondary Tab Row nodes from their typed properties.
     pub SecondaryTabRow: ComposeNodeFactory<ComposeGeneratedSecondaryTabRowProps>,
     /// Factory used to construct Short Navigation Bar nodes from their typed properties.
     pub ShortNavigationBar: ComposeNodeFactory<ComposeGeneratedShortNavigationBarProps>,
     /// Factory used to construct Short Navigation Bar Item nodes from their typed properties.
-    pub ShortNavigationBarItem: ComposeNodeFactory<
-        ComposeGeneratedShortNavigationBarItemProps,
-    >,
+    pub ShortNavigationBarItem: ComposeNodeFactory<ComposeGeneratedShortNavigationBarItemProps>,
     /// Factory used to construct Small Floating Action Button nodes from their typed properties.
-    pub SmallFloatingActionButton: ComposeNodeFactory<
-        ComposeGeneratedSmallFloatingActionButtonProps,
-    >,
+    pub SmallFloatingActionButton:
+        ComposeNodeFactory<ComposeGeneratedSmallFloatingActionButtonProps>,
     /// Factory used to construct Snackbar nodes from their typed properties.
     pub Snackbar: ComposeNodeFactory<ComposeGeneratedSnackbarProps>,
     /// Factory used to construct Suggestion Chip nodes from their typed properties.
@@ -1825,9 +1739,7 @@ pub struct ComposeMaterial3GeneratedUiFactoryRegistry {
     /// Factory used to construct Wide Navigation Rail nodes from their typed properties.
     pub WideNavigationRail: ComposeNodeFactory<ComposeGeneratedWideNavigationRailProps>,
     /// Factory used to construct Wide Navigation Rail Item nodes from their typed properties.
-    pub WideNavigationRailItem: ComposeNodeFactory<
-        ComposeGeneratedWideNavigationRailItemProps,
-    >,
+    pub WideNavigationRailItem: ComposeNodeFactory<ComposeGeneratedWideNavigationRailItemProps>,
     /// Factory used to construct Box With Constraints nodes from their typed properties.
     pub BoxWithConstraints: ComposeNodeFactory<ComposeGeneratedBoxWithConstraintsProps>,
     /// Factory used to construct Basic Text nodes from their typed properties.

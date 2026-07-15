@@ -8,4 +8,7 @@ description = "Rust AST based TypeScript declaration generator for operit-plugin
 repository = "https://github.com/AAswordman/Operit2"
 
 [dependencies]
+quote = "1"
 syn = { version = "2", features = ["full", "visit"] }
+tree-sitter = "0.25"
+tree-sitter-javascript = "0.23"

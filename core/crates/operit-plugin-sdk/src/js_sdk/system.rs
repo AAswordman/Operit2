@@ -84,9 +84,7 @@ pub struct SystemBluetoothBleHostWriteAndReadCharacteristicOptions {
     pub data_base64: Option<String>,
     /// Sets the maximum response wait in milliseconds.
     #[serde(rename = "timeoutMs")]
-    pub timeout_ms: Option<
-        SystemBluetoothBleHostWriteAndReadCharacteristicOptionsTimeoutMs,
-    >,
+    pub timeout_ms: Option<SystemBluetoothBleHostWriteAndReadCharacteristicOptionsTimeoutMs>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Selects a BLE characteristic and enables or disables value notifications.
@@ -228,9 +226,7 @@ pub struct SystemTerminalHostExecStreamingOptions {
     /// Sets the maximum command execution time in milliseconds.
     pub timeout_ms: Option<SystemTerminalHostExecStreamingOptionsTimeoutMs>,
     /// Receives output events while the command is still running.
-    pub on_intermediate_result: Option<
-        Arc<dyn Fn(TerminalStreamEventData) -> () + Send + Sync>,
-    >,
+    pub on_intermediate_result: Option<Arc<dyn Fn(TerminalStreamEventData) -> () + Send + Sync>>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -359,20 +355,14 @@ pub trait SystemHost: Send + Sync {
     ///Sleep for specified milliseconds
     ///@param milliseconds - Milliseconds to sleep
     ///
-    fn sleep(
-        &self,
-        milliseconds: SystemHostSleepMilliseconds,
-    ) -> JsFuture<SleepResultData>;
+    fn sleep(&self, milliseconds: SystemHostSleepMilliseconds) -> JsFuture<SleepResultData>;
     ///
     ///Get a system setting
     ///@param setting - Setting name
     ///@param namespace - Setting namespace
     ///
-    fn getSetting(
-        &self,
-        setting: String,
-        namespace: Option<String>,
-    ) -> JsFuture<SystemSettingData>;
+    fn getSetting(&self, setting: String, namespace: Option<String>)
+        -> JsFuture<SystemSettingData>;
     ///
     ///Modify a system setting
     ///@param setting - Setting name
@@ -393,17 +383,13 @@ pub trait SystemHost: Send + Sync {
     ///Show a toast message on device.
     ///@param message - The message to show
     ///
-    fn toast(&self, message: String) -> JsFuture<StringResultData>;
+    fn toast(&self, message: String) -> JsFuture<String>;
     ///
     ///Send a notification using the same channel as AI reply completion.
     ///@param message - Notification content
     ///@param title - Optional notification title
     ///
-    fn sendNotification(
-        &self,
-        message: String,
-        title: Option<String>,
-    ) -> JsFuture<StringResultData>;
+    fn sendNotification(&self, message: String, title: Option<String>) -> JsFuture<String>;
     ///
     ///Use a tool package
     ///@param packageName - Package name
@@ -434,11 +420,8 @@ pub trait SystemHost: Send + Sync {
     ///@param packageName - Package name
     ///@param activity - Optional specific activity to launch
     ///
-    fn startApp(
-        &self,
-        packageName: String,
-        activity: Option<String>,
-    ) -> JsFuture<AppOperationData>;
+    fn startApp(&self, packageName: String, activity: Option<String>)
+        -> JsFuture<AppOperationData>;
     ///
     ///Get device notifications
     ///@param limit - Maximum number of notifications to return (default: 10)
@@ -475,11 +458,11 @@ pub trait SystemHost: Send + Sync {
 ///
 pub trait SystemBluetoothHost: Send + Sync {
     ///Request Bluetooth nearby devices permission.
-    fn requestPermission(&self) -> JsFuture<StringResultData>;
+    fn requestPermission(&self) -> JsFuture<String>;
     ///Get Bluetooth adapter state.
     fn getState(&self) -> JsFuture<BluetoothStateData>;
     ///Open the system dialog to enable Bluetooth.
-    fn requestEnable(&self) -> JsFuture<StringResultData>;
+    fn requestEnable(&self) -> JsFuture<String>;
     ///List bonded Bluetooth devices.
     fn listBondedDevices(&self) -> JsFuture<BluetoothBondedDevicesData>;
     ///Scan nearby Bluetooth classic and BLE devices.
@@ -488,10 +471,8 @@ pub trait SystemBluetoothHost: Send + Sync {
         options: Option<SystemBluetoothHostScanOptions>,
     ) -> JsFuture<BluetoothScanResultData>;
     ///Connect to a Bluetooth classic device.
-    fn connect(
-        &self,
-        options: SystemBluetoothHostConnectOptions,
-    ) -> JsFuture<BluetoothSessionData>;
+    fn connect(&self, options: SystemBluetoothHostConnectOptions)
+        -> JsFuture<BluetoothSessionData>;
     ///Listen for another device connecting to this phone over Bluetooth classic.
     fn listen(
         &self,
@@ -522,7 +503,7 @@ pub trait SystemBluetoothHost: Send + Sync {
         options: SystemBluetoothHostSendAndReadOptions,
     ) -> JsFuture<BluetoothReadData>;
     ///Close a Bluetooth classic, listener, or BLE session.
-    fn close(&self, sessionId: String) -> JsFuture<StringResultData>;
+    fn close(&self, sessionId: String) -> JsFuture<String>;
 }
 /// Connects to BLE peripherals and accesses their services, characteristics, and notifications.
 pub trait SystemBluetoothBleHost: Send + Sync {
@@ -652,7 +633,7 @@ pub trait SystemTerminalHost: Send + Sync {
         &self,
         sessionId: String,
         options: Option<SystemTerminalHostInputOptions>,
-    ) -> JsFuture<StringResultData>;
+    ) -> JsFuture<String>;
 }
 ///
 ///App music playback operations.
@@ -662,10 +643,7 @@ pub trait SystemMusicHost: Send + Sync {
     ///Play audio inside the app.
     ///@param options Playback options
     ///
-    fn play(
-        &self,
-        options: SystemMusicHostPlayOptions,
-    ) -> JsFuture<MusicPlaybackResultData>;
+    fn play(&self, options: SystemMusicHostPlayOptions) -> JsFuture<MusicPlaybackResultData>;
     ///Pause current music playback.
     fn pause(&self) -> JsFuture<MusicPlaybackResultData>;
     ///Resume current music playback.
@@ -676,10 +654,7 @@ pub trait SystemMusicHost: Send + Sync {
     ///Seek current music playback.
     ///@param positionMs Target position in milliseconds
     ///
-    fn seek(
-        &self,
-        positionMs: SystemMusicHostSeekPositionMs,
-    ) -> JsFuture<MusicPlaybackResultData>;
+    fn seek(&self, positionMs: SystemMusicHostSeekPositionMs) -> JsFuture<MusicPlaybackResultData>;
     ///
     ///Set playback volume.
     ///@param volume Volume from 0 to 1

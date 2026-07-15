@@ -7,6 +7,7 @@ use operit_plugin_sdk::javascript::{
     JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolCallResultData,
     JsToolNameResolutionRequest, JsToolPkgIpcRequest, JsToolPkgResourceRequest,
 };
+use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_plugin_sdk::package::ToolPackage;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_tools::files::PathMapper::PathMapper;
@@ -44,6 +45,7 @@ pub struct AIToolHandler {
 pub struct AIToolHandlerState {
     availableTools: BTreeMap<String, Box<dyn ToolExecutor>>,
     toolVisibility: BTreeMap<String, ToolRegistrationVisibility>,
+    unavailableBuiltinTools: BTreeMap<BuiltinToolName, String>,
     defaultToolsRegistered: bool,
     context: HostManager,
     runtimeDependencies: ToolRuntimeDependencies,
@@ -89,6 +91,7 @@ impl AIToolHandler {
             inner: Arc::new(Mutex::new(AIToolHandlerState {
                 availableTools: BTreeMap::new(),
                 toolVisibility: BTreeMap::new(),
+                unavailableBuiltinTools: BTreeMap::new(),
                 defaultToolsRegistered: false,
                 context,
                 runtimeDependencies,
@@ -346,6 +349,50 @@ impl AIToolHandler {
         self.registerToolWithVisibility(name, executor, ToolRegistrationVisibility::INTERNAL);
     }
 
+    /// Registers one statically declared built-in tool with explicit visibility.
+    #[allow(non_snake_case)]
+    pub fn registerBuiltinTool(
+        &mut self,
+        name: BuiltinToolName,
+        executor: Box<dyn ToolExecutor>,
+        visibility: ToolRegistrationVisibility,
+    ) {
+        let toolName = name.as_str().to_string();
+        let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
+        assert!(
+            !guard.availableTools.contains_key(&toolName),
+            "Built-in tool is registered more than once: {toolName}"
+        );
+        assert!(
+            !guard.unavailableBuiltinTools.contains_key(&name),
+            "Built-in tool cannot be both registered and unavailable: {toolName}"
+        );
+        guard.availableTools.insert(
+            toolName.clone(),
+            Box::new(ContractCheckedBuiltinToolExecutor { name, executor }),
+        );
+        guard.toolVisibility.insert(toolName, visibility);
+    }
+
+    /// Marks built-in tools as unavailable because their required host capability is absent.
+    #[allow(non_snake_case)]
+    pub(crate) fn markBuiltinToolsUnavailable(&mut self, names: &[BuiltinToolName], reason: &str) {
+        let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
+        for name in names {
+            assert!(
+                !guard.availableTools.contains_key(name.as_str()),
+                "Registered built-in tool cannot be marked unavailable: {name}"
+            );
+            assert!(
+                guard
+                    .unavailableBuiltinTools
+                    .insert(*name, reason.to_string())
+                    .is_none(),
+                "Built-in tool is marked unavailable more than once: {name}"
+            );
+        }
+    }
+
     /// Registers a tool executor with explicit public or internal visibility.
     #[allow(non_snake_case)]
     pub fn registerToolWithVisibility(
@@ -354,6 +401,10 @@ impl AIToolHandler {
         executor: Box<dyn ToolExecutor>,
         visibility: ToolRegistrationVisibility,
     ) {
+        assert!(
+            BuiltinToolName::from_name(&name).is_none(),
+            "Built-in tools must use registerBuiltinTool: {name}"
+        );
         let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
         guard.availableTools.insert(name.clone(), executor);
         guard.toolVisibility.insert(name, visibility);
@@ -387,10 +438,16 @@ impl AIToolHandler {
                 .clone()
         };
         registerAllTools(self, &context);
-        self.inner
-            .lock()
-            .expect("AIToolHandler mutex poisoned")
-            .defaultToolsRegistered = true;
+        let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
+        for name in BuiltinToolName::ALL {
+            let registered = guard.availableTools.contains_key(name.as_str());
+            let unavailable = guard.unavailableBuiltinTools.contains_key(name);
+            assert!(
+                registered ^ unavailable,
+                "Built-in tool must be exactly registered or unavailable: {name}"
+            );
+        }
+        guard.defaultToolsRegistered = true;
     }
 
     #[allow(non_snake_case)]
@@ -1011,6 +1068,7 @@ impl AIToolHandler {
         let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
         guard.availableTools.clear();
         guard.toolVisibility.clear();
+        guard.unavailableBuiltinTools.clear();
         guard.defaultToolsRegistered = false;
     }
 }
@@ -1173,10 +1231,67 @@ impl JsExecutionHost for AIToolHandler {
 }
 
 pub struct FnToolExecutor {
-    pub name: String,
     pub invoke: Arc<dyn Fn(&AITool) -> ToolResult + Send + Sync>,
     pub validate: Arc<dyn Fn(&AITool) -> ToolValidationResult + Send + Sync>,
     pub effect: ToolEffect,
+}
+
+/// Enforces the registered name and successful result contract for one built-in executor.
+struct ContractCheckedBuiltinToolExecutor {
+    name: BuiltinToolName,
+    executor: Box<dyn ToolExecutor>,
+}
+
+impl ToolExecutor for ContractCheckedBuiltinToolExecutor {
+    /// Validates parameters only for the exact built-in name bound during registration.
+    fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
+        assert_eq!(
+            tool.name,
+            self.name.as_str(),
+            "Built-in executor received a different tool name"
+        );
+        self.executor.validateParameters(tool)
+    }
+
+    /// Delegates access classification after verifying the registered built-in name.
+    fn accessSpec(&self, tool: &AITool) -> Result<ToolAccessSpec, String> {
+        assert_eq!(
+            tool.name,
+            self.name.as_str(),
+            "Built-in executor received a different tool name"
+        );
+        self.executor.accessSpec(tool)
+    }
+
+    /// Verifies every successful result emitted by the wrapped built-in executor.
+    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
+        assert_eq!(
+            tool.name,
+            self.name.as_str(),
+            "Built-in executor received a different tool name"
+        );
+        let results = self.executor.invokeAndStream(tool);
+        for result in &results {
+            if self.name != BuiltinToolName::PackageProxy {
+                assert_eq!(
+                    result.toolName,
+                    self.name.as_str(),
+                    "Built-in executor emitted a result for a different tool name"
+                );
+            }
+            assert!(
+                !result.success || self.name.accepts_runtime_result(&result.result),
+                "Built-in executor emitted an incompatible successful result: {}",
+                self.name
+            );
+            assert!(
+                result.success || result.error.is_some(),
+                "Built-in executor emitted a failed result without an error: {}",
+                self.name
+            );
+        }
+        results
+    }
 }
 
 impl ToolExecutor for FnToolExecutor {

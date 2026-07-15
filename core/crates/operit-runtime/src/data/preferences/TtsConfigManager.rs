@@ -284,14 +284,10 @@ impl TtsConfigManager {
                 .read()
                 .map_err(|error| error.to_string())?;
         let mut voices = Vec::new();
-        for installed in registry
-            .installedModels
-            .into_iter()
-            .filter(|model| {
-                model.manifest.kind == LocalModelKind::TextToSpeech
-                    && model.manifest.supportsPlatform(&platform)
-            })
-        {
+        for installed in registry.installedModels.into_iter().filter(|model| {
+            model.manifest.kind == LocalModelKind::TextToSpeech
+                && model.manifest.supportsPlatform(&platform)
+        }) {
             let driver = installed.manifest.driver.as_ref().ok_or_else(|| {
                 format!(
                     "local TTS model driver is missing: {}",

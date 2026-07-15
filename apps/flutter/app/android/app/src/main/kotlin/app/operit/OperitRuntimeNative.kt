@@ -58,4 +58,12 @@ object OperitRuntimeNative {
     ): String
 
     @JvmStatic external fun emitRuntimeEvent(handle: Long, eventJson: String): String
+
+    @JvmStatic
+    external fun emitHostRuntimeEventSchedule(
+        handle: Long,
+        scheduleId: String,
+        scheduledAtMillis: Long,
+        firedAtMillis: Long,
+    ): String
 }

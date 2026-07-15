@@ -3,9 +3,9 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     AudioPlaybackHost, BluetoothHost, BrowserAutomationHost, BrowserSessionHost,
     ComposeDslWebViewHost, FileSystemHost, HostEnvironmentDescriptor, HostRuntimeEventHost,
-    HostSecretStore, HttpHost, LocalInferenceHost, ManagedRuntimeHost, RuntimeSqliteHost,
-    RuntimeStorageHost, SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost,
-    WebVisitHost,
+    HostRuntimeEventSchedulerHost, HostSecretStore, HttpHost, LocalInferenceHost,
+    ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost, SystemOperationHost, TerminalHost,
+    TtsPlaybackHost, TtsSynthesisHost, WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
@@ -49,6 +49,7 @@ pub struct HostManager {
     pub runtimeSqliteHost: Option<Arc<dyn RuntimeSqliteHost>>,
     pub hostSecretStore: Option<Arc<dyn HostSecretStore>>,
     pub hostRuntimeEventHost: Option<Arc<dyn HostRuntimeEventHost>>,
+    pub hostRuntimeEventSchedulerHost: Option<Arc<dyn HostRuntimeEventSchedulerHost>>,
     pub hostEnvironment: HostEnvironmentDescriptor,
     pub coreCommandExecutor: Option<CoreCommandExecutor>,
 }
@@ -75,6 +76,7 @@ impl HostManager {
             runtimeSqliteHost: None,
             hostSecretStore: None,
             hostRuntimeEventHost: None,
+            hostRuntimeEventSchedulerHost: None,
             hostEnvironment: HostEnvironmentDescriptor::android(),
             coreCommandExecutor: None,
         }
@@ -103,6 +105,7 @@ impl HostManager {
             runtimeSqliteHost: None,
             hostSecretStore: None,
             hostRuntimeEventHost: None,
+            hostRuntimeEventSchedulerHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -134,6 +137,7 @@ impl HostManager {
             runtimeSqliteHost: None,
             hostSecretStore: None,
             hostRuntimeEventHost: None,
+            hostRuntimeEventSchedulerHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -166,6 +170,7 @@ impl HostManager {
             runtimeSqliteHost: None,
             hostSecretStore: None,
             hostRuntimeEventHost: None,
+            hostRuntimeEventSchedulerHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -202,6 +207,7 @@ impl HostManager {
             runtimeSqliteHost: Some(runtimeSqliteHost),
             hostSecretStore: None,
             hostRuntimeEventHost: None,
+            hostRuntimeEventSchedulerHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -303,6 +309,16 @@ impl HostManager {
         hostRuntimeEventHost: Arc<dyn HostRuntimeEventHost>,
     ) -> Self {
         self.hostRuntimeEventHost = Some(hostRuntimeEventHost);
+        self
+    }
+
+    /// Adds a host-owned timer and interval scheduler for ToolPkg events.
+    #[allow(non_snake_case)]
+    pub fn withHostRuntimeEventSchedulerHost(
+        mut self,
+        hostRuntimeEventSchedulerHost: Arc<dyn HostRuntimeEventSchedulerHost>,
+    ) -> Self {
+        self.hostRuntimeEventSchedulerHost = Some(hostRuntimeEventSchedulerHost);
         self
     }
 }

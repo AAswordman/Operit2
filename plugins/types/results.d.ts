@@ -177,7 +177,7 @@ export interface BooleanResultData {
 }
 
 /**
- * Wraps a string value returned by a built-in tool.
+ * Wraps a string inside the Rust tool runtime before the JavaScript bridge emits a primitive string.
  */
 export interface StringResultData {
   /**

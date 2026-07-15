@@ -271,18 +271,19 @@ unsafe extern "system" fn network_change_callback(
         return;
     }
     let state = &*(callerContext as *const WindowsEventState);
-    let (interfaceIndex, family) = if row.is_null() {
-        (0u32, 0u16)
+    let connected = if row.is_null() {
+        false
     } else {
-        ((*row).InterfaceIndex, (*row).Family)
+        (*row).Connected != 0
     };
     emit(
         &state.sink,
         "system.network.changed",
         serde_json::json!({
-            "notificationType": notificationType,
-            "interfaceIndex": interfaceIndex,
-            "family": family,
+            "connected": connected,
+            "networkType": if connected { "other" } else { "none" },
+            "metered": null,
+            "interfaceName": null,
         }),
     );
 }
@@ -374,11 +375,11 @@ unsafe extern "system" fn window_proc(
 unsafe fn handle_power_broadcast(state: &mut WindowsEventState, wparam: WPARAM, lparam: LPARAM) {
     match wparam {
         PBT_APMSUSPEND => {
-            emit(&state.sink, "system.power.sleep", serde_json::json!({}));
+            emit(&state.sink, "system.power.sleep", serde_json::json!({"sleeping": true}));
             return;
         }
         PBT_APMRESUMESUSPEND | PBT_APMRESUMEAUTOMATIC => {
-            emit(&state.sink, "system.power.wake", serde_json::json!({}));
+            emit(&state.sink, "system.power.wake", serde_json::json!({"sleeping": false}));
             return;
         }
         PBT_POWERSETTINGCHANGE => {}
@@ -391,8 +392,16 @@ unsafe fn handle_power_broadcast(state: &mut WindowsEventState, wparam: WPARAM, 
     let data = power_setting_u32(setting);
     if guid_eq(setting.PowerSetting, GUID_ACDC_POWER_SOURCE) {
         match data {
-            Some(0) => emit(&state.sink, "system.power.connected", serde_json::json!({"source": "ac"})),
-            Some(1) | Some(2) => emit(&state.sink, "system.power.disconnected", serde_json::json!({"source": "battery"})),
+            Some(0) => emit(&state.sink, "system.power.connected", serde_json::json!({
+                "connected": true,
+                "source": "ac",
+                "batteryLevel": null,
+            })),
+            Some(1) | Some(2) => emit(&state.sink, "system.power.disconnected", serde_json::json!({
+                "connected": false,
+                "source": "battery",
+                "batteryLevel": null,
+            })),
             _ => {}
         }
     }
@@ -405,14 +414,18 @@ unsafe fn handle_power_broadcast(state: &mut WindowsEventState, wparam: WPARAM, 
                     true => "system.battery.low",
                     false => "system.battery.okay",
                 };
-                emit(&state.sink, topic, serde_json::json!({"percentage": percentage}));
+                emit(&state.sink, topic, serde_json::json!({
+                    "low": isLow,
+                    "level": percentage,
+                    "charging": null,
+                }));
             }
         }
     }
     if guid_eq(setting.PowerSetting, GUID_CONSOLE_DISPLAY_STATE) {
         match data {
-            Some(0) => emit(&state.sink, "system.screen.off", serde_json::json!({"state": "off"})),
-            Some(1) => emit(&state.sink, "system.screen.on", serde_json::json!({"state": "on"})),
+            Some(0) => emit(&state.sink, "system.screen.off", serde_json::json!({"screenOn": false})),
+            Some(1) => emit(&state.sink, "system.screen.on", serde_json::json!({"screenOn": true})),
             _ => {}
         }
     }
@@ -435,18 +448,25 @@ unsafe fn power_setting_u32(setting: &POWERBROADCAST_SETTING) -> Option<u32> {
 
 fn handle_session_change(state: &mut WindowsEventState, wparam: WPARAM) {
     match wparam as u32 {
-        WTS_SESSION_LOCK => emit(&state.sink, "system.session.lock", serde_json::json!({})),
+        WTS_SESSION_LOCK => emit(&state.sink, "system.session.lock", serde_json::json!({"locked": true})),
         WTS_SESSION_UNLOCK => {
-            emit(&state.sink, "system.session.unlock", serde_json::json!({}));
-            emit(&state.sink, "system.user.present", serde_json::json!({}));
+            emit(&state.sink, "system.session.unlock", serde_json::json!({"locked": false}));
+            emit(&state.sink, "system.user.present", serde_json::json!({"present": true}));
         }
         _ => {}
     }
 }
 
 fn handle_time_change(state: &mut WindowsEventState) {
-    emit(&state.sink, "system.date.changed", serde_json::json!({}));
-    emit(&state.sink, "system.timezone.changed", serde_json::json!({}));
+    let timestampMillis = unix_millis();
+    emit(&state.sink, "system.date.changed", serde_json::json!({
+        "timestampMillis": timestampMillis,
+        "timezone": null,
+    }));
+    emit(&state.sink, "system.timezone.changed", serde_json::json!({
+        "timestampMillis": timestampMillis,
+        "timezone": null,
+    }));
 }
 
 fn handle_device_change(state: &mut WindowsEventState, wparam: WPARAM, lparam: LPARAM) {
@@ -465,9 +485,9 @@ fn handle_device_change(state: &mut WindowsEventState, wparam: WPARAM, lparam: L
                 &state.sink,
                 "system.headset.plug",
                 serde_json::json!({
-                    "deviceInterface": deviceInterface,
-                    "devicePath": devicePath,
-                    "arrived": true,
+                    "connected": true,
+                    "deviceName": devicePath,
+                    "hasMicrophone": null,
                 }),
             ),
             _ => {}
@@ -482,9 +502,9 @@ fn handle_device_change(state: &mut WindowsEventState, wparam: WPARAM, lparam: L
                 &state.sink,
                 "system.headset.plug",
                 serde_json::json!({
-                    "deviceInterface": deviceInterface,
-                    "devicePath": devicePath,
-                    "arrived": false,
+                    "connected": false,
+                    "deviceName": devicePath,
+                    "hasMicrophone": null,
                 }),
             ),
             _ => {}
@@ -595,7 +615,6 @@ fn sync_bluetooth_radio_snapshots(state: &mut WindowsEventState) {
         if !current.contains_key(address) {
             let mut payload = bluetooth_radio_payload(previousRadio);
             if let Some(object) = payload.as_object_mut() {
-                object.insert("connectable".to_string(), Value::Bool(false));
                 object.insert("powered".to_string(), Value::Bool(false));
             }
             emit(&state.sink, "bluetooth.adapter.powered_changed", payload);
@@ -625,14 +644,8 @@ fn bluetooth_devices_connected(devices: &BTreeMap<String, BluetoothDeviceSnapsho
 
 fn bluetooth_radio_payload(radio: &BluetoothRadioSnapshot) -> Value {
     serde_json::json!({
-        "adapterAddress": radio.address,
-        "adapterName": radio.name,
-        "connectable": radio.connectable,
-        "discoverable": radio.discoverable,
         "powered": true,
-        "classOfDevice": radio.classOfDevice,
-        "lmpSubversion": radio.lmpSubversion,
-        "manufacturer": radio.manufacturer,
+        "connected": null,
     })
 }
 
@@ -641,8 +654,8 @@ fn bluetooth_device_payload(device: &BluetoothDeviceSnapshot) -> Value {
         "deviceAddress": device.address,
         "deviceName": device.name,
         "connected": device.connected,
-        "remembered": device.remembered,
         "bonded": device.authenticated,
+        "rssi": null,
     })
 }
 

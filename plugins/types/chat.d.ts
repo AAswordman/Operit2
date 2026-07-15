@@ -245,7 +245,7 @@ export namespace Chat {
     /**
      * Receives each intermediate event emitted while the assistant reply is generated.
      */
-    on_intermediate_result?: (arg0: MessageSendStreamEventData) => void;
+    onIntermediateResult?: (arg0: MessageSendStreamEventData) => void;
   }
 
 }

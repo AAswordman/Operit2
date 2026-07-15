@@ -231,19 +231,19 @@ export interface ComposeGeneratedRowProps extends ComposeCommonProps {
   /**
    * Horizontal spacing and placement strategy for child nodes.
    */
-  horizontal_arrangement?: ComposeArrangement;
+  horizontalArrangement?: ComposeArrangement;
   /**
    * Called when the user activates the component.
    */
-  on_click?: () => ComposeGeneratedRowPropsOnClickOutput;
+  onClick?: () => ComposeGeneratedRowPropsOnClickOutput;
   /**
    * Vertical alignment applied to child nodes.
    */
-  vertical_alignment?: ComposeAlignment;
+  verticalAlignment?: ComposeAlignment;
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -395,11 +395,11 @@ export interface ComposeGeneratedTextFieldProps extends ComposeCommonProps {
   /**
    * Marks the input as invalid and enables its error presentation.
    */
-  is_error?: boolean;
+  isError?: boolean;
   /**
    * Masks the entered value as password text when true.
    */
-  is_password?: boolean;
+  isPassword?: boolean;
   /**
    * Label content identifying the control or destination.
    */
@@ -407,19 +407,19 @@ export interface ComposeGeneratedTextFieldProps extends ComposeCommonProps {
   /**
    * Icon content rendered before the component's label or value.
    */
-  leading_icon?: ComposeChildren;
+  leadingIcon?: ComposeChildren;
   /**
    * Maximum number of text lines that may be displayed.
    */
-  max_lines?: number;
+  maxLines?: number;
   /**
    * Minimum number of text lines reserved by the input.
    */
-  min_lines?: number;
+  minLines?: number;
   /**
    * Called with the newly entered text whenever the input value changes.
    */
-  on_value_change: (arg0: string) => void;
+  onValueChange: (arg0: string) => void;
   /**
    * Hint content shown while the text field value is empty.
    */
@@ -431,11 +431,11 @@ export interface ComposeGeneratedTextFieldProps extends ComposeCommonProps {
   /**
    * Prevents editing while preserving focus and text selection behavior.
    */
-  read_only?: boolean;
+  readOnly?: boolean;
   /**
    * Constrains the text field to a single horizontal line.
    */
-  single_line?: boolean;
+  singleLine?: boolean;
   /**
    * Typography or component style applied to the rendered content.
    */
@@ -447,11 +447,11 @@ export interface ComposeGeneratedTextFieldProps extends ComposeCommonProps {
   /**
    * Supporting or validation content rendered below the text field.
    */
-  supporting_text?: ComposeChildren;
+  supportingText?: ComposeChildren;
   /**
    * Icon content rendered after the component's label or value.
    */
-  trailing_icon?: ComposeChildren;
+  trailingIcon?: ComposeChildren;
   /**
    * Controlled text currently displayed by the input.
    */
@@ -459,7 +459,7 @@ export interface ComposeGeneratedTextFieldProps extends ComposeCommonProps {
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -473,11 +473,11 @@ export interface ComposeGeneratedSwitchProps extends ComposeCommonProps {
   /**
    * Color of the switch thumb while checked.
    */
-  checked_thumb_color?: ComposeColor;
+  checkedThumbColor?: ComposeColor;
   /**
    * Color of the switch track while checked.
    */
-  checked_track_color?: ComposeColor;
+  checkedTrackColor?: ComposeColor;
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -485,23 +485,23 @@ export interface ComposeGeneratedSwitchProps extends ComposeCommonProps {
   /**
    * Called with the requested checked state after a toggle interaction.
    */
-  on_checked_change: (arg0: boolean) => void;
+  onCheckedChange: (arg0: boolean) => void;
   /**
    * Content rendered inside the switch thumb.
    */
-  thumb_content?: ComposeChildren;
+  thumbContent?: ComposeChildren;
   /**
    * Color of the switch thumb while unchecked.
    */
-  unchecked_thumb_color?: ComposeColor;
+  uncheckedThumbColor?: ComposeColor;
   /**
    * Color of the switch track while unchecked.
    */
-  unchecked_track_color?: ComposeColor;
+  uncheckedTrackColor?: ComposeColor;
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -519,11 +519,11 @@ export interface ComposeGeneratedCheckboxProps extends ComposeCommonProps {
   /**
    * Called with the requested checked state after a toggle interaction.
    */
-  on_checked_change: (arg0: boolean) => void;
+  onCheckedChange: (arg0: boolean) => void;
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -533,7 +533,7 @@ export interface ComposeGeneratedButtonProps extends ComposeCommonProps {
   /**
    * Background color of the component's container.
    */
-  container_color?: ComposeColor;
+  containerColor?: ComposeColor;
   /**
    * Child nodes rendered inside the component.
    */
@@ -541,19 +541,19 @@ export interface ComposeGeneratedButtonProps extends ComposeCommonProps {
   /**
    * Default foreground color supplied to child content.
    */
-  content_color?: ComposeColor;
+  contentColor?: ComposeColor;
   /**
    * Padding between the container boundary and its child content.
    */
-  content_padding?: ComposePadding;
+  contentPadding?: ComposePadding;
   /**
    * Background color used when the component is disabled.
    */
-  disabled_container_color?: ComposeColor;
+  disabledContainerColor?: ComposeColor;
   /**
    * Foreground color supplied to content while the component is disabled.
    */
-  disabled_content_color?: ComposeColor;
+  disabledContentColor?: ComposeColor;
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -561,7 +561,7 @@ export interface ComposeGeneratedButtonProps extends ComposeCommonProps {
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedButtonPropsOnClickOutput;
   /**
    * Shape used for the component's container outline.
    */
@@ -573,7 +573,7 @@ export interface ComposeGeneratedButtonProps extends ComposeCommonProps {
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -595,7 +595,7 @@ export interface ComposeGeneratedIconButtonProps extends ComposeCommonProps {
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedIconButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedIconButtonPropsOnClickOutput;
   /**
    * Shape used for the component's container outline.
    */
@@ -603,7 +603,7 @@ export interface ComposeGeneratedIconButtonProps extends ComposeCommonProps {
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -669,7 +669,7 @@ export interface ComposeGeneratedSurfaceProps extends ComposeCommonProps {
   /**
    * Background color of the component's container.
    */
-  container_color?: ComposeColor;
+  containerColor?: ComposeColor;
   /**
    * Child nodes rendered inside the component.
    */
@@ -677,15 +677,15 @@ export interface ComposeGeneratedSurfaceProps extends ComposeCommonProps {
   /**
    * Default foreground color supplied to child content.
    */
-  content_color?: ComposeColor;
+  contentColor?: ComposeColor;
   /**
    * Called when the user activates the component.
    */
-  on_click?: () => ComposeGeneratedSurfacePropsOnClickOutput;
+  onClick?: () => ComposeGeneratedSurfacePropsOnClickOutput;
   /**
    * Physical shadow elevation cast by the surface.
    */
-  shadow_elevation?: number;
+  shadowElevation?: number;
   /**
    * Shape used for the component's container outline.
    */
@@ -693,11 +693,11 @@ export interface ComposeGeneratedSurfaceProps extends ComposeCommonProps {
   /**
    * Tonal elevation used to adjust the surface color against its background.
    */
-  tonal_elevation?: number;
+  tonalElevation?: number;
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -787,19 +787,19 @@ export interface ComposeGeneratedAssistChipProps extends ComposeCommonProps {
   /**
    * Icon content rendered before the component's label or value.
    */
-  leading_icon?: ComposeChildren;
+  leadingIcon?: ComposeChildren;
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedAssistChipPropsOnClickOutput;
+  onClick: () => ComposeGeneratedAssistChipPropsOnClickOutput;
   /**
    * Icon content rendered after the component's label or value.
    */
-  trailing_icon?: ComposeChildren;
+  trailingIcon?: ComposeChildren;
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -915,7 +915,7 @@ export interface ComposeGeneratedDropdownMenuProps extends ComposeCommonProps {
   /**
    * Called when user interaction requests that the popup or dialog close.
    */
-  on_dismiss_request: () => ComposeGeneratedDropdownMenuPropsOnDismissRequestOutput;
+  onDismissRequest: () => ComposeGeneratedDropdownMenuPropsOnDismissRequestOutput;
   /**
    * Popup-window focus, dismissal, clipping, and sizing behavior.
    */
@@ -923,7 +923,7 @@ export interface ComposeGeneratedDropdownMenuProps extends ComposeCommonProps {
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -941,19 +941,19 @@ export interface ComposeGeneratedElevatedAssistChipProps extends ComposeCommonPr
   /**
    * Icon content rendered before the component's label or value.
    */
-  leading_icon?: ComposeChildren;
+  leadingIcon?: ComposeChildren;
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedElevatedAssistChipPropsOnClickOutput;
+  onClick: () => ComposeGeneratedElevatedAssistChipPropsOnClickOutput;
   /**
    * Icon content rendered after the component's label or value.
    */
-  trailing_icon?: ComposeChildren;
+  trailingIcon?: ComposeChildren;
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -963,7 +963,7 @@ export interface ComposeGeneratedElevatedButtonProps extends ComposeCommonProps 
   /**
    * Background color of the component's container.
    */
-  container_color?: ComposeColor;
+  containerColor?: ComposeColor;
   /**
    * Child nodes rendered inside the component.
    */
@@ -971,19 +971,19 @@ export interface ComposeGeneratedElevatedButtonProps extends ComposeCommonProps 
   /**
    * Default foreground color supplied to child content.
    */
-  content_color?: ComposeColor;
+  contentColor?: ComposeColor;
   /**
    * Padding between the container boundary and its child content.
    */
-  content_padding?: ComposePadding;
+  contentPadding?: ComposePadding;
   /**
    * Background color used when the component is disabled.
    */
-  disabled_container_color?: ComposeColor;
+  disabledContainerColor?: ComposeColor;
   /**
    * Foreground color supplied to content while the component is disabled.
    */
-  disabled_content_color?: ComposeColor;
+  disabledContentColor?: ComposeColor;
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -991,7 +991,7 @@ export interface ComposeGeneratedElevatedButtonProps extends ComposeCommonProps 
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedElevatedButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedElevatedButtonPropsOnClickOutput;
   /**
    * Shape used for the component's container outline.
    */
@@ -999,7 +999,7 @@ export interface ComposeGeneratedElevatedButtonProps extends ComposeCommonProps 
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1051,11 +1051,11 @@ export interface ComposeGeneratedElevatedFilterChipProps extends ComposeCommonPr
   /**
    * Icon content rendered before the component's label or value.
    */
-  leading_icon?: ComposeChildren;
+  leadingIcon?: ComposeChildren;
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedElevatedFilterChipPropsOnClickOutput;
+  onClick: () => ComposeGeneratedElevatedFilterChipPropsOnClickOutput;
   /**
    * Controlled state indicating whether this option or destination is selected.
    */
@@ -1063,11 +1063,11 @@ export interface ComposeGeneratedElevatedFilterChipProps extends ComposeCommonPr
   /**
    * Icon content rendered after the component's label or value.
    */
-  trailing_icon?: ComposeChildren;
+  trailingIcon?: ComposeChildren;
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1089,11 +1089,11 @@ export interface ComposeGeneratedElevatedSuggestionChipProps extends ComposeComm
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedElevatedSuggestionChipPropsOnClickOutput;
+  onClick: () => ComposeGeneratedElevatedSuggestionChipPropsOnClickOutput;
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1107,11 +1107,11 @@ export interface ComposeGeneratedExtendedFloatingActionButtonProps extends Compo
   /**
    * Default foreground color supplied to child content.
    */
-  content_color?: ComposeColor;
+  contentColor?: ComposeColor;
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedExtendedFloatingActionButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedExtendedFloatingActionButtonPropsOnClickOutput;
   /**
    * Shape used for the component's container outline.
    */
@@ -1119,7 +1119,7 @@ export interface ComposeGeneratedExtendedFloatingActionButtonProps extends Compo
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1141,7 +1141,7 @@ export interface ComposeGeneratedFilledIconButtonProps extends ComposeCommonProp
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedFilledIconButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedFilledIconButtonPropsOnClickOutput;
   /**
    * Shape used for the component's container outline.
    */
@@ -1149,7 +1149,7 @@ export interface ComposeGeneratedFilledIconButtonProps extends ComposeCommonProp
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1171,7 +1171,7 @@ export interface ComposeGeneratedFilledIconToggleButtonProps extends ComposeComm
   /**
    * Called with the requested checked state after a toggle interaction.
    */
-  on_checked_change: (arg0: boolean) => void;
+  onCheckedChange: (arg0: boolean) => void;
   /**
    * Shape used for the component's container outline.
    */
@@ -1179,7 +1179,7 @@ export interface ComposeGeneratedFilledIconToggleButtonProps extends ComposeComm
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1189,7 +1189,7 @@ export interface ComposeGeneratedFilledTonalButtonProps extends ComposeCommonPro
   /**
    * Background color of the component's container.
    */
-  container_color?: ComposeColor;
+  containerColor?: ComposeColor;
   /**
    * Child nodes rendered inside the component.
    */
@@ -1197,19 +1197,19 @@ export interface ComposeGeneratedFilledTonalButtonProps extends ComposeCommonPro
   /**
    * Default foreground color supplied to child content.
    */
-  content_color?: ComposeColor;
+  contentColor?: ComposeColor;
   /**
    * Padding between the container boundary and its child content.
    */
-  content_padding?: ComposePadding;
+  contentPadding?: ComposePadding;
   /**
    * Background color used when the component is disabled.
    */
-  disabled_container_color?: ComposeColor;
+  disabledContainerColor?: ComposeColor;
   /**
    * Foreground color supplied to content while the component is disabled.
    */
-  disabled_content_color?: ComposeColor;
+  disabledContentColor?: ComposeColor;
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -1217,7 +1217,7 @@ export interface ComposeGeneratedFilledTonalButtonProps extends ComposeCommonPro
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedFilledTonalButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedFilledTonalButtonPropsOnClickOutput;
   /**
    * Shape used for the component's container outline.
    */
@@ -1225,7 +1225,7 @@ export interface ComposeGeneratedFilledTonalButtonProps extends ComposeCommonPro
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1247,7 +1247,7 @@ export interface ComposeGeneratedFilledTonalIconButtonProps extends ComposeCommo
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedFilledTonalIconButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedFilledTonalIconButtonPropsOnClickOutput;
   /**
    * Shape used for the component's container outline.
    */
@@ -1255,7 +1255,7 @@ export interface ComposeGeneratedFilledTonalIconButtonProps extends ComposeCommo
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1277,7 +1277,7 @@ export interface ComposeGeneratedFilledTonalIconToggleButtonProps extends Compos
   /**
    * Called with the requested checked state after a toggle interaction.
    */
-  on_checked_change: (arg0: boolean) => void;
+  onCheckedChange: (arg0: boolean) => void;
   /**
    * Shape used for the component's container outline.
    */
@@ -1285,7 +1285,7 @@ export interface ComposeGeneratedFilledTonalIconToggleButtonProps extends Compos
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1303,11 +1303,11 @@ export interface ComposeGeneratedFilterChipProps extends ComposeCommonProps {
   /**
    * Icon content rendered before the component's label or value.
    */
-  leading_icon?: ComposeChildren;
+  leadingIcon?: ComposeChildren;
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedFilterChipPropsOnClickOutput;
+  onClick: () => ComposeGeneratedFilterChipPropsOnClickOutput;
   /**
    * Controlled state indicating whether this option or destination is selected.
    */
@@ -1315,11 +1315,11 @@ export interface ComposeGeneratedFilterChipProps extends ComposeCommonProps {
   /**
    * Icon content rendered after the component's label or value.
    */
-  trailing_icon?: ComposeChildren;
+  trailingIcon?: ComposeChildren;
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1333,11 +1333,11 @@ export interface ComposeGeneratedFloatingActionButtonProps extends ComposeCommon
   /**
    * Default foreground color supplied to child content.
    */
-  content_color?: ComposeColor;
+  contentColor?: ComposeColor;
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedFloatingActionButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedFloatingActionButtonPropsOnClickOutput;
   /**
    * Shape used for the component's container outline.
    */
@@ -1345,7 +1345,7 @@ export interface ComposeGeneratedFloatingActionButtonProps extends ComposeCommon
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1389,7 +1389,7 @@ export interface ComposeGeneratedIconToggleButtonProps extends ComposeCommonProp
   /**
    * Called with the requested checked state after a toggle interaction.
    */
-  on_checked_change: (arg0: boolean) => void;
+  onCheckedChange: (arg0: boolean) => void;
   /**
    * Shape used for the component's container outline.
    */
@@ -1397,7 +1397,7 @@ export interface ComposeGeneratedIconToggleButtonProps extends ComposeCommonProp
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1419,11 +1419,11 @@ export interface ComposeGeneratedInputChipProps extends ComposeCommonProps {
   /**
    * Icon content rendered before the component's label or value.
    */
-  leading_icon?: ComposeChildren;
+  leadingIcon?: ComposeChildren;
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedInputChipPropsOnClickOutput;
+  onClick: () => ComposeGeneratedInputChipPropsOnClickOutput;
   /**
    * Controlled state indicating whether this option or destination is selected.
    */
@@ -1431,11 +1431,11 @@ export interface ComposeGeneratedInputChipProps extends ComposeCommonProps {
   /**
    * Icon content rendered after the component's label or value.
    */
-  trailing_icon?: ComposeChildren;
+  trailingIcon?: ComposeChildren;
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1449,11 +1449,11 @@ export interface ComposeGeneratedLargeFloatingActionButtonProps extends ComposeC
   /**
    * Default foreground color supplied to child content.
    */
-  content_color?: ComposeColor;
+  contentColor?: ComposeColor;
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedLargeFloatingActionButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedLargeFloatingActionButtonPropsOnClickOutput;
   /**
    * Shape used for the component's container outline.
    */
@@ -1461,7 +1461,7 @@ export interface ComposeGeneratedLargeFloatingActionButtonProps extends ComposeC
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1479,7 +1479,7 @@ export interface ComposeGeneratedLeadingIconTabProps extends ComposeCommonProps 
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedLeadingIconTabPropsOnClickOutput;
+  onClick: () => ComposeGeneratedLeadingIconTabPropsOnClickOutput;
   /**
    * Controlled state indicating whether this option or destination is selected.
    */
@@ -1491,7 +1491,7 @@ export interface ComposeGeneratedLeadingIconTabProps extends ComposeCommonProps 
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1643,7 +1643,7 @@ export interface ComposeGeneratedNavigationDrawerItemProps extends ComposeCommon
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedNavigationDrawerItemPropsOnClickOutput;
+  onClick: () => ComposeGeneratedNavigationDrawerItemPropsOnClickOutput;
   /**
    * Controlled state indicating whether this option or destination is selected.
    */
@@ -1651,7 +1651,7 @@ export interface ComposeGeneratedNavigationDrawerItemProps extends ComposeCommon
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1683,7 +1683,7 @@ export interface ComposeGeneratedNavigationRailItemProps extends ComposeCommonPr
   /**
    * Keeps the destination label visible even when the item is not selected.
    */
-  always_show_label?: boolean;
+  alwaysShowLabel?: boolean;
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -1699,7 +1699,7 @@ export interface ComposeGeneratedNavigationRailItemProps extends ComposeCommonPr
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedNavigationRailItemPropsOnClickOutput;
+  onClick: () => ComposeGeneratedNavigationRailItemPropsOnClickOutput;
   /**
    * Controlled state indicating whether this option or destination is selected.
    */
@@ -1707,7 +1707,7 @@ export interface ComposeGeneratedNavigationRailItemProps extends ComposeCommonPr
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1717,7 +1717,7 @@ export interface ComposeGeneratedOutlinedButtonProps extends ComposeCommonProps 
   /**
    * Background color of the component's container.
    */
-  container_color?: ComposeColor;
+  containerColor?: ComposeColor;
   /**
    * Child nodes rendered inside the component.
    */
@@ -1725,19 +1725,19 @@ export interface ComposeGeneratedOutlinedButtonProps extends ComposeCommonProps 
   /**
    * Default foreground color supplied to child content.
    */
-  content_color?: ComposeColor;
+  contentColor?: ComposeColor;
   /**
    * Padding between the container boundary and its child content.
    */
-  content_padding?: ComposePadding;
+  contentPadding?: ComposePadding;
   /**
    * Background color used when the component is disabled.
    */
-  disabled_container_color?: ComposeColor;
+  disabledContainerColor?: ComposeColor;
   /**
    * Foreground color supplied to content while the component is disabled.
    */
-  disabled_content_color?: ComposeColor;
+  disabledContentColor?: ComposeColor;
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -1745,7 +1745,7 @@ export interface ComposeGeneratedOutlinedButtonProps extends ComposeCommonProps 
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedOutlinedButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedOutlinedButtonPropsOnClickOutput;
   /**
    * Shape used for the component's container outline.
    */
@@ -1753,7 +1753,7 @@ export interface ComposeGeneratedOutlinedButtonProps extends ComposeCommonProps 
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1809,7 +1809,7 @@ export interface ComposeGeneratedOutlinedIconButtonProps extends ComposeCommonPr
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedOutlinedIconButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedOutlinedIconButtonPropsOnClickOutput;
   /**
    * Shape used for the component's container outline.
    */
@@ -1817,7 +1817,7 @@ export interface ComposeGeneratedOutlinedIconButtonProps extends ComposeCommonPr
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1839,7 +1839,7 @@ export interface ComposeGeneratedOutlinedIconToggleButtonProps extends ComposeCo
   /**
    * Called with the requested checked state after a toggle interaction.
    */
-  on_checked_change: (arg0: boolean) => void;
+  onCheckedChange: (arg0: boolean) => void;
   /**
    * Shape used for the component's container outline.
    */
@@ -1847,7 +1847,7 @@ export interface ComposeGeneratedOutlinedIconToggleButtonProps extends ComposeCo
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -1979,7 +1979,7 @@ export interface ComposeGeneratedPullToRefreshBoxProps extends ComposeCommonProp
   /**
    * Alignment used to position child content within the available bounds.
    */
-  content_alignment?: ComposeAlignment;
+  contentAlignment?: ComposeAlignment;
   /**
    * Custom indicator content showing selection or refresh state.
    */
@@ -1987,15 +1987,15 @@ export interface ComposeGeneratedPullToRefreshBoxProps extends ComposeCommonProp
   /**
    * Controlled state indicating that refresh work is currently active.
    */
-  is_refreshing: boolean;
+  isRefreshing: boolean;
   /**
    * Called when the pull gesture requests a content refresh.
    */
-  on_refresh: () => ComposeGeneratedPullToRefreshBoxPropsOnRefreshOutput;
+  onRefresh: () => ComposeGeneratedPullToRefreshBoxPropsOnRefreshOutput;
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -2009,7 +2009,7 @@ export interface ComposeGeneratedRadioButtonProps extends ComposeCommonProps {
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedRadioButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedRadioButtonPropsOnClickOutput;
   /**
    * Controlled state indicating whether this option or destination is selected.
    */
@@ -2021,7 +2021,7 @@ export interface ComposeGeneratedRadioButtonProps extends ComposeCommonProps {
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -2163,7 +2163,7 @@ export interface ComposeGeneratedShortNavigationBarItemProps extends ComposeComm
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedShortNavigationBarItemPropsOnClickOutput;
+  onClick: () => ComposeGeneratedShortNavigationBarItemPropsOnClickOutput;
   /**
    * Controlled state indicating whether this option or destination is selected.
    */
@@ -2171,7 +2171,7 @@ export interface ComposeGeneratedShortNavigationBarItemProps extends ComposeComm
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -2185,11 +2185,11 @@ export interface ComposeGeneratedSmallFloatingActionButtonProps extends ComposeC
   /**
    * Default foreground color supplied to child content.
    */
-  content_color?: ComposeColor;
+  contentColor?: ComposeColor;
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedSmallFloatingActionButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedSmallFloatingActionButtonPropsOnClickOutput;
   /**
    * Shape used for the component's container outline.
    */
@@ -2197,7 +2197,7 @@ export interface ComposeGeneratedSmallFloatingActionButtonProps extends ComposeC
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -2249,11 +2249,11 @@ export interface ComposeGeneratedSuggestionChipProps extends ComposeCommonProps 
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedSuggestionChipPropsOnClickOutput;
+  onClick: () => ComposeGeneratedSuggestionChipPropsOnClickOutput;
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -2271,7 +2271,7 @@ export interface ComposeGeneratedTabProps extends ComposeCommonProps {
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedTabPropsOnClickOutput;
+  onClick: () => ComposeGeneratedTabPropsOnClickOutput;
   /**
    * Controlled state indicating whether this option or destination is selected.
    */
@@ -2279,7 +2279,7 @@ export interface ComposeGeneratedTabProps extends ComposeCommonProps {
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -2289,7 +2289,7 @@ export interface ComposeGeneratedTextButtonProps extends ComposeCommonProps {
   /**
    * Background color of the component's container.
    */
-  container_color?: ComposeColor;
+  containerColor?: ComposeColor;
   /**
    * Child nodes rendered inside the component.
    */
@@ -2297,19 +2297,19 @@ export interface ComposeGeneratedTextButtonProps extends ComposeCommonProps {
   /**
    * Default foreground color supplied to child content.
    */
-  content_color?: ComposeColor;
+  contentColor?: ComposeColor;
   /**
    * Padding between the container boundary and its child content.
    */
-  content_padding?: ComposePadding;
+  contentPadding?: ComposePadding;
   /**
    * Background color used when the component is disabled.
    */
-  disabled_container_color?: ComposeColor;
+  disabledContainerColor?: ComposeColor;
   /**
    * Foreground color supplied to content while the component is disabled.
    */
-  disabled_content_color?: ComposeColor;
+  disabledContentColor?: ComposeColor;
   /**
    * Controls whether the component accepts user interaction.
    */
@@ -2317,7 +2317,7 @@ export interface ComposeGeneratedTextButtonProps extends ComposeCommonProps {
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedTextButtonPropsOnClickOutput;
+  onClick: () => ComposeGeneratedTextButtonPropsOnClickOutput;
   /**
    * Shape used for the component's container outline.
    */
@@ -2325,7 +2325,7 @@ export interface ComposeGeneratedTextButtonProps extends ComposeCommonProps {
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -2335,7 +2335,7 @@ export interface ComposeGeneratedTimePickerDialogProps extends ComposeCommonProp
   /**
    * Confirmation action displayed by the time-picker dialog.
    */
-  confirm_button: ComposeChildren;
+  confirmButton: ComposeChildren;
   /**
    * Child nodes rendered inside the component.
    */
@@ -2343,15 +2343,15 @@ export interface ComposeGeneratedTimePickerDialogProps extends ComposeCommonProp
   /**
    * Optional dismissal action displayed by the time-picker dialog.
    */
-  dismiss_button?: ComposeChildren;
+  dismissButton?: ComposeChildren;
   /**
    * Optional control for switching the time picker's input mode.
    */
-  mode_toggle_button?: ComposeChildren;
+  modeToggleButton?: ComposeChildren;
   /**
    * Called when user interaction requests that the popup or dialog close.
    */
-  on_dismiss_request: () => ComposeGeneratedTimePickerDialogPropsOnDismissRequestOutput;
+  onDismissRequest: () => ComposeGeneratedTimePickerDialogPropsOnDismissRequestOutput;
   /**
    * Title content displayed at the top of the time-picker dialog.
    */
@@ -2359,7 +2359,7 @@ export interface ComposeGeneratedTimePickerDialogProps extends ComposeCommonProp
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**
@@ -2431,11 +2431,11 @@ export interface ComposeGeneratedWideNavigationRailItemProps extends ComposeComm
   /**
    * Called when the user activates the component.
    */
-  on_click: () => ComposeGeneratedWideNavigationRailItemPropsOnClickOutput;
+  onClick: () => ComposeGeneratedWideNavigationRailItemPropsOnClickOutput;
   /**
    * Indicates whether the containing wide navigation rail is expanded.
    */
-  rail_expanded: boolean;
+  railExpanded: boolean;
   /**
    * Controlled state indicating whether this option or destination is selected.
    */
@@ -2443,7 +2443,7 @@ export interface ComposeGeneratedWideNavigationRailItemProps extends ComposeComm
   /**
    * Drawing order relative to sibling nodes; larger values render above smaller values.
    */
-  z_index?: number;
+  zIndex?: number;
 }
 
 /**

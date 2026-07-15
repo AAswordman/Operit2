@@ -16,19 +16,31 @@ pub struct ToolPkgJsonValueVariant3 {
     pub additional_properties: BTreeMap<String, ToolPkgJsonValue>,
 }
 /// Carries the message-processing hook discriminator.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgHookEventNameVariant2 {
+    /// Identifies the message-processing hook.
+    #[serde(rename = "message_processing")]
     MessageProcessing,
 }
 /// Carries the XML-render hook discriminator.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgHookEventNameVariant3 {
+    /// Identifies the XML-render hook.
+    #[serde(rename = "xml_render")]
     XmlRender,
 }
 /// Carries the input-menu-toggle hook discriminator.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgHookEventNameVariant4 {
+    /// Identifies the input-menu-toggle hook.
+    #[serde(rename = "input_menu_toggle")]
     InputMenuToggle,
 }
 /// Carries the navigation-entry-action hook discriminator.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgHookEventNameVariant7 {
+    /// Identifies the navigation-entry-action hook.
+    #[serde(rename = "navigation_entry_action")]
     NavigationEntryAction,
 }
 /// Enumerates values to which an asynchronous generic hook may resolve.
@@ -253,40 +265,99 @@ pub enum ToolPkgAiProviderHandlerRegistrationFunction {
     Variant3(ToolPkgAiProviderTestConnectionHandler),
     Variant4(ToolPkgAiProviderCalculateInputTokensHandler),
 }
-/// Maps each broadcast topic family to its corresponding payload.
-pub enum ToolPkgBroadcastDataForTopicConditional<TTopic> {
-    /// Contains power sleep or wake broadcast data.
-    PowerSleep(ToolPkgBroadcastPowerSleepData),
-    /// Contains network change broadcast data.
-    NetworkChanged(ToolPkgBroadcastNetworkChangedData),
-    /// Contains a system broadcast payload.
-    System(ToolPkgBroadcastSystemData),
-    /// Contains Bluetooth device broadcast data.
-    BluetoothDevice(ToolPkgBroadcastBluetoothDeviceData),
-    /// Contains Bluetooth adapter broadcast data.
-    BluetoothAdapter(ToolPkgBroadcastAdapterData),
-    /// Contains platform-specific raw broadcast data.
-    Raw(ToolPkgRawBroadcastData),
-    /// Retains the topic parameter for Rust type checking.
-    Marker(std::marker::PhantomData<TTopic>),
-}
-/// Distinguishes broadcasts with topic data from broadcasts without data.
-pub enum ToolPkgHostEventBroadcastPayloadConditional<TTopic> {
-    /// Contains a payload for a topic without declared broadcast data.
-    WithoutData(ToolPkgHostEventBroadcastPayloadWithoutData<TTopic>),
-    /// Contains a payload with topic-specific broadcast data.
-    WithData(ToolPkgHostEventBroadcastPayloadWithData<TTopic>),
-}
-/// Carries metadata for a broadcast topic that has no data payload.
-pub struct ToolPkgHostEventBroadcastPayloadWithoutData<TTopic> {
-    /// Identifies the broadcast topic.
-    pub topic: TTopic,
-    /// Identifies the source platform.
-    pub platform: ToolPkgBroadcastPlatform,
-    /// Prohibits broadcast data for topics resolving to never.
-    pub data: Option<super::JsNever>,
-    /// Records the receive timestamp in milliseconds.
-    pub receivedAtMillis: f64,
+/// Maps every standard broadcast topic to its one canonical payload type.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ToolPkgBroadcastDataTypeMap {
+    /// Maps application resume events to lifecycle data.
+    #[serde(rename = "app.lifecycle.resumed")]
+    AppLifecycleResumed(ToolPkgBroadcastLifecycleData),
+    /// Maps application inactive events to lifecycle data.
+    #[serde(rename = "app.lifecycle.inactive")]
+    AppLifecycleInactive(ToolPkgBroadcastLifecycleData),
+    /// Maps application pause events to lifecycle data.
+    #[serde(rename = "app.lifecycle.paused")]
+    AppLifecyclePaused(ToolPkgBroadcastLifecycleData),
+    /// Maps application detach events to lifecycle data.
+    #[serde(rename = "app.lifecycle.detached")]
+    AppLifecycleDetached(ToolPkgBroadcastLifecycleData),
+    /// Maps application hidden events to lifecycle data.
+    #[serde(rename = "app.lifecycle.hidden")]
+    AppLifecycleHidden(ToolPkgBroadcastLifecycleData),
+    /// Maps host boot completion events to boot data.
+    #[serde(rename = "system.boot.completed")]
+    SystemBootCompleted(ToolPkgBroadcastBootData),
+    /// Maps external power connection events to power data.
+    #[serde(rename = "system.power.connected")]
+    SystemPowerConnected(ToolPkgBroadcastPowerConnectionData),
+    /// Maps external power disconnection events to power data.
+    #[serde(rename = "system.power.disconnected")]
+    SystemPowerDisconnected(ToolPkgBroadcastPowerConnectionData),
+    /// Maps host sleep events to sleep-state data.
+    #[serde(rename = "system.power.sleep")]
+    SystemPowerSleep(ToolPkgBroadcastPowerSleepData),
+    /// Maps host wake events to sleep-state data.
+    #[serde(rename = "system.power.wake")]
+    SystemPowerWake(ToolPkgBroadcastPowerSleepData),
+    /// Maps low-battery events to battery data.
+    #[serde(rename = "system.battery.low")]
+    SystemBatteryLow(ToolPkgBroadcastBatteryData),
+    /// Maps recovered-battery events to battery data.
+    #[serde(rename = "system.battery.okay")]
+    SystemBatteryOkay(ToolPkgBroadcastBatteryData),
+    /// Maps display-on events to screen data.
+    #[serde(rename = "system.screen.on")]
+    SystemScreenOn(ToolPkgBroadcastScreenData),
+    /// Maps display-off events to screen data.
+    #[serde(rename = "system.screen.off")]
+    SystemScreenOff(ToolPkgBroadcastScreenData),
+    /// Maps user-presence events to presence data.
+    #[serde(rename = "system.user.present")]
+    SystemUserPresent(ToolPkgBroadcastUserPresenceData),
+    /// Maps clock tick events to time data.
+    #[serde(rename = "system.time.tick")]
+    SystemTimeTick(ToolPkgBroadcastTimeData),
+    /// Maps date changes to time data.
+    #[serde(rename = "system.date.changed")]
+    SystemDateChanged(ToolPkgBroadcastTimeData),
+    /// Maps timezone changes to time data.
+    #[serde(rename = "system.timezone.changed")]
+    SystemTimezoneChanged(ToolPkgBroadcastTimeData),
+    /// Maps airplane-mode changes to airplane-mode data.
+    #[serde(rename = "system.airplane_mode.changed")]
+    SystemAirplaneModeChanged(ToolPkgBroadcastAirplaneModeData),
+    /// Maps headset route changes to headset data.
+    #[serde(rename = "system.headset.plug")]
+    SystemHeadsetPlug(ToolPkgBroadcastHeadsetData),
+    /// Maps session lock events to session data.
+    #[serde(rename = "system.session.lock")]
+    SystemSessionLock(ToolPkgBroadcastSessionData),
+    /// Maps session unlock events to session data.
+    #[serde(rename = "system.session.unlock")]
+    SystemSessionUnlock(ToolPkgBroadcastSessionData),
+    /// Maps network changes to network data.
+    #[serde(rename = "system.network.changed")]
+    SystemNetworkChanged(ToolPkgBroadcastNetworkChangedData),
+    /// Maps Bluetooth discovery events to device data.
+    #[serde(rename = "bluetooth.device.found")]
+    BluetoothDeviceFound(ToolPkgBroadcastBluetoothDeviceData),
+    /// Maps Bluetooth name changes to device data.
+    #[serde(rename = "bluetooth.device.name_changed")]
+    BluetoothDeviceNameChanged(ToolPkgBroadcastBluetoothDeviceData),
+    /// Maps Bluetooth device connections to device data.
+    #[serde(rename = "bluetooth.device.connected")]
+    BluetoothDeviceConnected(ToolPkgBroadcastBluetoothDeviceData),
+    /// Maps Bluetooth device disconnections to device data.
+    #[serde(rename = "bluetooth.device.disconnected")]
+    BluetoothDeviceDisconnected(ToolPkgBroadcastBluetoothDeviceData),
+    /// Maps Bluetooth bond-state changes to device data.
+    #[serde(rename = "bluetooth.device.bond_state_changed")]
+    BluetoothDeviceBondStateChanged(ToolPkgBroadcastBluetoothDeviceData),
+    /// Maps Bluetooth adapter connection changes to adapter data.
+    #[serde(rename = "bluetooth.adapter.connection_state_changed")]
+    BluetoothAdapterConnectionStateChanged(ToolPkgBroadcastAdapterData),
+    /// Maps Bluetooth adapter power changes to adapter data.
+    #[serde(rename = "bluetooth.adapter.powered_changed")]
+    BluetoothAdapterPoweredChanged(ToolPkgBroadcastAdapterData),
 }
 /// Carries metadata and topic-specific data for a host broadcast.
 pub struct ToolPkgHostEventBroadcastPayloadWithData<TTopic> {
@@ -296,8 +367,8 @@ pub struct ToolPkgHostEventBroadcastPayloadWithData<TTopic> {
     pub platform: ToolPkgBroadcastPlatform,
     /// Contains topic-specific broadcast data.
     pub data: ToolPkgBroadcastDataForTopic<TTopic>,
-    /// Records the receive timestamp in milliseconds.
-    pub receivedAtMillis: f64,
+    /// Records when the host event occurred, in epoch milliseconds.
+    pub occurredAtMillis: f64,
 }
 /// Subscribes a host event hook to one broadcast topic.
 pub struct ToolPkgHostEventBroadcastTriggerVariant1<TTopic> {
@@ -305,6 +376,10 @@ pub struct ToolPkgHostEventBroadcastTriggerVariant1<TTopic> {
     pub kind: ToolPkgHostEventBroadcastSource,
     /// Selects the broadcast topic observed by this trigger.
     pub topic: TTopic,
+    /// Restricts delivery to one host platform when present.
+    pub platform: Option<ToolPkgBroadcastPlatform>,
+    /// Restricts delivery to the listed host platforms when present.
+    pub platforms: Option<Vec<ToolPkgBroadcastPlatform>>,
     /// Prevents a topic list from being supplied for a single-topic trigger.
     pub topics: Option<super::JsNever>,
 }
@@ -316,28 +391,30 @@ pub struct ToolPkgHostEventBroadcastTriggerVariant2<TTopic> {
     pub topic: Option<super::JsNever>,
     /// Selects broadcast topics observed by this trigger.
     pub topics: Vec<TTopic>,
+    /// Restricts delivery to one host platform when present.
+    pub platform: Option<ToolPkgBroadcastPlatform>,
+    /// Restricts delivery to the listed host platforms when present.
+    pub platforms: Option<Vec<ToolPkgBroadcastPlatform>>,
 }
 /// Maps each host event source to its matching trigger configuration.
-pub enum ToolPkgHostEventTriggerForSourceConditional<TSource> {
-    /// Contains a timer trigger.
-    Timer(ToolPkgHostEventTimerTrigger),
-    /// Contains an interval trigger.
-    Interval(ToolPkgHostEventIntervalTrigger),
-    /// Contains a broadcast trigger.
-    Broadcast(ToolPkgHostEventBroadcastTrigger),
-    /// Retains the source parameter for Rust type checking.
-    Marker(std::marker::PhantomData<TSource>),
+#[allow(non_camel_case_types)]
+pub enum ToolPkgHostEventTriggerTypeMap {
+    /// Maps timer sources to timer trigger configuration.
+    timer(ToolPkgHostEventTimerTrigger),
+    /// Maps interval sources to interval trigger configuration.
+    interval(ToolPkgHostEventIntervalTrigger),
+    /// Maps broadcast sources to broadcast trigger configuration.
+    broadcast(ToolPkgHostEventBroadcastTrigger),
 }
 /// Maps each host event source to the payload delivered to its handler.
-pub enum ToolPkgHostEventPayloadForSourceConditional<TSource> {
-    /// Contains a timer event payload.
-    Timer(ToolPkgHostEventTimerPayload<ToolPkgJsonObject>),
-    /// Contains an interval event payload.
-    Interval(ToolPkgHostEventIntervalPayload<ToolPkgJsonObject>),
-    /// Contains a broadcast event payload.
-    Broadcast(ToolPkgHostEventBroadcastPayload<ToolPkgBroadcastTopic>),
-    /// Retains the source parameter for Rust type checking.
-    Marker(std::marker::PhantomData<TSource>),
+#[allow(non_camel_case_types)]
+pub enum ToolPkgHostEventPayloadTypeMap {
+    /// Maps timer sources to timer event payloads.
+    timer(ToolPkgHostEventTimerPayload<ToolPkgJsonObject>),
+    /// Maps interval sources to interval event payloads.
+    interval(ToolPkgHostEventIntervalPayload<ToolPkgJsonObject>),
+    /// Maps broadcast sources to broadcast event payloads.
+    broadcast(ToolPkgHostEventBroadcastPayload<ToolPkgBroadcastTopic>),
 }
 /// Associates an AI provider with its model-listing callback.
 pub struct ToolPkgAiProviderRegistrationListModels {
@@ -394,18 +471,31 @@ pub struct ToolPkgJsonObject {
     pub additional_properties: BTreeMap<String, ToolPkgJsonValue>,
 }
 /// Names application and activity lifecycle callbacks exposed to plugins.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgAppLifecycleEvent {
+    #[serde(rename = "application_on_create")]
     ApplicationOnCreate,
+    #[serde(rename = "application_on_foreground")]
     ApplicationOnForeground,
+    #[serde(rename = "application_on_background")]
     ApplicationOnBackground,
+    #[serde(rename = "application_on_low_memory")]
     ApplicationOnLowMemory,
+    #[serde(rename = "application_on_trim_memory")]
     ApplicationOnTrimMemory,
+    #[serde(rename = "application_on_terminate")]
     ApplicationOnTerminate,
+    #[serde(rename = "activity_on_create")]
     ActivityOnCreate,
+    #[serde(rename = "activity_on_start")]
     ActivityOnStart,
+    #[serde(rename = "activity_on_resume")]
     ActivityOnResume,
+    #[serde(rename = "activity_on_pause")]
     ActivityOnPause,
+    #[serde(rename = "activity_on_stop")]
     ActivityOnStop,
+    #[serde(rename = "activity_on_destroy")]
     ActivityOnDestroy,
 }
 /// Enumerates every hook event that a ToolPkg plugin may register.
@@ -424,7 +514,7 @@ pub enum ToolPkgHookEventName {
     Variant12(ToolPkgToolPromptComposeEventName),
     Variant13(ToolPkgPromptFinalizeEventName),
     Variant14(ToolPkgSummaryGenerateEventName),
-    Variant15(ToolPkgHostEventHookEventName),
+    Variant15(ToolPkgHostEventName),
 }
 /// Accepts a JSON result, no result, or asynchronous completion from a generic hook.
 pub enum ToolPkgHookReturn {
@@ -433,9 +523,7 @@ pub enum ToolPkgHookReturn {
     Variant3(JsFuture<ToolPkgHookReturnVariant3Output>),
 }
 /// Callback invoked when a  event is dispatched.
-pub type ToolPkgHookHandler<TEvent> = Arc<
-    dyn Fn(TEvent) -> ToolPkgHookReturn + Send + Sync,
->;
+pub type ToolPkgHookHandler<TEvent> = Arc<dyn Fn(TEvent) -> ToolPkgHookReturn + Send + Sync>;
 /// Enumerates immediate and asynchronous results accepted from an application lifecycle hook.
 pub enum ToolPkgAppLifecycleHookReturn {
     Variant1(ToolPkgJsonValue),
@@ -488,12 +576,19 @@ pub enum ToolPkgXmlRenderHookReturn {
     Variant5(JsFuture<ToolPkgXmlRenderHookReturnVariant5Output>),
 }
 /// Selects the input-menu section in which a toggle is displayed.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgInputMenuToggleSlot {
+    #[serde(rename = "thinking")]
     Thinking,
+    #[serde(rename = "memory")]
     Memory,
+    #[serde(rename = "model")]
     Model,
+    #[serde(rename = "tools")]
     Tools,
+    #[serde(rename = "general")]
     General,
+    #[serde(rename = "default")]
     Default,
 }
 /// Describes one toggle contributed to the chat input menu.
@@ -529,15 +624,23 @@ pub enum ToolPkgInputMenuToggleHookReturn {
     Variant5(JsFuture<ToolPkgInputMenuToggleHookReturnVariant5Output>),
 }
 /// Names the stages at which chat input hooks run.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgChatInputEventName {
+    #[serde(rename = "input_changed")]
     InputChanged,
+    #[serde(rename = "submit_requested")]
     SubmitRequested,
+    #[serde(rename = "submitted")]
     Submitted,
 }
 /// Names the open, update, and close stages of a chat view.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgChatViewEventName {
+    #[serde(rename = "view_opened")]
     ViewOpened,
+    #[serde(rename = "view_updated")]
     ViewUpdated,
+    #[serde(rename = "view_closed")]
     ViewClosed,
 }
 /// Controls chat input handling and optionally supplies replacement text or metadata.
@@ -564,55 +667,94 @@ pub enum ToolPkgChatInputHookReturn {
     Variant5(JsFuture<ToolPkgChatInputHookReturnVariant5Output>),
 }
 /// Names permission, execution, result, and completion stages of a tool call.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgToolLifecycleEventName {
+    /// Runs before a tool call is accepted by the execution pipeline.
+    #[serde(rename = "tool_call_intercept")]
+    ToolCallIntercept,
+    #[serde(rename = "tool_call_requested")]
     ToolCallRequested,
+    #[serde(rename = "tool_permission_checked")]
     ToolPermissionChecked,
+    #[serde(rename = "tool_execution_started")]
     ToolExecutionStarted,
+    #[serde(rename = "tool_execution_result")]
     ToolExecutionResult,
+    #[serde(rename = "tool_execution_error")]
     ToolExecutionError,
+    #[serde(rename = "tool_execution_finished")]
     ToolExecutionFinished,
 }
 /// Names the stages before and after user-input processing.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgPromptInputEventName {
+    #[serde(rename = "before_process")]
     BeforeProcess,
+    #[serde(rename = "after_process")]
     AfterProcess,
 }
 /// Names the stages before and after prompt-history preparation.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgPromptHistoryEventName {
+    #[serde(rename = "before_prepare_history")]
     BeforePrepareHistory,
+    #[serde(rename = "after_prepare_history")]
     AfterPrepareHistory,
 }
 /// Names the stages used to assemble a system prompt.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgSystemPromptComposeEventName {
+    #[serde(rename = "before_compose_system_prompt")]
     BeforeComposeSystemPrompt,
+    #[serde(rename = "compose_system_prompt_sections")]
     ComposeSystemPromptSections,
+    #[serde(rename = "after_compose_system_prompt")]
     AfterComposeSystemPrompt,
 }
 /// Names the stages used to filter and assemble tool prompts.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgToolPromptComposeEventName {
+    #[serde(rename = "before_compose_tool_prompt")]
     BeforeComposeToolPrompt,
+    #[serde(rename = "filter_tool_prompt_items")]
     FilterToolPromptItems,
+    #[serde(rename = "filter_tool_call_tools")]
     FilterToolCallTools,
+    #[serde(rename = "after_compose_tool_prompt")]
     AfterComposeToolPrompt,
 }
 /// Names the final prompt stages before a model request.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgPromptFinalizeEventName {
+    #[serde(rename = "before_finalize_prompt")]
     BeforeFinalizePrompt,
+    #[serde(rename = "before_send_to_model")]
     BeforeSendToModel,
 }
 /// Names the stages used to prepare and generate a conversation summary.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgSummaryGenerateEventName {
+    #[serde(rename = "before_prepare_summary_prompt")]
     BeforePrepareSummaryPrompt,
+    #[serde(rename = "before_send_to_model")]
     BeforeSendToModel,
+    #[serde(rename = "after_generate_summary")]
     AfterGenerateSummary,
 }
 /// Identifies the role and purpose of one prompt-history turn.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgPromptTurnKind {
+    #[serde(rename = "SYSTEM")]
     SYSTEM,
+    #[serde(rename = "USER")]
     USER,
+    #[serde(rename = "ASSISTANT")]
     ASSISTANT,
+    #[serde(rename = "TOOL_CALL")]
     TOOLCALL,
+    #[serde(rename = "TOOL_RESULT")]
     TOOLRESULT,
+    #[serde(rename = "SUMMARY")]
     SUMMARY,
 }
 /// Contains one typed turn in prepared prompt history.
@@ -629,8 +771,13 @@ pub struct ToolPkgPromptTurn {
     pub metadata: Option<ToolPkgJsonObject>,
 }
 /// Enumerates supported active prompt type values.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgActivePromptType {
+    /// Identifies a character-card prompt.
+    #[serde(rename = "character_card")]
     CharacterCard,
+    /// Identifies a character-group prompt.
+    #[serde(rename = "character_group")]
     CharacterGroup,
 }
 /// Captures the identity of the character prompt active for a hook.
@@ -865,81 +1012,59 @@ pub enum ToolPkgSummaryGenerateHookReturn {
     Variant5(JsFuture<ToolPkgSummaryGenerateHookReturnVariant5Output>),
 }
 /// Callback invoked when an application or activity lifecycle event is dispatched.
-pub type ToolPkgAppLifecycleHookHandler = Arc<
-    dyn Fn(ToolPkgAppLifecycleHookEvent) -> ToolPkgAppLifecycleHookReturn + Send + Sync,
->;
+pub type ToolPkgAppLifecycleHookHandler =
+    Arc<dyn Fn(ToolPkgAppLifecycleHookEvent) -> ToolPkgAppLifecycleHookReturn + Send + Sync>;
 /// Callback invoked when a message processing event is dispatched.
 pub type ToolPkgMessageProcessingHookHandler = Arc<
-    dyn Fn(
-        ToolPkgMessageProcessingHookEvent,
-    ) -> ToolPkgMessageProcessingHookHandlerOutput + Send + Sync,
+    dyn Fn(ToolPkgMessageProcessingHookEvent) -> ToolPkgMessageProcessingHookHandlerOutput
+        + Send
+        + Sync,
 >;
 /// Callback invoked when the host requests rendering for a registered XML tag.
-pub type ToolPkgXmlRenderHookHandler = Arc<
-    dyn Fn(ToolPkgXmlRenderHookEvent) -> ToolPkgXmlRenderHookReturn + Send + Sync,
->;
+pub type ToolPkgXmlRenderHookHandler =
+    Arc<dyn Fn(ToolPkgXmlRenderHookEvent) -> ToolPkgXmlRenderHookReturn + Send + Sync>;
 /// Callback invoked when input-menu toggles are requested or changed.
-pub type ToolPkgInputMenuToggleHookHandler = Arc<
-    dyn Fn(
-        ToolPkgInputMenuToggleHookEvent,
-    ) -> ToolPkgInputMenuToggleHookReturn + Send + Sync,
->;
+pub type ToolPkgInputMenuToggleHookHandler =
+    Arc<dyn Fn(ToolPkgInputMenuToggleHookEvent) -> ToolPkgInputMenuToggleHookReturn + Send + Sync>;
 /// Callback invoked when a chat input event is dispatched.
-pub type ToolPkgChatInputHookHandler = Arc<
-    dyn Fn(ToolPkgChatInputHookEvent) -> ToolPkgChatInputHookReturn + Send + Sync,
->;
+pub type ToolPkgChatInputHookHandler =
+    Arc<dyn Fn(ToolPkgChatInputHookEvent) -> ToolPkgChatInputHookReturn + Send + Sync>;
 /// Callback invoked when a navigation entry action event is dispatched.
-pub type ToolPkgNavigationEntryActionHookHandler = Arc<
-    dyn Fn(ToolPkgNavigationEntryActionHookEvent) -> ToolPkgHookReturn + Send + Sync,
->;
+pub type ToolPkgNavigationEntryActionHookHandler =
+    Arc<dyn Fn(ToolPkgNavigationEntryActionHookEvent) -> ToolPkgHookReturn + Send + Sync>;
 /// Callback invoked when a tool lifecycle event is dispatched.
-pub type ToolPkgToolLifecycleHookHandler = Arc<
-    dyn Fn(ToolPkgToolLifecycleHookEvent) -> ToolPkgToolLifecycleHookReturn + Send + Sync,
->;
+pub type ToolPkgToolLifecycleHookHandler =
+    Arc<dyn Fn(ToolPkgToolLifecycleHookEvent) -> ToolPkgToolLifecycleHookReturn + Send + Sync>;
 /// Callback invoked when a prompt input event is dispatched.
-pub type ToolPkgPromptInputHookHandler = Arc<
-    dyn Fn(ToolPkgPromptInputHookEvent) -> ToolPkgPromptInputHookReturn + Send + Sync,
->;
+pub type ToolPkgPromptInputHookHandler =
+    Arc<dyn Fn(ToolPkgPromptInputHookEvent) -> ToolPkgPromptInputHookReturn + Send + Sync>;
 /// Callback invoked when a prompt history event is dispatched.
-pub type ToolPkgPromptHistoryHookHandler = Arc<
-    dyn Fn(ToolPkgPromptHistoryHookEvent) -> ToolPkgPromptHistoryHookReturn + Send + Sync,
->;
+pub type ToolPkgPromptHistoryHookHandler =
+    Arc<dyn Fn(ToolPkgPromptHistoryHookEvent) -> ToolPkgPromptHistoryHookReturn + Send + Sync>;
 /// Callback invoked when a prompt estimate history event is dispatched.
 pub type ToolPkgPromptEstimateHistoryHookHandler = Arc<
-    dyn Fn(
-        ToolPkgPromptEstimateHistoryHookEvent,
-    ) -> ToolPkgPromptHistoryHookReturn + Send + Sync,
+    dyn Fn(ToolPkgPromptEstimateHistoryHookEvent) -> ToolPkgPromptHistoryHookReturn + Send + Sync,
 >;
 /// Callback invoked when a system prompt compose event is dispatched.
 pub type ToolPkgSystemPromptComposeHookHandler = Arc<
-    dyn Fn(
-        ToolPkgSystemPromptComposeHookEvent,
-    ) -> ToolPkgSystemPromptComposeHookReturn + Send + Sync,
+    dyn Fn(ToolPkgSystemPromptComposeHookEvent) -> ToolPkgSystemPromptComposeHookReturn
+        + Send
+        + Sync,
 >;
 /// Callback invoked when a tool prompt compose event is dispatched.
 pub type ToolPkgToolPromptComposeHookHandler = Arc<
-    dyn Fn(
-        ToolPkgToolPromptComposeHookEvent,
-    ) -> ToolPkgToolPromptComposeHookReturn + Send + Sync,
+    dyn Fn(ToolPkgToolPromptComposeHookEvent) -> ToolPkgToolPromptComposeHookReturn + Send + Sync,
 >;
 /// Callback invoked when a prompt finalize event is dispatched.
-pub type ToolPkgPromptFinalizeHookHandler = Arc<
-    dyn Fn(
-        ToolPkgPromptFinalizeHookEvent,
-    ) -> ToolPkgPromptFinalizeHookReturn + Send + Sync,
->;
+pub type ToolPkgPromptFinalizeHookHandler =
+    Arc<dyn Fn(ToolPkgPromptFinalizeHookEvent) -> ToolPkgPromptFinalizeHookReturn + Send + Sync>;
 /// Callback invoked when a prompt estimate finalize event is dispatched.
 pub type ToolPkgPromptEstimateFinalizeHookHandler = Arc<
-    dyn Fn(
-        ToolPkgPromptEstimateFinalizeHookEvent,
-    ) -> ToolPkgPromptFinalizeHookReturn + Send + Sync,
+    dyn Fn(ToolPkgPromptEstimateFinalizeHookEvent) -> ToolPkgPromptFinalizeHookReturn + Send + Sync,
 >;
 /// Callback invoked when a summary generate event is dispatched.
-pub type ToolPkgSummaryGenerateHookHandler = Arc<
-    dyn Fn(
-        ToolPkgSummaryGenerateHookEvent,
-    ) -> ToolPkgSummaryGenerateHookReturn + Send + Sync,
->;
+pub type ToolPkgSummaryGenerateHookHandler =
+    Arc<dyn Fn(ToolPkgSummaryGenerateHookEvent) -> ToolPkgSummaryGenerateHookReturn + Send + Sync>;
 /// Carries a hook discriminator, typed payload, package identity, and dispatch metadata.
 pub struct ToolPkgHookEventBase<TEventName, TPayload> {
     /// Identifies the hook event being dispatched.
@@ -1071,10 +1196,8 @@ pub struct ToolPkgNavigationEntryActionEventPayload {
 /// Combines shared dispatch metadata with an application lifecycle payload.
 pub struct ToolPkgAppLifecycleHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this app lifecycle hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgAppLifecycleEvent,
-        ToolPkgAppLifecycleEventPayload,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgAppLifecycleEvent, ToolPkgAppLifecycleEventPayload>,
 }
 /// Combines shared dispatch metadata with the typed payload for a message processing hook.
 pub struct ToolPkgMessageProcessingHookEvent {
@@ -1087,10 +1210,8 @@ pub struct ToolPkgMessageProcessingHookEvent {
 /// Combines shared dispatch metadata with an XML-render payload.
 pub struct ToolPkgXmlRenderHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this XML render hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgXmlRenderHookEventBaseType1,
-        ToolPkgXmlRenderEventPayload,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgXmlRenderHookEventBaseType1, ToolPkgXmlRenderEventPayload>,
 }
 /// Combines shared dispatch metadata with an input-menu-toggle payload.
 pub struct ToolPkgInputMenuToggleHookEvent {
@@ -1103,18 +1224,14 @@ pub struct ToolPkgInputMenuToggleHookEvent {
 /// Combines shared dispatch metadata with the typed payload for a chat input hook.
 pub struct ToolPkgChatInputHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this chat input hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgChatInputEventName,
-        ToolPkgChatInputEventPayload,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgChatInputEventName, ToolPkgChatInputEventPayload>,
 }
 /// Combines shared dispatch metadata with the typed payload for a chat view hook.
 pub struct ToolPkgChatViewHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this chat view hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgChatViewEventName,
-        ToolPkgChatViewEventPayload,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgChatViewEventName, ToolPkgChatViewEventPayload>,
 }
 /// Combines shared dispatch metadata with the typed payload for a navigation entry action hook.
 pub struct ToolPkgNavigationEntryActionHookEvent {
@@ -1127,74 +1244,56 @@ pub struct ToolPkgNavigationEntryActionHookEvent {
 /// Combines shared dispatch metadata with the typed payload for a tool lifecycle hook.
 pub struct ToolPkgToolLifecycleHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this tool lifecycle hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgToolLifecycleEventName,
-        ToolPkgToolLifecycleEventPayload,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgToolLifecycleEventName, ToolPkgToolLifecycleEventPayload>,
 }
 /// Combines shared dispatch metadata with the typed payload for a prompt input hook.
 pub struct ToolPkgPromptInputHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this prompt input hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgPromptInputEventName,
-        ToolPkgPromptHookEventPayload,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgPromptInputEventName, ToolPkgPromptHookEventPayload>,
 }
 /// Combines shared dispatch metadata with the typed payload for a prompt history hook.
 pub struct ToolPkgPromptHistoryHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this prompt history hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgPromptHistoryEventName,
-        ToolPkgPromptHookEventPayload,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgPromptHistoryEventName, ToolPkgPromptHookEventPayload>,
 }
 /// Combines shared dispatch metadata with the typed payload for a prompt estimate history hook.
 pub struct ToolPkgPromptEstimateHistoryHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this prompt estimate history hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgPromptHistoryEventName,
-        ToolPkgPromptHookEventPayload,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgPromptHistoryEventName, ToolPkgPromptHookEventPayload>,
 }
 /// Combines shared dispatch metadata with the typed payload for a system prompt compose hook.
 pub struct ToolPkgSystemPromptComposeHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this system prompt compose hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgSystemPromptComposeEventName,
-        ToolPkgPromptHookEventPayload,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgSystemPromptComposeEventName, ToolPkgPromptHookEventPayload>,
 }
 /// Combines shared dispatch metadata with the typed payload for a tool prompt compose hook.
 pub struct ToolPkgToolPromptComposeHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this tool prompt compose hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgToolPromptComposeEventName,
-        ToolPkgPromptHookEventPayload,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgToolPromptComposeEventName, ToolPkgPromptHookEventPayload>,
 }
 /// Combines shared dispatch metadata with the typed payload for a prompt finalize hook.
 pub struct ToolPkgPromptFinalizeHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this prompt finalize hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgPromptFinalizeEventName,
-        ToolPkgPromptHookEventPayload,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgPromptFinalizeEventName, ToolPkgPromptHookEventPayload>,
 }
 /// Combines shared dispatch metadata with the typed payload for a prompt estimate finalize hook.
 pub struct ToolPkgPromptEstimateFinalizeHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this prompt estimate finalize hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgPromptFinalizeEventName,
-        ToolPkgPromptHookEventPayload,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgPromptFinalizeEventName, ToolPkgPromptHookEventPayload>,
 }
 /// Combines shared dispatch metadata with the typed payload for a summary generate hook.
 pub struct ToolPkgSummaryGenerateHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this summary generate hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgSummaryGenerateEventName,
-        ToolPkgSummaryGenerateEventPayload,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgSummaryGenerateEventName, ToolPkgSummaryGenerateEventPayload>,
 }
 /// Contains host configuration supplied to registered AI provider callbacks.
 pub struct ToolPkgAiProviderConfig {
@@ -1386,27 +1485,25 @@ pub enum ToolPkgAiProviderCalculateInputTokensReturn {
 }
 /// Callback that lists models exposed by an AI provider.
 pub type ToolPkgAiProviderListModelsHandler = Arc<
-    dyn Fn(
-        ToolPkgAiProviderListModelsEvent,
-    ) -> ToolPkgAiProviderListModelsReturn + Send + Sync,
+    dyn Fn(ToolPkgAiProviderListModelsEvent) -> ToolPkgAiProviderListModelsReturn + Send + Sync,
 >;
 /// Callback that generates a response through an AI provider.
 pub type ToolPkgAiProviderSendMessageHandler = Arc<
-    dyn Fn(
-        ToolPkgAiProviderSendMessageEvent,
-    ) -> ToolPkgAiProviderSendMessageReturn + Send + Sync,
+    dyn Fn(ToolPkgAiProviderSendMessageEvent) -> ToolPkgAiProviderSendMessageReturn + Send + Sync,
 >;
 /// Callback that verifies connectivity to an AI provider.
 pub type ToolPkgAiProviderTestConnectionHandler = Arc<
-    dyn Fn(
-        ToolPkgAiProviderTestConnectionEvent,
-    ) -> ToolPkgAiProviderTestConnectionReturn + Send + Sync,
+    dyn Fn(ToolPkgAiProviderTestConnectionEvent) -> ToolPkgAiProviderTestConnectionReturn
+        + Send
+        + Sync,
 >;
 /// Callback that calculates token usage for an AI provider input.
 pub type ToolPkgAiProviderCalculateInputTokensHandler = Arc<
     dyn Fn(
-        ToolPkgAiProviderCalculateInputTokensEvent,
-    ) -> ToolPkgAiProviderCalculateInputTokensReturn + Send + Sync,
+            ToolPkgAiProviderCalculateInputTokensEvent,
+        ) -> ToolPkgAiProviderCalculateInputTokensReturn
+        + Send
+        + Sync,
 >;
 /// Collects settings and callbacks used to register AI provider handler.
 pub struct ToolPkgAiProviderHandlerRegistration {
@@ -1448,8 +1545,13 @@ pub struct ToolPkgUiRouteRegistration {
     pub keepAlive: Option<bool>,
 }
 /// Enumerates supported navigation surface values.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgNavigationSurface {
+    /// Places the entry in the toolbox.
+    #[serde(rename = "toolbox")]
     Toolbox,
+    /// Places the entry in the main sidebar plugin section.
+    #[serde(rename = "main_sidebar_plugins")]
     MainSidebarPlugins,
 }
 /// Describes a plugin action exposed through a host navigation surface.
@@ -1539,189 +1641,322 @@ pub struct ToolPkgChatViewHookRegistration {
     pub function: ToolPkgHookHandler<ToolPkgChatViewHookEvent>,
 }
 /// Identifies a supported host event timer source.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgHostEventTimerSource {
+    /// Selects a one-shot runtime timer.
+    #[serde(rename = "timer")]
     Timer,
 }
 /// Identifies a supported host event interval source.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgHostEventIntervalSource {
+    /// Selects a repeating runtime interval.
+    #[serde(rename = "interval")]
     Interval,
 }
 /// Identifies a supported host event broadcast source.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgHostEventBroadcastSource {
+    /// Selects an event emitted by a host platform.
+    #[serde(rename = "broadcast")]
     Broadcast,
 }
 /// Identifies a supported host event source.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgHostEventSource {
+    /// Selects a one-shot runtime timer.
+    #[serde(rename = "timer")]
     Timer,
+    /// Selects a repeating runtime interval.
+    #[serde(rename = "interval")]
     Interval,
+    /// Selects an event emitted by a host platform.
+    #[serde(rename = "broadcast")]
     Broadcast,
 }
-/// Names lifecycle stages exposed by host event hook events.
-pub enum ToolPkgHostEventHookEventName {
-    ToolpkgHostEvent,
+/// Names the hook event used for host-originated runtime events.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgHostEventName {
+    /// Identifies a host-originated runtime event.
+    #[serde(rename = "host_event")]
+    HostEvent,
 }
 /// Enumerates supported broadcast platform values.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgBroadcastPlatform {
+    /// Identifies Android host events.
+    #[serde(rename = "android")]
     Android,
+    /// Identifies Windows host events.
+    #[serde(rename = "windows")]
     Windows,
+    /// Identifies Linux host events.
+    #[serde(rename = "linux")]
     Linux,
-}
-/// Identifies a supported android broadcast topic.
-pub struct ToolPkgAndroidBroadcastTopic(String);
-impl ToolPkgAndroidBroadcastTopic {
-    /// Returns the validated Android broadcast topic.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-impl TryFrom<String> for ToolPkgAndroidBroadcastTopic {
-    type Error = String;
-    /// Validates and constructs an Android broadcast topic.
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value.starts_with("android.") {
-            Ok(Self(value))
-        } else {
-            Err(format!("invalid Android broadcast topic: {value}"))
-        }
-    }
-}
-/// Identifies a supported windows broadcast topic.
-pub struct ToolPkgWindowsBroadcastTopic(String);
-impl ToolPkgWindowsBroadcastTopic {
-    /// Returns the validated Windows broadcast topic.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-impl TryFrom<String> for ToolPkgWindowsBroadcastTopic {
-    type Error = String;
-    /// Validates and constructs a Windows broadcast topic.
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value.starts_with("windows.") {
-            Ok(Self(value))
-        } else {
-            Err(format!("invalid Windows broadcast topic: {value}"))
-        }
-    }
-}
-/// Identifies a supported linux broadcast topic.
-pub struct ToolPkgLinuxBroadcastTopic(String);
-impl ToolPkgLinuxBroadcastTopic {
-    /// Returns the validated Linux broadcast topic.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-impl TryFrom<String> for ToolPkgLinuxBroadcastTopic {
-    type Error = String;
-    /// Validates and constructs a Linux broadcast topic.
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value.starts_with("linux.") {
-            Ok(Self(value))
-        } else {
-            Err(format!("invalid Linux broadcast topic: {value}"))
-        }
-    }
+    /// Identifies macOS host events.
+    #[serde(rename = "macos")]
+    Macos,
+    /// Identifies iOS host events.
+    #[serde(rename = "ios")]
+    Ios,
+    /// Identifies OpenHarmony host events.
+    #[serde(rename = "ohos")]
+    Ohos,
+    /// Identifies browser host events.
+    #[serde(rename = "web")]
+    Web,
 }
 /// Identifies a supported broadcast topic.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ToolPkgBroadcastTopic {
+    #[serde(rename = "app.lifecycle.resumed")]
+    AppLifecycleResumed,
+    #[serde(rename = "app.lifecycle.inactive")]
+    AppLifecycleInactive,
+    #[serde(rename = "app.lifecycle.paused")]
+    AppLifecyclePaused,
+    #[serde(rename = "app.lifecycle.detached")]
+    AppLifecycleDetached,
+    #[serde(rename = "app.lifecycle.hidden")]
+    AppLifecycleHidden,
+    #[serde(rename = "system.boot.completed")]
     SystemBootCompleted,
+    #[serde(rename = "system.power.connected")]
     SystemPowerConnected,
+    #[serde(rename = "system.power.disconnected")]
     SystemPowerDisconnected,
+    #[serde(rename = "system.power.sleep")]
     SystemPowerSleep,
+    #[serde(rename = "system.power.wake")]
     SystemPowerWake,
+    #[serde(rename = "system.battery.low")]
     SystemBatteryLow,
+    #[serde(rename = "system.battery.okay")]
     SystemBatteryOkay,
+    #[serde(rename = "system.screen.on")]
     SystemScreenOn,
+    #[serde(rename = "system.screen.off")]
     SystemScreenOff,
+    #[serde(rename = "system.user.present")]
     SystemUserPresent,
+    #[serde(rename = "system.time.tick")]
     SystemTimeTick,
+    #[serde(rename = "system.date.changed")]
     SystemDateChanged,
+    #[serde(rename = "system.timezone.changed")]
     SystemTimezoneChanged,
+    #[serde(rename = "system.airplane_mode.changed")]
     SystemAirplaneModeChanged,
+    #[serde(rename = "system.headset.plug")]
     SystemHeadsetPlug,
+    #[serde(rename = "system.session.lock")]
     SystemSessionLock,
+    #[serde(rename = "system.session.unlock")]
     SystemSessionUnlock,
+    #[serde(rename = "system.network.changed")]
     SystemNetworkChanged,
+    #[serde(rename = "bluetooth.device.found")]
     BluetoothDeviceFound,
+    #[serde(rename = "bluetooth.device.name_changed")]
     BluetoothDeviceNameChanged,
+    #[serde(rename = "bluetooth.device.connected")]
     BluetoothDeviceConnected,
+    #[serde(rename = "bluetooth.device.disconnected")]
     BluetoothDeviceDisconnected,
+    #[serde(rename = "bluetooth.device.bond_state_changed")]
     BluetoothDeviceBondStateChanged,
+    #[serde(rename = "bluetooth.adapter.connection_state_changed")]
     BluetoothAdapterConnectionStateChanged,
+    #[serde(rename = "bluetooth.adapter.powered_changed")]
     BluetoothAdapterPoweredChanged,
-    Android(ToolPkgAndroidBroadcastTopic),
-    Windows(ToolPkgWindowsBroadcastTopic),
-    Linux(ToolPkgLinuxBroadcastTopic),
 }
-/// Carries a generic operating-system broadcast action and its extra values.
-pub struct ToolPkgBroadcastSystemData {
-    /// Preserves additional JSON properties supplied with this broadcast system data.
-    pub base_json_object: ToolPkgJsonObject,
-    /// Names the operating-system broadcast action.
-    pub action: Option<String>,
-    /// Carries host-specific data without a dedicated field.
-    pub extras: ToolPkgJsonObject,
+/// Marks Rust types that represent one published ToolPkg broadcast topic key.
+pub trait ToolPkgBroadcastTopicKey {}
+
+impl ToolPkgBroadcastTopicKey for ToolPkgBroadcastTopic {}
+
+/// Names one normalized application lifecycle state.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgBroadcastLifecycleState {
+    #[serde(rename = "resumed")]
+    Resumed,
+    #[serde(rename = "inactive")]
+    Inactive,
+    #[serde(rename = "paused")]
+    Paused,
+    #[serde(rename = "detached")]
+    Detached,
+    #[serde(rename = "hidden")]
+    Hidden,
 }
-/// Carries a Bluetooth device broadcast and optional device identity.
-pub struct ToolPkgBroadcastBluetoothDeviceData {
-    /// Preserves additional JSON properties supplied with this broadcast bluetooth device data.
-    pub base_json_object: ToolPkgJsonObject,
-    /// Names the Bluetooth device broadcast action.
-    pub action: Option<String>,
-    /// Provides the Bluetooth device name reported by the platform.
-    pub deviceName: JsOptional<String>,
-    /// Identifies the Bluetooth device address reported by the platform.
-    pub deviceAddress: JsOptional<String>,
-    /// Carries host-specific data without a dedicated field.
-    pub extras: Option<ToolPkgJsonObject>,
+/// Carries one application lifecycle transition on every supported host platform.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgBroadcastLifecycleData {
+    /// Identifies the normalized lifecycle state.
+    pub state: ToolPkgBroadcastLifecycleState,
 }
-/// Reports whether a power-state broadcast is entering sleep or waking.
+/// Reports that host startup completed.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgBroadcastBootData {
+    /// Confirms that the host completed its boot sequence.
+    pub bootCompleted: bool,
+}
+/// Names a normalized source supplying host power.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgBroadcastPowerSource {
+    #[serde(rename = "ac")]
+    Ac,
+    #[serde(rename = "usb")]
+    Usb,
+    #[serde(rename = "wireless")]
+    Wireless,
+    #[serde(rename = "battery")]
+    Battery,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+/// Carries a normalized external-power connection change.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgBroadcastPowerConnectionData {
+    /// Reports whether the host is connected to external power.
+    pub connected: bool,
+    /// Identifies the normalized power source when the platform reports it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<ToolPkgBroadcastPowerSource>,
+    /// Reports the battery percentage when the platform reports it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batteryLevel: Option<f64>,
+}
+/// Reports whether a power-state event is entering sleep or waking.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolPkgBroadcastPowerSleepData {
-    /// Preserves additional JSON properties supplied with this broadcast power sleep data.
-    pub base_json_object: ToolPkgJsonObject,
-    /// Reports whether the system is entering sleep rather than waking.
-    pub preparingForSleep: bool,
+    /// Reports whether the host is entering a suspended state.
+    pub sleeping: bool,
 }
-/// Carries network state reported by a network-change broadcast.
+/// Carries a normalized battery threshold change.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgBroadcastBatteryData {
+    /// Reports whether the battery is currently below the host low threshold.
+    pub low: bool,
+    /// Reports the battery percentage when the platform reports it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<f64>,
+    /// Reports whether the battery is charging when the platform reports it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub charging: Option<bool>,
+}
+/// Carries a normalized display power change.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgBroadcastScreenData {
+    /// Reports whether the primary display is on.
+    pub screenOn: bool,
+}
+/// Carries a normalized user presence change.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgBroadcastUserPresenceData {
+    /// Reports whether the host considers its user present and unlocked.
+    pub present: bool,
+}
+/// Carries a normalized clock, date, or timezone change.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgBroadcastTimeData {
+    /// Records the platform timestamp at which the change was observed.
+    pub timestampMillis: f64,
+    /// Identifies the active timezone when the platform reports it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+}
+/// Carries a normalized airplane-mode change.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgBroadcastAirplaneModeData {
+    /// Reports whether airplane mode is enabled.
+    pub enabled: bool,
+}
+/// Carries a normalized wired or wireless headset connection change.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgBroadcastHeadsetData {
+    /// Reports whether a headset is connected.
+    pub connected: bool,
+    /// Provides the headset name when the platform reports it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deviceName: Option<String>,
+    /// Reports microphone availability when the platform reports it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hasMicrophone: Option<bool>,
+}
+/// Carries a normalized desktop session lock change.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgBroadcastSessionData {
+    /// Reports whether the active user session is locked.
+    pub locked: bool,
+}
+/// Names the normalized active network transport.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgBroadcastNetworkType {
+    #[serde(rename = "wifi")]
+    Wifi,
+    #[serde(rename = "cellular")]
+    Cellular,
+    #[serde(rename = "ethernet")]
+    Ethernet,
+    #[serde(rename = "vpn")]
+    Vpn,
+    #[serde(rename = "other")]
+    Other,
+    #[serde(rename = "none")]
+    None,
+}
+/// Carries a normalized network connectivity change.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolPkgBroadcastNetworkChangedData {
-    /// Preserves additional JSON properties supplied with this broadcast network changed data.
-    pub base_json_object: ToolPkgJsonObject,
-    /// Contains the platform network state code.
-    pub state: Option<f64>,
-    /// Names the network-change broadcast action.
-    pub action: Option<String>,
-    /// Carries host-specific data without a dedicated field.
-    pub extras: Option<ToolPkgJsonObject>,
+    /// Reports whether the host has an active network.
+    pub connected: bool,
+    /// Identifies the normalized active network transport.
+    pub networkType: ToolPkgBroadcastNetworkType,
+    /// Reports whether the active network is metered when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metered: Option<bool>,
+    /// Identifies the changed interface when the platform reports it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interfaceName: Option<String>,
 }
-/// Carries a Bluetooth adapter broadcast and its extra values.
+/// Carries a normalized Bluetooth device change.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgBroadcastBluetoothDeviceData {
+    /// Identifies the Bluetooth device address when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deviceAddress: Option<String>,
+    /// Provides the Bluetooth device name when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deviceName: Option<String>,
+    /// Reports the connection state when the topic describes or includes it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connected: Option<bool>,
+    /// Reports the bond state when the topic describes or includes it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bonded: Option<bool>,
+    /// Reports received signal strength when the platform provides it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rssi: Option<f64>,
+}
+/// Carries a normalized Bluetooth adapter change.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolPkgBroadcastAdapterData {
-    /// Preserves additional JSON properties supplied with this broadcast adapter data.
-    pub base_json_object: ToolPkgJsonObject,
-    /// Names the Bluetooth adapter broadcast action.
-    pub action: Option<String>,
-    /// Carries host-specific data without a dedicated field.
-    pub extras: Option<ToolPkgJsonObject>,
-}
-/// Preserves a platform broadcast that has no dedicated payload type.
-pub struct ToolPkgRawBroadcastData {
-    /// Preserves additional JSON properties supplied with this raw broadcast data.
-    pub base_json_object: ToolPkgJsonObject,
-    /// Stores platform-specific fields from the raw broadcast.
-    pub additional_properties: BTreeMap<String, ToolPkgJsonValue>,
+    /// Reports whether the Bluetooth adapter is powered when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub powered: Option<bool>,
+    /// Reports whether the adapter has an active device connection when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connected: Option<bool>,
 }
 /// Resolves a broadcast topic to the data shape delivered for that topic.
-pub type ToolPkgBroadcastDataForTopic<TTopic> = ToolPkgBroadcastDataForTopicConditional<
-    TTopic,
->;
+pub type ToolPkgBroadcastDataForTopic<TTopic> =
+    super::JsTypeIndex<ToolPkgBroadcastDataTypeMap, TTopic>;
 /// Carries runtime data for a host event broadcast event.
-pub type ToolPkgHostEventBroadcastPayload<TTopic> = ToolPkgHostEventBroadcastPayloadConditional<
-    TTopic,
->;
+pub type ToolPkgHostEventBroadcastPayload<TTopic> =
+    ToolPkgHostEventBroadcastPayloadWithData<TTopic>;
 /// Configures when a host event timer event is emitted.
 pub struct ToolPkgHostEventTimerTrigger<TPayload = ToolPkgJsonObject> {
-    /// Preserves additional JSON properties supplied with this host event timer trigger.
-    pub base_json_object: ToolPkgJsonObject,
     /// Identifies the concrete kind of trigger or prompt value.
     pub kind: ToolPkgHostEventTimerSource,
     /// Sets the delay before a timer fires, in milliseconds.
@@ -1731,8 +1966,6 @@ pub struct ToolPkgHostEventTimerTrigger<TPayload = ToolPkgJsonObject> {
 }
 /// Configures when a host event interval event is emitted.
 pub struct ToolPkgHostEventIntervalTrigger<TPayload = ToolPkgJsonObject> {
-    /// Preserves additional JSON properties supplied with this host event interval trigger.
-    pub base_json_object: ToolPkgJsonObject,
     /// Identifies the concrete kind of trigger or prompt value.
     pub kind: ToolPkgHostEventIntervalSource,
     /// Sets or reports the interval duration in milliseconds.
@@ -1752,13 +1985,10 @@ pub enum ToolPkgHostEventTrigger {
     Variant3(ToolPkgHostEventBroadcastTrigger),
 }
 /// Resolves a host event source to its matching trigger configuration.
-pub type ToolPkgHostEventTriggerForSource<TSource> = ToolPkgHostEventTriggerForSourceConditional<
-    TSource,
->;
+pub type ToolPkgHostEventTriggerForSource<TSource> =
+    super::JsTypeIndex<ToolPkgHostEventTriggerTypeMap, TSource>;
 /// Carries runtime data for a host event timer event.
 pub struct ToolPkgHostEventTimerPayload<TPayload> {
-    /// Preserves additional JSON properties supplied with this host event timer payload.
-    pub base_json_object: ToolPkgJsonObject,
     /// Identifies the registered hook that received the event.
     pub hookId: String,
     /// Identifies where this value originated.
@@ -1769,6 +1999,8 @@ pub struct ToolPkgHostEventTimerPayload<TPayload> {
     pub payload: Option<TPayload>,
     /// Records when the host scheduled the event, in epoch milliseconds.
     pub scheduledAtMillis: f64,
+    /// Records when the platform delivered the timer event, in epoch milliseconds.
+    pub firedAtMillis: f64,
     /// Sets the delay before a timer fires, in milliseconds.
     pub delayMs: Option<f64>,
     /// Sets or reports the interval duration in milliseconds.
@@ -1776,8 +2008,6 @@ pub struct ToolPkgHostEventTimerPayload<TPayload> {
 }
 /// Carries runtime data for a host event interval event.
 pub struct ToolPkgHostEventIntervalPayload<TPayload> {
-    /// Preserves additional JSON properties supplied with this host event interval payload.
-    pub base_json_object: ToolPkgJsonObject,
     /// Identifies the registered hook that received the event.
     pub hookId: String,
     /// Identifies where this value originated.
@@ -1788,13 +2018,14 @@ pub struct ToolPkgHostEventIntervalPayload<TPayload> {
     pub payload: Option<TPayload>,
     /// Records when the host scheduled the event, in epoch milliseconds.
     pub scheduledAtMillis: f64,
+    /// Records when the platform delivered the interval event, in epoch milliseconds.
+    pub firedAtMillis: f64,
     /// Sets or reports the interval duration in milliseconds.
     pub intervalMs: f64,
 }
 /// Resolves a host event source to the payload delivered by that source.
-pub type ToolPkgHostEventPayloadForSource<TSource> = ToolPkgHostEventPayloadForSourceConditional<
-    TSource,
->;
+pub type ToolPkgHostEventPayloadForSource<TSource> =
+    super::JsTypeIndex<ToolPkgHostEventPayloadTypeMap, TSource>;
 /// Configures and identifies a host event timer hook registration.
 pub struct ToolPkgHostEventTimerHookRegistration<TPayload = ToolPkgJsonObject> {
     /// Uniquely identifies this host event timer hook registration within the package.
@@ -1843,24 +2074,20 @@ pub enum ToolPkgHostEventHookRegistration {
 /// Combines shared dispatch metadata with the typed payload for a host event hook.
 pub struct ToolPkgHostEventHookEvent<TSource> {
     /// Carries shared dispatch metadata and the typed payload for this host event hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgHostEventHookEventName,
-        ToolPkgHostEventHookEventPayload<TSource>,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgHostEventName, ToolPkgHostEventHookEventPayload<TSource>>,
 }
 /// Combines shared dispatch metadata with the typed payload for a host event timer hook.
 pub struct ToolPkgHostEventTimerHookEvent<TPayload> {
     /// Carries shared dispatch metadata and the typed payload for this host event timer hook event.
-    pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgHostEventHookEventName,
-        ToolPkgHostEventTimerHookEventPayload<TPayload>,
-    >,
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgHostEventName, ToolPkgHostEventTimerHookEventPayload<TPayload>>,
 }
 /// Combines shared dispatch metadata with the typed payload for a host event interval hook.
 pub struct ToolPkgHostEventIntervalHookEvent<TPayload> {
     /// Carries shared dispatch metadata and the typed payload for this host event interval hook event.
     pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgHostEventHookEventName,
+        ToolPkgHostEventName,
         ToolPkgHostEventIntervalHookEventPayload<TPayload>,
     >,
 }
@@ -1868,14 +2095,12 @@ pub struct ToolPkgHostEventIntervalHookEvent<TPayload> {
 pub struct ToolPkgHostEventBroadcastHookEvent<TTopic> {
     /// Carries shared dispatch metadata and the typed payload for this host event broadcast hook event.
     pub base_hook_event_base: ToolPkgHookEventBase<
-        ToolPkgHostEventHookEventName,
+        ToolPkgHostEventName,
         ToolPkgHostEventBroadcastHookEventPayload<TTopic>,
     >,
 }
 /// Carries source, trigger, and runtime data delivered to a host event hook.
 pub struct ToolPkgHostEventHookEventPayload<TSource> {
-    /// Preserves additional JSON properties supplied with this host event hook event payload.
-    pub base_json_object: ToolPkgJsonObject,
     /// Identifies the timer, interval, or broadcast source that fired.
     pub eventSource: TSource,
     /// Identifies the registered hook that received the event.
@@ -1887,8 +2112,6 @@ pub struct ToolPkgHostEventHookEventPayload<TSource> {
 }
 /// Carries source, trigger, and runtime data delivered to a host event timer hook.
 pub struct ToolPkgHostEventTimerHookEventPayload<TPayload> {
-    /// Preserves additional JSON properties supplied with this host event timer hook event payload.
-    pub base_json_object: ToolPkgJsonObject,
     /// Identifies the timer, interval, or broadcast source that fired.
     pub eventSource: ToolPkgHostEventTimerSource,
     /// Identifies the registered hook that received the event.
@@ -1900,8 +2123,6 @@ pub struct ToolPkgHostEventTimerHookEventPayload<TPayload> {
 }
 /// Carries source, trigger, and runtime data delivered to a host event interval hook.
 pub struct ToolPkgHostEventIntervalHookEventPayload<TPayload> {
-    /// Preserves additional JSON properties supplied with this host event interval hook event payload.
-    pub base_json_object: ToolPkgJsonObject,
     /// Identifies the timer, interval, or broadcast source that fired.
     pub eventSource: ToolPkgHostEventIntervalSource,
     /// Identifies the registered hook that received the event.
@@ -1913,8 +2134,6 @@ pub struct ToolPkgHostEventIntervalHookEventPayload<TPayload> {
 }
 /// Carries source, trigger, and runtime data delivered to a host event broadcast hook.
 pub struct ToolPkgHostEventBroadcastHookEventPayload<TTopic> {
-    /// Preserves additional JSON properties supplied with this host event broadcast hook event payload.
-    pub base_json_object: ToolPkgJsonObject,
     /// Identifies the timer, interval, or broadcast source that fired.
     pub eventSource: ToolPkgHostEventBroadcastSource,
     /// Identifies the registered hook that received the event.
@@ -1925,23 +2144,17 @@ pub struct ToolPkgHostEventBroadcastHookEventPayload<TTopic> {
     pub payload: ToolPkgHostEventBroadcastPayload<TTopic>,
 }
 /// Callback invoked when a timer, interval, or broadcast host event is dispatched.
-pub type ToolPkgHostEventHookHandler<TSource> = Arc<
-    dyn Fn(ToolPkgHostEventHookEvent<TSource>) -> ToolPkgHookReturn + Send + Sync,
->;
+pub type ToolPkgHostEventHookHandler<TSource> =
+    Arc<dyn Fn(ToolPkgHostEventHookEvent<TSource>) -> ToolPkgHookReturn + Send + Sync>;
 /// Callback invoked when a host event timer event is dispatched.
-pub type ToolPkgHostEventTimerHookHandler<TPayload> = Arc<
-    dyn Fn(ToolPkgHostEventTimerHookEvent<TPayload>) -> ToolPkgHookReturn + Send + Sync,
->;
+pub type ToolPkgHostEventTimerHookHandler<TPayload> =
+    Arc<dyn Fn(ToolPkgHostEventTimerHookEvent<TPayload>) -> ToolPkgHookReturn + Send + Sync>;
 /// Callback invoked when a host event interval event is dispatched.
-pub type ToolPkgHostEventIntervalHookHandler<TPayload> = Arc<
-    dyn Fn(
-        ToolPkgHostEventIntervalHookEvent<TPayload>,
-    ) -> ToolPkgHookReturn + Send + Sync,
->;
+pub type ToolPkgHostEventIntervalHookHandler<TPayload> =
+    Arc<dyn Fn(ToolPkgHostEventIntervalHookEvent<TPayload>) -> ToolPkgHookReturn + Send + Sync>;
 /// Callback invoked when a host event broadcast event is dispatched.
-pub type ToolPkgHostEventBroadcastHookHandler<TTopic> = Arc<
-    dyn Fn(ToolPkgHostEventBroadcastHookEvent<TTopic>) -> ToolPkgHookReturn + Send + Sync,
->;
+pub type ToolPkgHostEventBroadcastHookHandler<TTopic> =
+    Arc<dyn Fn(ToolPkgHostEventBroadcastHookEvent<TTopic>) -> ToolPkgHookReturn + Send + Sync>;
 /// Configures and identifies a tool lifecycle hook registration.
 pub struct ToolPkgToolLifecycleHookRegistration {
     /// Uniquely identifies this tool lifecycle hook registration within the package.
@@ -2023,10 +2236,19 @@ pub struct ToolPkgAiProviderRegistration {
     pub calculateInputTokens: ToolPkgAiProviderRegistrationCalculateInputTokens,
 }
 ///Runtime area that owns a ToolPkg JavaScript context.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgRuntimeKind {
+    /// Identifies the package's main runtime.
+    #[serde(rename = "main")]
     Main,
+    /// Identifies a package UI runtime.
+    #[serde(rename = "ui")]
     Ui,
+    /// Identifies a sandboxed package runtime.
+    #[serde(rename = "sandbox")]
     Sandbox,
+    /// Identifies an AI provider runtime.
+    #[serde(rename = "provider")]
     Provider,
 }
 ///Metadata passed to a handler registered with {@link IpcApi.on}.
@@ -2059,10 +2281,7 @@ pub trait ToolPkgIpcApiMethods: Send + Sync {
         &self,
         channel: String,
         handler: Arc<
-            dyn Fn(
-                TPayload,
-                ToolPkgIpcMeta,
-            ) -> ToolPkgIpcApiOnHandlerOutput<TResult> + Send + Sync,
+            dyn Fn(TPayload, ToolPkgIpcMeta) -> ToolPkgIpcApiOnHandlerOutput<TResult> + Send + Sync,
         >,
     ) -> Arc<dyn Fn() -> () + Send + Sync>;
     ///Removes a channel handler. Passing the handler checks that the same function is still registered.
@@ -2071,10 +2290,9 @@ pub trait ToolPkgIpcApiMethods: Send + Sync {
         channel: String,
         handler: Option<
             Arc<
-                dyn Fn(
-                    TPayload,
-                    ToolPkgIpcMeta,
-                ) -> ToolPkgIpcApiOffHandlerOutput<TResult> + Send + Sync,
+                dyn Fn(TPayload, ToolPkgIpcMeta) -> ToolPkgIpcApiOffHandlerOutput<TResult>
+                    + Send
+                    + Sync,
             >,
         >,
     ) -> bool;
@@ -2094,34 +2312,22 @@ pub struct ToolPkgRegistry {
 /// Requires the host to implement every registry methods operation.
 pub trait ToolPkgRegistryMethods: Send + Sync {
     /// Registers a Compose DSL screen in the toolbox UI.
-    fn registerToolboxUiModule(
-        &self,
-        definition: ToolPkgToolboxUiModuleRegistration,
-    ) -> ();
+    fn registerToolboxUiModule(&self, definition: ToolPkgToolboxUiModuleRegistration) -> ();
     /// Registers a routable Compose DSL screen for the current plugin.
     fn registerUiRoute(&self, definition: ToolPkgUiRouteRegistration) -> ();
     /// Adds a plugin action to a host navigation surface.
-    fn registerNavigationEntry(
-        &self,
-        definition: ToolPkgNavigationEntryRegistration,
-    ) -> ();
+    fn registerNavigationEntry(&self, definition: ToolPkgNavigationEntryRegistration) -> ();
     /// Registers a plugin widget on the desktop surface.
     fn registerDesktopWidget(&self, definition: ToolPkgDesktopWidgetRegistration) -> ();
     /// Registers a callback for an application or activity lifecycle event.
-    fn registerAppLifecycleHook(
-        &self,
-        definition: ToolPkgAppLifecycleHookRegistration,
-    ) -> ();
+    fn registerAppLifecycleHook(&self, definition: ToolPkgAppLifecycleHookRegistration) -> ();
     /// Registers a callback that inspects or transforms messages.
     fn registerMessageProcessingPlugin(
         &self,
         definition: ToolPkgMessageProcessingPluginRegistration,
     ) -> ();
     /// Registers a callback that renders a selected XML tag.
-    fn registerXmlRenderPlugin(
-        &self,
-        definition: ToolPkgXmlRenderPluginRegistration,
-    ) -> ();
+    fn registerXmlRenderPlugin(&self, definition: ToolPkgXmlRenderPluginRegistration) -> ();
     /// Registers a callback that supplies chat input menu toggles.
     fn registerInputMenuTogglePlugin(
         &self,
@@ -2142,25 +2348,16 @@ pub trait ToolPkgRegistryMethods: Send + Sync {
         definition: ToolPkgHostEventIntervalHookRegistration<TPayload>,
     ) -> ();
     /// Registers a typed timer, interval, or broadcast hook.
-    fn registerHostEventHook_overload_3<TTopic>(
+    fn registerHostEventHook_overload_3<TTopic: ToolPkgBroadcastTopicKey>(
         &self,
         definition: ToolPkgHostEventBroadcastHookRegistration<TTopic>,
     ) -> ();
     /// Registers a callback for tool permission and execution stages.
-    fn registerToolLifecycleHook(
-        &self,
-        definition: ToolPkgToolLifecycleHookRegistration,
-    ) -> ();
+    fn registerToolLifecycleHook(&self, definition: ToolPkgToolLifecycleHookRegistration) -> ();
     /// Registers a callback around user-input processing.
-    fn registerPromptInputHook(
-        &self,
-        definition: ToolPkgPromptInputHookRegistration,
-    ) -> ();
+    fn registerPromptInputHook(&self, definition: ToolPkgPromptInputHookRegistration) -> ();
     /// Registers a callback around prompt-history preparation.
-    fn registerPromptHistoryHook(
-        &self,
-        definition: ToolPkgPromptHistoryHookRegistration,
-    ) -> ();
+    fn registerPromptHistoryHook(&self, definition: ToolPkgPromptHistoryHookRegistration) -> ();
     /// Registers a prompt-history callback used during token estimation.
     fn registerPromptEstimateHistoryHook(
         &self,
@@ -2177,20 +2374,15 @@ pub trait ToolPkgRegistryMethods: Send + Sync {
         definition: ToolPkgToolPromptComposeHookRegistration,
     ) -> ();
     /// Registers a callback before a prompt is sent to the model.
-    fn registerPromptFinalizeHook(
-        &self,
-        definition: ToolPkgPromptFinalizeHookRegistration,
-    ) -> ();
+    fn registerPromptFinalizeHook(&self, definition: ToolPkgPromptFinalizeHookRegistration) -> ();
     /// Registers a prompt-finalization callback used during token estimation.
     fn registerPromptEstimateFinalizeHook(
         &self,
         definition: ToolPkgPromptEstimateFinalizeHookRegistration,
     ) -> ();
     /// Registers a callback for summary preparation and generation.
-    fn registerSummaryGenerateHook(
-        &self,
-        definition: ToolPkgSummaryGenerateHookRegistration,
-    ) -> ();
+    fn registerSummaryGenerateHook(&self, definition: ToolPkgSummaryGenerateHookRegistration)
+        -> ();
     /// Registers an AI provider and its required operation callbacks.
     fn registerAiProvider(&self, definition: ToolPkgAiProviderRegistration) -> ();
     /// Extracts a packaged plugin resource and resolves to its readable path.
@@ -2206,22 +2398,13 @@ pub trait ToolPkgRegistryMethods: Send + Sync {
 /// Requires the host to implement every global host operation.
 pub trait GlobalHost: Send + Sync {
     /// Registers a Compose DSL screen in the toolbox UI. The global binding delegates to the active ToolPkg registry.
-    fn registerToolPkgToolboxUiModule(
-        &self,
-        definition: ToolPkgToolboxUiModuleRegistration,
-    ) -> ();
+    fn registerToolPkgToolboxUiModule(&self, definition: ToolPkgToolboxUiModuleRegistration) -> ();
     /// Registers a routable Compose DSL screen for the current plugin. The global binding delegates to the active ToolPkg registry.
     fn registerToolPkgUiRoute(&self, definition: ToolPkgUiRouteRegistration) -> ();
     /// Adds a plugin action to a host navigation surface. The global binding delegates to the active ToolPkg registry.
-    fn registerToolPkgNavigationEntry(
-        &self,
-        definition: ToolPkgNavigationEntryRegistration,
-    ) -> ();
+    fn registerToolPkgNavigationEntry(&self, definition: ToolPkgNavigationEntryRegistration) -> ();
     /// Registers a plugin widget on the desktop surface. The global binding delegates to the active ToolPkg registry.
-    fn registerToolPkgDesktopWidget(
-        &self,
-        definition: ToolPkgDesktopWidgetRegistration,
-    ) -> ();
+    fn registerToolPkgDesktopWidget(&self, definition: ToolPkgDesktopWidgetRegistration) -> ();
     /// Registers a callback for an application or activity lifecycle event. The global binding delegates to the active ToolPkg registry.
     fn registerToolPkgAppLifecycleHook(
         &self,
@@ -2233,25 +2416,16 @@ pub trait GlobalHost: Send + Sync {
         definition: ToolPkgMessageProcessingPluginRegistration,
     ) -> ();
     /// Registers a callback that renders a selected XML tag. The global binding delegates to the active ToolPkg registry.
-    fn registerToolPkgXmlRenderPlugin(
-        &self,
-        definition: ToolPkgXmlRenderPluginRegistration,
-    ) -> ();
+    fn registerToolPkgXmlRenderPlugin(&self, definition: ToolPkgXmlRenderPluginRegistration) -> ();
     /// Registers a callback that supplies chat input menu toggles. The global binding delegates to the active ToolPkg registry.
     fn registerToolPkgInputMenuTogglePlugin(
         &self,
         definition: ToolPkgInputMenuTogglePluginRegistration,
     ) -> ();
     /// Registers a callback for chat input changes and submissions. The global binding delegates to the active ToolPkg registry.
-    fn registerToolPkgChatInputHook(
-        &self,
-        definition: ToolPkgChatInputHookRegistration,
-    ) -> ();
+    fn registerToolPkgChatInputHook(&self, definition: ToolPkgChatInputHookRegistration) -> ();
     /// Registers a callback for chat view lifecycle changes. The global binding delegates to the active ToolPkg registry.
-    fn registerToolPkgChatViewHook(
-        &self,
-        definition: ToolPkgChatViewHookRegistration,
-    ) -> ();
+    fn registerToolPkgChatViewHook(&self, definition: ToolPkgChatViewHookRegistration) -> ();
     /// Registers a typed timer, interval, or broadcast hook. The global binding delegates to the active ToolPkg registry.
     fn registerToolPkgHostEventHook_overload_1<TPayload>(
         &self,
@@ -2263,7 +2437,7 @@ pub trait GlobalHost: Send + Sync {
         definition: ToolPkgHostEventIntervalHookRegistration<TPayload>,
     ) -> ();
     /// Registers a typed timer, interval, or broadcast hook. The global binding delegates to the active ToolPkg registry.
-    fn registerToolPkgHostEventHook_overload_3<TTopic>(
+    fn registerToolPkgHostEventHook_overload_3<TTopic: ToolPkgBroadcastTopicKey>(
         &self,
         definition: ToolPkgHostEventBroadcastHookRegistration<TTopic>,
     ) -> ();
@@ -2273,10 +2447,7 @@ pub trait GlobalHost: Send + Sync {
         definition: ToolPkgToolLifecycleHookRegistration,
     ) -> ();
     /// Registers a callback around user-input processing. The global binding delegates to the active ToolPkg registry.
-    fn registerToolPkgPromptInputHook(
-        &self,
-        definition: ToolPkgPromptInputHookRegistration,
-    ) -> ();
+    fn registerToolPkgPromptInputHook(&self, definition: ToolPkgPromptInputHookRegistration) -> ();
     /// Registers a callback around prompt-history preparation. The global binding delegates to the active ToolPkg registry.
     fn registerToolPkgPromptHistoryHook(
         &self,

@@ -170,6 +170,7 @@ pub(crate) enum SerializableTypeKind {
     TaggedEnum {
         tag_name: String,
         content_name: Option<String>,
+        externally_tagged: bool,
         variants: Vec<SerializableEnumVariant>,
     },
     Enum {
@@ -190,6 +191,7 @@ pub(crate) struct SerializableEnumVariant {
     pub(crate) name: String,
     pub(crate) json_name: String,
     pub(crate) fields_are_unnamed: bool,
+    pub(crate) fields_are_unit: bool,
     pub(crate) fields: Vec<SerializableField>,
 }
 

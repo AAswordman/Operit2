@@ -7,6 +7,7 @@ pub mod chromium_browser;
 pub mod host_runtime_event;
 
 pub use host_runtime_event::WindowsHostRuntimeEventHost;
+pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as WindowsHostRuntimeEventSchedulerHost;
 pub use tools::audio::WindowsAudioPlaybackHost;
 pub use tools::bluetooth::WindowsBluetoothHost;
 pub use tools::tts::{WindowsTtsPlaybackHost, WindowsTtsSynthesisHost};

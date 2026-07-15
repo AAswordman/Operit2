@@ -1,16 +1,23 @@
 package app.operit
 
 import android.bluetooth.BluetoothDevice
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Build
+import android.os.PowerManager
 import org.json.JSONArray
 import org.json.JSONObject
 
 object HostEventBridge {
     private val receivers = mutableListOf<BroadcastReceiver>()
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     fun startHostEventReceivers(
         context: Context,
@@ -19,6 +26,8 @@ object HostEventBridge {
         clear(context)
         registerAndroidBroadcastReceiver(context, runtimeHandle)
         registerBluetoothReceiver(context, runtimeHandle)
+        registerNetworkCallback(context, runtimeHandle)
+        registerPowerIdleReceiver(context, runtimeHandle)
     }
 
     fun clear(context: Context) {
@@ -29,6 +38,13 @@ object HostEventBridge {
             }
         }
         receivers.clear()
+        val manager = connectivityManager
+        val callback = networkCallback
+        if (manager != null && callback != null) {
+            manager.unregisterNetworkCallback(callback)
+        }
+        connectivityManager = null
+        networkCallback = null
     }
 
     private fun registerAndroidBroadcastReceiver(
@@ -42,7 +58,8 @@ object HostEventBridge {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 val event = AndroidRuntimeEvents.systemBroadcast(intent, intentExtrasToJson(intent))
-                OperitRuntimeNative.emitRuntimeEvent(runtimeHandle(), event.toString())
+                RuntimeEvents.emit(runtimeHandle(), event)
+                emitSessionEvent(context, runtimeHandle, intent.action)
             }
         }
         registerReceiver(context, receiver, filter)
@@ -74,11 +91,109 @@ object HostEventBridge {
                     device,
                     intentExtrasToJson(intent),
                 )
-                OperitRuntimeNative.emitRuntimeEvent(runtimeHandle(), event.toString())
+                RuntimeEvents.emit(runtimeHandle(), event)
             }
         }
         registerReceiver(context, receiver, filter)
         receivers.add(receiver)
+    }
+
+    /** Registers Android's active-network callback and emits the shared network payload. */
+    private fun registerNetworkCallback(
+        context: Context,
+        runtimeHandle: () -> Long,
+    ) {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            /** Emits normalized connectivity when Android reports network capabilities. */
+            override fun onCapabilitiesChanged(
+                network: Network,
+                capabilities: NetworkCapabilities,
+            ) {
+                emitNetworkEvent(runtimeHandle, capabilities)
+            }
+
+            /** Emits the shared disconnected state when Android loses its active network. */
+            override fun onLost(network: Network) {
+                emitNetworkEvent(runtimeHandle, null)
+            }
+        }
+        manager.registerDefaultNetworkCallback(callback)
+        connectivityManager = manager
+        networkCallback = callback
+    }
+
+    /** Registers Android device-idle changes as normalized power sleep and wake events. */
+    private fun registerPowerIdleReceiver(
+        context: Context,
+        runtimeHandle: () -> Long,
+    ) {
+        val receiver = object : BroadcastReceiver() {
+            /** Converts Android Doze state into the shared power suspension topic. */
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val powerManager = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+                val sleeping = powerManager.isDeviceIdleMode
+                val event = RuntimeEvents.androidBroadcast(
+                    if (sleeping) RuntimeEvents.Topic.SYSTEM_POWER_SLEEP else RuntimeEvents.Topic.SYSTEM_POWER_WAKE,
+                    JSONObject().put("sleeping", sleeping),
+                )
+                RuntimeEvents.emit(runtimeHandle(), event)
+            }
+        }
+        registerReceiver(
+            context,
+            receiver,
+            IntentFilter(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED),
+        )
+        receivers.add(receiver)
+    }
+
+    /** Emits Android lock and unlock state alongside screen and user-presence broadcasts. */
+    private fun emitSessionEvent(
+        context: Context,
+        runtimeHandle: () -> Long,
+        action: String?,
+    ) {
+        val locked = when (action) {
+            Intent.ACTION_SCREEN_OFF -> {
+                val keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+                if (!keyguard.isKeyguardLocked) {
+                    return
+                }
+                true
+            }
+            Intent.ACTION_USER_PRESENT -> false
+            else -> return
+        }
+        val event = RuntimeEvents.androidBroadcast(
+            if (locked) RuntimeEvents.Topic.SYSTEM_SESSION_LOCK else RuntimeEvents.Topic.SYSTEM_SESSION_UNLOCK,
+            JSONObject().put("locked", locked),
+        )
+        RuntimeEvents.emit(runtimeHandle(), event)
+    }
+
+    /** Converts Android network capabilities and forwards one normalized event to Core. */
+    private fun emitNetworkEvent(
+        runtimeHandle: () -> Long,
+        capabilities: NetworkCapabilities?,
+    ) {
+        val connected = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        val networkType = when {
+            capabilities == null -> "none"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "vpn"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+            else -> "other"
+        }
+        val metered = capabilities?.let {
+            !it.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        }
+        val event = RuntimeEvents.androidBroadcast(
+            RuntimeEvents.Topic.SYSTEM_NETWORK_CHANGED,
+            AndroidRuntimeEvents.networkChanged(connected, networkType, metered),
+        )
+        RuntimeEvents.emit(runtimeHandle(), event)
     }
 
     private fun registerReceiver(context: Context, receiver: BroadcastReceiver, filter: IntentFilter) {
@@ -123,7 +238,7 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         if (AndroidRuntimeStorageConfigStore.read(context) != null) {
-            OperitCoreService.start(context)
+            OperitCoreService.startAfterBoot(context)
         }
     }
 }

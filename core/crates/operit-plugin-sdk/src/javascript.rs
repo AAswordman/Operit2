@@ -82,7 +82,7 @@ pub struct JsToolPkgIpcRequest {
 }
 
 /// Defines the fixed Rust execution contract required by package JavaScript.
-pub trait JsExecutionHost: Send + Sync {
+pub trait JsExecutionHost: crate::js_sdk::JsToolsHost + Send + Sync {
     /// Executes one validated tool call through the embedding application's tool system.
     fn execute_tool_call(&self, request: JsToolCallRequest) -> JsToolCallResult;
 

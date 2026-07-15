@@ -21,22 +21,22 @@ export namespace ToolPkg {
   /**
    * Carries the message-processing hook discriminator.
    */
-  export type HookEventNameVariant2 = "MessageProcessing";
+  export type HookEventNameVariant2 = "message_processing";
 
   /**
    * Carries the XML-render hook discriminator.
    */
-  export type HookEventNameVariant3 = "XmlRender";
+  export type HookEventNameVariant3 = "xml_render";
 
   /**
    * Carries the input-menu-toggle hook discriminator.
    */
-  export type HookEventNameVariant4 = "InputMenuToggle";
+  export type HookEventNameVariant4 = "input_menu_toggle";
 
   /**
    * Carries the navigation-entry-action hook discriminator.
    */
-  export type HookEventNameVariant7 = "NavigationEntryAction";
+  export type HookEventNameVariant7 = "navigation_entry_action";
 
   /**
    * Enumerates values to which an asynchronous generic hook may resolve.
@@ -263,35 +263,129 @@ export namespace ToolPkg {
   export type AiProviderHandlerRegistrationFunction = AiProviderListModelsHandler | AiProviderSendMessageHandler | AiProviderTestConnectionHandler | AiProviderCalculateInputTokensHandler;
 
   /**
-   * Maps each broadcast topic family to its corresponding payload.
+   * Maps every standard broadcast topic to its one canonical payload type.
    */
-  export type BroadcastDataForTopicConditional<TTopic> = BroadcastPowerSleepData | BroadcastNetworkChangedData | BroadcastSystemData | BroadcastBluetoothDeviceData | BroadcastAdapterData | RawBroadcastData | TTopic;
-
-  /**
-   * Distinguishes broadcasts with topic data from broadcasts without data.
-   */
-  export type HostEventBroadcastPayloadConditional<TTopic> = HostEventBroadcastPayloadWithoutData<TTopic> | HostEventBroadcastPayloadWithData<TTopic>;
-
-  /**
-   * Carries metadata for a broadcast topic that has no data payload.
-   */
-  export interface HostEventBroadcastPayloadWithoutData<TTopic> {
+  export interface BroadcastDataTypeMap {
     /**
-     * Identifies the broadcast topic.
+     * Maps application resume events to lifecycle data.
      */
-    topic: TTopic;
+    "app.lifecycle.resumed": BroadcastLifecycleData;
     /**
-     * Identifies the source platform.
+     * Maps application inactive events to lifecycle data.
      */
-    platform: BroadcastPlatform;
+    "app.lifecycle.inactive": BroadcastLifecycleData;
     /**
-     * Prohibits broadcast data for topics resolving to never.
+     * Maps application pause events to lifecycle data.
      */
-    data?: never;
+    "app.lifecycle.paused": BroadcastLifecycleData;
     /**
-     * Records the receive timestamp in milliseconds.
+     * Maps application detach events to lifecycle data.
      */
-    receivedAtMillis: number;
+    "app.lifecycle.detached": BroadcastLifecycleData;
+    /**
+     * Maps application hidden events to lifecycle data.
+     */
+    "app.lifecycle.hidden": BroadcastLifecycleData;
+    /**
+     * Maps host boot completion events to boot data.
+     */
+    "system.boot.completed": BroadcastBootData;
+    /**
+     * Maps external power connection events to power data.
+     */
+    "system.power.connected": BroadcastPowerConnectionData;
+    /**
+     * Maps external power disconnection events to power data.
+     */
+    "system.power.disconnected": BroadcastPowerConnectionData;
+    /**
+     * Maps host sleep events to sleep-state data.
+     */
+    "system.power.sleep": BroadcastPowerSleepData;
+    /**
+     * Maps host wake events to sleep-state data.
+     */
+    "system.power.wake": BroadcastPowerSleepData;
+    /**
+     * Maps low-battery events to battery data.
+     */
+    "system.battery.low": BroadcastBatteryData;
+    /**
+     * Maps recovered-battery events to battery data.
+     */
+    "system.battery.okay": BroadcastBatteryData;
+    /**
+     * Maps display-on events to screen data.
+     */
+    "system.screen.on": BroadcastScreenData;
+    /**
+     * Maps display-off events to screen data.
+     */
+    "system.screen.off": BroadcastScreenData;
+    /**
+     * Maps user-presence events to presence data.
+     */
+    "system.user.present": BroadcastUserPresenceData;
+    /**
+     * Maps clock tick events to time data.
+     */
+    "system.time.tick": BroadcastTimeData;
+    /**
+     * Maps date changes to time data.
+     */
+    "system.date.changed": BroadcastTimeData;
+    /**
+     * Maps timezone changes to time data.
+     */
+    "system.timezone.changed": BroadcastTimeData;
+    /**
+     * Maps airplane-mode changes to airplane-mode data.
+     */
+    "system.airplane_mode.changed": BroadcastAirplaneModeData;
+    /**
+     * Maps headset route changes to headset data.
+     */
+    "system.headset.plug": BroadcastHeadsetData;
+    /**
+     * Maps session lock events to session data.
+     */
+    "system.session.lock": BroadcastSessionData;
+    /**
+     * Maps session unlock events to session data.
+     */
+    "system.session.unlock": BroadcastSessionData;
+    /**
+     * Maps network changes to network data.
+     */
+    "system.network.changed": BroadcastNetworkChangedData;
+    /**
+     * Maps Bluetooth discovery events to device data.
+     */
+    "bluetooth.device.found": BroadcastBluetoothDeviceData;
+    /**
+     * Maps Bluetooth name changes to device data.
+     */
+    "bluetooth.device.name_changed": BroadcastBluetoothDeviceData;
+    /**
+     * Maps Bluetooth device connections to device data.
+     */
+    "bluetooth.device.connected": BroadcastBluetoothDeviceData;
+    /**
+     * Maps Bluetooth device disconnections to device data.
+     */
+    "bluetooth.device.disconnected": BroadcastBluetoothDeviceData;
+    /**
+     * Maps Bluetooth bond-state changes to device data.
+     */
+    "bluetooth.device.bond_state_changed": BroadcastBluetoothDeviceData;
+    /**
+     * Maps Bluetooth adapter connection changes to adapter data.
+     */
+    "bluetooth.adapter.connection_state_changed": BroadcastAdapterData;
+    /**
+     * Maps Bluetooth adapter power changes to adapter data.
+     */
+    "bluetooth.adapter.powered_changed": BroadcastAdapterData;
   }
 
   /**
@@ -311,9 +405,9 @@ export namespace ToolPkg {
      */
     data: BroadcastDataForTopic<TTopic>;
     /**
-     * Records the receive timestamp in milliseconds.
+     * Records when the host event occurred, in epoch milliseconds.
      */
-    receivedAtMillis: number;
+    occurredAtMillis: number;
   }
 
   /**
@@ -328,6 +422,14 @@ export namespace ToolPkg {
      * Selects the broadcast topic observed by this trigger.
      */
     topic: TTopic;
+    /**
+     * Restricts delivery to one host platform when present.
+     */
+    platform?: BroadcastPlatform;
+    /**
+     * Restricts delivery to the listed host platforms when present.
+     */
+    platforms?: BroadcastPlatform[];
     /**
      * Prevents a topic list from being supplied for a single-topic trigger.
      */
@@ -350,17 +452,51 @@ export namespace ToolPkg {
      * Selects broadcast topics observed by this trigger.
      */
     topics: TTopic[];
+    /**
+     * Restricts delivery to one host platform when present.
+     */
+    platform?: BroadcastPlatform;
+    /**
+     * Restricts delivery to the listed host platforms when present.
+     */
+    platforms?: BroadcastPlatform[];
   }
 
   /**
    * Maps each host event source to its matching trigger configuration.
    */
-  export type HostEventTriggerForSourceConditional<TSource> = HostEventTimerTrigger | HostEventIntervalTrigger | HostEventBroadcastTrigger | TSource;
+  export interface HostEventTriggerTypeMap {
+    /**
+     * Maps timer sources to timer trigger configuration.
+     */
+    "timer": HostEventTimerTrigger;
+    /**
+     * Maps interval sources to interval trigger configuration.
+     */
+    "interval": HostEventIntervalTrigger;
+    /**
+     * Maps broadcast sources to broadcast trigger configuration.
+     */
+    "broadcast": HostEventBroadcastTrigger;
+  }
 
   /**
    * Maps each host event source to the payload delivered to its handler.
    */
-  export type HostEventPayloadForSourceConditional<TSource> = HostEventTimerPayload<JsonObject> | HostEventIntervalPayload<JsonObject> | HostEventBroadcastPayload<BroadcastTopic> | TSource;
+  export interface HostEventPayloadTypeMap {
+    /**
+     * Maps timer sources to timer event payloads.
+     */
+    "timer": HostEventTimerPayload<JsonObject>;
+    /**
+     * Maps interval sources to interval event payloads.
+     */
+    "interval": HostEventIntervalPayload<JsonObject>;
+    /**
+     * Maps broadcast sources to broadcast event payloads.
+     */
+    "broadcast": HostEventBroadcastPayload<BroadcastTopic>;
+  }
 
   /**
    * Associates an AI provider with its model-listing callback.
@@ -437,12 +573,12 @@ export namespace ToolPkg {
   /**
    * Names application and activity lifecycle callbacks exposed to plugins.
    */
-  export type AppLifecycleEvent = "ApplicationOnCreate" | "ApplicationOnForeground" | "ApplicationOnBackground" | "ApplicationOnLowMemory" | "ApplicationOnTrimMemory" | "ApplicationOnTerminate" | "ActivityOnCreate" | "ActivityOnStart" | "ActivityOnResume" | "ActivityOnPause" | "ActivityOnStop" | "ActivityOnDestroy";
+  export type AppLifecycleEvent = "application_on_create" | "application_on_foreground" | "application_on_background" | "application_on_low_memory" | "application_on_trim_memory" | "application_on_terminate" | "activity_on_create" | "activity_on_start" | "activity_on_resume" | "activity_on_pause" | "activity_on_stop" | "activity_on_destroy";
 
   /**
    * Enumerates every hook event that a ToolPkg plugin may register.
    */
-  export type HookEventName = AppLifecycleEvent | HookEventNameVariant2 | HookEventNameVariant3 | HookEventNameVariant4 | ChatInputEventName | ChatViewEventName | HookEventNameVariant7 | ToolLifecycleEventName | PromptInputEventName | PromptHistoryEventName | SystemPromptComposeEventName | ToolPromptComposeEventName | PromptFinalizeEventName | SummaryGenerateEventName | HostEventHookEventName;
+  export type HookEventName = AppLifecycleEvent | HookEventNameVariant2 | HookEventNameVariant3 | HookEventNameVariant4 | ChatInputEventName | ChatViewEventName | HookEventNameVariant7 | ToolLifecycleEventName | PromptInputEventName | PromptHistoryEventName | SystemPromptComposeEventName | ToolPromptComposeEventName | PromptFinalizeEventName | SummaryGenerateEventName | HostEventName;
 
   /**
    * Accepts a JSON result, no result, or asynchronous completion from a generic hook.
@@ -521,7 +657,7 @@ export namespace ToolPkg {
   /**
    * Selects the input-menu section in which a toggle is displayed.
    */
-  export type InputMenuToggleSlot = "Thinking" | "Memory" | "Model" | "Tools" | "General" | "Default";
+  export type InputMenuToggleSlot = "thinking" | "memory" | "model" | "tools" | "general" | "default";
 
   /**
    * Describes one toggle contributed to the chat input menu.
@@ -571,12 +707,12 @@ export namespace ToolPkg {
   /**
    * Names the stages at which chat input hooks run.
    */
-  export type ChatInputEventName = "InputChanged" | "SubmitRequested" | "Submitted";
+  export type ChatInputEventName = "input_changed" | "submit_requested" | "submitted";
 
   /**
    * Names the open, update, and close stages of a chat view.
    */
-  export type ChatViewEventName = "ViewOpened" | "ViewUpdated" | "ViewClosed";
+  export type ChatViewEventName = "view_opened" | "view_updated" | "view_closed";
 
   /**
    * Controls chat input handling and optionally supplies replacement text or metadata.
@@ -612,42 +748,42 @@ export namespace ToolPkg {
   /**
    * Names permission, execution, result, and completion stages of a tool call.
    */
-  export type ToolLifecycleEventName = "ToolCallRequested" | "ToolPermissionChecked" | "ToolExecutionStarted" | "ToolExecutionResult" | "ToolExecutionError" | "ToolExecutionFinished";
+  export type ToolLifecycleEventName = "tool_call_intercept" | "tool_call_requested" | "tool_permission_checked" | "tool_execution_started" | "tool_execution_result" | "tool_execution_error" | "tool_execution_finished";
 
   /**
    * Names the stages before and after user-input processing.
    */
-  export type PromptInputEventName = "BeforeProcess" | "AfterProcess";
+  export type PromptInputEventName = "before_process" | "after_process";
 
   /**
    * Names the stages before and after prompt-history preparation.
    */
-  export type PromptHistoryEventName = "BeforePrepareHistory" | "AfterPrepareHistory";
+  export type PromptHistoryEventName = "before_prepare_history" | "after_prepare_history";
 
   /**
    * Names the stages used to assemble a system prompt.
    */
-  export type SystemPromptComposeEventName = "BeforeComposeSystemPrompt" | "ComposeSystemPromptSections" | "AfterComposeSystemPrompt";
+  export type SystemPromptComposeEventName = "before_compose_system_prompt" | "compose_system_prompt_sections" | "after_compose_system_prompt";
 
   /**
    * Names the stages used to filter and assemble tool prompts.
    */
-  export type ToolPromptComposeEventName = "BeforeComposeToolPrompt" | "FilterToolPromptItems" | "FilterToolCallTools" | "AfterComposeToolPrompt";
+  export type ToolPromptComposeEventName = "before_compose_tool_prompt" | "filter_tool_prompt_items" | "filter_tool_call_tools" | "after_compose_tool_prompt";
 
   /**
    * Names the final prompt stages before a model request.
    */
-  export type PromptFinalizeEventName = "BeforeFinalizePrompt" | "BeforeSendToModel";
+  export type PromptFinalizeEventName = "before_finalize_prompt" | "before_send_to_model";
 
   /**
    * Names the stages used to prepare and generate a conversation summary.
    */
-  export type SummaryGenerateEventName = "BeforePrepareSummaryPrompt" | "BeforeSendToModel" | "AfterGenerateSummary";
+  export type SummaryGenerateEventName = "before_prepare_summary_prompt" | "before_send_to_model" | "after_generate_summary";
 
   /**
    * Identifies the role and purpose of one prompt-history turn.
    */
-  export type PromptTurnKind = "SYSTEM" | "USER" | "ASSISTANT" | "TOOLCALL" | "TOOLRESULT" | "SUMMARY";
+  export type PromptTurnKind = "SYSTEM" | "USER" | "ASSISTANT" | "TOOL_CALL" | "TOOL_RESULT" | "SUMMARY";
 
   /**
    * Contains one typed turn in prepared prompt history.
@@ -674,7 +810,7 @@ export namespace ToolPkg {
   /**
    * Enumerates supported active prompt type values.
    */
-  export type ActivePromptType = "CharacterCard" | "CharacterGroup";
+  export type ActivePromptType = "character_card" | "character_group";
 
   /**
    * Captures the identity of the character prompt active for a hook.
@@ -1805,7 +1941,7 @@ export namespace ToolPkg {
   /**
    * Enumerates supported navigation surface values.
    */
-  export type NavigationSurface = "Toolbox" | "MainSidebarPlugins";
+  export type NavigationSurface = "toolbox" | "main_sidebar_plugins";
 
   /**
    * Describes a plugin action exposed through a host navigation surface.
@@ -1982,152 +2118,267 @@ export namespace ToolPkg {
   /**
    * Identifies a supported host event timer source.
    */
-  export type HostEventTimerSource = "Timer";
+  export type HostEventTimerSource = "timer";
 
   /**
    * Identifies a supported host event interval source.
    */
-  export type HostEventIntervalSource = "Interval";
+  export type HostEventIntervalSource = "interval";
 
   /**
    * Identifies a supported host event broadcast source.
    */
-  export type HostEventBroadcastSource = "Broadcast";
+  export type HostEventBroadcastSource = "broadcast";
 
   /**
    * Identifies a supported host event source.
    */
-  export type HostEventSource = "Timer" | "Interval" | "Broadcast";
+  export type HostEventSource = "timer" | "interval" | "broadcast";
 
   /**
-   * Names lifecycle stages exposed by host event hook events.
+   * Names the hook event used for host-originated runtime events.
    */
-  export type HostEventHookEventName = "ToolpkgHostEvent";
+  export type HostEventName = "host_event";
 
   /**
    * Enumerates supported broadcast platform values.
    */
-  export type BroadcastPlatform = "Android" | "Windows" | "Linux";
-
-  /**
-   * Identifies a supported android broadcast topic.
-   */
-  export type AndroidBroadcastTopic = string;
-
-  /**
-   * Identifies a supported windows broadcast topic.
-   */
-  export type WindowsBroadcastTopic = string;
-
-  /**
-   * Identifies a supported linux broadcast topic.
-   */
-  export type LinuxBroadcastTopic = string;
+  export type BroadcastPlatform = "android" | "windows" | "linux" | "macos" | "ios" | "ohos" | "web";
 
   /**
    * Identifies a supported broadcast topic.
    */
-  export type BroadcastTopic = "SystemBootCompleted" | "SystemPowerConnected" | "SystemPowerDisconnected" | "SystemPowerSleep" | "SystemPowerWake" | "SystemBatteryLow" | "SystemBatteryOkay" | "SystemScreenOn" | "SystemScreenOff" | "SystemUserPresent" | "SystemTimeTick" | "SystemDateChanged" | "SystemTimezoneChanged" | "SystemAirplaneModeChanged" | "SystemHeadsetPlug" | "SystemSessionLock" | "SystemSessionUnlock" | "SystemNetworkChanged" | "BluetoothDeviceFound" | "BluetoothDeviceNameChanged" | "BluetoothDeviceConnected" | "BluetoothDeviceDisconnected" | "BluetoothDeviceBondStateChanged" | "BluetoothAdapterConnectionStateChanged" | "BluetoothAdapterPoweredChanged" | AndroidBroadcastTopic | WindowsBroadcastTopic | LinuxBroadcastTopic;
+  export type BroadcastTopic = "app.lifecycle.resumed" | "app.lifecycle.inactive" | "app.lifecycle.paused" | "app.lifecycle.detached" | "app.lifecycle.hidden" | "system.boot.completed" | "system.power.connected" | "system.power.disconnected" | "system.power.sleep" | "system.power.wake" | "system.battery.low" | "system.battery.okay" | "system.screen.on" | "system.screen.off" | "system.user.present" | "system.time.tick" | "system.date.changed" | "system.timezone.changed" | "system.airplane_mode.changed" | "system.headset.plug" | "system.session.lock" | "system.session.unlock" | "system.network.changed" | "bluetooth.device.found" | "bluetooth.device.name_changed" | "bluetooth.device.connected" | "bluetooth.device.disconnected" | "bluetooth.device.bond_state_changed" | "bluetooth.adapter.connection_state_changed" | "bluetooth.adapter.powered_changed";
 
   /**
-   * Carries a generic operating-system broadcast action and its extra values.
+   * Names one normalized application lifecycle state.
    */
-  export interface BroadcastSystemData extends JsonObject {
+  export type BroadcastLifecycleState = "resumed" | "inactive" | "paused" | "detached" | "hidden";
+
+  /**
+   * Carries one application lifecycle transition on every supported host platform.
+   */
+  export interface BroadcastLifecycleData {
     /**
-     * Names the operating-system broadcast action.
+     * Identifies the normalized lifecycle state.
      */
-    action?: string;
-    /**
-     * Carries host-specific data without a dedicated field.
-     */
-    extras: JsonObject;
+    state: BroadcastLifecycleState;
   }
 
   /**
-   * Carries a Bluetooth device broadcast and optional device identity.
+   * Reports that host startup completed.
    */
-  export interface BroadcastBluetoothDeviceData extends JsonObject {
+  export interface BroadcastBootData {
     /**
-     * Names the Bluetooth device broadcast action.
+     * Confirms that the host completed its boot sequence.
      */
-    action?: string;
-    /**
-     * Provides the Bluetooth device name reported by the platform.
-     */
-    deviceName?: string | null;
-    /**
-     * Identifies the Bluetooth device address reported by the platform.
-     */
-    deviceAddress?: string | null;
-    /**
-     * Carries host-specific data without a dedicated field.
-     */
-    extras?: JsonObject;
+    bootCompleted: boolean;
   }
 
   /**
-   * Reports whether a power-state broadcast is entering sleep or waking.
+   * Names a normalized source supplying host power.
    */
-  export interface BroadcastPowerSleepData extends JsonObject {
+  export type BroadcastPowerSource = "ac" | "usb" | "wireless" | "battery" | "unknown";
+
+  /**
+   * Carries a normalized external-power connection change.
+   */
+  export interface BroadcastPowerConnectionData {
     /**
-     * Reports whether the system is entering sleep rather than waking.
+     * Reports whether the host is connected to external power.
      */
-    preparingForSleep: boolean;
+    connected: boolean;
+    /**
+     * Identifies the normalized power source when the platform reports it.
+     */
+    source?: BroadcastPowerSource;
+    /**
+     * Reports the battery percentage when the platform reports it.
+     */
+    batteryLevel?: number;
   }
 
   /**
-   * Carries network state reported by a network-change broadcast.
+   * Reports whether a power-state event is entering sleep or waking.
    */
-  export interface BroadcastNetworkChangedData extends JsonObject {
+  export interface BroadcastPowerSleepData {
     /**
-     * Contains the platform network state code.
+     * Reports whether the host is entering a suspended state.
      */
-    state?: number;
-    /**
-     * Names the network-change broadcast action.
-     */
-    action?: string;
-    /**
-     * Carries host-specific data without a dedicated field.
-     */
-    extras?: JsonObject;
+    sleeping: boolean;
   }
 
   /**
-   * Carries a Bluetooth adapter broadcast and its extra values.
+   * Carries a normalized battery threshold change.
    */
-  export interface BroadcastAdapterData extends JsonObject {
+  export interface BroadcastBatteryData {
     /**
-     * Names the Bluetooth adapter broadcast action.
+     * Reports whether the battery is currently below the host low threshold.
      */
-    action?: string;
+    low: boolean;
     /**
-     * Carries host-specific data without a dedicated field.
+     * Reports the battery percentage when the platform reports it.
      */
-    extras?: JsonObject;
+    level?: number;
+    /**
+     * Reports whether the battery is charging when the platform reports it.
+     */
+    charging?: boolean;
   }
 
   /**
-   * Preserves a platform broadcast that has no dedicated payload type.
+   * Carries a normalized display power change.
    */
-  export interface RawBroadcastData extends JsonObject {
-    [key: string]: JsonValue;
+  export interface BroadcastScreenData {
+    /**
+     * Reports whether the primary display is on.
+     */
+    screenOn: boolean;
+  }
+
+  /**
+   * Carries a normalized user presence change.
+   */
+  export interface BroadcastUserPresenceData {
+    /**
+     * Reports whether the host considers its user present and unlocked.
+     */
+    present: boolean;
+  }
+
+  /**
+   * Carries a normalized clock, date, or timezone change.
+   */
+  export interface BroadcastTimeData {
+    /**
+     * Records the platform timestamp at which the change was observed.
+     */
+    timestampMillis: number;
+    /**
+     * Identifies the active timezone when the platform reports it.
+     */
+    timezone?: string;
+  }
+
+  /**
+   * Carries a normalized airplane-mode change.
+   */
+  export interface BroadcastAirplaneModeData {
+    /**
+     * Reports whether airplane mode is enabled.
+     */
+    enabled: boolean;
+  }
+
+  /**
+   * Carries a normalized wired or wireless headset connection change.
+   */
+  export interface BroadcastHeadsetData {
+    /**
+     * Reports whether a headset is connected.
+     */
+    connected: boolean;
+    /**
+     * Provides the headset name when the platform reports it.
+     */
+    deviceName?: string;
+    /**
+     * Reports microphone availability when the platform reports it.
+     */
+    hasMicrophone?: boolean;
+  }
+
+  /**
+   * Carries a normalized desktop session lock change.
+   */
+  export interface BroadcastSessionData {
+    /**
+     * Reports whether the active user session is locked.
+     */
+    locked: boolean;
+  }
+
+  /**
+   * Names the normalized active network transport.
+   */
+  export type BroadcastNetworkType = "wifi" | "cellular" | "ethernet" | "vpn" | "other" | "none";
+
+  /**
+   * Carries a normalized network connectivity change.
+   */
+  export interface BroadcastNetworkChangedData {
+    /**
+     * Reports whether the host has an active network.
+     */
+    connected: boolean;
+    /**
+     * Identifies the normalized active network transport.
+     */
+    networkType: BroadcastNetworkType;
+    /**
+     * Reports whether the active network is metered when known.
+     */
+    metered?: boolean;
+    /**
+     * Identifies the changed interface when the platform reports it.
+     */
+    interfaceName?: string;
+  }
+
+  /**
+   * Carries a normalized Bluetooth device change.
+   */
+  export interface BroadcastBluetoothDeviceData {
+    /**
+     * Identifies the Bluetooth device address when available.
+     */
+    deviceAddress?: string;
+    /**
+     * Provides the Bluetooth device name when available.
+     */
+    deviceName?: string;
+    /**
+     * Reports the connection state when the topic describes or includes it.
+     */
+    connected?: boolean;
+    /**
+     * Reports the bond state when the topic describes or includes it.
+     */
+    bonded?: boolean;
+    /**
+     * Reports received signal strength when the platform provides it.
+     */
+    rssi?: number;
+  }
+
+  /**
+   * Carries a normalized Bluetooth adapter change.
+   */
+  export interface BroadcastAdapterData {
+    /**
+     * Reports whether the Bluetooth adapter is powered when known.
+     */
+    powered?: boolean;
+    /**
+     * Reports whether the adapter has an active device connection when known.
+     */
+    connected?: boolean;
   }
 
   /**
    * Resolves a broadcast topic to the data shape delivered for that topic.
    */
-  export type BroadcastDataForTopic<TTopic> = BroadcastDataForTopicConditional<TTopic>;
+  export type BroadcastDataForTopic<TTopic> = BroadcastDataTypeMap[TTopic & keyof BroadcastDataTypeMap];
 
   /**
    * Carries runtime data for a host event broadcast event.
    */
-  export type HostEventBroadcastPayload<TTopic> = HostEventBroadcastPayloadConditional<TTopic>;
+  export type HostEventBroadcastPayload<TTopic> = HostEventBroadcastPayloadWithData<TTopic>;
 
   /**
    * Configures when a host event timer event is emitted.
    */
-  export interface HostEventTimerTrigger<TPayload = JsonObject> extends JsonObject {
+  export interface HostEventTimerTrigger<TPayload = JsonObject> {
     /**
      * Identifies the concrete kind of trigger or prompt value.
      */
@@ -2145,7 +2396,7 @@ export namespace ToolPkg {
   /**
    * Configures when a host event interval event is emitted.
    */
-  export interface HostEventIntervalTrigger<TPayload = JsonObject> extends JsonObject {
+  export interface HostEventIntervalTrigger<TPayload = JsonObject> {
     /**
      * Identifies the concrete kind of trigger or prompt value.
      */
@@ -2173,12 +2424,12 @@ export namespace ToolPkg {
   /**
    * Resolves a host event source to its matching trigger configuration.
    */
-  export type HostEventTriggerForSource<TSource> = HostEventTriggerForSourceConditional<TSource>;
+  export type HostEventTriggerForSource<TSource> = HostEventTriggerTypeMap[TSource & keyof HostEventTriggerTypeMap];
 
   /**
    * Carries runtime data for a host event timer event.
    */
-  export interface HostEventTimerPayload<TPayload> extends JsonObject {
+  export interface HostEventTimerPayload<TPayload> {
     /**
      * Identifies the registered hook that received the event.
      */
@@ -2200,6 +2451,10 @@ export namespace ToolPkg {
      */
     scheduledAtMillis: number;
     /**
+     * Records when the platform delivered the timer event, in epoch milliseconds.
+     */
+    firedAtMillis: number;
+    /**
      * Sets the delay before a timer fires, in milliseconds.
      */
     delayMs?: number;
@@ -2212,7 +2467,7 @@ export namespace ToolPkg {
   /**
    * Carries runtime data for a host event interval event.
    */
-  export interface HostEventIntervalPayload<TPayload> extends JsonObject {
+  export interface HostEventIntervalPayload<TPayload> {
     /**
      * Identifies the registered hook that received the event.
      */
@@ -2234,6 +2489,10 @@ export namespace ToolPkg {
      */
     scheduledAtMillis: number;
     /**
+     * Records when the platform delivered the interval event, in epoch milliseconds.
+     */
+    firedAtMillis: number;
+    /**
      * Sets or reports the interval duration in milliseconds.
      */
     intervalMs: number;
@@ -2242,7 +2501,7 @@ export namespace ToolPkg {
   /**
    * Resolves a host event source to the payload delivered by that source.
    */
-  export type HostEventPayloadForSource<TSource> = HostEventPayloadForSourceConditional<TSource>;
+  export type HostEventPayloadForSource<TSource> = HostEventPayloadTypeMap[TSource & keyof HostEventPayloadTypeMap];
 
   /**
    * Configures and identifies a host event timer hook registration.
@@ -2330,31 +2589,31 @@ export namespace ToolPkg {
   /**
    * Combines shared dispatch metadata with the typed payload for a host event hook.
    */
-  export interface HostEventHookEvent<TSource> extends HookEventBase<HostEventHookEventName, HostEventHookEventPayload<TSource>> {
+  export interface HostEventHookEvent<TSource> extends HookEventBase<HostEventName, HostEventHookEventPayload<TSource>> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a host event timer hook.
    */
-  export interface HostEventTimerHookEvent<TPayload> extends HookEventBase<HostEventHookEventName, HostEventTimerHookEventPayload<TPayload>> {
+  export interface HostEventTimerHookEvent<TPayload> extends HookEventBase<HostEventName, HostEventTimerHookEventPayload<TPayload>> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a host event interval hook.
    */
-  export interface HostEventIntervalHookEvent<TPayload> extends HookEventBase<HostEventHookEventName, HostEventIntervalHookEventPayload<TPayload>> {
+  export interface HostEventIntervalHookEvent<TPayload> extends HookEventBase<HostEventName, HostEventIntervalHookEventPayload<TPayload>> {
   }
 
   /**
    * Combines shared dispatch metadata with the typed payload for a host event broadcast hook.
    */
-  export interface HostEventBroadcastHookEvent<TTopic> extends HookEventBase<HostEventHookEventName, HostEventBroadcastHookEventPayload<TTopic>> {
+  export interface HostEventBroadcastHookEvent<TTopic> extends HookEventBase<HostEventName, HostEventBroadcastHookEventPayload<TTopic>> {
   }
 
   /**
    * Carries source, trigger, and runtime data delivered to a host event hook.
    */
-  export interface HostEventHookEventPayload<TSource> extends JsonObject {
+  export interface HostEventHookEventPayload<TSource> {
     /**
      * Identifies the timer, interval, or broadcast source that fired.
      */
@@ -2376,7 +2635,7 @@ export namespace ToolPkg {
   /**
    * Carries source, trigger, and runtime data delivered to a host event timer hook.
    */
-  export interface HostEventTimerHookEventPayload<TPayload> extends JsonObject {
+  export interface HostEventTimerHookEventPayload<TPayload> {
     /**
      * Identifies the timer, interval, or broadcast source that fired.
      */
@@ -2398,7 +2657,7 @@ export namespace ToolPkg {
   /**
    * Carries source, trigger, and runtime data delivered to a host event interval hook.
    */
-  export interface HostEventIntervalHookEventPayload<TPayload> extends JsonObject {
+  export interface HostEventIntervalHookEventPayload<TPayload> {
     /**
      * Identifies the timer, interval, or broadcast source that fired.
      */
@@ -2420,7 +2679,7 @@ export namespace ToolPkg {
   /**
    * Carries source, trigger, and runtime data delivered to a host event broadcast hook.
    */
-  export interface HostEventBroadcastHookEventPayload<TTopic> extends JsonObject {
+  export interface HostEventBroadcastHookEventPayload<TTopic> {
     /**
      * Identifies the timer, interval, or broadcast source that fired.
      */
@@ -2622,7 +2881,7 @@ export namespace ToolPkg {
   /**
    * Runtime area that owns a ToolPkg JavaScript context.
    */
-  export type RuntimeKind = "Main" | "Ui" | "Sandbox" | "Provider";
+  export type RuntimeKind = "main" | "ui" | "sandbox" | "provider";
 
   /**
    * Metadata passed to a handler registered with {@link IpcApi.on}.
@@ -2741,7 +3000,7 @@ export namespace ToolPkg {
     /**
      * Registers a typed timer, interval, or broadcast hook.
      */
-    registerHostEventHook<TTopic>(definition: HostEventBroadcastHookRegistration<TTopic>): void;
+    registerHostEventHook<TTopic extends ToolPkg.BroadcastTopic>(definition: HostEventBroadcastHookRegistration<TTopic>): void;
     /**
      * Registers a callback for tool permission and execution stages.
      */
@@ -2829,7 +3088,7 @@ declare global {
   /**
    * Registers a typed timer, interval, or broadcast hook. The global binding delegates to the active ToolPkg registry.
    */
-  function registerToolPkgHostEventHook<TTopic>(definition: ToolPkg.HostEventBroadcastHookRegistration<TTopic>): void;
+  function registerToolPkgHostEventHook<TTopic extends ToolPkg.BroadcastTopic>(definition: ToolPkg.HostEventBroadcastHookRegistration<TTopic>): void;
   /**
    * Registers a callback that supplies chat input menu toggles. The global binding delegates to the active ToolPkg registry.
    */

@@ -8,12 +8,11 @@
   "dependencies": {
     "@ohos/flutter_ohos": "file:../har/flutter_embedding_release.har",
     "flutter_native_arm64_v8a": "file:../har/arm64_v8a_release.har",
-    "webview_all_ohos": "file:../.flutter_ohos_plugins/webview_all_ohos",
-    "record_ohos": "file:../.flutter_ohos_plugins/record_ohos",
-    "path_provider_ohos": "file:../.flutter_ohos_plugins/path_provider_ohos",
     "file_selector_ohos": "file:../.flutter_ohos_plugins/file_selector_ohos",
+    "path_provider_ohos": "file:../.flutter_ohos_plugins/path_provider_ohos",
+    "record_ohos": "file:../.flutter_ohos_plugins/record_ohos",
     "url_launcher_ohos": "file:../.flutter_ohos_plugins/url_launcher_ohos",
-    "printing_ohos": "file:../.flutter_ohos_plugins/printing_ohos",
-    "video_player_ohos": "file:../.flutter_ohos_plugins/video_player_ohos"
+    "video_player_ohos": "file:../.flutter_ohos_plugins/video_player_ohos",
+    "webview_all_ohos": "file:../.flutter_ohos_plugins/webview_all_ohos"
   }
 }

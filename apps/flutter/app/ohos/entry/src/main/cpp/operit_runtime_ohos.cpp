@@ -32,6 +32,7 @@ using BridgeDiscoverDevices = char* (*)(BridgeHandle, const char*);
 using BridgeStopWebAccessServer = char* (*)(BridgeHandle);
 using BridgeRemotePairStart = char* (*)(BridgeHandle, const char*, const char*, const char*);
 using BridgeRemotePairFinish = char* (*)(BridgeHandle, const char*, const char*);
+using BridgeEmitRuntimeEvent = char* (*)(BridgeHandle, const char*);
 
 class OperitBridgeLibrary {
  public:
@@ -74,6 +75,7 @@ class OperitBridgeLibrary {
         Load<BridgeStopWebAccessServer>("operit_flutter_bridge_stop_web_access_server");
     remote_pair_start_ = Load<BridgeRemotePairStart>("operit_flutter_bridge_remote_pair_start");
     remote_pair_finish_ = Load<BridgeRemotePairFinish>("operit_flutter_bridge_remote_pair_finish");
+    emit_runtime_event_ = Load<BridgeEmitRuntimeEvent>("operit_flutter_bridge_emit_runtime_event");
     free_bytes_ = Load<BridgeFreeBytes>("operit_flutter_bridge_free_bytes");
     free_string_ = Load<BridgeFreeString>("operit_flutter_bridge_free_string");
     if (create_with_storage_roots_ == nullptr || create_error_ == nullptr || destroy_ == nullptr ||
@@ -82,7 +84,8 @@ class OperitBridgeLibrary {
         next_watch_channel_event_ == nullptr || close_watch_stream_ == nullptr ||
         start_web_access_server_ == nullptr || discover_devices_ == nullptr ||
         stop_web_access_server_ == nullptr || remote_pair_start_ == nullptr ||
-        remote_pair_finish_ == nullptr || free_bytes_ == nullptr || free_string_ == nullptr) {
+        remote_pair_finish_ == nullptr || emit_runtime_event_ == nullptr ||
+        free_bytes_ == nullptr || free_string_ == nullptr) {
       AssignError(error, "operit flutter bridge exports are incomplete");
       return false;
     }
@@ -183,6 +186,11 @@ class OperitBridgeLibrary {
     return TakeString(remote_pair_finish_(handle, pairing_id.c_str(), pairing_code.c_str()));
   }
 
+  /// Delivers one normalized OpenHarmony event through the Rust bridge.
+  std::string EmitRuntimeEvent(BridgeHandle handle, const std::string& event_json) {
+    return TakeString(emit_runtime_event_(handle, event_json.c_str()));
+  }
+
   /// Frees an owned Rust byte buffer.
   void FreeBytes(OperitByteBuffer buffer) { free_bytes_(buffer); }
 
@@ -228,6 +236,7 @@ class OperitBridgeLibrary {
   BridgeStopWebAccessServer stop_web_access_server_ = nullptr;
   BridgeRemotePairStart remote_pair_start_ = nullptr;
   BridgeRemotePairFinish remote_pair_finish_ = nullptr;
+  BridgeEmitRuntimeEvent emit_runtime_event_ = nullptr;
   BridgeFreeBytes free_bytes_ = nullptr;
   BridgeFreeString free_string_ = nullptr;
 };
@@ -543,6 +552,22 @@ napi_value RemotePairFinish(napi_env env, napi_callback_info info) {
                                                             ReadString(env, args[2])));
 }
 
+/// Delivers one normalized OpenHarmony event through Rust.
+napi_value EmitRuntimeEvent(napi_env env, napi_callback_info info) {
+  if (!EnsureBridgeReady(env)) {
+    return nullptr;
+  }
+  auto args = CallbackArgs(env, info, 2);
+  if (args.empty()) {
+    return nullptr;
+  }
+  BridgeHandle handle = ReadHandle(env, args[0]);
+  if (handle == nullptr) {
+    return nullptr;
+  }
+  return StringValue(env, g_bridge_library.EmitRuntimeEvent(handle, ReadString(env, args[1])));
+}
+
 /// Registers one named N-API function.
 void DefineFunction(napi_env env,
                     napi_value exports,
@@ -554,7 +579,7 @@ void DefineFunction(napi_env env,
 
 /// Initializes the OpenHarmony native runtime module.
 napi_value Init(napi_env env, napi_value exports) {
-  napi_property_descriptor descriptors[15];
+  napi_property_descriptor descriptors[16];
   DefineFunction(env, exports, "create", Create, &descriptors[0]);
   DefineFunction(env, exports, "destroy", Destroy, &descriptors[1]);
   DefineFunction(env, exports, "call", Call, &descriptors[2]);
@@ -570,7 +595,8 @@ napi_value Init(napi_env env, napi_value exports) {
   DefineFunction(env, exports, "stopWebAccessServer", StopWebAccessServer, &descriptors[12]);
   DefineFunction(env, exports, "remotePairStart", RemotePairStart, &descriptors[13]);
   DefineFunction(env, exports, "remotePairFinish", RemotePairFinish, &descriptors[14]);
-  napi_define_properties(env, exports, 15, descriptors);
+  DefineFunction(env, exports, "emitRuntimeEvent", EmitRuntimeEvent, &descriptors[15]);
+  napi_define_properties(env, exports, 16, descriptors);
   return exports;
 }
 
