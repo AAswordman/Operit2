@@ -140,6 +140,9 @@ def verify_returned_assets(args: argparse.Namespace, assets: list[Path]) -> None
 def remote_build_script(args: argparse.Namespace, remote_archive: str, remote_source: str, remote_dist: str, remote_result: str) -> str:
     products = " ".join(shlex.quote(product) for product in args.products)
     ios_option = " --include-ios" if args.include_ios else ""
+    remote_cache = f"{args.remote_root.rstrip('/')}/cache"
+    remote_tool_cache = f"{remote_cache}/.ci-tools"
+    remote_build_tool_cache = f"{remote_cache}/operit-build-tools"
     return f"""
 set -euo pipefail
 export PATH="$HOME/.rustup/toolchains/stable-$(uname -m)-apple-darwin/bin:$HOME/.pub-cache/bin:$HOME/flutter/bin:/usr/local/bin:$PATH"
@@ -150,9 +153,12 @@ command -v fvm
 command -v node
 command -v npm
 rm -rf {shlex.quote(remote_source)} {shlex.quote(remote_dist)}
-mkdir -p {shlex.quote(remote_source)} {shlex.quote(remote_dist)}
+mkdir -p {shlex.quote(remote_source)} {shlex.quote(remote_dist)} {shlex.quote(remote_tool_cache)} {shlex.quote(remote_build_tool_cache)}
 tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(remote_source)}
 cd {shlex.quote(remote_source)}
+ln -s {shlex.quote(remote_tool_cache)} .ci-tools
+mkdir -p target
+ln -s {shlex.quote(remote_build_tool_cache)} target/operit-build-tools
 python3 tools/build_scripts/build_apple_release.py \
   --build-name {shlex.quote(args.build_name)} \
   --build-number {shlex.quote(args.build_number)} \
