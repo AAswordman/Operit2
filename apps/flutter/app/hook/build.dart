@@ -552,12 +552,14 @@ Future<Map<String, String>> _wasmCargoEnvironment(Directory repoRoot) async {
       'by QuickJS: libc=${wasiLibc.path} builtins=${wasiBuiltins.path}',
     );
   }
+  final wasiLibDirPath = wasiLibDir.path.replaceAll(r'\', '/');
+  final wasiBuiltinsDirPath = wasiBuiltinsDir.path.replaceAll(r'\', '/');
   environment['RUSTFLAGS'] = <String>[
     '-Awarnings',
     '-L',
-    'native=${wasiLibDir.path}',
+    'native=$wasiLibDirPath',
     '-L',
-    'native=${wasiBuiltinsDir.path}',
+    'native=$wasiBuiltinsDirPath',
     '-l',
     'static=c',
     '-l',

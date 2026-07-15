@@ -216,9 +216,9 @@ def main() -> int:
         [
             env.get("RUSTFLAGS", "-Awarnings"),
             "-L",
-            f"native={wasi_lib_dir}",
+            f"native={wasi_lib_dir.as_posix()}",
             "-L",
-            f"native={wasi_builtins_dir}",
+            f"native={wasi_builtins_dir.as_posix()}",
             "-l",
             "static=c",
             "-l",
