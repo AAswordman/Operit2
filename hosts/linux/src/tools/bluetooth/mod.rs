@@ -1,10 +1,4 @@
 use std::collections::{HashMap, VecDeque};
-use std::process::Command;
-use std::sync::{Arc, Mutex};
-#[cfg(target_os = "linux")]
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(target_os = "linux")]
 use std::io::{Read, Write};
 #[cfg(target_os = "linux")]
@@ -13,17 +7,24 @@ use std::mem::{size_of, zeroed};
 use std::net::Shutdown;
 #[cfg(target_os = "linux")]
 use std::os::fd::{FromRawFd, RawFd};
+use std::process::Command;
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use operit_host_api::{
-    BluetoothBleCharacteristicAddress, BluetoothBleConnectRequest, BluetoothBleNotificationData,
-    BluetoothBleNotificationEntry, BluetoothBleServicesData, BluetoothBleSubscribeRequest,
-    BluetoothBleWriteAndReadRequest, BluetoothBleWriteRequest, BluetoothBondedDevicesData,
-    BluetoothClassicAcceptRequest, BluetoothClassicConnectRequest, BluetoothClassicListenRequest,
-    BluetoothDeviceData, BluetoothHost, BluetoothPayload, BluetoothReadData, BluetoothReadRequest,
-    BluetoothScanRequest, BluetoothScanResultData, BluetoothScannedDeviceData,
-    BluetoothSessionData, BluetoothStateData, BluetoothTransferData, HostError, HostResult,
+    BluetoothBleCharacteristicAddress, BluetoothBleCharacteristicData, BluetoothBleConnectRequest,
+    BluetoothBleNotificationData, BluetoothBleNotificationEntry, BluetoothBleServiceData,
+    BluetoothBleServicesData, BluetoothBleSubscribeRequest, BluetoothBleWriteAndReadRequest,
+    BluetoothBleWriteRequest, BluetoothBondedDevicesData, BluetoothClassicAcceptRequest,
+    BluetoothClassicConnectRequest, BluetoothClassicListenRequest, BluetoothDeviceData,
+    BluetoothHost, BluetoothPayload, BluetoothReadData, BluetoothReadRequest, BluetoothScanRequest,
+    BluetoothScanResultData, BluetoothScannedDeviceData, BluetoothSessionData, BluetoothStateData,
+    BluetoothTransferData, HostError, HostResult,
 };
 use uuid::Uuid;
 #[cfg(target_os = "linux")]
@@ -99,9 +100,9 @@ impl LinuxBluetoothHost {
     fn lockSessions(
         &self,
     ) -> HostResult<std::sync::MutexGuard<'_, HashMap<String, LinuxBluetoothSession>>> {
-        self.sessions
-            .lock()
-            .map_err(|error| HostError::new(format!("Linux Bluetooth session lock failed: {error}")))
+        self.sessions.lock().map_err(|error| {
+            HostError::new(format!("Linux Bluetooth session lock failed: {error}"))
+        })
     }
 }
 
@@ -189,36 +190,38 @@ impl BluetoothHost for LinuxBluetoothHost {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = request;
-            return Err(HostError::new("Linux Bluetooth classic connect requires a Linux target"));
+            return Err(HostError::new(
+                "Linux Bluetooth classic connect requires a Linux target",
+            ));
         }
         #[cfg(target_os = "linux")]
         {
-        let channel = rfcomm_channel(&request.uuid)?;
-        let fd = rfcomm_socket()?;
-        let sockaddr = rfcomm_sockaddr(&request.address, channel)?;
-        let result = unsafe {
-            libc::connect(
-                fd,
-                &sockaddr as *const SockAddrRc as *const libc::sockaddr,
-                size_of::<SockAddrRc>() as libc::socklen_t,
-            )
-        };
-        if result != 0 {
-            let error = os_error("Linux Bluetooth classic connect failed");
-            unsafe {
-                libc::close(fd);
+            let channel = rfcomm_channel(&request.uuid)?;
+            let fd = rfcomm_socket()?;
+            let sockaddr = rfcomm_sockaddr(&request.address, channel)?;
+            let result = unsafe {
+                libc::connect(
+                    fd,
+                    &sockaddr as *const SockAddrRc as *const libc::sockaddr,
+                    size_of::<SockAddrRc>() as libc::socklen_t,
+                )
+            };
+            if result != 0 {
+                let error = os_error("Linux Bluetooth classic connect failed");
+                unsafe {
+                    libc::close(fd);
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
-        let stream = unsafe { std::net::TcpStream::from_raw_fd(fd) };
-        let sessionId = format!("linux-bt-classic-{}", Uuid::new_v4());
-        self.lockSessions()?
-            .insert(sessionId.clone(), LinuxBluetoothSession::Classic(stream));
-        Ok(BluetoothSessionData {
-            sessionId,
-            address: request.address,
-            mode: "classic".to_string(),
-        })
+            let stream = unsafe { std::net::TcpStream::from_raw_fd(fd) };
+            let sessionId = format!("linux-bt-classic-{}", Uuid::new_v4());
+            self.lockSessions()?
+                .insert(sessionId.clone(), LinuxBluetoothSession::Classic(stream));
+            Ok(BluetoothSessionData {
+                sessionId,
+                address: request.address,
+                mode: "classic".to_string(),
+            })
         }
     }
 
@@ -229,42 +232,44 @@ impl BluetoothHost for LinuxBluetoothHost {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = request;
-            return Err(HostError::new("Linux Bluetooth classic listen requires a Linux target"));
+            return Err(HostError::new(
+                "Linux Bluetooth classic listen requires a Linux target",
+            ));
         }
         #[cfg(target_os = "linux")]
         {
-        let channel = rfcomm_channel(&request.uuid)?;
-        let fd = rfcomm_socket()?;
-        let sockaddr = rfcomm_any_sockaddr(channel);
-        let bind_result = unsafe {
-            libc::bind(
-                fd,
-                &sockaddr as *const SockAddrRc as *const libc::sockaddr,
-                size_of::<SockAddrRc>() as libc::socklen_t,
-            )
-        };
-        if bind_result != 0 {
-            let error = os_error("Linux Bluetooth classic bind failed");
-            unsafe {
-                libc::close(fd);
+            let channel = rfcomm_channel(&request.uuid)?;
+            let fd = rfcomm_socket()?;
+            let sockaddr = rfcomm_any_sockaddr(channel);
+            let bind_result = unsafe {
+                libc::bind(
+                    fd,
+                    &sockaddr as *const SockAddrRc as *const libc::sockaddr,
+                    size_of::<SockAddrRc>() as libc::socklen_t,
+                )
+            };
+            if bind_result != 0 {
+                let error = os_error("Linux Bluetooth classic bind failed");
+                unsafe {
+                    libc::close(fd);
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
-        if unsafe { libc::listen(fd, 1) } != 0 {
-            let error = os_error("Linux Bluetooth classic listen failed");
-            unsafe {
-                libc::close(fd);
+            if unsafe { libc::listen(fd, 1) } != 0 {
+                let error = os_error("Linux Bluetooth classic listen failed");
+                unsafe {
+                    libc::close(fd);
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
-        let sessionId = format!("linux-bt-listener-{}", Uuid::new_v4());
-        self.lockSessions()?
-            .insert(sessionId.clone(), LinuxBluetoothSession::Listener(fd));
-        Ok(BluetoothSessionData {
-            sessionId,
-            address: request.name,
-            mode: "classic_listener".to_string(),
-        })
+            let sessionId = format!("linux-bt-listener-{}", Uuid::new_v4());
+            self.lockSessions()?
+                .insert(sessionId.clone(), LinuxBluetoothSession::Listener(fd));
+            Ok(BluetoothSessionData {
+                sessionId,
+                address: request.name,
+                mode: "classic_listener".to_string(),
+            })
         }
     }
 
@@ -275,56 +280,58 @@ impl BluetoothHost for LinuxBluetoothHost {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = request;
-            return Err(HostError::new("Linux Bluetooth classic accept requires a Linux target"));
+            return Err(HostError::new(
+                "Linux Bluetooth classic accept requires a Linux target",
+            ));
         }
         #[cfg(target_os = "linux")]
         {
-        let listener_fd = {
-            let sessions = self.lockSessions()?;
-            match sessions.get(&request.listenerSessionId) {
-                Some(LinuxBluetoothSession::Listener(fd)) => *fd,
-                Some(LinuxBluetoothSession::Classic(_)) => {
-                    return Err(HostError::new(format!(
-                        "Linux Bluetooth session is not a listener: {}",
-                        request.listenerSessionId
-                    )))
+            let listener_fd = {
+                let sessions = self.lockSessions()?;
+                match sessions.get(&request.listenerSessionId) {
+                    Some(LinuxBluetoothSession::Listener(fd)) => *fd,
+                    Some(LinuxBluetoothSession::Classic(_)) => {
+                        return Err(HostError::new(format!(
+                            "Linux Bluetooth session is not a listener: {}",
+                            request.listenerSessionId
+                        )))
+                    }
+                    Some(LinuxBluetoothSession::Ble(_)) => {
+                        return Err(HostError::new(format!(
+                            "Linux Bluetooth session is not a listener: {}",
+                            request.listenerSessionId
+                        )))
+                    }
+                    None => {
+                        return Err(HostError::new(format!(
+                            "Linux Bluetooth listener session is not available: {}",
+                            request.listenerSessionId
+                        )))
+                    }
                 }
-                Some(LinuxBluetoothSession::Ble(_)) => {
-                    return Err(HostError::new(format!(
-                        "Linux Bluetooth session is not a listener: {}",
-                        request.listenerSessionId
-                    )))
-                }
-                None => {
-                    return Err(HostError::new(format!(
-                        "Linux Bluetooth listener session is not available: {}",
-                        request.listenerSessionId
-                    )))
-                }
+            };
+            let mut sockaddr: SockAddrRc = unsafe { zeroed() };
+            let mut sockaddr_len = size_of::<SockAddrRc>() as libc::socklen_t;
+            let fd = unsafe {
+                libc::accept(
+                    listener_fd,
+                    &mut sockaddr as *mut SockAddrRc as *mut libc::sockaddr,
+                    &mut sockaddr_len,
+                )
+            };
+            if fd < 0 {
+                return Err(os_error("Linux Bluetooth classic accept failed"));
             }
-        };
-        let mut sockaddr: SockAddrRc = unsafe { zeroed() };
-        let mut sockaddr_len = size_of::<SockAddrRc>() as libc::socklen_t;
-        let fd = unsafe {
-            libc::accept(
-                listener_fd,
-                &mut sockaddr as *mut SockAddrRc as *mut libc::sockaddr,
-                &mut sockaddr_len,
-            )
-        };
-        if fd < 0 {
-            return Err(os_error("Linux Bluetooth classic accept failed"));
-        }
-        let stream = unsafe { std::net::TcpStream::from_raw_fd(fd) };
-        let sessionId = format!("linux-bt-classic-{}", Uuid::new_v4());
-        let address = bluetooth_address_string(sockaddr.rc_bdaddr.bytes);
-        self.lockSessions()?
-            .insert(sessionId.clone(), LinuxBluetoothSession::Classic(stream));
-        Ok(BluetoothSessionData {
-            sessionId,
-            address,
-            mode: "classic".to_string(),
-        })
+            let stream = unsafe { std::net::TcpStream::from_raw_fd(fd) };
+            let sessionId = format!("linux-bt-classic-{}", Uuid::new_v4());
+            let address = bluetooth_address_string(sockaddr.rc_bdaddr.bytes);
+            self.lockSessions()?
+                .insert(sessionId.clone(), LinuxBluetoothSession::Classic(stream));
+            Ok(BluetoothSessionData {
+                sessionId,
+                address,
+                mode: "classic".to_string(),
+            })
         }
     }
 
@@ -336,18 +343,20 @@ impl BluetoothHost for LinuxBluetoothHost {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = (sessionId, payload);
-            return Err(HostError::new("Linux Bluetooth classic send requires a Linux target"));
+            return Err(HostError::new(
+                "Linux Bluetooth classic send requires a Linux target",
+            ));
         }
         #[cfg(target_os = "linux")]
         {
-        let bytes = bluetooth_payload_bytes(payload)?;
-        let mut sessions = self.lockSessions()?;
-        let stream = classic_stream(&mut sessions, sessionId)?;
-        stream.write_all(&bytes)?;
-        Ok(BluetoothTransferData {
-            sessionId: sessionId.to_string(),
-            bytesWritten: bytes.len() as i64,
-        })
+            let bytes = bluetooth_payload_bytes(payload)?;
+            let mut sessions = self.lockSessions()?;
+            let stream = classic_stream(&mut sessions, sessionId)?;
+            stream.write_all(&bytes)?;
+            Ok(BluetoothTransferData {
+                sessionId: sessionId.to_string(),
+                bytesWritten: bytes.len() as i64,
+            })
         }
     }
 
@@ -355,20 +364,22 @@ impl BluetoothHost for LinuxBluetoothHost {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = request;
-            return Err(HostError::new("Linux Bluetooth classic read requires a Linux target"));
+            return Err(HostError::new(
+                "Linux Bluetooth classic read requires a Linux target",
+            ));
         }
         #[cfg(target_os = "linux")]
         {
-        let mut buffer = vec![
-            0u8;
-            usize::try_from(request.maxBytes.max(1))
-                .map_err(|error| HostError::new(error.to_string()))?
-        ];
-        let mut sessions = self.lockSessions()?;
-        let stream = classic_stream(&mut sessions, &request.sessionId)?;
-        let read = stream.read(&mut buffer)?;
-        buffer.truncate(read);
-        Ok(bluetooth_read_data(request.sessionId, buffer))
+            let mut buffer = vec![
+                0u8;
+                usize::try_from(request.maxBytes.max(1))
+                    .map_err(|error| HostError::new(error.to_string()))?
+            ];
+            let mut sessions = self.lockSessions()?;
+            let stream = classic_stream(&mut sessions, &request.sessionId)?;
+            let read = stream.read(&mut buffer)?;
+            buffer.truncate(read);
+            Ok(bluetooth_read_data(request.sessionId, buffer))
         }
     }
 
@@ -390,20 +401,20 @@ impl BluetoothHost for LinuxBluetoothHost {
         }
         #[cfg(target_os = "linux")]
         {
-        if let Some(session) = self.lockSessions()?.remove(sessionId) {
-            match session {
-                LinuxBluetoothSession::Classic(stream) => {
-                    let _ = stream.shutdown(Shutdown::Both);
-                }
-                LinuxBluetoothSession::Listener(fd) => unsafe {
-                    libc::close(fd);
-                },
-                LinuxBluetoothSession::Ble(session) => {
-                    stop_linux_ble_session(&session)?;
+            if let Some(session) = self.lockSessions()?.remove(sessionId) {
+                match session {
+                    LinuxBluetoothSession::Classic(stream) => {
+                        let _ = stream.shutdown(Shutdown::Both);
+                    }
+                    LinuxBluetoothSession::Listener(fd) => unsafe {
+                        libc::close(fd);
+                    },
+                    LinuxBluetoothSession::Ble(session) => {
+                        stop_linux_ble_session(&session)?;
+                    }
                 }
             }
-        }
-        Ok(format!("linux_bluetooth_session_closed:{sessionId}"))
+            Ok(format!("linux_bluetooth_session_closed:{sessionId}"))
         }
     }
 
@@ -418,25 +429,28 @@ impl BluetoothHost for LinuxBluetoothHost {
         }
         #[cfg(target_os = "linux")]
         {
-        let connection = bluez_connection()?;
-        let devicePath = bluez_device_path(&connection, &request.address)?;
-        let device = bluez_proxy(&connection, &devicePath, BLUEZ_DEVICE_INTERFACE)?;
-        let _: () = device.call("Connect", &())?;
-        let sessionId = format!("linux-ble-{}", Uuid::new_v4());
-        self.lockSessions()?.insert(
-            sessionId.clone(),
-            LinuxBluetoothSession::Ble(LinuxBleSession {
-                address: request.address.clone(),
-                devicePath,
-                notifications: Arc::new(Mutex::new(VecDeque::new())),
-                subscriptions: Arc::new(Mutex::new(HashMap::new())),
-            }),
-        );
-        Ok(BluetoothSessionData {
-            sessionId,
-            address: request.address,
-            mode: "ble".to_string(),
-        })
+            let connection = bluez_connection()?;
+            let devicePath = bluez_device_path(&connection, &request.address)?;
+            let device = bluez_proxy(&connection, &devicePath, BLUEZ_DEVICE_INTERFACE)?;
+            let _: () = device
+                .call("Connect", &())
+                .map_err(|error| bluez_call_error("connect Linux BlueZ BLE device", error))?;
+            drop(device);
+            let sessionId = format!("linux-ble-{}", Uuid::new_v4());
+            self.lockSessions()?.insert(
+                sessionId.clone(),
+                LinuxBluetoothSession::Ble(LinuxBleSession {
+                    address: request.address.clone(),
+                    devicePath,
+                    notifications: Arc::new(Mutex::new(VecDeque::new())),
+                    subscriptions: Arc::new(Mutex::new(HashMap::new())),
+                }),
+            );
+            Ok(BluetoothSessionData {
+                sessionId,
+                address: request.address,
+                mode: "ble".to_string(),
+            })
         }
     }
 
@@ -448,18 +462,20 @@ impl BluetoothHost for LinuxBluetoothHost {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = (sessionId, timeoutMs);
-            return Err(HostError::new("Linux BLE service discovery requires a Linux target"));
+            return Err(HostError::new(
+                "Linux BLE service discovery requires a Linux target",
+            ));
         }
         #[cfg(target_os = "linux")]
         {
-        let session = self.bleSession(sessionId)?;
-        let connection = bluez_connection()?;
-        wait_for_bluez_services(&connection, &session.devicePath, timeoutMs)?;
-        let services = bluez_ble_services(&connection, &session.devicePath)?;
-        Ok(BluetoothBleServicesData {
-            sessionId: sessionId.to_string(),
-            services,
-        })
+            let session = self.bleSession(sessionId)?;
+            let connection = bluez_connection()?;
+            wait_for_bluez_services(&connection, &session.devicePath, timeoutMs)?;
+            let services = bluez_ble_services(&connection, &session.devicePath)?;
+            Ok(BluetoothBleServicesData {
+                sessionId: sessionId.to_string(),
+                services,
+            })
         }
     }
 
@@ -470,21 +486,26 @@ impl BluetoothHost for LinuxBluetoothHost {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = address;
-            return Err(HostError::new("Linux BLE characteristic read requires a Linux target"));
+            return Err(HostError::new(
+                "Linux BLE characteristic read requires a Linux target",
+            ));
         }
         #[cfg(target_os = "linux")]
         {
-        let session = self.bleSession(&address.sessionId)?;
-        let connection = bluez_connection()?;
-        let path = bluez_characteristic_path(
-            &connection,
-            &session.devicePath,
-            &address.serviceUuid,
-            &address.characteristicUuid,
-        )?;
-        let characteristic = bluez_proxy(&connection, &path, BLUEZ_GATT_CHARACTERISTIC_INTERFACE)?;
-        let bytes: Vec<u8> = characteristic.call("ReadValue", &(HashMap::<String, Value<'_>>::new(),))?;
-        Ok(bluetooth_read_data(address.sessionId, bytes))
+            let session = self.bleSession(&address.sessionId)?;
+            let connection = bluez_connection()?;
+            let path = bluez_characteristic_path(
+                &connection,
+                &session.devicePath,
+                &address.serviceUuid,
+                &address.characteristicUuid,
+            )?;
+            let characteristic =
+                bluez_proxy(&connection, &path, BLUEZ_GATT_CHARACTERISTIC_INTERFACE)?;
+            let bytes: Vec<u8> = characteristic
+                .call("ReadValue", &(HashMap::<String, Value<'_>>::new(),))
+                .map_err(|error| bluez_call_error("read Linux BlueZ BLE characteristic", error))?;
+            Ok(bluetooth_read_data(address.sessionId, bytes))
         }
     }
 
@@ -495,31 +516,36 @@ impl BluetoothHost for LinuxBluetoothHost {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = request;
-            return Err(HostError::new("Linux BLE characteristic write requires a Linux target"));
+            return Err(HostError::new(
+                "Linux BLE characteristic write requires a Linux target",
+            ));
         }
         #[cfg(target_os = "linux")]
         {
-        let session = self.bleSession(&request.sessionId)?;
-        let connection = bluez_connection()?;
-        let path = bluez_characteristic_path(
-            &connection,
-            &session.devicePath,
-            &request.serviceUuid,
-            &request.characteristicUuid,
-        )?;
-        let bytes = bluetooth_payload_bytes(BluetoothPayload {
-            text: request.text,
-            dataBase64: request.dataBase64,
-        })?;
-        let characteristic = bluez_proxy(&connection, &path, BLUEZ_GATT_CHARACTERISTIC_INTERFACE)?;
-        let _: () = characteristic.call(
-            "WriteValue",
-            &(bytes.clone(), HashMap::<String, Value<'_>>::new()),
-        )?;
-        Ok(BluetoothTransferData {
-            sessionId: request.sessionId,
-            bytesWritten: bytes.len() as i64,
-        })
+            let session = self.bleSession(&request.sessionId)?;
+            let connection = bluez_connection()?;
+            let path = bluez_characteristic_path(
+                &connection,
+                &session.devicePath,
+                &request.serviceUuid,
+                &request.characteristicUuid,
+            )?;
+            let bytes = bluetooth_payload_bytes(BluetoothPayload {
+                text: request.text,
+                dataBase64: request.dataBase64,
+            })?;
+            let characteristic =
+                bluez_proxy(&connection, &path, BLUEZ_GATT_CHARACTERISTIC_INTERFACE)?;
+            let _: () = characteristic
+                .call(
+                    "WriteValue",
+                    &(bytes.clone(), HashMap::<String, Value<'_>>::new()),
+                )
+                .map_err(|error| bluez_call_error("write Linux BlueZ BLE characteristic", error))?;
+            Ok(BluetoothTransferData {
+                sessionId: request.sessionId,
+                bytesWritten: bytes.len() as i64,
+            })
         }
     }
 
@@ -549,81 +575,89 @@ impl BluetoothHost for LinuxBluetoothHost {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = request;
-            return Err(HostError::new("Linux BLE characteristic subscribe requires a Linux target"));
+            return Err(HostError::new(
+                "Linux BLE characteristic subscribe requires a Linux target",
+            ));
         }
         #[cfg(target_os = "linux")]
         {
-        let session = self.bleSession(&request.sessionId)?;
-        let connection = bluez_connection()?;
-        let path = bluez_characteristic_path(
-            &connection,
-            &session.devicePath,
-            &request.serviceUuid,
-            &request.characteristicUuid,
-        )?;
-        let characteristic = bluez_proxy(&connection, &path, BLUEZ_GATT_CHARACTERISTIC_INTERFACE)?;
-        let subscriptionKey =
-            linux_ble_subscription_key(&request.serviceUuid, &request.characteristicUuid);
-        if request.enable {
-            {
-                let subscriptions = session.subscriptions.lock().map_err(|error| {
-                    HostError::new(format!("Linux BLE subscription lock failed: {error}"))
-                })?;
-                if subscriptions.get(&subscriptionKey).is_some() {
-                    return Err(HostError::new(format!(
-                        "Linux BLE subscription is already active: {subscriptionKey}"
-                    )));
+            let session = self.bleSession(&request.sessionId)?;
+            let connection = bluez_connection()?;
+            let path = bluez_characteristic_path(
+                &connection,
+                &session.devicePath,
+                &request.serviceUuid,
+                &request.characteristicUuid,
+            )?;
+            let characteristic =
+                bluez_proxy(&connection, &path, BLUEZ_GATT_CHARACTERISTIC_INTERFACE)?;
+            let subscriptionKey =
+                linux_ble_subscription_key(&request.serviceUuid, &request.characteristicUuid);
+            if request.enable {
+                {
+                    let subscriptions = session.subscriptions.lock().map_err(|error| {
+                        HostError::new(format!("Linux BLE subscription lock failed: {error}"))
+                    })?;
+                    if subscriptions.get(&subscriptionKey).is_some() {
+                        return Err(HostError::new(format!(
+                            "Linux BLE subscription is already active: {subscriptionKey}"
+                        )));
+                    }
                 }
+                let _: () = characteristic.call("StartNotify", &()).map_err(|error| {
+                    bluez_call_error("start Linux BlueZ BLE notifications", error)
+                })?;
+                drop(characteristic);
+                let stop = Arc::new(AtomicBool::new(false));
+                let notifications = session.notifications.clone();
+                let characteristicUuid = request.characteristicUuid.clone();
+                let workerPath = path.clone();
+                let workerStop = stop.clone();
+                thread::spawn(move || {
+                    if let Err(error) = linux_ble_notification_worker(
+                        workerPath,
+                        characteristicUuid,
+                        notifications,
+                        workerStop,
+                    ) {
+                        eprintln!("Linux BLE notification worker stopped: {error}");
+                    }
+                });
+                session
+                    .subscriptions
+                    .lock()
+                    .map_err(|error| {
+                        HostError::new(format!("Linux BLE subscription lock failed: {error}"))
+                    })?
+                    .insert(
+                        subscriptionKey,
+                        LinuxBleSubscription {
+                            characteristicPath: path,
+                            stop,
+                        },
+                    );
+            } else {
+                let subscription = session
+                    .subscriptions
+                    .lock()
+                    .map_err(|error| {
+                        HostError::new(format!("Linux BLE subscription lock failed: {error}"))
+                    })?
+                    .remove(&subscriptionKey)
+                    .ok_or_else(|| {
+                        HostError::new(format!(
+                            "Linux BLE subscription is not active: {subscriptionKey}"
+                        ))
+                    })?;
+                subscription.stop.store(true, Ordering::SeqCst);
+                let _: () = characteristic.call("StopNotify", &()).map_err(|error| {
+                    bluez_call_error("stop Linux BlueZ BLE notifications", error)
+                })?;
             }
-            let _: () = characteristic.call("StartNotify", &())?;
-            let stop = Arc::new(AtomicBool::new(false));
-            let notifications = session.notifications.clone();
-            let characteristicUuid = request.characteristicUuid.clone();
-            let workerPath = path.clone();
-            let workerStop = stop.clone();
-            thread::spawn(move || {
-                if let Err(error) = linux_ble_notification_worker(
-                    workerPath,
-                    characteristicUuid,
-                    notifications,
-                    workerStop,
-                ) {
-                    eprintln!("Linux BLE notification worker stopped: {error}");
-                }
-            });
-            session
-                .subscriptions
-                .lock()
-                .map_err(|error| {
-                    HostError::new(format!("Linux BLE subscription lock failed: {error}"))
-                })?
-                .insert(
-                    subscriptionKey,
-                    LinuxBleSubscription {
-                        characteristicPath: path,
-                        stop,
-                    },
-                );
-        } else {
-            let subscription = session
-                .subscriptions
-                .lock()
-                .map_err(|error| {
-                    HostError::new(format!("Linux BLE subscription lock failed: {error}"))
-                })?
-                .remove(&subscriptionKey)
-                .ok_or_else(|| {
-                    HostError::new(format!(
-                        "Linux BLE subscription is not active: {subscriptionKey}"
-                    ))
-                })?;
-            subscription.stop.store(true, Ordering::SeqCst);
-            let _: () = characteristic.call("StopNotify", &())?;
-        }
-        Ok(BluetoothTransferData {
-            sessionId: request.sessionId,
-            bytesWritten: 0,
-        })
+            Ok(BluetoothTransferData {
+                sessionId: request.sessionId,
+                bytesWritten: 0,
+            })
         }
     }
 
@@ -635,27 +669,29 @@ impl BluetoothHost for LinuxBluetoothHost {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = (sessionId, limit);
-            return Err(HostError::new("Linux BLE notification read requires a Linux target"));
+            return Err(HostError::new(
+                "Linux BLE notification read requires a Linux target",
+            ));
         }
         #[cfg(target_os = "linux")]
         {
-        let session = self.bleSession(sessionId)?;
-        let count = usize::try_from(limit.max(0))
-            .map_err(|error| HostError::new(error.to_string()))?;
-        let mut queue = session.notifications.lock().map_err(|error| {
-            HostError::new(format!("Linux BLE notification queue lock failed: {error}"))
-        })?;
-        let mut notifications = Vec::new();
-        for _ in 0..count {
-            let Some(entry) = queue.pop_front() else {
-                break;
-            };
-            notifications.push(entry);
-        }
-        Ok(BluetoothBleNotificationData {
-            sessionId: sessionId.to_string(),
-            notifications,
-        })
+            let session = self.bleSession(sessionId)?;
+            let count =
+                usize::try_from(limit.max(0)).map_err(|error| HostError::new(error.to_string()))?;
+            let mut queue = session.notifications.lock().map_err(|error| {
+                HostError::new(format!("Linux BLE notification queue lock failed: {error}"))
+            })?;
+            let mut notifications = Vec::new();
+            for _ in 0..count {
+                let Some(entry) = queue.pop_front() else {
+                    break;
+                };
+                notifications.push(entry);
+            }
+            Ok(BluetoothBleNotificationData {
+                sessionId: sessionId.to_string(),
+                notifications,
+            })
         }
     }
 }
@@ -701,7 +737,9 @@ fn rfcomm_channel(uuid: &str) -> HostResult<u8> {
         .parse::<u8>()
         .map_err(|error| HostError::new(format!("Linux RFCOMM channel parse failed: {error}")))?;
     if value == 0 {
-        return Err(HostError::new("Linux RFCOMM channel must be greater than 0"));
+        return Err(HostError::new(
+            "Linux RFCOMM channel must be greater than 0",
+        ));
     }
     Ok(value)
 }
@@ -774,17 +812,16 @@ fn classic_stream<'a>(
 fn bluetooth_payload_bytes(payload: BluetoothPayload) -> HostResult<Vec<u8>> {
     match (payload.text, payload.dataBase64) {
         (Some(text), None) => Ok(text.into_bytes()),
-        (None, Some(data)) => BASE64_STANDARD
-            .decode(data)
-            .map_err(|error| HostError::new(format!("Bluetooth base64 payload decode failed: {error}"))),
+        (None, Some(data)) => BASE64_STANDARD.decode(data).map_err(|error| {
+            HostError::new(format!("Bluetooth base64 payload decode failed: {error}"))
+        }),
         (Some(_), Some(_)) => Err(HostError::new("Provide exactly one of text or dataBase64")),
         (None, None) => Err(HostError::new("Provide exactly one of text or dataBase64")),
     }
 }
 
 #[cfg(target_os = "linux")]
-type BluezObjects =
-    HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>>;
+type BluezObjects = HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>>;
 
 #[cfg(target_os = "linux")]
 fn bluez_connection() -> HostResult<Connection> {
@@ -808,6 +845,12 @@ fn bluez_objects(connection: &Connection) -> HostResult<BluezObjects> {
     manager
         .call("GetManagedObjects", &())
         .map_err(|error| HostError::new(format!("Linux BlueZ GetManagedObjects failed: {error}")))
+}
+
+// Maps a failed BlueZ D-Bus method call to the host error boundary.
+#[cfg(target_os = "linux")]
+fn bluez_call_error(operation: &str, error: zbus::Error) -> HostError {
+    HostError::new(format!("{operation} failed: {error}"))
 }
 
 #[cfg(target_os = "linux")]
@@ -835,15 +878,12 @@ fn wait_for_bluez_services(
     devicePath: &str,
     timeoutMs: i64,
 ) -> HostResult<()> {
-    let deadline = std::time::Instant::now()
-        + Duration::from_millis(timeoutMs.max(0) as u64);
+    let deadline = std::time::Instant::now() + Duration::from_millis(timeoutMs.max(0) as u64);
     loop {
         let device = bluez_proxy(connection, devicePath, BLUEZ_DEVICE_INTERFACE)?;
-        let servicesResolved: bool = device
-            .get_property("ServicesResolved")
-            .map_err(|error| HostError::new(format!(
-                "read Linux BlueZ ServicesResolved failed: {error}"
-            )))?;
+        let servicesResolved: bool = device.get_property("ServicesResolved").map_err(|error| {
+            HostError::new(format!("read Linux BlueZ ServicesResolved failed: {error}"))
+        })?;
         if servicesResolved {
             return Ok(());
         }
@@ -962,6 +1002,7 @@ fn owned_value_string(properties: &HashMap<String, OwnedValue>, key: &str) -> Op
 fn owned_value_string_array(properties: &HashMap<String, OwnedValue>, key: &str) -> Vec<String> {
     properties
         .get(key)
+        .and_then(|value| value.try_clone().ok())
         .and_then(|value| Vec::<String>::try_from(value).ok())
         .unwrap_or_default()
 }
@@ -1004,8 +1045,11 @@ fn linux_ble_notification_worker(
     stop: Arc<AtomicBool>,
 ) -> HostResult<()> {
     let connection = bluez_connection()?;
-    let characteristic =
-        bluez_proxy(&connection, &characteristicPath, BLUEZ_GATT_CHARACTERISTIC_INTERFACE)?;
+    let characteristic = bluez_proxy(
+        &connection,
+        &characteristicPath,
+        BLUEZ_GATT_CHARACTERISTIC_INTERFACE,
+    )?;
     let mut changes = characteristic.receive_property_changed::<Vec<u8>>("Value");
     while !stop.load(Ordering::SeqCst) {
         let Some(change) = changes.next() else {
@@ -1020,9 +1064,7 @@ fn linux_ble_notification_worker(
         notifications
             .lock()
             .map_err(|error| {
-                HostError::new(format!(
-                    "Linux BLE notification queue lock failed: {error}"
-                ))
+                HostError::new(format!("Linux BLE notification queue lock failed: {error}"))
             })?
             .push_back(ble_notification_entry(characteristicUuid.clone(), bytes));
     }
@@ -1034,9 +1076,7 @@ fn stop_linux_ble_session(session: &LinuxBleSession) -> HostResult<()> {
     let subscriptions = session
         .subscriptions
         .lock()
-        .map_err(|error| {
-            HostError::new(format!("Linux BLE subscription lock failed: {error}"))
-        })?
+        .map_err(|error| HostError::new(format!("Linux BLE subscription lock failed: {error}")))?
         .drain()
         .map(|(_, subscription)| subscription)
         .collect::<Vec<_>>();
@@ -1048,10 +1088,14 @@ fn stop_linux_ble_session(session: &LinuxBleSession) -> HostResult<()> {
             &subscription.characteristicPath,
             BLUEZ_GATT_CHARACTERISTIC_INTERFACE,
         )?;
-        let _: () = characteristic.call("StopNotify", &())?;
+        let _: () = characteristic
+            .call("StopNotify", &())
+            .map_err(|error| bluez_call_error("stop Linux BlueZ BLE notifications", error))?;
     }
     let device = bluez_proxy(&connection, &session.devicePath, BLUEZ_DEVICE_INTERFACE)?;
-    let _: () = device.call("Disconnect", &())?;
+    let _: () = device
+        .call("Disconnect", &())
+        .map_err(|error| bluez_call_error("disconnect Linux BlueZ BLE device", error))?;
     Ok(())
 }
 

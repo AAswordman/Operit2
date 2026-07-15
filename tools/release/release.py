@@ -845,7 +845,13 @@ def windows_path_to_wsl(path):
 
 
 def wsl_run(distro, script):
-    script = "export PATH=\"$HOME/.cargo/bin:$HOME/.pub-cache/bin:$HOME/.local/flutter/bin:$PATH\"\n" + script
+    script = (
+        "export PATH=\"$HOME/.cargo/bin:$HOME/.pub-cache/bin:$HOME/.local/flutter/bin:$PATH\"\n"
+        "export RUSTFLAGS=\"-Awarnings\"\n"
+        "export http_proxy=\"$HTTP_PROXY\"\n"
+        "export https_proxy=\"$HTTPS_PROXY\"\n"
+        + script
+    )
     script = script.replace("\r\n", "\n").replace("\r", "\n")
     command = ["wsl.exe"]
     if distro:
