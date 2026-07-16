@@ -11,7 +11,7 @@ from common import (
     build_env_with_typescript,
     ensure_node_and_npm,
     flutter_command,
-    dart_pub_get,
+    flutter_pub_get,
     generate_dart_proxy_artifacts,
     prepare_python_command,
     require_command,
@@ -60,7 +60,7 @@ def main() -> int:
         generate_dart_proxy_artifacts()
 
     prepare_python_command()
-    dart_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
+    flutter_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
 
     command = [flutter, "build", "macos", "--release", "--no-pub"]
     if args.build_name:

@@ -443,6 +443,14 @@ def dart_pub_get(enforce_lockfile: bool = False, env: dict[str, str] | None = No
     run(command, cwd=FLUTTER_APP_DIR, env=env)
 
 
+def flutter_pub_get(enforce_lockfile: bool = False, env: dict[str, str] | None = None) -> None:
+    """Resolves app dependencies and generates native plugin registrants with FVM Flutter."""
+    command = [flutter_command(), "pub", "get"]
+    if enforce_lockfile:
+        command.append("--enforce-lockfile")
+    run(command, cwd=FLUTTER_APP_DIR, env=env)
+
+
 def build_env_with_typescript(version: str) -> dict[str, str]:
     env = os.environ.copy()
     typescript_bin = ensure_typescript(version)
