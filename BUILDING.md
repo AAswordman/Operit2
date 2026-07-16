@@ -37,7 +37,9 @@ Linux desktop App builds:
 
 ```text
 CMake, Ninja, pkg-config, clang, and GTK development headers
-GStreamer development headers exposing pkg-config package gstreamer-1.0
+GStreamer development headers exposing gstreamer-1.0, gstreamer-app-1.0, and
+gstreamer-audio-1.0 through pkg-config
+WebKitGTK 4.1 development headers exposing pkg-config package webkit2gtk-4.1
 ```
 
 Flutter app builds:

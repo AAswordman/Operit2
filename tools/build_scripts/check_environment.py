@@ -170,7 +170,11 @@ def check_native_app_tools(include_ios: bool) -> list[CheckResult]:
                 check_command("ninja", ["--version"]),
                 check_command("pkg-config", ["--version"]),
                 check_command("clang", ["--version"]),
+                check_pkg_config_package("gtk+-3.0"),
                 check_pkg_config_package("gstreamer-1.0"),
+                check_pkg_config_package("gstreamer-app-1.0"),
+                check_pkg_config_package("gstreamer-audio-1.0"),
+                check_pkg_config_package("webkit2gtk-4.1"),
             ]
         )
     elif platform_name == "macos":
