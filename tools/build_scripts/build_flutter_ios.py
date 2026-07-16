@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from common import (
+    DIST_DIR,
     FLUTTER_APP_DIR,
     build_env_with_typescript,
     ensure_node_and_npm,
@@ -22,7 +23,7 @@ from prepare_apple_sherpa import prepare_apple_sherpa
 
 
 IOS_RELEASE_APP_DIR = FLUTTER_APP_DIR / "build" / "ios" / "iphoneos" / "Runner.app"
-IOS_ARCHIVE_PATH = FLUTTER_APP_DIR / "build" / "ios" / "iphoneos" / "Operit2-ios.zip"
+IOS_ARCHIVE_PATH = DIST_DIR / "operit2-app-ios-arm64.zip"
 
 
 # Packages the unsigned iOS app bundle produced by Flutter.

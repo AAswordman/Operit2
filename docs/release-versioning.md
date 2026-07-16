@@ -194,6 +194,7 @@ normal release work:
 ```powershell
 gh workflow run "macOS Flutter Build" -f products=all -f build_web_assets=false
 gh workflow run "iOS Flutter Build" -f build_web_assets=false
+.\.venv\Scripts\python.exe tools\release\download_action_artifacts.py --run-id <run-id>
 ```
 
 Collaborators can build the current host locally with one Python entrypoint. On

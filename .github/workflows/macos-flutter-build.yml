@@ -190,7 +190,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: operit2-macos-${{ github.sha }}
-          path: apps/flutter/app/build/macos/Build/Products/Release/Operit2-macos.zip
+          path: tools/release/dist/operit2-app-macos-*.zip
           if-no-files-found: error
           retention-days: 14
 

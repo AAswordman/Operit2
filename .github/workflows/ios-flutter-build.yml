@@ -175,6 +175,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: operit2-ios-${{ github.sha }}
-          path: apps/flutter/app/build/ios/iphoneos/Operit2-ios.zip
+          path: tools/release/dist/operit2-app-ios-arm64.zip
           if-no-files-found: error
           retention-days: 14
