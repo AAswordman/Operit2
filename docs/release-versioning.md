@@ -179,6 +179,12 @@ CLI architecture selection:
 
 On Windows, `--cli-arches all` builds Windows x86_64 and Windows aarch64 locally, and Linux x86_64 and Linux aarch64 through WSL. Windows aarch64 requires the Rust target, Visual Studio ARM64 build tools, and LLVM clang. Linux aarch64 in Fedora WSL requires:
 
+Before a local release build, run the environment check for the selected scope:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release.py --scope full --cli-arches all --check-environment
+```
+
 ```bash
 rustup target add aarch64-unknown-linux-gnu
 sudo dnf install -y gcc-aarch64-linux-gnu sysroot-aarch64-fc43-glibc cpio
@@ -189,9 +195,11 @@ sudo ln -sf libgcc_s.so.1 /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64/libg
 ```
 
 macOS App, macOS CLI, and unsigned iOS assets are produced by GitHub Actions for
-normal release work:
+normal release work. Apple workflows are manual `workflow_dispatch` entrypoints,
+and the macOS/iOS workflows are also reusable through `workflow_call`:
 
 ```powershell
+gh workflow run "Apple Release Build" -f products=all -f include_ios=true -f build_web_assets=false
 gh workflow run "macOS Flutter Build" -f products=all -f build_web_assets=false
 gh workflow run "iOS Flutter Build" -f build_web_assets=false
 .\.venv\Scripts\python.exe tools\release\download_action_artifacts.py --run-id <run-id>

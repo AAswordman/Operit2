@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cli-arches", choices=CLI_ARCH_CHOICES, default="host")
     parser.add_argument("--include-ios", action="store_true")
     parser.add_argument("--enforce-lockfile", action="store_true")
+    parser.add_argument("--check", action="store_true", help="Check the local build environment and exit.")
     return parser.parse_args()
 
 
@@ -73,6 +74,21 @@ def build_ios_app(enforce_lockfile: bool) -> None:
     run(command)
 
 
+# Checks the local environment required by the selected build.
+def check_local_environment(products: str, cli_arches: str, include_ios: bool) -> None:
+    command = [
+        sys.executable,
+        os.path.join(BUILD_SCRIPTS_DIR, "check_environment.py"),
+        "--products",
+        products,
+        "--cli-arches",
+        cli_arches,
+    ]
+    if include_ios:
+        command.append("--include-ios")
+    run(command)
+
+
 # Builds the selected native products after producing the shared Web Access bundle.
 def main() -> int:
     args = parse_args()
@@ -81,6 +97,9 @@ def main() -> int:
         raise RuntimeError("--include-ios requires a macOS host")
     if args.include_ios and args.products == "cli":
         raise RuntimeError("--include-ios requires --products app or all")
+    if args.check:
+        check_local_environment(args.products, args.cli_arches, args.include_ios)
+        return 0
 
     os.environ["RUSTFLAGS"] = "-Awarnings"
     run([sys.executable, os.path.join(BUILD_SCRIPTS_DIR, "build_flutter_web_access.py")])

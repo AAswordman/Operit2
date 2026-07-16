@@ -1221,6 +1221,31 @@ def build_host_cli(cli_arches="host"):
     )
 
 
+# Checks the local environment required by the selected release scope.
+def check_release_environment(products, cli_arches, no_wsl, wsl_distro):
+    selected = [product for product in products if product != ReleaseProduct.NONE]
+    if {ReleaseProduct.APP, ReleaseProduct.CLI}.issubset(selected):
+        environment_products = "all"
+    elif ReleaseProduct.APP in selected:
+        environment_products = "app"
+    elif ReleaseProduct.CLI in selected:
+        environment_products = "cli"
+    else:
+        environment_products = "all"
+    command = [
+        sys.executable,
+        BUILD_SCRIPTS_DIR / "check_environment.py",
+        "--products",
+        environment_products,
+        "--cli-arches",
+        cli_arches,
+        "--release-script",
+    ]
+    if not no_wsl and ReleaseProduct.NONE not in products:
+        command.extend(["--wsl", "--wsl-distro", wsl_distro])
+    run(command)
+
+
 def publish_release(tag, repo_value, draft, prerelease, auth):
     assets = sorted(path for path in DIST_DIR.iterdir() if path.is_file())
     if not assets:
@@ -1345,6 +1370,7 @@ def main():
     parser.add_argument("--products", nargs="+", choices=[item.value for item in ReleaseProduct])
     parser.add_argument("--wsl-distro", default="FedoraLinux-43")
     parser.add_argument("--no-wsl", action="store_true")
+    parser.add_argument("--check-environment", action="store_true", help="Check release build requirements and exit.")
     parser.add_argument("--cli-arches", default=CliArchMode.HOST.value, choices=[item.value for item in CliArchMode],
                         help="CLI target architectures: host (current only) or all (all desktop arches)")
     args = parser.parse_args()
@@ -1360,6 +1386,9 @@ def main():
     if args.prerelease and not version.is_prerelease:
         raise RuntimeError("--prerelease was set for a stable release version")
     products = products_for_scope(args.scope, args.products)
+    if args.check_environment:
+        check_release_environment(products, args.cli_arches, args.no_wsl, args.wsl_distro)
+        return
 
     publish_auth = None
     if not args.build_only:

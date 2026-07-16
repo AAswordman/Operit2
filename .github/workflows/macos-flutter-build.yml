@@ -20,6 +20,18 @@ on:
         options:
           - "false"
           - "true"
+  workflow_call:
+    inputs:
+      products:
+        description: "Release products to build"
+        required: false
+        default: "app"
+        type: string
+      build_web_assets:
+        description: "Force rebuild web assets before macOS build"
+        required: false
+        default: "false"
+        type: string
 jobs:
   build-macos:
     runs-on: macos-15
@@ -77,6 +89,9 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
           targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Check build environment
+        run: python3 tools/build_scripts/check_environment.py --products "${{ inputs.products }}" --cli-arches all --github-runner
 
       - name: Cache Cargo outputs
         uses: actions/cache@v4
