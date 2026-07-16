@@ -1,0 +1,117 @@
+name: Linux Release Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      products:
+        description: "Release products to build"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - "app"
+          - "cli"
+          - "all"
+      cli_arches:
+        description: "Linux CLI architectures"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - "host"
+          - "all"
+          - "x86_64"
+          - "aarch64"
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      RUSTFLAGS: -Awarnings
+      RUST_TOOLCHAIN_VERSION: 1.95.0
+      FVM_VERSION: 4.1.2
+      TYPESCRIPT_VERSION: 5.9.3
+      WASM_BINDGEN_VERSION: 0.2.122
+      WASI_SDK_VERSION: "20.0"
+      QUICKJS_WASM_SYS_WASI_SDK_MAJOR_VERSION: 20
+      QUICKJS_WASM_SYS_WASI_SDK_MINOR_VERSION: 0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            cmake \
+            gcc-aarch64-linux-gnu \
+            libgtk-3-dev \
+            liblzma-dev \
+            libc6-dev-arm64-cross \
+            musl-tools \
+            ninja-build \
+            pkg-config
+
+      - name: Install bootstrap Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install FVM
+        run: |
+          dart pub global activate fvm "$FVM_VERSION"
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+
+      - name: Install project Flutter SDK
+        working-directory: apps/flutter/app
+        run: fvm install --skip-pub-get
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-gnu,wasm32-unknown-unknown
+
+      - name: Check build environment
+        run: python3 tools/build_scripts/check_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
+
+      - name: Build Web Access assets
+        run: python3 tools/build_scripts/build_flutter_web_access.py
+
+      - name: Build and package Linux app
+        if: inputs.products != 'cli'
+        run: python3 tools/build_scripts/build_flutter_linux.py --archive-path tools/release/dist/operit2-app-linux-x86_64.tar.gz --enforce-lockfile
+
+      - name: Build and package Linux CLI
+        if: inputs.products != 'app'
+        run: python3 tools/build_scripts/build_cli_linux.py --arches "${{ inputs.cli_arches }}"
+
+      - name: Upload Linux app artifact
+        if: inputs.products != 'cli'
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-linux-app-${{ github.sha }}
+          path: tools/release/dist/operit2-app-linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Linux CLI artifacts
+        if: inputs.products != 'app'
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-linux-cli-${{ github.sha }}
+          path: tools/release/dist/operit2-cli-linux-*.tar.gz
+          if-no-files-found: error
+          retention-days: 14

@@ -178,6 +178,19 @@ def check_windows_aarch64_cli(cli_arches: str) -> list[CheckResult]:
     return [check_file("Visual Studio locator", vswhere), check_file("LLVM clang", llvm_clang)]
 
 
+# Checks Linux cross compilers required by explicitly selected CLI targets.
+def check_linux_cross_cli(cli_arches: str) -> list[CheckResult]:
+    if host_platform() != "linux" or cli_arches == "host":
+        return []
+    results = []
+    for architecture in selected_cli_arches(cli_arches):
+        if architecture == "x86_64":
+            results.append(check_command("musl-gcc", ["--version"]))
+        elif architecture == "aarch64":
+            results.append(check_command("aarch64-linux-gnu-gcc", ["--version"]))
+    return results
+
+
 # Checks signing files needed by the Windows release script's App scope.
 def check_release_signing_files() -> list[CheckResult]:
     return [
@@ -236,6 +249,7 @@ def build_checks(args: argparse.Namespace) -> list[CheckResult]:
     if args.products in ("cli", "all"):
         checks.extend(check_cli_rust_targets(host_platform(), args.cli_arches))
         checks.extend(check_windows_aarch64_cli(args.cli_arches))
+        checks.extend(check_linux_cross_cli(args.cli_arches))
     if args.release_script and args.products in ("app", "all"):
         checks.extend(check_release_signing_files())
     if args.wsl:

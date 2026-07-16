@@ -135,6 +135,14 @@ Build only:
 .\.venv\Scripts\python.exe tools\release\build_release.py --scope cli
 ```
 
+`tools/release/dist` is the shared staging directory for local, SSH-collected,
+and GitHub Actions assets. `build_release.py` keeps existing staged files so
+platform builds can be composed. Start a new staged set explicitly with:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope cli --clean-dist
+```
+
 Release environment assumptions:
 
 ```text
@@ -148,8 +156,9 @@ Local build_local.py:
   requirements. macOS can add unsigned iOS with --include-ios.
 
 GitHub Actions:
-  Apple Release Build, macOS Flutter Build, and iOS Flutter Build are manual
-  cloud entrypoints. Artifacts downloaded from cloud runs must be collected into
+  Apple Release Build, macOS Flutter Build, iOS Flutter Build, Windows Release
+  Build, Linux Release Build, and Android Flutter Build are manual cloud
+  entrypoints. Artifacts downloaded from cloud runs are collected into
   tools/release/dist with download_action_artifacts.py.
 ```
 
@@ -182,18 +191,49 @@ operit2-cli-linux-x86_64.tar.gz
 operit2-cli-linux-aarch64.tar.gz
 ```
 
-Apple release assets are built in GitHub Actions for normal release work. Use
-the Apple aggregate workflow for macOS App, macOS CLI, and unsigned iOS archives,
-or trigger the individual macOS and iOS workflows while diagnosing one product.
-These workflows are manual `workflow_dispatch` entrypoints, and the macOS/iOS
-workflows are also reusable through `workflow_call`.
+Cloud workflows are independent manual `workflow_dispatch` entrypoints. The
+Apple aggregate workflow invokes the reusable macOS and iOS workflows; the
+other workflows build exactly one platform family:
+
+```text
+Apple Release Build       macOS App, macOS CLI, and unsigned iOS App
+macOS Flutter Build       macOS App and/or CLI
+iOS Flutter Build         unsigned iOS App
+Windows Release Build     Windows App and/or CLI
+Linux Release Build       Linux App and/or CLI
+Android Flutter Build     signed Android APKs
+```
+
+Android Flutter Build requires these repository secrets before it can run:
+
+```text
+ANDROID_RELEASE_KEYSTORE_BASE64
+ANDROID_RELEASE_STORE_PASSWORD
+ANDROID_RELEASE_KEY_ALIAS
+ANDROID_RELEASE_KEY_PASSWORD
+```
+
+`ANDROID_RELEASE_KEYSTORE_BASE64` is the Base64 encoding of the Android release
+keystore. The workflow writes the signing material only inside its runner.
+
+OpenHarmony has no GitHub Actions workflow yet. Its SDK and command-line tools
+are not currently distributed from a reproducible URL available to this
+repository, so a cloud workflow cannot provision a valid toolchain. The local
+OpenHarmony procedure below remains the supported build path until that SDK
+distribution source and the signing secrets are supplied.
 
 ```powershell
 gh workflow run "Apple Release Build" -f products=all -f include_ios=true -f build_web_assets=false
 gh workflow run "macOS Flutter Build" -f products=all -f build_web_assets=false
 gh workflow run "iOS Flutter Build" -f build_web_assets=false
-.\.venv\Scripts\python.exe tools\release\download_action_artifacts.py --run-id <macos-run-id> --run-id <ios-run-id>
+gh workflow run "Windows Release Build" -f products=all -f cli_arches=all
+gh workflow run "Linux Release Build" -f products=all -f cli_arches=all
+gh workflow run "Android Flutter Build"
+.\.venv\Scripts\python.exe tools\release\download_action_artifacts.py --run-id <apple-run-id> --run-id <windows-run-id> --run-id <linux-run-id> --run-id <android-run-id>
 ```
+
+`download_action_artifacts.py` accepts only completed successful runs and copies
+their release archives into the existing `tools/release/dist` staging directory.
 
 Collaborators can still build the current host locally with one Python command.
 Run it from the repository root. On Windows, use the project virtual environment.

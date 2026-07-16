@@ -1360,6 +1360,11 @@ def main():
     parser.add_argument("--products", nargs="+", choices=[item.value for item in ReleaseProduct])
     parser.add_argument("--wsl-distro", default="FedoraLinux-43")
     parser.add_argument("--no-wsl", action="store_true")
+    parser.add_argument(
+        "--clean-dist",
+        action="store_true",
+        help="Remove existing staged release assets before building.",
+    )
     parser.add_argument("--check-environment", action="store_true", help="Check release build requirements and exit.")
     parser.add_argument("--cli-arches", default=CliArchMode.HOST.value, choices=[item.value for item in CliArchMode],
                         help="CLI target architectures: host (current only) or all (all desktop arches)")
@@ -1374,7 +1379,10 @@ def main():
         check_release_environment(products, args.cli_arches, args.no_wsl, args.wsl_distro)
         return
 
-    reset_dir(DIST_DIR)
+    if args.clean_dist:
+        reset_dir(DIST_DIR)
+    else:
+        DIST_DIR.mkdir(parents=True, exist_ok=True)
     reset_dir(WORK_DIR)
 
     if ReleaseProduct.APP in products or ReleaseProduct.CLI in products:
