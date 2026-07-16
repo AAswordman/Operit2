@@ -43,40 +43,6 @@ using BridgeFreeString = void (*)(char*);
 FlMethodChannel* g_operit_runtime_channel = nullptr;
 std::atomic_bool g_watch_channel_pump_running{false};
 
-std::string json_string(const std::string& value) {
-  std::string output = "\"";
-  for (char ch : value) {
-    switch (ch) {
-      case '\\':
-        output += "\\\\";
-        break;
-      case '"':
-        output += "\\\"";
-        break;
-      case '\b':
-        output += "\\b";
-        break;
-      case '\f':
-        output += "\\f";
-        break;
-      case '\n':
-        output += "\\n";
-        break;
-      case '\r':
-        output += "\\r";
-        break;
-      case '\t':
-        output += "\\t";
-        break;
-      default:
-        output += ch;
-        break;
-    }
-  }
-  output += "\"";
-  return output;
-}
-
 /// Normalizes one caller-supplied Linux storage root.
 bool normalize_linux_storage_root(const std::string& requested,
                                   const char* label,
@@ -499,13 +465,6 @@ void respond_error(FlMethodCall* method_call,
   fl_method_call_respond(method_call, FL_METHOD_RESPONSE(response), nullptr);
 }
 
-void respond_success(FlMethodCall* method_call, const std::string& value) {
-  g_autoptr(FlValue) result = fl_value_new_string(value.c_str());
-  g_autoptr(FlMethodSuccessResponse) response =
-      fl_method_success_response_new(result);
-  fl_method_call_respond(method_call, FL_METHOD_RESPONSE(response), nullptr);
-}
-
 void respond_success_value(FlMethodCall* method_call, FlValue* value) {
   g_autoptr(FlMethodSuccessResponse) response =
       fl_method_success_response_new(value);
@@ -561,13 +520,6 @@ void ensure_watch_channel_pump() {
   }).detach();
 }
 
-struct RuntimeStringResponse {
-  FlMethodCall* method_call;
-  bool ok;
-  std::string response;
-  std::string error;
-};
-
 struct RuntimeBytesResponse {
   FlMethodCall* method_call;
   bool ok;
@@ -604,47 +556,6 @@ void respond_runtime_bytes_async(FlMethodCall* method_call,
             respond_success_value(result->method_call, value);
           } else {
             respond_error(result->method_call, "RUNTIME_BRIDGE_ERROR", result->error);
-          }
-          g_object_unref(result->method_call);
-          return G_SOURCE_REMOVE;
-        },
-        result);
-  });
-  if (!submitted) {
-    g_object_unref(method_call);
-    respond_error(method_call, "RUNTIME_WORKER_QUEUE_CLOSED",
-                  "runtime worker queue is not accepting work");
-  }
-}
-
-/// Runs one Rust bridge operation off the Linux platform thread.
-template <typename Operation>
-void respond_runtime_string_async(FlMethodCall* method_call,
-                                  Operation operation) {
-  auto* workers = g_operit_runtime_workers.get();
-  if (workers == nullptr) {
-    respond_error(method_call, "RUNTIME_WORKER_QUEUE_CLOSED",
-                  "runtime worker queue is not available");
-    return;
-  }
-  g_object_ref(method_call);
-  const bool submitted = workers->Post(
-      [method_call, operation = std::move(operation)]() mutable {
-    std::string response;
-    std::string error;
-    const bool ok = operation(&response, &error);
-    auto* result = new RuntimeStringResponse{
-        method_call, ok, std::move(response), std::move(error)};
-    g_main_context_invoke(
-        nullptr,
-        [](gpointer data) -> gboolean {
-          std::unique_ptr<RuntimeStringResponse> result(
-              static_cast<RuntimeStringResponse*>(data));
-          if (result->ok) {
-            respond_success(result->method_call, result->response);
-          } else {
-            respond_error(
-                result->method_call, "RUNTIME_BRIDGE_ERROR", result->error);
           }
           g_object_unref(result->method_call);
           return G_SOURCE_REMOVE;
