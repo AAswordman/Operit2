@@ -64,7 +64,7 @@ v2.0.0            -> GitHub prerelease = false
 
 Draft releases are ignored by the updater.
 
-The release script derives the GitHub prerelease flag from the tag version. Prerelease tags publish as GitHub prereleases. Stable tags publish as stable GitHub releases.
+The publish script derives the GitHub prerelease flag from the tag version. Prerelease tags publish as GitHub prereleases. Stable tags publish as stable GitHub releases.
 
 The first public Operit2 preview should use:
 
@@ -128,16 +128,16 @@ For `2.0.0-preview.1`, the Flutter platform version is:
 2.0.0+1
 ```
 
-The release script uses the full Operit2 SemVer for Git tags and updater metadata. The Flutter `major.minor.patch` must match the Operit2 release version. Flutter `buildNumber` is only platform package metadata for Android, Windows, Linux, and macOS builds.
+The build and publish scripts use the full Operit2 SemVer for Git tags and updater metadata. The Flutter `major.minor.patch` must match the Operit2 release version. Flutter `buildNumber` is only platform package metadata for Android, Windows, Linux, and macOS builds.
 
-For App and full runs, including `--build-only`, the release script builds with the current Flutter `buildNumber` and then increments `apps/flutter/app/pubspec.yaml` by 1 after all selected App assets succeed. CLI-only runs do not change the Flutter `buildNumber`.
+For App and full runs, the build release script builds with the current Flutter `buildNumber` and then increments `apps/flutter/app/pubspec.yaml` by 1 after all selected App assets succeed. CLI-only runs do not change the Flutter `buildNumber`.
 
-## Release Script
+## Build Release Script
 
-The release script is:
+The build release script is:
 
 ```text
-tools/release/release.py
+tools/release/build_release.py
 ```
 
 GitHub publish credentials live in:
@@ -158,27 +158,26 @@ Release scope:
 
 ```powershell
 # CLI/TUI only
-.\.venv\Scripts\python.exe tools\release\release.py --scope cli
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope cli
 
 # App only
-.\.venv\Scripts\python.exe tools\release\release.py --scope app
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope app
 
 # App and CLI/TUI
-.\.venv\Scripts\python.exe tools\release\release.py --scope full
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope full
 ```
 
-`release.py` builds release assets. Add `--publish` only when this same command
-should upload the newly built files after a successful build. Use
-`publish_dist.py` to publish files that are already staged in `tools/release/dist`.
+`build_release.py` only builds release assets. `publish_dist.py` uploads files
+already staged in `tools/release/dist`.
 
 CLI architecture selection:
 
 ```powershell
 # Current host architecture only
-.\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only --cli-arches host
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope cli --cli-arches host
 
 # x86_64 and aarch64 for the current desktop platforms available from this host
-.\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only --cli-arches all
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope cli --cli-arches all
 ```
 
 On Windows, `--cli-arches all` builds Windows x86_64 and Windows aarch64 locally, and Linux x86_64 and Linux aarch64 through WSL. Windows aarch64 requires the Rust target, Visual Studio ARM64 build tools, and LLVM clang. Linux aarch64 in Fedora WSL requires:
@@ -186,7 +185,7 @@ On Windows, `--cli-arches all` builds Windows x86_64 and Windows aarch64 locally
 Before a local release build, run the environment check for the selected scope:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope full --cli-arches all --check-environment
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope full --cli-arches all --check-environment
 ```
 
 ```bash
@@ -206,8 +205,12 @@ and the macOS/iOS workflows are also reusable through `workflow_call`:
 gh workflow run "Apple Release Build" -f products=all -f include_ios=true -f build_web_assets=false
 gh workflow run "macOS Flutter Build" -f products=all -f build_web_assets=false
 gh workflow run "iOS Flutter Build" -f build_web_assets=false
-.\.venv\Scripts\python.exe tools\release\download_action_artifacts.py --run-id <run-id>
+.\.venv\Scripts\python.exe tools\release\download_action_artifacts.py --run-id <macos-run-id> --run-id <ios-run-id>
 ```
+
+Cloud release builds are composable: trigger the selected platform workflows,
+collect each successful run into `tools/release/dist`, then publish the collected
+files through `publish_dist.py` when the release set is complete.
 
 Collaborators can build the current host locally with one Python entrypoint. On
 macOS, `--include-ios` also builds the unsigned iOS archive when the iOS Xcode
@@ -252,7 +255,7 @@ AAswordman/Operit2
 
 Use `--repo owner/name` to publish another repository.
 
-It must enforce these rules:
+The build and publish scripts must enforce these rules:
 
 - Read Cargo package versions with TOML parsing.
 - Read Flutter platform build metadata from `pubspec.yaml`.
@@ -261,10 +264,10 @@ It must enforce these rules:
 - Reject Flutter platform versions whose `major.minor.patch` differs from the Cargo release version.
 - Reject a `--tag` value that differs from the Cargo release version.
 - Derive the GitHub prerelease flag from the release version.
-- Build and upload only the selected `--scope` assets.
+- Build only the selected `--scope` assets.
 - Increment Flutter `buildNumber` by 1 after successful App/full asset builds.
-- Publish releases through the GitHub REST API with `GITHUB_TOKEN`.
-- Check an existing GitHub release's prerelease flag before uploading assets.
+- Publish staged files through the GitHub REST API with `GITHUB_TOKEN`.
+- Check an existing GitHub release's prerelease flag before uploading staged files.
 
 For the first public preview:
 

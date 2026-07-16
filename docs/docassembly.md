@@ -1995,7 +1995,7 @@ docs/release-versioning.md
 脚本：
 
 ```text
-tools/release/release.py
+tools/release/build_release.py
 ```
 
 Tag：
@@ -2204,7 +2204,7 @@ Flutter bridge
 
 发布
   docs/release-versioning.md
-  tools/release/release.py
+  tools/release/build_release.py
 ```
 
 ## 19. Assembly Checklist

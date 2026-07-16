@@ -5,7 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from release import (
+from build_release import (
     DEFAULT_GITHUB_ENV,
     DEFAULT_RELEASE_REPO,
     DIST_DIR,

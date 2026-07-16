@@ -126,9 +126,10 @@ operit2 cli mcp local-set <id> [--disabled true|false] [--env KEY=VALUE] [--appr
 
 ```powershell
 .\.venv\Scripts\python.exe tools\release\release_interactive.py
-.\.venv\Scripts\python.exe tools\release\release.py
-.\.venv\Scripts\python.exe tools\release\release.py --scope cli
-.\.venv\Scripts\python.exe tools\release\release.py --scope app
+.\.venv\Scripts\python.exe tools\release\build_release.py
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope cli
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope app
+.\.venv\Scripts\python.exe tools\release\publish_dist.py
 ```
 
 ```powershell

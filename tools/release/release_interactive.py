@@ -9,7 +9,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
-RELEASE_SCRIPT = SCRIPT_DIR / "release.py"
+RELEASE_SCRIPT = SCRIPT_DIR / "build_release.py"
 
 
 class ValueEnum(str, Enum):
@@ -29,9 +29,6 @@ class ChoiceKey(ValueEnum):
     NO_WSL = "no_wsl"
     RUN = "run"
     CANCEL = "cancel"
-    BUILD = "build"
-    PUBLISH = "publish"
-    DRAFT = "draft"
 
 
 @dataclass(frozen=True)
@@ -65,22 +62,11 @@ def build_command() -> list[str]:
             Choice(ChoiceKey.CLI, "CLI/TUI", ("--scope", "cli")),
             Choice(ChoiceKey.APP, "App（Android + OpenHarmony + 当前桌面平台）", ("--scope", "app")),
             Choice(ChoiceKey.FULL, "全量：App（Android + OpenHarmony + 当前桌面平台）+ CLI/TUI", ("--scope", "full")),
-            Choice(ChoiceKey.CHECK, "只检查版本和脚本入口", ("--scope", "none", "--build-only", "--no-wsl")),
+            Choice(ChoiceKey.CHECK, "只检查版本和脚本入口", ("--scope", "none", "--no-wsl")),
         ],
     )
 
     command = [sys.executable, str(RELEASE_SCRIPT), *target.args]
-
-    if target.key != ChoiceKey.CHECK:
-        mode = choose(
-            "执行方式？",
-            [
-                Choice(ChoiceKey.BUILD, "只构建检查", ()),
-                Choice(ChoiceKey.PUBLISH, "构建后发布到 GitHub Release", ("--publish",)),
-                Choice(ChoiceKey.DRAFT, "构建后发布到 GitHub Draft", ("--publish", "--draft")),
-            ],
-        )
-        command.extend(mode.args)
 
     if target.key in (ChoiceKey.CLI, ChoiceKey.FULL):
         arches = choose(

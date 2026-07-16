@@ -6,4 +6,4 @@ The release version, GitHub tag, update channel, and package asset rules are def
 docs/release-versioning.md
 ```
 
-`tools/release/release.py` must follow that document.
+`tools/release/build_release.py` must follow that document.

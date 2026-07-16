@@ -72,7 +72,7 @@ sudo dnf install -y musl-gcc musl-devel musl-libc-static gcc-aarch64-linux-gnu s
 ```
 
 The aarch64 Linux CLI release requires an `aarch64-linux-gnu-gcc` cross C compiler and
-the Fedora `/usr/aarch64-redhat-linux/sys-root/fc43` sysroot. The release script injects
+the Fedora `/usr/aarch64-redhat-linux/sys-root/fc43` sysroot. The build release script injects
 the sysroot's `limits.h` while compiling C dependencies because Fedora's cross compiler
 is built without target headers.
 
@@ -99,7 +99,7 @@ cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- cli update check 
 cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- tui --update-current-version 0.0.0-preview.0
 ```
 
-## Release Script
+## Build Release Script
 
 Interactive release helper:
 
@@ -107,38 +107,38 @@ Interactive release helper:
 .\.venv\Scripts\python.exe tools\release\release_interactive.py
 ```
 
-Direct release script:
+Direct build release script:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py
+.\.venv\Scripts\python.exe tools\release\build_release.py
 ```
 
 Environment check only:
 
 ```powershell
 .\.venv\Scripts\python.exe tools\build_scripts\build_local.py --products all --cli-arches host --check
-.\.venv\Scripts\python.exe tools\release\release.py --scope full --cli-arches all --check-environment
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope full --cli-arches all --check-environment
 ```
 
 Scopes:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope cli
-.\.venv\Scripts\python.exe tools\release\release.py --scope app
-.\.venv\Scripts\python.exe tools\release\release.py --scope full
-.\.venv\Scripts\python.exe tools\release\release.py --scope none --build-only --no-wsl
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope cli
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope app
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope full
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope none --no-wsl
 ```
 
 Build only:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope cli
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope cli
 ```
 
 Release environment assumptions:
 
 ```text
-Local Windows release.py:
+Local Windows build_release.py:
   Builds Android, OpenHarmony, Windows App, Windows CLI, and WSL Linux assets.
   Requires Windows build tools, Android/OpenHarmony signing files, and Fedora WSL
   when WSL Linux assets are selected.
@@ -153,6 +153,15 @@ GitHub Actions:
   tools/release/dist with download_action_artifacts.py.
 ```
 
+Cloud build composition:
+
+```text
+1. Trigger the platform workflows needed for this release.
+2. Wait for every selected workflow to succeed.
+3. Collect every run into tools/release/dist with one --run-id per run.
+4. Run publish_dist.py only when the collected files are ready to publish.
+```
+
 Successful App and full builds advance the Flutter build number in
 `apps/flutter/app/pubspec.yaml` after their assets are packaged. CLI-only builds do not
 change it.
@@ -160,8 +169,8 @@ change it.
 CLI architecture selection:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only --cli-arches host
-.\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only --cli-arches all
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope cli --cli-arches host
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope cli --cli-arches all
 ```
 
 On Windows, `--cli-arches all` builds:
@@ -183,7 +192,7 @@ workflows are also reusable through `workflow_call`.
 gh workflow run "Apple Release Build" -f products=all -f include_ios=true -f build_web_assets=false
 gh workflow run "macOS Flutter Build" -f products=all -f build_web_assets=false
 gh workflow run "iOS Flutter Build" -f build_web_assets=false
-.\.venv\Scripts\python.exe tools\release\download_action_artifacts.py --run-id <run-id>
+.\.venv\Scripts\python.exe tools\release\download_action_artifacts.py --run-id <macos-run-id> --run-id <ios-run-id>
 ```
 
 Collaborators can still build the current host locally with one Python command.
@@ -227,7 +236,7 @@ README.txt
 Skip WSL Linux packaging:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only --cli-arches all --no-wsl
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope cli --cli-arches all --no-wsl
 ```
 
 ## Publishing
@@ -244,20 +253,13 @@ Validate the staged files and GitHub credentials without uploading:
 .\.venv\Scripts\python.exe tools\release\publish_dist.py --check-only
 ```
 
-The build-then-publish path is available when one command should run the whole
-local release flow:
-
-```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope cli --publish
-```
-
 Publish staged files as a draft:
 
 ```powershell
 .\.venv\Scripts\python.exe tools\release\publish_dist.py --draft
 ```
 
-The release script reads versions from:
+The build release script reads versions from:
 
 ```text
 apps/cli/Cargo.toml
@@ -273,7 +275,7 @@ docs/release-versioning.md
 
 ## Flutter App
 
-The release script builds app packages through Flutter. Local checks can be run from:
+The build release script builds app packages through Flutter. Local checks can be run from:
 
 ```powershell
 cd apps\flutter\app

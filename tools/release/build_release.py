@@ -1353,20 +1353,9 @@ def products_for_scope(scope, explicit_products):
     return products
 
 
-# Builds, publishes, and reports release assets for the selected scope.
+# Builds and reports release assets for the selected scope.
 def main():
     parser = argparse.ArgumentParser(description="Build Operit2 release assets.")
-    parser.add_argument("--tag", default="")
-    parser.add_argument("--repo", default=DEFAULT_RELEASE_REPO)
-    parser.add_argument("--github-env", default=str(DEFAULT_GITHUB_ENV))
-    parser.add_argument("--build-only", action="store_true")
-    parser.add_argument("--publish", action="store_true", help="Publish after this build succeeds.")
-    parser.add_argument("--draft", action="store_true")
-    parser.add_argument(
-        "--prerelease",
-        action="store_true",
-        help="Accepted for prerelease versions. The GitHub flag is derived from the release version.",
-    )
     parser.add_argument("--scope", default=ReleaseScope.FULL.value, choices=[item.value for item in ReleaseScope])
     parser.add_argument("--products", nargs="+", choices=[item.value for item in ReleaseProduct])
     parser.add_argument("--wsl-distro", default="FedoraLinux-43")
@@ -1380,26 +1369,10 @@ def main():
     version = release_version()
     platform_version = flutter_platform_version()
     validate_flutter_platform_version(platform_version, version)
-    tag = args.tag or f"v{version.text}"
-    tag_version = parse_semver(tag, "--tag", allow_tag=True)
-    if tag_version.text != version.text:
-        raise RuntimeError(f"--tag {tag} does not match release version {version.text}")
-    if args.prerelease and not version.is_prerelease:
-        raise RuntimeError("--prerelease was set for a stable release version")
-    if args.build_only and args.publish:
-        raise RuntimeError("--build-only cannot be combined with --publish")
-    if args.draft and not args.publish:
-        raise RuntimeError("--draft requires --publish. Use tools/release/publish_dist.py --draft for existing assets.")
     products = products_for_scope(args.scope, args.products)
     if args.check_environment:
         check_release_environment(products, args.cli_arches, args.no_wsl, args.wsl_distro)
         return
-
-    publish_auth = None
-    if args.publish:
-        load_env_file(Path(args.github_env))
-        publish_auth = github_auth()
-        verify_github_publish_access(args.repo, publish_auth)
 
     reset_dir(DIST_DIR)
     reset_dir(WORK_DIR)
@@ -1438,10 +1411,6 @@ def main():
     print("\nRelease assets:")
     for asset in sorted(path for path in DIST_DIR.iterdir() if path.is_file()):
         print(f" - {asset.name}")
-
-    if args.publish:
-        publish_release(tag, args.repo, args.draft, version.is_prerelease, publish_auth)
-
 
 if __name__ == "__main__":
     try:
