@@ -179,6 +179,12 @@ CLI architecture selection:
 
 On Windows, `--cli-arches all` builds Windows x86_64 and Windows aarch64 locally, and Linux x86_64 and Linux aarch64 through WSL. Windows aarch64 requires the Rust target, Visual Studio ARM64 build tools, and LLVM clang. Linux aarch64 in Fedora WSL requires:
 
+Before a local release build, run the environment check for the selected scope:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release.py --scope full --cli-arches all --check-environment
+```
+
 ```bash
 rustup target add aarch64-unknown-linux-gnu
 sudo dnf install -y gcc-aarch64-linux-gnu sysroot-aarch64-fc43-glibc cpio
@@ -188,25 +194,24 @@ sudo cp -a lib64/libgcc_s*.so* /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64
 sudo ln -sf libgcc_s.so.1 /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64/libgcc_s.so
 ```
 
-macOS App and CLI assets are built on a macOS SSH worker by passing `--apple-builder`:
+macOS App, macOS CLI, and unsigned iOS assets are produced by GitHub Actions for
+normal release work. Apple workflows are manual `workflow_dispatch` entrypoints,
+and the macOS/iOS workflows are also reusable through `workflow_call`:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope full --cli-arches all --apple-builder user@mac-mini.local
+gh workflow run "Apple Release Build" -f products=all -f include_ios=true -f build_web_assets=false
+gh workflow run "macOS Flutter Build" -f products=all -f build_web_assets=false
+gh workflow run "iOS Flutter Build" -f build_web_assets=false
+.\.venv\Scripts\python.exe tools\release\download_action_artifacts.py --run-id <run-id>
 ```
 
-The release script transfers the current working tree to the macOS worker before
-building, so the worker's existing Operit2 checkout is not used. After the
-remote build finishes, its archives are copied back into the local
-`tools/release/dist` directory before the GitHub Release upload begins.
+Collaborators can build the current host locally with one Python entrypoint. On
+macOS, `--include-ios` also builds the unsigned iOS archive when the iOS Xcode
+platform component is installed:
 
-Use `--apple-optional` to continue the non-Apple release builds when the SSH
-worker is unreachable. It does not ignore Apple build failures after a worker
-connection has been established.
-
-The iOS package is opt-in because it requires the iOS Xcode platform component:
-
-```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope app --apple-builder user@mac-mini.local --apple-include-ios
+```bash
+python3 tools/build_scripts/build_local.py --products all --cli-arches host
+python3 tools/build_scripts/build_local.py --products app --include-ios
 ```
 
 The script reads GitHub credentials from:

@@ -7,11 +7,12 @@ import sys
 from pathlib import Path
 
 from common import (
+    DIST_DIR,
     FLUTTER_APP_DIR,
     build_env_with_typescript,
     ensure_node_and_npm,
     flutter_command,
-    dart_pub_get,
+    flutter_pub_get,
     generate_dart_proxy_artifacts,
     prepare_python_command,
     require_command,
@@ -22,7 +23,7 @@ from prepare_apple_sherpa import prepare_apple_sherpa
 
 
 IOS_RELEASE_APP_DIR = FLUTTER_APP_DIR / "build" / "ios" / "iphoneos" / "Runner.app"
-IOS_ARCHIVE_PATH = FLUTTER_APP_DIR / "build" / "ios" / "iphoneos" / "Operit2-ios.zip"
+IOS_ARCHIVE_PATH = DIST_DIR / "operit2-app-ios-arm64.zip"
 
 
 # Packages the unsigned iOS app bundle produced by Flutter.
@@ -67,7 +68,7 @@ def main() -> int:
         generate_dart_proxy_artifacts()
 
     prepare_python_command()
-    dart_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
+    flutter_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
 
     command = [flutter, "build", "ios", "--release", "--no-pub", "--no-codesign"]
     if args.build_name:

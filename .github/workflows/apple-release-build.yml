@@ -1,0 +1,43 @@
+name: Apple Release Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      products:
+        description: "macOS products to build"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - "app"
+          - "cli"
+          - "all"
+      include_ios:
+        description: "Build unsigned iOS app"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      build_web_assets:
+        description: "Force rebuild web assets before Apple builds"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  macos:
+    uses: ./.github/workflows/macos-flutter-build.yml
+    with:
+      products: ${{ inputs.products }}
+      build_web_assets: ${{ inputs.build_web_assets }}
+
+  ios:
+    if: inputs.include_ios == 'true' && inputs.products != 'cli'
+    uses: ./.github/workflows/ios-flutter-build.yml
+    with:
+      build_web_assets: ${{ inputs.build_web_assets }}

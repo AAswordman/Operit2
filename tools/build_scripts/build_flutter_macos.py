@@ -7,12 +7,14 @@ import sys
 from pathlib import Path
 
 from common import (
+    DIST_DIR,
     FLUTTER_APP_DIR,
     build_env_with_typescript,
     ensure_node_and_npm,
     flutter_command,
-    dart_pub_get,
+    flutter_pub_get,
     generate_dart_proxy_artifacts,
+    host_arch,
     prepare_python_command,
     require_command,
     prepare_web_access_embedded_assets,
@@ -20,10 +22,11 @@ from common import (
 )
 
 
+# Packages the macOS app bundle as a release archive.
 def package_macos_app(archive_path: Path | None = None) -> Path:
     app_path = FLUTTER_APP_DIR / "build" / "macos" / "Build" / "Products" / "Release" / "Operit2.app"
     if archive_path is None:
-        archive_path = app_path.parent / "Operit2-macos.zip"
+        archive_path = DIST_DIR / f"operit2-app-macos-{host_arch()}.zip"
     if not app_path.is_dir():
         raise RuntimeError(f"macOS app bundle was not produced: {app_path}")
     if archive_path.exists():
@@ -34,6 +37,7 @@ def package_macos_app(archive_path: Path | None = None) -> Path:
     return archive_path
 
 
+# Parses command-line options for the macOS Flutter build.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the Operit2 macOS Flutter app.")
     parser.add_argument("--build-name")
@@ -45,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Builds the macOS Flutter app and writes a release archive.
 def main() -> int:
     args = parse_args()
     prepare_web_access_embedded_assets()
@@ -60,7 +65,7 @@ def main() -> int:
         generate_dart_proxy_artifacts()
 
     prepare_python_command()
-    dart_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
+    flutter_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
 
     command = [flutter, "build", "macos", "--release", "--no-pub"]
     if args.build_name:

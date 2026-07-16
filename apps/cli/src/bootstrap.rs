@@ -5,14 +5,25 @@ use std::sync::Arc;
 
 use operit_core_proxy::LocalCoreProxy;
 use operit_host_api::HostManager::HostManager;
+#[cfg(target_os = "macos")]
+use operit_host_apple_native::{
+    AppleBrowserAutomationHost as NativeBrowserAutomationHost,
+    AppleFileSystemHost as NativeFileSystemHost,
+    AppleHostRuntimeEventHost as NativeHostRuntimeEventHost,
+    AppleHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    AppleHttpHost as NativeHttpHost, AppleManagedRuntimeHost as NativeManagedRuntimeHost,
+    AppleRuntimeStorageHost as NativeRuntimeStorageHost,
+    AppleSystemOperationHost as NativeSystemOperationHost, AppleTerminalHost as NativeTerminalHost,
+    AppleWebVisitHost as NativeWebVisitHost,
+};
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
     LinuxAudioPlaybackHost as NativeAudioPlaybackHost, LinuxBluetoothHost as NativeBluetoothHost,
     LinuxBrowserAutomationHost as NativeBrowserAutomationHost,
     LinuxFileSystemHost as NativeFileSystemHost,
-    LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost, LinuxHttpHost as NativeHttpHost,
+    LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost,
     LinuxHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
-    LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
+    LinuxHttpHost as NativeHttpHost, LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
     LinuxSystemOperationHost as NativeSystemOperationHost, LinuxTerminalHost as NativeTerminalHost,
     LinuxWebVisitHost as NativeWebVisitHost,
@@ -23,9 +34,9 @@ use operit_host_windows_native::{
     WindowsBluetoothHost as NativeBluetoothHost,
     WindowsBrowserAutomationHost as NativeBrowserAutomationHost,
     WindowsFileSystemHost as NativeFileSystemHost,
-    WindowsHostRuntimeEventHost as NativeHostRuntimeEventHost, WindowsHttpHost as NativeHttpHost,
+    WindowsHostRuntimeEventHost as NativeHostRuntimeEventHost,
     WindowsHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
-    WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
+    WindowsHttpHost as NativeHttpHost, WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
     WindowsTerminalHost as NativeTerminalHost, WindowsWebVisitHost as NativeWebVisitHost,
@@ -33,8 +44,8 @@ use operit_host_windows_native::{
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use serde::{Deserialize, Serialize};
 
-#[cfg(not(any(windows, target_os = "linux")))]
-compile_error!("operit2 CLI host is implemented for Windows and Linux.");
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+compile_error!("operit2 CLI host is implemented for Windows, Linux, and macOS.");
 
 /// Creates the CLI application with the configured runtime and workspace roots.
 pub(crate) fn create_cli_application() -> OperitApplication {
@@ -55,16 +66,18 @@ pub(crate) fn create_cli_application() -> OperitApplication {
         runtimeSqliteHost,
     )
     .withHostSecretStore(hostSecretStore);
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     {
         context = context.withTerminalHost(Arc::new(NativeTerminalHost::new()));
     }
-    context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::new()));
-    context = context.withBluetoothHost(Arc::new(NativeBluetoothHost::new()));
+    #[cfg(any(target_os = "linux", windows))]
+    {
+        context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::new()));
+        context = context.withBluetoothHost(Arc::new(NativeBluetoothHost::new()));
+    }
     context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
-    context = context.withHostRuntimeEventSchedulerHost(Arc::new(
-        NativeHostRuntimeEventSchedulerHost::new(),
-    ));
+    context = context
+        .withHostRuntimeEventSchedulerHost(Arc::new(NativeHostRuntimeEventSchedulerHost::new()));
     context = context.withBrowserAutomationHost(Arc::new(NativeBrowserAutomationHost::new()));
     let commandContext = context.clone();
     OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(
@@ -201,6 +214,15 @@ fn cli_config_dir() -> PathBuf {
         let home = env::var_os("HOME").expect("HOME is required for Operit2 CLI config");
         return PathBuf::from(home).join(".config").join("operit2");
     }
+    #[cfg(target_os = "macos")]
+    {
+        let home = env::var_os("HOME").expect("HOME is required for Operit2 CLI config");
+        return PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("Operit2")
+            .join("cli");
+    }
 }
 
 #[cfg(test)]
@@ -222,7 +244,7 @@ mod tests {
             "Write-Output direct-tool-ok",
             "direct-tool-ok",
         );
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let (sessionName, command, expectedOutput) = (
             "direct-tool-visible-linux",
             "printf 'direct-tool-ok\\n'; [ -t 0 ] && echo tty=yes || echo tty=no",

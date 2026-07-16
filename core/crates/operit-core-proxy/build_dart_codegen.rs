@@ -27,21 +27,28 @@ pub(crate) fn write_dart_proxy_artifacts(
         .expect("operit-core-proxy must live under core/crates");
     let schema_dir = repo_root.join("core/generated");
     fs::create_dir_all(&schema_dir).expect("create generated schema directory");
-    fs::write(schema_dir.join("core_proxy_schema.json"), schema_json)
-        .expect("write core_proxy_schema.json");
+    write_generated_file(&schema_dir.join("core_proxy_schema.json"), schema_json);
 
     let dart_dir = repo_root.join("apps/flutter/app/lib/core/proxy/generated");
     fs::create_dir_all(&dart_dir).expect("create generated dart proxy directory");
-    fs::write(
-        dart_dir.join("CoreProxyModels.g.dart"),
-        render_dart_models(objects, serializable_types),
-    )
-    .expect("write CoreProxyModels.g.dart");
-    fs::write(
-        dart_dir.join("CoreProxyClients.g.dart"),
-        render_dart_clients(objects, serializable_types),
-    )
-    .expect("write CoreProxyClients.g.dart");
+    write_generated_file(
+        &dart_dir.join("CoreProxyModels.g.dart"),
+        &render_dart_models(objects, serializable_types),
+    );
+    write_generated_file(
+        &dart_dir.join("CoreProxyClients.g.dart"),
+        &render_dart_clients(objects, serializable_types),
+    );
+}
+
+/// Writes generated content only when its bytes differ from the existing file.
+fn write_generated_file(path: &Path, contents: &str) {
+    if fs::read(path).is_ok_and(|current| current == contents.as_bytes()) {
+        return;
+    }
+
+    fs::write(path, contents)
+        .unwrap_or_else(|error| panic!("write generated file {}: {error}", path.display()));
 }
 
 fn render_dart_models(

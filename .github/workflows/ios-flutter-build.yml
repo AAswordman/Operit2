@@ -11,6 +11,13 @@ on:
         options:
           - "false"
           - "true"
+  workflow_call:
+    inputs:
+      build_web_assets:
+        description: "Force rebuild web assets before iOS build"
+        required: false
+        default: "false"
+        type: string
 jobs:
   build-ios:
     runs-on: macos-15
@@ -67,6 +74,9 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+
+      - name: Check build environment
+        run: python3 tools/build_scripts/check_environment.py --products app --include-ios --github-runner
 
       - name: Cache Cargo outputs
         uses: actions/cache@v4
@@ -175,6 +185,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: operit2-ios-${{ github.sha }}
-          path: apps/flutter/app/build/ios/iphoneos/Operit2-ios.zip
+          path: tools/release/dist/operit2-app-ios-arm64.zip
           if-no-files-found: error
           retention-days: 14

@@ -1,5 +1,7 @@
 pub mod audio;
 pub mod bluetooth;
+#[cfg(target_os = "macos")]
+pub mod browser;
 pub mod fs;
 pub mod host_runtime_event;
 pub mod http;

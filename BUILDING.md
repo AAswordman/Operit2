@@ -113,6 +113,13 @@ Direct release script:
 .\.venv\Scripts\python.exe tools\release\release.py
 ```
 
+Environment check only:
+
+```powershell
+.\.venv\Scripts\python.exe tools\build_scripts\build_local.py --products all --cli-arches host --check
+.\.venv\Scripts\python.exe tools\release\release.py --scope full --cli-arches all --check-environment
+```
+
 Scopes:
 
 ```powershell
@@ -126,6 +133,24 @@ Build only:
 
 ```powershell
 .\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only
+```
+
+Release environment assumptions:
+
+```text
+Local Windows release.py:
+  Builds Android, OpenHarmony, Windows App, Windows CLI, and WSL Linux assets.
+  Requires Windows build tools, Android/OpenHarmony signing files, and Fedora WSL
+  when WSL Linux assets are selected.
+
+Local build_local.py:
+  Builds only the current host App and/or CLI after checking the current host
+  requirements. macOS can add unsigned iOS with --include-ios.
+
+GitHub Actions:
+  Apple Release Build, macOS Flutter Build, and iOS Flutter Build are manual
+  cloud entrypoints. Artifacts downloaded from cloud runs must be collected into
+  tools/release/dist with download_action_artifacts.py.
 ```
 
 Successful App and full builds advance the Flutter build number in
@@ -148,16 +173,34 @@ operit2-cli-linux-x86_64.tar.gz
 operit2-cli-linux-aarch64.tar.gz
 ```
 
-Apple release assets can be built on a macOS SSH worker. The release script
-packages the current working tree, sends it to the Mac, runs the Apple build
-there, and copies the produced assets into `tools/release/dist`.
+Apple release assets are built in GitHub Actions for normal release work. Use
+the Apple aggregate workflow for macOS App, macOS CLI, and unsigned iOS archives,
+or trigger the individual macOS and iOS workflows while diagnosing one product.
+These workflows are manual `workflow_dispatch` entrypoints, and the macOS/iOS
+workflows are also reusable through `workflow_call`.
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope full --cli-arches all --apple-builder user@mac-mini.local
+gh workflow run "Apple Release Build" -f products=all -f include_ios=true -f build_web_assets=false
+gh workflow run "macOS Flutter Build" -f products=all -f build_web_assets=false
+gh workflow run "iOS Flutter Build" -f build_web_assets=false
+.\.venv\Scripts\python.exe tools\release\download_action_artifacts.py --run-id <run-id>
 ```
 
-The macOS worker must have Xcode, Rust, FVM, Node/npm, and Python 3 available
-from the SSH login environment. Apple outputs include:
+Collaborators can still build the current host locally with one Python command.
+Run it from the repository root. On Windows, use the project virtual environment.
+On macOS and Linux, use the active Python 3 environment.
+
+```powershell
+.\.venv\Scripts\python.exe tools\build_scripts\build_local.py --products all --cli-arches host
+```
+
+```bash
+python3 tools/build_scripts/build_local.py --products all --cli-arches host
+python3 tools/build_scripts/build_local.py --products app --include-ios
+```
+
+Local Apple builds require Xcode, Rust, FVM, Node/npm, and Python 3 on the macOS
+host. Apple outputs include:
 
 ```text
 operit2-app-macos-aarch64.zip

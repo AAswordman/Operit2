@@ -32,10 +32,6 @@ class ChoiceKey(ValueEnum):
     BUILD = "build"
     PUBLISH = "publish"
     DRAFT = "draft"
-    APPLE = "apple"
-    NO_APPLE = "no_apple"
-    IOS = "ios"
-    NO_IOS = "no_ios"
 
 
 @dataclass(frozen=True)
@@ -45,6 +41,7 @@ class Choice:
     args: tuple[str, ...]
 
 
+# Prompts the user to select one interactive choice.
 def choose(title: str, choices: list[Choice]) -> Choice:
     print()
     print(title)
@@ -60,16 +57,7 @@ def choose(title: str, choices: list[Choice]) -> Choice:
         print("输入无效，请重新选择。")
 
 
-# Reads one non-empty interactive text value.
-def read_required_text(title: str) -> str:
-    print()
-    while True:
-        value = input(f"{title}: ").strip()
-        if value:
-            return value
-        print("输入不能为空。")
-
-
+# Builds the release command selected by the interactive prompts.
 def build_command() -> list[str]:
     target = choose(
         "这次要处理什么？",
@@ -114,28 +102,10 @@ def build_command() -> list[str]:
         )
         command.extend(linux.args)
 
-    if target.key != ChoiceKey.CHECK:
-        apple = choose(
-            "Apple 构建机？",
-            [
-                Choice(ChoiceKey.NO_APPLE, "不使用 Apple SSH 构建机", ()),
-                Choice(ChoiceKey.APPLE, "使用 Apple SSH 构建 macOS App 和 CLI", ()),
-            ],
-        )
-        if apple.key == ChoiceKey.APPLE:
-            command.extend(["--apple-builder", read_required_text("SSH 目标，例如 user@mac-mini.local")])
-            ios = choose(
-                "额外构建 iOS 包？",
-                [
-                    Choice(ChoiceKey.NO_IOS, "暂不构建 iOS", ()),
-                    Choice(ChoiceKey.IOS, "构建 unsigned iOS 包", ("--apple-include-ios",)),
-                ],
-            )
-            command.extend(ios.args)
-
     return command
 
 
+# Runs the selected release command after user confirmation.
 def main() -> int:
     if not RELEASE_SCRIPT.is_file():
         print(f"发布脚本不存在: {RELEASE_SCRIPT}", file=sys.stderr)
