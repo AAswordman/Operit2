@@ -151,7 +151,7 @@ That directory is ignored by git.
 Default publish command on Windows:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py
+.\.venv\Scripts\python.exe tools\release\publish_dist.py
 ```
 
 Release scope:
@@ -166,6 +166,10 @@ Release scope:
 # App and CLI/TUI
 .\.venv\Scripts\python.exe tools\release\release.py --scope full
 ```
+
+`release.py` builds release assets. Add `--publish` only when this same command
+should upload the newly built files after a successful build. Use
+`publish_dist.py` to publish files that are already staged in `tools/release/dist`.
 
 CLI architecture selection:
 
@@ -225,6 +229,19 @@ Required keys:
 ```text
 GITHUB_TOKEN
 GITHUB_API_URL
+```
+
+Publishing existing build outputs is handled by:
+
+```text
+tools/release/publish_dist.py
+```
+
+It uploads the files already staged in `tools/release/dist` without rebuilding:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\publish_dist.py
+.\.venv\Scripts\python.exe tools\release\publish_dist.py --check-only
 ```
 
 The default release repository is:

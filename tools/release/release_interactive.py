@@ -75,9 +75,9 @@ def build_command() -> list[str]:
         mode = choose(
             "执行方式？",
             [
-                Choice(ChoiceKey.BUILD, "只构建检查", ("--build-only",)),
-                Choice(ChoiceKey.PUBLISH, "发布到 GitHub Release", ()),
-                Choice(ChoiceKey.DRAFT, "发布到 GitHub Draft", ("--draft",)),
+                Choice(ChoiceKey.BUILD, "只构建检查", ()),
+                Choice(ChoiceKey.PUBLISH, "构建后发布到 GitHub Release", ("--publish",)),
+                Choice(ChoiceKey.DRAFT, "构建后发布到 GitHub Draft", ("--publish", "--draft")),
             ],
         )
         command.extend(mode.args)

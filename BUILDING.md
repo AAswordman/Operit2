@@ -132,7 +132,7 @@ Scopes:
 Build only:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only
+.\.venv\Scripts\python.exe tools\release\release.py --scope cli
 ```
 
 Release environment assumptions:
@@ -232,16 +232,29 @@ Skip WSL Linux packaging:
 
 ## Publishing
 
-Publish selected scope to GitHub Release:
+Publish the already-built files in `tools/release/dist` to GitHub Release:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope cli
+.\.venv\Scripts\python.exe tools\release\publish_dist.py
 ```
 
-Publish as draft:
+Validate the staged files and GitHub credentials without uploading:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope cli --draft
+.\.venv\Scripts\python.exe tools\release\publish_dist.py --check-only
+```
+
+The build-then-publish path is available when one command should run the whole
+local release flow:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\release.py --scope cli --publish
+```
+
+Publish staged files as a draft:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\publish_dist.py --draft
 ```
 
 The release script reads versions from:
