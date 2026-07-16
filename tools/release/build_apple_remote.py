@@ -157,9 +157,9 @@ rm -rf {shlex.quote(remote_source)} {shlex.quote(remote_dist)}
 mkdir -p {shlex.quote(remote_source)} {shlex.quote(remote_dist)} {shlex.quote(remote_tool_cache)} {shlex.quote(remote_build_tool_cache)}
 tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(remote_source)}
 cd {shlex.quote(remote_source)}
-ln -s {shlex.quote(remote_tool_cache)} .ci-tools
+ln -s ../cache/.ci-tools .ci-tools
 mkdir -p target
-ln -s {shlex.quote(remote_build_tool_cache)} target/operit-build-tools
+ln -s ../../cache/operit-build-tools target/operit-build-tools
 python3 tools/build_scripts/build_apple_release.py \
   --build-name {shlex.quote(args.build_name)} \
   --build-number {shlex.quote(args.build_number)} \
