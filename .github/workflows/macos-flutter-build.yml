@@ -3,6 +3,15 @@ name: macOS Flutter Build
 on:
   workflow_dispatch:
     inputs:
+      products:
+        description: "Release products to build"
+        required: false
+        default: "app"
+        type: choice
+        options:
+          - "app"
+          - "cli"
+          - "all"
       build_web_assets:
         description: "Force rebuild web assets before macOS build"
         required: false
@@ -76,9 +85,10 @@ jobs:
             ~/.cargo/registry
             core/target
             apps/flutter/native/operit-flutter-bridge/target
+            apps/cli/target
             hosts/apple/target
             target/operit-build-tools
-          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-cargo-${{ hashFiles('core/Cargo.lock', 'core/crates/**/Cargo.toml', 'apps/flutter/native/operit-flutter-bridge/Cargo.lock', 'apps/flutter/native/operit-flutter-bridge/Cargo.toml', 'hosts/apple/Cargo.lock', 'hosts/apple/Cargo.toml', 'hosts/web/Cargo.lock', 'hosts/web/Cargo.toml') }}
+          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-cargo-${{ hashFiles('core/Cargo.lock', 'core/crates/**/Cargo.toml', 'apps/cli/Cargo.lock', 'apps/cli/Cargo.toml', 'apps/cli/src/**', 'apps/flutter/native/operit-flutter-bridge/Cargo.lock', 'apps/flutter/native/operit-flutter-bridge/Cargo.toml', 'hosts/apple/Cargo.lock', 'hosts/apple/Cargo.toml', 'hosts/web/Cargo.lock', 'hosts/web/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-cargo-
 
@@ -137,7 +147,12 @@ jobs:
         run: python3 tools/build_scripts/build_flutter_web_access.py
 
       - name: Build and package macOS app
+        if: inputs.products != 'cli'
         run: python3 tools/build_scripts/build_flutter_macos.py
+
+      - name: Build and package macOS CLI
+        if: inputs.products != 'app'
+        run: python3 tools/build_scripts/build_cli_macos.py --arches all
 
       - name: Save TypeScript compiler
         if: steps.typescript-cache.outputs.cache-hit != 'true'
@@ -170,9 +185,19 @@ jobs:
           key: ${{ steps.web-build-cache.outputs.cache-primary-key }}
 
       - name: Upload macOS app artifact
+        if: inputs.products != 'cli'
         uses: actions/upload-artifact@v4
         with:
           name: operit2-macos-${{ github.sha }}
           path: apps/flutter/app/build/macos/Build/Products/Release/Operit2-macos.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload macOS CLI artifacts
+        if: inputs.products != 'app'
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-macos-cli-${{ github.sha }}
+          path: tools/release/dist/operit2-cli-macos-*.tar.gz
           if-no-files-found: error
           retention-days: 14

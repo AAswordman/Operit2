@@ -55,3 +55,6 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_
 
 [target.'cfg(target_os = "linux")'.dependencies]
 operit-host-linux-native = { path = "../../hosts/linux" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+operit-host-apple-native = { path = "../../hosts/apple" }

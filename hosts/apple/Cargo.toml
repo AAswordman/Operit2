@@ -25,3 +25,4 @@ security-framework = "3.7"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 operit-host-native-common = { path = "../common/operit-host-native-common", default-features = false, features = ["http", "terminal"] }
+tungstenite = "0.24"
