@@ -33,6 +33,13 @@ MSVC x64 and ARM64 components
 LLVM clang at C:\Program Files\LLVM\bin\clang.exe
 ```
 
+Linux desktop App builds:
+
+```text
+CMake, Ninja, pkg-config, clang, and GTK development headers
+GStreamer development headers exposing pkg-config package gstreamer-1.0
+```
+
 Flutter app builds:
 
 ```text

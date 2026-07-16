@@ -92,6 +92,20 @@ def check_directory(name: str, path: Path) -> CheckResult:
     return missing(name, f"required directory not found: {path}")
 
 
+# Checks one pkg-config package required by a native build.
+def check_pkg_config_package(package: str) -> CheckResult:
+    pkg_config = shutil.which("pkg-config")
+    if pkg_config is None:
+        return missing("pkg-config", "command not found on PATH: pkg-config")
+    result = command_output([pkg_config, "--exists", package])
+    if result.returncode == 0:
+        return ok(f"pkg-config package {package}", "available")
+    return missing(
+        f"pkg-config package {package}",
+        f"install the development package that provides {package}",
+    )
+
+
 # Returns every Rust target installed through rustup.
 def installed_rust_targets() -> set[str]:
     result = command_output(["rustup", "target", "list", "--installed"])
@@ -156,6 +170,7 @@ def check_native_app_tools(include_ios: bool) -> list[CheckResult]:
                 check_command("ninja", ["--version"]),
                 check_command("pkg-config", ["--version"]),
                 check_command("clang", ["--version"]),
+                check_pkg_config_package("gstreamer-1.0"),
             ]
         )
     elif platform_name == "macos":
