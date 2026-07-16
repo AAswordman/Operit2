@@ -143,7 +143,7 @@ CLI_RUST_TARGETS = {
     (HostPlatform.WINDOWS, "x86_64"): "x86_64-pc-windows-msvc",
     (HostPlatform.WINDOWS, "aarch64"): "aarch64-pc-windows-msvc",
     (HostPlatform.LINUX, "x86_64"): "x86_64-unknown-linux-musl",
-    (HostPlatform.LINUX, "aarch64"): "aarch64-unknown-linux-musl",
+    (HostPlatform.LINUX, "aarch64"): "aarch64-unknown-linux-gnu",
     (HostPlatform.MACOS, "x86_64"): "x86_64-apple-darwin",
     (HostPlatform.MACOS, "aarch64"): "aarch64-apple-darwin",
 }
@@ -931,15 +931,25 @@ command -v musl-gcc >/dev/null 2>&1 || {
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
 export CC_x86_64_unknown_linux_musl=musl-gcc
 """
-    elif target.rust_target == "aarch64-unknown-linux-musl":
+    elif target.rust_target == "aarch64-unknown-linux-gnu":
         dependency_check = """
-command -v aarch64-linux-musl-gcc >/dev/null 2>&1 || {
-    echo "Missing WSL dependency: aarch64-linux-musl-gcc" >&2
-    echo "Install an aarch64 musl cross C compiler and put aarch64-linux-musl-gcc on PATH." >&2
+command -v aarch64-linux-gnu-gcc >/dev/null 2>&1 || {
+    echo "Missing WSL dependency: aarch64-linux-gnu-gcc" >&2
+    echo "Fedora: sudo dnf install -y gcc-aarch64-linux-gnu sysroot-aarch64-fc43-glibc" >&2
     exit 1
 }
-export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
-export CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc
+export OPERIT_AARCH64_LINUX_SYSROOT=/usr/aarch64-redhat-linux/sys-root/fc43
+test -d "$OPERIT_AARCH64_LINUX_SYSROOT" || {
+    echo "Missing WSL sysroot: $OPERIT_AARCH64_LINUX_SYSROOT" >&2
+    echo "Fedora: sudo dnf install -y sysroot-aarch64-fc43-glibc" >&2
+    exit 1
+}
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+export CFLAGS_aarch64_unknown_linux_gnu="--sysroot=$OPERIT_AARCH64_LINUX_SYSROOT -D_GNU_SOURCE -include $OPERIT_AARCH64_LINUX_SYSROOT/usr/include/limits.h"
+unset RUSTFLAGS
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Awarnings"
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Awarnings -C link-arg=--sysroot=$OPERIT_AARCH64_LINUX_SYSROOT"
 """
     else:
         dependency_check = ""

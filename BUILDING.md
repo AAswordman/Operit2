@@ -63,15 +63,18 @@ rustup target add x86_64-pc-windows-msvc
 rustup target add aarch64-pc-windows-msvc
 ```
 
-Fedora WSL Linux CLI release builds use static musl targets:
+Fedora WSL Linux CLI release builds use these Rust targets:
 
 ```bash
 rustup target add x86_64-unknown-linux-musl
-rustup target add aarch64-unknown-linux-musl
-sudo dnf install -y musl-gcc musl-devel musl-libc-static
+rustup target add aarch64-unknown-linux-gnu
+sudo dnf install -y musl-gcc musl-devel musl-libc-static gcc-aarch64-linux-gnu sysroot-aarch64-fc43-glibc
 ```
 
-The aarch64 Linux CLI release also requires an `aarch64-linux-musl-gcc` cross C compiler on PATH.
+The aarch64 Linux CLI release requires an `aarch64-linux-gnu-gcc` cross C compiler and
+the Fedora `/usr/aarch64-redhat-linux/sys-root/fc43` sysroot. The release script injects
+the sysroot's `limits.h` while compiling C dependencies because Fedora's cross compiler
+is built without target headers.
 
 ## Local CLI Checks
 
