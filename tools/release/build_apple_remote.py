@@ -146,6 +146,7 @@ def remote_build_script(args: argparse.Namespace, remote_archive: str, remote_so
     return f"""
 set -euo pipefail
 export PATH="$HOME/.rustup/toolchains/stable-$(uname -m)-apple-darwin/bin:$HOME/.pub-cache/bin:$HOME/flutter/bin:/usr/local/bin:$PATH"
+export RUSTFLAGS="-Awarnings"
 command -v python3
 command -v cargo
 command -v rustup
