@@ -1221,34 +1221,6 @@ def build_host_cli(cli_arches="host"):
     )
 
 
-# Builds Apple release assets on a macOS SSH worker.
-def build_remote_apple(products, build_name, build_number, cli_arches, apple_builder, apple_remote_root, include_ios):
-    selected = [product.value for product in sorted(products, key=lambda item: item.value) if product != ReleaseProduct.NONE]
-    if not selected:
-        return
-    command = [
-        sys.executable,
-        SCRIPT_DIR / "build_apple_remote.py",
-        "--ssh",
-        apple_builder,
-        "--remote-root",
-        apple_remote_root,
-        "--build-name",
-        build_name,
-        "--build-number",
-        build_number,
-        "--cli-arches",
-        cli_arches,
-        "--products",
-        *selected,
-        "--dist-dir",
-        DIST_DIR,
-    ]
-    if include_ios:
-        command.append("--include-ios")
-    run(command)
-
-
 def publish_release(tag, repo_value, draft, prerelease, auth):
     assets = sorted(path for path in DIST_DIR.iterdir() if path.is_file())
     if not assets:
@@ -1356,6 +1328,7 @@ def products_for_scope(scope, explicit_products):
     return products
 
 
+# Builds, publishes, and reports release assets for the selected scope.
 def main():
     parser = argparse.ArgumentParser(description="Build and publish Operit2 release assets.")
     parser.add_argument("--tag", default="")
@@ -1372,13 +1345,10 @@ def main():
     parser.add_argument("--products", nargs="+", choices=[item.value for item in ReleaseProduct])
     parser.add_argument("--wsl-distro", default="FedoraLinux-43")
     parser.add_argument("--no-wsl", action="store_true")
-    parser.add_argument("--apple-builder", default="", help="macOS SSH target used to build macOS assets")
-    parser.add_argument("--apple-remote-root", default="operit2-apple-release")
-    parser.add_argument("--apple-include-ios", action="store_true", help="Build the unsigned iOS app package on the Apple worker.")
-    parser.add_argument("--apple-optional", action="store_true", help="Continue when the Apple SSH worker is unreachable.")
     parser.add_argument("--cli-arches", default=CliArchMode.HOST.value, choices=[item.value for item in CliArchMode],
                         help="CLI target architectures: host (current only) or all (all desktop arches)")
     args = parser.parse_args()
+    os.environ["RUSTFLAGS"] = "-Awarnings"
 
     version = release_version()
     platform_version = flutter_platform_version()
@@ -1389,10 +1359,6 @@ def main():
         raise RuntimeError(f"--tag {tag} does not match release version {version.text}")
     if args.prerelease and not version.is_prerelease:
         raise RuntimeError("--prerelease was set for a stable release version")
-    if args.apple_include_ios and not args.apple_builder:
-        raise RuntimeError("--apple-include-ios requires --apple-builder")
-    if args.apple_optional and not args.apple_builder:
-        raise RuntimeError("--apple-optional requires --apple-builder")
     products = products_for_scope(args.scope, args.products)
 
     publish_auth = None
@@ -1423,22 +1389,6 @@ def main():
             platform_version.build_number,
             args.cli_arches,
         )
-
-    if args.apple_builder:
-        try:
-            build_remote_apple(
-                products,
-                platform_version.build_name,
-                platform_version.build_number,
-                args.cli_arches,
-                args.apple_builder,
-                args.apple_remote_root,
-                args.apple_include_ios,
-            )
-        except subprocess.CalledProcessError as error:
-            if not args.apple_optional or error.returncode != 255:
-                raise
-            print("Apple SSH worker is unreachable; skipping Apple release assets", flush=True)
 
     next_platform_version = None
     if ReleaseProduct.APP in products:

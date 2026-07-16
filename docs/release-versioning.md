@@ -188,25 +188,21 @@ sudo cp -a lib64/libgcc_s*.so* /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64
 sudo ln -sf libgcc_s.so.1 /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64/libgcc_s.so
 ```
 
-macOS App and CLI assets are built on a macOS SSH worker by passing `--apple-builder`:
+macOS App, macOS CLI, and unsigned iOS assets are produced by GitHub Actions for
+normal release work:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope full --cli-arches all --apple-builder user@mac-mini.local
+gh workflow run "macOS Flutter Build" -f products=all -f build_web_assets=false
+gh workflow run "iOS Flutter Build" -f build_web_assets=false
 ```
 
-The release script transfers the current working tree to the macOS worker before
-building, so the worker's existing Operit2 checkout is not used. After the
-remote build finishes, its archives are copied back into the local
-`tools/release/dist` directory before the GitHub Release upload begins.
+Collaborators can build the current host locally with one Python entrypoint. On
+macOS, `--include-ios` also builds the unsigned iOS archive when the iOS Xcode
+platform component is installed:
 
-Use `--apple-optional` to continue the non-Apple release builds when the SSH
-worker is unreachable. It does not ignore Apple build failures after a worker
-connection has been established.
-
-The iOS package is opt-in because it requires the iOS Xcode platform component:
-
-```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope app --apple-builder user@mac-mini.local --apple-include-ios
+```bash
+python3 tools/build_scripts/build_local.py --products all --cli-arches host
+python3 tools/build_scripts/build_local.py --products app --include-ios
 ```
 
 The script reads GitHub credentials from:

@@ -148,16 +148,30 @@ operit2-cli-linux-x86_64.tar.gz
 operit2-cli-linux-aarch64.tar.gz
 ```
 
-Apple release assets can be built on a macOS SSH worker. The release script
-packages the current working tree, sends it to the Mac, runs the Apple build
-there, and copies the produced assets into `tools/release/dist`.
+Apple release assets are built in GitHub Actions for normal release work. Use
+the macOS workflow for macOS App and CLI archives, and the iOS workflow for the
+unsigned iOS package.
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release\release.py --scope full --cli-arches all --apple-builder user@mac-mini.local
+gh workflow run "macOS Flutter Build" -f products=all -f build_web_assets=false
+gh workflow run "iOS Flutter Build" -f build_web_assets=false
 ```
 
-The macOS worker must have Xcode, Rust, FVM, Node/npm, and Python 3 available
-from the SSH login environment. Apple outputs include:
+Collaborators can still build the current host locally with one Python command.
+Run it from the repository root. On Windows, use the project virtual environment.
+On macOS and Linux, use the active Python 3 environment.
+
+```powershell
+.\.venv\Scripts\python.exe tools\build_scripts\build_local.py --products all --cli-arches host
+```
+
+```bash
+python3 tools/build_scripts/build_local.py --products all --cli-arches host
+python3 tools/build_scripts/build_local.py --products app --include-ios
+```
+
+Local Apple builds require Xcode, Rust, FVM, Node/npm, and Python 3 on the macOS
+host. Apple outputs include:
 
 ```text
 operit2-app-macos-aarch64.zip
