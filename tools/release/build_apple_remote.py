@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import shlex
 import shutil
 import subprocess
@@ -82,7 +83,14 @@ def create_source_archive() -> None:
         SOURCE_ARCHIVE.unlink()
     with tarfile.open(SOURCE_ARCHIVE, "w:gz") as archive:
         for path in source_paths():
-            archive.add(path, arcname=path.relative_to(REPO_ROOT).as_posix())
+            arcname = path.relative_to(REPO_ROOT).as_posix()
+            if path.suffix == ".sh":
+                contents = path.read_bytes().replace(b"\r\n", b"\n")
+                info = archive.gettarinfo(str(path), arcname=arcname)
+                info.size = len(contents)
+                archive.addfile(info, io.BytesIO(contents))
+                continue
+            archive.add(path, arcname=arcname)
 
 
 # Runs one shell script on the remote macOS worker through SSH.
