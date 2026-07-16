@@ -1,6 +1,7 @@
 use crate::commands::util::{parseCsvList, parse_i64_arg};
 use crate::output::CoreCommandOutput;
 use operit_host_api::HostManager::HostManager;
+use operit_host_api::RuntimeStorageHost;
 use operit_model::CharacterCard::CharacterSharedMemoryMount;
 use operit_model::Memory::Memory;
 use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
@@ -10,7 +11,7 @@ use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_util::OperitPaths::{characterMemoryOwnerKey, sharedMemoryOwnerKey};
 
 pub fn run_memory_command(
-    _context: HostManager,
+    context: HostManager,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -19,9 +20,12 @@ pub fn run_memory_command(
         return Ok(());
     }
 
+    let storageHost = context
+        .runtimeStorageHost
+        .ok_or_else(|| "runtime storage host is unavailable".to_string())?;
     match args[0].as_str() {
-        "character" => run_character_memory_command(&args[1..], output),
-        "shared" => run_shared_memory_command(&args[1..], output),
+        "character" => run_character_memory_command(&storageHost, &args[1..], output),
+        "shared" => run_shared_memory_command(&storageHost, &args[1..], output),
         "mount" => run_mount_command(&args[1..], output),
         "unmount" => run_unmount_command(&args[1..], output),
         _ => {
@@ -32,6 +36,7 @@ pub fn run_memory_command(
 }
 
 fn run_character_memory_command(
+    storageHost: &std::sync::Arc<dyn RuntimeStorageHost>,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -45,7 +50,7 @@ fn run_character_memory_command(
         .map_err(|error| error.to_string())?;
     let ownerKey = characterMemoryOwnerKey(&characterId)?;
     match args[1].as_str() {
-        "user" => run_user_command(&ownerKey, &args[2..], output),
+        "user" => run_user_command(storageHost, &ownerKey, &args[2..], output),
         "item" => run_item_command(&ownerKey, &args[2..], output),
         "graph" => run_graph_command(&ownerKey, output),
         _ => {
@@ -56,6 +61,7 @@ fn run_character_memory_command(
 }
 
 fn run_shared_memory_command(
+    storageHost: &std::sync::Arc<dyn RuntimeStorageHost>,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -112,7 +118,7 @@ fn run_shared_memory_command(
                 .map_err(|error| error.to_string())?;
             let ownerKey = sharedMemoryOwnerKey(sharedId)?;
             match args.get(1).map(String::as_str) {
-                Some("user") => run_user_command(&ownerKey, &args[2..], output),
+                Some("user") => run_user_command(storageHost, &ownerKey, &args[2..], output),
                 Some("item") => run_item_command(&ownerKey, &args[2..], output),
                 Some("graph") => run_graph_command(&ownerKey, output),
                 _ => {
@@ -188,6 +194,7 @@ fn run_unmount_command(args: &[String], output: &mut CoreCommandOutput) -> Resul
 }
 
 fn run_user_command(
+    storageHost: &std::sync::Arc<dyn RuntimeStorageHost>,
     ownerKey: &str,
     args: &[String],
     output: &mut CoreCommandOutput,
@@ -196,7 +203,7 @@ fn run_user_command(
         print_user_usage(output);
         return Ok(());
     }
-    let repository = UserMarkdownRepository::new(ownerKey);
+    let repository = UserMarkdownRepository::new(ownerKey, storageHost.clone());
     match args[0].as_str() {
         "show" => {
             output.push_stdout(repository.readUserMarkdown()?);

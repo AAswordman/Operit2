@@ -5,6 +5,7 @@ use chrono::{Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 
 use crate::runtime_support::ToolRuntimeSupport;
 use operit_model::CharacterCard::CharacterCardMemoryBindingMode;
+use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_store::repository::MemoryRepository::{MemoryLinkInfo, MemoryRepository};
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_tools::tools::ToolResultDataClasses::{
@@ -418,7 +419,7 @@ fn executeUpdateUserPreferences(tool: &AITool) -> ToolResult {
     if content.trim().is_empty() {
         return errorResult(tool, "content parameter is required");
     }
-    match UserMarkdownRepository::new(ownerKey).writeUserMarkdown(content) {
+    match UserMarkdownRepository::new(ownerKey, defaultRuntimeStorageHost()).writeUserMarkdown(content) {
         Ok(_) => success(tool, "Successfully updated USER.md".to_string()),
         Err(error) => errorResult(tool, &format!("Failed to update USER.md: {error}")),
     }

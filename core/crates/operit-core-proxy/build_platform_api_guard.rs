@@ -8,7 +8,7 @@ use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 use syn::{
     Attribute, ExprPath, ImplItemFn, ItemConst, ItemExternCrate, ItemFn, ItemMod, ItemStatic,
-    ItemUse, Meta, Path as SynPath, Token, TraitItemFn, TypePath, UseTree,
+    ItemUse, Lit, Meta, Path as SynPath, Token, TraitItemFn, TypePath, UseTree,
 };
 
 use super::SourceRoot;
@@ -45,20 +45,82 @@ fn collect_source_violations(
     directory: &Path,
     violations: &mut BTreeSet<PlatformApiViolation>,
 ) {
+    let mut source_files = Vec::new();
+    collect_source_files(directory, &mut source_files);
+    let test_sources = collect_test_source_files(&source_files);
+    for path in source_files {
+        if test_sources.contains(&path) {
+            continue;
+        }
+        collect_file_violations(source_root, &path, violations);
+    }
+}
+
+/// Recursively collects Rust source files for one crate without inspecting their contents.
+fn collect_source_files(directory: &Path, source_files: &mut Vec<PathBuf>) {
     let entries = fs::read_dir(directory)
         .unwrap_or_else(|error| panic!("read source directory {}: {error}", directory.display()));
     for entry in entries {
         let entry = entry.unwrap_or_else(|error| panic!("read source entry: {error}"));
         let path = entry.path();
         if path.is_dir() {
-            collect_source_violations(source_root, &path, violations);
+            collect_source_files(&path, source_files);
             continue;
         }
         if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
             continue;
         }
-        collect_file_violations(source_root, &path, violations);
+        source_files.push(path);
     }
+}
+
+/// Finds external module sources that are compiled only by test builds.
+fn collect_test_source_files(source_files: &[PathBuf]) -> BTreeSet<PathBuf> {
+    let mut test_sources = BTreeSet::new();
+    for source_path in source_files {
+        let content = fs::read_to_string(source_path)
+            .unwrap_or_else(|error| panic!("read source file {}: {error}", source_path.display()));
+        let file = syn::parse_file(&content)
+            .unwrap_or_else(|error| panic!("parse source file {}: {error}", source_path.display()));
+        for item in file.items {
+            let syn::Item::Mod(module) = item else {
+                continue;
+            };
+            if module.content.is_some() || !is_excluded_from_wasm(&module.attrs) {
+                continue;
+            }
+            if let Some(path) = external_module_source_path(source_path, &module) {
+                test_sources.insert(path);
+            }
+        }
+    }
+    test_sources
+}
+
+/// Resolves the source file for one external test-only module declaration.
+fn external_module_source_path(source_path: &Path, module: &ItemMod) -> Option<PathBuf> {
+    let parent = source_path.parent()?;
+    for attribute in &module.attrs {
+        if !attribute.path().is_ident("path") {
+            continue;
+        }
+        let Meta::NameValue(value) = &attribute.meta else {
+            continue;
+        };
+        let syn::Expr::Lit(expression) = &value.value else {
+            continue;
+        };
+        let Lit::Str(path) = &expression.lit else {
+            continue;
+        };
+        return Some(parent.join(path.value()));
+    }
+    let module_name = module.ident.to_string();
+    let direct_file = parent.join(format!("{module_name}.rs"));
+    if direct_file.is_file() {
+        return Some(direct_file);
+    }
+    Some(parent.join(module_name).join("mod.rs"))
 }
 
 /// Parses one Rust source file and records its restricted platform API usage.
@@ -292,8 +354,11 @@ fn cfg_condition_excludes_wasm(condition: &Meta) -> bool {
         Meta::NameValue(value) if value.path.is_ident("target_arch") => {
             value.value.to_token_stream().to_string() != "\"wasm32\""
         }
-        Meta::List(list) if list.path.is_ident("not") => parse_cfg_conditions(list)
-            .is_some_and(|conditions| conditions.len() == 1 && !cfg_condition_excludes_wasm(&conditions[0])),
+        Meta::List(list) if list.path.is_ident("not") => {
+            parse_cfg_conditions(list).is_some_and(|conditions| {
+                conditions.len() == 1 && !cfg_condition_excludes_wasm(&conditions[0])
+            })
+        }
         Meta::List(list) if list.path.is_ident("all") => parse_cfg_conditions(list)
             .is_some_and(|conditions| conditions.iter().any(cfg_condition_excludes_wasm)),
         Meta::List(list) if list.path.is_ident("any") => parse_cfg_conditions(list)

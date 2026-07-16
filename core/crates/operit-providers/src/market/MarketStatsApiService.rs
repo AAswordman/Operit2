@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use operit_host_api::{HttpHost, HttpRequestData, HttpResponseData};
 use serde::{Deserialize, Serialize};
@@ -1202,16 +1201,10 @@ fn total_pages(total: i32, page_size: i32) -> i32 {
 }
 
 fn now_iso() -> String {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| {
-            let secs = d.as_secs();
-            let millis = d.subsec_millis();
-            let dt = chrono::DateTime::from_timestamp(secs as i64, millis * 1_000_000)
-                .unwrap_or_default();
-            dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
-        })
-        .unwrap_or_default()
+    chrono::DateTime::from_timestamp_millis(operit_host_api::TimeUtils::currentTimeMillis())
+        .expect("current host time must be representable as a chrono timestamp")
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string()
 }
 
 fn entry_downloads(entry: &MarketEntrySummary) -> i32 {

@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -111,14 +110,15 @@ impl MCPStarter {
             .filter(|pluginId| localServer.isServerEnabled(pluginId))
             .collect::<Vec<_>>();
         let timeoutMs = timeoutSeconds.max(1) as u64 * 1000;
-        let timeoutDuration = Duration::from_millis(timeoutMs);
         let mut successCount = 0usize;
         for pluginId in &plugins {
-            let startedAt = Instant::now();
+            let startedAtMillis = operit_host_api::TimeUtils::currentTimeMillisU128();
             if self.startPluginWithTimeout(pluginId, timeoutMs, |_| {}) {
                 successCount += 1;
             }
-            if startedAt.elapsed() >= timeoutDuration {
+            if operit_host_api::TimeUtils::currentTimeMillisU128().saturating_sub(startedAtMillis)
+                >= u128::from(timeoutMs)
+            {
                 break;
             }
         }

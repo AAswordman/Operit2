@@ -2,10 +2,9 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use operit_host_api::HostRuntimeTaskSchedulerHost;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::JsCast;
 
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_INPUT_MENU_TOGGLE;
@@ -422,8 +421,9 @@ fn triggerRefresh(
     }
     let paramsForRefresh = params.clone();
     let paramsCacheKeyForRefresh = paramsCacheKey.to_string();
-    launchTask(move || {
-        let resolved = loadSpecs(&runtime, &paramsForRefresh);
+    let taskRuntime = runtime.clone();
+    launchTask(&runtime, "operit-toolpkg-input-refresh", move || {
+        let resolved = loadSpecs(&taskRuntime, &paramsForRefresh);
         *INPUT_MENU_SPECS_CACHE
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
@@ -624,33 +624,25 @@ fn launchToggle(
     spec: InputMenuSpec,
     params: InputMenuToggleHookParams,
 ) {
-    launchTask(move || {
-        runInputMenuToggleHook(&runtime, &spec, &params);
+    let taskRuntime = runtime.clone();
+    launchTask(&runtime, "operit-toolpkg-input-toggle", move || {
+        runInputMenuToggleHook(&taskRuntime, &spec, &params);
         let registryVersion = HOOK_REGISTRY_VERSION.load(Ordering::SeqCst);
         let paramsCacheKey = buildCacheKey(&params);
-        triggerRefresh(runtime, &params, registryVersion, &paramsCacheKey);
+        triggerRefresh(taskRuntime, &params, registryVersion, &paramsCacheKey);
     });
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[allow(non_snake_case)]
-fn launchTask<F>(task: F)
+fn launchTask<F>(runtime: &ToolPkgBridgeRuntime, taskName: &str, task: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    std::thread::spawn(task);
-}
-
-#[cfg(target_arch = "wasm32")]
-#[allow(non_snake_case)]
-fn launchTask<F>(task: F)
-where
-    F: FnOnce() + 'static,
-{
-    let callback = wasm_bindgen::closure::Closure::once_into_js(task);
-    let function: &js_sys::Function = callback.unchecked_ref();
-    web_sys::window()
-        .expect("window must exist for toolpkg input menu task")
-        .set_timeout_with_callback_and_timeout_and_arguments_0(function, 0)
-        .expect("toolpkg input menu task must be scheduled");
+    runtime
+        .host_manager()
+        .hostRuntimeTaskSchedulerHost
+        .as_ref()
+        .expect("HostRuntimeTaskSchedulerHost is required for ToolPkg input menu tasks")
+        .scheduleHostRuntimeTask(taskName, Box::new(task))
+        .expect("host runtime task scheduler must schedule ToolPkg input menu task");
 }

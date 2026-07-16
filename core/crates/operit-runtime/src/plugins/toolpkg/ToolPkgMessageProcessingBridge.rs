@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::thread;
 
+use operit_host_api::HostRuntimeTaskSchedulerHost;
 use serde_json::Value;
 
 use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
@@ -143,56 +143,65 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
             let hook_for_worker = hook.clone();
             let manager_for_worker = manager.clone();
             let executionIdForWorker = executionId.clone();
-            thread::spawn(move || {
-                ChainLogger::info(
-                    PLUGIN_CHAIN,
-                    "plugin.toolpkg.message_processing.run.start",
-                    &[
-                        ("package", hook_for_worker.containerPackageName.clone()),
-                        ("hookId", hook_for_worker.pluginId.clone()),
-                        ("executionId", executionIdForWorker.clone()),
-                    ],
-                );
-                let emittedAny = Arc::new(AtomicBool::new(false));
-                let emittedAnyForIntermediate = emittedAny.clone();
-                let decoded = runMessageProcessingHook(
-                    &manager_for_worker,
-                    &hook_for_worker,
-                    eventPayload,
-                    Some(Arc::new(move |raw| {
-                        let decoded = decodeToolPkgHookResult(Some(raw));
-                        for chunk in extractMessageChunks(decoded.as_ref()) {
-                            if !chunk.is_empty() {
-                                emittedAnyForIntermediate.store(true, Ordering::Relaxed);
-                                stream_for_intermediate.emit(chunk);
+            self.runtime
+                .host_manager()
+                .hostRuntimeTaskSchedulerHost
+                .as_ref()
+                .expect("HostRuntimeTaskSchedulerHost is required for ToolPkg message processing")
+                .scheduleHostRuntimeTask(
+                    "operit-toolpkg-message-processing",
+                    Box::new(move || {
+                        ChainLogger::info(
+                            PLUGIN_CHAIN,
+                            "plugin.toolpkg.message_processing.run.start",
+                            &[
+                                ("package", hook_for_worker.containerPackageName.clone()),
+                                ("hookId", hook_for_worker.pluginId.clone()),
+                                ("executionId", executionIdForWorker.clone()),
+                            ],
+                        );
+                        let emittedAny = Arc::new(AtomicBool::new(false));
+                        let emittedAnyForIntermediate = emittedAny.clone();
+                        let decoded = runMessageProcessingHook(
+                            &manager_for_worker,
+                            &hook_for_worker,
+                            eventPayload,
+                            Some(Arc::new(move |raw| {
+                                let decoded = decodeToolPkgHookResult(Some(raw));
+                                for chunk in extractMessageChunks(decoded.as_ref()) {
+                                    if !chunk.is_empty() {
+                                        emittedAnyForIntermediate.store(true, Ordering::Relaxed);
+                                        stream_for_intermediate.emit(chunk);
+                                    }
+                                }
+                            })),
+                        );
+                        let parsed = parseMessageProcessingResult(decoded.as_ref());
+                        let mut emittedChunkCount = 0usize;
+                        if let Some(parsed) = parsed {
+                            if parsed.matched && !emittedAny.load(Ordering::Relaxed) {
+                                for chunk in parsed.chunks {
+                                    if !chunk.is_empty() {
+                                        emittedChunkCount += 1;
+                                        stream_for_final.emit(chunk);
+                                    }
+                                }
                             }
                         }
-                    })),
-                );
-                let parsed = parseMessageProcessingResult(decoded.as_ref());
-                let mut emittedChunkCount = 0usize;
-                if let Some(parsed) = parsed {
-                    if parsed.matched && !emittedAny.load(Ordering::Relaxed) {
-                        for chunk in parsed.chunks {
-                            if !chunk.is_empty() {
-                                emittedChunkCount += 1;
-                                stream_for_final.emit(chunk);
-                            }
-                        }
-                    }
-                }
-                ChainLogger::info(
-                    PLUGIN_CHAIN,
-                    "plugin.toolpkg.message_processing.run.done",
-                    &[
-                        ("package", hook_for_worker.containerPackageName.clone()),
-                        ("hookId", hook_for_worker.pluginId.clone()),
-                        ("executionId", executionIdForWorker.clone()),
-                        ("chunkCount", emittedChunkCount.to_string()),
-                    ],
-                );
-                stream_for_final.close();
-            });
+                        ChainLogger::info(
+                            PLUGIN_CHAIN,
+                            "plugin.toolpkg.message_processing.run.done",
+                            &[
+                                ("package", hook_for_worker.containerPackageName.clone()),
+                                ("hookId", hook_for_worker.pluginId.clone()),
+                                ("executionId", executionIdForWorker.clone()),
+                                ("chunkCount", emittedChunkCount.to_string()),
+                            ],
+                        );
+                        stream_for_final.close();
+                    }),
+                )
+                .expect("host runtime task scheduler must schedule ToolPkg message processing");
             return Some(MessageProcessingExecution {
                 controller: Box::new(RegisteredMessageProcessingController { executionId, hook }),
                 stream,

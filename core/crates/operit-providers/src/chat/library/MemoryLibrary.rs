@@ -13,6 +13,7 @@ use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::FunctionType::FunctionType;
 use operit_model::Memory::{Memory, MemoryTag};
 use operit_model::PromptTurn::{toPromptTurns, PromptTurn, PromptTurnKind};
+use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_store::repository::MemoryRepository::MemoryRepository;
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
@@ -245,7 +246,7 @@ impl MemoryLibrary {
         }
 
         if !analysis.userPreferences.is_empty() {
-            UserMarkdownRepository::new(&ownerKey)
+            UserMarkdownRepository::new(&ownerKey, defaultRuntimeStorageHost())
                 .writeUserMarkdown(analysis.userPreferences.clone())?;
         }
 
@@ -338,7 +339,8 @@ impl MemoryLibrary {
         runtimeContext: &ProviderRuntimeContext,
     ) -> Result<ParsedAnalysis, String> {
         let useEnglish = false;
-        let currentPreferences = UserMarkdownRepository::new(ownerKey).readUserMarkdown()?;
+        let currentPreferences =
+            UserMarkdownRepository::new(ownerKey, defaultRuntimeStorageHost()).readUserMarkdown()?;
         let contextQuery = buildCandidateSearchQuery(query, solution);
         let searchConfig = runtimeContext.support().memorySearchConfig(ownerKey)?;
         let candidateMemories = memoryRepository

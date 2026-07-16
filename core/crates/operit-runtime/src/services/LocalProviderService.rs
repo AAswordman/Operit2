@@ -1,12 +1,11 @@
 #![allow(non_snake_case)]
 
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::{
-    LocalInferenceHost, LocalSttInferenceHostRequest, LocalTtsInferenceHostRequest,
+    FileSystemHost, LocalInferenceHost, LocalSttInferenceHostRequest, LocalTtsInferenceHostRequest,
     RuntimeStorageHost,
 };
 use operit_local_models::LocalEngineManifest::{LocalEngineDelivery, LocalPlatform};
@@ -23,6 +22,7 @@ use uuid::Uuid;
 pub struct LocalProviderService {
     runtimeRoot: PathBuf,
     runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
+    fileSystemHost: Arc<dyn FileSystemHost>,
     localInferenceHost: Option<Arc<dyn LocalInferenceHost>>,
 }
 
@@ -36,9 +36,14 @@ impl LocalProviderService {
         let runtimeRoot = runtimeStorageHost
             .runtimeRootDir()
             .ok_or_else(|| "RuntimeStorageHost runtime root is not configured".to_string())?;
+        let fileSystemHost = context
+            .fileSystemHost
+            .as_ref()
+            .ok_or_else(|| "FileSystemHost is required for LOCAL_MODEL".to_string())?;
         Ok(Self {
             runtimeRoot,
             runtimeStorageHost: runtimeStorageHost.clone(),
+            fileSystemHost: fileSystemHost.clone(),
             localInferenceHost: context.localInferenceHost.clone(),
         })
     }
@@ -172,7 +177,7 @@ impl LocalProviderService {
                 optionsJson: "{}".to_string(),
             })
             .map_err(errorString)?;
-        let audioBytes = self.readPlatformTtsOutput(&runtime, &response.audioPath)?;
+        let audioBytes = self.readPlatformTtsOutput(&response.audioPath)?;
         Ok(LocalTtsResponse {
             audioBytes,
             outputFormat: response.outputFormat,
@@ -202,23 +207,12 @@ impl LocalProviderService {
             &PathBuf::from(&runtime.engineRuntimeDirectory),
             relativePath,
         );
-        match runtime.engine.artifact.target.platform {
-            LocalPlatform::Web => {
-                let path = storagePathString(&directory);
-                if !self.runtimeStorageHost.exists(&path).map_err(errorString)? {
-                    return Err(format!(
-                        "platform engine library directory is missing: {path}"
-                    ));
-                }
-            }
-            _ => {
-                if !directory.is_dir() {
-                    return Err(format!(
-                        "platform engine library directory is missing: {}",
-                        directory.display()
-                    ));
-                }
-            }
+        let path = storagePathString(&directory);
+        let entry = self.fileSystemHost.fileExists(&path).map_err(errorString)?;
+        if !entry.exists || !entry.isDirectory {
+            return Err(format!(
+                "platform engine library directory is missing: {path}"
+            ));
         }
         Ok(directory.to_string_lossy().to_string())
     }
@@ -232,49 +226,31 @@ impl LocalProviderService {
 
     /// Builds an output path for one platform TTS request.
     fn platformTtsOutputPath(&self, runtime: &ResolvedLocalModelRuntime) -> Result<String, String> {
-        match runtime.engine.artifact.target.platform {
-            LocalPlatform::Web => Ok(format!(
-                "runtime/temp/clean_on_exit/local-tts-{}.wav",
-                Uuid::new_v4()
-            )),
-            _ => {
-                let outputPath = self
-                    .runtimeRoot
-                    .join("temp")
-                    .join("clean_on_exit")
-                    .join(format!("local-tts-{}.wav", Uuid::new_v4()));
-                let outputParent = outputPath
-                    .parent()
-                    .ok_or_else(|| "local TTS output path has no parent".to_string())?;
-                fs::create_dir_all(outputParent).map_err(errorString)?;
-                Ok(outputPath.to_string_lossy().to_string())
-            }
-        }
+        let outputPath = self
+            .runtimeRoot
+            .join("temp")
+            .join("clean_on_exit")
+            .join(format!("local-tts-{}.wav", Uuid::new_v4()));
+        let outputParent = outputPath
+            .parent()
+            .ok_or_else(|| "local TTS output path has no parent".to_string())?;
+        let outputParent = storagePathString(outputParent);
+        self.fileSystemHost
+            .makeDirectory(&outputParent, true)
+            .map_err(errorString)?;
+        Ok(storagePathString(&outputPath))
     }
 
     /// Reads and removes one platform TTS output file.
-    fn readPlatformTtsOutput(
-        &self,
-        runtime: &ResolvedLocalModelRuntime,
-        audioPath: &str,
-    ) -> Result<Vec<u8>, String> {
-        match runtime.engine.artifact.target.platform {
-            LocalPlatform::Web => {
-                let audioBytes = self
-                    .runtimeStorageHost
-                    .readBytes(audioPath)
-                    .map_err(errorString)?;
-                self.runtimeStorageHost
-                    .delete(audioPath, false)
-                    .map_err(errorString)?;
-                Ok(audioBytes)
-            }
-            _ => {
-                let audioBytes = fs::read(audioPath).map_err(errorString)?;
-                fs::remove_file(audioPath).map_err(errorString)?;
-                Ok(audioBytes)
-            }
-        }
+    fn readPlatformTtsOutput(&self, audioPath: &str) -> Result<Vec<u8>, String> {
+        let audioBytes = self
+            .fileSystemHost
+            .readFileBytes(audioPath)
+            .map_err(errorString)?;
+        self.fileSystemHost
+            .deleteFile(audioPath, false)
+            .map_err(errorString)?;
+        Ok(audioBytes)
     }
 
     /// Creates a local inference provider for the configured runtime root.

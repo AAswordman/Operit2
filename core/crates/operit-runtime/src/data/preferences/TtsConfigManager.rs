@@ -278,11 +278,11 @@ impl TtsConfigManager {
         providerConfig: &TtsConfig,
     ) -> Result<Vec<AvailableTtsVoice>, String> {
         let platform = LocalPlatformTarget::current()?.platform;
-        let registry =
-            LocalModelRegistryStore::forRuntimeRoot(self.paths.runtime_dir().to_path_buf())
-                .map_err(|error| error.to_string())?
-                .read()
-                .map_err(|error| error.to_string())?;
+        let registry = LocalModelRegistryStore::forRuntimeStorage(
+            operit_store::RuntimeStorageHost::defaultRuntimeStorageHost(),
+        )
+        .read()
+        .map_err(|error| error.to_string())?;
         let mut voices = Vec::new();
         for installed in registry.installedModels.into_iter().filter(|model| {
             model.manifest.kind == LocalModelKind::TextToSpeech

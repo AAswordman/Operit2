@@ -126,7 +126,8 @@ pub struct LocalModelInstaller {
 }
 
 impl LocalModelInstaller {
-    /// Creates an installer from the supplied runtime root directory.
+    /// Creates a filesystem-backed installer for native test coverage.
+    #[cfg(test)]
     pub fn forRuntimeRoot(
         runtimeRoot: PathBuf,
         httpHost: Arc<dyn HttpHost>,
@@ -141,7 +142,8 @@ impl LocalModelInstaller {
         })
     }
 
-    /// Creates an installer rooted at the supplied runtime data directory.
+    /// Creates a filesystem-backed installer for native test coverage.
+    #[cfg(test)]
     pub fn new(
         runtimeRoot: PathBuf,
         registryPath: PathBuf,

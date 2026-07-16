@@ -881,10 +881,11 @@ impl ModelConfigManager {
         if provider.providerType != ApiProviderType::LOCAL_MODEL {
             return Ok(provider);
         }
-        let registry = LocalModelRegistryStore::forRuntimeRoot(self.runtimeRoot.clone())
-            .map_err(|error| ModelConfigError::ModelListFetch(error.to_string()))?
-            .read()
-            .map_err(|error| ModelConfigError::ModelListFetch(error.to_string()))?;
+        let registry = LocalModelRegistryStore::forRuntimeStorage(
+            operit_store::RuntimeStorageHost::defaultRuntimeStorageHost(),
+        )
+        .read()
+        .map_err(|error| ModelConfigError::ModelListFetch(error.to_string()))?;
         let platform = LocalPlatformTarget::current().map_err(ModelConfigError::ModelListFetch)?;
         let mut models = registry
             .installedModels

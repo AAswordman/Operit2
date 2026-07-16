@@ -75,16 +75,6 @@ pub struct LocalModelProvider {
 }
 
 impl LocalModelProvider {
-    /// Creates a local provider from the active runtime root directory.
-    pub fn forRuntimeRoot(runtimeRoot: PathBuf) -> Result<Self, LocalModelProviderError> {
-        let registryStore = LocalModelRegistryStore::forRuntimeRoot(runtimeRoot.clone())
-            .map_err(|error| LocalModelProviderError::Registry(error.to_string()))?;
-        Ok(Self {
-            runtimeRoot,
-            registryStore,
-        })
-    }
-
     /// Creates a local provider backed by the runtime storage host.
     pub fn forRuntimeStorage(
         storageHost: Arc<dyn RuntimeStorageHost>,

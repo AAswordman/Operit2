@@ -96,7 +96,8 @@ pub struct LocalEngineInstaller {
 }
 
 impl LocalEngineInstaller {
-    /// Creates an engine installer from one runtime root directory.
+    /// Creates a filesystem-backed engine installer for native test coverage.
+    #[cfg(test)]
     pub fn forRuntimeRoot(
         runtimeRoot: PathBuf,
         httpHost: Arc<dyn HttpHost>,

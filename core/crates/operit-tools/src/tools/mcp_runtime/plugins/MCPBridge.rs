@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Cursor};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
 
 use operit_host_api::{
     HttpHost, HttpRequestData, HttpResponseData, ManagedRuntimeHost, ManagedRuntimeProcess,
@@ -611,9 +610,10 @@ fn connectRemoteSse(session: &mut RemoteMcpSession, timeoutMs: u64) -> Result<()
     }
     rememberRemoteSessionId(session, &response.headers)?;
     let mut reader = BufReader::new(Cursor::new(response.body));
-    let deadline = Instant::now() + Duration::from_millis(timeoutMs);
+    let deadlineMillis =
+        operit_host_api::TimeUtils::currentTimeMillisU128() + u128::from(timeoutMs);
     loop {
-        if Instant::now() >= deadline {
+        if operit_host_api::TimeUtils::currentTimeMillisU128() >= deadlineMillis {
             return Err("Remote MCP SSE endpoint event timed out".to_string());
         }
         let Some((eventName, data)) = readSseEvent(&mut reader)? else {
@@ -931,9 +931,10 @@ fn sendRemoteSseJsonRpc(
         .sseReader
         .as_mut()
         .ok_or_else(|| "Remote MCP SSE reader is not connected".to_string())?;
-    let deadline = Instant::now() + Duration::from_millis(timeoutMs);
+    let deadlineMillis =
+        operit_host_api::TimeUtils::currentTimeMillisU128() + u128::from(timeoutMs);
     loop {
-        if Instant::now() >= deadline {
+        if operit_host_api::TimeUtils::currentTimeMillisU128() >= deadlineMillis {
             return Err(format!("Remote MCP SSE request {expectedId} timed out"));
         }
         let Some((eventName, data)) = readSseEvent(reader)? else {
@@ -1107,11 +1108,12 @@ fn readJsonResponse(
     targetId: u64,
     timeoutMs: u64,
 ) -> Result<Value, String> {
-    let deadline = Instant::now() + Duration::from_millis(timeoutMs);
+    let deadlineMillis =
+        operit_host_api::TimeUtils::currentTimeMillisU128() + u128::from(timeoutMs);
     let mut seenIds = BTreeSet::new();
     loop {
-        let now = Instant::now();
-        if now >= deadline {
+        let nowMillis = operit_host_api::TimeUtils::currentTimeMillisU128();
+        if nowMillis >= deadlineMillis {
             let stderr = active
                 .process
                 .as_ref()
@@ -1121,7 +1123,7 @@ fn readJsonResponse(
             active.logs.push_str(&stderr);
             return Err(format!("MCP request {targetId} timed out. {stderr}"));
         }
-        let waitMs = (deadline - now).as_millis().min(250) as u64;
+        let waitMs = (deadlineMillis - nowMillis).min(250) as u64;
         let line = active
             .process
             .as_ref()

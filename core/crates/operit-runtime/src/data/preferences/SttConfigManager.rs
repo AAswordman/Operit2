@@ -192,11 +192,11 @@ impl SttConfigManager {
     /// Returns installed local speech-to-text models as provider model entries.
     fn getInstalledLocalSttModels(&self) -> Result<Vec<AvailableSttModel>, String> {
         let platform = LocalPlatformTarget::current()?.platform;
-        let registry =
-            LocalModelRegistryStore::forRuntimeRoot(self.paths.runtime_dir().to_path_buf())
-                .map_err(|error| error.to_string())?
-                .read()
-                .map_err(|error| error.to_string())?;
+        let registry = LocalModelRegistryStore::forRuntimeStorage(
+            operit_store::RuntimeStorageHost::defaultRuntimeStorageHost(),
+        )
+        .read()
+        .map_err(|error| error.to_string())?;
         let mut models = registry
             .installedModels
             .into_iter()

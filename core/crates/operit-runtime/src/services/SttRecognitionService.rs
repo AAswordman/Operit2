@@ -1,8 +1,8 @@
 #![allow(non_snake_case)]
 
-use std::fs;
 use std::path::PathBuf;
 
+use operit_host_api::FileSystemHost;
 use operit_host_api::HostManager::HostManager;
 use operit_model::SttConfig::{SttConfig, SttProviderType, SttRecognitionResult};
 use operit_providers::stt::SpeechToTextServiceFactory::SpeechToTextServiceFactory;
@@ -106,8 +106,7 @@ impl SttRecognitionService {
         self.transcribeLocalWithTemporaryInput(model, localProvider, audioBytes, language)
     }
 
-    /// Runs local STT with a target-specific temporary audio path.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Runs local STT with a host-owned temporary audio file.
     fn transcribeLocalWithTemporaryInput(
         &self,
         model: operit_local_models::LocalInference::LocalModelSelection,
@@ -115,47 +114,25 @@ impl SttRecognitionService {
         audioBytes: Vec<u8>,
         language: Option<String>,
     ) -> Result<operit_local_models::LocalInference::LocalSttResponse, String> {
-        fs::create_dir_all(&self.temporaryAudioDirectory).map_err(errorString)?;
+        let fileSystemHost = self
+            .context
+            .fileSystemHost
+            .as_ref()
+            .ok_or_else(|| "FileSystemHost is required for LOCAL_MODEL STT".to_string())?;
+        fileSystemHost
+            .makeDirectory(&self.temporaryAudioDirectory.to_string_lossy(), true)
+            .map_err(errorString)?;
         let audioPath = self
             .temporaryAudioDirectory
             .join(format!("local-stt-{}.wav", Uuid::new_v4()));
-        fs::write(&audioPath, audioBytes).map_err(errorString)?;
-        let recognition =
-            localProvider.transcribeAudio(model, audioPath.to_string_lossy().to_string(), language);
-        let cleanup = fs::remove_file(&audioPath).map_err(errorString);
-        match (recognition, cleanup) {
-            (Ok(response), Ok(())) => Ok(response),
-            (Err(error), Ok(())) => Err(error),
-            (Ok(_), Err(error)) => Err(format!("failed to remove local STT input: {error}")),
-            (Err(recognitionError), Err(cleanupError)) => Err(format!(
-                "{recognitionError}; failed to remove local STT input: {cleanupError}"
-            )),
-        }
-    }
-
-    /// Runs Web local STT with a runtime-storage temporary audio path.
-    #[cfg(target_arch = "wasm32")]
-    fn transcribeLocalWithTemporaryInput(
-        &self,
-        model: operit_local_models::LocalInference::LocalModelSelection,
-        localProvider: LocalProviderService,
-        audioBytes: Vec<u8>,
-        language: Option<String>,
-    ) -> Result<operit_local_models::LocalInference::LocalSttResponse, String> {
-        let storageHost = self
-            .context
-            .runtimeStorageHost
-            .as_ref()
-            .ok_or_else(|| "RuntimeStorageHost is required for LOCAL_MODEL STT".to_string())?;
-        let audioPath = format!(
-            "{RUNTIME_CLEAN_ON_EXIT_DIR_PATH}/local-stt-{}.wav",
-            Uuid::new_v4()
-        );
-        storageHost
-            .writeBytes(&audioPath, &audioBytes)
+        let audioPath = audioPath.to_string_lossy().to_string();
+        fileSystemHost
+            .writeFileBytes(&audioPath, &audioBytes)
             .map_err(errorString)?;
         let recognition = localProvider.transcribeAudio(model, audioPath.clone(), language);
-        let cleanup = storageHost.delete(&audioPath, false).map_err(errorString);
+        let cleanup = fileSystemHost
+            .deleteFile(&audioPath, false)
+            .map_err(errorString);
         match (recognition, cleanup) {
             (Ok(response), Ok(())) => Ok(response),
             (Err(error), Ok(())) => Err(error),

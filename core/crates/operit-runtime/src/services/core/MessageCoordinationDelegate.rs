@@ -1,5 +1,5 @@
+use core::time::Duration;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -1122,8 +1122,10 @@ impl MessageCoordinationDelegate {
 
     #[allow(non_snake_case)]
     async fn awaitTurnComplete(&self, chatId: String, targetCounter: i64, timeoutMs: u64) -> bool {
-        let started = Instant::now();
-        while started.elapsed() < Duration::from_millis(timeoutMs) {
+        let startedAtMillis = operit_host_api::TimeUtils::currentTimeMillisU128();
+        while operit_host_api::TimeUtils::currentTimeMillisU128().saturating_sub(startedAtMillis)
+            < u128::from(timeoutMs)
+        {
             if self
                 .messageProcessingDelegate
                 .getTurnCompleteCounter(chatId.clone())

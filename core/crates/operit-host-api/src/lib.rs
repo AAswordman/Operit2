@@ -600,7 +600,8 @@ fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
         HostOnboardingRequirement {
             id: "android.fileManagement".to_string(),
             title: "文件管理".to_string(),
-            description: "Host 需要文件管理授权来读取和写入用户选择的 Android 共享存储目录。".to_string(),
+            description: "Host 需要文件管理授权来读取和写入用户选择的 Android 共享存储目录。"
+                .to_string(),
             capabilityIds: vec![
                 "fs.read".to_string(),
                 "fs.write".to_string(),

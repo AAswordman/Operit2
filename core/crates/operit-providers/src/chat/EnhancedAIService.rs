@@ -33,6 +33,7 @@ use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
+use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_tools::tools::climode::CliToolModeSupport::{
@@ -1035,9 +1036,10 @@ impl EnhancedAIService {
         } else {
             characterMemoryOwnerKey(&activeCard.id).map_err(AiServiceError::RequestFailed)?
         };
-        let userPreferencesText = UserMarkdownRepository::new(userOwnerKey)
-            .readUserMarkdown()
-            .map_err(AiServiceError::RequestFailed)?;
+        let userPreferencesText =
+            UserMarkdownRepository::new(userOwnerKey, defaultRuntimeStorageHost())
+                .readUserMarkdown()
+                .map_err(AiServiceError::RequestFailed)?;
 
         Ok(SendMessageRuntime {
             activePromptMetadata: BTreeMap::new(),
