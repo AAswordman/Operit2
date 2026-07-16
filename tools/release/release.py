@@ -1441,7 +1441,7 @@ def main():
             print("Apple SSH worker is unreachable; skipping Apple release assets", flush=True)
 
     next_platform_version = None
-    if ReleaseProduct.APP in products and not args.build_only:
+    if ReleaseProduct.APP in products:
         next_platform_version = increment_flutter_platform_build_number(platform_version)
 
     print(f"\nRelease version: {version.text}")

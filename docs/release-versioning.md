@@ -130,7 +130,7 @@ For `2.0.0-preview.1`, the Flutter platform version is:
 
 The release script uses the full Operit2 SemVer for Git tags and updater metadata. The Flutter `major.minor.patch` must match the Operit2 release version. Flutter `buildNumber` is only platform package metadata for Android, Windows, Linux, and macOS builds.
 
-For App and full publish runs, the release script builds with the current Flutter `buildNumber` and then increments `apps/flutter/app/pubspec.yaml` by 1 for the next App package. `--build-only` and CLI-only runs do not change the Flutter `buildNumber`.
+For App and full runs, including `--build-only`, the release script builds with the current Flutter `buildNumber` and then increments `apps/flutter/app/pubspec.yaml` by 1 after all selected App assets succeed. CLI-only runs do not change the Flutter `buildNumber`.
 
 ## Release Script
 
@@ -240,7 +240,7 @@ It must enforce these rules:
 - Reject a `--tag` value that differs from the Cargo release version.
 - Derive the GitHub prerelease flag from the release version.
 - Build and upload only the selected `--scope` assets.
-- Increment Flutter `buildNumber` by 1 after successful App/full publish builds.
+- Increment Flutter `buildNumber` by 1 after successful App/full asset builds.
 - Publish releases through the GitHub REST API with `GITHUB_TOKEN`.
 - Check an existing GitHub release's prerelease flag before uploading assets.
 

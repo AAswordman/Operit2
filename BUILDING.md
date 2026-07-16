@@ -128,6 +128,10 @@ Build only:
 .\.venv\Scripts\python.exe tools\release\release.py --scope cli --build-only
 ```
 
+Successful App and full builds advance the Flutter build number in
+`apps/flutter/app/pubspec.yaml` after their assets are packaged. CLI-only builds do not
+change it.
+
 CLI architecture selection:
 
 ```powershell
