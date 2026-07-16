@@ -10,7 +10,7 @@ from common import (
     RELEASE_DIR,
     copy_required_file,
     flutter_command,
-    dart_pub_get,
+    flutter_pub_get,
     read_properties,
     prepare_web_access_embedded_assets,
     run,
@@ -76,7 +76,7 @@ def main() -> int:
         ensure_android_signing()
     flutter = flutter_command()
     configure_android_flutter_sdk(flutter)
-    dart_pub_get(enforce_lockfile=args.enforce_lockfile)
+    flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
     run(
         [
             flutter,
