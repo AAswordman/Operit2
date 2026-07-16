@@ -148,6 +148,7 @@ set -euo pipefail
 export PATH="$HOME/.rustup/toolchains/stable-$(uname -m)-apple-darwin/bin:$HOME/.pub-cache/bin:$HOME/flutter/bin:/usr/local/bin:$PATH"
 export RUSTFLAGS="-Awarnings"
 command -v python3
+command -v git
 command -v cargo
 command -v rustup
 command -v fvm
@@ -157,6 +158,8 @@ rm -rf {shlex.quote(remote_source)} {shlex.quote(remote_dist)}
 mkdir -p {shlex.quote(remote_source)} {shlex.quote(remote_dist)} {shlex.quote(remote_tool_cache)} {shlex.quote(remote_build_tool_cache)}
 tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(remote_source)}
 cd {shlex.quote(remote_source)}
+git init -q
+git add --all
 ln -s ../cache/.ci-tools .ci-tools
 mkdir -p target
 ln -s ../../cache/operit-build-tools target/operit-build-tools
