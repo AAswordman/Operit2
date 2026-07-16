@@ -1,14 +1,15 @@
 #![allow(non_snake_case)]
 
+use core::time::Duration;
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::sync::{Condvar, Mutex, OnceLock};
-use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use operit_host_api::HostManager::HostManager;
+use operit_host_api::TimeUtils::tryCurrentTimeMillisU128;
 use operit_util::stream::Stream::Stream;
 
 tokio::task_local! {
@@ -1101,7 +1102,7 @@ impl RuntimeHostInteractionBroker {
         timeout: Duration,
     ) -> Result<RuntimeHostInteractionResponse, String> {
         let requestId = request.requestId.clone();
-        let startedAt = Instant::now();
+        let startedAt = tryCurrentTimeMillisU128()?;
         let mut state = self
             .state
             .lock()
@@ -1126,7 +1127,11 @@ impl RuntimeHostInteractionBroker {
                 }
                 return Ok(response);
             }
-            let elapsed = startedAt.elapsed();
+            let elapsedMillis = tryCurrentTimeMillisU128()?.saturating_sub(startedAt);
+            let elapsed = Duration::from_millis(
+                u64::try_from(elapsedMillis)
+                    .map_err(|_| "host interaction elapsed time exceeds u64 milliseconds")?,
+            );
             if elapsed >= timeout {
                 state.pending.remove(&requestId);
                 self.changed.notify_all();

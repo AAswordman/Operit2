@@ -17,11 +17,12 @@ pub use filesystem::OhosFileSystemHost;
 pub use http::OhosHttpHost;
 pub use local_inference::OhosLocalInferenceHost;
 pub use managed_runtime::OhosManagedRuntimeHost;
+pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as OhosHostRuntimeEventSchedulerHost;
+pub use operit_host_native_common::NativeHostRuntimeTaskSchedulerHost as OhosHostRuntimeTaskSchedulerHost;
 pub use storage::OhosRuntimeStorageHost;
 pub use system_operation::OhosSystemOperationHost;
 pub use terminal::OhosTerminalHost;
 pub use tts_playback::{OhosTtsPlaybackCommand, OhosTtsPlaybackHost};
-pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as OhosHostRuntimeEventSchedulerHost;
 
 /// Creates the OpenHarmony file host.
 pub fn newOhosFileSystemHost() -> OhosFileSystemHost {

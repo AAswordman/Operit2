@@ -166,7 +166,6 @@ object AndroidRuntimeAssets {
     private fun createExecutableLink(target: File, link: File) {
         link.parentFile?.mkdirs()
         link.delete()
-        target.setExecutable(true, false)
         Os.symlink(target.absolutePath, link.absolutePath)
     }
 

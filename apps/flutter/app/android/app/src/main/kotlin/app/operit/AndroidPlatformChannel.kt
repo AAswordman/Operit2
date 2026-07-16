@@ -26,6 +26,7 @@ class AndroidPlatformChannel(
             "localRuntimeStoragePaths" -> localRuntimeStoragePaths(call, result)
             "setLocalRuntimeStorage" -> setLocalRuntimeStorage(call, result)
             "startLocalCoreService" -> startLocalCoreService(result)
+            "localRuntimeStartupStatus" -> localRuntimeStartupStatus(result)
             "hostOnboardingPermissionSnapshot" -> hostOnboardingPermissionSnapshot(call, result)
             "hostOnboardingRequestPermission" -> hostOnboardingRequestPermission(call, result)
             else -> return false
@@ -107,6 +108,11 @@ class AndroidPlatformChannel(
         } catch (error: Throwable) {
             result.error("CORE_SERVICE_START_ERROR", error.message, null)
         }
+    }
+
+    /** Returns the latest native local-runtime startup stage. */
+    private fun localRuntimeStartupStatus(result: MethodChannel.Result) {
+        result.success(runtimeHost.runtimeStartupStatusMap())
     }
 
     private fun onboardingPermissionSnapshot(result: MethodChannel.Result) {

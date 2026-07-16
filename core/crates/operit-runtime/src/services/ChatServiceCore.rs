@@ -10,6 +10,8 @@ use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
     WorkspaceBackupManager, WorkspaceFileChange,
 };
 use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
+use operit_host_api::FileSystemHost;
+use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_model::ActivePrompt::ActivePrompt;
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatDisplayWindowState::ChatDisplayWindowState;
@@ -31,13 +33,13 @@ use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+use operit_util::AppLogger::AppLogger;
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};
 use operit_util::OperitPaths;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
 use url::Url;
 
 const PACKAGE_ATTACHMENT_PREFIX: &str = "package_attach:";
@@ -156,6 +158,7 @@ fn characterCardAvatarUriByName(
 }
 
 pub struct ChatServiceCore {
+    fileSystemHost: Arc<dyn FileSystemHost>,
     pub selectionMode: ChatSelectionMode,
     pub enhancedAiService: Option<EnhancedAIService>,
     pub messageProcessingDelegate: MessageProcessingDelegate,
@@ -170,8 +173,9 @@ pub struct ChatServiceCore {
 
 impl ChatServiceCore {
     /// Creates a chat service core for the selected chat target mode.
-    pub fn new(selectionMode: ChatSelectionMode) -> Self {
+    pub fn new(selectionMode: ChatSelectionMode, fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
         let mut core = Self {
+            fileSystemHost,
             selectionMode: selectionMode.clone(),
             enhancedAiService: None,
             messageProcessingDelegate: MessageProcessingDelegate::default(),
@@ -865,8 +869,18 @@ impl ChatServiceCore {
             return;
         }
 
-        let positionInfo = match image::image_dimensions(&screenshotPath) {
-            Ok((width, height)) if width > 0 && height > 0 => {
+        let screenshotBytes = match self.fileSystemHost.readFileBytes(&screenshotPath) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.messageProcessingDelegate
+                    .showToast(format!("添加屏幕内容失败: {}", error.message));
+                return;
+            }
+        };
+        let positionInfo = match image::load_from_memory(&screenshotBytes) {
+            Ok(image) if image.width() > 0 && image.height() > 0 => {
+                let width = image.width();
+                let height = image.height();
                 format!("【位置】full_screen; image_px={}x{}", width, height)
             }
             _ => "【位置】full_screen".to_string(),
@@ -893,7 +907,12 @@ impl ChatServiceCore {
         self.messageProcessingDelegate
             .showToast("已添加屏幕内容".to_string());
 
-        let _ = fs::remove_file(&screenshotPath);
+        if let Err(error) = self.fileSystemHost.deleteFile(&screenshotPath, false) {
+            AppLogger::w(
+                "ChatServiceCore",
+                &format!("cannot remove captured screenshot: {}", error.message),
+            );
+        }
     }
 
     #[allow(non_snake_case)]
@@ -1035,8 +1054,15 @@ impl ChatServiceCore {
     #[allow(non_snake_case)]
     fn createAttachmentInfo(&self, filePath: &str) -> Result<AttachmentInfo, String> {
         let localPath = resolveAttachmentPath(filePath)?;
-        let metadata = fs::metadata(&localPath).map_err(|_| "附件文件不存在".to_string())?;
-        if !metadata.is_file() {
+        let localPathText = localPath.to_string_lossy();
+        let source = self
+            .fileSystemHost
+            .fileExists(&localPathText)
+            .map_err(|error| error.message)?;
+        if !source.exists {
+            return Err("附件文件不存在".to_string());
+        }
+        if source.isDirectory {
             return Err(format!("无法添加附件: {}", localPath.display()));
         }
 
@@ -1047,10 +1073,12 @@ impl ChatServiceCore {
             .ok_or_else(|| format!("无法添加附件: {}", localPath.display()))?
             .to_string();
         let mimeType = getMimeTypeFromPath(&localPath).to_string();
-        let tempFile = createTempFileFromPath(&localPath, &fileName)?;
-        let fileSize = fs::metadata(&tempFile)
-            .map_err(|error| format!("无法读取附件大小: {error}"))?
-            .len() as i64;
+        let tempFile = createTempFileFromPath(self.fileSystemHost.as_ref(), &localPath, &fileName)?;
+        let fileSize = self
+            .fileSystemHost
+            .fileExists(&tempFile.to_string_lossy())
+            .map_err(|error| format!("无法读取附件大小: {}", error.message))?
+            .size;
 
         Ok(AttachmentInfo {
             filePath: tempFile.to_string_lossy().into_owned(),
@@ -1416,12 +1444,6 @@ impl ChatServiceCore {
     }
 }
 
-impl Default for ChatServiceCore {
-    fn default() -> Self {
-        Self::new(ChatSelectionMode::FOLLOW_GLOBAL)
-    }
-}
-
 #[allow(non_snake_case)]
 fn stripXmlLikeTags(text: &str) -> String {
     let mut value = text.to_string();
@@ -1610,23 +1632,38 @@ fn fileUrlToPathBuf(url: &Url) -> Result<PathBuf, ()> {
 }
 
 #[allow(non_snake_case)]
-fn createTempFileFromPath(sourcePath: &Path, fileName: &str) -> Result<PathBuf, String> {
+/// Copies an attachment into clean-on-exit storage through the supplied file-system host.
+fn createTempFileFromPath(
+    fileSystemHost: &dyn FileSystemHost,
+    sourcePath: &Path,
+    fileName: &str,
+) -> Result<PathBuf, String> {
     let fileExtension = fileName
         .rsplit_once('.')
         .map(|(_, extension)| extension)
         .filter(|extension| !extension.trim().is_empty())
         .unwrap_or("jpg");
     let externalDir = OperitPaths::cleanOnExitDir()?;
-    fs::create_dir_all(&externalDir).map_err(|error| format!("无法创建附件临时目录: {error}"))?;
+    let externalDirText = externalDir.to_string_lossy();
+    fileSystemHost
+        .makeDirectory(&externalDirText, true)
+        .map_err(|error| format!("无法创建附件临时目录: {}", error.message))?;
     let noMediaFile = externalDir.join(".nomedia");
-    if !noMediaFile.exists() {
-        fs::File::create(&noMediaFile).map_err(|error| format!("无法创建附件媒体标记: {error}"))?;
-    }
+    fileSystemHost
+        .writeFile(&noMediaFile.to_string_lossy(), "", false)
+        .map_err(|error| format!("无法创建附件媒体标记: {}", error.message))?;
     let tempFile = externalDir.join(format!("img_{}.{}", currentTimeMillis(), fileExtension));
-    fs::copy(sourcePath, &tempFile).map_err(|error| format!("无法复制附件: {error}"))?;
-    let metadata =
-        fs::metadata(&tempFile).map_err(|error| format!("无法读取附件临时文件: {error}"))?;
-    if !metadata.is_file() || metadata.len() == 0 {
+    fileSystemHost
+        .copyFile(
+            &sourcePath.to_string_lossy(),
+            &tempFile.to_string_lossy(),
+            false,
+        )
+        .map_err(|error| format!("无法复制附件: {}", error.message))?;
+    let copied = fileSystemHost
+        .fileExists(&tempFile.to_string_lossy())
+        .map_err(|error| format!("无法读取附件临时文件: {}", error.message))?;
+    if !copied.exists || copied.isDirectory || copied.size == 0 {
         return Err(format!("无法添加附件: {}", sourcePath.display()));
     }
     Ok(tempFile)
@@ -1700,12 +1737,4 @@ fn toolFailureMessage(result: &ToolResult) -> String {
         return message;
     }
     result.result.toString()
-}
-
-#[allow(non_snake_case)]
-fn currentTimeMillis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time must be after unix epoch")
-        .as_millis()
 }

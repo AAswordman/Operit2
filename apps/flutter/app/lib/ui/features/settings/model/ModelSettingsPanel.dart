@@ -2688,6 +2688,7 @@ String _providerTypeLocalName(AppLocalizations l10n, String providerTypeId) {
     'LMSTUDIO' => l10n.settingsModelProviderTypeLmstudio,
     'OLLAMA' => l10n.settingsModelProviderTypeOllama,
     'OPENAI_LOCAL' => l10n.settingsModelProviderTypeOpenaiLocal,
+    'LOCAL_MODEL' => l10n.settingsModelProviderTypeLocalModel,
     'MNN' => l10n.settingsModelProviderTypeMnn,
     'LLAMA_CPP' => l10n.settingsModelProviderTypeLlamaCpp,
     'PPINFRA' => l10n.settingsModelProviderTypePpinfra,

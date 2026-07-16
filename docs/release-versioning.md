@@ -170,6 +170,14 @@ Release scope:
 `build_release.py` only builds release assets. `publish_dist.py` uploads files
 already staged in `tools/release/dist`.
 
+`tools/release/dist` accumulates assets from local builds, SSH collection, and
+GitHub Actions downloads. Use `--clean-dist` with `build_release.py` only when
+starting a new staged release set:
+
+```powershell
+.\.venv\Scripts\python.exe tools\release\build_release.py --scope cli --clean-dist
+```
+
 CLI architecture selection:
 
 ```powershell
@@ -197,20 +205,47 @@ sudo cp -a lib64/libgcc_s*.so* /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64
 sudo ln -sf libgcc_s.so.1 /usr/aarch64-redhat-linux/sys-root/fc43/usr/lib64/libgcc_s.so
 ```
 
-macOS App, macOS CLI, and unsigned iOS assets are produced by GitHub Actions for
-normal release work. Apple workflows are manual `workflow_dispatch` entrypoints,
-and the macOS/iOS workflows are also reusable through `workflow_call`:
+Cloud release builds are composable. All available platform workflows are manual
+`workflow_dispatch` entrypoints; macOS and iOS are additionally reusable through
+`workflow_call` from Apple Release Build:
+
+```text
+Apple Release Build       macOS App, macOS CLI, unsigned iOS App
+macOS Flutter Build       macOS App and/or CLI
+iOS Flutter Build         unsigned iOS App
+Windows Release Build     Windows App and/or CLI
+Linux Release Build       Linux App and/or CLI
+Android Flutter Build     signed Android APKs
+```
+
+Android Flutter Build requires these repository secrets:
+
+```text
+ANDROID_RELEASE_KEYSTORE_BASE64
+ANDROID_RELEASE_STORE_PASSWORD
+ANDROID_RELEASE_KEY_ALIAS
+ANDROID_RELEASE_KEY_PASSWORD
+```
+
+The Android keystore secret must be Base64 encoded. OpenHarmony remains a local
+build because this repository has no reproducible distribution URL for its SDK
+and command-line tools. Do not treat it as an available cloud build until that
+external toolchain source and the signing secrets are configured.
 
 ```powershell
 gh workflow run "Apple Release Build" -f products=all -f include_ios=true -f build_web_assets=false
 gh workflow run "macOS Flutter Build" -f products=all -f build_web_assets=false
 gh workflow run "iOS Flutter Build" -f build_web_assets=false
-.\.venv\Scripts\python.exe tools\release\download_action_artifacts.py --run-id <macos-run-id> --run-id <ios-run-id>
+gh workflow run "Windows Release Build" -f products=all -f cli_arches=all
+gh workflow run "Linux Release Build" -f products=all -f cli_arches=all
+gh workflow run "Android Flutter Build"
+.\.venv\Scripts\python.exe tools\release\download_action_artifacts.py --run-id <apple-run-id> --run-id <windows-run-id> --run-id <linux-run-id> --run-id <android-run-id>
 ```
 
-Cloud release builds are composable: trigger the selected platform workflows,
-collect each successful run into `tools/release/dist`, then publish the collected
-files through `publish_dist.py` when the release set is complete.
+`download_action_artifacts.py` verifies that every requested run completed with
+the `success` conclusion before copying release assets into `tools/release/dist`.
+Publish the collected files through `publish_dist.py` when the release set is
+complete.
 
 Collaborators can build the current host locally with one Python entrypoint. On
 macOS, `--include-ios` also builds the unsigned iOS archive when the iOS Xcode

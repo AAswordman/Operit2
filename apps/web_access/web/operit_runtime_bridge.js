@@ -8,6 +8,7 @@
   const storageDatabaseName = "operit2.host.storage";
   const storageObjectStoreName = "entries";
   const storageCache = new Map();
+  const fileDirectories = new Set();
   const sqliteConnections = new Map();
   const sqliteTransactions = new Map();
   let sqliteConnectionIndex = 0;
@@ -813,6 +814,89 @@
       });
     }
     return entries;
+  }
+
+  // Builds the canonical in-memory key for one browser-host directory.
+  function fileDirectoryKey(path) {
+    const normalized = normalizeRuntimePath(path);
+    return normalized.length === 0 ? filePrefix : `${filePrefix}${normalized}/`;
+  }
+
+  // Reports whether the browser host can resolve one directory from explicit or file-backed state.
+  function fileDirectoryExists(path) {
+    const directory = fileDirectoryKey(path);
+    if (fileDirectories.has(directory)) {
+      return true;
+    }
+    for (const itemKey of storageCache.keys()) {
+      if (itemKey.startsWith(directory)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Creates one browser-host directory and, when requested, all of its parents.
+  function makeFileDirectory(path, createParents) {
+    const normalized = normalizeRuntimePath(path);
+    if (normalized.length === 0) {
+      return;
+    }
+    const segments = normalized.split("/");
+    if (!createParents) {
+      const parent = segments.slice(0, -1).join("/");
+      if (parent.length > 0 && !fileDirectoryExists(parent)) {
+        throw new Error(`parent directory does not exist: ${parent}`);
+      }
+      fileDirectories.add(fileDirectoryKey(normalized));
+      return;
+    }
+    for (let index = 1; index <= segments.length; index += 1) {
+      fileDirectories.add(fileDirectoryKey(segments.slice(0, index).join("/")));
+    }
+  }
+
+  // Lists immediate file-system children from browser-host directory and file state.
+  function listFileDirectory(path) {
+    const directory = fileDirectoryKey(path);
+    const entries = new Map();
+    for (const candidate of fileDirectories) {
+      if (!candidate.startsWith(directory) || candidate === directory) {
+        continue;
+      }
+      const relative = candidate.slice(directory.length).replace(/\/$/, "");
+      const separator = relative.indexOf("/");
+      const name = separator < 0 ? relative : relative.slice(0, separator);
+      entries.set(name, { path: name, isDirectory: true, size: 0 });
+    }
+    for (const [itemKey, bytes] of storageCache.entries()) {
+      if (!itemKey.startsWith(directory)) {
+        continue;
+      }
+      const relative = itemKey.slice(directory.length);
+      const separator = relative.indexOf("/");
+      const name = separator < 0 ? relative : relative.slice(0, separator);
+      if (separator < 0) {
+        entries.set(name, { path: name, isDirectory: false, size: bytes.length });
+      } else {
+        entries.set(name, { path: name, isDirectory: true, size: 0 });
+      }
+    }
+    return Array.from(entries.values());
+  }
+
+  // Removes one browser-host directory from the in-memory directory index.
+  function deleteFileDirectory(path, recursive) {
+    const directory = fileDirectoryKey(path);
+    fileDirectories.delete(directory);
+    if (!recursive) {
+      return;
+    }
+    for (const candidate of Array.from(fileDirectories)) {
+      if (candidate.startsWith(directory)) {
+        fileDirectories.delete(candidate);
+      }
+    }
   }
 
   function loadScript(src) {
@@ -2199,7 +2283,7 @@ self.onmessage = (event) => {
     fileSystem: {
       validatePath() {},
       listFiles(path) {
-        return storageList(filePrefix, path).map((entry) => ({
+        return listFileDirectory(path).map((entry) => ({
           name: entry.path.split("/").pop() || entry.path,
           isDirectory: entry.isDirectory,
           size: entry.size,
@@ -2227,13 +2311,16 @@ self.onmessage = (event) => {
       },
       deleteFile(path, recursive) {
         storageDelete(filePrefix, path, recursive);
+        deleteFileDirectory(path, recursive);
       },
       fileExists(path) {
-        const exists = storageExists(filePrefix, path);
+        const itemKey = key(filePrefix, path);
+        const isDirectory = !storageCache.has(itemKey) && fileDirectoryExists(path);
+        const exists = storageCache.has(itemKey) || isDirectory;
         return {
           exists,
-          isDirectory: false,
-          size: exists ? storageRead(filePrefix, path).length : 0,
+          isDirectory,
+          size: storageCache.has(itemKey) ? storageRead(filePrefix, path).length : 0,
         };
       },
       moveFile(source, destination) {
@@ -2244,7 +2331,9 @@ self.onmessage = (event) => {
       copyFile(source, destination) {
         storageWrite(filePrefix, destination, storageRead(filePrefix, source));
       },
-      makeDirectory() {},
+      makeDirectory(path, createParents) {
+        makeFileDirectory(path, createParents);
+      },
       findFiles() {
         return [];
       },

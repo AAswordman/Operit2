@@ -50,8 +50,9 @@ impl AppleRuntimeStorageHost {
         match segments.as_slice() {
             ["runtime", rest @ ..] => Ok(joinSegments(&self.runtimeRoot, rest)),
             ["workspaces", rest @ ..] => Ok(joinSegments(&self.workspaceRoot, rest)),
+            ["secure", rest @ ..] => legacySecurePath(&self.runtimeRoot, rest),
             _ => Err(HostError::new(format!(
-                "Runtime storage path must start with runtime/ or workspaces/: {path}"
+                "Runtime storage path must start with runtime/, workspaces/, or secure/: {path}"
             ))),
         }
     }
@@ -63,11 +64,30 @@ impl AppleRuntimeStorageHost {
         if let Ok(relative) = path.strip_prefix(&self.workspaceRoot) {
             return Ok(prefixedPath("workspaces", relative));
         }
+        let secureRoot = legacySecurePath(&self.runtimeRoot, &[])?;
+        if let Ok(relative) = path.strip_prefix(&secureRoot) {
+            return Ok(prefixedPath("secure", relative));
+        }
         Err(HostError::new(format!(
             "Physical path is outside configured runtime and workspace roots: {}",
             path.display()
         )))
     }
+}
+
+/// Resolves the legacy secure storage namespace beside the runtime root.
+fn legacySecurePath(runtimeRoot: &Path, segments: &[&str]) -> HostResult<PathBuf> {
+    let mut resolved = runtimeRoot.parent().map(Path::to_path_buf).ok_or_else(|| {
+        HostError::new(format!(
+            "Runtime root has no parent for secure storage: {}",
+            runtimeRoot.display()
+        ))
+    })?;
+    resolved.push("secure");
+    for segment in segments {
+        resolved.push(segment);
+    }
+    Ok(resolved)
 }
 
 impl RuntimeStorageHost for AppleRuntimeStorageHost {

@@ -1,0 +1,10 @@
+[package]
+name = "operit-host-native-http"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+operit-host-api = { path = "../../../core/crates/operit-host-api" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "multipart", "rustls-tls"] }

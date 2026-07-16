@@ -2160,6 +2160,7 @@ dependencies = [
  "operit-command-core",
  "operit-core-proxy",
  "operit-host-api",
+ "operit-host-apple-native",
  "operit-host-linux-native",
  "operit-host-windows-native",
  "operit-link",
@@ -2239,6 +2240,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-host-apple-native"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "globset",
+ "grep-regex",
+ "grep-searcher",
+ "ignore",
+ "operit-host-api",
+ "operit-host-native-common",
+ "reqwest",
+ "rusqlite",
+ "security-framework",
+ "serde",
+ "serde_json",
+ "tungstenite",
+ "uuid",
+ "zip",
+]
+
+[[package]]
 name = "operit-host-linux-native"
 version = "0.1.0"
 dependencies = [
@@ -2267,8 +2289,11 @@ dependencies = [
 name = "operit-host-native-common"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "operit-host-api",
+ "portable-pty",
  "reqwest",
+ "uuid",
 ]
 
 [[package]]

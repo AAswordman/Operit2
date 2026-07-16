@@ -56,7 +56,7 @@ const MEMORY_SEARCH_SETTINGS_FILE_PATH: &str = "settings/memory_search_settings.
 
 #[allow(non_snake_case)]
 pub fn operitRootDir() -> Result<PathBuf, String> {
-    ensureDir(default_runtime_dir())
+    Ok(default_runtime_dir())
 }
 
 /// Maps a virtual runtime storage path into a supplied physical runtime root.
@@ -109,7 +109,7 @@ pub fn pluginConfigDir(pluginId: &str) -> Result<PathBuf, String> {
     } else {
         format!("{safeBaseName}-{:x}", javaStringHashCode(trimmed))
     };
-    ensureDir(pluginConfigsDir()?.join(safeName))
+    Ok(pluginConfigsDir()?.join(safeName))
 }
 
 #[allow(non_snake_case)]
@@ -133,7 +133,7 @@ pub fn exportsDir() -> Result<PathBuf, String> {
 
 #[allow(non_snake_case)]
 pub fn workspaceDir() -> Result<PathBuf, String> {
-    ensureDir(default_workspace_dir())
+    Ok(default_workspace_dir())
 }
 
 #[allow(non_snake_case)]
@@ -216,6 +216,13 @@ pub fn customPreferencePath(fileName: &str) -> Result<PathBuf, String> {
     Ok(preferencesDir()?.join(fileName))
 }
 
+/// Builds a host-relative storage path for one custom preference file.
+#[allow(non_snake_case)]
+pub fn customPreferenceStoragePath(fileName: &str) -> Result<String, String> {
+    let fileName = normalizePlainFileName(fileName)?;
+    Ok(format!("{CONFIG_PREFERENCES_DIR_PATH}/{fileName}"))
+}
+
 #[allow(non_snake_case)]
 pub fn currentChatIdPreferencesPath() -> Result<PathBuf, String> {
     relativeFile(CURRENT_CHAT_ID_PREFERENCES_PATH)
@@ -272,8 +279,26 @@ pub fn memoryLinkSqlitePath(ownerKey: &str) -> Result<PathBuf, String> {
 #[allow(non_snake_case)]
 pub fn memorySearchSettingsPath(ownerKey: &str) -> Result<PathBuf, String> {
     let path = memoryStoreRootPath(ownerKey)?.join(MEMORY_SEARCH_SETTINGS_FILE_PATH);
-    ensureParentDir(&path)?;
     Ok(path)
+}
+
+/// Builds a host-relative storage path for one memory search configuration.
+#[allow(non_snake_case)]
+pub fn memorySearchSettingsStoragePath(ownerKey: &str) -> Result<String, String> {
+    let owner = parseMemoryOwnerKey(ownerKey)?;
+    let ownerPath = match owner.kind {
+        MemoryOwnerKind::Character => format!(
+            "{}/{}",
+            DATA_MEMORY_CHARACTERS_DIR_PATH,
+            sanitizeMemoryOwnerId(&owner.id)
+        ),
+        MemoryOwnerKind::Shared => format!(
+            "{}/{}",
+            DATA_MEMORY_SHARED_DIR_PATH,
+            sanitizeMemoryOwnerId(&owner.id)
+        ),
+    };
+    Ok(format!("{ownerPath}/{MEMORY_SEARCH_SETTINGS_FILE_PATH}"))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -347,59 +372,13 @@ pub fn workspacePathSdcard(chatId: &str) -> Result<String, String> {
 }
 
 #[allow(non_snake_case)]
-pub fn cleanOnExitCleanup() -> Result<(), String> {
-    let dir = cleanOnExitDir()?;
-    for entry in std::fs::read_dir(&dir)
-        .map_err(|error| format!("cannot read cleanOnExit dir {}: {error}", dir.display()))?
-    {
-        let path = entry
-            .map_err(|error| format!("cannot read cleanOnExit entry: {error}"))?
-            .path();
-        let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
-            format!(
-                "cannot inspect cleanOnExit entry {}: {error}",
-                path.display()
-            )
-        })?;
-        if metadata.is_dir() {
-            std::fs::remove_dir_all(&path).map_err(|error| {
-                format!("cannot remove cleanOnExit dir {}: {error}", path.display())
-            })?;
-        } else {
-            std::fs::remove_file(&path).map_err(|error| {
-                format!("cannot remove cleanOnExit file {}: {error}", path.display())
-            })?;
-        }
-    }
-    Ok(())
-}
-
-#[allow(non_snake_case)]
 fn relativeDir(relativePath: &str) -> Result<PathBuf, String> {
-    ensureDir(runtimePathFromRoot(&default_runtime_dir(), relativePath)?)
+    runtimePathFromRoot(&default_runtime_dir(), relativePath)
 }
 
 #[allow(non_snake_case)]
 fn relativeFile(relativePath: &str) -> Result<PathBuf, String> {
-    let path = runtimePathFromRoot(&default_runtime_dir(), relativePath)?;
-    ensureParentDir(&path)?;
-    Ok(path)
-}
-
-#[allow(non_snake_case)]
-fn ensureParentDir(path: &PathBuf) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("path has no parent: {}", path.display()))?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("cannot create dir {}: {error}", parent.display()))
-}
-
-#[allow(non_snake_case)]
-fn ensureDir(dir: PathBuf) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(&dir)
-        .map_err(|error| format!("cannot create dir {}: {error}", dir.display()))?;
-    Ok(dir)
+    runtimePathFromRoot(&default_runtime_dir(), relativePath)
 }
 
 #[allow(non_snake_case)]

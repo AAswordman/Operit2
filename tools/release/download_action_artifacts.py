@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import subprocess
@@ -46,6 +47,22 @@ def run(command: list[str | Path]) -> None:
     subprocess.run([str(part) for part in command], check=True)
 
 
+# Verifies that a selected GitHub Actions run completed successfully.
+def require_successful_run(run_id: str) -> None:
+    completed = subprocess.run(
+        ["gh", "run", "view", run_id, "--json", "status,conclusion"],
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+    status = json.loads(completed.stdout)
+    if status.get("status") != "completed" or status.get("conclusion") != "success":
+        raise RuntimeError(
+            f"GitHub Actions run {run_id} is not a successful completed run: "
+            f"status={status.get('status')} conclusion={status.get('conclusion')}"
+        )
+
+
 # Returns every release asset file found under one downloaded run directory.
 def release_assets(download_dir: Path) -> list[Path]:
     return sorted(
@@ -57,6 +74,7 @@ def release_assets(download_dir: Path) -> list[Path]:
 
 # Downloads one run's artifacts into the work directory.
 def download_run(run_id: str, work_dir: Path) -> Path:
+    require_successful_run(run_id)
     download_dir = work_dir / run_id
     if download_dir.exists():
         shutil.rmtree(download_dir)

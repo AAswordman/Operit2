@@ -2258,6 +2258,12 @@ abstract class AppLocalizations {
   /// **'OpenAI Local'**
   String get settingsModelProviderTypeOpenaiLocal;
 
+  /// No description provided for @settingsModelProviderTypeLocalModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Local model'**
+  String get settingsModelProviderTypeLocalModel;
+
   /// No description provided for @settingsModelProviderTypeMnn.
   ///
   /// In en, this message translates to:

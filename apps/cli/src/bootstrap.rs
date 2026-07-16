@@ -11,6 +11,7 @@ use operit_host_apple_native::{
     AppleFileSystemHost as NativeFileSystemHost,
     AppleHostRuntimeEventHost as NativeHostRuntimeEventHost,
     AppleHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    AppleHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
     AppleHttpHost as NativeHttpHost, AppleManagedRuntimeHost as NativeManagedRuntimeHost,
     AppleRuntimeStorageHost as NativeRuntimeStorageHost,
     AppleSystemOperationHost as NativeSystemOperationHost, AppleTerminalHost as NativeTerminalHost,
@@ -23,6 +24,7 @@ use operit_host_linux_native::{
     LinuxFileSystemHost as NativeFileSystemHost,
     LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost,
     LinuxHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    LinuxHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
     LinuxHttpHost as NativeHttpHost, LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
     LinuxSystemOperationHost as NativeSystemOperationHost, LinuxTerminalHost as NativeTerminalHost,
@@ -36,6 +38,7 @@ use operit_host_windows_native::{
     WindowsFileSystemHost as NativeFileSystemHost,
     WindowsHostRuntimeEventHost as NativeHostRuntimeEventHost,
     WindowsHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    WindowsHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
     WindowsHttpHost as NativeHttpHost, WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
@@ -78,6 +81,8 @@ pub(crate) fn create_cli_application() -> OperitApplication {
     context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
     context = context
         .withHostRuntimeEventSchedulerHost(Arc::new(NativeHostRuntimeEventSchedulerHost::new()));
+    context = context
+        .withHostRuntimeTaskSchedulerHost(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
     context = context.withBrowserAutomationHost(Arc::new(NativeBrowserAutomationHost::new()));
     let commandContext = context.clone();
     OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(

@@ -8,7 +8,7 @@ from common import (
     FLUTTER_APP_DIR,
     compress_zip,
     flutter_command,
-    dart_pub_get,
+    flutter_pub_get,
     host_arch,
     prepare_web_access_embedded_assets,
     run,
@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     prepare_web_access_embedded_assets()
-    dart_pub_get(enforce_lockfile=args.enforce_lockfile)
+    flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
     command = [flutter_command(), "build", "windows", "--release", "--no-pub"]
     if args.build_name:
         command.extend(["--build-name", args.build_name])

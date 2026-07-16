@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 operit-host-api = { path = "../../core/crates/operit-host-api" }
-operit-host-native-common = { path = "../common/operit-host-native-common" }
+operit-host-native-common = { path = "../common/operit-host-native-common", default-features = false, features = ["fs", "http", "scheduler", "storage", "terminal"] }
 operit-local-models = { path = "../../core/crates/operit-local-models" }
 libloading = "0.8"
 serde = { version = "1.0", features = ["derive"] }

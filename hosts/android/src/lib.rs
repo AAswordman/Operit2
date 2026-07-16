@@ -26,11 +26,12 @@ pub use http::AndroidHttpHost;
 #[cfg(target_os = "android")]
 pub use local_inference::AndroidLocalInferenceHost;
 pub use managed_runtime::AndroidManagedRuntimeHost;
-pub use runtime_storage::AndroidRuntimeStorageHost;
+pub use operit_host_native_common::NativeHostRuntimeTaskSchedulerHost as AndroidHostRuntimeTaskSchedulerHost;
 #[cfg(target_os = "android")]
 pub use runtime_event_scheduler::{
     emitAndroidHostRuntimeEventSchedule, AndroidHostRuntimeEventSchedulerHost,
 };
+pub use runtime_storage::AndroidRuntimeStorageHost;
 #[cfg(target_os = "android")]
 pub use secret_store::{clearAndroidHostSecretStoreBridge, setAndroidHostSecretStoreBridge};
 pub use system_operation::AndroidSystemOperationHost;

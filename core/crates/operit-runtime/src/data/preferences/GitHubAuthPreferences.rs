@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
+use operit_host_api::RuntimeStorageHost;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
+use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_util::OperitPaths;
 use serde::{Deserialize, Serialize};
 
@@ -36,12 +38,19 @@ impl GitHubAuthPreferences {
 
     /// Returns the runtime directory that owns GitHub authentication preferences.
     pub fn data_dir() -> PathBuf {
-        OperitPaths::operitRootDir().expect("Operit root dir must be available")
+        defaultRuntimeStorageHost()
+            .runtimeRootDir()
+            .expect("runtime storage host must provide a GitHub preference root")
     }
 
     /// Opens GitHub authentication preferences from the default runtime directory.
     pub fn getInstance() -> Self {
-        Self::new(Self::data_dir())
+        Self {
+            dataStore: PreferencesDataStore::newEncryptedWithStorage(
+                defaultRuntimeStorageHost(),
+                OperitPaths::GITHUB_AUTH_PREFERENCES_PATH,
+            ),
+        }
     }
 
     /// Creates a GitHub authentication preference manager rooted at a directory.

@@ -1203,6 +1203,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelProviderTypeOpenaiLocal => 'OpenAI Local';
 
   @override
+  String get settingsModelProviderTypeLocalModel => 'Local model';
+
+  @override
   String get settingsModelProviderTypeMnn => 'MNN';
 
   @override

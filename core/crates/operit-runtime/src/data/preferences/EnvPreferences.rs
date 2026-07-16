@@ -1,6 +1,7 @@
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
+use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_util::OperitPaths;
 use std::collections::BTreeMap;
 
@@ -16,8 +17,9 @@ impl EnvPreferences {
     /// Opens the persistent environment preference store.
     pub fn getInstance() -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(
-                OperitPaths::envPreferencesPath().expect("env preferences path must be available"),
+            dataStore: PreferencesDataStore::newWithStorage(
+                defaultRuntimeStorageHost(),
+                OperitPaths::ENV_PREFERENCES_PATH,
             ),
         }
     }

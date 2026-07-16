@@ -1,0 +1,113 @@
+name: Windows Release Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      products:
+        description: "Release products to build"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - "app"
+          - "cli"
+          - "all"
+      cli_arches:
+        description: "Windows CLI architectures"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - "host"
+          - "all"
+          - "x86_64"
+          - "aarch64"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      RUSTFLAGS: -Awarnings
+      RUST_TOOLCHAIN_VERSION: 1.95.0
+      FVM_VERSION: 4.1.2
+      TYPESCRIPT_VERSION: 5.9.3
+      WASM_BINDGEN_VERSION: 0.2.122
+      WASI_SDK_VERSION: "20.0"
+      QUICKJS_WASM_SYS_WASI_SDK_MAJOR_VERSION: 20
+      QUICKJS_WASM_SYS_WASI_SDK_MINOR_VERSION: 0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install bootstrap Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install FVM
+        shell: pwsh
+        run: |
+          dart pub global activate fvm $env:FVM_VERSION
+          "$env:APPDATA\Pub\Cache\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Install project Flutter SDK
+        working-directory: apps/flutter/app
+        shell: pwsh
+        run: fvm install --skip-pub-get
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc,wasm32-unknown-unknown
+
+      - name: Install LLVM
+        shell: pwsh
+        run: choco install llvm --no-progress --limit-output --yes
+
+      - name: Check build environment
+        shell: pwsh
+        run: python tools/build_scripts/check_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
+
+      - name: Build Web Access assets
+        shell: pwsh
+        run: python tools/build_scripts/build_flutter_web_access.py
+
+      - name: Build and package Windows app
+        if: inputs.products != 'cli'
+        shell: pwsh
+        run: python tools/build_scripts/build_flutter_windows.py --archive-path tools/release/dist/operit2-app-windows-x86_64.zip --enforce-lockfile
+
+      - name: Build and package Windows CLI
+        if: inputs.products != 'app'
+        shell: pwsh
+        run: python tools/build_scripts/build_cli_windows.py --arches "${{ inputs.cli_arches }}"
+
+      - name: Upload Windows app artifact
+        if: inputs.products != 'cli'
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-windows-app-${{ github.sha }}
+          path: tools/release/dist/operit2-app-windows-x86_64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Windows CLI artifacts
+        if: inputs.products != 'app'
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-windows-cli-${{ github.sha }}
+          path: tools/release/dist/operit2-cli-windows-*.zip
+          if-no-files-found: error
+          retention-days: 14

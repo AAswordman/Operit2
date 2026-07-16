@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use operit_host_api::RuntimeStorageHost;
 use operit_model::ModelConfigData::ApiProviderType;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
+use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_util::OperitPaths;
 
 /// Stores API, token accounting, tool visibility, and runtime preference values.
@@ -31,12 +33,19 @@ impl ApiPreferences {
 
     /// Returns the root directory used for API preference storage.
     pub fn data_dir() -> PathBuf {
-        OperitPaths::operitRootDir().expect("Operit root dir must be available")
+        defaultRuntimeStorageHost()
+            .runtimeRootDir()
+            .expect("runtime storage host must provide an API preference root")
     }
 
     /// Creates preferences using the default runtime data directory.
     pub fn getInstance() -> Self {
-        Self::new(Self::data_dir())
+        Self {
+            apiDataStore: PreferencesDataStore::newWithStorage(
+                defaultRuntimeStorageHost(),
+                OperitPaths::API_PREFERENCES_PATH,
+            ),
+        }
     }
 
     /// Creates preferences rooted at the supplied directory.

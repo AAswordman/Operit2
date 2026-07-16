@@ -881,10 +881,8 @@ fn templateHasTextPlaceholder(template: &str) -> bool {
     templateHasPlaceholder(template, "text") || templateHasPlaceholder(template, "textXml")
 }
 
+/// Returns the current Unix time through the platform-compatible host clock.
 #[allow(non_snake_case)]
 fn currentTimeMillis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system time before unix epoch")
-        .as_millis() as i64
+    operit_host_api::TimeUtils::currentTimeMillis()
 }

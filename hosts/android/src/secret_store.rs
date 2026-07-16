@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
-use jni::objects::{GlobalRef, JByteArray, JObject, JValue};
+use jni::objects::{GlobalRef, JByteArray, JObject, JString, JValue};
 use jni::JavaVM;
 use operit_host_api::{HostError, HostResult, HostRuntimeEventSchedule};
 
@@ -50,7 +50,41 @@ pub(crate) fn androidHostSecretStoreBridge() -> HostResult<Arc<AndroidHostSecret
         .ok_or_else(|| HostError::new("Android host secret store bridge is not registered"))
 }
 
+/// Reads the system language code from the registered Android runtime host.
+pub(crate) fn androidHostSystemLanguageCode() -> HostResult<String> {
+    androidHostSecretStoreBridge()?.systemLanguageCode()
+}
+
 impl AndroidHostSecretStoreBridge {
+    /// Reads the system language code from the Java Android runtime host.
+    pub fn systemLanguageCode(&self) -> HostResult<String> {
+        let mut env = self
+            .vm
+            .attach_current_thread()
+            .map_err(|error| jniHostError("attaching current thread", error))?;
+        let value = env
+            .call_method(
+                self.host.as_obj(),
+                "systemLanguageCode",
+                "()Ljava/lang/String;",
+                &[],
+            )
+            .map_err(|error| jniHostError("reading system language code", error))?;
+        let object = value
+            .l()
+            .map_err(|error| jniHostError("reading system language code result", error))?;
+        if object.is_null() {
+            return Err(HostError::new(
+                "Android runtime host returned a null system language code",
+            ));
+        }
+        let language_object = JString::from(object);
+        let language = env
+            .get_string(&language_object)
+            .map_err(|error| jniHostError("decoding system language code", error))?;
+        Ok(String::from(language))
+    }
+
     /// Reads secret bytes from the Java Android host.
     pub fn readSecret(&self, key: &str) -> HostResult<Option<Vec<u8>>> {
         let mut env = self

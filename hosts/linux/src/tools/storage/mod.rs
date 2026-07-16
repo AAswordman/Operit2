@@ -39,7 +39,9 @@ impl LinuxRuntimeStorageHost {
     #[allow(non_snake_case)]
     pub fn defaultWorkspaceRoot() -> PathBuf {
         if let Some(xdg_data_home) = env::var_os("XDG_DATA_HOME") {
-            return PathBuf::from(xdg_data_home).join("operit2").join("workspaces");
+            return PathBuf::from(xdg_data_home)
+                .join("operit2")
+                .join("workspaces");
         }
         let home = env::var_os("HOME").expect("HOME is required for Operit2 runtime storage");
         PathBuf::from(home)
@@ -64,8 +66,9 @@ impl LinuxRuntimeStorageHost {
         match segments.as_slice() {
             ["runtime", rest @ ..] => Ok(joinSegments(&self.runtimeRoot, rest)),
             ["workspaces", rest @ ..] => Ok(joinSegments(&self.workspaceRoot, rest)),
+            ["secure", rest @ ..] => legacySecurePath(&self.runtimeRoot, rest),
             _ => Err(HostError::new(format!(
-                "Runtime storage path must start with runtime/ or workspaces/: {path}"
+                "Runtime storage path must start with runtime/, workspaces/, or secure/: {path}"
             ))),
         }
     }
@@ -77,11 +80,30 @@ impl LinuxRuntimeStorageHost {
         if let Ok(relative) = path.strip_prefix(&self.workspaceRoot) {
             return Ok(prefixedPath("workspaces", relative));
         }
+        let secureRoot = legacySecurePath(&self.runtimeRoot, &[])?;
+        if let Ok(relative) = path.strip_prefix(&secureRoot) {
+            return Ok(prefixedPath("secure", relative));
+        }
         Err(HostError::new(format!(
             "Physical path is outside configured runtime and workspace roots: {}",
             path.display()
         )))
     }
+}
+
+/// Resolves the legacy secure storage namespace beside the runtime root.
+fn legacySecurePath(runtimeRoot: &Path, segments: &[&str]) -> HostResult<PathBuf> {
+    let mut resolved = runtimeRoot.parent().map(Path::to_path_buf).ok_or_else(|| {
+        HostError::new(format!(
+            "Runtime root has no parent for secure storage: {}",
+            runtimeRoot.display()
+        ))
+    })?;
+    resolved.push("secure");
+    for segment in segments {
+        resolved.push(segment);
+    }
+    Ok(resolved)
 }
 
 impl RuntimeStorageHost for LinuxRuntimeStorageHost {
@@ -258,7 +280,9 @@ fn linuxReadSecret(key: &str) -> HostResult<Option<Vec<u8>>> {
 #[cfg(not(target_os = "linux"))]
 /// Rejects Linux Secret Service reads on non-Linux targets.
 fn linuxReadSecret(_key: &str) -> HostResult<Option<Vec<u8>>> {
-    Err(HostError::new("Linux Secret Service is only available on Linux"))
+    Err(HostError::new(
+        "Linux Secret Service is only available on Linux",
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -268,9 +292,12 @@ fn linuxWriteSecret(key: &str, content: &[u8]) -> HostResult<()> {
     let connection = Connection::session()
         .map_err(|error| HostError::new(format!("connect Secret Service failed: {error}")))?;
     let service = secretServiceProxy(&connection)?;
-    let collectionPath: OwnedObjectPath = service
-        .call("ReadAlias", &("default",))
-        .map_err(|error| HostError::new(format!("read default Secret Service collection failed: {error}")))?;
+    let collectionPath: OwnedObjectPath =
+        service.call("ReadAlias", &("default",)).map_err(|error| {
+            HostError::new(format!(
+                "read default Secret Service collection failed: {error}"
+            ))
+        })?;
     let collection = secretCollectionProxy(&connection, &collectionPath)?;
     let attributes = secretAttributes(&key);
     let properties = secretItemProperties(&key, &attributes)?;
@@ -289,7 +316,9 @@ fn linuxWriteSecret(key: &str, content: &[u8]) -> HostResult<()> {
 #[cfg(not(target_os = "linux"))]
 /// Rejects Linux Secret Service writes on non-Linux targets.
 fn linuxWriteSecret(_key: &str, _content: &[u8]) -> HostResult<()> {
-    Err(HostError::new("Linux Secret Service is only available on Linux"))
+    Err(HostError::new(
+        "Linux Secret Service is only available on Linux",
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -302,9 +331,9 @@ fn linuxDeleteSecret(key: &str) -> HostResult<()> {
     let (locked, unlocked) = searchSecretItems(&service, &key)?;
     for itemPath in locked.into_iter().chain(unlocked.into_iter()) {
         let item = secretItemProxy(&connection, &itemPath)?;
-        let _: OwnedObjectPath = item
-            .call("Delete", &())
-            .map_err(|error| HostError::new(format!("delete Secret Service item failed: {error}")))?;
+        let _: OwnedObjectPath = item.call("Delete", &()).map_err(|error| {
+            HostError::new(format!("delete Secret Service item failed: {error}"))
+        })?;
     }
     Ok(())
 }
@@ -312,7 +341,9 @@ fn linuxDeleteSecret(key: &str) -> HostResult<()> {
 #[cfg(not(target_os = "linux"))]
 /// Rejects Linux Secret Service deletes on non-Linux targets.
 fn linuxDeleteSecret(_key: &str) -> HostResult<()> {
-    Err(HostError::new("Linux Secret Service is only available on Linux"))
+    Err(HostError::new(
+        "Linux Secret Service is only available on Linux",
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -339,12 +370,19 @@ fn secretCollectionProxy<'a>(
         path.as_str(),
         SECRET_COLLECTION_INTERFACE,
     )
-    .map_err(|error| HostError::new(format!("create Secret Service collection proxy failed: {error}")))
+    .map_err(|error| {
+        HostError::new(format!(
+            "create Secret Service collection proxy failed: {error}"
+        ))
+    })
 }
 
 #[cfg(target_os = "linux")]
 /// Creates a proxy for a Linux Secret Service item object.
-fn secretItemProxy<'a>(connection: &'a Connection, path: &'a OwnedObjectPath) -> HostResult<Proxy<'a>> {
+fn secretItemProxy<'a>(
+    connection: &'a Connection,
+    path: &'a OwnedObjectPath,
+) -> HostResult<Proxy<'a>> {
     Proxy::new(
         connection,
         SECRET_SERVICE_DESTINATION,
@@ -407,8 +445,8 @@ impl RuntimeSqliteHost for LinuxRuntimeStorageHost {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let connection = rusqlite::Connection::open(path)
-            .map_err(|error| HostError::new(error.to_string()))?;
+        let connection =
+            rusqlite::Connection::open(path).map_err(|error| HostError::new(error.to_string()))?;
         Ok(Box::new(RusqliteRuntimeConnection { connection }))
     }
 }

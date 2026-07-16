@@ -1,23 +1,14 @@
 #![allow(non_snake_case)]
 
 #[cfg(feature = "fs")]
-pub mod fs;
+pub use operit_host_native_filesystem::PosixFileSystemHost;
 #[cfg(feature = "http")]
-pub mod http;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod runtime_event_scheduler;
+pub use operit_host_native_http::NativeHttpHost;
+#[cfg(all(feature = "scheduler", not(target_arch = "wasm32")))]
+pub use operit_host_native_scheduler::NativeHostRuntimeEventSchedulerHost;
+#[cfg(all(feature = "scheduler", not(target_arch = "wasm32")))]
+pub use operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost;
 #[cfg(feature = "storage")]
-pub mod storage;
+pub use operit_host_native_storage::NativeRuntimeStorageHost;
 #[cfg(feature = "terminal")]
-pub mod terminal;
-
-#[cfg(feature = "fs")]
-pub use fs::PosixFileSystemHost;
-#[cfg(feature = "http")]
-pub use http::NativeHttpHost;
-#[cfg(not(target_arch = "wasm32"))]
-pub use runtime_event_scheduler::NativeHostRuntimeEventSchedulerHost;
-#[cfg(feature = "storage")]
-pub use storage::NativeRuntimeStorageHost;
-#[cfg(feature = "terminal")]
-pub use terminal::NativePtyTerminalHost;
+pub use operit_host_native_terminal::NativePtyTerminalHost;

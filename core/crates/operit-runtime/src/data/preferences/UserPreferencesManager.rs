@@ -1,6 +1,7 @@
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, PreferencesDataStore, PreferencesDataStoreError,
 };
+use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_util::LocaleUtils::LanguageCodes;
 use operit_util::OperitPaths;
 
@@ -20,9 +21,9 @@ impl UserPreferencesManager {
     /// Opens user preferences from the default runtime preference path.
     pub fn getInstance() -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(
-                OperitPaths::userPreferencesPath()
-                    .expect("user preferences path must be available"),
+            dataStore: PreferencesDataStore::newWithStorage(
+                defaultRuntimeStorageHost(),
+                OperitPaths::USER_PREFERENCES_PATH,
             ),
         }
     }

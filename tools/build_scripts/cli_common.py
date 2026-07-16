@@ -295,6 +295,22 @@ def windows_aarch64_env() -> dict[str, str]:
     return build_env
 
 
+# Configures the linker required for one non-native Linux CLI target.
+def linux_cross_target_env(target: CliBuildTarget) -> dict[str, str]:
+    build_env = {**os.environ}
+    if target.rust_target == "x86_64-unknown-linux-musl":
+        linker = require_command("musl-gcc")
+        build_env["CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER"] = linker
+        build_env["CC_x86_64_unknown_linux_musl"] = linker
+        return build_env
+    if target.rust_target == "aarch64-unknown-linux-gnu":
+        linker = require_command("aarch64-linux-gnu-gcc")
+        build_env["CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER"] = linker
+        build_env["CC_aarch64_unknown_linux_gnu"] = linker
+        return build_env
+    raise RuntimeError(f"Unsupported Linux cross target: {target.rust_target}")
+
+
 def build_cli_target(
     target: CliBuildTarget,
     use_default_target: bool = False,
@@ -315,6 +331,8 @@ def build_cli_target(
         build_env = {**os.environ}
         if target.platform == "windows" and target.arch == "aarch64":
             build_env = windows_aarch64_env()
+        elif target.platform == "linux":
+            build_env = linux_cross_target_env(target)
         run(
             [
                 "cargo",

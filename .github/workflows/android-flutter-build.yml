@@ -1,0 +1,129 @@
+name: Android Flutter Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      RUSTFLAGS: -Awarnings
+      RUST_TOOLCHAIN_VERSION: 1.95.0
+      FVM_VERSION: 4.1.2
+      TYPESCRIPT_VERSION: 5.9.3
+      WASM_BINDGEN_VERSION: 0.2.122
+      WASI_SDK_VERSION: "20.0"
+      QUICKJS_WASM_SYS_WASI_SDK_MAJOR_VERSION: 20
+      QUICKJS_WASM_SYS_WASI_SDK_MINOR_VERSION: 0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install bootstrap Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install FVM
+        shell: pwsh
+        run: |
+          dart pub global activate fvm $env:FVM_VERSION
+          "$env:APPDATA\Pub\Cache\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Install project Flutter SDK
+        working-directory: apps/flutter/app
+        shell: pwsh
+        run: fvm install --skip-pub-get
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,wasm32-unknown-unknown
+
+      - name: Prepare Android bindgen libclang
+        shell: pwsh
+        run: |
+          $version = "21.1.8"
+          $packageName = "libclang.runtime.win-x64.$version"
+          $toolsDir = "target/operit-build-tools"
+          $packageDir = Join-Path $toolsDir $packageName
+          $archive = Join-Path $toolsDir "$packageName.nupkg"
+          New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+          Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/libclang.runtime.win-x64/$version" -OutFile $archive
+          Expand-Archive -Path $archive -DestinationPath $packageDir -Force
+          $libclang = Join-Path $packageDir "runtimes/win-x64/native/libclang.dll"
+          if (-not (Test-Path -LiteralPath $libclang)) {
+            throw "Android bindgen libclang was not prepared at $libclang"
+          }
+
+      - name: Restore Android signing material
+        shell: pwsh
+        env:
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          $required = @(
+            "ANDROID_RELEASE_KEYSTORE_BASE64",
+            "ANDROID_RELEASE_STORE_PASSWORD",
+            "ANDROID_RELEASE_KEY_ALIAS",
+            "ANDROID_RELEASE_KEY_PASSWORD"
+          )
+          $missing = $required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) }
+          if ($missing.Count -gt 0) {
+            throw "Missing required GitHub Actions secrets: $($missing -join ', ')"
+          }
+          $secretsDir = "tools/release/secrets"
+          New-Item -ItemType Directory -Force -Path $secretsDir | Out-Null
+          $keystore = Join-Path $secretsDir "operit2-release.keystore"
+          [System.IO.File]::WriteAllBytes($keystore, [System.Convert]::FromBase64String($env:ANDROID_RELEASE_KEYSTORE_BASE64))
+          @"
+          RELEASE_STORE_FILE=operit2-release.keystore
+          RELEASE_STORE_PASSWORD=$env:ANDROID_RELEASE_STORE_PASSWORD
+          RELEASE_KEY_ALIAS=$env:ANDROID_RELEASE_KEY_ALIAS
+          RELEASE_KEY_PASSWORD=$env:ANDROID_RELEASE_KEY_PASSWORD
+          "@ | Set-Content -Path (Join-Path $secretsDir "android-signing.properties") -Encoding utf8
+
+      - name: Check build environment
+        shell: pwsh
+        run: python tools/build_scripts/check_environment.py --products app --github-runner
+
+      - name: Build Web Access assets
+        shell: pwsh
+        run: python tools/build_scripts/build_flutter_web_access.py
+
+      - name: Build and package Android app
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path apps/flutter/app/pubspec.yaml -Pattern '^version:\s*(\d+\.\d+\.\d+)\+(\d+)\s*$').Matches
+          if ($version.Count -ne 1) {
+            throw "apps/flutter/app/pubspec.yaml must contain exactly one release version line"
+          }
+          python tools/build_scripts/build_flutter_android.py --build-name $version[0].Groups[1].Value --build-number $version[0].Groups[2].Value --enforce-lockfile
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-android-${{ github.sha }}
+          path: tools/release/dist/operit2-app-android-*.apk
+          if-no-files-found: error
+          retention-days: 14

@@ -1379,6 +1379,14 @@ pub trait HostRuntimeEventSchedulerHost: Send + Sync {
     ) -> HostResult<()>;
 }
 
+/// Owns a one-shot runtime task that must execute outside Core's synchronous startup path.
+pub type HostRuntimeTask = Box<dyn FnOnce() + Send + 'static>;
+
+pub trait HostRuntimeTaskSchedulerHost: Send + Sync {
+    /// Schedules a named one-shot runtime task through the platform execution mechanism.
+    fn scheduleHostRuntimeTask(&self, taskName: &str, task: HostRuntimeTask) -> HostResult<()>;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SystemSettingData {
     pub namespace: String,

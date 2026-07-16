@@ -1169,6 +1169,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelProviderTypeOpenaiLocal => 'OpenAI 本地';
 
   @override
+  String get settingsModelProviderTypeLocalModel => '本地模型';
+
+  @override
   String get settingsModelProviderTypeMnn => 'MNN';
 
   @override

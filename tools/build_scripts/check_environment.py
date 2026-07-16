@@ -92,6 +92,20 @@ def check_directory(name: str, path: Path) -> CheckResult:
     return missing(name, f"required directory not found: {path}")
 
 
+# Checks one pkg-config package required by a native build.
+def check_pkg_config_package(package: str) -> CheckResult:
+    pkg_config = shutil.which("pkg-config")
+    if pkg_config is None:
+        return missing("pkg-config", "command not found on PATH: pkg-config")
+    result = command_output([pkg_config, "--exists", package])
+    if result.returncode == 0:
+        return ok(f"pkg-config package {package}", "available")
+    return missing(
+        f"pkg-config package {package}",
+        f"install the development package that provides {package}",
+    )
+
+
 # Returns every Rust target installed through rustup.
 def installed_rust_targets() -> set[str]:
     result = command_output(["rustup", "target", "list", "--installed"])
@@ -156,6 +170,11 @@ def check_native_app_tools(include_ios: bool) -> list[CheckResult]:
                 check_command("ninja", ["--version"]),
                 check_command("pkg-config", ["--version"]),
                 check_command("clang", ["--version"]),
+                check_pkg_config_package("gtk+-3.0"),
+                check_pkg_config_package("gstreamer-1.0"),
+                check_pkg_config_package("gstreamer-app-1.0"),
+                check_pkg_config_package("gstreamer-audio-1.0"),
+                check_pkg_config_package("webkit2gtk-4.1"),
             ]
         )
     elif platform_name == "macos":
@@ -176,6 +195,19 @@ def check_windows_aarch64_cli(cli_arches: str) -> list[CheckResult]:
     vswhere = Path(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
     llvm_clang = Path("C:/Program Files/LLVM/bin/clang.exe")
     return [check_file("Visual Studio locator", vswhere), check_file("LLVM clang", llvm_clang)]
+
+
+# Checks Linux cross compilers required by explicitly selected CLI targets.
+def check_linux_cross_cli(cli_arches: str) -> list[CheckResult]:
+    if host_platform() != "linux" or cli_arches == "host":
+        return []
+    results = []
+    for architecture in selected_cli_arches(cli_arches):
+        if architecture == "x86_64":
+            results.append(check_command("musl-gcc", ["--version"]))
+        elif architecture == "aarch64":
+            results.append(check_command("aarch64-linux-gnu-gcc", ["--version"]))
+    return results
 
 
 # Checks signing files needed by the Windows release script's App scope.
@@ -236,6 +268,7 @@ def build_checks(args: argparse.Namespace) -> list[CheckResult]:
     if args.products in ("cli", "all"):
         checks.extend(check_cli_rust_targets(host_platform(), args.cli_arches))
         checks.extend(check_windows_aarch64_cli(args.cli_arches))
+        checks.extend(check_linux_cross_cli(args.cli_arches))
     if args.release_script and args.products in ("app", "all"):
         checks.extend(check_release_signing_files())
     if args.wsl:

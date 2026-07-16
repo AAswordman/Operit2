@@ -231,7 +231,7 @@ interface BleCharacteristicPayload {
 }
 
 interface RuntimeNativeModule {
-  create(runtimeRoot: string, workspaceRoot: string): bigint;
+  create(runtimeRoot: string, workspaceRoot: string, systemLanguageCode: string): bigint;
   destroy(handle: bigint): void;
   call(handle: bigint, request: ArrayBuffer): ArrayBuffer;
   pushOpen(handle: bigint, request: ArrayBuffer): ArrayBuffer;
@@ -581,7 +581,11 @@ export class OperitRuntimeChannel {
       this.runtimeRoot = roots.runtimeRoot;
       this.workspaceRoot = roots.workspaceRoot;
     }
-    this.runtimeHandle = nativeBridge.create(this.runtimeRoot, this.workspaceRoot);
+    this.runtimeHandle = nativeBridge.create(
+      this.runtimeRoot,
+      this.workspaceRoot,
+      i18n.System.getSystemLocale()
+    );
     this.installHostEventMonitoring();
     return this.runtimeHandle;
   }

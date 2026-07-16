@@ -6,21 +6,16 @@ license = "MIT"
 publish = false
 
 [features]
-default = ["fs", "http", "storage", "terminal"]
-fs = ["dep:globset", "dep:grep-regex", "dep:grep-searcher", "dep:ignore", "dep:zip"]
-http = ["dep:reqwest"]
-storage = ["dep:rusqlite"]
-terminal = ["dep:base64", "dep:portable-pty", "dep:uuid"]
+default = []
+fs = ["dep:operit-host-native-filesystem"]
+http = ["dep:operit-host-native-http"]
+scheduler = ["dep:operit-host-native-scheduler"]
+storage = ["dep:operit-host-native-storage"]
+terminal = ["dep:operit-host-native-terminal"]
 
 [dependencies]
-base64 = { version = "0.22", optional = true }
-globset = { version = "0.4.18", optional = true }
-grep-regex = { version = "0.1.14", optional = true }
-grep-searcher = { version = "0.1.16", optional = true }
-ignore = { version = "0.4.26", optional = true }
-operit-host-api = { path = "../../../core/crates/operit-host-api" }
-portable-pty = { version = "0.9.0", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "multipart", "rustls-tls"], optional = true }
-rusqlite = { version = "0.31", features = ["bundled"], optional = true }
-uuid = { version = "1", features = ["v4"], optional = true }
-zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
+operit-host-native-filesystem = { path = "../operit-host-native-filesystem", optional = true }
+operit-host-native-http = { path = "../operit-host-native-http", optional = true }
+operit-host-native-scheduler = { path = "../operit-host-native-scheduler", optional = true }
+operit-host-native-storage = { path = "../operit-host-native-storage", optional = true }
+operit-host-native-terminal = { path = "../operit-host-native-terminal", optional = true }

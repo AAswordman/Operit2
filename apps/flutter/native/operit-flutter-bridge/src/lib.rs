@@ -35,11 +35,11 @@ use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerAudioPlay, requestOwnerBluetooth, requestOwnerBrowserAutomation,
     requestOwnerBrowserSession, requestOwnerComposeWebViewController, requestOwnerFileOpen,
     requestOwnerFileShare, requestOwnerLocalInference, requestOwnerMusicPlayback,
-    requestOwnerSystemCaptureScreenshot, requestOwnerSystemLanguageCode,
-    requestOwnerSystemOperation, requestOwnerSystemRecognizeText, requestOwnerToolPermission,
-    requestOwnerTtsPlayback, requestOwnerTtsSynthesis, requestOwnerWebVisit,
-    RuntimeHostInteractionAudioPlayPayload, RuntimeHostInteractionBluetoothPayload,
-    RuntimeHostInteractionBrowserAutomationPayload, RuntimeHostInteractionBrowserSessionPayload,
+    requestOwnerSystemCaptureScreenshot, requestOwnerSystemOperation,
+    requestOwnerSystemRecognizeText, requestOwnerToolPermission, requestOwnerTtsPlayback,
+    requestOwnerTtsSynthesis, requestOwnerWebVisit, RuntimeHostInteractionAudioPlayPayload,
+    RuntimeHostInteractionBluetoothPayload, RuntimeHostInteractionBrowserAutomationPayload,
+    RuntimeHostInteractionBrowserSessionPayload,
     RuntimeHostInteractionComposeWebViewControllerPayload, RuntimeHostInteractionFileOpenPayload,
     RuntimeHostInteractionFileSharePayload, RuntimeHostInteractionLocalInferencePayload,
     RuntimeHostInteractionMusicPlaybackPayload, RuntimeHostInteractionSystemOperationPayload,
@@ -54,12 +54,13 @@ use operit_tools::ToolExecutionManager::AITool;
 use serde::Serialize;
 
 #[cfg(target_arch = "wasm32")]
-use js_sys::Function;
+use js_sys::{Function, Reflect};
 #[cfg(target_os = "android")]
 use operit_host_android_native::{
     AndroidAudioPlaybackHost as NativeAudioPlaybackHost,
     AndroidBluetoothHost as NativeBluetoothHost, AndroidFileSystemHost as NativeFileSystemHost,
     AndroidHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    AndroidHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
     AndroidHttpHost as NativeHttpHost, AndroidManagedRuntimeHost as NativeManagedRuntimeHost,
     AndroidMusicCommand as NativeMusicCommand,
     AndroidRuntimeStorageHost as NativeRuntimeStorageHost,
@@ -76,6 +77,7 @@ use operit_host_apple_native::{
     AppleAudioPlaybackHost as NativeAudioPlaybackHost, AppleBluetoothHost as NativeBluetoothHost,
     AppleFileSystemHost as NativeFileSystemHost,
     AppleHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    AppleHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
     AppleHttpHost as NativeHttpHost, AppleManagedRuntimeHost as NativeManagedRuntimeHost,
     AppleMusicCommand as NativeMusicCommand, AppleRuntimeStorageHost as NativeRuntimeStorageHost,
     AppleSystemOperationHost as NativeSystemOperationHost,
@@ -92,8 +94,8 @@ use operit_host_linux_native::{
     LinuxFileSystemHost as NativeFileSystemHost,
     LinuxHostRuntimeEventHost as NativeHostRuntimeEventHost,
     LinuxHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
-    LinuxHttpHost as NativeHttpHost,
-    LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
+    LinuxHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
+    LinuxHttpHost as NativeHttpHost, LinuxManagedRuntimeHost as NativeManagedRuntimeHost,
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
     LinuxSystemOperationHost as NativeSystemOperationHost, LinuxTerminalHost as NativeTerminalHost,
 };
@@ -106,6 +108,7 @@ use operit_host_ohos_native::{
     OhosAudioPlaybackHost as NativeAudioPlaybackHost, OhosBluetoothHost as NativeBluetoothHost,
     OhosFileSystemHost as NativeFileSystemHost,
     OhosHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    OhosHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
     OhosHttpHost as NativeHttpHost, OhosLocalInferenceHost as NativeLocalInferenceHost,
     OhosManagedRuntimeHost as NativeManagedRuntimeHost, OhosMusicCommand as NativeMusicCommand,
     OhosRuntimeStorageHost as NativeRuntimeStorageHost,
@@ -115,13 +118,14 @@ use operit_host_ohos_native::{
 #[cfg(target_arch = "wasm32")]
 use operit_host_web::{
     WebAudioPlaybackHost as NativeAudioPlaybackHost, WebBluetoothHost as NativeBluetoothHost,
-    WebFileSystemHost as NativeFileSystemHost,
+    WebBrowserSessionHost as NativeBrowserSessionHost, WebFileSystemHost as NativeFileSystemHost,
     WebHostRuntimeEventHost as NativeHostRuntimeEventHost,
     WebHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    WebHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
     WebHttpHost as NativeHttpHost, WebLocalInferenceHost as NativeLocalInferenceHost,
     WebManagedRuntimeHost as NativeManagedRuntimeHost,
     WebRuntimeStorageHost as NativeRuntimeStorageHost,
-    WebSystemOperationHost as NativeSystemOperationHost,
+    WebSystemOperationHost as NativeSystemOperationHost, WebTerminalHost as NativeTerminalHost,
     WebTtsPlaybackHost as NativeTtsPlaybackHost,
 };
 #[cfg(windows)]
@@ -130,6 +134,7 @@ use operit_host_windows_native::{
     WindowsBluetoothHost as NativeBluetoothHost, WindowsFileSystemHost as NativeFileSystemHost,
     WindowsHostRuntimeEventHost as NativeHostRuntimeEventHost,
     WindowsHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    WindowsHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
     WindowsHttpHost as NativeHttpHost, WindowsManagedRuntimeHost as NativeManagedRuntimeHost,
     WindowsRuntimeStorageHost as NativeRuntimeStorageHost,
     WindowsSystemOperationHost as NativeSystemOperationHost,
@@ -142,6 +147,8 @@ use operit_host_windows_native::{
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsCast;
 
 pub struct OperitFlutterBridge {
     #[cfg(not(target_arch = "wasm32"))]
@@ -534,9 +541,7 @@ impl FlutterSystemOperationBridge {
 #[cfg(target_os = "android")]
 impl operit_host_api::SystemOperationHost for FlutterSystemOperationBridge {
     fn getSystemLanguageCode(&self) -> operit_host_api::HostResult<String> {
-        let response = requestOwnerSystemLanguageCode(Duration::from_secs(60))
-            .map_err(operit_host_api::HostError::new)?;
-        Ok(response.languageCode)
+        self.native.getSystemLanguageCode()
     }
 
     fn toast(&self, message: &str) -> operit_host_api::HostResult<()> {
@@ -657,6 +662,7 @@ impl operit_host_api::SystemOperationHost for FlutterSystemOperationBridge {
 
 impl OperitFlutterBridge {
     /// Creates a bridge using the platform's explicit runtime and workspace roots.
+    #[cfg(not(target_env = "ohos"))]
     fn new() -> Result<Self, String> {
         let (runtime_root, workspace_root) = default_native_storage_roots()?;
         Self::new_with_storage_roots(runtime_root, workspace_root)
@@ -666,6 +672,7 @@ impl OperitFlutterBridge {
     fn new_with_storage_roots(
         runtime_root: PathBuf,
         workspace_root: PathBuf,
+        #[cfg(target_env = "ohos")] systemLanguageCode: String,
     ) -> Result<Self, String> {
         #[cfg(not(target_arch = "wasm32"))]
         let runtime = {
@@ -690,6 +697,8 @@ impl OperitFlutterBridge {
         let mut core = create_local_core(
             runtime_root,
             workspace_root,
+            #[cfg(target_env = "ohos")]
+            systemLanguageCode,
             Arc::new(webVisitBridge),
             Some(Arc::new(browserAutomationBridge)),
             Some(Arc::new(browserSessionBridge)),
@@ -975,8 +984,8 @@ impl OperitFlutterBridge {
         };
         let response = self.call(CoreCallRequest::new(
             format!("runtime-event-{}", current_time_millis_u64()),
-            "services.runtimeEventIngressService",
-            "ingestEvent",
+            "application",
+            "ingestRuntimeEvent",
             operit_link::toCoreValue(serde_json::json!({
                 "event": eventValue,
             }))
@@ -1246,6 +1255,8 @@ impl CoreLinkClient for SharedFlutterCoreClient {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+/// Installs the owner-host permission requester for native runtimes.
 fn install_permission_requester(core: &mut LocalCoreProxy) {
     let handler = core.localApplicationMut().toolHandler.clone();
     handler
@@ -1264,6 +1275,30 @@ fn install_permission_requester(core: &mut LocalCoreProxy) {
                 "allow_session" => PermissionRequestResult::ALLOW_SESSION,
                 "deny" => PermissionRequestResult::DENY,
                 other => panic!("unknown permission response result: {other}"),
+            }
+        });
+}
+
+#[cfg(target_arch = "wasm32")]
+/// Installs the browser-native synchronous permission requester for WebAssembly runtimes.
+fn install_permission_requester(core: &mut LocalCoreProxy) {
+    let handler = core.localApplicationMut().toolHandler.clone();
+    handler
+        .getToolPermissionSystem()
+        .setPermissionRequester(move |tool, description| {
+            let confirm = Reflect::get(&js_sys::global(), &JsValue::from_str("confirm"))
+                .expect("browser confirm function must be available")
+                .dyn_into::<Function>()
+                .expect("browser confirm must be a function");
+            let message = format!("Allow tool {}?\n\n{}", tool.name, description);
+            match confirm
+                .call1(&JsValue::NULL, &JsValue::from_str(&message))
+                .expect("browser permission prompt must complete")
+                .as_bool()
+            {
+                Some(true) => PermissionRequestResult::ALLOW,
+                Some(false) => PermissionRequestResult::DENY,
+                None => panic!("browser permission prompt must return a boolean"),
             }
         });
 }
@@ -1356,12 +1391,16 @@ fn create_local_core(
         context = context.withHostRuntimeEventSchedulerHost(Arc::new(
             NativeHostRuntimeEventSchedulerHost::new(),
         ));
+        context = context
+            .withHostRuntimeTaskSchedulerHost(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
     }
     #[cfg(not(target_os = "android"))]
     {
         context = context.withHostRuntimeEventSchedulerHost(Arc::new(
             NativeHostRuntimeEventSchedulerHost::new(),
         ));
+        context = context
+            .withHostRuntimeTaskSchedulerHost(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
     }
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
@@ -1586,12 +1625,9 @@ fn create_local_core(
         workspace_root,
     ));
     let runtimeSqliteHost = runtimeStorageHost.clone();
+    let systemLanguageCode = Arc::new(systemLanguageCode);
     let systemOperationHost = Arc::new(NativeSystemOperationHost::fromOwnerCallbacks(
-        Arc::new(|| {
-            let response = requestOwnerSystemLanguageCode(Duration::from_secs(60))
-                .map_err(operit_host_api::HostError::new)?;
-            Ok(response.languageCode)
-        }),
+        Arc::new(move || Ok(systemLanguageCode.as_ref().clone())),
         Arc::new(|| {
             let response = requestOwnerSystemCaptureScreenshot(Duration::from_secs(60))
                 .map_err(operit_host_api::HostError::new)?;
@@ -1782,6 +1818,8 @@ fn create_local_core(
     ))));
     context = context
         .withHostRuntimeEventSchedulerHost(Arc::new(NativeHostRuntimeEventSchedulerHost::new()));
+    context = context
+        .withHostRuntimeTaskSchedulerHost(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
@@ -2011,6 +2049,8 @@ fn create_local_core(
     )));
     context = context
         .withHostRuntimeEventSchedulerHost(Arc::new(NativeHostRuntimeEventSchedulerHost::new()));
+    context = context
+        .withHostRuntimeTaskSchedulerHost(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
@@ -2019,17 +2059,17 @@ fn create_local_core(
 fn create_local_core(
     _runtime_root: PathBuf,
     _workspace_root: PathBuf,
-    webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
-    browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
-    browserSessionHost: Option<Arc<dyn operit_host_api::BrowserSessionHost>>,
-    composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
+    _webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
+    _browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
+    _browserSessionHost: Option<Arc<dyn operit_host_api::BrowserSessionHost>>,
+    _composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
 ) -> Result<LocalCoreProxy, String> {
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new());
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
     let mut context = HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
         Arc::new(NativeFileSystemHost::new()),
-        webVisitHost,
+        Arc::new(operit_host_web::WebWebVisitHost::new()),
         Arc::new(NativeHttpHost::new()),
         Arc::new(NativeSystemOperationHost::new()),
         Arc::new(NativeManagedRuntimeHost::new()),
@@ -2037,21 +2077,16 @@ fn create_local_core(
         runtimeSqliteHost,
     )
     .withHostSecretStore(hostSecretStore);
-    if let Some(host) = browserAutomationHost {
-        context = context.withBrowserAutomationHost(host);
-    }
-    if let Some(host) = browserSessionHost {
-        context = context.withBrowserSessionHost(host);
-    }
-    if let Some(host) = composeDslWebViewHost {
-        context = context.withComposeDslWebViewHost(host);
-    }
+    context = context.withBrowserSessionHost(Arc::new(NativeBrowserSessionHost::new()));
+    context = context.withTerminalHost(Arc::new(NativeTerminalHost::new()));
     context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::new()));
     context = context.withBluetoothHost(Arc::new(NativeBluetoothHost::new()));
     context = context.withLocalInferenceHost(Arc::new(NativeLocalInferenceHost::new()));
     context = context.withTtsPlaybackHost(Arc::new(NativeTtsPlaybackHost::new()));
     context = context
         .withHostRuntimeEventSchedulerHost(Arc::new(NativeHostRuntimeEventSchedulerHost::new()));
+    context = context
+        .withHostRuntimeTaskSchedulerHost(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
     context = context.withHostRuntimeEventHost(Arc::new(NativeHostRuntimeEventHost::new()));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
@@ -2084,6 +2119,7 @@ fn create_local_core(
 }
 
 #[no_mangle]
+#[cfg(not(target_env = "ohos"))]
 pub extern "C" fn operit_flutter_bridge_create() -> *mut OperitFlutterBridge {
     match OperitFlutterBridge::new() {
         Ok(bridge) => Box::into_raw(Box::new(bridge)),
@@ -2111,6 +2147,7 @@ impl OperitByteBuffer {
 }
 
 #[no_mangle]
+#[cfg(not(target_env = "ohos"))]
 pub unsafe extern "C" fn operit_flutter_bridge_create_with_storage_roots(
     runtime_root: *const c_char,
     workspace_root: *const c_char,
@@ -2140,6 +2177,66 @@ pub unsafe extern "C" fn operit_flutter_bridge_create_with_storage_roots(
         }
     };
     match OperitFlutterBridge::new_with_storage_roots(runtime_root, workspace_root) {
+        Ok(bridge) => Box::into_raw(Box::new(bridge)),
+        Err(error) => {
+            set_last_create_error(error);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Creates an OpenHarmony bridge with an owner-supplied system language code.
+#[no_mangle]
+#[cfg(target_env = "ohos")]
+pub unsafe extern "C" fn operit_flutter_bridge_create_with_storage_roots_and_system_language(
+    runtime_root: *const c_char,
+    workspace_root: *const c_char,
+    system_language_code: *const c_char,
+) -> *mut OperitFlutterBridge {
+    if runtime_root.is_null() {
+        set_last_create_error("runtime storage root pointer is null".to_string());
+        return std::ptr::null_mut();
+    }
+    if workspace_root.is_null() {
+        set_last_create_error("workspace storage root pointer is null".to_string());
+        return std::ptr::null_mut();
+    }
+    if system_language_code.is_null() {
+        set_last_create_error("system language code pointer is null".to_string());
+        return std::ptr::null_mut();
+    }
+    let runtime_root = match CStr::from_ptr(runtime_root).to_str() {
+        Ok(value) => PathBuf::from(value),
+        Err(error) => {
+            set_last_create_error(format!("runtime storage root is not valid UTF-8: {error}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let workspace_root = match CStr::from_ptr(workspace_root).to_str() {
+        Ok(value) => PathBuf::from(value),
+        Err(error) => {
+            set_last_create_error(format!(
+                "workspace storage root is not valid UTF-8: {error}"
+            ));
+            return std::ptr::null_mut();
+        }
+    };
+    let system_language_code = match CStr::from_ptr(system_language_code).to_str() {
+        Ok(value) if !value.trim().is_empty() => value.to_string(),
+        Ok(_) => {
+            set_last_create_error("system language code is empty".to_string());
+            return std::ptr::null_mut();
+        }
+        Err(error) => {
+            set_last_create_error(format!("system language code is not valid UTF-8: {error}"));
+            return std::ptr::null_mut();
+        }
+    };
+    match OperitFlutterBridge::new_with_storage_roots(
+        runtime_root,
+        workspace_root,
+        system_language_code,
+    ) {
         Ok(bridge) => Box::into_raw(Box::new(bridge)),
         Err(error) => {
             set_last_create_error(error);
@@ -3461,7 +3558,7 @@ mod android_jni {
         handle: jlong,
         request: JByteArray,
     ) -> jbyteArray {
-        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_mut() else {
+        let Some(bridge) = (handle as *const OperitFlutterBridge).as_ref() else {
             return new_java_bytes(
                 &mut env,
                 &native_result_error_vec(
@@ -3492,7 +3589,7 @@ mod android_jni {
         handle: jlong,
         request: JByteArray,
     ) -> jbyteArray {
-        let Some(bridge) = (handle as *mut OperitFlutterBridge).as_mut() else {
+        let Some(bridge) = (handle as *const OperitFlutterBridge).as_ref() else {
             return new_java_bytes(
                 &mut env,
                 &native_result_error_vec(

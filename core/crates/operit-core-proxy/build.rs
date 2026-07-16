@@ -10,6 +10,7 @@ use syn::{
 
 mod build_dart_codegen;
 mod build_model;
+mod build_platform_api_guard;
 mod build_rust_codegen;
 mod build_rust_codegen_utils;
 mod build_rust_dispatch_codegen;
@@ -20,6 +21,7 @@ mod build_type_resolver;
 mod build_utils;
 
 use build_model::*;
+use build_platform_api_guard::*;
 use build_scanner::*;
 use build_type_resolver::*;
 use build_utils::*;
@@ -50,6 +52,19 @@ fn main() {
         manifest_dir.join("../operit-host-api/src"),
         "operit_host_api",
     );
+    let restricted_source_roots = vec![
+        runtime_root.clone(),
+        model_root.clone(),
+        local_models_root.clone(),
+        plugin_sdk_root.clone(),
+        store_root.clone(),
+        util_root.clone(),
+        tools_root.clone(),
+        provider_root.clone(),
+    ];
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH")
+        .expect("Cargo must provide CARGO_CFG_TARGET_ARCH to the proxy generator");
+    enforce_host_platform_boundaries(&restricted_source_roots, &target_arch);
     let source_roots = vec![
         runtime_root.clone(),
         model_root,

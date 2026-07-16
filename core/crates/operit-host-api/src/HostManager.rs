@@ -3,9 +3,9 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     AudioPlaybackHost, BluetoothHost, BrowserAutomationHost, BrowserSessionHost,
     ComposeDslWebViewHost, FileSystemHost, HostEnvironmentDescriptor, HostRuntimeEventHost,
-    HostRuntimeEventSchedulerHost, HostSecretStore, HttpHost, LocalInferenceHost,
-    ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost, SystemOperationHost, TerminalHost,
-    TtsPlaybackHost, TtsSynthesisHost, WebVisitHost,
+    HostRuntimeEventSchedulerHost, HostRuntimeTaskSchedulerHost, HostSecretStore, HttpHost,
+    LocalInferenceHost, ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost,
+    SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost, WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
@@ -50,6 +50,7 @@ pub struct HostManager {
     pub hostSecretStore: Option<Arc<dyn HostSecretStore>>,
     pub hostRuntimeEventHost: Option<Arc<dyn HostRuntimeEventHost>>,
     pub hostRuntimeEventSchedulerHost: Option<Arc<dyn HostRuntimeEventSchedulerHost>>,
+    pub hostRuntimeTaskSchedulerHost: Option<Arc<dyn HostRuntimeTaskSchedulerHost>>,
     pub hostEnvironment: HostEnvironmentDescriptor,
     pub coreCommandExecutor: Option<CoreCommandExecutor>,
 }
@@ -77,6 +78,7 @@ impl HostManager {
             hostSecretStore: None,
             hostRuntimeEventHost: None,
             hostRuntimeEventSchedulerHost: None,
+            hostRuntimeTaskSchedulerHost: None,
             hostEnvironment: HostEnvironmentDescriptor::android(),
             coreCommandExecutor: None,
         }
@@ -106,6 +108,7 @@ impl HostManager {
             hostSecretStore: None,
             hostRuntimeEventHost: None,
             hostRuntimeEventSchedulerHost: None,
+            hostRuntimeTaskSchedulerHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -138,6 +141,7 @@ impl HostManager {
             hostSecretStore: None,
             hostRuntimeEventHost: None,
             hostRuntimeEventSchedulerHost: None,
+            hostRuntimeTaskSchedulerHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -171,6 +175,7 @@ impl HostManager {
             hostSecretStore: None,
             hostRuntimeEventHost: None,
             hostRuntimeEventSchedulerHost: None,
+            hostRuntimeTaskSchedulerHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -208,6 +213,7 @@ impl HostManager {
             hostSecretStore: None,
             hostRuntimeEventHost: None,
             hostRuntimeEventSchedulerHost: None,
+            hostRuntimeTaskSchedulerHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -319,6 +325,16 @@ impl HostManager {
         hostRuntimeEventSchedulerHost: Arc<dyn HostRuntimeEventSchedulerHost>,
     ) -> Self {
         self.hostRuntimeEventSchedulerHost = Some(hostRuntimeEventSchedulerHost);
+        self
+    }
+
+    /// Adds a host-owned scheduler for one-shot runtime tasks.
+    #[allow(non_snake_case)]
+    pub fn withHostRuntimeTaskSchedulerHost(
+        mut self,
+        hostRuntimeTaskSchedulerHost: Arc<dyn HostRuntimeTaskSchedulerHost>,
+    ) -> Self {
+        self.hostRuntimeTaskSchedulerHost = Some(hostRuntimeTaskSchedulerHost);
         self
     }
 }

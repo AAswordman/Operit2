@@ -23,10 +23,10 @@ tokio = { workspace = true, features = ["sync"] }
 
 [build-dependencies]
 quote = "1"
-syn = { version = "2", features = ["full"] }
+syn = { version = "2", features = ["full", "visit"] }
 
 [dev-dependencies]
-operit-host-native-common = { path = "../../../hosts/common/operit-host-native-common" }
+operit-host-native-common = { path = "../../../hosts/common/operit-host-native-common", default-features = false, features = ["storage"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

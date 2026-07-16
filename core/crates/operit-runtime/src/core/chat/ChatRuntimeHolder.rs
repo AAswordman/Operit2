@@ -3,9 +3,11 @@ use std::collections::HashMap;
 use crate::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use crate::services::core::ChatHistoryDelegate::ChatSelectionMode;
 use crate::services::ChatServiceCore::ChatServiceCore;
+use operit_host_api::FileSystemHost;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
+use std::sync::Arc;
 
 #[derive(Clone)]
 struct ChatRuntimeDependencies {
@@ -15,20 +17,27 @@ struct ChatRuntimeDependencies {
 
 /// Builds chat service cores for each runtime slot.
 pub struct ChatRuntimeCoreFactory {
+    fileSystemHost: Arc<dyn FileSystemHost>,
     runtimeDependencies: Option<ChatRuntimeDependencies>,
 }
 
 impl ChatRuntimeCoreFactory {
     /// Creates a factory used before host capabilities have been installed.
-    pub fn bootstrap() -> Self {
+    pub fn bootstrap(fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
         Self {
+            fileSystemHost,
             runtimeDependencies: None,
         }
     }
 
     /// Creates a factory that wires chat cores to runtime dependencies.
-    pub fn new(toolHandler: AIToolHandler, providerRuntimeContext: ProviderRuntimeContext) -> Self {
+    pub fn new(
+        fileSystemHost: Arc<dyn FileSystemHost>,
+        toolHandler: AIToolHandler,
+        providerRuntimeContext: ProviderRuntimeContext,
+    ) -> Self {
         Self {
+            fileSystemHost,
             runtimeDependencies: Some(ChatRuntimeDependencies {
                 toolHandler,
                 providerRuntimeContext,
@@ -38,12 +47,15 @@ impl ChatRuntimeCoreFactory {
 
     /// Creates a chat service core configured for the requested slot.
     pub fn createCore(&self, slot: ChatRuntimeSlot) -> ChatServiceCore {
-        let mut core = ChatServiceCore::new(match slot {
-            ChatRuntimeSlot::MAIN => ChatSelectionMode::FOLLOW_GLOBAL,
-            ChatRuntimeSlot::FLOATING | ChatRuntimeSlot::DETACHED(_) => {
-                ChatSelectionMode::LOCAL_ONLY
-            }
-        });
+        let mut core = ChatServiceCore::new(
+            match slot {
+                ChatRuntimeSlot::MAIN => ChatSelectionMode::FOLLOW_GLOBAL,
+                ChatRuntimeSlot::FLOATING | ChatRuntimeSlot::DETACHED(_) => {
+                    ChatSelectionMode::LOCAL_ONLY
+                }
+            },
+            self.fileSystemHost.clone(),
+        );
         if let Some(runtimeDependencies) = &self.runtimeDependencies {
             core.enhancedAiService = Some(EnhancedAIService::new(
                 runtimeDependencies.toolHandler.clone(),
@@ -64,17 +76,19 @@ pub struct ChatRuntimeHolder {
 
 impl ChatRuntimeHolder {
     /// Creates a holder using bootstrap cores without host-backed enhanced AI services.
-    pub fn new() -> Self {
-        Self::newWithFactory(ChatRuntimeCoreFactory::bootstrap())
+    pub fn new(fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
+        Self::newWithFactory(ChatRuntimeCoreFactory::bootstrap(fileSystemHost))
     }
 
     /// Creates a holder that injects runtime dependencies into newly created cores.
     #[allow(non_snake_case)]
     pub fn newWithRuntimeDependencies(
+        fileSystemHost: Arc<dyn FileSystemHost>,
         toolHandler: AIToolHandler,
         providerRuntimeContext: ProviderRuntimeContext,
     ) -> Self {
         Self::newWithFactory(ChatRuntimeCoreFactory::new(
+            fileSystemHost,
             toolHandler,
             providerRuntimeContext,
         ))
@@ -180,11 +194,5 @@ impl ChatRuntimeHolder {
             return;
         }
         targetCore.switchChatLocal(chatId);
-    }
-}
-
-impl Default for ChatRuntimeHolder {
-    fn default() -> Self {
-        Self::new()
     }
 }

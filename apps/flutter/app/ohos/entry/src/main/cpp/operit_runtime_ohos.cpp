@@ -11,7 +11,8 @@
 namespace {
 
 using BridgeHandle = void*;
-using BridgeCreateWithStorageRoots = BridgeHandle (*)(const char*, const char*);
+using BridgeCreateWithStorageRootsAndSystemLanguage =
+    BridgeHandle (*)(const char*, const char*, const char*);
 using BridgeCreateError = char* (*)();
 using BridgeDestroy = void (*)(BridgeHandle);
 
@@ -57,8 +58,9 @@ class OperitBridgeLibrary {
       AssignError(error, dlerror());
       return false;
     }
-    create_with_storage_roots_ = Load<BridgeCreateWithStorageRoots>(
-        "operit_flutter_bridge_create_with_storage_roots");
+    create_with_storage_roots_ =
+        Load<BridgeCreateWithStorageRootsAndSystemLanguage>(
+            "operit_flutter_bridge_create_with_storage_roots_and_system_language");
     create_error_ = Load<BridgeCreateError>("operit_flutter_bridge_create_error");
     destroy_ = Load<BridgeDestroy>("operit_flutter_bridge_destroy");
     native_call_ = Load<BridgeNativeCall>("operit_flutter_bridge_native_call");
@@ -95,8 +97,10 @@ class OperitBridgeLibrary {
   }
 
   /// Creates one Rust runtime bridge handle.
-  BridgeHandle Create(const std::string& runtime_root, const std::string& workspace_root) {
-    return create_with_storage_roots_(runtime_root.c_str(), workspace_root.c_str());
+  BridgeHandle Create(const std::string& runtime_root, const std::string& workspace_root,
+                      const std::string& system_language_code) {
+    return create_with_storage_roots_(runtime_root.c_str(), workspace_root.c_str(),
+                                      system_language_code.c_str());
   }
 
   /// Returns the last Rust runtime bridge creation error.
@@ -222,7 +226,7 @@ class OperitBridgeLibrary {
 
   std::mutex mutex_;
   void* library_ = nullptr;
-  BridgeCreateWithStorageRoots create_with_storage_roots_ = nullptr;
+  BridgeCreateWithStorageRootsAndSystemLanguage create_with_storage_roots_ = nullptr;
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
   BridgeNativeCall native_call_ = nullptr;
@@ -338,13 +342,15 @@ napi_value Create(napi_env env, napi_callback_info info) {
   if (!EnsureBridgeReady(env)) {
     return nullptr;
   }
-  auto args = CallbackArgs(env, info, 2);
-  if (args.empty()) {
-    return nullptr;
+  auto args = CallbackArgs(env, info, 3);
+  if (args.size() != 3) {
+    return ThrowError(env, "create expects runtime root, workspace root, and system language code");
   }
   auto runtime_root = ReadString(env, args[0]);
   auto workspace_root = ReadString(env, args[1]);
-  BridgeHandle handle = g_bridge_library.Create(runtime_root, workspace_root);
+  auto system_language_code = ReadString(env, args[2]);
+  BridgeHandle handle =
+      g_bridge_library.Create(runtime_root, workspace_root, system_language_code);
   if (handle == nullptr) {
     return ThrowError(env, g_bridge_library.CreateError());
   }

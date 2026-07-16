@@ -101,6 +101,10 @@ apps/flutter/app/lib/core/proxy/generated/
 apps/flutter/app/assets/web_access/
 apps/flutter/app/build/web
 apps/flutter/app/build/web/
+apps/web_access/web/operit_flutter_bridge.js
+apps/web_access/web/operit_flutter_bridge_bg.wasm
+apps/web_access/web/sql-wasm.js
+apps/web_access/web/sql-wasm.wasm
 
 # Local dependency extraction/package scratch
 package/

@@ -85,6 +85,7 @@ void main(List<String> args) async {
     ], workingDirectory: repoRoot.path);
 
     if (shouldBuildWebAssets) {
+      await _invalidateWebRuntimeArtifacts([webBuildDir, webSourceDir]);
       await _run(
         'cargo',
         const ['build', '--release', '--target', 'wasm32-unknown-unknown'],
@@ -118,6 +119,7 @@ void main(List<String> args) async {
       await File.fromUri(
         sqlDist.uri.resolve('sql-wasm.wasm'),
       ).copy(File.fromUri(webBuildDir.uri.resolve('sql-wasm.wasm')).path);
+      await _syncWebRuntimeArtifacts(webBuildDir, webSourceDir);
       final versionManifest = await _writeWebAccessVersionManifest(
         webBuildDir,
         webAccessAssetsDir,
@@ -410,6 +412,50 @@ Future<void> _syncDirectory(Directory source, Directory destination) async {
   }
 }
 
+/// Copies generated wasm runtime files into the Web static-file directory.
+Future<void> _syncWebRuntimeArtifacts(
+  Directory source,
+  Directory destination,
+) async {
+  const fileNames = <String>[
+    'operit_flutter_bridge.js',
+    'operit_flutter_bridge_bg.wasm',
+    'sql-wasm.js',
+    'sql-wasm.wasm',
+  ];
+  for (final fileName in fileNames) {
+    final sourceFile = File.fromUri(source.uri.resolve(fileName));
+    if (!sourceFile.existsSync()) {
+      throw StateError(
+        'Web runtime artifact does not exist: ${sourceFile.path}',
+      );
+    }
+    final destinationFile = File.fromUri(destination.uri.resolve(fileName));
+    await destinationFile.parent.create(recursive: true);
+    await sourceFile.copy(destinationFile.path);
+  }
+}
+
+/// Removes generated web runtime artifacts before compiling their replacement.
+Future<void> _invalidateWebRuntimeArtifacts(
+  Iterable<Directory> directories,
+) async {
+  const fileNames = <String>[
+    'operit_flutter_bridge.js',
+    'operit_flutter_bridge_bg.wasm',
+    'operit_flutter_bridge_bg.wasm.d.ts',
+    'operit_flutter_bridge.d.ts',
+  ];
+  for (final directory in directories) {
+    for (final fileName in fileNames) {
+      final file = File.fromUri(directory.uri.resolve(fileName));
+      if (file.existsSync()) {
+        await file.delete();
+      }
+    }
+  }
+}
+
 /// Computes a path relative to the copied Web Access bundle root.
 String _relativePath(Directory root, FileSystemEntity entity) {
   final rootPath = root.uri.toFilePath(windows: Platform.isWindows);
@@ -497,10 +543,7 @@ String _targetOs(BuildInput input) {
     return targetOs;
   }
   final buildAssetTypes = config['build_asset_types'];
-  final linkingEnabled = config['linking_enabled'];
-  if (buildAssetTypes is List<Object?> &&
-      buildAssetTypes.isEmpty &&
-      linkingEnabled == true) {
+  if (buildAssetTypes is List<Object?> && buildAssetTypes.isEmpty) {
     return 'web';
   }
   throw StateError('Unsupported build hook target configuration: $config');

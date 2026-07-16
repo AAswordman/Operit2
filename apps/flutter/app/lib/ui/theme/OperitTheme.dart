@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
@@ -62,6 +63,10 @@ class _OperitThemeState extends State<OperitTheme> {
   bool _runtimeUiReady = false;
   bool _preserveUnconfiguredChild = false;
   int _runtimeGeneration = 0;
+  Timer? _runtimeStartupStatusTimer;
+  String _runtimeStartupMessage = '正在准备本地运行时';
+
+  static const MethodChannel _runtimeChannel = MethodChannel('operit/runtime');
 
   /// Subscribes to runtime readiness and starts theme services when configured.
   @override
@@ -78,6 +83,7 @@ class _OperitThemeState extends State<OperitTheme> {
   /// Releases runtime readiness and theme subscriptions.
   @override
   void dispose() {
+    _stopRuntimeStartupStatusPolling();
     _runtimeManager.removeListener(_handleRuntimeConnectionChanged);
     _controller.dispose();
     super.dispose();
@@ -87,12 +93,14 @@ class _OperitThemeState extends State<OperitTheme> {
   void _handleRuntimeConnectionChanged() {
     if (!_runtimeManager.runtimeConfigured) {
       _runtimeGeneration++;
+      _stopRuntimeStartupStatusPolling();
       _controller.dispose();
       setState(() {
         _runtimeUiReady = false;
         _runtimeStartupError = null;
         _runtimeStartFuture = null;
         _preserveUnconfiguredChild = widget.unconfiguredChildEnabled;
+        _runtimeStartupMessage = '正在准备本地运行时';
       });
       return;
     }
@@ -107,6 +115,7 @@ class _OperitThemeState extends State<OperitTheme> {
       return;
     }
     final generation = ++_runtimeGeneration;
+    _startRuntimeStartupStatusPolling(generation);
     final startFuture = _controller.start();
     _runtimeStartFuture = startFuture;
     try {
@@ -137,9 +146,46 @@ class _OperitThemeState extends State<OperitTheme> {
       });
     } finally {
       if (generation == _runtimeGeneration) {
+        _stopRuntimeStartupStatusPolling();
         _runtimeStartFuture = null;
       }
     }
+  }
+
+  /// Starts reading Android native runtime stages while Core-backed UI is starting.
+  void _startRuntimeStartupStatusPolling(int generation) {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+    _stopRuntimeStartupStatusPolling();
+    unawaited(_refreshRuntimeStartupStatus(generation));
+    _runtimeStartupStatusTimer = Timer.periodic(
+      const Duration(milliseconds: 200),
+      (_) => unawaited(_refreshRuntimeStartupStatus(generation)),
+    );
+  }
+
+  /// Stops Android native runtime stage polling.
+  void _stopRuntimeStartupStatusPolling() {
+    _runtimeStartupStatusTimer?.cancel();
+    _runtimeStartupStatusTimer = null;
+  }
+
+  /// Applies the current Android native runtime stage to the bootstrap screen.
+  Future<void> _refreshRuntimeStartupStatus(int generation) async {
+    final status = await _runtimeChannel.invokeMapMethod<String, String>(
+      'localRuntimeStartupStatus',
+    );
+    final message = status?['message'];
+    if (!mounted || generation != _runtimeGeneration || message == null) {
+      return;
+    }
+    if (_runtimeStartupMessage == message) {
+      return;
+    }
+    setState(() {
+      _runtimeStartupMessage = message;
+    });
   }
 
   /// Builds the bootstrap or fully initialized application theme.
@@ -152,20 +198,27 @@ class _OperitThemeState extends State<OperitTheme> {
         : UserPreferencesManager.defaultThemePreferenceSnapshot;
     final themeMode = runtimeReady ? _controller.themeMode : ThemeMode.system;
     final Widget appChild;
-    if (!runtimeConfigured) {
+    if (_preserveUnconfiguredChild) {
+      appChild = Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          widget.child,
+          if (runtimeConfigured && !runtimeReady)
+            RuntimeBootstrapScreen(
+              message: _runtimeStartupMessage,
+              errorText: _runtimeStartupError?.toString(),
+            ),
+        ],
+      );
+    } else if (!runtimeConfigured) {
       appChild = widget.unconfiguredChildEnabled
           ? widget.child
           : const RuntimeBootstrapScreen(message: '请先在主窗口配置运行时目录和工作区目录');
     } else if (!runtimeReady) {
-      final bootstrap = RuntimeBootstrapScreen(
+      appChild = RuntimeBootstrapScreen(
+        message: _runtimeStartupMessage,
         errorText: _runtimeStartupError?.toString(),
       );
-      appChild = _preserveUnconfiguredChild
-          ? Stack(
-              fit: StackFit.expand,
-              children: <Widget>[widget.child, bootstrap],
-            )
-          : bootstrap;
     } else {
       appChild = widget.child;
     }

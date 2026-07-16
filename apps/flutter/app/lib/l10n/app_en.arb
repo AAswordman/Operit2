@@ -582,6 +582,7 @@
   "settingsModelProviderTypeLmstudio": "LM Studio",
   "settingsModelProviderTypeOllama": "Ollama",
   "settingsModelProviderTypeOpenaiLocal": "OpenAI Local",
+  "settingsModelProviderTypeLocalModel": "Local model",
   "settingsModelProviderTypeMnn": "MNN",
   "settingsModelProviderTypeLlamaCpp": "llama.cpp",
   "settingsModelProviderTypePpinfra": "PPInfra",

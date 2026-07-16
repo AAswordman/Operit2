@@ -22,8 +22,8 @@ use crate::plugins::PluginRegistry::PluginRegistry;
 use crate::services::ProviderRuntimeSupportService::ProviderRuntimeSupportService;
 use crate::services::ToolRuntimeSupportService::ToolRuntimeSupportService;
 use operit_host_api::HostManager::{setDefaultHttpHost, HostManager};
-use operit_host_api::HostRuntimeEventRegistration;
 use operit_host_api::TimeUtils::currentTimeMillis;
+use operit_host_api::{HostRuntimeEventRegistration, HostRuntimeTaskSchedulerHost};
 #[cfg(feature = "javascript")]
 use operit_js_bridge::javascript::JsExecutionProvider::QuickJsExecutionProvider;
 use operit_model::Memory::{Memory, MemoryLink};
@@ -42,6 +42,8 @@ use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_store::SyncOperationStore::{
     compactSyncOperations, SyncClock, SyncOperation, SyncOperationStore,
 };
+use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_tools::runtime_support::ToolRuntimeDependencies;
 use operit_tools::tools::mcp_runtime::plugins::MCPStarter::MCPStarter;
 use operit_tools::tools::mcp_runtime::MCPRepository::MCPRepository;
@@ -49,7 +51,6 @@ use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
-use std::fs;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -87,7 +88,21 @@ impl OperitApplication {
             let workspaceRoot = runtimeStorageHost
                 .workspaceRootDir()
                 .expect("runtime storage host must provide a workspace root directory");
-            AppLogger::configure_log_files(&runtimeRoot);
+            let fileSystemHost = hostManager
+                .fileSystemHost
+                .clone()
+                .expect("runtime storage host requires a file-system host for logging");
+            let pathMapper = PathMapper::new(runtimeRoot.clone(), workspaceRoot.clone());
+            let logFile = pathMapper
+                .resolve("/app/data/logs/operit.log")
+                .expect("runtime log path must resolve through the file-system host")
+                .physicalPath;
+            let packageLogFile = pathMapper
+                .resolve("/app/data/logs/toolpkg.log")
+                .expect("ToolPkg log path must resolve through the file-system host")
+                .physicalPath;
+            AppLogger::configure_log_files(fileSystemHost, logFile, packageLogFile)
+                .expect("runtime log files must be configured through the file-system host");
             setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
                 runtimeRoot,
                 workspaceRoot,
@@ -103,7 +118,13 @@ impl OperitApplication {
         if let Some(httpHost) = hostManager.httpHost.clone() {
             setDefaultHttpHost(httpHost);
         }
-        let chatRuntimeHolder = Arc::new(AsyncMutex::new(ChatRuntimeHolder::new()));
+        let chatFileSystemHost = hostManager
+            .fileSystemHost
+            .clone()
+            .expect("Chat runtime requires a FileSystemHost");
+        let chatRuntimeHolder = Arc::new(AsyncMutex::new(ChatRuntimeHolder::new(
+            chatFileSystemHost.clone(),
+        )));
         let runtimeToolSupport =
             ToolRuntimeSupportService::create(hostManager.clone(), chatRuntimeHolder.clone());
         #[cfg(feature = "javascript")]
@@ -122,6 +143,7 @@ impl OperitApplication {
             .try_lock()
             .expect("new chat runtime holder must be unlocked") =
             ChatRuntimeHolder::newWithRuntimeDependencies(
+                chatFileSystemHost,
                 toolHandler.clone(),
                 providerRuntimeContext.clone(),
             );
@@ -138,13 +160,74 @@ impl OperitApplication {
         }
     }
 
+    /// Removes files queued for cleanup through the configured file-system host.
+    #[allow(non_snake_case)]
+    fn cleanOnExitFiles(&self) -> Result<(), String> {
+        let fileSystem = self.runtimeFileSystem()?;
+        const CLEAN_ON_EXIT_PATH: &str = "/app/data/temp/clean_on_exit";
+        fileSystem.makeDirectory(CLEAN_ON_EXIT_PATH, true)?;
+        for entry in fileSystem.listFiles(CLEAN_ON_EXIT_PATH)? {
+            let path = PathMapper::joinVfsPath(CLEAN_ON_EXIT_PATH, &entry.name)?;
+            fileSystem.deleteFile(&path, entry.isDirectory)?;
+        }
+        Ok(())
+    }
+
+    /// Builds the virtual file system backed by the configured runtime hosts.
+    fn runtimeFileSystem(&self) -> Result<VisualFileSystem, String> {
+        let runtimeStorageHost = self
+            .hostManager
+            .runtimeStorageHost
+            .as_ref()
+            .ok_or_else(|| {
+                "RuntimeStorageHost is not registered for runtime file-system access".to_string()
+            })?;
+        let runtimeRoot = runtimeStorageHost.runtimeRootDir().ok_or_else(|| {
+            "RuntimeStorageHost runtime root is not configured for runtime file-system access"
+                .to_string()
+        })?;
+        let workspaceRoot = runtimeStorageHost.workspaceRootDir().ok_or_else(|| {
+            "RuntimeStorageHost workspace root is not configured for runtime file-system access"
+                .to_string()
+        })?;
+        let fileSystemHost = self.hostManager.fileSystemHost.clone().ok_or_else(|| {
+            "FileSystemHost is not registered for runtime file-system access".to_string()
+        })?;
+        Ok(VisualFileSystem::new(
+            fileSystemHost,
+            PathMapper::new(runtimeRoot, workspaceRoot),
+        ))
+    }
+
+    /// Ensures a mapped directory exists through the configured file-system host.
+    fn ensureHostDirectory(&self, path: &std::path::Path) -> Result<(), String> {
+        let fileSystemHost = self.hostManager.fileSystemHost.as_ref().ok_or_else(|| {
+            "FileSystemHost is not registered for runtime directory creation".to_string()
+        })?;
+        fileSystemHost
+            .makeDirectory(&path.to_string_lossy(), true)
+            .map_err(|error| error.message)
+    }
+
+    /// Reads one host-visible file as bytes through the configured file-system host.
+    fn readHostFileBytes(&self, path: &str) -> Result<Vec<u8>, String> {
+        let fileSystemHost =
+            self.hostManager.fileSystemHost.as_ref().ok_or_else(|| {
+                "FileSystemHost is not registered for runtime file reads".to_string()
+            })?;
+        fileSystemHost
+            .readFileBytes(path)
+            .map_err(|_| "无法读取 Operit1 快照文件".to_string())
+    }
+
     /// Initializes persistent stores, prompt managers, tool handlers, plugins, and runtime events.
     #[allow(non_snake_case)]
     pub fn onCreate(&mut self) -> Result<(), String> {
         self.appStartupTimeMs = currentTimeMillis();
+        AppLogger::i("OperitApplication", "runtime initialization start");
         setHostManager(self.hostManager.clone());
         self.configureOpenMpEnvironment();
-        OperitPaths::cleanOnExitCleanup()?;
+        self.cleanOnExitFiles()?;
         self.ensureWorkManagerInitialized();
         AIMessageManager::initialize();
         self.initializeJsonSerializer();
@@ -154,16 +237,50 @@ impl OperitApplication {
         self.initializeFunctionalPromptManager()?;
         self.preloadDatabase();
         let mut toolHandler = self.toolHandler.clone();
+        let toolRegistrationStartedAt = currentTimeMillis();
+        AppLogger::i("OperitApplication", "default tool registration start");
         toolHandler.registerDefaultTools();
+        AppLogger::i(
+            "OperitApplication",
+            &format!(
+                "default tool registration done elapsedMs={}",
+                currentTimeMillis() - toolRegistrationStartedAt
+            ),
+        );
+        let pluginInitializationStartedAt = currentTimeMillis();
+        AppLogger::i("OperitApplication", "built-in plugin initialization start");
         PluginRegistry::initializeBuiltins(self.toolPkgBridgeRuntime.clone());
+        AppLogger::i(
+            "OperitApplication",
+            &format!(
+                "built-in plugin initialization done elapsedMs={}",
+                currentTimeMillis() - pluginInitializationStartedAt
+            ),
+        );
+        let runtimeEventRegistrationStartedAt = currentTimeMillis();
+        AppLogger::i("OperitApplication", "host runtime event registration start");
         self.hostRuntimeEventRegistration =
             crate::services::RuntimeEventIngressService::RuntimeEventIngressService::startHostRuntimeEventSupport(
                 self.hostManager.clone(),
                 self.toolPkgBridgeRuntime.clone(),
             )?
             .map(|registration| Arc::new(Mutex::new(registration)));
+        AppLogger::i(
+            "OperitApplication",
+            &format!(
+                "host runtime event registration done elapsedMs={}",
+                currentTimeMillis() - runtimeEventRegistrationStartedAt
+            ),
+        );
         self.initialized = true;
         self.initMcpPlugins();
+        AppLogger::i(
+            "OperitApplication",
+            &format!(
+                "runtime initialization done elapsedMs={}",
+                currentTimeMillis() - self.appStartupTimeMs
+            ),
+        );
         Ok(())
     }
 
@@ -229,16 +346,21 @@ impl OperitApplication {
     pub fn initMcpPlugins(&self) {
         let hostManager = self.hostManager.clone();
         let runtimeSupport = self.toolHandler.runtimeSupport();
-        std::thread::Builder::new()
-            .name("operit-mcp-startup".to_string())
-            .spawn(move || {
-                let starter = MCPStarter::new(hostManager, runtimeSupport);
-                let timeoutSeconds = ApiPreferences::getInstance()
-                    .getMcpStartupTimeoutSeconds()
-                    .expect("api preferences must provide mcp startup timeout seconds");
-                let _ = starter.startAllDeployedPluginsWithTimeout(timeoutSeconds);
-            })
-            .expect("MCP startup thread must be created");
+        let taskScheduler = self
+            .hostManager
+            .hostRuntimeTaskSchedulerHost
+            .clone()
+            .expect("runtime task scheduler host must be configured for MCP startup");
+        let startup = move || {
+            let starter = MCPStarter::new(hostManager, runtimeSupport);
+            let timeoutSeconds = ApiPreferences::getInstance()
+                .getMcpStartupTimeoutSeconds()
+                .expect("api preferences must provide mcp startup timeout seconds");
+            let _ = starter.startAllDeployedPluginsWithTimeout(timeoutSeconds);
+        };
+        taskScheduler
+            .scheduleHostRuntimeTask("operit-mcp-startup", Box::new(startup))
+            .expect("MCP startup task must be scheduled");
     }
 
     /// Returns the initialized tool handler owned by this runtime.
@@ -331,19 +453,25 @@ impl OperitApplication {
     /// Returns the user-visible Operit root directory path.
     #[allow(non_snake_case)]
     pub fn operitRootPath(&self) -> Result<String, String> {
-        OperitPaths::operitRootPathSdcard()
+        let path = OperitPaths::operitRootDir()?;
+        self.ensureHostDirectory(&path)?;
+        Ok(path.to_string_lossy().into_owned())
     }
 
     /// Returns the directory used for exported user artifacts.
     #[allow(non_snake_case)]
     pub fn exportsPath(&self) -> Result<String, String> {
-        OperitPaths::exportsPathSdcard()
+        let path = OperitPaths::exportsDir()?;
+        self.ensureHostDirectory(&path)?;
+        Ok(path.to_string_lossy().into_owned())
     }
 
     /// Returns the directory used for files removed during clean-on-exit maintenance.
     #[allow(non_snake_case)]
     pub fn cleanOnExitPath(&self) -> Result<String, String> {
-        OperitPaths::cleanOnExitPathSdcard()
+        let path = OperitPaths::cleanOnExitDir()?;
+        self.ensureHostDirectory(&path)?;
+        Ok(path.to_string_lossy().into_owned())
     }
 
     /// Clears the current runtime log files.
@@ -486,7 +614,7 @@ impl OperitApplication {
         &self,
         path: String,
     ) -> Result<Operit1SnapshotPreview, String> {
-        let bytes = fs::read(path).map_err(|_| "无法读取 Operit1 快照文件".to_string())?;
+        let bytes = self.readHostFileBytes(&path)?;
         Operit1SnapshotImportManager::new(RuntimeStorePaths::default()).inspectSnapshot(bytes)
     }
 
@@ -534,7 +662,7 @@ impl OperitApplication {
             progress: 0.02,
             active: true,
         });
-        let bytes = fs::read(path).map_err(|_| "无法读取 Operit1 快照文件".to_string())?;
+        let bytes = self.readHostFileBytes(&path)?;
         Operit1SnapshotImportManager::new(RuntimeStorePaths::default()).importSnapshot(bytes)
     }
 

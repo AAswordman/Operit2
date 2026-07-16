@@ -179,6 +179,7 @@ val cargoBuildOperitFlutterBridgeTasks = selectedOperitRustTargets.map { target 
         environment("CARGO_TARGET_${target.envTarget}_AR", ar.absolutePath)
         environment("LIBCLANG_PATH", operitLibclangDir.absolutePath)
         environment("BINDGEN_EXTRA_CLANG_ARGS_$ccEnvTarget", bindgenClangArgs)
+        environment("RUSTFLAGS", "-Awarnings")
         commandLine(
             "cargo",
             "build",
@@ -200,7 +201,43 @@ val cargoBuildOperitFlutterBridge = tasks.register("cargoBuildOperitFlutterBridg
     dependsOn(cargoBuildOperitFlutterBridgeTasks)
 }
 
+val requiredOperitAndroidRuntimeLibraries = listOf(
+    "libbash.so",
+    "liboperit_busybox.so",
+    "liboperit_loader.so",
+    "liboperit_proot.so",
+)
+val requiredOperitAndroidRuntimeAssets = listOf(
+    "rootfs.tar.gz.bin",
+    "rootfs.tar.gz.bin.sha256",
+)
+val verifyOperitAndroidRuntimeArtifacts = tasks.register("verifyOperitAndroidRuntimeArtifacts") {
+    doLast {
+        val missingArtifacts = selectedOperitRustTargets.flatMap { target ->
+            val libraryDirectory = operitBridgeJniLibs.resolve(target.abi)
+            val assetDirectory = project.layout.projectDirectory
+                .dir("src/main/assets/android-runtime/${target.abi}")
+                .asFile
+            requiredOperitAndroidRuntimeLibraries
+                .map { libraryName -> libraryDirectory.resolve(libraryName) }
+                .plus(
+                    requiredOperitAndroidRuntimeAssets.map { assetName ->
+                        assetDirectory.resolve(assetName)
+                    },
+                )
+                .filterNot(File::isFile)
+        }
+        if (missingArtifacts.isNotEmpty()) {
+            throw GradleException(
+                "Missing required Operit Android runtime artifacts:\n" +
+                    missingArtifacts.joinToString(separator = "\n") { it.absolutePath },
+            )
+        }
+    }
+}
+
 tasks.named("preBuild") {
     dependsOn(syncOperitPlugins)
     dependsOn(cargoBuildOperitFlutterBridge)
+    dependsOn(verifyOperitAndroidRuntimeArtifacts)
 }

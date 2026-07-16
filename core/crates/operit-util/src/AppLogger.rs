@@ -1,15 +1,10 @@
 use std::backtrace::Backtrace;
 use std::fmt::Write as _;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, Once, OnceLock};
 
 use chrono::{DateTime, Local, Utc};
+use operit_host_api::FileSystemHost;
 use serde::{Deserialize, Serialize};
-use std::sync::Once;
-
-use crate::RuntimeStorageLayout;
 
 /// Android-compatible verbose log priority.
 pub const VERBOSE: i32 = 2;
@@ -36,12 +31,12 @@ pub struct LogEntry {
     pub timestamp_ms: u128,
 }
 
-#[derive(Debug, Default)]
 struct LoggerState {
     enable_file_logging: bool,
     enable_console_logging: bool,
-    log_file: Option<PathBuf>,
-    package_log_file: Option<PathBuf>,
+    file_system_host: Option<Arc<dyn FileSystemHost>>,
+    log_file: Option<String>,
+    package_log_file: Option<String>,
     entries: Vec<LogEntry>,
 }
 
@@ -54,6 +49,7 @@ fn state() -> &'static Mutex<LoggerState> {
         Mutex::new(LoggerState {
             enable_file_logging: true,
             enable_console_logging: true,
+            file_system_host: None,
             log_file: None,
             package_log_file: None,
             entries: Vec::new(),
@@ -101,30 +97,24 @@ impl AppLogger {
             .enable_console_logging
     }
 
-    /// Binds the main runtime log file path.
-    pub fn bind_log_file(path: impl Into<PathBuf>) {
+    /// Configures runtime and ToolPkg logs through the supplied file-system host.
+    pub fn configure_log_files(
+        file_system_host: Arc<dyn FileSystemHost>,
+        log_file: String,
+        package_log_file: String,
+    ) -> Result<(), String> {
+        ensure_log_file(&file_system_host, &log_file)?;
+        ensure_log_file(&file_system_host, &package_log_file)?;
         let mut guard = state().lock().expect("AppLogger mutex poisoned");
-        guard.log_file = Some(path.into());
-    }
-
-    /// Binds the ToolPkg-specific log file path.
-    pub fn bind_package_log_file(path: impl Into<PathBuf>) {
-        let mut guard = state().lock().expect("AppLogger mutex poisoned");
-        guard.package_log_file = Some(path.into());
-    }
-
-    /// Configures both runtime and ToolPkg log files under a storage root.
-    pub fn configure_log_files(root: impl AsRef<Path>) {
-        let log_file = root.as_ref().join(RuntimeStorageLayout::OPERIT_LOG_PATH);
-        let package_log_file = root.as_ref().join(RuntimeStorageLayout::TOOLPKG_LOG_PATH);
-        ensure_log_file(&log_file);
-        ensure_log_file(&package_log_file);
-        Self::bind_log_file(log_file);
-        Self::bind_package_log_file(package_log_file);
+        guard.file_system_host = Some(file_system_host);
+        guard.log_file = Some(log_file);
+        guard.package_log_file = Some(package_log_file);
+        guard.enable_file_logging = true;
+        Ok(())
     }
 
     /// Returns the bound runtime log file path.
-    pub fn get_log_file() -> Option<PathBuf> {
+    pub fn get_log_file() -> Option<String> {
         state()
             .lock()
             .expect("AppLogger mutex poisoned")
@@ -133,7 +123,7 @@ impl AppLogger {
     }
 
     /// Returns the bound ToolPkg log file path.
-    pub fn get_package_log_file() -> Option<PathBuf> {
+    pub fn get_package_log_file() -> Option<String> {
         state()
             .lock()
             .expect("AppLogger mutex poisoned")
@@ -143,32 +133,25 @@ impl AppLogger {
 
     /// Returns the runtime log file path as display text.
     pub fn get_log_file_path() -> Result<String, String> {
-        Self::get_log_file()
-            .map(|path| path.to_string_lossy().to_string())
-            .ok_or_else(|| "AppLogger log file is not bound".to_string())
+        Self::get_log_file().ok_or_else(|| "AppLogger log file is not bound".to_string())
     }
 
     /// Returns the ToolPkg log file path as display text.
     pub fn get_package_log_file_path() -> Result<String, String> {
         Self::get_package_log_file()
-            .map(|path| path.to_string_lossy().to_string())
             .ok_or_else(|| "AppLogger package log file is not bound".to_string())
     }
 
     /// Clears current log files and in-memory log entries.
     pub fn reset_log_file() {
         let mut guard = state().lock().expect("AppLogger mutex poisoned");
-        if let Some(path) = &guard.log_file {
-            let _ = fs::remove_file(path);
-        }
-        if let Some(path) = &guard.package_log_file {
-            let _ = fs::remove_file(path);
-        }
-        if let Some(path) = &guard.log_file {
-            ensure_log_file(path);
-        }
-        if let Some(path) = &guard.package_log_file {
-            ensure_log_file(path);
+        if let Some(file_system_host) = &guard.file_system_host {
+            if let Some(path) = &guard.log_file {
+                let _ = file_system_host.writeFile(path, "", false);
+            }
+            if let Some(path) = &guard.package_log_file {
+                let _ = file_system_host.writeFile(path, "", false);
+            }
         }
         guard.entries.clear();
     }
@@ -189,16 +172,18 @@ impl AppLogger {
 
     /// Reads the runtime log file as text.
     pub fn text() -> Result<String, String> {
-        let path =
-            Self::get_log_file().ok_or_else(|| "AppLogger log file is not bound".to_string())?;
-        fs::read_to_string(path).map_err(|error| error.to_string())
+        let (file_system_host, path) = log_file_access(false)?;
+        file_system_host
+            .readFile(&path)
+            .map_err(|error| error.message)
     }
 
     /// Reads the ToolPkg log file as text.
     pub fn package_text() -> Result<String, String> {
-        let path = Self::get_package_log_file()
-            .ok_or_else(|| "AppLogger package log file is not bound".to_string())?;
-        fs::read_to_string(path).map_err(|error| error.to_string())
+        let (file_system_host, path) = log_file_access(true)?;
+        file_system_host
+            .readFile(&path)
+            .map_err(|error| error.message)
     }
 
     /// Writes a verbose log message.
@@ -269,12 +254,13 @@ fn write_entry(priority: i32, tag: &str, msg: &str, throwable: Option<String>) {
         timestamp_ms,
     };
 
-    let (enable_file_logging, enable_console_logging, log_file, package_log_file) = {
+    let (enable_file_logging, enable_console_logging, file_system_host, log_file, package_log_file) = {
         let mut guard = state().lock().expect("AppLogger mutex poisoned");
         guard.entries.push(entry.clone());
         (
             guard.enable_file_logging,
             guard.enable_console_logging,
+            guard.file_system_host.clone(),
             guard.log_file.clone(),
             guard.package_log_file.clone(),
         )
@@ -289,35 +275,51 @@ fn write_entry(priority: i32, tag: &str, msg: &str, throwable: Option<String>) {
     }
 
     if enable_file_logging {
-        if let Some(path) = log_file {
-            append_line(&path, &line);
-        }
-        if tag.eq_ignore_ascii_case(TOOLPKG_LOG_TAG) {
-            if let Some(path) = package_log_file {
-                append_line(&path, &format_package_log_line(&entry));
+        if let Some(file_system_host) = file_system_host {
+            if let Some(path) = log_file {
+                append_line(&file_system_host, &path, &line);
+            }
+            if tag.eq_ignore_ascii_case(TOOLPKG_LOG_TAG) {
+                if let Some(path) = package_log_file {
+                    append_line(&file_system_host, &path, &format_package_log_line(&entry));
+                }
             }
         }
     }
 }
 
-fn append_line(path: &Path, line: &str) {
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = file.write_all(line.as_bytes());
-    }
+/// Appends one formatted log line through the configured file-system host.
+fn append_line(file_system_host: &Arc<dyn FileSystemHost>, path: &str, line: &str) {
+    let _ = file_system_host.writeFile(path, line, true);
 }
 
-fn ensure_log_file(path: &Path) {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("AppLogger log directory must be created");
+/// Creates an empty log file through the host when the path is absent.
+fn ensure_log_file(file_system_host: &Arc<dyn FileSystemHost>, path: &str) -> Result<(), String> {
+    let metadata = file_system_host
+        .fileExists(path)
+        .map_err(|error| error.message)?;
+    if !metadata.exists {
+        file_system_host
+            .writeFile(path, "", false)
+            .map_err(|error| error.message)?;
     }
-    OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .expect("AppLogger log file must be opened");
+    Ok(())
+}
+
+/// Returns the host and path for one configured runtime or ToolPkg log file.
+fn log_file_access(package_log: bool) -> Result<(Arc<dyn FileSystemHost>, String), String> {
+    let guard = state().lock().expect("AppLogger mutex poisoned");
+    let file_system_host = guard
+        .file_system_host
+        .clone()
+        .ok_or_else(|| "AppLogger file-system host is not bound".to_string())?;
+    let path = if package_log {
+        guard.package_log_file.clone()
+    } else {
+        guard.log_file.clone()
+    }
+    .ok_or_else(|| "AppLogger log file is not bound".to_string())?;
+    Ok((file_system_host, path))
 }
 
 fn format_log_line(entry: &LogEntry, tag: &str) -> String {

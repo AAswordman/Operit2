@@ -2032,6 +2032,7 @@ dependencies = [
  "security-framework",
  "serde",
  "serde_json",
+ "tungstenite",
  "uuid",
  "zip",
 ]
@@ -2065,17 +2066,56 @@ dependencies = [
 name = "operit-host-native-common"
 version = "0.1.0"
 dependencies = [
- "base64",
+ "operit-host-native-filesystem",
+ "operit-host-native-http",
+ "operit-host-native-scheduler",
+ "operit-host-native-storage",
+ "operit-host-native-terminal",
+]
+
+[[package]]
+name = "operit-host-native-filesystem"
+version = "0.1.0"
+dependencies = [
  "globset",
  "grep-regex",
  "grep-searcher",
  "ignore",
  "operit-host-api",
- "portable-pty",
- "reqwest",
- "rusqlite",
- "uuid",
  "zip",
+]
+
+[[package]]
+name = "operit-host-native-http"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+ "reqwest",
+]
+
+[[package]]
+name = "operit-host-native-scheduler"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+]
+
+[[package]]
+name = "operit-host-native-storage"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+ "rusqlite",
+]
+
+[[package]]
+name = "operit-host-native-terminal"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "operit-host-api",
+ "portable-pty",
+ "uuid",
 ]
 
 [[package]]
@@ -2568,8 +2608,6 @@ checksum = "e0c5ccf5294c6ccd63a74f1565028353830a9c2f5eb0c682c355c471726a6e3f"
 [[package]]
 name = "quickjs-wasm-rs"
 version = "3.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28238e71a7aaafc42354af7908626b8b062d9a5ff16e4da6a5890e372b717cc5"
 dependencies = [
  "anyhow",
  "once_cell",

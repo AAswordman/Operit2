@@ -23,6 +23,9 @@ class ToolApprovalBridge {
 
   /// Returns the current pending permission request.
   Future<ToolApprovalRequest?> currentPermissionRequest() async {
+    if (kIsWeb) {
+      return null;
+    }
     _ensureSubscription();
     if (_requests.isEmpty) {
       return null;

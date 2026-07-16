@@ -4,11 +4,13 @@ use crate::javascript::JsAssetLoader::{
 use crate::javascript::JsEmbeddedLibraryLoader::{loadCryptoJs, loadJimpJs, loadPakoJs};
 use crate::javascript::JsInitRuntimeScriptBuilder;
 use crate::javascript::JsJavaBridge::buildJavaClassBridgeDefinition;
+use operit_host_api::RuntimeStorageHost;
 use operit_plugin_sdk::toolpkg::ToolPkgComposeDslBridge::buildComposeDslContextBridgeDefinition;
 use operit_plugin_sdk::toolpkg::ToolPkgRegistrationBridge::buildToolPkgRegistrationBridgeScript;
 use operit_plugin_sdk::JsExecutionScriptBuilder;
 use operit_plugin_sdk::JsTools::getJsToolsDefinition;
-use operit_util::OperitPaths;
+use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
+use operit_util::RuntimeStorageLayout::RUNTIME_CLEAN_ON_EXIT_DIR_PATH;
 
 /// JavaScript bootstrap module loaded into the QuickJS runtime.
 pub struct JsBootstrapModule {
@@ -112,11 +114,8 @@ pub fn buildRuntimeBootstrapModules() -> Vec<JsBootstrapModule> {
 
 #[allow(non_snake_case)]
 fn buildOperitPathsBootstrapScript() -> String {
-    let cleanOnExitDirJson = serde_json::to_string(
-        &OperitPaths::cleanOnExitPathSdcard()
-            .expect("OperitPaths cleanOnExit path must be available"),
-    )
-    .expect("OperitPaths cleanOnExit path must serialize");
+    let cleanOnExitDirJson = serde_json::to_string(&cleanOnExitHostPath())
+        .expect("clean-on-exit host path must serialize");
     format!(
         r#"
         var OPERIT_CLEAN_ON_EXIT_DIR = {};
@@ -126,6 +125,21 @@ fn buildOperitPathsBootstrapScript() -> String {
         "#,
         cleanOnExitDirJson
     )
+}
+
+/// Resolves the clean-on-exit directory into the active host file-system path.
+#[allow(non_snake_case)]
+fn cleanOnExitHostPath() -> String {
+    let runtimeRoot = defaultRuntimeStorageHost()
+        .runtimeRootDir()
+        .expect("runtime storage host must provide a clean-on-exit root");
+    let relativePath = RUNTIME_CLEAN_ON_EXIT_DIR_PATH
+        .strip_prefix("runtime/")
+        .expect("clean-on-exit path must be rooted under runtime");
+    runtimeRoot
+        .join(relativePath)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 #[allow(non_snake_case)]
@@ -211,11 +225,8 @@ pub fn buildRuntimeBootstrapScript() -> String {
     let executionPreludeJson =
         serde_json::to_string(&JsExecutionScriptBuilder::buildExecutionPreludeSource())
             .unwrap_or_else(|_| "\"\"".to_string());
-    let cleanOnExitDirJson = serde_json::to_string(
-        &OperitPaths::cleanOnExitPathSdcard()
-            .expect("OperitPaths cleanOnExit path must be available"),
-    )
-    .expect("OperitPaths cleanOnExit path must serialize");
+    let cleanOnExitDirJson = serde_json::to_string(&cleanOnExitHostPath())
+        .expect("clean-on-exit host path must serialize");
     format!(
         r#"
         {}

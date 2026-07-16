@@ -9,7 +9,7 @@ use operit_host_api::{
     RuntimeSqliteTransaction, RuntimeStorageEntry, RuntimeStorageHost, SqliteRow, SqliteValue,
 };
 use rusqlite::types::Value;
-use windows_sys::Win32::Foundation::{GetLastError, FILETIME, ERROR_NOT_FOUND};
+use windows_sys::Win32::Foundation::{GetLastError, ERROR_NOT_FOUND, FILETIME};
 use windows_sys::Win32::Security::Credentials::{
     CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
     CRED_TYPE_GENERIC,
@@ -25,14 +25,16 @@ impl WindowsRuntimeStorageHost {
     /// Returns the default Windows runtime data root.
     #[allow(non_snake_case)]
     pub fn defaultRuntimeRoot() -> PathBuf {
-        let appdata = env::var_os("APPDATA").expect("APPDATA is required for Operit2 runtime storage");
+        let appdata =
+            env::var_os("APPDATA").expect("APPDATA is required for Operit2 runtime storage");
         PathBuf::from(appdata).join("Operit2").join("runtime")
     }
 
     /// Returns the default Windows workspace collection root.
     #[allow(non_snake_case)]
     pub fn defaultWorkspaceRoot() -> PathBuf {
-        let appdata = env::var_os("APPDATA").expect("APPDATA is required for Operit2 runtime storage");
+        let appdata =
+            env::var_os("APPDATA").expect("APPDATA is required for Operit2 runtime storage");
         PathBuf::from(appdata).join("Operit2").join("workspaces")
     }
 
@@ -51,8 +53,9 @@ impl WindowsRuntimeStorageHost {
         match segments.as_slice() {
             ["runtime", rest @ ..] => Ok(joinSegments(&self.runtimeRoot, rest)),
             ["workspaces", rest @ ..] => Ok(joinSegments(&self.workspaceRoot, rest)),
+            ["secure", rest @ ..] => legacySecurePath(&self.runtimeRoot, rest),
             _ => Err(HostError::new(format!(
-                "Runtime storage path must start with runtime/ or workspaces/: {path}"
+                "Runtime storage path must start with runtime/, workspaces/, or secure/: {path}"
             ))),
         }
     }
@@ -64,11 +67,30 @@ impl WindowsRuntimeStorageHost {
         if let Ok(relative) = path.strip_prefix(&self.workspaceRoot) {
             return Ok(prefixedPath("workspaces", relative));
         }
+        let secureRoot = legacySecurePath(&self.runtimeRoot, &[])?;
+        if let Ok(relative) = path.strip_prefix(&secureRoot) {
+            return Ok(prefixedPath("secure", relative));
+        }
         Err(HostError::new(format!(
             "Physical path is outside configured runtime and workspace roots: {}",
             path.display()
         )))
     }
+}
+
+/// Resolves the legacy secure storage namespace beside the runtime root.
+fn legacySecurePath(runtimeRoot: &Path, segments: &[&str]) -> HostResult<PathBuf> {
+    let mut resolved = runtimeRoot.parent().map(Path::to_path_buf).ok_or_else(|| {
+        HostError::new(format!(
+            "Runtime root has no parent for secure storage: {}",
+            runtimeRoot.display()
+        ))
+    })?;
+    resolved.push("secure");
+    for segment in segments {
+        resolved.push(segment);
+    }
+    Ok(resolved)
 }
 
 impl RuntimeStorageHost for WindowsRuntimeStorageHost {
@@ -240,9 +262,12 @@ fn prefixedPath(prefix: &str, relative: &Path) -> String {
 
 fn validateSecretKey(key: &str) -> HostResult<String> {
     if key.is_empty()
-        || key
-            .chars()
-            .any(|character| !(character.is_ascii_alphanumeric() || character == '.' || character == '_' || character == '-'))
+        || key.chars().any(|character| {
+            !(character.is_ascii_alphanumeric()
+                || character == '.'
+                || character == '_'
+                || character == '-')
+        })
     {
         return Err(HostError::new(format!("invalid host secret key: {key}")));
     }
@@ -276,8 +301,8 @@ impl RuntimeSqliteHost for WindowsRuntimeStorageHost {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let connection = rusqlite::Connection::open(path)
-            .map_err(|error| HostError::new(error.to_string()))?;
+        let connection =
+            rusqlite::Connection::open(path).map_err(|error| HostError::new(error.to_string()))?;
         Ok(Box::new(RusqliteRuntimeConnection { connection }))
     }
 }

@@ -1,0 +1,14 @@
+[package]
+name = "operit-host-native-filesystem"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+globset = "0.4.18"
+grep-regex = "0.1.14"
+grep-searcher = "0.1.16"
+ignore = "0.4.26"
+operit-host-api = { path = "../../../core/crates/operit-host-api" }
+zip = { version = "2", default-features = false, features = ["deflate"] }
