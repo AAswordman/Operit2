@@ -86,7 +86,7 @@ def main() -> int:
     require_macos_host()
     args.dist_dir.mkdir(parents=True, exist_ok=True)
 
-    run([sys.executable, BUILD_SCRIPTS_DIR / "build_flutter_web_access.py"])
+    run([sys.executable, BUILD_SCRIPTS_DIR / "build_flutter_web_access.py", "--base-href", "/"])
     products = set(args.products)
     if "app" in products:
         build_apple_apps(args.build_name, args.build_number, args.dist_dir, args.include_ios)

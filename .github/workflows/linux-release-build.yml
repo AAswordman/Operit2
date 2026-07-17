@@ -91,7 +91,7 @@ jobs:
         run: python3 tools/build_scripts/check_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
 
       - name: Build Web Access assets
-        run: python3 tools/build_scripts/build_flutter_web_access.py
+        run: python3 tools/build_scripts/build_flutter_web_access.py --base-href /
 
       - name: Build and package Linux app
         if: inputs.products != 'cli'

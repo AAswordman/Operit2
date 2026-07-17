@@ -1055,7 +1055,7 @@ def build_ohos_app(build_name, build_number):
 
 # Builds the shared Web Access bundle consumed by app and CLI packages.
 def build_web_access_bundle():
-    run([sys.executable, BUILD_SCRIPTS_DIR / "build_flutter_web_access.py"])
+    run([sys.executable, BUILD_SCRIPTS_DIR / "build_flutter_web_access.py", "--base-href", "/"])
 
 
 def build_host_app(build_name, build_number):

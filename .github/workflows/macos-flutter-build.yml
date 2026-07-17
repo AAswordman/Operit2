@@ -160,7 +160,7 @@ jobs:
 
       - name: Build Web Access assets
         if: steps.web-build.outputs.needed == 'true'
-        run: python3 tools/build_scripts/build_flutter_web_access.py
+        run: python3 tools/build_scripts/build_flutter_web_access.py --base-href /
 
       - name: Build and package macOS app
         if: inputs.products != 'cli'

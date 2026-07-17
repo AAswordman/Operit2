@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import os
 import shutil
 import sys
@@ -49,6 +50,20 @@ SQL_DIST_DIR = (
     / "sql.js"
     / "dist"
 )
+
+
+# Parses the required deployment base path for the Flutter Web bundle.
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--base-href",
+        required=True,
+        help="Absolute deployment path ending with a slash, such as /Operit2/.",
+    )
+    arguments = parser.parse_args()
+    if not arguments.base_href.startswith("/") or not arguments.base_href.endswith("/"):
+        parser.error("--base-href must start and end with '/'")
+    return arguments
 
 
 # Compiles and minifies the browser runtime bridge into Flutter's web shell.
@@ -195,8 +210,8 @@ def stage_web_runtime_files(wasm_bindgen_bin: Path) -> None:
     )
 
 
-# Builds the shared Web Access Flutter Web bundle.
-def main() -> int:
+# Builds the shared Web Access Flutter Web bundle for one deployment base path.
+def main(base_href: str) -> int:
     os.environ.setdefault("RUSTFLAGS", "-Awarnings")
     typescript_version = os.environ.get("TYPESCRIPT_VERSION", "5.9.3")
     terser_version = os.environ.get("TERSER_VERSION", "5.44.0")
@@ -268,6 +283,8 @@ def main() -> int:
                 "--release",
                 "--no-pub",
                 "--no-wasm-dry-run",
+                "--base-href",
+                base_href,
                 "--output",
                 WEB_ACCESS_BUNDLE_DIR,
             ],
@@ -290,7 +307,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(main())
+        raise SystemExit(main(parse_arguments().base_href))
     except Exception as error:
         print(f"error: {error}", file=sys.stderr)
         raise SystemExit(1)

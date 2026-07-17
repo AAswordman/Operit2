@@ -438,7 +438,7 @@ fvm flutter create --platforms ohos .
 Build the shared Web Access bundle from the repository root:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\build_scripts\build_flutter_web_access.py
+.\.venv\Scripts\python.exe tools\build_scripts\build_flutter_web_access.py --base-href /
 ```
 
 The remote access bundle is written to `apps/web_access/build/bundle` and

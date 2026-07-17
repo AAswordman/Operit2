@@ -1,0 +1,82 @@
+name: Deploy Web Experience
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTFLAGS: -Awarnings
+      RUST_TOOLCHAIN_VERSION: 1.95.0
+      FVM_VERSION: 4.1.2
+      TYPESCRIPT_VERSION: 5.9.3
+      WASM_BINDGEN_VERSION: 0.2.122
+      WASI_SDK_VERSION: "20.0"
+      QUICKJS_WASM_SYS_WASI_SDK_MAJOR_VERSION: 20
+      QUICKJS_WASM_SYS_WASI_SDK_MINOR_VERSION: 0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Install bootstrap Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install FVM
+        run: |
+          dart pub global activate fvm "$FVM_VERSION"
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+
+      - name: Install project Flutter SDK
+        working-directory: apps/flutter/app
+        run: fvm install --skip-pub-get
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: wasm32-unknown-unknown
+
+      - name: Build Web experience
+        run: python3 tools/build_scripts/build_flutter_web_access.py --base-href "${{ steps.pages.outputs.base_path }}/"
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web_access/build/bundle
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Deploy GitHub Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@v4

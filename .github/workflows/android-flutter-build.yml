@@ -109,7 +109,7 @@ jobs:
 
       - name: Build Web Access assets
         shell: pwsh
-        run: python tools/build_scripts/build_flutter_web_access.py
+        run: python tools/build_scripts/build_flutter_web_access.py --base-href /
 
       - name: Build and package Android app
         shell: pwsh

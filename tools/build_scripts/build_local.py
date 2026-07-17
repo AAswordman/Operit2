@@ -102,7 +102,14 @@ def main() -> int:
         return 0
 
     os.environ["RUSTFLAGS"] = "-Awarnings"
-    run([sys.executable, os.path.join(BUILD_SCRIPTS_DIR, "build_flutter_web_access.py")])
+    run(
+        [
+            sys.executable,
+            os.path.join(BUILD_SCRIPTS_DIR, "build_flutter_web_access.py"),
+            "--base-href",
+            "/",
+        ]
+    )
     if args.products in ("app", "all"):
         build_local_app(platform_name, args.enforce_lockfile)
         if args.include_ios:
