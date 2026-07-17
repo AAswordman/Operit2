@@ -1,9 +1,7 @@
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use operit_host_api::{WebVisitHost, WebVisitRequest, WebVisitResult};
+use operit_host_api::{FileSystemHost, WebVisitHost, WebVisitRequest, WebVisitResult};
 use url::Url;
 
 use operit_tools::tools::ToolResultDataClasses::{
@@ -18,6 +16,7 @@ use operit_tools::ToolExecutionManager::{
 /// Web visit tool backed by a host-provided page fetcher and extractor.
 pub struct StandardWebVisitTool {
     pub webVisitHost: Option<Arc<dyn WebVisitHost>>,
+    fileSystemHost: Arc<dyn FileSystemHost>,
 }
 
 static VISIT_CACHE: OnceLock<Mutex<HashMap<String, VisitWebResultData>>> = OnceLock::new();
@@ -44,9 +43,15 @@ fn webVisitResultToVisitData(value: WebVisitResult) -> VisitWebResultData {
 }
 
 impl StandardWebVisitTool {
-    /// Creates a web visit tool from an optional host implementation.
-    pub fn new(webVisitHost: Option<Arc<dyn WebVisitHost>>) -> Self {
-        Self { webVisitHost }
+    /// Creates a web visit tool from host-provided visit and file services.
+    pub fn new(
+        webVisitHost: Option<Arc<dyn WebVisitHost>>,
+        fileSystemHost: Arc<dyn FileSystemHost>,
+    ) -> Self {
+        Self {
+            webVisitHost,
+            fileSystemHost,
+        }
     }
 
     #[allow(non_snake_case)]
@@ -99,13 +104,16 @@ impl StandardWebVisitTool {
     }
 
     #[allow(non_snake_case)]
-    fn persistVisitContentIfNeeded(&self, resultData: VisitWebResultData) -> VisitWebResultData {
+    fn persistVisitContentIfNeeded(
+        &self,
+        resultData: VisitWebResultData,
+    ) -> Result<VisitWebResultData, String> {
         if resultData.content.len() <= MAX_INLINE_VISIT_CONTENT_CHARS {
-            return resultData;
+            return Ok(resultData);
         }
-        let outputFile = writeVisitResultToFile(&resultData);
+        let outputFile = writeVisitResultToFile(self.fileSystemHost.as_ref(), &resultData)?;
         let preview = buildInlineContentPreview(&resultData.content, &outputFile);
-        resultData.copy_with_preview(preview, outputFile)
+        Ok(resultData.copy_with_preview(preview, outputFile))
     }
 
     #[allow(non_snake_case)]
@@ -237,7 +245,16 @@ impl StandardWebVisitTool {
                 let visitKey = uuid::Uuid::new_v4().to_string();
                 let mut stored = resultData.clone();
                 stored.visitKey = Some(visitKey.clone());
-                let stored = self.persistVisitContentIfNeeded(stored);
+                let stored = match self.persistVisitContentIfNeeded(stored) {
+                    Ok(stored) => stored,
+                    Err(error) => {
+                        return toolError(
+                            tool,
+                            String::new(),
+                            format!("Error storing web visit content: {error}"),
+                        )
+                    }
+                };
                 Self::putCachedVisitResult(stored.clone());
                 toolResultFromVisitWebData(tool, stored)
             }
@@ -324,11 +341,14 @@ fn parseBoolean(raw: Option<&str>) -> bool {
 }
 
 #[allow(non_snake_case)]
-fn writeVisitResultToFile(resultData: &VisitWebResultData) -> PathBuf {
-    let mut outputDir = std::env::temp_dir();
-    outputDir.push("operit2");
-    outputDir.push("visit_web");
-    let _ = fs::create_dir_all(&outputDir);
+fn writeVisitResultToFile(
+    fileSystemHost: &dyn FileSystemHost,
+    resultData: &VisitWebResultData,
+) -> Result<String, String> {
+    const VISIT_OUTPUT_DIRECTORY: &str = "/app/data/temp/visit_web";
+    fileSystemHost
+        .makeDirectory(VISIT_OUTPUT_DIRECTORY, true)
+        .map_err(|error| error.to_string())?;
     let hostRaw = Url::parse(&resultData.url)
         .ok()
         .and_then(|url| url.host_str().map(str::to_string))
@@ -343,40 +363,42 @@ fn writeVisitResultToFile(resultData: &VisitWebResultData) -> PathBuf {
         })
         .collect::<String>();
     let host = hostRaw.trim_matches('_').to_string();
-    let filePath = outputDir.join(format!(
-        "visit_web_{}_{}_{}.txt",
+    let filePath = format!(
+        "{VISIT_OUTPUT_DIRECTORY}/visit_web_{}_{}_{}.txt",
         host,
         operit_host_api::TimeUtils::currentTimeMillis(),
         &uuid::Uuid::new_v4().to_string()[..8]
-    ));
+    );
     let text = StandardWebVisitTool::buildFullVisitResultText(resultData);
-    let _ = fs::write(&filePath, text);
-    filePath
+    fileSystemHost
+        .writeFile(&filePath, &text, false)
+        .map_err(|error| error.to_string())?;
+    Ok(filePath)
 }
 
 #[allow(non_snake_case)]
-fn buildInlineContentPreview(fullContent: &str, savedPath: &PathBuf) -> String {
+fn buildInlineContentPreview(fullContent: &str, savedPath: &str) -> String {
     let preview = fullContent
         .chars()
         .take(MAX_INLINE_VISIT_CONTENT_PREVIEW_CHARS)
         .collect::<String>();
     format!(
         "{preview}\n\n[Content truncated. Full content saved to file: {}]",
-        savedPath.display()
+        savedPath
     )
 }
 
 trait VisitWebResultPreview {
     /// Replaces full content with its persisted inline preview metadata.
-    fn copy_with_preview(self, preview: String, savedPath: PathBuf) -> Self;
+    fn copy_with_preview(self, preview: String, savedPath: String) -> Self;
 }
 
 impl VisitWebResultPreview for VisitWebResultData {
     /// Replaces full content with its persisted inline preview metadata.
-    fn copy_with_preview(mut self, preview: String, savedPath: PathBuf) -> Self {
+    fn copy_with_preview(mut self, preview: String, savedPath: String) -> Self {
         let originalLength = self.content.chars().count();
         self.content = preview;
-        self.contentSavedTo = Some(savedPath.display().to_string());
+        self.contentSavedTo = Some(savedPath);
         self.contentTruncated = true;
         self.originalContentLength = Some(originalLength);
         self

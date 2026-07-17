@@ -20,7 +20,10 @@ impl VoiceServiceFactory {
                 let host = context
                     .and_then(|context| context.ttsSynthesisHost.clone())
                     .ok_or_else(|| "TtsSynthesisHost is required for SYSTEM_TTS".to_string())?;
-                Ok(Box::new(SystemVoiceProvider::new(host)))
+                let fileSystemHost = context
+                    .and_then(|context| context.fileSystemHost.clone())
+                    .ok_or_else(|| "FileSystemHost is required for SYSTEM_TTS".to_string())?;
+                Ok(Box::new(SystemVoiceProvider::new(host, fileSystemHost)))
             }
             TtsProviderType::LOCAL_MODEL => Err(
                 "LOCAL_MODEL TTS must be created by the runtime local model service".to_string(),

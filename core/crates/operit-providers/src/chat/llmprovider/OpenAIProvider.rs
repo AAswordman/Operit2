@@ -3,7 +3,6 @@ use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 use uuid::Uuid;
@@ -11,7 +10,7 @@ use uuid::Uuid;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
-    SendMessageRequest, TokenCounts,
+    SendMessageRequest, SharedAiResponseStream, TokenCounts,
 };
 use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
 use operit_model::ModelParameter::ModelParameter;
@@ -19,10 +18,9 @@ use operit_model::ModelParameter::ParameterValueType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
-    empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike, TextStreamEvent,
-    TextStreamEventType,
+    with_event_channel_shared, RevisableTextStreamLike, TextStreamEvent, TextStreamEventType,
 };
-use operit_util::stream::Stream::FnStream;
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ChatUtils::ChatUtils;
 use operit_util::TokenCacheManager::TokenCacheManager;
@@ -753,7 +751,7 @@ impl OpenAIProvider {
         &self,
         response: reqwest::Response,
         on_tool_invocation: Option<&Arc<dyn Fn(String) + Send + Sync>>,
-        tx: &std::sync::mpsc::Sender<String>,
+        output: &SharedAiResponseStream,
         emitter: &mut StreamEmitter,
     ) -> Result<(), AiServiceError> {
         let mut state = StreamingState {
@@ -792,7 +790,7 @@ impl OpenAIProvider {
                     let emitted_before = state.chunks.len();
                     self.process_streaming_line(&line, &mut state, on_tool_invocation)?;
                     for chunk in state.chunks[emitted_before..].iter().cloned() {
-                        let _ = tx.send(chunk.clone());
+                        output.upstream.emit(chunk.clone());
                         emitter.emit_chunk(&chunk);
                     }
                 }
@@ -803,7 +801,7 @@ impl OpenAIProvider {
                 let emitted_before = state.chunks.len();
                 self.process_streaming_line(&pending, &mut state, on_tool_invocation)?;
                 for chunk in state.chunks[emitted_before..].iter().cloned() {
-                    let _ = tx.send(chunk.clone());
+                    output.upstream.emit(chunk.clone());
                     emitter.emit_chunk(&chunk);
                 }
             }
@@ -1628,194 +1626,112 @@ impl OpenAIProvider {
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         self.begin_request();
         if request.stream {
-            let mut provider = self.clone();
-            let event_channel = empty_revisable_event_channel();
-            let stream_event_channel = event_channel.clone();
-            let mut request_parts = Some((
-                self.api_endpoint.clone(),
-                self.headers()?,
-                request_body,
-                request.enable_retry,
-                request.on_non_fatal_error.clone(),
-                request.on_tool_invocation.clone(),
-            ));
-            let cold_stream = FnStream::new(move |emit| {
-                let (
-                    api_endpoint,
-                    headers,
-                    request_body,
-                    enable_retry,
-                    on_non_fatal_error,
-                    on_tool_invocation,
-                ) = request_parts
-                    .take()
-                    .expect("OpenAIProvider stream must only be collected once");
-                let (tx, rx) = channel::<String>();
-                let worker_provider = provider.clone();
-                let worker_event_channel = stream_event_channel.clone();
-                let worker = std::thread::spawn(move || {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .expect("tokio runtime must build for OpenAIProvider stream");
-                    let result: Result<(), AiServiceError> = runtime.block_on(async {
+            let output = with_event_channel_shared(
+                operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
+                operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
+            );
+            let producer = output.clone();
+            let provider = self.clone();
+            let api_endpoint = self.api_endpoint.clone();
+            let headers = self.headers()?;
+            let enable_retry = request.enable_retry;
+            let on_non_fatal_error = request.on_non_fatal_error.clone();
+            let on_tool_invocation = request.on_tool_invocation.clone();
+            defaultHostRuntimeTaskSchedulerHost()
+                .scheduleHostRuntimeAsyncTask(
+                    "openai-response-stream",
+                    Box::pin(async move {
                         let request_savepoint_id = format!("attempt_{}", Uuid::new_v4().simple());
-                        let mut emitter = StreamEmitter::new(worker_event_channel.clone());
+                        let mut emitter = StreamEmitter::new(producer.event_channel.clone());
                         emitter.emit_savepoint(&request_savepoint_id);
-                        let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
                         let mut retryCount = 0;
-
                         loop {
-                            let client = reqwest::Client::new();
-                            let response = match worker_provider
+                            let response = provider
                                 .sendHttpRequest(
-                                    client
+                                    reqwest::Client::new()
                                         .post(&api_endpoint)
                                         .headers(headers.clone())
-                                        .json(&request_body.clone()),
-                                )
-                                .await
-                            {
-                                Ok(response) => response,
-                                Err(AiServiceError::RequestCancelled) => {
-                                    break Err(AiServiceError::RequestCancelled);
-                                }
-                                Err(error) => {
-                                    let errorText = retry_error_text(&error);
-                                    if !enable_retry {
-                                        break Err(error);
-                                    }
-                                    let newRetryCount = retryCount + 1;
-                                    if newRetryCount > maxRetries {
-                                        break Err(error);
-                                    }
-                                    let _ = emitter.emit_rollback(&request_savepoint_id);
-                                    if let Some(on_non_fatal_error) = on_non_fatal_error.as_ref() {
-                                        on_non_fatal_error(retry_message(
-                                            &errorText,
-                                            newRetryCount,
-                                        ));
-                                    }
-                                    worker_provider.delayRetryOrCancel(newRetryCount).await?;
-                                    retryCount = newRetryCount;
-                                    continue;
-                                }
-                            };
-
-                            let status = response.status();
-                            if !status.is_success() {
-                                let message = worker_provider.readResponseText(response).await?;
-                                let error =
-                                    AiServiceError::RequestFailed(format!("{status}: {message}"));
-                                let errorText = retry_error_text(&error);
-                                if !enable_retry {
-                                    break Err(error);
-                                }
-                                let newRetryCount = retryCount + 1;
-                                if newRetryCount > maxRetries {
-                                    break Err(error);
-                                }
-                                let _ = emitter.emit_rollback(&request_savepoint_id);
-                                if let Some(on_non_fatal_error) = on_non_fatal_error.as_ref() {
-                                    on_non_fatal_error(retry_message(&errorText, newRetryCount));
-                                }
-                                worker_provider.delayRetryOrCancel(newRetryCount).await?;
-                                retryCount = newRetryCount;
-                                continue;
-                            }
-
-                            let result = worker_provider
-                                .read_streaming_response(
-                                    response,
-                                    on_tool_invocation.as_ref(),
-                                    &tx,
-                                    &mut emitter,
+                                        .json(&request_body),
                                 )
                                 .await;
+                            let result = match response {
+                                Ok(response) if response.status().is_success() => provider
+                                    .read_streaming_response(
+                                        response,
+                                        on_tool_invocation.as_ref(),
+                                        &producer,
+                                        &mut emitter,
+                                    )
+                                    .await,
+                                Ok(response) => Err(AiServiceError::RequestFailed(format!(
+                                    "{}: {}",
+                                    response.status(),
+                                    provider.readResponseText(response).await.unwrap_or_default()
+                                ))),
+                                Err(error) => Err(error),
+                            };
                             match result {
-                                Ok(()) => break Ok(()),
-                                Err(AiServiceError::RequestCancelled) => {
-                                    let _ = emitter.emit_rollback(&request_savepoint_id);
-                                    break Err(AiServiceError::RequestCancelled);
-                                }
+                                Ok(()) | Err(AiServiceError::RequestCancelled) => break,
                                 Err(error) => {
-                                    let errorText = retry_error_text(&error);
-                                    if !enable_retry {
-                                        let _ = emitter.emit_rollback(&request_savepoint_id);
-                                        break Err(error);
-                                    }
-                                    let newRetryCount = retryCount + 1;
-                                    if newRetryCount > maxRetries {
-                                        let _ = emitter.emit_rollback(&request_savepoint_id);
-                                        break Err(error);
+                                    retryCount += 1;
+                                    if !enable_retry
+                                        || retryCount
+                                            > super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS
+                                    {
+                                        break;
                                     }
                                     let _ = emitter.emit_rollback(&request_savepoint_id);
-                                    if let Some(on_non_fatal_error) = on_non_fatal_error.as_ref() {
-                                        on_non_fatal_error(retry_message(
-                                            &errorText,
-                                            newRetryCount,
-                                        ));
+                                    if let Some(callback) = on_non_fatal_error.as_ref() {
+                                        callback(retry_message(&retry_error_text(&error), retryCount));
                                     }
-                                    worker_provider.delayRetryOrCancel(newRetryCount).await?;
-                                    retryCount = newRetryCount;
+                                    if provider.delayRetryOrCancel(retryCount).await.is_err() {
+                                        break;
+                                    }
                                 }
                             }
                         }
-                    });
-                    let _ = result;
-                    worker_event_channel.close();
-                });
-                while let Ok(chunk) = rx.recv() {
-                    emit(chunk);
-                }
-                let _ = worker.join();
-            });
-            return Ok(Box::new(with_event_channel(cold_stream, event_channel)));
+                        producer.upstream.close();
+                        producer.event_channel.close();
+                    }),
+                )
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            return Ok(Box::new(output));
         }
 
+        let output = with_event_channel_shared(
+            operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
+            operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
+        );
+        let producer = output.clone();
         let provider = self.clone();
-        let event_channel = empty_revisable_event_channel();
-        let stream_event_channel = event_channel.clone();
-        let mut request_parts = Some((
-            self.api_endpoint.clone(),
-            self.headers()?,
-            request_body,
-            request.enable_retry,
-            request.on_non_fatal_error.clone(),
-        ));
-        let cold_stream = FnStream::new(move |emit| {
-            let (api_endpoint, headers, request_body, enable_retry, on_non_fatal_error) =
-                request_parts
-                    .take()
-                    .expect("OpenAIProvider non-stream request must only be collected once");
-            let (tx, rx) = channel::<String>();
-            let worker_provider = provider.clone();
-            let worker_event_channel = stream_event_channel.clone();
-            let worker = std::thread::spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("tokio runtime must build for OpenAIProvider non-stream request");
-                let result = runtime.block_on(worker_provider.sendNonStreamingPreparedRequest(
-                    api_endpoint,
-                    headers,
-                    request_body,
-                    enable_retry,
-                    on_non_fatal_error,
-                ));
-                if let Ok(chunks) = result {
-                    for chunk in chunks {
-                        let _ = tx.send(chunk);
+        let api_endpoint = self.api_endpoint.clone();
+        let headers = self.headers()?;
+        let enable_retry = request.enable_retry;
+        let on_non_fatal_error = request.on_non_fatal_error.clone();
+        defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask(
+                "openai-response",
+                Box::pin(async move {
+                    if let Ok(chunks) = provider
+                        .sendNonStreamingPreparedRequest(
+                            api_endpoint,
+                            headers,
+                            request_body,
+                            enable_retry,
+                            on_non_fatal_error,
+                        )
+                        .await
+                    {
+                        for chunk in chunks {
+                            producer.upstream.emit(chunk);
+                        }
                     }
-                }
-                worker_event_channel.close();
-            });
-            while let Ok(chunk) = rx.recv() {
-                emit(chunk);
-            }
-            let _ = worker.join();
-        });
-        Ok(Box::new(with_event_channel(cold_stream, event_channel)))
+                    producer.upstream.close();
+                    producer.event_channel.close();
+                }),
+            )
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        Ok(Box::new(output))
     }
 
     async fn sendNonStreamingPreparedRequest(

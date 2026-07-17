@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -138,15 +138,12 @@ impl ModelConfigConnectionTester {
 
             if configForTest.capabilities.directImage {
                 Self::runCase(&mut items, ModelConnectionTestType::IMAGE, || async {
-                    let imagePath = Self::copyAssetToCache(
-                        &rootDir,
-                        "1.jpg",
+                    let imageId = ImagePoolManager::add_image_bytes(
                         include_bytes!("../../../assets/test/1.jpg"),
-                    )
-                    .map_err(|error| error.to_string())?;
-                    let imageId = ImagePoolManager::add_image(&imagePath.to_string_lossy(), None);
+                        Some("image/jpeg"),
+                        None,
+                    );
                     if imageId == "error" {
-                        let _ = std::fs::remove_file(&imagePath);
                         return Err("Failed to create test image".to_string());
                     }
                     let prompt = format!(
@@ -171,7 +168,6 @@ impl ModelConfigConnectionTester {
                         })
                         .map_err(|error| error.to_string());
                     ImagePoolManager::remove_image(&imageId);
-                    let _ = std::fs::remove_file(&imagePath);
                     result
                 })
                 .await;
@@ -179,16 +175,11 @@ impl ModelConfigConnectionTester {
 
             if configForTest.capabilities.directAudio {
                 Self::runCase(&mut items, ModelConnectionTestType::AUDIO, || async {
-                    let audioPath = Self::copyAssetToCache(
-                        &rootDir,
-                        "1.mp3",
+                    let audioId = MediaPoolManager::add_media_bytes(
                         include_bytes!("../../../assets/test/1.mp3"),
-                    )
-                    .map_err(|error| error.to_string())?;
-                    let audioId =
-                        MediaPoolManager::add_media(&audioPath.to_string_lossy(), "audio/mpeg");
+                        "audio/mpeg",
+                    );
                     if audioId == "error" {
-                        let _ = std::fs::remove_file(&audioPath);
                         return Err("Failed to create test audio".to_string());
                     }
                     let prompt = format!(
@@ -213,7 +204,6 @@ impl ModelConfigConnectionTester {
                         })
                         .map_err(|error| error.to_string());
                     MediaPoolManager::remove_media(&audioId);
-                    let _ = std::fs::remove_file(&audioPath);
                     result
                 })
                 .await;
@@ -221,16 +211,11 @@ impl ModelConfigConnectionTester {
 
             if configForTest.capabilities.directVideo {
                 Self::runCase(&mut items, ModelConnectionTestType::VIDEO, || async {
-                    let videoPath = Self::copyAssetToCache(
-                        &rootDir,
-                        "1.mp4",
+                    let videoId = MediaPoolManager::add_media_bytes(
                         include_bytes!("../../../assets/test/1.mp4"),
-                    )
-                    .map_err(|error| error.to_string())?;
-                    let videoId =
-                        MediaPoolManager::add_media(&videoPath.to_string_lossy(), "video/mp4");
+                        "video/mp4",
+                    );
                     if videoId == "error" {
-                        let _ = std::fs::remove_file(&videoPath);
                         return Err("Failed to create test video".to_string());
                     }
                     let prompt = format!(
@@ -255,7 +240,6 @@ impl ModelConfigConnectionTester {
                         })
                         .map_err(|error| error.to_string());
                     MediaPoolManager::remove_media(&videoId);
-                    let _ = std::fs::remove_file(&videoPath);
                     result
                 })
                 .await;
@@ -314,17 +298,5 @@ impl ModelConfigConnectionTester {
             default: None,
         }]);
         tool
-    }
-
-    fn copyAssetToCache(
-        rootDir: &Path,
-        fileName: &str,
-        bytes: &[u8],
-    ) -> Result<PathBuf, std::io::Error> {
-        let dir = rootDir.join("cache").join("model_connection_test");
-        std::fs::create_dir_all(&dir)?;
-        let path = dir.join(format!("{}_{}", uuid::Uuid::new_v4(), fileName));
-        std::fs::write(&path, bytes)?;
-        Ok(path)
     }
 }

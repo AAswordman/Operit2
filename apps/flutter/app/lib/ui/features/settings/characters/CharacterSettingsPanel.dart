@@ -8,7 +8,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
-import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
@@ -39,17 +38,10 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
 
   Future<_CharacterSettingsData>? _future;
 
-  GeneratedRepositoryUserMarkdownRepositoryCoreProxy _userMarkdownRepository(
+  GeneratedApplicationUserMarkdownRepositoryCoreProxy _userMarkdownRepository(
     String ownerKey,
   ) {
-    return GeneratedRepositoryUserMarkdownRepositoryCoreProxy(
-      widget.clients.bridge,
-      CoreObjectPath(<String>[
-        'repository',
-        'userMarkdownRepository',
-        ownerKey,
-      ]),
-    );
+    return widget.clients.application.userMarkdownRepository(ownerKey: ownerKey);
   }
 
   @override

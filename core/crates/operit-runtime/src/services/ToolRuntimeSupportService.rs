@@ -204,7 +204,12 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
     /// Returns AI-visible skill package metadata.
     #[allow(non_snake_case)]
     fn aiVisibleSkillPackages(&self) -> Vec<RuntimeSkillCatalogEntry> {
-        SkillManager::fromDefaultPaths()
+        SkillManager::fromDefaultPaths(
+            self.hostManager
+                .fileSystemHost
+                .clone()
+                .expect("ToolRuntimeSupportService requires a FileSystemHost"),
+        )
             .getAvailableSkills()
             .into_iter()
             .filter(|(name, _)| SkillVisibilityPreferences::getInstance().isSkillVisibleToAi(name))

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -35,7 +34,7 @@ struct CookieRecord {
 /// Defines built-in HTTP tools and host bindings.
 pub struct StandardHttpTools {
     httpHost: Arc<dyn HttpHost>,
-    fileSystemHost: Option<Arc<dyn FileSystemHost>>,
+    fileSystemHost: Arc<dyn FileSystemHost>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,10 +57,7 @@ const USER_AGENT_VALUE: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleW
 
 impl StandardHttpTools {
     /// Creates HTTP tools backed by host HTTP and file-system services.
-    pub fn new(
-        httpHost: Arc<dyn HttpHost>,
-        fileSystemHost: Option<Arc<dyn FileSystemHost>>,
-    ) -> Self {
+    pub fn new(httpHost: Arc<dyn HttpHost>, fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
         Self {
             httpHost,
             fileSystemHost,
@@ -372,13 +368,12 @@ impl StandardHttpTools {
                     "Error parsing file data: field_name and file_path are required".to_string(),
                 );
             }
-            let content = match &self.fileSystemHost {
-                Some(host) => host.readFileBytes(filePath).map_err(|error| {
+            let content = self
+                .fileSystemHost
+                .readFileBytes(filePath)
+                .map_err(|error| {
                     format!("File does not exist or cannot be read: {filePath}: {error}")
-                })?,
-                None => fs::read(filePath)
-                    .map_err(|_| format!("File does not exist or cannot be read: {filePath}"))?,
-            };
+                })?;
             parts.push(HttpFilePart {
                 fieldName: fieldName.to_string(),
                 fileName,

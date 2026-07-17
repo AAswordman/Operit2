@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::RuntimeStorageHost;
 use operit_util::RuntimeStorageLayout::{
     MODEL_CONFIGS_PREFERENCES_PATH, TTS_CONFIGS_PREFERENCES_PATH,
@@ -1601,7 +1602,6 @@ struct PreferencesDataStoreChangeSignal {
     version: Mutex<u64>,
     changed: Condvar,
     subscribers: Mutex<PreferencesDataStoreFlowSubscribers>,
-    dispatcherStarted: AtomicBool,
 }
 
 struct PreferencesDataStoreFlowSubscribers {
@@ -1839,6 +1839,8 @@ impl PreferencesDataStore {
             .expect("PreferencesDataStore version mutex must not be poisoned");
         *version += 1;
         signal.changed.notify_all();
+        drop(version);
+        notifyPreferencesDataStoreSubscribers(&signal);
         Ok(())
     }
 
@@ -2015,6 +2017,8 @@ impl PreferencesDataStore {
             .expect("PreferencesDataStore version mutex must not be poisoned");
         *version += 1;
         self.changeSignal.changed.notify_all();
+        drop(version);
+        notifyPreferencesDataStoreSubscribers(&self.changeSignal);
     }
 }
 
@@ -2094,7 +2098,6 @@ fn preferencesDataStoreChangeSignal(path: &Path) -> Arc<PreferencesDataStoreChan
             nextId: 0,
             callbacks: HashMap::new(),
         }),
-        dispatcherStarted: AtomicBool::new(false),
     });
     signals.insert(path.to_path_buf(), Arc::downgrade(&signal));
     signal
@@ -2116,7 +2119,6 @@ fn preferencesDataStoreFlowObservation(
                 subscribers.callbacks.insert(id, callback);
                 id
             };
-            startPreferencesDataStoreFlowDispatcher(Arc::clone(&signal));
             FlowObservationSubscription {
                 _guard: Box::new(PreferencesDataStoreFlowSubscription {
                     signal: Arc::downgrade(&signal),
@@ -2128,76 +2130,30 @@ fn preferencesDataStoreFlowObservation(
 }
 
 #[allow(non_snake_case)]
-fn startPreferencesDataStoreFlowDispatcher(signal: Arc<PreferencesDataStoreChangeSignal>) {
-    if signal.dispatcherStarted.swap(true, Ordering::SeqCst) {
-        return;
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    std::thread::spawn(move || {
-        let mut observedVersion = *signal
-            .version
-            .lock()
-            .expect("PreferencesDataStore version mutex must not be poisoned");
-
-        loop {
-            let mut versionGuard = signal
-                .version
-                .lock()
-                .expect("PreferencesDataStore version mutex must not be poisoned");
-            while *versionGuard == observedVersion
-                && !preferencesDataStoreFlowSubscribersEmpty(&signal)
-            {
-                versionGuard = signal
-                    .changed
-                    .wait(versionGuard)
-                    .expect("PreferencesDataStore version mutex must not be poisoned");
-            }
-
-            if preferencesDataStoreFlowDispatcherShouldExit(&signal) {
-                return;
-            }
-
-            observedVersion = *versionGuard;
-            drop(versionGuard);
-
-            let callbacks = signal
-                .subscribers
-                .lock()
-                .expect("PreferencesDataStore subscribers mutex must not be poisoned")
-                .callbacks
-                .values()
-                .cloned()
-                .collect::<Vec<_>>();
-            for callback in callbacks {
-                callback();
-            }
-        }
-    });
-}
-
+/// Schedules every active preference observer after a successful persistence change.
 #[allow(non_snake_case)]
-fn preferencesDataStoreFlowSubscribersEmpty(signal: &PreferencesDataStoreChangeSignal) -> bool {
-    signal
+fn notifyPreferencesDataStoreSubscribers(signal: &PreferencesDataStoreChangeSignal) {
+    let callbacks = signal
         .subscribers
         .lock()
         .expect("PreferencesDataStore subscribers mutex must not be poisoned")
         .callbacks
-        .is_empty()
-}
-
-#[allow(non_snake_case)]
-fn preferencesDataStoreFlowDispatcherShouldExit(signal: &PreferencesDataStoreChangeSignal) -> bool {
-    let subscribers = signal
-        .subscribers
-        .lock()
-        .expect("PreferencesDataStore subscribers mutex must not be poisoned");
-    if subscribers.callbacks.is_empty() {
-        signal.dispatcherStarted.store(false, Ordering::SeqCst);
-        true
-    } else {
-        false
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    if callbacks.is_empty() {
+        return;
     }
+    defaultHostRuntimeTaskSchedulerHost()
+        .scheduleHostRuntimeTask(
+            "operit-preferences-observers",
+            Box::new(move || {
+                for callback in callbacks {
+                    callback();
+                }
+            }),
+        )
+        .expect("preferences observer task must be scheduled");
 }
 
 #[cfg(test)]

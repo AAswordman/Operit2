@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
-use std::thread;
 use std::time::Duration;
 
 pub struct SlidingWindowRateLimiter {
@@ -52,13 +51,14 @@ impl SlidingWindowRateLimiter {
         }
     }
 
-    pub fn acquire(&self) {
+    /// Waits asynchronously until the next request fits inside the configured window.
+    pub async fn acquire(&self) {
         loop {
             let retryAfterMs = self.tryAcquire(now_ms());
             if retryAfterMs <= 0 {
                 return;
             }
-            thread::sleep(Duration::from_millis(retryAfterMs as u64));
+            tokio::time::sleep(Duration::from_millis(retryAfterMs as u64)).await;
         }
     }
 }

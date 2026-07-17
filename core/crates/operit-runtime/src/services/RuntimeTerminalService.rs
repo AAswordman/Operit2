@@ -1,11 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::thread;
-use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use operit_host_api::{TerminalHost, TerminalSessionListEntry};
+use operit_host_api::{HostRuntimeTaskSchedulerHost, TerminalHost, TerminalSessionListEntry};
 use operit_store::{
     PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow},
     RuntimeStorePaths::RuntimeStorePaths,
@@ -130,36 +128,65 @@ fn close_terminal_pty_output_stream(sessionId: &str) {
 
 fn start_terminal_pty_output_reader(
     terminalHost: Arc<dyn TerminalHost>,
+    taskScheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
     sessionId: String,
     stream: MutableSharedStreamImpl<String>,
 ) {
-    thread::spawn(move || loop {
-        match terminalHost.readPtySession(&sessionId) {
-            Ok(data) => {
-                if !data.is_empty() {
-                    stream.emit(STANDARD.encode(data));
-                }
-            }
-            Err(_) => {
-                close_terminal_pty_output_stream(&sessionId);
-                break;
-            }
-        }
+    let scheduledTaskScheduler = taskScheduler.clone();
+    taskScheduler
+        .scheduleHostRuntimeTask(
+            "operit-terminal-pty-output",
+            Box::new(move || {
+                poll_terminal_pty_output(terminalHost, scheduledTaskScheduler, sessionId, stream);
+            }),
+        )
+        .expect("terminal PTY output task must be scheduled");
+}
 
-        match terminalHost.pollPtyExitCode(&sessionId) {
-            Ok(Some(_)) => {
-                publish_terminal_sessions(&terminalHost)
-                    .expect("TerminalHost.listSessions must succeed after PTY exit");
-                close_terminal_pty_output_stream(&sessionId);
-                break;
-            }
-            Ok(None) => thread::sleep(Duration::from_millis(40)),
-            Err(_) => {
-                close_terminal_pty_output_stream(&sessionId);
-                break;
-            }
+/// Reads one PTY output batch and schedules the next host-owned polling turn.
+fn poll_terminal_pty_output(
+    terminalHost: Arc<dyn TerminalHost>,
+    taskScheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
+    sessionId: String,
+    stream: MutableSharedStreamImpl<String>,
+) {
+    match terminalHost.readPtySession(&sessionId) {
+        Ok(data) if !data.is_empty() => stream.emit(STANDARD.encode(data)),
+        Ok(_) => {}
+        Err(_) => {
+            close_terminal_pty_output_stream(&sessionId);
+            return;
         }
-    });
+    }
+
+    match terminalHost.pollPtyExitCode(&sessionId) {
+        Ok(Some(_)) => {
+            publish_terminal_sessions(&terminalHost)
+                .expect("TerminalHost.listSessions must succeed after PTY exit");
+            close_terminal_pty_output_stream(&sessionId);
+        }
+        Ok(None) => {
+            let nextTerminalHost = terminalHost.clone();
+            let nextTaskScheduler = taskScheduler.clone();
+            let nextSessionId = sessionId.clone();
+            let nextStream = stream.clone();
+            taskScheduler
+                .scheduleDelayedHostRuntimeTask(
+                    "operit-terminal-pty-output",
+                    40,
+                    Box::new(move || {
+                        poll_terminal_pty_output(
+                            nextTerminalHost,
+                            nextTaskScheduler,
+                            nextSessionId,
+                            nextStream,
+                        );
+                    }),
+                )
+                .expect("terminal PTY output delay must be scheduled");
+        }
+        Err(_) => close_terminal_pty_output_stream(&sessionId),
+    }
 }
 
 impl RuntimeTerminalService {
@@ -313,7 +340,17 @@ impl RuntimeTerminalService {
                 stream: stream.clone(),
             },
         );
-        start_terminal_pty_output_reader(self.terminalHost.clone(), sessionId, stream.clone());
+        let taskScheduler = self
+            .context
+            .hostRuntimeTaskSchedulerHost
+            .clone()
+            .expect("RuntimeTerminalService requires a HostRuntimeTaskSchedulerHost");
+        start_terminal_pty_output_reader(
+            self.terminalHost.clone(),
+            taskScheduler,
+            sessionId,
+            stream.clone(),
+        );
         stream
     }
 }

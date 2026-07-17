@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::thread;
 
 use operit_store::PreferencesDataStore::mutableStateFlow;
 use operit_store::PreferencesDataStore::MutableStateFlow;
@@ -33,9 +32,10 @@ use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
-use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
+use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_tools::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, ToolExposureMode as ResolvedToolExposureMode,
 };
@@ -1075,49 +1075,30 @@ impl EnhancedAIService {
         options: SendMessageOptions,
         runtime: SendMessageRuntime,
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
-        let eventChannel = operit_util::stream::HotStream::mutable_shared_stream(usize::MAX);
-        let streamEventChannel = eventChannel.clone();
+        let responseStream = with_event_channel_shared(
+            operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
+            operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
+        );
         let mut service = self.clone();
-        let mut ownedOptions = Some(options);
-        let mut ownedRuntime = Some(runtime);
-        let coldStream = FnStream::new(move |emit| {
-            let options = ownedOptions
-                .take()
-                .expect("sendMessageWithRuntime stream must only be collected once");
-            let runtime = ownedRuntime
-                .take()
-                .expect("sendMessageWithRuntime runtime must only be consumed once");
-            let responseStream = with_event_channel_shared(
-                operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
-                streamEventChannel.clone(),
-            );
-            let mut workerService = service.clone();
-            let workerResponseStream = responseStream.clone();
-            let worker = thread::spawn(move || {
-                let runtimeBuilder = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("tokio runtime must build for EnhancedAIService stream");
-                let result = runtimeBuilder.block_on(workerService.executeSendMessageWithRuntime(
-                    options,
-                    runtime,
-                    workerResponseStream.clone(),
-                ));
-                workerResponseStream.upstream.close();
-                workerResponseStream.event_channel.close();
-                if let Err(error) = result {
-                    workerService.setInputProcessingState(InputProcessingState::Error {
-                        message: error.to_string(),
-                    });
-                }
-            });
-            let mut sharedCollector = responseStream.clone();
-            sharedCollector.collect(emit);
-            let _ = worker.join();
-        });
-        Ok(Box::new(
-            operit_util::stream::RevisableTextStream::with_event_channel(coldStream, eventChannel),
-        ))
+        let producerStream = responseStream.clone();
+        defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask(
+                "enhanced-ai-response",
+                Box::pin(async move {
+                    let result = service
+                        .executeSendMessageWithRuntime(options, runtime, producerStream.clone())
+                        .await;
+                    producerStream.upstream.close();
+                    producerStream.event_channel.close();
+                    if let Err(error) = result {
+                        service.setInputProcessingState(InputProcessingState::Error {
+                            message: error.to_string(),
+                        });
+                    }
+                }),
+            )
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        Ok(Box::new(responseStream))
     }
 
     async fn executeSendMessageWithRuntime(
@@ -1467,13 +1448,6 @@ impl EnhancedAIService {
 
         lifecycle.push(SendMessageLifecycleStage::CollectResponseStream);
         let providerEventChannel = provider_stream.event_channel().clone();
-        let responseEventChannel = responseStream.event_channel.clone();
-        let eventForwarder = thread::spawn(move || {
-            let mut events = providerEventChannel;
-            events.collect(&mut |event| {
-                responseEventChannel.emit(event);
-            });
-        });
         let mut responseChunks = Vec::new();
         let mut totalChars = 0;
         let mut isFirstChunk = true;
@@ -1516,7 +1490,9 @@ impl EnhancedAIService {
             responseStream.upstream.emit(content.clone());
             responseChunks.push(content);
         });
-        let _ = eventForwarder.join();
+        for event in providerEventChannel.replay_cache() {
+            responseStream.event_channel.emit(event);
+        }
 
         if !self.isExecutionContextActive(&execContext) {
             self.unregisterExecutionContext(&execContext);
@@ -1932,13 +1908,6 @@ impl EnhancedAIService {
         }
 
         let responseEventChannel = response.event_channel().clone();
-        let collectorEventChannel = collector.event_channel.clone();
-        let eventForwarder = thread::spawn(move || {
-            let mut events = responseEventChannel;
-            events.collect(&mut |event| {
-                collectorEventChannel.emit(event);
-            });
-        });
         let activeExecutionState = self.shared_state.clone();
         let mut chunkCount = 0usize;
         let mut totalChars = 0usize;
@@ -1952,7 +1921,9 @@ impl EnhancedAIService {
             context.roundManager.appendContent(&content);
             collector.upstream.emit(content);
         });
-        let _ = eventForwarder.join();
+        for event in responseEventChannel.replay_cache() {
+            collector.event_channel.emit(event);
+        }
 
         if !self.isExecutionContextActive(context) {
             return Ok(());

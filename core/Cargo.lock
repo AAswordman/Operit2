@@ -1689,6 +1689,7 @@ version = "2.0.0-preview.4"
 dependencies = [
  "chrono",
  "json5",
+ "operit-host-api",
  "operit-plugin-sdk-codegen",
  "regex",
  "serde",

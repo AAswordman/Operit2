@@ -1,17 +1,20 @@
-use std::fs;
-use std::path::Path;
-
 use crate::package::{
     EnvVar, LocalizedText, PackageTool, PackageToolParameter, ToolPackage, ToolPackageState,
 };
+use operit_host_api::FileSystemHost;
 
 /// Loads and parses standalone JavaScript plugin packages.
 pub struct JsPackageLoader;
 
 impl JsPackageLoader {
-    /// Loads a JavaScript package from a source file.
-    pub fn load_from_file(file: &Path) -> Result<ToolPackage, String> {
-        let js_content = fs::read_to_string(file).map_err(|error| error.to_string())?;
+    /// Loads a JavaScript package through the supplied file-system host.
+    pub fn load_from_file(
+        fileSystemHost: &dyn FileSystemHost,
+        sourcePath: &str,
+    ) -> Result<ToolPackage, String> {
+        let js_content = fileSystemHost
+            .readFile(sourcePath)
+            .map_err(|error| error.to_string())?;
         Self::parse(&js_content)
     }
 

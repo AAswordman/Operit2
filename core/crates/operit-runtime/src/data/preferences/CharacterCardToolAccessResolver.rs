@@ -28,7 +28,7 @@ impl CharacterCardToolAccessResolver {
             .into_iter()
             .filter(|packageName| !packageManager.isToolPkgContainer(packageName))
             .collect::<HashSet<_>>();
-        let globalSkillNames = SkillManager::fromDefaultPaths()
+        let globalSkillNames = SkillManager::fromDefaultPaths(packageManager.fileSystemHost())
             .getAvailableSkills()
             .into_keys()
             .filter(|name| SkillVisibilityPreferences::getInstance().isSkillVisibleToAi(name))

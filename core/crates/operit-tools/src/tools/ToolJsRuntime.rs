@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::sync::Arc;
 
 use operit_plugin_sdk::execution_result::decode_js_execution_result_value;
@@ -140,8 +139,17 @@ pub fn materializeToolPkgResource(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "ToolPkg resource output file name is invalid".to_string())?;
+    let fileSystemHost = toolHandler
+        .getContext()
+        .fileSystemHost
+        .ok_or_else(|| "FileSystemHost is required for ToolPkg resource export".to_string())?;
     let outputDir = OperitPaths::toolPkgResourceExportsDir(request.internal)?;
-    fs::create_dir_all(&outputDir).map_err(|error| error.to_string())?;
+    let outputDirPath = outputDir
+        .to_str()
+        .ok_or_else(|| "ToolPkg resource export directory is not valid UTF-8".to_string())?;
+    fileSystemHost
+        .makeDirectory(outputDirPath, true)
+        .map_err(|error| error.to_string())?;
     let outputFile = outputDir.join(safeName);
 
     let copied = if guard.getToolPkgContainerRuntime(&target).is_some() {

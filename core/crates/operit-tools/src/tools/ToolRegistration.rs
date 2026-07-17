@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use operit_host_api::HostManager::HostManager;
+use operit_host_api::HostManager::{
+    defaultHostRuntimeTaskSchedulerHost, HostManager,
+};
 use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_plugin_sdk::package::ToolPackage;
 use operit_tools::tools::climode::CliToolModeSupport::{
@@ -128,7 +130,13 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
                     .and_then(|parameter| parameter.value.parse::<i32>().ok())
                     .unwrap_or(1000);
                 let sleptMs = durationMs.max(0);
-                std::thread::sleep(std::time::Duration::from_millis(sleptMs as u64));
+                defaultHostRuntimeTaskSchedulerHost()
+                    .scheduleDelayedHostRuntimeTask(
+                        "builtin-tool-sleep",
+                        sleptMs as u64,
+                        Box::new(|| {}),
+                    )
+                    .expect("runtime task scheduler must schedule the sleep tool delay");
                 ToolResult {
                     toolName: tool.name.clone(),
                     success: true,

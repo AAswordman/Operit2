@@ -4,7 +4,6 @@ use crate::toolpkg::ToolPkgParser::ToolPkgArchiveParser;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::io::{Cursor, Read, Write};
-use std::path::Path;
 use zip::write::SimpleFileOptions;
 
 pub const PROTECTION_ID: &str = "operit-protected-v1";
@@ -61,16 +60,15 @@ pub fn encrypt(bytes: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 #[allow(non_snake_case)]
-pub fn protectArtifactFile(sourceFile: &Path, isToolPkg: bool) -> Result<Vec<u8>, String> {
+/// Protects one JavaScript or ToolPkg artifact supplied as bytes.
+pub fn protectArtifactBytes(sourceBytes: &[u8], isToolPkg: bool) -> Result<Vec<u8>, String> {
     if !isSecretConfigured() {
         return Err("ToolPkg protection secret is not configured".to_string());
     }
     if isToolPkg {
-        protectToolPkgArchive(sourceFile)
+        protectToolPkgArchive(sourceBytes)
     } else {
-        std::fs::read(sourceFile)
-            .map_err(|e| e.to_string())
-            .and_then(|b| encrypt(&b))
+        encrypt(sourceBytes)
     }
 }
 
@@ -92,9 +90,8 @@ fn decrypt(bytes: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 #[allow(non_snake_case)]
-fn protectToolPkgArchive(sourceFile: &Path) -> Result<Vec<u8>, String> {
-    let file = std::fs::File::open(sourceFile).map_err(|e| e.to_string())?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+fn protectToolPkgArchive(sourceBytes: &[u8]) -> Result<Vec<u8>, String> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(sourceBytes)).map_err(|e| e.to_string())?;
     let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
     let mPreview = ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &entryIndex)
         .ok_or_else(|| "manifest.hjson or manifest.json not found".to_string())?;
@@ -192,55 +189,6 @@ fn protectionKey() -> Option<Vec<u8>> {
             return Some(t.as_bytes().to_vec());
         }
     }
-    readSecretFromEnvFiles().map(|v| v.into_bytes())
-}
-
-fn readSecretFromEnvFiles() -> Option<String> {
-    let mut cans = Vec::new();
-    if let Ok(cd) = std::env::current_dir() {
-        pushEnv(&cd, &mut cans);
-    }
-    pushEnv(Path::new(env!("CARGO_MANIFEST_DIR")), &mut cans);
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(p) = exe.parent() {
-            pushEnv(p, &mut cans);
-        }
-    }
-    for p in cans {
-        if let Ok(c) = std::fs::read_to_string(p) {
-            if let Some(s) = parseSecret(&c) {
-                return Some(s);
-            }
-        }
-    }
-    None
-}
-
-fn pushEnv(start: &Path, out: &mut Vec<std::path::PathBuf>) {
-    for d in start.ancestors() {
-        out.push(d.join(".env.local"));
-        out.push(d.join(".env"));
-    }
-}
-
-fn parseSecret(content: &str) -> Option<String> {
-    for l in content.lines() {
-        let mut line = l.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        line = line.strip_prefix("export ").unwrap_or(line).trim_start();
-        let Some((k, v)) = line.split_once('=') else {
-            continue;
-        };
-        if k.trim() != SECRET_KEY {
-            continue;
-        }
-        let val = v.trim().trim_matches('"').trim_matches('\'').to_string();
-        if !val.is_empty() {
-            return Some(val);
-        }
-    }
     None
 }
 
@@ -315,7 +263,6 @@ fn constantTimeEquals(l: &[u8], r: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use std::io::{Read, Write};
     use std::sync::Mutex;
 
@@ -367,12 +314,8 @@ mod tests {
     #[test]
     fn toolpkg_protection_keeps_manifest_resources_plain() {
         withTestSecret(|| {
-            let tempPath = std::env::temp_dir().join(format!(
-                "operit-toolpkg-protection-{}.toolpkg",
-                uuid::Uuid::new_v4()
-            ));
-            let zipFile = fs::File::create(&tempPath).expect("test zip should be created");
-            let mut zip = zip::ZipWriter::new(zipFile);
+            let mut sourceBytes = Vec::new();
+            let mut zip = zip::ZipWriter::new(Cursor::new(&mut sourceBytes));
             let options =
                 SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
             zip.start_file("manifest.json", options)
@@ -406,8 +349,7 @@ mod tests {
             zip.finish().expect("test zip should finish");
 
             let protectedBytes =
-                protectArtifactFile(&tempPath, true).expect("toolpkg should be protected");
-            fs::remove_file(&tempPath).ok();
+                protectArtifactBytes(&sourceBytes, true).expect("toolpkg should be protected");
 
             let cursor = Cursor::new(protectedBytes);
             let mut protectedZip =

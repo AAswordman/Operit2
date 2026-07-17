@@ -1,20 +1,24 @@
 #![allow(non_snake_case)]
 
-use std::fs;
 use std::sync::Arc;
 
-use operit_host_api::{TtsSynthesisHost, TtsSynthesisRequest};
+use operit_host_api::{FileSystemHost, TtsSynthesisHost, TtsSynthesisRequest};
 
 use crate::tts::VoiceService::VoiceService;
 use operit_model::TtsConfig::TtsConfig;
 
 pub struct SystemVoiceProvider {
     host: Arc<dyn TtsSynthesisHost>,
+    fileSystemHost: Arc<dyn FileSystemHost>,
 }
 
 impl SystemVoiceProvider {
-    pub fn new(host: Arc<dyn TtsSynthesisHost>) -> Self {
-        Self { host }
+    /// Creates a system voice provider with explicit synthesis and file hosts.
+    pub fn new(host: Arc<dyn TtsSynthesisHost>, fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
+        Self {
+            host,
+            fileSystemHost,
+        }
     }
 }
 
@@ -31,6 +35,8 @@ impl VoiceService for SystemVoiceProvider {
                 outputFormat: config.responseFormat.clone(),
             })
             .map_err(|error| error.to_string())?;
-        fs::read(&response.audioPath).map_err(|error| error.to_string())
+        self.fileSystemHost
+            .readFileBytes(&response.audioPath)
+            .map_err(|error| error.to_string())
     }
 }

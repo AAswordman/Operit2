@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
+use operit_host_api::FileSystemHost;
 use serde_json::Value;
 
 use crate::toolpkg::ToolPkgCommonPluginConstants::{
@@ -52,6 +52,10 @@ pub trait ToolPkgPackageHost: Send + Sync {
     /// Returns persisted ToolPkg subpackage enabled states.
     #[allow(non_snake_case)]
     fn getToolPkgSubpackageStatesInternal(&self) -> BTreeMap<String, bool>;
+
+    /// Returns the filesystem capability owned by the embedding runtime.
+    #[allow(non_snake_case)]
+    fn fileSystemHost(&self) -> std::sync::Arc<dyn FileSystemHost>;
 
     /// Persists the complete enabled package name list.
     #[allow(non_snake_case)]
@@ -487,6 +491,8 @@ impl<'a> ToolPkgPackageService<'a> {
         templateId: &str,
         destinationDir: &Path,
     ) -> Result<ToolPkgWorkspaceTemplateImportResult, String> {
+        let fileSystemHost = self.packageManager.fileSystemHost();
+        let destinationPath = destinationDir.to_string_lossy().to_string();
         self.packageManager.ensureInitialized();
         let normalizedContainerPackageName = self
             .packageManager
@@ -525,18 +531,20 @@ impl<'a> ToolPkgPackageService<'a> {
                 template.resource_key
             ));
         }
-        if destinationDir.exists() {
-            if !destinationDir.is_dir() {
+        let destinationInfo = fileSystemHost
+            .fileExists(&destinationPath)
+            .map_err(|error| error.to_string())?;
+        if destinationInfo.exists {
+            if !destinationInfo.isDirectory {
                 return Err(format!(
                     "Workspace destination is not a directory: {}",
                     destinationDir.display()
                 ));
             }
-            if destinationDir
-                .read_dir()
+            if !fileSystemHost
+                .listFiles(&destinationPath)
                 .map_err(|error| error.to_string())?
-                .next()
-                .is_some()
+                .is_empty()
             {
                 return Err(format!(
                     "Workspace destination must be empty: {}",
@@ -544,13 +552,15 @@ impl<'a> ToolPkgPackageService<'a> {
                 ));
             }
         } else {
-            fs::create_dir_all(destinationDir).map_err(|error| {
-                format!(
-                    "Failed to create workspace destination: {}: {}",
-                    destinationDir.display(),
-                    error
-                )
-            })?;
+            fileSystemHost
+                .makeDirectory(&destinationPath, true)
+                .map_err(|error| {
+                    format!(
+                        "Failed to create workspace destination: {}: {}",
+                        destinationDir.display(),
+                        error
+                    )
+                })?;
         }
         let resourceDir = self
             .packageManager
@@ -561,24 +571,38 @@ impl<'a> ToolPkgPackageService<'a> {
                     template.resource_key
                 )
             })?;
-        if !resourceDir.is_dir() {
+        let resourceDirPath = resourceDir.to_string_lossy().to_string();
+        let resourceInfo = fileSystemHost
+            .fileExists(&resourceDirPath)
+            .map_err(|error| error.to_string())?;
+        if !resourceInfo.exists || !resourceInfo.isDirectory {
             return Err(format!(
                 "Workspace template directory is invalid: {}",
                 template.resource_key
             ));
         }
-        for entry in fs::read_dir(&resourceDir).map_err(|error| error.to_string())? {
-            let entry = entry.map_err(|error| error.to_string())?;
-            copyRecursively(&entry.path(), &destinationDir.join(entry.file_name()))?;
+        for entry in fileSystemHost
+            .listFiles(&resourceDirPath)
+            .map_err(|error| error.to_string())?
+        {
+            let sourcePath = joinHostPath(&resourceDirPath, &entry.name);
+            let destinationEntryPath = joinHostPath(&destinationPath, &entry.name);
+            fileSystemHost
+                .copyFile(&sourcePath, &destinationEntryPath, true)
+                .map_err(|error| error.to_string())?;
         }
-        let configPath = destinationDir.join(".operit").join("config.json");
-        if !configPath.is_file() {
+        let configPath = joinHostPath(&destinationPath, ".operit/config.json");
+        let configInfo = fileSystemHost
+            .fileExists(&configPath)
+            .map_err(|error| error.to_string())?;
+        if !configInfo.exists || configInfo.isDirectory {
             return Err(format!(
                 "Workspace template is missing .operit/config.json: {}",
                 template.id
             ));
         }
-        let workspaceConfig = fs::read_to_string(&configPath)
+        let workspaceConfig = fileSystemHost
+            .readFile(&configPath)
             .map_err(|error| error.to_string())
             .and_then(|text| {
                 serde_json::from_str::<Value>(&text).map_err(|error| error.to_string())
@@ -1140,28 +1164,12 @@ fn nonBlankOr(value: &str, defaultValue: &str) -> String {
     }
 }
 
-/// Copies one file or directory tree into a workspace template destination.
+/// Joins one relative path beneath a host-owned directory.
 #[allow(non_snake_case)]
-fn copyRecursively(source: &Path, destination: &Path) -> Result<(), String> {
-    if source.is_dir() {
-        fs::create_dir_all(destination).map_err(|error| error.to_string())?;
-        for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
-            let entry = entry.map_err(|error| error.to_string())?;
-            copyRecursively(&entry.path(), &destination.join(entry.file_name()))?;
-        }
-        return Ok(());
-    }
-    if source.is_file() {
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        fs::copy(source, destination)
-            .map(|_| ())
-            .map_err(|error| error.to_string())?;
-        return Ok(());
-    }
-    Err(format!(
-        "Workspace template source is invalid: {}",
-        source.display()
-    ))
+fn joinHostPath(directory: &str, relativePath: &str) -> String {
+    format!(
+        "{}/{}",
+        directory.trim_end_matches(['/', '\\']),
+        relativePath
+    )
 }

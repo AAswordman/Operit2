@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
+
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 
 use crate::stream::Stream::Stream;
 
@@ -402,31 +402,18 @@ where
     MutableStateStreamImpl::new(initial_value)
 }
 
-pub fn share<S>(
-    mut stream: S,
-    replay: usize,
-    started: StreamStart,
-) -> MutableSharedStreamImpl<S::Item>
+pub fn share<S>(stream: S, replay: usize, started: StreamStart) -> MutableSharedStreamImpl<S::Item>
 where
     S: Stream + Send + 'static,
     S::Item: Clone + Send + 'static,
 {
     let shared = MutableSharedStreamImpl::new(replay);
-    let shared_for_thread = shared.clone();
-    thread::spawn(move || {
-        if matches!(started, StreamStart::Lazily) {
-            while shared_for_thread.subscription_count() == 0 {
-                thread::sleep(Duration::from_millis(10));
-            }
-        }
-        stream.collect(&mut |value| shared_for_thread.emit(value));
-        shared_for_thread.close();
-    });
+    scheduleSharedStreamCollection(Arc::new(Mutex::new(Some(stream))), shared.clone(), started);
     shared
 }
 
 pub fn state<S>(
-    mut stream: S,
+    stream: S,
     initial_value: S::Item,
     started: StreamStart,
 ) -> MutableStateStreamImpl<S::Item>
@@ -435,14 +422,110 @@ where
     S::Item: Clone + PartialEq + Send + 'static,
 {
     let state_stream = MutableStateStreamImpl::new(initial_value);
-    let mut state_stream_for_thread = state_stream.clone();
-    thread::spawn(move || {
-        if matches!(started, StreamStart::Lazily) {
-            while state_stream_for_thread.subscription_count() == 0 {
-                thread::sleep(Duration::from_millis(10));
-            }
-        }
-        stream.collect(&mut |value| state_stream_for_thread.set_value(value));
-    });
+    scheduleStateStreamCollection(
+        Arc::new(Mutex::new(Some(stream))),
+        state_stream.clone(),
+        started,
+    );
     state_stream
+}
+
+/// Schedules collection into a shared stream through the configured host task scheduler.
+fn scheduleSharedStreamCollection<S>(
+    source: Arc<Mutex<Option<S>>>,
+    shared: MutableSharedStreamImpl<S::Item>,
+    started: StreamStart,
+) where
+    S: Stream + Send + 'static,
+    S::Item: Clone + Send + 'static,
+{
+    let retrySource = source.clone();
+    let retryShared = shared.clone();
+    defaultHostRuntimeTaskSchedulerHost()
+        .scheduleHostRuntimeTask(
+            "operit-shared-stream-collection",
+            Box::new(move || {
+                if matches!(started, StreamStart::Lazily) && retryShared.subscription_count() == 0 {
+                    scheduleSharedStreamCollectionAfterDelay(retrySource, retryShared, started);
+                    return;
+                }
+                let mut stream = retrySource
+                    .lock()
+                    .expect("shared stream source mutex poisoned")
+                    .take()
+                    .expect("shared stream collection must start exactly once");
+                stream.collect(&mut |value| retryShared.emit(value));
+                retryShared.close();
+            }),
+        )
+        .expect("shared stream collection task must be scheduled");
+}
+
+/// Re-enqueues lazy shared-stream collection after a host-owned short delay.
+fn scheduleSharedStreamCollectionAfterDelay<S>(
+    source: Arc<Mutex<Option<S>>>,
+    shared: MutableSharedStreamImpl<S::Item>,
+    started: StreamStart,
+) where
+    S: Stream + Send + 'static,
+    S::Item: Clone + Send + 'static,
+{
+    defaultHostRuntimeTaskSchedulerHost()
+        .scheduleDelayedHostRuntimeTask(
+            "operit-shared-stream-lazy-collection",
+            10,
+            Box::new(move || scheduleSharedStreamCollection(source, shared, started)),
+        )
+        .expect("lazy shared stream collection task must be scheduled");
+}
+
+/// Schedules collection into a state stream through the configured host task scheduler.
+fn scheduleStateStreamCollection<S>(
+    source: Arc<Mutex<Option<S>>>,
+    stateStream: MutableStateStreamImpl<S::Item>,
+    started: StreamStart,
+) where
+    S: Stream + Send + 'static,
+    S::Item: Clone + PartialEq + Send + 'static,
+{
+    let retrySource = source.clone();
+    let retryStateStream = stateStream.clone();
+    defaultHostRuntimeTaskSchedulerHost()
+        .scheduleHostRuntimeTask(
+            "operit-state-stream-collection",
+            Box::new(move || {
+                if matches!(started, StreamStart::Lazily)
+                    && retryStateStream.subscription_count() == 0
+                {
+                    scheduleStateStreamCollectionAfterDelay(retrySource, retryStateStream, started);
+                    return;
+                }
+                let mut stream = retrySource
+                    .lock()
+                    .expect("state stream source mutex poisoned")
+                    .take()
+                    .expect("state stream collection must start exactly once");
+                let mut target = retryStateStream.clone();
+                stream.collect(&mut |value| target.set_value(value));
+            }),
+        )
+        .expect("state stream collection task must be scheduled");
+}
+
+/// Re-enqueues lazy state-stream collection after a host-owned short delay.
+fn scheduleStateStreamCollectionAfterDelay<S>(
+    source: Arc<Mutex<Option<S>>>,
+    stateStream: MutableStateStreamImpl<S::Item>,
+    started: StreamStart,
+) where
+    S: Stream + Send + 'static,
+    S::Item: Clone + PartialEq + Send + 'static,
+{
+    defaultHostRuntimeTaskSchedulerHost()
+        .scheduleDelayedHostRuntimeTask(
+            "operit-state-stream-lazy-collection",
+            10,
+            Box::new(move || scheduleStateStreamCollection(source, stateStream, started)),
+        )
+        .expect("lazy state stream collection task must be scheduled");
 }

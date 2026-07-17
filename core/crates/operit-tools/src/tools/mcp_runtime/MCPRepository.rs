@@ -1,5 +1,5 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::io::{Cursor, Read};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use zip::ZipArchive;
@@ -11,9 +11,9 @@ use crate::tools::mcp_runtime::plugins::MCPProjectAnalyzer::MCPProjectAnalyzer;
 use crate::tools::mcp_runtime::MCPLocalServer::{
     MCPConfig, MCPLocalServer, PluginMetadata, ServerConfig,
 };
-use operit_host_api::HostManager::defaultHttpHost;
-use operit_host_api::HostManager::HostManager;
-use operit_host_api::HttpRequestData;
+use operit_host_api::{
+    FileSystemHost, HostManager::defaultHttpHost, HostManager::HostManager, HttpRequestData,
+};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use url::Url;
 
@@ -25,7 +25,8 @@ const READ_TIMEOUT_SECONDS: u64 = 30;
 pub struct MCPRepository {
     context: HostManager,
     mcpLocalServer: MCPLocalServer,
-    pluginsBaseDir: PathBuf,
+    fileSystemHost: Arc<dyn FileSystemHost>,
+    pluginsBaseDir: String,
     runtimeSupport: Arc<dyn ToolRuntimeSupport>,
 }
 
@@ -56,11 +57,19 @@ impl MCPRepository {
     #[allow(non_snake_case)]
     pub fn getInstance(context: &HostManager, runtimeSupport: Arc<dyn ToolRuntimeSupport>) -> Self {
         let paths = RuntimeStorePaths::default();
-        let _ = paths.ensure_mcp_plugins_dir();
+        let fileSystemHost = context
+            .fileSystemHost
+            .clone()
+            .expect("MCPRepository requires a FileSystemHost");
+        let pluginsBaseDir = paths.mcp_plugins_dir().to_string_lossy().to_string();
+        fileSystemHost
+            .makeDirectory(&pluginsBaseDir, true)
+            .expect("MCPRepository cannot create the MCP plugin directory");
         Self {
             context: context.clone(),
             mcpLocalServer: MCPLocalServer::getInstance(context),
-            pluginsBaseDir: paths.mcp_plugins_dir(),
+            fileSystemHost,
+            pluginsBaseDir,
             runtimeSupport,
         }
     }
@@ -161,11 +170,13 @@ impl MCPRepository {
     ) -> InstallResult {
         progressCallback(InstallProgress::Preparing);
 
-        let pluginDir = self.pluginsBaseDir.join(pluginId);
-        if pluginDir.exists() {
-            let _ = fs::remove_dir_all(&pluginDir);
+        let pluginDir = joinHostPath(&self.pluginsBaseDir, pluginId);
+        if let Err(error) = self.fileSystemHost.deleteFile(&pluginDir, true) {
+            return InstallResult::Error {
+                message: format!("Failed to reset plugin directory: {error}"),
+            };
         }
-        if let Err(error) = fs::create_dir_all(&pluginDir) {
+        if let Err(error) = self.fileSystemHost.makeDirectory(&pluginDir, true) {
             return InstallResult::Error {
                 message: format!("Failed to create plugin directory: {error}"),
             };
@@ -178,7 +189,7 @@ impl MCPRepository {
         };
 
         progressCallback(InstallProgress::Downloading(0));
-        let Some(zipFile) =
+        let Some(zipBytes) =
             self.downloadRepositoryZip(&owner, &repoName, pluginId, progressCallback)
         else {
             return InstallResult::Error {
@@ -187,28 +198,28 @@ impl MCPRepository {
         };
 
         progressCallback(InstallProgress::Extracting(0));
-        if let Err(error) = extractZipFile(&zipFile, &pluginDir, progressCallback) {
-            let _ = fs::remove_file(&zipFile);
-            let _ = fs::remove_dir_all(&pluginDir);
+        if let Err(error) = extractZipBytes(
+            &zipBytes,
+            &pluginDir,
+            self.fileSystemHost.as_ref(),
+            progressCallback,
+        ) {
+            let _ = self.fileSystemHost.deleteFile(&pluginDir, true);
             return InstallResult::Error {
                 message: format!("Failed to extract repository: {error}"),
             };
         }
-        let _ = fs::remove_file(&zipFile);
-
-        let mainDir = fs::read_dir(&pluginDir)
-            .ok()
-            .and_then(|entries| {
-                entries
-                    .flatten()
-                    .map(|entry| entry.path())
-                    .find(|path| path.is_dir())
-            })
-            .unwrap_or(pluginDir);
+        let mainDir = match self.resolvePluginRoot(&pluginDir) {
+            Ok(path) => path,
+            Err(error) => {
+                let _ = self.fileSystemHost.deleteFile(&pluginDir, true);
+                return InstallResult::Error { message: error };
+            }
+        };
 
         progressCallback(InstallProgress::Finished);
         InstallResult::Success {
-            pluginPath: mainDir.to_string_lossy().to_string(),
+            pluginPath: mainDir,
         }
     }
 
@@ -222,54 +233,70 @@ impl MCPRepository {
     ) -> InstallResult {
         progressCallback(InstallProgress::Preparing);
 
-        let zipFile = PathBuf::from(zipPath);
-        if !zipFile.is_file() {
+        let zipInfo = match self.fileSystemHost.fileExists(zipPath) {
+            Ok(info) => info,
+            Err(error) => {
+                return InstallResult::Error {
+                    message: format!("Failed to access MCP zip: {error}"),
+                }
+            }
+        };
+        if !zipInfo.exists || zipInfo.isDirectory {
             return InstallResult::Error {
                 message: format!("MCP zip file not found: {zipPath}"),
             };
         }
-        if zipFile
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(|value| !value.eq_ignore_ascii_case("zip"))
-            .unwrap_or(true)
-        {
+        if !zipPath.trim().to_ascii_lowercase().ends_with(".zip") {
             return InstallResult::Error {
                 message: "Only .zip files are supported".to_string(),
             };
         }
 
-        let pluginDir = self.pluginsBaseDir.join(pluginId);
-        if pluginDir.exists() {
-            let _ = fs::remove_dir_all(&pluginDir);
+        let pluginDir = joinHostPath(&self.pluginsBaseDir, pluginId);
+        if let Err(error) = self.fileSystemHost.deleteFile(&pluginDir, true) {
+            return InstallResult::Error {
+                message: format!("Failed to reset plugin directory: {error}"),
+            };
         }
-        if let Err(error) = fs::create_dir_all(&pluginDir) {
+        if let Err(error) = self.fileSystemHost.makeDirectory(&pluginDir, true) {
             return InstallResult::Error {
                 message: format!("Failed to create plugin directory: {error}"),
             };
         }
 
         progressCallback(InstallProgress::Extracting(0));
-        if let Err(error) = extractZipFile(&zipFile, &pluginDir, progressCallback) {
-            let _ = fs::remove_dir_all(&pluginDir);
+        let zipBytes = match self.fileSystemHost.readFileBytes(zipPath) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                let _ = self.fileSystemHost.deleteFile(&pluginDir, true);
+                return InstallResult::Error {
+                    message: format!("Failed to read MCP zip: {error}"),
+                };
+            }
+        };
+        if let Err(error) = extractZipBytes(
+            &zipBytes,
+            &pluginDir,
+            self.fileSystemHost.as_ref(),
+            progressCallback,
+        ) {
+            let _ = self.fileSystemHost.deleteFile(&pluginDir, true);
             return InstallResult::Error {
                 message: format!("Failed to extract MCP zip: {error}"),
             };
         }
 
-        let mainDir = fs::read_dir(&pluginDir)
-            .ok()
-            .and_then(|entries| {
-                entries
-                    .flatten()
-                    .map(|entry| entry.path())
-                    .find(|path| path.is_dir())
-            })
-            .unwrap_or(pluginDir);
+        let mainDir = match self.resolvePluginRoot(&pluginDir) {
+            Ok(path) => path,
+            Err(error) => {
+                let _ = self.fileSystemHost.deleteFile(&pluginDir, true);
+                return InstallResult::Error { message: error };
+            }
+        };
 
         progressCallback(InstallProgress::Finished);
         InstallResult::Success {
-            pluginPath: mainDir.to_string_lossy().to_string(),
+            pluginPath: mainDir,
         }
     }
 
@@ -279,15 +306,33 @@ impl MCPRepository {
         &self,
         owner: &str,
         repoName: &str,
-        serverId: &str,
+        _serverId: &str,
         progressCallback: &impl Fn(InstallProgress),
-    ) -> Option<PathBuf> {
+    ) -> Option<Vec<u8>> {
         let defaultBranch = getGithubDefaultBranch(owner, repoName)?;
         let zipUrl = format!(
             "https://github.com/{owner}/{repoName}/archive/refs/heads/{}.zip",
             encodePathSegment(&defaultBranch)
         );
-        downloadFromUrl(&zipUrl, serverId, progressCallback).ok()
+        downloadArchiveBytes(&zipUrl, progressCallback).ok()
+    }
+
+    /// Resolves the repository root after an archive has been extracted.
+    #[allow(non_snake_case)]
+    fn resolvePluginRoot(&self, pluginDir: &str) -> Result<String, String> {
+        let roots = self
+            .fileSystemHost
+            .listFiles(pluginDir)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|entry| entry.isDirectory)
+            .collect::<Vec<_>>();
+        if roots.len() != 1 {
+            return Err(format!(
+                "MCP archive must contain exactly one root directory: {pluginDir}"
+            ));
+        }
+        Ok(joinHostPath(pluginDir, &roots[0].name))
     }
 
     /// Stores plugin metadata in the local MCP registry.
@@ -331,13 +376,24 @@ impl MCPRepository {
         pluginPath: &str,
     ) -> Result<String, String> {
         let pluginDir = PathBuf::from(pluginPath);
-        if !pluginDir.is_dir() {
+        let pluginInfo = self
+            .fileSystemHost
+            .fileExists(pluginPath)
+            .map_err(|error| error.to_string())?;
+        if !pluginInfo.exists || !pluginInfo.isDirectory {
             return Err(format!("MCP plugin directory not found: {pluginPath}"));
         }
-        let analyzer = MCPProjectAnalyzer;
+        let analyzer = MCPProjectAnalyzer::new(self.fileSystemHost.clone());
         let readmeContent = analyzer
             .findReadmeFile(&pluginDir)
-            .map(|path| fs::read_to_string(path).map_err(|error| error.to_string()))
+            .map(|path| {
+                self.fileSystemHost
+                    .readFile(
+                        path.to_str()
+                            .ok_or_else(|| "MCP README path is not valid UTF-8".to_string())?,
+                    )
+                    .map_err(|error| error.to_string())
+            })
             .transpose()?
             .unwrap_or_default();
         let projectStructure = analyzer.analyzeProjectStructure(&pluginDir, &readmeContent);
@@ -511,16 +567,10 @@ fn getGithubDefaultBranch(owner: &str, repoName: &str) -> Option<String> {
 }
 
 #[allow(non_snake_case)]
-fn downloadFromUrl(
+fn downloadArchiveBytes(
     zipUrl: &str,
-    serverId: &str,
     progressCallback: &impl Fn(InstallProgress),
-) -> Result<PathBuf, String> {
-    let tempFile = std::env::temp_dir().join(format!(
-        "operit_mcp_{}_repo_{}.zip",
-        sanitizeTempPart(serverId),
-        currentTimeMillis()
-    ));
+) -> Result<Vec<u8>, String> {
     let response = defaultHttpHost()
         .executeHttpRequest(HttpRequestData {
             url: zipUrl.to_string(),
@@ -543,19 +593,18 @@ fn downloadFromUrl(
     if !(200..300).contains(&response.statusCode) {
         return Err(format!("HTTP {}", response.statusCode));
     }
-    fs::write(&tempFile, response.body).map_err(|error| error.to_string())?;
     progressCallback(InstallProgress::Downloading(100));
-    Ok(tempFile)
+    Ok(response.body)
 }
 
 #[allow(non_snake_case)]
-fn extractZipFile(
-    zipFile: &Path,
-    targetDir: &Path,
+fn extractZipBytes(
+    zipBytes: &[u8],
+    targetDir: &str,
+    fileSystemHost: &dyn FileSystemHost,
     progressCallback: &impl Fn(InstallProgress),
 ) -> Result<(), String> {
-    let file = fs::File::open(zipFile).map_err(|error| error.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(Cursor::new(zipBytes)).map_err(|error| error.to_string())?;
     let totalEntries = archive.len().max(1);
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
@@ -566,15 +615,19 @@ fn extractZipFile(
         let Some(enclosedName) = entry.enclosed_name().map(|path| path.to_path_buf()) else {
             continue;
         };
-        let outPath = targetDir.join(enclosedName);
+        let outPath = joinHostPath(targetDir, &enclosedName.to_string_lossy());
         if entry.is_dir() {
-            fs::create_dir_all(&outPath).map_err(|error| error.to_string())?;
+            fileSystemHost
+                .makeDirectory(&outPath, true)
+                .map_err(|error| error.to_string())?;
         } else {
-            if let Some(parent) = outPath.parent() {
-                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-            }
-            let mut out = fs::File::create(&outPath).map_err(|error| error.to_string())?;
-            std::io::copy(&mut entry, &mut out).map_err(|error| error.to_string())?;
+            let mut bytes = Vec::new();
+            entry
+                .read_to_end(&mut bytes)
+                .map_err(|error| error.to_string())?;
+            fileSystemHost
+                .writeFileBytes(&outPath, &bytes)
+                .map_err(|error| error.to_string())?;
         }
         progressCallback(InstallProgress::Extracting(
             ((index + 1) * 100 / totalEntries) as i32,
@@ -598,14 +651,10 @@ fn encodePathSegment(value: &str) -> String {
 }
 
 #[allow(non_snake_case)]
-fn sanitizeTempPart(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-        .collect()
-}
-
-#[allow(non_snake_case)]
-fn currentTimeMillis() -> i64 {
-    operit_host_api::TimeUtils::currentTimeMillis()
+fn joinHostPath(directory: &str, relativePath: &str) -> String {
+    format!(
+        "{}/{}",
+        directory.trim_end_matches(['/', '\\']),
+        relativePath
+    )
 }

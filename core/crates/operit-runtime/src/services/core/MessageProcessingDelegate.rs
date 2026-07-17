@@ -19,6 +19,7 @@ use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::PromptFunctionType::PromptFunctionType;
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_providers::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions,
@@ -1169,49 +1170,14 @@ impl MessageProcessingDelegate {
                 .chatHistoryDelegate
                 .addMessageToChat(aiMessage.clone(), Some(chatId.clone()));
         }
-        std::thread::spawn(move || {
+        defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeTask("message-response-collector", Box::new(move || {
             ChainLogger::info(
                 RECEIVE_CHAIN,
                 "receive.stream.collect.start",
                 &[("chatId", workerChatId.clone())],
             );
             let mut workerEventChatHistoryDelegate = workerEventChatHistoryDelegate;
-            let workerEventTurnOptions = workerTurnOptions.clone();
-            let workerEventAiMessage = workerAiMessage.clone();
-            let workerEventChatId = workerChatId.clone();
-            let workerEventSnapshotPersistAt = workerStreamingSnapshotPersistAt.clone();
-            let eventWorker = std::thread::spawn(move || {
-                let mut events = workerEventCollector;
-                events.collect(&mut |event| match event.event_type {
-                    TextStreamEventType::Savepoint => {
-                        workerEventTracker
-                            .lock()
-                            .expect("revision tracker mutex poisoned")
-                            .savepoint(&event.id);
-                    }
-                    TextStreamEventType::Rollback => {
-                        let mut tracker = workerEventTracker
-                            .lock()
-                            .expect("revision tracker mutex poisoned");
-                        let rolled_back = tracker.rollback(&event.id).is_some();
-                        if rolled_back
-                            && MessageProcessingDelegate::claimStreamingSnapshot(
-                                &workerEventTurnOptions,
-                                &workerEventSnapshotPersistAt,
-                            )
-                        {
-                            let snapshot = tracker.current_content().to_owned();
-                            drop(tracker);
-                            MessageProcessingDelegate::persistStreamingSnapshot(
-                                &mut workerEventChatHistoryDelegate,
-                                &workerEventChatId,
-                                &workerEventAiMessage,
-                                snapshot,
-                            );
-                        }
-                    }
-                });
-            });
             let mut firstResponseElapsed = None::<i64>;
             workerResponseStream.collect(&mut |chunk| {
                 if firstResponseElapsed.is_none() {
@@ -1250,7 +1216,37 @@ impl MessageProcessingDelegate {
                 workerWorkspaceToolHookHandler.removeToolHook(session.hookId());
                 session.close();
             }
-            let _ = eventWorker.join();
+            for event in workerEventCollector.replay_cache() {
+                match event.event_type {
+                    TextStreamEventType::Savepoint => {
+                        workerRevisionTracker
+                            .lock()
+                            .expect("revision tracker mutex poisoned")
+                            .savepoint(&event.id);
+                    }
+                    TextStreamEventType::Rollback => {
+                        let mut tracker = workerRevisionTracker
+                            .lock()
+                            .expect("revision tracker mutex poisoned");
+                        let rolled_back = tracker.rollback(&event.id).is_some();
+                        if rolled_back
+                            && MessageProcessingDelegate::claimStreamingSnapshot(
+                                &workerTurnOptions,
+                                &workerStreamingSnapshotPersistAt,
+                            )
+                        {
+                            let snapshot = tracker.current_content().to_owned();
+                            drop(tracker);
+                            MessageProcessingDelegate::persistStreamingSnapshot(
+                                &mut workerEventChatHistoryDelegate,
+                                &workerChatId,
+                                &workerAiMessage,
+                                snapshot,
+                            );
+                        }
+                    }
+                }
+            }
             let finalContent = workerRevisionTracker
                 .lock()
                 .expect("revision tracker mutex poisoned")
@@ -1331,7 +1327,12 @@ impl MessageProcessingDelegate {
                 nextWindowSize,
                 workerTurnOptions,
             );
-        });
+            }))
+            .map_err(|error| {
+                operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(
+                    error.to_string(),
+                )
+            })?;
         Ok(SendUserMessageProcessingResult {
             aiMessage,
             nextWindowSize: None,

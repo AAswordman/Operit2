@@ -1,6 +1,4 @@
-use std::fs;
 use std::io::Cursor;
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::javascript::JsExecutionEngine;
@@ -9,30 +7,35 @@ use crate::toolpkg::ToolPkgParser::{
     ToolPkgArchiveParser, ToolPkgLoadResult, ToolPkgMainRegistrationParseResult, ToolPkgSourceType,
 };
 use crate::JsPackageLoader::JsPackageLoader;
+use operit_host_api::FileSystemHost;
 
 /// Loads ToolPkg archives and executes their main registration scripts.
 pub struct ToolPkgLoader;
 
 impl ToolPkgLoader {
-    /// Loads a ToolPkg archive from an external file.
+    /// Loads a ToolPkg archive through the supplied file-system host.
     #[allow(non_snake_case)]
     pub fn loadToolPkgFromExternalFile<FReportPackageLoadError>(
-        file: &Path,
+        fileSystemHost: &dyn FileSystemHost,
+        sourcePath: &str,
         jsEngine: &dyn JsExecutionEngine,
         reportPackageLoadError: FReportPackageLoadError,
     ) -> Result<ToolPkgLoadResult, String>
     where
         FReportPackageLoadError: Fn(&str, &str),
     {
-        let zipFile = fs::File::open(file).map_err(|error| error.to_string())?;
-        let mut archive = zip::ZipArchive::new(zipFile).map_err(|error| error.to_string())?;
+        let archiveBytes = fileSystemHost
+            .readFileBytes(sourcePath)
+            .map_err(|error| error.to_string())?;
+        let mut archive =
+            zip::ZipArchive::new(Cursor::new(archiveBytes)).map_err(|error| error.to_string())?;
         let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
         let textResources = Arc::new(readToolPkgTextResources(&mut archive, &entryIndex));
         ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
             &entryIndex,
             |entryName| readIndexedTextResource(&textResources, &entryIndex, entryName),
             ToolPkgSourceType::EXTERNAL,
-            &file.to_string_lossy(),
+            sourcePath,
             false,
             |jsContent, reportPackageLoadError| match JsPackageLoader::parse(jsContent) {
                 Ok(package) => Some(package),

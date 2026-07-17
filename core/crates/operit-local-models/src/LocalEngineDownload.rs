@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::Component;
@@ -378,23 +379,21 @@ impl LocalEngineInstaller {
             .map_err(|error| LocalEngineDownloadError::Registry(error.to_string()))
     }
 
-    /// Creates a directory for native storage targets.
+    /// Verifies that the installer has a runtime storage host.
     fn createDirectory(&self, path: &Path) -> Result<(), LocalEngineDownloadError> {
-        match &self.storageHost {
-            Some(_) => Ok(()),
-            None => fs::create_dir_all(path)
-                .map_err(|error| LocalEngineDownloadError::Storage(error.to_string())),
-        }
+        self.storageHost
+            .as_ref()
+            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePathString(path)))?;
+        Ok(())
     }
 
     /// Removes a file or directory from the configured storage backend.
     fn removePath(&self, path: &Path) -> Result<(), LocalEngineDownloadError> {
-        match &self.storageHost {
-            Some(storageHost) => storageHost
-                .delete(&storagePathString(path), true)
-                .map_err(|error| LocalEngineDownloadError::Storage(error.to_string())),
-            None => removeNativePath(path),
-        }
+        self.storageHost
+            .as_ref()
+            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePathString(path)))?
+            .delete(&storagePathString(path), true)
+            .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))
     }
 
     /// Verifies one downloaded archive against its declared size and SHA-256.
@@ -404,25 +403,17 @@ impl LocalEngineInstaller {
         declaredBytes: u64,
         declaredSha256: &str,
     ) -> Result<(), LocalEngineDownloadError> {
-        match &self.storageHost {
-            Some(storageHost) => verifyArchiveBytes(
-                &storageHost
-                    .readBytes(&storagePathString(archivePath))
-                    .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?,
-                declaredBytes,
-                declaredSha256,
-            ),
-            None => {
-                let metadata = fs::metadata(archivePath)
-                    .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?;
-                if metadata.len() != declaredBytes {
-                    return Err(LocalEngineDownloadError::SizeMismatch);
-                }
-                let mut file = fs::File::open(archivePath)
-                    .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?;
-                verifyArchiveReader(&mut file, declaredSha256)
-            }
-        }
+        let storageHost = self
+            .storageHost
+            .as_ref()
+            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePathString(archivePath)))?;
+        verifyArchiveBytes(
+            &storageHost
+                .readBytes(&storagePathString(archivePath))
+                .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?,
+            declaredBytes,
+            declaredSha256,
+        )
     }
 
     /// Extracts one verified engine archive into a staging directory.
@@ -432,12 +423,13 @@ impl LocalEngineInstaller {
         stagingDir: &Path,
         archiveFormat: &LocalEngineArchiveFormat,
     ) -> Result<(), LocalEngineDownloadError> {
-        match (&self.storageHost, archiveFormat) {
-            (Some(storageHost), LocalEngineArchiveFormat::TarBz2) => {
+        let storageHost = self
+            .storageHost
+            .as_ref()
+            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePathString(archivePath)))?;
+        match archiveFormat {
+            LocalEngineArchiveFormat::TarBz2 => {
                 extractTarBz2ArchiveToStorage(archivePath, stagingDir, storageHost)
-            }
-            (None, LocalEngineArchiveFormat::TarBz2) => {
-                extractTarBz2ArchiveToNative(archivePath, stagingDir)
             }
         }
     }
@@ -450,12 +442,12 @@ impl LocalEngineInstaller {
     ) -> Result<(), LocalEngineDownloadError> {
         let requiredPaths = requiredEngineRuntimeFiles(installDir, artifact);
         for path in requiredPaths {
-            let exists = match &self.storageHost {
-                Some(storageHost) => storageHost
-                    .exists(&storagePathString(&path))
-                    .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?,
-                None => path.is_file(),
-            };
+            let exists = self
+                .storageHost
+                .as_ref()
+                .ok_or_else(|| LocalEngineDownloadError::Storage(storagePathString(&path)))?
+                .exists(&storagePathString(&path))
+                .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?;
             if !exists {
                 return Err(LocalEngineDownloadError::RuntimeFileMissing(
                     storagePathString(&path),
@@ -471,18 +463,13 @@ impl LocalEngineInstaller {
         stagingDir: &Path,
         installDir: &Path,
     ) -> Result<(), LocalEngineDownloadError> {
-        match &self.storageHost {
-            Some(storageHost) => {
-                self.removePath(installDir)?;
-                copyStorageDirectory(storageHost, stagingDir, installDir)?;
-                self.removePath(stagingDir)
-            }
-            None => {
-                removeNativePath(installDir)?;
-                fs::rename(stagingDir, installDir)
-                    .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))
-            }
-        }
+        let storageHost = self
+            .storageHost
+            .as_ref()
+            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePathString(installDir)))?;
+        self.removePath(installDir)?;
+        copyStorageDirectory(storageHost, stagingDir, installDir)?;
+        self.removePath(stagingDir)
     }
 }
 
@@ -555,6 +542,7 @@ fn verifyArchiveReader(
 }
 
 /// Extracts a Tar+Bzip2 engine archive into a native staging directory.
+#[cfg(test)]
 fn extractTarBz2ArchiveToNative(
     archivePath: &Path,
     stagingDir: &Path,
@@ -750,6 +738,7 @@ fn storagePathString(path: &Path) -> String {
 }
 
 /// Removes one temporary file or directory used by native engine installation.
+#[cfg(test)]
 fn removeNativePath(path: &Path) -> Result<(), LocalEngineDownloadError> {
     if !path.exists() {
         return Ok(());

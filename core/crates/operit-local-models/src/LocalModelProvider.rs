@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -72,6 +71,7 @@ pub struct ResolvedLocalModelRuntime {
 pub struct LocalModelProvider {
     runtimeRoot: PathBuf,
     registryStore: LocalModelRegistryStore,
+    storageHost: Arc<dyn RuntimeStorageHost>,
 }
 
 impl LocalModelProvider {
@@ -87,6 +87,7 @@ impl LocalModelProvider {
         Ok(Self {
             runtimeRoot,
             registryStore: LocalModelRegistryStore::forRuntimeStorage(storageHost.clone()),
+            storageHost,
         })
     }
 
@@ -262,7 +263,7 @@ impl LocalModelProvider {
             "TTS",
         )?;
         let modelDirectory = PathBuf::from(&runtime.modelDirectory);
-        let outputPath = self.localTtsOutputPath()?;
+        let outputPath = self.localTtsOutputPath();
         let speed = jsonNumberOption(&request.options, "speed")?;
         let mut args = vec![
             format!("--sid={speakerId}"),
@@ -270,14 +271,17 @@ impl LocalModelProvider {
             "--provider=cpu".to_string(),
             "--num-threads=2".to_string(),
             "--print-args=false".to_string(),
-            format!("--output-filename={}", outputPath.display()),
+            format!("--output-filename={outputPath}"),
         ];
         appendSherpaTtsDriverArguments(&mut args, driver, speakerId, &runtime, &modelDirectory)?;
         args.push(request.text);
         runEngineCommand(&runtime, &executable, &args)?;
-        let audioBytes = fs::read(&outputPath)
+        let audioBytes = self
+            .storageHost
+            .readBytes(&outputPath)
             .map_err(|error| LocalModelProviderError::Storage(error.to_string()))?;
-        fs::remove_file(&outputPath)
+        self.storageHost
+            .delete(&outputPath, false)
             .map_err(|error| LocalModelProviderError::Storage(error.to_string()))?;
         Ok(LocalTtsResponse {
             audioBytes,
@@ -297,12 +301,13 @@ impl LocalModelProvider {
     }
 
     /// Creates a unique temporary WAV output path below runtime storage.
-    fn localTtsOutputPath(&self) -> Result<PathBuf, LocalModelProviderError> {
-        let directory = self.runtimeRoot.join("temp").join("clean_on_exit");
-        fs::create_dir_all(&directory)
-            .map_err(|error| LocalModelProviderError::Storage(error.to_string()))?;
+    fn localTtsOutputPath(&self) -> String {
         let sequence = LOCAL_TTS_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        Ok(directory.join(format!("local-tts-{}-{sequence}.wav", std::process::id())))
+        format!(
+            "{}/temp/clean_on_exit/local-tts-{}-{sequence}.wav",
+            self.runtimeRoot.to_string_lossy().replace('\\', "/"),
+            std::process::id()
+        )
     }
 }
 

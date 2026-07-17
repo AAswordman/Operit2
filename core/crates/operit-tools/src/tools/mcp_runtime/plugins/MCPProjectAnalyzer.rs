@@ -1,6 +1,7 @@
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use operit_host_api::FileSystemHost;
 use regex::Regex;
 use serde_json::Value;
 
@@ -31,36 +32,43 @@ pub struct ProjectStructure {
     pub pythonPackageName: Option<String>,
 }
 
-pub struct MCPProjectAnalyzer;
+pub struct MCPProjectAnalyzer {
+    fileSystemHost: Arc<dyn FileSystemHost>,
+}
 
 impl MCPProjectAnalyzer {
+    /// Creates an MCP project analyzer backed by the supplied file-system host.
+    pub fn new(fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
+        Self { fileSystemHost }
+    }
+
     #[allow(non_snake_case)]
     pub fn analyzeProjectStructure(
         &self,
         pluginDir: &Path,
         readmeContent: &str,
     ) -> ProjectStructure {
-        let hasRequirementsTxt = pluginDir.join("requirements.txt").exists();
-        let hasPyprojectToml = pluginDir.join("pyproject.toml").exists();
-        let hasSetupPy = pluginDir.join("setup.py").exists();
-        let hasPackageJson = pluginDir.join("package.json").exists();
-        let hasTsConfig = pluginDir.join("tsconfig.json").exists();
+        let hasRequirementsTxt = self.fileExists(&pluginDir.join("requirements.txt"));
+        let hasPyprojectToml = self.fileExists(&pluginDir.join("pyproject.toml"));
+        let hasSetupPy = self.fileExists(&pluginDir.join("setup.py"));
+        let hasPackageJson = self.fileExists(&pluginDir.join("package.json"));
+        let hasTsConfig = self.fileExists(&pluginDir.join("tsconfig.json"));
 
-        let pythonFiles = filesWithExtensions(pluginDir, &["py"]);
-        let jsFiles = filesWithExtensions(pluginDir, &["js"]);
-        let tsFiles = filesWithExtensions(pluginDir, &["ts", "tsx"]);
+        let pythonFiles = self.filesWithExtensions(pluginDir, &["py"]);
+        let jsFiles = self.filesWithExtensions(pluginDir, &["js"]);
+        let tsFiles = self.filesWithExtensions(pluginDir, &["ts", "tsx"]);
         let hasTsFiles = !tsFiles.is_empty();
 
-        let mainPythonModule = findMainPythonModule(pluginDir);
-        let packageJson = readJsonFile(&pluginDir.join("package.json"));
-        let mainJsFile = findMainJsFile(pluginDir, packageJson.as_ref());
-        let mainTsFile = findMainTsFile(pluginDir, packageJson.as_ref(), &tsFiles);
+        let mainPythonModule = self.findMainPythonModule(pluginDir);
+        let packageJson = self.readJsonFile(&pluginDir.join("package.json"));
+        let mainJsFile = self.findMainJsFile(pluginDir, packageJson.as_ref());
+        let mainTsFile = self.findMainTsFile(pluginDir, packageJson.as_ref(), &tsFiles);
         let hasTypeScriptDependency = packageJson
             .as_ref()
             .map(hasTypeScriptMarker)
             .unwrap_or(false);
-        let (tsConfigOutDir, tsConfigRootDir) = parseTsConfig(pluginDir);
-        let pythonPackageName = parsePyprojectToml(pluginDir);
+        let (tsConfigOutDir, tsConfigRootDir) = self.parseTsConfig(pluginDir);
+        let pythonPackageName = self.parsePyprojectToml(pluginDir);
 
         let projectType = if hasTsConfig || hasTsFiles || hasTypeScriptDependency {
             ProjectType::TYPESCRIPT
@@ -104,47 +112,153 @@ impl MCPProjectAnalyzer {
             pluginDir.join("docs").join("readme.md"),
         ];
         for candidate in candidates {
-            if candidate.is_file() {
+            if self.fileExists(&candidate) {
                 return Some(candidate);
             }
         }
-        fs::read_dir(pluginDir)
+        self.fileSystemHost
+            .listFiles(pluginDir.to_str()?)
             .ok()?
-            .flatten()
-            .map(|entry| entry.path())
-            .find(|path| {
-                path.is_file()
-                    && path
+            .into_iter()
+            .find(|entry| {
+                !entry.isDirectory
+                    && Path::new(&entry.name)
                         .extension()
                         .and_then(|value| value.to_str())
-                        .map(|value| value.eq_ignore_ascii_case("md"))
-                        .unwrap_or(false)
+                        .is_some_and(|value| value.eq_ignore_ascii_case("md"))
             })
+            .map(|entry| pluginDir.join(entry.name))
     }
-}
 
-#[allow(non_snake_case)]
-fn filesWithExtensions(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
-    fs::read_dir(dir)
-        .ok()
-        .into_iter()
-        .flat_map(|entries| entries.flatten())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .map(|value| extensions.iter().any(|ext| value.eq_ignore_ascii_case(ext)))
-                    .unwrap_or(false)
-        })
-        .collect()
-}
+    /// Returns whether a host-owned path is an existing file.
+    fn fileExists(&self, path: &Path) -> bool {
+        path.to_str()
+            .and_then(|path| self.fileSystemHost.fileExists(path).ok())
+            .is_some_and(|entry| entry.exists && !entry.isDirectory)
+    }
 
-#[allow(non_snake_case)]
-fn readJsonFile(path: &Path) -> Option<Value> {
-    let text = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<Value>(&text).ok()
+    /// Lists direct child files with extensions accepted by the project detector.
+    fn filesWithExtensions(&self, dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
+        let Some(path) = dir.to_str() else {
+            return Vec::new();
+        };
+        self.fileSystemHost
+            .listFiles(path)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|entry| {
+                !entry.isDirectory
+                    && Path::new(&entry.name)
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .is_some_and(|value| {
+                            extensions
+                                .iter()
+                                .any(|extension| value.eq_ignore_ascii_case(extension))
+                        })
+            })
+            .map(|entry| dir.join(entry.name))
+            .collect()
+    }
+
+    /// Reads and parses one JSON project file through the host file system.
+    fn readJsonFile(&self, path: &Path) -> Option<Value> {
+        let text = self.fileSystemHost.readFile(path.to_str()?).ok()?;
+        serde_json::from_str::<Value>(&text).ok()
+    }
+
+    /// Finds the primary Python module declared by common project layouts.
+    fn findMainPythonModule(&self, pluginDir: &Path) -> Option<String> {
+        let srcDir = pluginDir.join("src");
+        if srcDir
+            .to_str()
+            .and_then(|path| self.fileSystemHost.fileExists(path).ok())
+            .is_some_and(|entry| entry.exists && entry.isDirectory)
+        {
+            for entry in self.fileSystemHost.listFiles(srcDir.to_str()?).ok()? {
+                let path = srcDir.join(&entry.name);
+                if entry.isDirectory && self.fileExists(&path.join("__init__.py")) {
+                    return Some(entry.name);
+                }
+            }
+        }
+        for filename in ["main.py", "__main__.py", "app.py", "server.py"] {
+            if self.fileExists(&pluginDir.join(filename)) {
+                if filename == "__main__.py" {
+                    return pluginDir
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .map(|value| value.replace('-', "_").to_ascii_lowercase());
+                }
+                return Some(filename.trim_end_matches(".py").to_string());
+            }
+        }
+        if self.fileExists(&pluginDir.join("__init__.py")) {
+            return pluginDir
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(|value| value.replace('-', "_").to_ascii_lowercase());
+        }
+        let dirNameModule = pluginDir
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value.replace('-', "_").to_ascii_lowercase())?;
+        self.fileExists(&pluginDir.join(format!("{dirNameModule}.py")))
+            .then_some(dirNameModule)
+    }
+
+    /// Finds the primary JavaScript file declared by package metadata or conventions.
+    fn findMainJsFile(&self, pluginDir: &Path, packageJson: Option<&Value>) -> Option<String> {
+        if let Some(main) = packageJson
+            .and_then(|json| json.get("main"))
+            .and_then(Value::as_str)
+        {
+            return Some(main.to_string());
+        }
+        ["index.js", "server.js", "app.js", "main.js"]
+            .into_iter()
+            .find(|filename| self.fileExists(&pluginDir.join(filename)))
+            .map(str::to_string)
+    }
+
+    /// Finds the primary TypeScript file declared by metadata or source conventions.
+    fn findMainTsFile(
+        &self,
+        pluginDir: &Path,
+        packageJson: Option<&Value>,
+        tsFiles: &[PathBuf],
+    ) -> Option<String> {
+        findMainTsFile(self, pluginDir, packageJson, tsFiles)
+    }
+
+    /// Reads TypeScript compiler directory settings from tsconfig.json.
+    fn parseTsConfig(&self, pluginDir: &Path) -> (Option<String>, Option<String>) {
+        let Some(json) = self.readJsonFile(&pluginDir.join("tsconfig.json")) else {
+            return (None, None);
+        };
+        let options = json.get("compilerOptions");
+        let outDir = options
+            .and_then(|value| value.get("outDir"))
+            .and_then(Value::as_str)
+            .map(normalizePathText)
+            .filter(|value| !value.is_empty());
+        let rootDir = options
+            .and_then(|value| value.get("rootDir"))
+            .and_then(Value::as_str)
+            .map(normalizePathText)
+            .filter(|value| !value.is_empty());
+        (outDir, rootDir)
+    }
+
+    /// Reads the Python package name from pyproject.toml through the host.
+    fn parsePyprojectToml(&self, pluginDir: &Path) -> Option<String> {
+        parsePyprojectTomlContent(
+            &self
+                .fileSystemHost
+                .readFile(pluginDir.join("pyproject.toml").to_str()?)
+                .ok()?,
+        )
+    }
 }
 
 #[allow(non_snake_case)]
@@ -178,60 +292,8 @@ fn hasTypeScriptMarker(packageJson: &Value) -> bool {
 }
 
 #[allow(non_snake_case)]
-fn findMainPythonModule(pluginDir: &Path) -> Option<String> {
-    let srcDir = pluginDir.join("src");
-    if srcDir.is_dir() {
-        for entry in fs::read_dir(srcDir).ok()?.flatten() {
-            let path = entry.path();
-            if path.is_dir() && path.join("__init__.py").exists() {
-                return path.file_name()?.to_str().map(str::to_string);
-            }
-        }
-    }
-    for filename in ["main.py", "__main__.py", "app.py", "server.py"] {
-        if pluginDir.join(filename).exists() {
-            if filename == "__main__.py" {
-                return pluginDir
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .map(|value| value.replace('-', "_").to_ascii_lowercase());
-            }
-            return Some(filename.trim_end_matches(".py").to_string());
-        }
-    }
-    if pluginDir.join("__init__.py").exists() {
-        return pluginDir
-            .file_name()
-            .and_then(|value| value.to_str())
-            .map(|value| value.replace('-', "_").to_ascii_lowercase());
-    }
-    let dirNameModule = pluginDir
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(|value| value.replace('-', "_").to_ascii_lowercase())?;
-    if pluginDir.join(format!("{dirNameModule}.py")).exists() {
-        Some(dirNameModule)
-    } else {
-        None
-    }
-}
-
-#[allow(non_snake_case)]
-fn findMainJsFile(pluginDir: &Path, packageJson: Option<&Value>) -> Option<String> {
-    if let Some(main) = packageJson
-        .and_then(|json| json.get("main"))
-        .and_then(Value::as_str)
-    {
-        return Some(main.to_string());
-    }
-    ["index.js", "server.js", "app.js", "main.js"]
-        .into_iter()
-        .find(|filename| pluginDir.join(filename).exists())
-        .map(str::to_string)
-}
-
-#[allow(non_snake_case)]
 fn findMainTsFile(
+    analyzer: &MCPProjectAnalyzer,
     pluginDir: &Path,
     packageJson: Option<&Value>,
     tsFiles: &[PathBuf],
@@ -258,7 +320,7 @@ fn findMainTsFile(
                         tsFileName,
                         binPath.replace(".js", ".ts"),
                     ] {
-                        if pluginDir.join(&candidate).exists() {
+                        if analyzer.fileExists(&pluginDir.join(&candidate)) {
                             return Some(candidate);
                         }
                     }
@@ -286,7 +348,7 @@ fn findMainTsFile(
         "app.ts",
         "main.ts",
     ] {
-        if pluginDir.join(filename).exists() {
+        if analyzer.fileExists(&pluginDir.join(filename)) {
             return Some(filename.to_string());
         }
     }
@@ -295,25 +357,6 @@ fn findMainTsFile(
         .and_then(|path| path.file_name())
         .and_then(|value| value.to_str())
         .map(str::to_string)
-}
-
-#[allow(non_snake_case)]
-fn parseTsConfig(pluginDir: &Path) -> (Option<String>, Option<String>) {
-    let Some(json) = readJsonFile(&pluginDir.join("tsconfig.json")) else {
-        return (None, None);
-    };
-    let options = json.get("compilerOptions");
-    let outDir = options
-        .and_then(|value| value.get("outDir"))
-        .and_then(Value::as_str)
-        .map(normalizePathText)
-        .filter(|value| !value.is_empty());
-    let rootDir = options
-        .and_then(|value| value.get("rootDir"))
-        .and_then(Value::as_str)
-        .map(normalizePathText)
-        .filter(|value| !value.is_empty());
-    (outDir, rootDir)
 }
 
 #[allow(non_snake_case)]
@@ -326,8 +369,7 @@ fn normalizePathText(value: &str) -> String {
 }
 
 #[allow(non_snake_case)]
-fn parsePyprojectToml(pluginDir: &Path) -> Option<String> {
-    let content = fs::read_to_string(pluginDir.join("pyproject.toml")).ok()?;
+fn parsePyprojectTomlContent(content: &str) -> Option<String> {
     let scriptsSection = Regex::new(r"(?s)\[project\.scripts\](.*?)(?:\n\[|$)").ok()?;
     if let Some(section) = scriptsSection
         .captures(&content)

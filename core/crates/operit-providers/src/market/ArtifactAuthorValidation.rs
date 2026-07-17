@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::io::Cursor;
+use std::path::Path;
+use std::sync::Arc;
 
+use operit_host_api::FileSystemHost;
 use operit_plugin_sdk::package::PublishablePackageSource;
 use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgArchiveParser;
 use serde::{Deserialize, Serialize};
@@ -13,13 +15,15 @@ pub struct LocalArtifactAuthorDeclaration {
     pub declaredAuthorSlotCount: i32,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct ArtifactAuthorValidation;
+#[derive(Clone)]
+pub struct ArtifactAuthorValidation {
+    fileSystemHost: Arc<dyn FileSystemHost>,
+}
 
 impl ArtifactAuthorValidation {
     /// Creates a validator for local artifact author declarations.
-    pub fn new() -> Self {
-        Self
+    pub fn new(fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
+        Self { fileSystemHost }
     }
 
     #[allow(non_snake_case)]
@@ -28,26 +32,35 @@ impl ArtifactAuthorValidation {
         &self,
         source: PublishablePackageSource,
     ) -> Result<LocalArtifactAuthorDeclaration, String> {
-        let sourceFile = PathBuf::from(&source.sourcePath);
-        if !sourceFile.exists() || !sourceFile.is_file() {
+        let sourceInfo = self
+            .fileSystemHost
+            .fileExists(&source.sourcePath)
+            .map_err(|error| error.to_string())?;
+        if !sourceInfo.exists || sourceInfo.isDirectory {
             return Ok(LocalArtifactAuthorDeclaration {
                 hasAuthorField: false,
                 declaredAuthorSlotCount: 0,
             });
         }
 
-        if source.isToolPkg {
-            inspectToolPkgAuthorDeclaration(&sourceFile)
-        } else {
-            inspectJsAuthorDeclaration(&sourceFile)
-        }
+        let sourceBytes = self
+            .fileSystemHost
+            .readFileBytes(&source.sourcePath)
+            .map_err(|error| error.to_string())?;
+        inspectArtifactAuthorDeclaration(&source, &sourceBytes)
     }
 }
 
 #[allow(non_snake_case)]
-fn inspectJsAuthorDeclaration(sourceFile: &Path) -> Result<LocalArtifactAuthorDeclaration, String> {
-    let jsContent = fs::read_to_string(sourceFile).map_err(|error| error.to_string())?;
-    let lowerPath = sourceFile.to_string_lossy().to_ascii_lowercase();
+fn inspectArtifactAuthorDeclaration(
+    source: &PublishablePackageSource,
+    sourceBytes: &[u8],
+) -> Result<LocalArtifactAuthorDeclaration, String> {
+    if source.isToolPkg {
+        return inspectToolPkgAuthorDeclaration(sourceBytes);
+    }
+    let jsContent = String::from_utf8(sourceBytes.to_vec()).map_err(|error| error.to_string())?;
+    let lowerPath = source.sourcePath.to_ascii_lowercase();
     let metadataString = if lowerPath.ends_with(".js") || lowerPath.ends_with(".ts") {
         extractJsMetadata(&jsContent)
     } else {
@@ -57,10 +70,10 @@ fn inspectJsAuthorDeclaration(sourceFile: &Path) -> Result<LocalArtifactAuthorDe
 }
 #[allow(non_snake_case)]
 fn inspectToolPkgAuthorDeclaration(
-    sourceFile: &Path,
+    sourceBytes: &[u8],
 ) -> Result<LocalArtifactAuthorDeclaration, String> {
-    let file = fs::File::open(sourceFile).map_err(|error| error.to_string())?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|error| error.to_string())?;
+    let mut archive =
+        zip::ZipArchive::new(Cursor::new(sourceBytes)).map_err(|error| error.to_string())?;
     let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
     let manifestEntryName = findToolPkgManifestEntryName(&entryIndex.entryNames)
         .ok_or_else(|| "toolpkg 缺少 manifest.hjson 或 manifest.json".to_string())?;

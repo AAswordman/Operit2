@@ -2098,6 +2098,7 @@ name = "operit-host-native-scheduler"
 version = "0.1.0"
 dependencies = [
  "operit-host-api",
+ "tokio",
 ]
 
 [[package]]
@@ -2139,6 +2140,7 @@ dependencies = [
  "serde",
  "serde_json",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 
@@ -2235,6 +2237,7 @@ version = "2.0.0-preview.4"
 dependencies = [
  "chrono",
  "json5",
+ "operit-host-api",
  "operit-plugin-sdk-codegen",
  "regex",
  "serde",

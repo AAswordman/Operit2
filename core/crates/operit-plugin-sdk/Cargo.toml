@@ -12,6 +12,7 @@ documentation = "https://docs.rs/operit-plugin-sdk"
 [dependencies]
 chrono.workspace = true
 json5.workspace = true
+operit-host-api = { path = "../operit-host-api" }
 regex.workspace = true
 serde.workspace = true
 serde_bytes = "0.11"

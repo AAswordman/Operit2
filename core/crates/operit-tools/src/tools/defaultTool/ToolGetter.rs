@@ -47,14 +47,23 @@ impl ToolGetter {
                 .httpHost
                 .clone()
                 .expect("HTTP host must be configured before registering HTTP tools"),
-            context.fileSystemHost.clone(),
+            context
+                .fileSystemHost
+                .clone()
+                .expect("FileSystemHost must be configured before registering HTTP tools"),
         )
     }
 
     /// Creates the web-visit tool wrapper around the optional web host.
     #[allow(non_snake_case)]
     pub fn getWebVisitTool(context: &HostManager) -> StandardWebVisitTool {
-        StandardWebVisitTool::new(context.webVisitHost.clone())
+        StandardWebVisitTool::new(
+            context.webVisitHost.clone(),
+            context
+                .fileSystemHost
+                .clone()
+                .expect("FileSystemHost must be configured before registering web-visit tools"),
+        )
     }
 
     /// Creates browser automation tools from the browser host capability.

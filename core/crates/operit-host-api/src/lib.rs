@@ -6,7 +6,9 @@ pub mod TimeUtils;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
@@ -1383,9 +1385,35 @@ pub trait HostRuntimeEventSchedulerHost: Send + Sync {
 /// Owns a one-shot runtime task that must execute outside Core's synchronous startup path.
 pub type HostRuntimeTask = Box<dyn FnOnce() + Send + 'static>;
 
+/// Owns an asynchronous runtime task scheduled by the platform event executor.
+///
+/// Native schedulers move tasks to named threads, while browser futures remain
+/// local to the JavaScript event loop and therefore cannot require `Send`.
+#[cfg(not(target_arch = "wasm32"))]
+pub type HostRuntimeAsyncTask = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+/// Owns a browser-local asynchronous runtime task.
+#[cfg(target_arch = "wasm32")]
+pub type HostRuntimeAsyncTask = Pin<Box<dyn Future<Output = ()> + 'static>>;
+
 pub trait HostRuntimeTaskSchedulerHost: Send + Sync {
     /// Schedules a named one-shot runtime task through the platform execution mechanism.
     fn scheduleHostRuntimeTask(&self, taskName: &str, task: HostRuntimeTask) -> HostResult<()>;
+
+    /// Schedules a named asynchronous runtime task through the platform executor.
+    fn scheduleHostRuntimeAsyncTask(
+        &self,
+        taskName: &str,
+        task: HostRuntimeAsyncTask,
+    ) -> HostResult<()>;
+
+    /// Schedules a named runtime task after a platform-owned delay.
+    fn scheduleDelayedHostRuntimeTask(
+        &self,
+        taskName: &str,
+        delayMs: u64,
+        task: HostRuntimeTask,
+    ) -> HostResult<()>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

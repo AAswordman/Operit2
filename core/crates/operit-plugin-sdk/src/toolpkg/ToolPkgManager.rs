@@ -1,9 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::io::Read;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use operit_host_api::FileSystemHost;
 use serde_json::Value;
 
 use crate::javascript::JsExecutionEngine;
@@ -46,6 +45,7 @@ pub struct ToolPkgManager {
     toolPkgExecutionEngines: Arc<Mutex<BTreeMap<String, ToolPkgExecutionEngineEntry>>>,
     executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
     assetSource: Arc<dyn ToolPkgAssetSource>,
+    fileSystemHost: Arc<dyn FileSystemHost>,
 }
 
 impl ToolPkgManager {
@@ -53,6 +53,7 @@ impl ToolPkgManager {
     pub fn new(
         executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
         assetSource: Arc<dyn ToolPkgAssetSource>,
+        fileSystemHost: Arc<dyn FileSystemHost>,
     ) -> Self {
         Self {
             containers: BTreeMap::new(),
@@ -61,6 +62,7 @@ impl ToolPkgManager {
             toolPkgExecutionEngines: Arc::new(Mutex::new(BTreeMap::new())),
             executionEngineFactory,
             assetSource,
+            fileSystemHost,
         }
     }
 
@@ -453,19 +455,25 @@ impl ToolPkgManager {
         let normalizedResourcePath = normalizeToolPkgEntryPath(resourcePath)?;
         match runtime.sourceType {
             ToolPkgSourceType::EXTERNAL => {
-                let sourcePath = PathBuf::from(&runtime.sourcePath);
-                if sourcePath.is_dir() {
-                    let bytes = fs::read(sourcePath.join(&normalizedResourcePath)).ok()?;
+                let sourceInfo = self.fileSystemHost.fileExists(&runtime.sourcePath).ok()?;
+                if sourceInfo.isDirectory {
+                    let resourceFile =
+                        joinToolPkgSourcePath(&runtime.sourcePath, &normalizedResourcePath);
+                    let bytes = self.fileSystemHost.readFileBytes(&resourceFile).ok()?;
                     return crate::toolpkg::ToolPkgProtection::decryptIfNeeded(&bytes).ok();
                 }
-                if sourcePath.is_file()
-                    && sourcePath
-                        .extension()
-                        .and_then(|extension| extension.to_str())
-                        .is_some_and(|extension| extension.eq_ignore_ascii_case("toolpkg"))
+                if sourceInfo.exists
+                    && runtime
+                        .sourcePath
+                        .to_ascii_lowercase()
+                        .ends_with(".toolpkg")
                 {
-                    let file = fs::File::open(sourcePath).ok()?;
-                    let mut archive = zip::ZipArchive::new(file).ok()?;
+                    let archiveBytes = self
+                        .fileSystemHost
+                        .readFileBytes(&runtime.sourcePath)
+                        .ok()?;
+                    let mut archive =
+                        zip::ZipArchive::new(std::io::Cursor::new(archiveBytes)).ok()?;
                     let mut entry = archive.by_name(&normalizedResourcePath).ok()?;
                     let mut bytes = Vec::new();
                     entry.read_to_end(&mut bytes).ok()?;
@@ -484,6 +492,11 @@ impl ToolPkgManager {
             }
         }
     }
+}
+
+/// Joins a normalized ToolPkg entry beneath one host-owned source directory.
+fn joinToolPkgSourcePath(sourcePath: &str, entryPath: &str) -> String {
+    format!("{}/{}", sourcePath.trim_end_matches(['/', '\\']), entryPath)
 }
 
 impl ToolPkgHookDispatcher for ToolPkgManager {
@@ -661,6 +674,127 @@ mod tests {
     use super::*;
     use crate::execution_result::JsExecutionResult;
     use crate::javascript::ToolPkgMainRegistrationCapture;
+    use operit_host_api::{
+        FileEntry, FileExistence, FileInfo, FindFilesRequest, GrepCodeRequest, GrepCodeResult,
+        HostEnvironmentDescriptor, HostError, HostResult,
+    };
+
+    /// Rejects filesystem operations because these engine lifecycle tests do not access files.
+    struct RejectingFileSystemHost;
+
+    impl RejectingFileSystemHost {
+        /// Returns the explicit error used for unsupported test filesystem operations.
+        fn unsupported<T>() -> HostResult<T> {
+            Err(HostError::new("filesystem access is not used by this test"))
+        }
+    }
+
+    impl FileSystemHost for RejectingFileSystemHost {
+        /// Returns the test host label.
+        fn envLabel(&self) -> &str {
+            "test"
+        }
+
+        /// Returns the test environment descriptor.
+        fn environmentDescriptor(&self) -> HostEnvironmentDescriptor {
+            HostEnvironmentDescriptor::linux()
+        }
+
+        /// Rejects path validation.
+        fn validatePath(&self, _path: &str, _paramName: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects directory listing.
+        fn listFiles(&self, _path: &str) -> HostResult<Vec<FileEntry>> {
+            Self::unsupported()
+        }
+
+        /// Rejects text reads.
+        fn readFile(&self, _path: &str) -> HostResult<String> {
+            Self::unsupported()
+        }
+
+        /// Rejects bounded text reads.
+        fn readFileWithLimit(&self, _path: &str, _maxBytes: usize) -> HostResult<String> {
+            Self::unsupported()
+        }
+
+        /// Rejects byte reads.
+        fn readFileBytes(&self, _path: &str) -> HostResult<Vec<u8>> {
+            Self::unsupported()
+        }
+
+        /// Rejects text writes.
+        fn writeFile(&self, _path: &str, _content: &str, _append: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects byte writes.
+        fn writeFileBytes(&self, _path: &str, _content: &[u8]) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects deletion.
+        fn deleteFile(&self, _path: &str, _recursive: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects file existence checks.
+        fn fileExists(&self, _path: &str) -> HostResult<FileExistence> {
+            Self::unsupported()
+        }
+
+        /// Rejects moves.
+        fn moveFile(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects copies.
+        fn copyFile(&self, _source: &str, _destination: &str, _recursive: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects directory creation.
+        fn makeDirectory(&self, _path: &str, _createParents: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects file searching.
+        fn findFiles(&self, _request: FindFilesRequest) -> HostResult<Vec<String>> {
+            Self::unsupported()
+        }
+
+        /// Rejects file metadata reads.
+        fn fileInfo(&self, _path: &str) -> HostResult<FileInfo> {
+            Self::unsupported()
+        }
+
+        /// Rejects code searches.
+        fn grepCode(&self, _request: GrepCodeRequest) -> HostResult<GrepCodeResult> {
+            Self::unsupported()
+        }
+
+        /// Rejects archive creation.
+        fn zipFiles(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects archive extraction.
+        fn unzipFiles(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects host file opening.
+        fn openFile(&self, _path: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects host file sharing.
+        fn shareFile(&self, _path: &str, _title: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+    }
 
     /// Records whether a test execution engine was destroyed.
     #[derive(Default)]
@@ -755,7 +889,11 @@ mod tests {
     /// Creates one manager and its recording engine factory.
     fn recordingManager() -> (ToolPkgManager, Arc<RecordingExecutionEngineFactory>) {
         let factory = Arc::new(RecordingExecutionEngineFactory::default());
-        let manager = ToolPkgManager::new(factory.clone(), Arc::new(EmptyAssetSource));
+        let manager = ToolPkgManager::new(
+            factory.clone(),
+            Arc::new(EmptyAssetSource),
+            Arc::new(RejectingFileSystemHost),
+        );
         (manager, factory)
     }
 

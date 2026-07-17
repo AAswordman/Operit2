@@ -9,6 +9,8 @@ use crate::{
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
+static DEFAULT_RUNTIME_TASK_SCHEDULER_HOST: OnceLock<Arc<dyn HostRuntimeTaskSchedulerHost>> =
+    OnceLock::new();
 
 /// Command callback used by hosts that expose core operations as argv-style calls.
 pub type CoreCommandExecutor = Arc<dyn Fn(Vec<String>) -> Result<String, String> + Send + Sync>;
@@ -25,6 +27,21 @@ pub fn defaultHttpHost() -> Arc<dyn HttpHost> {
     DEFAULT_HTTP_HOST
         .get()
         .expect("HTTP host must be configured before using HTTP-backed runtime services")
+        .clone()
+}
+
+/// Registers the task scheduler shared by runtime services that do not own a HostManager.
+#[allow(non_snake_case)]
+pub fn setDefaultHostRuntimeTaskSchedulerHost(host: Arc<dyn HostRuntimeTaskSchedulerHost>) {
+    let _ = DEFAULT_RUNTIME_TASK_SCHEDULER_HOST.set(host);
+}
+
+/// Returns the task scheduler configured by runtime initialization.
+#[allow(non_snake_case)]
+pub fn defaultHostRuntimeTaskSchedulerHost() -> Arc<dyn HostRuntimeTaskSchedulerHost> {
+    DEFAULT_RUNTIME_TASK_SCHEDULER_HOST
+        .get()
+        .expect("runtime task scheduler host must be configured before scheduling runtime work")
         .clone()
 }
 

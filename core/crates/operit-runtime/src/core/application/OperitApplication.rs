@@ -21,7 +21,9 @@ use crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggl
 use crate::plugins::PluginRegistry::PluginRegistry;
 use crate::services::ProviderRuntimeSupportService::ProviderRuntimeSupportService;
 use crate::services::ToolRuntimeSupportService::ToolRuntimeSupportService;
-use operit_host_api::HostManager::{setDefaultHttpHost, HostManager};
+use operit_host_api::HostManager::{
+    setDefaultHostRuntimeTaskSchedulerHost, setDefaultHttpHost, HostManager,
+};
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_host_api::{HostRuntimeEventRegistration, HostRuntimeTaskSchedulerHost};
 #[cfg(feature = "javascript")]
@@ -33,6 +35,7 @@ use operit_store::db::AppDatabase::AppDatabase;
 use operit_store::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
 use operit_store::PreferencesDataStore::PreferencesDataStore;
+use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::PreferencesDataStore::StateFlow;
 use operit_store::RuntimeStorageHost::{
     defaultRuntimeStorageHost, setDefaultHostSecretStore, setDefaultRuntimeSqliteHost,
@@ -117,6 +120,9 @@ impl OperitApplication {
         }
         if let Some(httpHost) = hostManager.httpHost.clone() {
             setDefaultHttpHost(httpHost);
+        }
+        if let Some(taskSchedulerHost) = hostManager.hostRuntimeTaskSchedulerHost.clone() {
+            setDefaultHostRuntimeTaskSchedulerHost(taskSchedulerHost);
         }
         let chatFileSystemHost = hostManager
             .fileSystemHost
@@ -379,6 +385,12 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn skillRepository(&self) -> SkillRepository {
         SkillRepository::getInstance(&self.hostManager, self.toolHandler.runtimeSupport())
+    }
+
+    /// Creates a user-markdown repository using this runtime's configured storage host.
+    #[allow(non_snake_case)]
+    pub fn userMarkdownRepository(&self, ownerKey: String) -> UserMarkdownRepository {
+        UserMarkdownRepository::new(ownerKey, defaultRuntimeStorageHost())
     }
 
     /// Creates an input menu bridge backed by this application's tool package runtime.

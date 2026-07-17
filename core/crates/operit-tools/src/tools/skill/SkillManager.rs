@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File};
-use std::io;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use operit_host_api::FileSystemHost;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 
@@ -11,9 +12,10 @@ use crate::tools::skill::SkillPackage::SkillPackage;
 
 const QUICK_PLUGIN_CREATOR_SKILL_NAME: &str = "PackageBuilder";
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SkillManager {
     paths: RuntimeStorePaths,
+    fileSystemHost: Arc<dyn FileSystemHost>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,13 +27,16 @@ pub struct BundledExternalSkillCandidate {
 impl SkillManager {
     /// Creates a skill manager using the default runtime store paths.
     #[allow(non_snake_case)]
-    pub fn fromDefaultPaths() -> Self {
-        Self::new(RuntimeStorePaths::default())
+    pub fn fromDefaultPaths(fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
+        Self::new(RuntimeStorePaths::default(), fileSystemHost)
     }
 
     /// Creates a skill manager rooted at explicit runtime store paths.
-    pub fn new(paths: RuntimeStorePaths) -> Self {
-        Self { paths }
+    pub fn new(paths: RuntimeStorePaths, fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
+        Self {
+            paths,
+            fileSystemHost,
+        }
     }
 
     /// Returns the directory where user-installed skills are stored.
@@ -49,8 +54,9 @@ impl SkillManager {
         let mut availableSkills = BTreeMap::new();
         let mut skillLoadErrors = BTreeMap::new();
         let skillsDir = self.getSkillsRootDir();
+        let skillsPath = hostPath(&skillsDir);
 
-        if let Err(error) = fs::create_dir_all(&skillsDir) {
+        if let Err(error) = self.fileSystemHost.makeDirectory(&skillsPath, true) {
             skillLoadErrors.insert(
                 "skills".to_string(),
                 format!("Cannot access skills directory: {}", error),
@@ -58,7 +64,7 @@ impl SkillManager {
             return (availableSkills, skillLoadErrors);
         }
 
-        let children = match fs::read_dir(&skillsDir) {
+        let children = match self.fileSystemHost.listFiles(&skillsPath) {
             Ok(children) => children,
             Err(error) => {
                 skillLoadErrors.insert(
@@ -70,34 +76,45 @@ impl SkillManager {
         };
 
         for child in children {
-            let Ok(child) = child else {
-                continue;
-            };
-            let childPath = child.path();
-            if !childPath.is_dir() {
+            if !child.isDirectory {
                 continue;
             }
-            let childName = child.file_name().to_string_lossy().to_string();
+            let childName = child.name;
+            let childPath = skillsDir.join(&childName);
             let primarySkillFile = childPath.join("SKILL.md");
             let lowerSkillFile = childPath.join("skill.md");
-            let skillFile = if primarySkillFile.is_file() {
+            let primaryInfo = match self.fileSystemHost.fileExists(&hostPath(&primarySkillFile)) {
+                Ok(info) => info,
+                Err(error) => {
+                    skillLoadErrors.insert(childName.clone(), error.to_string());
+                    continue;
+                }
+            };
+            let skillFile = if primaryInfo.exists && !primaryInfo.isDirectory {
                 primarySkillFile
             } else {
                 lowerSkillFile
             };
 
-            if !skillFile.is_file() {
+            let skillInfo = match self.fileSystemHost.fileExists(&hostPath(&skillFile)) {
+                Ok(info) => info,
+                Err(error) => {
+                    skillLoadErrors.insert(childName.clone(), error.to_string());
+                    continue;
+                }
+            };
+            if !skillInfo.exists || skillInfo.isDirectory {
                 skillLoadErrors.insert(
-                    childName,
+                    childName.clone(),
                     format!("Missing SKILL.md in {}", childPath.to_string_lossy()),
                 );
                 continue;
             }
 
-            match parseSkillMetadata(&skillFile) {
+            match parseSkillMetadata(self.fileSystemHost.as_ref(), &skillFile) {
                 Ok((name, description)) => {
                     let skillName = if name.trim().is_empty() {
-                        child.file_name().to_string_lossy().to_string()
+                        childName.clone()
                     } else {
                         name
                     };
@@ -110,7 +127,7 @@ impl SkillManager {
                             None => skillName.clone(),
                         };
                         skillLoadErrors.insert(
-                            child.file_name().to_string_lossy().to_string(),
+                            childName.clone(),
                             format!(
                                 "Duplicate scanned skill name: {} already loaded from {}",
                                 skillName, existingDirName
@@ -130,10 +147,7 @@ impl SkillManager {
                     );
                 }
                 Err(error) => {
-                    skillLoadErrors.insert(
-                        child.file_name().to_string_lossy().to_string(),
-                        format!("Failed to scan skill: {}", error),
-                    );
+                    skillLoadErrors.insert(childName, format!("Failed to scan skill: {}", error));
                 }
             }
         }
@@ -224,28 +238,33 @@ impl SkillManager {
         }
 
         let skillsRoot = self.getSkillsRootDir();
-        fs::create_dir_all(&skillsRoot)
+        let skillsRootPath = hostPath(&skillsRoot);
+        self.fileSystemHost
+            .makeDirectory(&skillsRootPath, true)
             .map_err(|error| format!("Cannot access skills directory: {}", error))?;
 
         let skillRoot = skillsRoot.join(skillName);
-        if skillRoot.exists() && !skillRoot.is_dir() {
+        let skillRootPath = hostPath(&skillRoot);
+        let skillRootInfo = self
+            .fileSystemHost
+            .fileExists(&skillRootPath)
+            .map_err(|error| error.to_string())?;
+        if skillRootInfo.exists && !skillRootInfo.isDirectory {
             return Err(format!(
                 "Skill path is not a directory: {}",
                 skillRoot.to_string_lossy()
             ));
         }
-        fs::create_dir_all(&skillRoot)
+        self.fileSystemHost
+            .makeDirectory(&skillRootPath, true)
             .map_err(|error| format!("Failed to create skill directory: {}", error))?;
 
-        clearBundledSkillFiles(&skillRoot)?;
+        clearBundledSkillFiles(self.fileSystemHost.as_ref(), &skillRoot)?;
         for asset in skillAssets {
             let normalizedPath = normalizeAssetRelativePath(asset.path)?;
             let outputFile = skillRoot.join(normalizedPath);
-            if let Some(parent) = outputFile.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|error| format!("Failed to create bundled skill parent: {}", error))?;
-            }
-            fs::write(&outputFile, asset.bytes)
+            self.fileSystemHost
+                .writeFileBytes(&hostPath(&outputFile), asset.bytes)
                 .map_err(|error| format!("Failed to write bundled skill asset: {}", error))?;
         }
 
@@ -273,7 +292,9 @@ impl SkillManager {
     pub fn readSkillContent(&self, skillName: &str) -> Option<String> {
         let skills = self.getAvailableSkills();
         let skill = skills.get(skillName)?;
-        fs::read_to_string(&skill.skillFile).ok()
+        self.fileSystemHost
+            .readFile(&hostPath(&skill.skillFile))
+            .ok()
     }
 
     /// Builds the system prompt fragment used when a skill is activated.
@@ -281,7 +302,7 @@ impl SkillManager {
     pub fn getSkillSystemPrompt(&self, skillName: &str) -> Option<String> {
         let skills = self.getAvailableSkills();
         let skill = skills.get(skillName)?;
-        let content = match fs::read_to_string(&skill.skillFile) {
+        let content = match self.fileSystemHost.readFile(&hostPath(&skill.skillFile)) {
             Ok(value) => value,
             Err(_) => String::new(),
         };
@@ -302,7 +323,10 @@ impl SkillManager {
             skill.directory.to_string_lossy()
         ));
         prompt.push_str("Directory structure:\n");
-        prompt.push_str(&buildDirectoryTreeText(&skill.directory));
+        prompt.push_str(&buildDirectoryTreeText(
+            self.fileSystemHost.as_ref(),
+            &skill.directory,
+        ));
         prompt.push_str("\n\nSKILL.md:\n");
         prompt.push_str(&content);
         prompt.push('\n');
@@ -316,7 +340,9 @@ impl SkillManager {
         let Some(skill) = skills.get(skillName) else {
             return false;
         };
-        fs::remove_dir_all(&skill.directory).is_ok()
+        self.fileSystemHost
+            .deleteFile(&hostPath(&skill.directory), true)
+            .is_ok()
     }
 
     /// Imports a skill from a zip archive by searching for SKILL.md.
@@ -332,7 +358,12 @@ impl SkillManager {
         zipFile: &Path,
         subDirPathInZip: Option<&str>,
     ) -> String {
-        if !zipFile.exists() || !zipFile.is_file() {
+        let zipPath = hostPath(zipFile);
+        let zipInfo = match self.fileSystemHost.fileExists(&zipPath) {
+            Ok(info) => info,
+            Err(error) => return format!("Cannot read skill file: {}", error),
+        };
+        if !zipInfo.exists || zipInfo.isDirectory {
             return format!("Cannot read skill file: {}", zipFile.to_string_lossy());
         }
         let extension = zipFile
@@ -342,13 +373,29 @@ impl SkillManager {
             return "Only .zip files are supported".to_string();
         }
 
+        let zipBytes = match self.fileSystemHost.readFileBytes(&zipPath) {
+            Ok(bytes) => bytes,
+            Err(error) => return format!("Cannot read skill file: {}", error),
+        };
+        self.importSkillArchiveBytes(&zipBytes, zipFile, subDirPathInZip)
+    }
+
+    /// Imports a skill from archive bytes supplied by a host-backed transport.
+    #[allow(non_snake_case)]
+    pub fn importSkillArchiveBytes(
+        &self,
+        zipBytes: &[u8],
+        archiveLabel: &Path,
+        subDirPathInZip: Option<&str>,
+    ) -> String {
         let skillsRoot = self.getSkillsRootDir();
-        if let Err(error) = fs::create_dir_all(&skillsRoot) {
+        let skillsRootPath = hostPath(&skillsRoot);
+        if let Err(error) = self.fileSystemHost.makeDirectory(&skillsRootPath, true) {
             return format!("Cannot access skills directory: {}", error);
         }
 
         let tmpDir = skillsRoot.join(format!(".import_tmp_{}", currentTimeMillis()));
-        if let Err(error) = fs::create_dir_all(&tmpDir) {
+        if let Err(error) = self.fileSystemHost.makeDirectory(&hostPath(&tmpDir), true) {
             return format!(
                 "Failed to create temporary import directory {}: {}",
                 tmpDir.to_string_lossy(),
@@ -356,20 +403,27 @@ impl SkillManager {
             );
         }
 
-        let result = self.importSkillFromZipInner(zipFile, subDirPathInZip, &skillsRoot, &tmpDir);
-        let _ = fs::remove_dir_all(&tmpDir);
+        let result = self.importSkillArchiveBytesInner(
+            zipBytes,
+            archiveLabel,
+            subDirPathInZip,
+            &skillsRoot,
+            &tmpDir,
+        );
+        let _ = self.fileSystemHost.deleteFile(&hostPath(&tmpDir), true);
         result
     }
 
     #[allow(non_snake_case)]
-    fn importSkillFromZipInner(
+    fn importSkillArchiveBytesInner(
         &self,
-        zipFile: &Path,
+        zipBytes: &[u8],
+        archiveLabel: &Path,
         subDirPathInZip: Option<&str>,
         skillsRoot: &Path,
         tmpDir: &Path,
     ) -> String {
-        if let Err(error) = unzipToDirectory(zipFile, tmpDir) {
+        if let Err(error) = unzipBytesToDirectory(self.fileSystemHost.as_ref(), zipBytes, tmpDir) {
             return format!("Failed to import skill: {}", error);
         }
 
@@ -378,31 +432,26 @@ impl SkillManager {
             .map(|value| value.trim_matches('/').to_string())
             .filter(|value| !value.is_empty());
 
-        let zipRootDir = match singleChildDirectory(tmpDir) {
+        let zipRootDir = match singleChildDirectory(self.fileSystemHost.as_ref(), tmpDir) {
             Some(path) => path,
             None => tmpDir.to_path_buf(),
         };
         let searchRoot = if let Some(subDir) = normalizedSubDir.as_ref() {
-            let baseCanonical = match zipRootDir.canonicalize() {
-                Ok(path) => path,
-                Err(error) => return format!("Failed to import skill: {}", error),
-            };
-            let resolved = zipRootDir.join(subDir);
-            let resolvedCanonical = match resolved.canonicalize() {
-                Ok(path) => path,
-                Err(_) => return format!("Import path not found: {}", subDir),
-            };
-            if !isPathInside(&resolvedCanonical, &baseCanonical) {
-                return "Invalid import path".to_string();
+            match safeChildPath(&zipRootDir, subDir) {
+                Ok(path) => match self.fileSystemHost.fileExists(&hostPath(&path)) {
+                    Ok(info) if info.exists && info.isDirectory => path,
+                    Ok(_) => return format!("Import path not found: {}", subDir),
+                    Err(error) => return format!("Failed to import skill: {}", error),
+                },
+                Err(error) => return error,
             }
-            resolvedCanonical
         } else {
             tmpDir.to_path_buf()
         };
 
-        let skillMdCandidates = match directSkillFile(&searchRoot) {
+        let skillMdCandidates = match directSkillFile(self.fileSystemHost.as_ref(), &searchRoot) {
             Some(skillFile) => vec![skillFile],
-            None => findSkillFiles(&searchRoot, 10),
+            None => findSkillFiles(self.fileSystemHost.as_ref(), &searchRoot, 10),
         };
         if skillMdCandidates.is_empty() {
             return if normalizedSubDir.is_some() {
@@ -417,15 +466,16 @@ impl SkillManager {
             return "Invalid SKILL.md path".to_string();
         };
 
-        let (metaName, metaDesc) = match parseSkillMetadata(&selectedSkillFile) {
-            Ok(value) => value,
-            Err(error) => return format!("Failed to import skill: {}", error),
-        };
+        let (metaName, metaDesc) =
+            match parseSkillMetadata(self.fileSystemHost.as_ref(), &selectedSkillFile) {
+                Ok(value) => value,
+                Err(error) => return format!("Failed to import skill: {}", error),
+            };
 
         let baseName = if !metaName.trim().is_empty() {
             metaName.trim().to_string()
-        } else if selectedSkillDir.canonicalize().ok() == tmpDir.canonicalize().ok() {
-            match zipFile.file_stem() {
+        } else if selectedSkillDir == tmpDir {
+            match archiveLabel.file_stem() {
                 Some(value) => value.to_string_lossy().to_string(),
                 None => "skill".to_string(),
             }
@@ -435,7 +485,7 @@ impl SkillManager {
                 .map(|value| value.to_string_lossy().to_string());
             match dirName {
                 Some(value) if !value.trim().is_empty() => value,
-                _ => match zipFile.file_stem() {
+                _ => match archiveLabel.file_stem() {
                     Some(value) => value.to_string_lossy().to_string(),
                     None => "skill".to_string(),
                 },
@@ -447,10 +497,19 @@ impl SkillManager {
             baseName.trim().to_string()
         };
         let finalDir = skillsRoot.join(&finalDirName);
-        if finalDir.exists() {
+        let finalDirPath = hostPath(&finalDir);
+        let finalDirInfo = match self.fileSystemHost.fileExists(&finalDirPath) {
+            Ok(info) => info,
+            Err(error) => return format!("Failed to import skill: {}", error),
+        };
+        if finalDirInfo.exists {
             return format!("Skill '{}' already exists", finalDirName);
         }
-        if let Err(error) = copyDirectoryRecursively(selectedSkillDir, &finalDir) {
+        if let Err(error) = self.fileSystemHost.copyFile(
+            &hostPath(selectedSkillDir),
+            &finalDirPath,
+            true,
+        ) {
             return format!("Failed to import skill: {}", error);
         }
 
@@ -468,9 +527,19 @@ impl SkillManager {
 }
 
 #[allow(non_snake_case)]
-fn parseSkillMetadata(skillFile: &Path) -> Result<(String, String), std::io::Error> {
-    let content = fs::read_to_string(skillFile)?;
+fn parseSkillMetadata(
+    fileSystemHost: &dyn FileSystemHost,
+    skillFile: &Path,
+) -> Result<(String, String), String> {
+    let content = fileSystemHost
+        .readFile(&hostPath(skillFile))
+        .map_err(|error| error.to_string())?;
     Ok(parseSkillMetadataContent(&content))
+}
+
+/// Converts a package metadata path into the corresponding host path string.
+fn hostPath(path: &Path) -> String {
+    path.to_string_lossy().to_string()
 }
 
 #[allow(non_snake_case)]
@@ -541,28 +610,26 @@ fn normalizeAssetRelativePath(path: &str) -> Result<PathBuf, String> {
 }
 
 #[allow(non_snake_case)]
-fn clearBundledSkillFiles(skillRoot: &Path) -> Result<(), String> {
-    let children = fs::read_dir(skillRoot)
+fn clearBundledSkillFiles(
+    fileSystemHost: &dyn FileSystemHost,
+    skillRoot: &Path,
+) -> Result<(), String> {
+    let children = fileSystemHost
+        .listFiles(&hostPath(skillRoot))
         .map_err(|error| format!("Failed to read bundled skill directory: {}", error))?;
     for child in children {
-        let child =
-            child.map_err(|error| format!("Failed to read bundled skill entry: {}", error))?;
-        let path = child.path();
-        if path.is_dir() {
-            fs::remove_dir_all(&path)
-                .map_err(|error| format!("Failed to clear bundled skill directory: {}", error))?;
-        } else {
-            fs::remove_file(&path)
-                .map_err(|error| format!("Failed to clear bundled skill file: {}", error))?;
-        }
+        let path = skillRoot.join(child.name);
+        fileSystemHost
+            .deleteFile(&hostPath(&path), child.isDirectory)
+            .map_err(|error| format!("Failed to clear bundled skill entry: {}", error))?;
     }
     Ok(())
 }
 
 #[allow(non_snake_case)]
-fn buildDirectoryTreeText(rootDir: &Path) -> String {
+fn buildDirectoryTreeText(fileSystemHost: &dyn FileSystemHost, rootDir: &Path) -> String {
     let mut output = String::new();
-    walkDirectory(rootDir, "", &mut output);
+    walkDirectory(fileSystemHost, rootDir, "", &mut output);
     if output.trim().is_empty() {
         "(empty directory)".to_string()
     } else {
@@ -571,29 +638,30 @@ fn buildDirectoryTreeText(rootDir: &Path) -> String {
 }
 
 #[allow(non_snake_case)]
-fn walkDirectory(dir: &Path, indent: &str, output: &mut String) {
-    let Ok(children) = fs::read_dir(dir) else {
+fn walkDirectory(
+    fileSystemHost: &dyn FileSystemHost,
+    dir: &Path,
+    indent: &str,
+    output: &mut String,
+) {
+    let Ok(mut children) = fileSystemHost.listFiles(&hostPath(dir)) else {
         return;
     };
-    let mut children = children.filter_map(Result::ok).collect::<Vec<_>>();
     children.sort_by(|left, right| {
-        let leftPath = left.path();
-        let rightPath = right.path();
-        leftPath.is_file().cmp(&rightPath.is_file()).then_with(|| {
-            left.file_name()
-                .to_string_lossy()
+        left.isDirectory.cmp(&right.isDirectory).then_with(|| {
+            left.name
                 .to_ascii_lowercase()
-                .cmp(&right.file_name().to_string_lossy().to_ascii_lowercase())
+                .cmp(&right.name.to_ascii_lowercase())
         })
     });
     for child in children {
-        let childPath = child.path();
+        let childPath = dir.join(&child.name);
         output.push_str(indent);
         output.push_str("- ");
-        output.push_str(&child.file_name().to_string_lossy());
-        if childPath.is_dir() {
+        output.push_str(&child.name);
+        if child.isDirectory {
             output.push_str("/\n");
-            walkDirectory(&childPath, &format!("{indent}  "), output);
+            walkDirectory(fileSystemHost, &childPath, &format!("{indent}  "), output);
         } else {
             output.push('\n');
         }
@@ -614,11 +682,12 @@ fn currentTimeMillis() -> u128 {
 }
 
 #[allow(non_snake_case)]
-fn unzipToDirectory(zipFile: &Path, destinationDir: &Path) -> Result<(), String> {
-    let file = File::open(zipFile).map_err(|error| error.to_string())?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|error| error.to_string())?;
-    let destCanonical = destinationDir
-        .canonicalize()
+fn unzipBytesToDirectory(
+    fileSystemHost: &dyn FileSystemHost,
+    zipBytes: &[u8],
+    destinationDir: &Path,
+) -> Result<(), String> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(zipBytes))
         .map_err(|error| error.to_string())?;
 
     for index in 0..archive.len() {
@@ -627,23 +696,20 @@ fn unzipToDirectory(zipFile: &Path, destinationDir: &Path) -> Result<(), String>
             return Err(format!("Zip entry is outside target dir: {}", entry.name()));
         };
         let outFile = destinationDir.join(enclosedName);
-        let outCanonicalParent = outFile
-            .parent()
-            .ok_or_else(|| format!("Invalid zip entry path: {}", entry.name()))?
-            .to_path_buf();
-        fs::create_dir_all(&outCanonicalParent).map_err(|error| error.to_string())?;
-        let parentCanonical = outCanonicalParent
-            .canonicalize()
-            .map_err(|error| error.to_string())?;
-        if !isPathInside(&parentCanonical, &destCanonical) {
-            return Err(format!("Zip entry is outside target dir: {}", entry.name()));
-        }
+        let outPath = hostPath(&outFile);
 
         if entry.is_dir() {
-            fs::create_dir_all(&outFile).map_err(|error| error.to_string())?;
+            fileSystemHost
+                .makeDirectory(&outPath, true)
+                .map_err(|error| error.to_string())?;
         } else {
-            let mut out = File::create(&outFile).map_err(|error| error.to_string())?;
-            io::copy(&mut entry, &mut out).map_err(|error| error.to_string())?;
+            let mut content = Vec::new();
+            entry
+                .read_to_end(&mut content)
+                .map_err(|error| error.to_string())?;
+            fileSystemHost
+                .writeFileBytes(&outPath, &content)
+                .map_err(|error| error.to_string())?;
         }
     }
 
@@ -651,82 +717,81 @@ fn unzipToDirectory(zipFile: &Path, destinationDir: &Path) -> Result<(), String>
 }
 
 #[allow(non_snake_case)]
-fn singleChildDirectory(root: &Path) -> Option<PathBuf> {
-    let children = fs::read_dir(root)
-        .ok()?
-        .filter_map(Result::ok)
-        .collect::<Vec<_>>();
-    if children.len() == 1 && children[0].path().is_dir() {
-        Some(children[0].path())
+fn singleChildDirectory(fileSystemHost: &dyn FileSystemHost, root: &Path) -> Option<PathBuf> {
+    let children = fileSystemHost.listFiles(&hostPath(root)).ok()?;
+    if children.len() == 1 && children[0].isDirectory {
+        Some(root.join(&children[0].name))
     } else {
         None
     }
 }
 
 #[allow(non_snake_case)]
-fn directSkillFile(root: &Path) -> Option<PathBuf> {
-    if !root.is_dir() {
-        return None;
-    }
+fn directSkillFile(fileSystemHost: &dyn FileSystemHost, root: &Path) -> Option<PathBuf> {
     let primary = root.join("SKILL.md");
-    if primary.is_file() {
+    if matches!(
+        fileSystemHost.fileExists(&hostPath(&primary)),
+        Ok(info) if info.exists && !info.isDirectory
+    ) {
         return Some(primary);
     }
     let lower = root.join("skill.md");
-    if lower.is_file() {
+    if matches!(
+        fileSystemHost.fileExists(&hostPath(&lower)),
+        Ok(info) if info.exists && !info.isDirectory
+    ) {
         return Some(lower);
     }
     None
 }
 
 #[allow(non_snake_case)]
-fn findSkillFiles(root: &Path, limit: usize) -> Vec<PathBuf> {
+fn findSkillFiles(
+    fileSystemHost: &dyn FileSystemHost,
+    root: &Path,
+    limit: usize,
+) -> Vec<PathBuf> {
     let mut result = Vec::new();
-    findSkillFilesInner(root, limit, &mut result);
+    findSkillFilesInner(fileSystemHost, root, limit, &mut result);
     result
 }
 
 #[allow(non_snake_case)]
-fn findSkillFilesInner(root: &Path, limit: usize, result: &mut Vec<PathBuf>) {
+fn findSkillFilesInner(
+    fileSystemHost: &dyn FileSystemHost,
+    root: &Path,
+    limit: usize,
+    result: &mut Vec<PathBuf>,
+) {
     if result.len() >= limit {
         return;
     }
-    let Ok(children) = fs::read_dir(root) else {
+    let Ok(children) = fileSystemHost.listFiles(&hostPath(root)) else {
         return;
     };
-    for child in children.filter_map(Result::ok) {
+    for child in children {
         if result.len() >= limit {
             return;
         }
-        let path = child.path();
-        if path.is_file() {
-            let name = child.file_name().to_string_lossy().to_string();
-            if name.eq_ignore_ascii_case("SKILL.md") || name.eq_ignore_ascii_case("skill.md") {
+        let path = root.join(&child.name);
+        if !child.isDirectory {
+            if child.name.eq_ignore_ascii_case("SKILL.md") || child.name.eq_ignore_ascii_case("skill.md") {
                 result.push(path);
             }
-        } else if path.is_dir() {
-            findSkillFilesInner(&path, limit, result);
-        }
-    }
-}
-
-#[allow(non_snake_case)]
-fn isPathInside(path: &Path, base: &Path) -> bool {
-    path == base || path.starts_with(base)
-}
-
-#[allow(non_snake_case)]
-fn copyDirectoryRecursively(source: &Path, destination: &Path) -> io::Result<()> {
-    fs::create_dir_all(destination)?;
-    for child in fs::read_dir(source)? {
-        let child = child?;
-        let childPath = child.path();
-        let targetPath = destination.join(child.file_name());
-        if childPath.is_dir() {
-            copyDirectoryRecursively(&childPath, &targetPath)?;
         } else {
-            fs::copy(&childPath, &targetPath)?;
+            findSkillFilesInner(fileSystemHost, &path, limit, result);
         }
     }
-    Ok(())
+}
+
+#[allow(non_snake_case)]
+fn safeChildPath(base: &Path, relativePath: &str) -> Result<PathBuf, String> {
+    let mut path = base.to_path_buf();
+    for component in Path::new(relativePath).components() {
+        match component {
+            std::path::Component::Normal(part) => path.push(part),
+            _ => return Err("Invalid import path".to_string()),
+        }
+    }
+    Ok(path)
 }

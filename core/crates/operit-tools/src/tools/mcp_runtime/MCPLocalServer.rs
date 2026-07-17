@@ -1,14 +1,16 @@
 use std::collections::BTreeMap;
-use std::fs;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use operit_host_api::FileSystemHost;
 use operit_host_api::HostManager::HostManager;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MCPLocalServer {
     storePaths: RuntimeStorePaths,
+    fileSystemHost: Arc<dyn FileSystemHost>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,13 +86,23 @@ struct SanitizedConfigResult {
 
 impl MCPLocalServer {
     #[allow(non_snake_case)]
-    pub fn getInstance(_context: &HostManager) -> Self {
-        Self::new(RuntimeStorePaths::default())
+    pub fn getInstance(context: &HostManager) -> Self {
+        Self::new(
+            RuntimeStorePaths::default(),
+            context
+                .fileSystemHost
+                .clone()
+                .expect("MCPLocalServer requires a FileSystemHost"),
+        )
     }
 
-    pub fn new(storePaths: RuntimeStorePaths) -> Self {
-        let server = Self { storePaths };
-        let _ = server.storePaths.ensure_mcp_plugins_dir();
+    /// Creates an MCP local server with explicit storage-path mapping and file host access.
+    pub fn new(storePaths: RuntimeStorePaths, fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
+        let server = Self {
+            storePaths,
+            fileSystemHost,
+        };
+        let _ = server.ensureMcpPluginsDirectory();
         let _ = server.loadAllConfigurations();
         server
     }
@@ -103,9 +115,7 @@ impl MCPLocalServer {
 
     #[allow(non_snake_case)]
     fn loadAllConfigurations(&self) -> Result<(), String> {
-        self.storePaths
-            .ensure_mcp_plugins_dir()
-            .map_err(|error| error.to_string())?;
+        self.ensureMcpPluginsDirectory()?;
         let config = self.readMCPConfig()?;
         let sanitized = self.sanitizeMCPConfig(config, "loadAllConfigurations");
         let updatedConfig = self.autoFillMissingMetadata(sanitized.config.clone());
@@ -219,24 +229,18 @@ impl MCPLocalServer {
         self.writeMCPConfig(&config)?;
         self.removeServerStatus(serverId)?;
 
-        let pluginsDir = self.storePaths.mcp_plugins_dir();
-        let pluginDir = pluginsDir.join(serverId.split('/').last().unwrap_or(serverId));
-        if pluginDir.exists() {
-            let pluginsDir = pluginsDir.canonicalize().map_err(|error| {
-                format!("Failed to canonicalize MCP plugins directory: {error}")
-            })?;
-            let pluginDir = pluginDir
-                .canonicalize()
-                .map_err(|error| format!("Failed to canonicalize MCP plugin directory: {error}"))?;
-            if !pluginDir.starts_with(&pluginsDir) {
-                return Err(format!(
-                    "MCP plugin path is outside mcp_plugins: {serverId}"
-                ));
+        let pluginDir = self.pluginDirectoryPath(serverId)?;
+        let pluginEntry = self
+            .fileSystemHost
+            .fileExists(&pluginDir)
+            .map_err(|error| error.to_string())?;
+        if pluginEntry.exists {
+            if !pluginEntry.isDirectory {
+                return Err(format!("MCP plugin path is not a directory: {pluginDir}"));
             }
-            if pluginDir.is_dir() {
-                fs::remove_dir_all(&pluginDir)
-                    .map_err(|error| format!("Failed to remove MCP plugin files: {error}"))?;
-            }
+            self.fileSystemHost
+                .deleteFile(&pluginDir, true)
+                .map_err(|error| format!("Failed to remove MCP plugin files: {error}"))?;
         }
         Ok(())
     }
@@ -269,19 +273,13 @@ impl MCPLocalServer {
     /// Returns the absolute path of the MCP configuration file.
     #[allow(non_snake_case)]
     pub fn getConfigFilePath(&self) -> String {
-        self.storePaths
-            .mcp_config_path()
-            .to_string_lossy()
-            .to_string()
+        storagePathString(&self.storePaths.mcp_config_path())
     }
 
     /// Returns the directory used for local MCP plugin runtime files.
     #[allow(non_snake_case)]
     pub fn getConfigDirectory(&self) -> String {
-        self.storePaths
-            .mcp_plugins_dir()
-            .to_string_lossy()
-            .to_string()
+        storagePathString(&self.storePaths.mcp_plugins_dir())
     }
 
     /// Returns one MCP server config by id.
@@ -661,42 +659,93 @@ impl MCPLocalServer {
 
     #[allow(non_snake_case)]
     fn readMCPConfig(&self) -> Result<MCPConfig, String> {
-        let path = self.storePaths.mcp_config_path();
-        if !path.exists() {
+        let path = self.getConfigFilePath();
+        if !self
+            .fileSystemHost
+            .fileExists(&path)
+            .map_err(|error| error.to_string())?
+            .exists
+        {
             return Ok(MCPConfig::default());
         }
-        let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+        let text = self
+            .fileSystemHost
+            .readFile(&path)
+            .map_err(|error| error.to_string())?;
         serde_json::from_str::<MCPConfig>(&text).map_err(|error| error.to_string())
     }
 
     #[allow(non_snake_case)]
     fn writeMCPConfig(&self, config: &MCPConfig) -> Result<(), String> {
-        self.storePaths
-            .ensure_mcp_plugins_dir()
-            .map_err(|error| error.to_string())?;
+        self.ensureMcpPluginsDirectory()?;
         let text = serde_json::to_string_pretty(config).map_err(|error| error.to_string())?;
-        fs::write(self.storePaths.mcp_config_path(), text).map_err(|error| error.to_string())
+        self.fileSystemHost
+            .writeFile(&self.getConfigFilePath(), &text, false)
+            .map_err(|error| error.to_string())
     }
 
     #[allow(non_snake_case)]
     fn readServerStatus(&self) -> Result<BTreeMap<String, ServerStatus>, String> {
-        let path = self.storePaths.mcp_server_status_path();
-        if !path.exists() {
+        let path = storagePathString(&self.storePaths.mcp_server_status_path());
+        if !self
+            .fileSystemHost
+            .fileExists(&path)
+            .map_err(|error| error.to_string())?
+            .exists
+        {
             return Ok(BTreeMap::new());
         }
-        let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+        let text = self
+            .fileSystemHost
+            .readFile(&path)
+            .map_err(|error| error.to_string())?;
         serde_json::from_str::<BTreeMap<String, ServerStatus>>(&text)
             .map_err(|error| error.to_string())
     }
 
     #[allow(non_snake_case)]
     fn writeServerStatus(&self, status: &BTreeMap<String, ServerStatus>) -> Result<(), String> {
-        self.storePaths
-            .ensure_mcp_plugins_dir()
-            .map_err(|error| error.to_string())?;
+        self.ensureMcpPluginsDirectory()?;
         let text = serde_json::to_string_pretty(status).map_err(|error| error.to_string())?;
-        fs::write(self.storePaths.mcp_server_status_path(), text).map_err(|error| error.to_string())
+        self.fileSystemHost
+            .writeFile(
+                &storagePathString(&self.storePaths.mcp_server_status_path()),
+                &text,
+                false,
+            )
+            .map_err(|error| error.to_string())
     }
+
+    /// Creates the host-owned MCP plugin storage directory.
+    #[allow(non_snake_case)]
+    fn ensureMcpPluginsDirectory(&self) -> Result<(), String> {
+        self.fileSystemHost
+            .makeDirectory(&self.getConfigDirectory(), true)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Resolves a validated MCP server id to a child directory below the MCP plugin root.
+    fn pluginDirectoryPath(&self, serverId: &str) -> Result<String, String> {
+        let directoryName = serverId
+            .rsplit(['/', '\\'])
+            .next()
+            .map(str::trim)
+            .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+            .ok_or_else(|| format!("MCP plugin directory name is invalid: {serverId}"))?;
+        if directoryName.contains(['/', '\\']) {
+            return Err(format!("MCP plugin directory name is invalid: {serverId}"));
+        }
+        Ok(format!(
+            "{}/{}",
+            self.getConfigDirectory().trim_end_matches(['/', '\\']),
+            directoryName
+        ))
+    }
+}
+
+/// Converts a mapped runtime path to the file-host path representation.
+fn storagePathString(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 #[allow(non_snake_case)]

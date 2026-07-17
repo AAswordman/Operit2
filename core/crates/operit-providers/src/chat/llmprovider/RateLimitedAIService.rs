@@ -66,7 +66,7 @@ impl AIService for RateLimitedAIService {
         request: SendMessageRequest,
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         if let Some(rateLimiter) = &self.rateLimiter {
-            rateLimiter.acquire();
+            rateLimiter.acquire().await;
         }
         if let Some(semaphore) = &self.concurrencySemaphore {
             semaphore.acquire();

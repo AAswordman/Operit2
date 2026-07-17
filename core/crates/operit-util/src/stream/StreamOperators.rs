@@ -2,8 +2,6 @@ use crate::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
 use crate::stream::Stream::{Stream, VecStream};
 use crate::stream::StreamGroup::StreamGroup;
 use std::collections::VecDeque;
-use std::thread;
-use std::time::{Duration, Instant};
 
 pub fn map<S, R>(mut source: S, mut transform: impl FnMut(S::Item) -> R) -> VecStream<R>
 where
@@ -159,25 +157,6 @@ where
     VecStream::new(values)
 }
 
-pub fn throttle_first<S>(mut source: S, window_duration: Duration) -> VecStream<S::Item>
-where
-    S: Stream,
-{
-    let mut values = Vec::new();
-    let mut last_emit_time: Option<Instant> = None;
-    source.collect(&mut |value| {
-        let current_time = Instant::now();
-        if last_emit_time
-            .map(|last| current_time.duration_since(last) >= window_duration)
-            .unwrap_or(true)
-        {
-            last_emit_time = Some(current_time);
-            values.push(value);
-        }
-    });
-    VecStream::new(values)
-}
-
 pub fn distinct_until_changed<S>(mut source: S) -> VecStream<S::Item>
 where
     S: Stream,
@@ -209,106 +188,6 @@ where
     });
     if !current.is_empty() {
         values.push(current);
-    }
-    VecStream::new(values)
-}
-
-pub fn delay<S>(mut source: S, duration: Duration) -> VecStream<S::Item>
-where
-    S: Stream,
-{
-    let mut values = Vec::new();
-    source.collect(&mut |value| {
-        thread::sleep(duration);
-        values.push(value);
-    });
-    VecStream::new(values)
-}
-
-pub fn debounce<S>(mut source: S, _timeout: Duration) -> VecStream<S::Item>
-where
-    S: Stream,
-{
-    let mut last_value = None;
-    source.collect(&mut |value| {
-        last_value = Some(value);
-    });
-    VecStream::new(last_value.into_iter().collect::<Vec<_>>())
-}
-
-pub fn sample<S>(mut source: S, _period: Duration) -> VecStream<S::Item>
-where
-    S: Stream,
-{
-    let mut values = Vec::new();
-    source.collect(&mut |value| values.push(value));
-    VecStream::new(values)
-}
-
-pub fn throttle_last<S>(mut source: S, window_duration: Duration) -> VecStream<S::Item>
-where
-    S: Stream,
-{
-    let mut values = Vec::new();
-    let mut last_emit_time: Option<Instant> = None;
-    let mut pending_value = None;
-    source.collect(&mut |value| {
-        let current_time = Instant::now();
-        pending_value = Some(value);
-        if last_emit_time
-            .map(|last| current_time.duration_since(last) >= window_duration)
-            .unwrap_or(true)
-        {
-            last_emit_time = Some(current_time);
-            if let Some(value) = pending_value.take() {
-                values.push(value);
-            }
-        }
-    });
-    VecStream::new(values)
-}
-
-pub fn fixed_rate<S>(mut source: S, period: Duration) -> VecStream<S::Item>
-where
-    S: Stream,
-{
-    let mut values = Vec::new();
-    let mut next_emit_time = None::<Instant>;
-    source.collect(&mut |value| {
-        let current_time = Instant::now();
-        match next_emit_time {
-            None => {
-                next_emit_time = Some(current_time + period);
-                values.push(value);
-            }
-            Some(next_time) if current_time >= next_time => {
-                next_emit_time = Some(current_time + period);
-                values.push(value);
-            }
-            Some(next_time) => {
-                thread::sleep(next_time.saturating_duration_since(current_time));
-                next_emit_time = Some(Instant::now() + period);
-                values.push(value);
-            }
-        }
-    });
-    VecStream::new(values)
-}
-
-pub fn timeout_trigger<S>(
-    mut source: S,
-    _timeout_duration: Duration,
-    timeout_value: Option<S::Item>,
-) -> VecStream<S::Item>
-where
-    S: Stream,
-{
-    let mut values = Vec::new();
-    source.collect(&mut |value| values.push(value));
-    if values.is_empty() {
-        if let Some(value) = timeout_value {
-            values.push(value);
-        }
     }
     VecStream::new(values)
 }

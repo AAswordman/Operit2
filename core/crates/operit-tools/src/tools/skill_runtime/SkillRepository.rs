@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -8,11 +7,12 @@ use crate::tools::skill::SkillManager::{BundledExternalSkillCandidate, SkillMana
 use crate::tools::skill::SkillPackage::SkillPackage;
 use operit_host_api::HostManager::defaultHttpHost;
 use operit_host_api::HostManager::HostManager;
-use operit_host_api::HttpRequestData;
+use operit_host_api::{FileSystemHost, HttpRequestData};
 use url::Url;
 
 pub struct SkillRepository {
     skillManager: SkillManager,
+    fileSystemHost: Arc<dyn FileSystemHost>,
     runtimeSupport: Arc<dyn ToolRuntimeSupport>,
 }
 
@@ -27,12 +27,14 @@ struct GitHubSkillTarget {
 impl SkillRepository {
     /// Creates a repository facade for managing installed and imported skills.
     #[allow(non_snake_case)]
-    pub fn getInstance(
-        _context: &HostManager,
-        runtimeSupport: Arc<dyn ToolRuntimeSupport>,
-    ) -> Self {
+    pub fn getInstance(context: &HostManager, runtimeSupport: Arc<dyn ToolRuntimeSupport>) -> Self {
+        let fileSystemHost = context
+            .fileSystemHost
+            .clone()
+            .expect("SkillRepository requires a FileSystemHost");
         Self {
-            skillManager: SkillManager::fromDefaultPaths(),
+            skillManager: SkillManager::fromDefaultPaths(fileSystemHost.clone()),
+            fileSystemHost,
             runtimeSupport,
         }
     }
@@ -164,38 +166,16 @@ impl SkillRepository {
             target.repo,
             encodePathSegment(&refName)
         );
-        let tempFile = std::env::temp_dir().join(format!(
-            "operit_skill_{}_{}_{}.zip",
-            sanitizeTempPart(&target.owner),
-            sanitizeTempPart(&target.repo),
-            currentTimeMillis()
-        ));
-
-        if let Err(error) = downloadToFile(&zipUrl, &tempFile) {
-            let _ = fs::remove_file(&tempFile);
+        let archiveBytes = match downloadArchiveBytes(&zipUrl) {
+            Ok(bytes) => bytes,
+            Err(error) => {
             return format!("Failed to download skill zip: {error}");
-        }
-
-        let skillsRootDir = PathBuf::from(self.getSkillsDirectoryPath());
-        let beforeDirs = directoryNameSet(&skillsRootDir);
-        let result = self
-            .skillManager
-            .importSkillFromZipWithSubDir(&tempFile, target.subDir.as_deref());
-        let _ = fs::remove_file(&tempFile);
-
-        if result.starts_with("Imported skill:") {
-            let afterDirs = directoryNameSet(&skillsRootDir);
-            let newDirs = afterDirs
-                .into_iter()
-                .filter(|name| !beforeDirs.iter().any(|before| before == name))
-                .collect::<Vec<_>>();
-            if newDirs.len() == 1 {
-                let markerPath = skillsRootDir.join(&newDirs[0]).join(".operit_repo_url");
-                let _ = fs::write(markerPath, repoUrl.trim());
             }
-        }
-
-        result
+        };
+        let archiveLabel = PathBuf::from(format!("{}-{}.zip", target.owner, target.repo));
+        self
+            .skillManager
+            .importSkillArchiveBytes(&archiveBytes, &archiveLabel, target.subDir.as_deref())
     }
 
     /// Creates a skill directly from text content and copied attachment files.
@@ -223,7 +203,8 @@ impl SkillRepository {
         }
 
         let skillsRootDir = PathBuf::from(self.getSkillsDirectoryPath());
-        if let Err(error) = fs::create_dir_all(&skillsRootDir) {
+        let skillsRootPath = hostPath(&skillsRootDir);
+        if let Err(error) = self.fileSystemHost.makeDirectory(&skillsRootPath, true) {
             return format!(
                 "Failed to create skills directory {}: {}",
                 skillsRootDir.to_string_lossy(),
@@ -232,10 +213,15 @@ impl SkillRepository {
         }
 
         let finalDir = skillsRootDir.join(trimmedId);
-        if finalDir.exists() {
+        let finalDirPath = hostPath(&finalDir);
+        let finalDirInfo = match self.fileSystemHost.fileExists(&finalDirPath) {
+            Ok(info) => info,
+            Err(error) => return format!("Failed to inspect skill directory: {}", error),
+        };
+        if finalDirInfo.exists {
             return format!("Skill '{}' already exists", trimmedId);
         }
-        if let Err(error) = fs::create_dir_all(&finalDir) {
+        if let Err(error) = self.fileSystemHost.makeDirectory(&finalDirPath, true) {
             return format!(
                 "Failed to create skills directory {}: {}",
                 finalDir.to_string_lossy(),
@@ -251,7 +237,7 @@ impl SkillRepository {
             attachmentPaths,
         );
         if let Err(error) = result {
-            let _ = fs::remove_dir_all(&finalDir);
+            let _ = self.fileSystemHost.deleteFile(&finalDirPath, true);
             return format!("Failed to import skill: {}", error);
         }
 
@@ -271,15 +257,19 @@ impl SkillRepository {
         content: &str,
         attachmentPaths: &[PathBuf],
     ) -> Result<(), String> {
-        fs::write(
-            finalDir.join("SKILL.md"),
-            buildDirectSkillMarkdown(skillId, description, content),
-        )
-        .map_err(|error| error.to_string())?;
+        self.fileSystemHost
+            .writeFile(
+                &hostPath(&finalDir.join("SKILL.md")),
+                &buildDirectSkillMarkdown(skillId, description, content),
+                false,
+            )
+            .map_err(|error| error.to_string())?;
 
         if !attachmentPaths.is_empty() {
             let assetsDir = finalDir.join("assets");
-            fs::create_dir_all(&assetsDir).map_err(|error| error.to_string())?;
+            self.fileSystemHost
+                .makeDirectory(&hostPath(&assetsDir), true)
+                .map_err(|error| error.to_string())?;
             let mut usedFileNames = Vec::<String>::new();
             for (index, path) in attachmentPaths.iter().enumerate() {
                 let displayName = match path.file_name() {
@@ -288,7 +278,9 @@ impl SkillRepository {
                 };
                 let safeName =
                     ensureUniqueFileName(&sanitizeAttachmentName(&displayName), &mut usedFileNames);
-                fs::copy(path, assetsDir.join(safeName)).map_err(|error| error.to_string())?;
+                self.fileSystemHost
+                    .copyFile(&hostPath(path), &hostPath(&assetsDir.join(safeName)), false)
+                    .map_err(|error| error.to_string())?;
             }
         }
 
@@ -497,7 +489,7 @@ fn getGithubDefaultBranch(owner: &str, repoName: &str) -> Option<String> {
 }
 
 #[allow(non_snake_case)]
-fn downloadToFile(url: &str, outFile: &Path) -> Result<(), String> {
+fn downloadArchiveBytes(url: &str) -> Result<Vec<u8>, String> {
     let response = defaultHttpHost()
         .executeHttpRequest(HttpRequestData {
             url: url.to_string(),
@@ -520,21 +512,7 @@ fn downloadToFile(url: &str, outFile: &Path) -> Result<(), String> {
     if !(200..300).contains(&response.statusCode) {
         return Err(format!("HTTP {}", response.statusCode));
     }
-    fs::write(outFile, response.body).map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-#[allow(non_snake_case)]
-fn directoryNameSet(root: &Path) -> Vec<String> {
-    fs::read_dir(root)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter(|entry| entry.path().is_dir())
-                .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
+    Ok(response.body)
 }
 
 #[allow(non_snake_case)]
@@ -552,14 +530,6 @@ fn encodePathSegment(value: &str) -> String {
 }
 
 #[allow(non_snake_case)]
-fn sanitizeTempPart(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-        .collect()
-}
-
-#[allow(non_snake_case)]
-fn currentTimeMillis() -> i64 {
-    operit_host_api::TimeUtils::currentTimeMillis()
+fn hostPath(path: &Path) -> String {
+    path.to_string_lossy().to_string()
 }

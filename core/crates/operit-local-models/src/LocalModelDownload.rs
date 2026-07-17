@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::Component;
@@ -467,13 +468,12 @@ impl LocalModelInstaller {
             .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))
     }
 
-    /// Creates a directory for native storage targets.
+    /// Verifies that the installer has a runtime storage host.
     fn createDirectory(&self, path: &Path) -> Result<(), LocalModelDownloadError> {
-        match &self.storageHost {
-            Some(_) => Ok(()),
-            None => fs::create_dir_all(path)
-                .map_err(|error| LocalModelDownloadError::Storage(error.to_string())),
-        }
+        self.storageHost
+            .as_ref()
+            .ok_or_else(|| LocalModelDownloadError::Storage(storagePathString(path)))?;
+        Ok(())
     }
 
     /// Removes temporary model targets after a stopped host download.
@@ -500,12 +500,11 @@ impl LocalModelInstaller {
 
     /// Removes one file or directory path from local model staging.
     fn removePath(&self, path: &Path) -> Result<(), LocalModelDownloadError> {
-        match &self.storageHost {
-            Some(storageHost) => storageHost
-                .delete(&storagePathString(path), true)
-                .map_err(|error| LocalModelDownloadError::Storage(error.to_string())),
-            None => removeNativePath(path),
-        }
+        self.storageHost
+            .as_ref()
+            .ok_or_else(|| LocalModelDownloadError::Storage(storagePathString(path)))?
+            .delete(&storagePathString(path), true)
+            .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))
     }
 
     /// Verifies all files declared by one installed manifest.
@@ -528,15 +527,16 @@ impl LocalModelInstaller {
         file: &LocalModelFile,
         target: &Path,
     ) -> Result<u64, LocalModelDownloadError> {
-        match &self.storageHost {
-            Some(storageHost) => verifyFileBytes(
-                file,
-                &storageHost
-                    .readBytes(&storagePathString(target))
-                    .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))?,
-            ),
-            None => verifyNativeFile(file, target),
-        }
+        let storageHost = self
+            .storageHost
+            .as_ref()
+            .ok_or_else(|| LocalModelDownloadError::Storage(storagePathString(target)))?;
+        verifyFileBytes(
+            file,
+            &storageHost
+                .readBytes(&storagePathString(target))
+                .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))?,
+        )
     }
 
     /// Verifies one downloaded archive by size and SHA-256 checksum.
@@ -545,15 +545,16 @@ impl LocalModelInstaller {
         archive: &LocalModelArchive,
         archivePath: &Path,
     ) -> Result<(), LocalModelDownloadError> {
-        match &self.storageHost {
-            Some(storageHost) => verifyArchiveBytes(
-                archive,
-                &storageHost
-                    .readBytes(&storagePathString(archivePath))
-                    .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))?,
-            ),
-            None => verifyNativeArchive(archive, archivePath),
-        }
+        let storageHost = self
+            .storageHost
+            .as_ref()
+            .ok_or_else(|| LocalModelDownloadError::Storage(storagePathString(archivePath)))?;
+        verifyArchiveBytes(
+            archive,
+            &storageHost
+                .readBytes(&storagePathString(archivePath))
+                .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))?,
+        )
     }
 
     /// Extracts one verified model archive into a staging directory.
@@ -563,12 +564,13 @@ impl LocalModelInstaller {
         stagingDir: &Path,
         archiveFormat: &LocalModelArchiveFormat,
     ) -> Result<(), LocalModelDownloadError> {
-        match (&self.storageHost, archiveFormat) {
-            (Some(storageHost), LocalModelArchiveFormat::TarBz2) => {
+        let storageHost = self
+            .storageHost
+            .as_ref()
+            .ok_or_else(|| LocalModelDownloadError::Storage(storagePathString(archivePath)))?;
+        match archiveFormat {
+            LocalModelArchiveFormat::TarBz2 => {
                 extractTarBz2ArchiveToStorage(archivePath, stagingDir, storageHost)
-            }
-            (None, LocalModelArchiveFormat::TarBz2) => {
-                extractTarBz2ArchiveToNative(archivePath, stagingDir)
             }
         }
     }
@@ -579,18 +581,17 @@ impl LocalModelInstaller {
         tempTarget: &Path,
         target: &Path,
     ) -> Result<(), LocalModelDownloadError> {
-        match &self.storageHost {
-            Some(storageHost) => {
-                let content = storageHost
-                    .readBytes(&storagePathString(tempTarget))
-                    .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))?;
-                storageHost
-                    .writeBytes(&storagePathString(target), &content)
-                    .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))?;
-                self.removePath(tempTarget)
-            }
-            None => replaceNativeFileWithVerifiedDownload(tempTarget, target),
-        }
+        let storageHost = self
+            .storageHost
+            .as_ref()
+            .ok_or_else(|| LocalModelDownloadError::Storage(storagePathString(tempTarget)))?;
+        let content = storageHost
+            .readBytes(&storagePathString(tempTarget))
+            .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))?;
+        storageHost
+            .writeBytes(&storagePathString(target), &content)
+            .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))?;
+        self.removePath(tempTarget)
     }
 
     /// Promotes a verified staging directory into the final model install path.
@@ -599,18 +600,13 @@ impl LocalModelInstaller {
         stagingDir: &Path,
         installDir: &Path,
     ) -> Result<(), LocalModelDownloadError> {
-        match &self.storageHost {
-            Some(storageHost) => {
-                self.removePath(installDir)?;
-                copyStorageDirectory(storageHost, stagingDir, installDir)?;
-                self.removePath(stagingDir)
-            }
-            None => {
-                removeNativePath(installDir)?;
-                fs::rename(stagingDir, installDir)
-                    .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))
-            }
-        }
+        let storageHost = self
+            .storageHost
+            .as_ref()
+            .ok_or_else(|| LocalModelDownloadError::Storage(storagePathString(installDir)))?;
+        self.removePath(installDir)?;
+        copyStorageDirectory(storageHost, stagingDir, installDir)?;
+        self.removePath(stagingDir)
     }
 
     /// Maps a runtime storage path to the installer runtime root.
@@ -707,6 +703,7 @@ fn archiveDownloadPath(
 }
 
 /// Removes one file or directory path from native local model staging.
+#[cfg(test)]
 fn removeNativePath(path: &Path) -> Result<(), LocalModelDownloadError> {
     if path.is_dir() {
         fs::remove_dir_all(path)
@@ -719,6 +716,7 @@ fn removeNativePath(path: &Path) -> Result<(), LocalModelDownloadError> {
 }
 
 /// Verifies one native file by size and SHA-256 checksum.
+#[cfg(test)]
 fn verifyNativeFile(file: &LocalModelFile, target: &Path) -> Result<u64, LocalModelDownloadError> {
     let mut input = fs::File::open(target)
         .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))?;
@@ -768,6 +766,7 @@ fn verifyFileReader(
 }
 
 /// Verifies one native archive by size and SHA-256 checksum.
+#[cfg(test)]
 fn verifyNativeArchive(
     archive: &LocalModelArchive,
     archivePath: &Path,
@@ -823,6 +822,7 @@ fn verifyArchiveReader(
 }
 
 /// Extracts a Tar+Bzip2 model archive into a native staging directory.
+#[cfg(test)]
 fn extractTarBz2ArchiveToNative(
     archivePath: &Path,
     stagingDir: &Path,
@@ -911,6 +911,7 @@ fn downloadTempPath(target: &Path) -> Result<PathBuf, LocalModelDownloadError> {
 }
 
 /// Replaces a native target file with a verified temporary download.
+#[cfg(test)]
 fn replaceNativeFileWithVerifiedDownload(
     tempTarget: &Path,
     target: &Path,

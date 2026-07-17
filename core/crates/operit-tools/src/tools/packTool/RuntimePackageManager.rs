@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -13,7 +12,7 @@ use crate::tools::skill::SkillManager::SkillManager;
 use crate::tools::ToolJsRuntime::{JsExecutionEngine, JsExecutionProvider};
 use crate::tools::ToolResultDataClasses::stringResultData;
 use crate::ConversationMarkupManager::ToolResult;
-use operit_host_api::HostManager::HostManager;
+use operit_host_api::{FileSystemHost, HostManager::HostManager};
 use operit_plugin_sdk::package::{LocalizedText, PublishablePackageSource, ToolPackage};
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::{ToolPkgHookDispatcher, ToolPkgHookInvocation};
 use operit_plugin_sdk::toolpkg::ToolPkgLoader::ToolPkgLoader;
@@ -175,6 +174,7 @@ pub struct RuntimePackageManager {
     toolPkgExecutionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
     dataStore: PreferencesDataStore,
     storePaths: RuntimeStorePaths,
+    fileSystemHost: Arc<dyn FileSystemHost>,
     context: HostManager,
     toolHandler: crate::tools::AIToolHandler::AIToolHandler,
     mcpManager: MCPManager,
@@ -193,12 +193,17 @@ impl RuntimePackageManager {
                 toolHandler: toolHandler.clone(),
                 jsExecutionProvider: runtimeDependencies.shared_js_execution_provider(),
             });
+        let fileSystemHost = context
+            .fileSystemHost
+            .clone()
+            .expect("RuntimePackageManager requires a FileSystemHost");
         let mut manager = Self {
             pluginPackageManager: PluginPackageManager::new(
                 toolPkgExecutionEngineFactory.clone(),
                 Arc::new(RuntimeToolPkgAssetSource {
                     runtimeSupport: runtimeDependencies.shared_runtime_support(),
                 }),
+                fileSystemHost.clone(),
                 Arc::new(RuntimePackageStateResolver),
             ),
             cachedMcpTools: BTreeMap::new(),
@@ -208,6 +213,7 @@ impl RuntimePackageManager {
             toolPkgExecutionEngineFactory,
             dataStore: PreferencesDataStore::new(paths.package_manager_preferences_path()),
             storePaths: paths,
+            fileSystemHost,
             mcpManager: MCPManager::getInstance(context.clone()),
             context,
             toolHandler,
@@ -307,6 +313,11 @@ impl RuntimePackageManager {
         &self.context
     }
 
+    /// Returns the file-system host required by package-adjacent services.
+    pub fn fileSystemHost(&self) -> Arc<dyn FileSystemHost> {
+        self.fileSystemHost.clone()
+    }
+
     #[allow(non_snake_case)]
     pub(crate) fn ensureInitialized(&self) {}
 
@@ -337,9 +348,7 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     fn toolPkgCacheRootDir(&self) -> PathBuf {
         let dir = self.storePaths.toolpkg_cache_dir();
-        if !dir.exists() {
-            let _ = fs::create_dir_all(&dir);
-        }
+        let _ = self.fileSystemHost.makeDirectory(&hostPath(&dir), true);
         dir
     }
 
@@ -383,9 +392,7 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     fn deleteToolPkgCacheDirLocked(&self, packageName: &str) {
         let dir = self.toolPkgCacheDir(packageName);
-        if dir.exists() {
-            let _ = fs::remove_dir_all(dir);
-        }
+        let _ = self.fileSystemHost.deleteFile(&hostPath(&dir), true);
     }
 
     #[allow(non_snake_case)]
@@ -405,31 +412,52 @@ impl RuntimePackageManager {
             .expect("toolpkg cache mutex poisoned");
         let cacheDir = self.toolPkgCacheDir(packageName);
         let signatureFile = cacheDir.join(TOOLPKG_CACHE_SIGNATURE_FILE);
-        let cacheDirExists = cacheDir.exists();
-        let signatureFileExists = signatureFile.exists();
+        let cacheDirExists = self
+            .fileSystemHost
+            .fileExists(&hostPath(&cacheDir))
+            .map(|info| info.exists && info.isDirectory)
+            .unwrap_or(false);
+        let signatureFileExists = self
+            .fileSystemHost
+            .fileExists(&hostPath(&signatureFile))
+            .map(|info| info.exists && !info.isDirectory)
+            .unwrap_or(false);
         let signatureMatches = if signatureFileExists {
-            fs::read_to_string(&signatureFile)
+            self.fileSystemHost
+                .readFile(&hostPath(&signatureFile))
                 .map(|text| text == signature)
                 .unwrap_or(false)
         } else {
             false
         };
         let mainScriptFile = cacheDir.join(mainEntry);
-        let mainScriptExists = mainScriptFile.exists();
+        let mainScriptExists = self
+            .fileSystemHost
+            .fileExists(&hostPath(&mainScriptFile))
+            .map(|info| info.exists && !info.isDirectory)
+            .unwrap_or(false);
 
         if cacheDirExists && signatureFileExists && signatureMatches && mainScriptExists {
             return Some(cacheDir);
         }
 
         self.deleteToolPkgCacheDirLocked(packageName);
-        if fs::create_dir_all(&cacheDir).is_err() {
+        if self
+            .fileSystemHost
+            .makeDirectory(&hostPath(&cacheDir), true)
+            .is_err()
+        {
             return None;
         }
         if !extractArchive(&cacheDir) {
             self.deleteToolPkgCacheDirLocked(packageName);
             return None;
         }
-        if fs::write(&signatureFile, signature).is_err() {
+        if self
+            .fileSystemHost
+            .writeFile(&hostPath(&signatureFile), signature, false)
+            .is_err()
+        {
             self.deleteToolPkgCacheDirLocked(packageName);
             return None;
         }
@@ -447,15 +475,15 @@ impl RuntimePackageManager {
         match sourceType {
             ToolPkgSourceType::EXTERNAL => {
                 let sourceFile = PathBuf::from(sourcePath);
-                if !sourceFile.exists() {
+                let metadata = self.fileSystemHost.fileInfo(sourcePath).ok()?;
+                if !metadata.exists {
                     return None;
                 }
-                let metadata = fs::metadata(&sourceFile).ok()?;
                 Some(format!(
                     "external|{}|{}|{}|{}|{}",
                     sourceFile.to_string_lossy(),
-                    metadata.len(),
-                    metadataModifiedMillis(&metadata),
+                    metadata.size,
+                    metadata.lastModified,
                     version,
                     mainEntry
                 ))
@@ -499,12 +527,21 @@ impl RuntimePackageManager {
         match runtime.sourceType {
             ToolPkgSourceType::EXTERNAL => {
                 let sourcePath = PathBuf::from(&runtime.sourcePath);
-                if sourcePath.is_dir() {
-                    return copyDirectoryEntries(&sourcePath, destinationDir);
+                if self
+                    .fileSystemHost
+                    .fileExists(&runtime.sourcePath)
+                    .map(|info| info.exists && info.isDirectory)
+                    .unwrap_or(false)
+                {
+                    return self
+                        .fileSystemHost
+                        .copyFile(&runtime.sourcePath, &hostPath(destinationDir), true)
+                        .is_ok();
                 }
                 ToolPkgArchiveParser::extractZipEntriesFromExternal(
+                    self.fileSystemHost.as_ref(),
                     &runtime.sourcePath,
-                    destinationDir,
+                    &destinationDir.to_string_lossy(),
                 )
             }
             ToolPkgSourceType::ASSET => {
@@ -514,7 +551,11 @@ impl RuntimePackageManager {
                 ) else {
                     return false;
                 };
-                ToolPkgArchiveParser::extractZipEntriesFromAssetBytes(asset.bytes, destinationDir)
+                ToolPkgArchiveParser::extractZipEntriesFromAssetBytes(
+                    asset.bytes,
+                    self.fileSystemHost.as_ref(),
+                    &destinationDir.to_string_lossy(),
+                )
             }
         }
     }
@@ -539,7 +580,12 @@ impl RuntimePackageManager {
         let normalizedPath = ToolPkgArchiveParser::normalizeResourcePath(normalizedResourcePath)?;
         let cacheDir = self.ensureToolPkgCache(runtime)?;
         let resourceFile = cacheDir.join(normalizedPath);
-        if !resourceFile.exists() {
+        if !self
+            .fileSystemHost
+            .fileExists(&hostPath(&resourceFile))
+            .map(|info| info.exists)
+            .unwrap_or(false)
+        {
             return None;
         }
         Some(resourceFile)
@@ -556,20 +602,38 @@ impl RuntimePackageManager {
             return false;
         };
         if let Some(parent) = destinationFile.parent() {
-            if fs::create_dir_all(parent).is_err() {
+            if self
+                .fileSystemHost
+                .makeDirectory(&hostPath(parent), true)
+                .is_err()
+            {
                 return false;
             }
         }
         if ToolPkgArchiveParser::isDirectoryResourceMime(Some(&resource.mime)) {
-            if !resourceFile.is_dir() {
+            if !self
+                .fileSystemHost
+                .fileExists(&hostPath(&resourceFile))
+                .map(|info| info.exists && info.isDirectory)
+                .unwrap_or(false)
+            {
                 return false;
             }
-            zipToolPkgResourceDirectory(&resourceFile, destinationFile)
+            self.fileSystemHost
+                .zipFiles(&hostPath(&resourceFile), &hostPath(destinationFile))
+                .is_ok()
         } else {
-            if !resourceFile.is_file() {
+            if !self
+                .fileSystemHost
+                .fileExists(&hostPath(&resourceFile))
+                .map(|info| info.exists && !info.isDirectory)
+                .unwrap_or(false)
+            {
                 return false;
             }
-            fs::copy(resourceFile, destinationFile).is_ok()
+            self.fileSystemHost
+                .copyFile(&hostPath(&resourceFile), &hostPath(destinationFile), false)
+                .is_ok()
         }
     }
 
@@ -616,7 +680,7 @@ impl RuntimePackageManager {
             return self.generatePackageSystemPrompt(&selectedPackage);
         }
 
-        let skillManager = SkillManager::fromDefaultPaths();
+        let skillManager = SkillManager::fromDefaultPaths(self.fileSystemHost());
         if skillManager
             .getAvailableSkills()
             .contains_key(&normalizedPackageName)
@@ -667,7 +731,7 @@ impl RuntimePackageManager {
             };
         }
 
-        let skillManager = SkillManager::fromDefaultPaths();
+        let skillManager = SkillManager::fromDefaultPaths(self.fileSystemHost());
         if skillManager
             .getAvailableSkills()
             .contains_key(&normalizedPackageName)
@@ -1024,7 +1088,13 @@ impl RuntimePackageManager {
         let isToolPkgContainer = containerRuntime.is_some();
         let packageFile = self.findPackageFile(&normalizedPackageName);
 
-        if packageFile.as_ref().is_none_or(|file| !file.exists()) {
+        if packageFile.as_ref().is_none_or(|file| {
+            !self
+                .fileSystemHost
+                .fileExists(&hostPath(file))
+                .map(|info| info.exists && !info.isDirectory)
+                .unwrap_or(false)
+        }) {
             if isToolPkgContainer {
                 self.disableToolPkgContainer(&normalizedPackageName);
             } else {
@@ -1041,7 +1111,7 @@ impl RuntimePackageManager {
         }
 
         let packageFile = packageFile.expect("checked package file presence");
-        match fs::remove_file(&packageFile) {
+        match self.fileSystemHost.deleteFile(&hostPath(&packageFile), false) {
             Ok(_) => {
                 if isToolPkgContainer {
                     self.disableToolPkgContainer(&normalizedPackageName);
@@ -1339,11 +1409,15 @@ impl RuntimePackageManager {
         };
         let sourceSignature = sha256Hex(sourceAsset.bytes);
         let sourceFileName = packageSourceFileName(&sourcePath);
-        if let Err(error) = self.storePaths.ensure_packages_dir() {
+        let packagesDir = self.storePaths.packages_dir();
+        if let Err(error) = self.fileSystemHost.makeDirectory(&hostPath(&packagesDir), true) {
             return format!("Error importing package: {error}");
         }
         let destinationFile = self.storePaths.packages_dir().join(&sourceFileName);
-        if let Err(error) = fs::write(&destinationFile, sourceAsset.bytes) {
+        if let Err(error) = self
+            .fileSystemHost
+            .writeFileBytes(&hostPath(&destinationFile), sourceAsset.bytes)
+        {
             return format!("Error importing package: {error}");
         }
         self.externalPackageScanCache
@@ -1534,10 +1608,13 @@ impl RuntimePackageManager {
         sourcePath: String,
         isToolPkg: bool,
     ) -> Result<Vec<u8>, String> {
-        operit_plugin_sdk::toolpkg::ToolPkgProtection::protectArtifactFile(
-            std::path::Path::new(&sourcePath),
-            isToolPkg,
-        )
+        let fileSystemHost = self.context.fileSystemHost.as_ref().ok_or_else(|| {
+            "FileSystemHost is required for ToolPkg artifact protection".to_string()
+        })?;
+        let sourceBytes = fileSystemHost
+            .readFileBytes(&sourcePath)
+            .map_err(|error| error.to_string())?;
+        operit_plugin_sdk::toolpkg::ToolPkgProtection::protectArtifactBytes(&sourceBytes, isToolPkg)
     }
 
     #[allow(non_snake_case)]
@@ -1555,7 +1632,12 @@ impl RuntimePackageManager {
             let Some(sourceFile) = self.findPackageFile(&packageName) else {
                 continue;
             };
-            if !sourceFile.exists() || !sourceFile.is_file() {
+            if !self
+                .fileSystemHost
+                .fileExists(&hostPath(&sourceFile))
+                .map(|info| info.exists && !info.isDirectory)
+                .unwrap_or(false)
+            {
                 continue;
             }
             let displayName = {
@@ -1590,7 +1672,12 @@ impl RuntimePackageManager {
                 continue;
             }
             let sourceFile = PathBuf::from(&runtime.sourcePath);
-            if !sourceFile.exists() || !sourceFile.is_file() {
+            if !self
+                .fileSystemHost
+                .fileExists(&hostPath(&sourceFile))
+                .map(|info| info.exists && !info.isDirectory)
+                .unwrap_or(false)
+            {
                 continue;
             }
             let displayName = {
@@ -1649,14 +1736,14 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     fn scanExternalPackages(&mut self, baseSnapshot: &PackageScanSnapshot) -> PackageScanSnapshot {
         let packagesDir = self.storePaths.packages_dir();
-        if let Err(error) = fs::create_dir_all(&packagesDir) {
+        if let Err(error) = self.fileSystemHost.makeDirectory(&hostPath(&packagesDir), true) {
             logPackageManagerError(format!(
                 "External package directory creation failed: {}, error={error}",
                 packagesDir.display()
             ));
             return baseSnapshot.clone();
         }
-        let Ok(entries) = fs::read_dir(&packagesDir) else {
+        let Ok(entries) = self.fileSystemHost.listFiles(&hostPath(&packagesDir)) else {
             logPackageManagerError(format!(
                 "External package directory is unreadable: {}",
                 packagesDir.display()
@@ -1664,9 +1751,9 @@ impl RuntimePackageManager {
             return baseSnapshot.clone();
         };
         let mut files = entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.is_file())
+            .into_iter()
+            .filter(|entry| !entry.isDirectory)
+            .map(|entry| packagesDir.join(entry.name))
             .collect::<Vec<_>>();
         files.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
 
@@ -1885,10 +1972,20 @@ impl RuntimePackageManager {
         if lowerPath.ends_with(".js") || lowerPath.ends_with(".ts") {
             result.toolPackage = self.loadPackageFromJsFile(path);
         } else if lowerPath.ends_with(".hjson") {
-            match fs::read_to_string(path).and_then(|content| {
-                JsPackageLoader::parse_metadata(&content, "")
-                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-            }) {
+            let parseResult = self
+                .context
+                .fileSystemHost
+                .as_ref()
+                .ok_or_else(|| {
+                    "FileSystemHost is required for external package loading".to_string()
+                })
+                .and_then(|fileSystemHost| {
+                    fileSystemHost
+                        .readFile(&sourcePath)
+                        .map_err(|error| error.to_string())
+                })
+                .and_then(|content| JsPackageLoader::parse_metadata(&content, ""));
+            match parseResult {
                 Ok(package) => result.toolPackage = Some(package),
                 Err(error) => logPackageManagerError(format!(
                     "External package metadata load error [{sourcePath}]: {error}"
@@ -2153,16 +2250,14 @@ impl RuntimePackageManager {
 
     #[allow(non_snake_case)]
     fn buildExternalPackageScanSignature(&self, file: &Path) -> String {
-        let metadata = fs::metadata(file).ok();
+        let metadata = self.fileSystemHost.fileInfo(&hostPath(file)).ok();
         format!(
             "{}|{}|{}",
             file.to_string_lossy(),
-            metadata.as_ref().map(|value| value.len()).unwrap_or(0),
+            metadata.as_ref().map(|value| value.size).unwrap_or(0),
             metadata
-                .and_then(|value| value.modified().ok())
-                .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|value| value.as_millis())
-                .unwrap_or(0)
+                .map(|value| value.lastModified)
+                .unwrap_or_default()
         )
     }
 
@@ -2188,7 +2283,12 @@ impl RuntimePackageManager {
                 continue;
             };
             let destinationFile = packagesDir.join(&record.destinationFileName);
-            if !destinationFile.exists() || !destinationFile.is_file() {
+            if !self
+                .fileSystemHost
+                .fileExists(&hostPath(&destinationFile))
+                .map(|info| info.exists && !info.isDirectory)
+                .unwrap_or(false)
+            {
                 packageNamesToRemove.push(packageName);
                 recordsChanged = true;
                 continue;
@@ -2216,7 +2316,8 @@ impl RuntimePackageManager {
             };
             let sourceSignature = sha256Hex(sourceAsset.bytes);
             if sourceSignature != record.sourceSignature {
-                fs::write(&destinationFile, sourceAsset.bytes)
+                self.fileSystemHost
+                    .writeFileBytes(&hostPath(&destinationFile), sourceAsset.bytes)
                     .map_err(|error| error.to_string())?;
                 if let Some(recordToUpdate) = records.get_mut(&record.packageName) {
                     recordToUpdate.sourceSignature = sourceSignature;
@@ -2253,7 +2354,12 @@ impl RuntimePackageManager {
             }
             let sourceFileName = packageSourceFileName(&result.sourcePath);
             let destinationFile = packagesDir.join(&sourceFileName);
-            if !destinationFile.exists() || !destinationFile.is_file() {
+            if !self
+                .fileSystemHost
+                .fileExists(&hostPath(&destinationFile))
+                .map(|info| info.exists && !info.isDirectory)
+                .unwrap_or(false)
+            {
                 continue;
             }
             let Some(sourceAsset) = bundledExternalPluginAssetByName(
@@ -2262,7 +2368,10 @@ impl RuntimePackageManager {
             ) else {
                 continue;
             };
-            let destinationBytes = fs::read(&destinationFile).map_err(|error| error.to_string())?;
+            let destinationBytes = self
+                .fileSystemHost
+                .readFileBytes(&hostPath(&destinationFile))
+                .map_err(|error| error.to_string())?;
             if destinationBytes != sourceAsset.bytes {
                 continue;
             }
@@ -2293,21 +2402,37 @@ impl RuntimePackageManager {
     }
 
     #[allow(non_snake_case)]
-    fn buildFileContentSignature(file: &Path) -> Result<String, std::io::Error> {
-        let bytes = fs::read(file)?;
+    fn buildFileContentSignature(&self, file: &Path) -> Result<String, String> {
+        let bytes = self
+            .fileSystemHost
+            .readFileBytes(&hostPath(file))
+            .map_err(|error| error.to_string())?;
         Ok(format!("{:x}", Sha256::digest(&bytes)))
     }
 
     #[allow(non_snake_case)]
-    fn filesHaveSameContent(left: &Path, right: &Path) -> Result<bool, std::io::Error> {
-        Ok(fs::read(left)? == fs::read(right)?)
+    fn filesHaveSameContent(&self, left: &Path, right: &Path) -> Result<bool, String> {
+        let leftBytes = self
+            .fileSystemHost
+            .readFileBytes(&hostPath(left))
+            .map_err(|error| error.to_string())?;
+        let rightBytes = self
+            .fileSystemHost
+            .readFileBytes(&hostPath(right))
+            .map_err(|error| error.to_string())?;
+        Ok(leftBytes == rightBytes)
     }
 
     #[allow(non_snake_case)]
     /// Imports a package file from external storage into package storage.
     pub fn addPackageFileFromExternalStorage(&mut self, filePath: &str) -> String {
         let file = PathBuf::from(filePath);
-        if !file.exists() || !file.is_file() {
+        if !self
+            .fileSystemHost
+            .fileExists(filePath)
+            .map(|info| info.exists && !info.isDirectory)
+            .unwrap_or(false)
+        {
             return format!("Cannot access file at path: {filePath}");
         }
 
@@ -2343,7 +2468,11 @@ impl RuntimePackageManager {
             };
             let destinationFile = self.storePaths.packages_dir().join(fileName);
             if file != destinationFile {
-                if let Err(error) = fs::copy(&file, &destinationFile) {
+                if let Err(error) = self.fileSystemHost.copyFile(
+                    &hostPath(&file),
+                    &hostPath(&destinationFile),
+                    false,
+                ) {
                     return format!("Error importing package: {error}");
                 }
             }
@@ -2365,7 +2494,7 @@ impl RuntimePackageManager {
         }
 
         let packageMetadata = if isHjson {
-            let content = match fs::read_to_string(&file) {
+            let content = match self.fileSystemHost.readFile(&hostPath(&file)) {
                 Ok(value) => value,
                 Err(error) => return format!("Error importing package: {error}"),
             };
@@ -2409,7 +2538,11 @@ impl RuntimePackageManager {
         };
         let destinationFile = self.storePaths.packages_dir().join(fileName);
         if file != destinationFile {
-            if let Err(error) = fs::copy(&file, &destinationFile) {
+            if let Err(error) = self.fileSystemHost.copyFile(
+                &hostPath(&file),
+                &hostPath(&destinationFile),
+                false,
+            ) {
                 return format!("Error importing package: {error}");
             }
         }
@@ -2467,10 +2600,15 @@ impl RuntimePackageManager {
         normalizedResourcePath: &str,
     ) -> Option<Vec<u8>> {
         let resourceFile = self.resolveToolPkgResourceFile(runtime, normalizedResourcePath)?;
-        if !resourceFile.is_file() {
+        if !self
+            .fileSystemHost
+            .fileExists(&hostPath(&resourceFile))
+            .map(|info| info.exists && !info.isDirectory)
+            .unwrap_or(false)
+        {
             return None;
         }
-        let bytes = fs::read(resourceFile).ok()?;
+        let bytes = self.fileSystemHost.readFileBytes(&hostPath(&resourceFile)).ok()?;
         operit_plugin_sdk::toolpkg::ToolPkgProtection::decryptIfNeeded(&bytes).ok()
     }
 
@@ -2863,7 +3001,12 @@ impl RuntimePackageManager {
     fn findPackageFile(&mut self, packageName: &str) -> Option<PathBuf> {
         let normalizedPackageName = self.normalizePackageName(packageName);
         let packagesDir = self.storePaths.packages_dir();
-        if !packagesDir.exists() {
+        if !self
+            .fileSystemHost
+            .fileExists(&hostPath(&packagesDir))
+            .map(|info| info.exists && info.isDirectory)
+            .unwrap_or(false)
+        {
             return None;
         }
 
@@ -2873,23 +3016,30 @@ impl RuntimePackageManager {
         {
             if containerRuntime.sourceType == ToolPkgSourceType::EXTERNAL {
                 let candidate = PathBuf::from(containerRuntime.sourcePath);
-                if candidate.exists() {
+                if self
+                    .fileSystemHost
+                    .fileExists(&hostPath(&candidate))
+                    .map(|info| info.exists && !info.isDirectory)
+                    .unwrap_or(false)
+                {
                     return Some(candidate);
                 }
             }
         }
 
         let jsFile = packagesDir.join(format!("{}.js", normalizedPackageName));
-        if jsFile.exists() {
+        if self
+            .fileSystemHost
+            .fileExists(&hostPath(&jsFile))
+            .map(|info| info.exists && !info.isDirectory)
+            .unwrap_or(false)
+        {
             return Some(jsFile);
         }
 
-        let entries = fs::read_dir(&packagesDir).ok()?;
-        for entry in entries.flatten() {
-            let file = entry.path();
-            if !file.is_file() {
-                continue;
-            }
+        let entries = self.fileSystemHost.listFiles(&hostPath(&packagesDir)).ok()?;
+        for entry in entries.into_iter().filter(|entry| !entry.isDirectory) {
+            let file = packagesDir.join(entry.name);
             let lowerName = file.to_string_lossy().to_ascii_lowercase();
             if lowerName.ends_with(".js") {
                 if let Some(loadedPackage) = self.loadPackageFromJsFile(&file) {
@@ -2952,14 +3102,20 @@ impl RuntimePackageManager {
 
     #[allow(non_snake_case)]
     fn loadPackageFromJsFile(&self, file: &Path) -> Option<ToolPackage> {
-        JsPackageLoader::load_from_file(file).ok()
+        let fileSystemHost = self.context.fileSystemHost.as_ref()?;
+        JsPackageLoader::load_from_file(fileSystemHost.as_ref(), &file.to_string_lossy()).ok()
     }
 
     #[allow(non_snake_case)]
     fn loadToolPkgFromExternalFile(&self, file: &Path) -> Result<ToolPkgLoadResult, String> {
+        let fileSystemHost =
+            self.context.fileSystemHost.as_ref().ok_or_else(|| {
+                "FileSystemHost is required for external ToolPkg loading".to_string()
+            })?;
         self.withToolPkgRegistrationEngine(|registrationEngine| {
             ToolPkgLoader::loadToolPkgFromExternalFile(
-                file,
+                fileSystemHost.as_ref(),
+                &file.to_string_lossy(),
                 registrationEngine,
                 |packageName, error| {
                     AppLogger::e(
@@ -3108,6 +3264,15 @@ impl ToolPkgPackageHost for RuntimePackageManager {
         RuntimePackageManager::getToolPkgSubpackageStatesInternal(self)
     }
 
+    /// Returns the filesystem host owned by this package manager context.
+    #[allow(non_snake_case)]
+    fn fileSystemHost(&self) -> Arc<dyn FileSystemHost> {
+        self.context
+            .fileSystemHost
+            .clone()
+            .expect("RuntimePackageManager requires a FileSystemHost")
+    }
+
     /// Persists enabled package names for SDK state changes.
     #[allow(non_snake_case)]
     fn saveEnabledPackageNames(&self, packageNames: &[String]) -> Result<(), String> {
@@ -3207,20 +3372,6 @@ fn sha256Hex(bytes: &[u8]) -> String {
 }
 
 #[allow(non_snake_case)]
-fn metadataModifiedMillis(metadata: &fs::Metadata) -> u128 {
-    metadata
-        .modified()
-        .ok()
-        .and_then(|modified| {
-            modified
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .map(|duration| duration.as_millis())
-        })
-        .unwrap_or(0)
-}
-
-#[allow(non_snake_case)]
 fn javaStringHashCodeHex(value: &str) -> String {
     let mut hash = 0i32;
     for unit in value.encode_utf16() {
@@ -3229,96 +3380,9 @@ fn javaStringHashCodeHex(value: &str) -> String {
     format!("{:x}", hash as u32)
 }
 
-#[allow(non_snake_case)]
-fn copyDirectoryEntries(sourceDir: &Path, destinationDir: &Path) -> bool {
-    if !sourceDir.exists() || !sourceDir.is_dir() {
-        return false;
-    }
-    let mut pending = vec![sourceDir.to_path_buf()];
-    while let Some(currentDir) = pending.pop() {
-        let Ok(entries) = fs::read_dir(&currentDir) else {
-            return false;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                pending.push(path);
-                continue;
-            }
-            if !path.is_file() {
-                continue;
-            }
-            let Ok(relativePath) = path.strip_prefix(sourceDir) else {
-                return false;
-            };
-            let relativePath = relativePath.to_string_lossy().replace('\\', "/");
-            let Some(normalizedEntry) = ToolPkgArchiveParser::normalizeZipEntryPath(&relativePath)
-            else {
-                continue;
-            };
-            let outputFile = destinationDir.join(normalizedEntry);
-            if let Some(parent) = outputFile.parent() {
-                if fs::create_dir_all(parent).is_err() {
-                    return false;
-                }
-            }
-            if fs::copy(&path, &outputFile).is_err() {
-                return false;
-            }
-        }
-    }
-    true
-}
-
-#[allow(non_snake_case)]
-fn zipToolPkgResourceDirectory(sourceDirectory: &Path, destinationZip: &Path) -> bool {
-    let Some(zipRootParent) = sourceDirectory.parent() else {
-        return false;
-    };
-    let Ok(fileOutput) = fs::File::create(destinationZip) else {
-        return false;
-    };
-    let mut zipOutput = zip::ZipWriter::new(fileOutput);
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-    let mut files = Vec::<PathBuf>::new();
-    collectDirectoryFiles(sourceDirectory, &mut files);
-    files.sort();
-    for file in files {
-        let Ok(relativePath) = file.strip_prefix(zipRootParent) else {
-            return false;
-        };
-        let relativePath = relativePath.to_string_lossy().replace('\\', "/");
-        let Some(normalizedEntry) = ToolPkgArchiveParser::normalizeZipEntryPath(&relativePath)
-        else {
-            continue;
-        };
-        if zipOutput.start_file(normalizedEntry, options).is_err() {
-            return false;
-        }
-        let Ok(mut input) = fs::File::open(&file) else {
-            return false;
-        };
-        if std::io::copy(&mut input, &mut zipOutput).is_err() {
-            return false;
-        }
-    }
-    zipOutput.finish().is_ok()
-}
-
-#[allow(non_snake_case)]
-fn collectDirectoryFiles(directory: &Path, files: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collectDirectoryFiles(&path, files);
-        } else if path.is_file() {
-            files.push(path);
-        }
-    }
+/// Converts a package metadata path into the corresponding host path string.
+fn hostPath(path: &Path) -> String {
+    path.to_string_lossy().to_string()
 }
 
 #[allow(non_snake_case)]

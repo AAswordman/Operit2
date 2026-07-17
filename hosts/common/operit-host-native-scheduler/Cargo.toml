@@ -7,3 +7,4 @@ publish = false
 
 [dependencies]
 operit-host-api = { path = "../../../core/crates/operit-host-api" }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "time"] }

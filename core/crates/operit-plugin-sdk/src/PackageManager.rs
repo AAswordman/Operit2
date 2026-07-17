@@ -8,6 +8,7 @@ use crate::toolpkg::ToolPkgManager::{
 use crate::toolpkg::ToolPkgParser::{
     ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSubpackageRuntime,
 };
+use operit_host_api::FileSystemHost;
 
 /// Resolves the active conditional state for one package.
 pub trait PackageStateResolver: Send + Sync {
@@ -33,6 +34,7 @@ impl PluginPackageManager {
     pub fn new(
         executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
         assetSource: Arc<dyn ToolPkgAssetSource>,
+        fileSystemHost: Arc<dyn FileSystemHost>,
         packageStateResolver: Arc<dyn PackageStateResolver>,
     ) -> Self {
         Self {
@@ -40,7 +42,11 @@ impl PluginPackageManager {
             availablePackages: BTreeMap::new(),
             enabledPackageNames: BTreeSet::new(),
             activePackageStateIds: BTreeMap::new(),
-            toolPkgManager: ToolPkgManager::new(executionEngineFactory, assetSource),
+            toolPkgManager: ToolPkgManager::new(
+                executionEngineFactory,
+                assetSource,
+                fileSystemHost,
+            ),
             packageStateResolver,
         }
     }

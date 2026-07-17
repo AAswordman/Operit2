@@ -1,6 +1,4 @@
 use std::collections::{HashMap, VecDeque};
-use std::fs;
-use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -54,7 +52,6 @@ pub struct ImageData {
 #[derive(Debug)]
 struct PoolState {
     max_pool_size: usize,
-    cache_dir: Option<PathBuf>,
     image_pool: HashMap<String, ImageData>,
     order: VecDeque<String>,
 }
@@ -63,7 +60,6 @@ impl Default for PoolState {
     fn default() -> Self {
         Self {
             max_pool_size: 20,
-            cache_dir: None,
             image_pool: HashMap::new(),
             order: VecDeque::new(),
         }
@@ -96,37 +92,18 @@ impl ImagePoolManager {
         }
     }
 
-    /// Initializes image cache storage and optionally loads cached images.
-    pub fn initialize(cache_dir_path: impl AsRef<Path>, preload_now: bool) {
-        let target_dir = cache_dir_path.as_ref().join("image_pool");
-        let _ = fs::create_dir_all(&target_dir);
-        {
-            let mut guard = state().lock().expect("ImagePool mutex poisoned");
-            guard.cache_dir = Some(target_dir);
-            guard.image_pool.clear();
-            guard.order.clear();
-        }
-        if preload_now {
-            Self::preload_from_disk();
-        }
-    }
-
-    /// Registers an image from a local file path.
-    pub fn add_image(file_path: &str, _options: Option<ImageRegistrationOptions>) -> String {
-        let path = Path::new(file_path);
-        if !path.is_file() {
-            AppLogger::e(
-                TAG,
-                &format!("file does not exist or is not a file: {file_path}"),
-            );
+    /// Registers image bytes for model input.
+    pub fn add_image_bytes(
+        bytes: &[u8],
+        mime_type: Option<&str>,
+        _options: Option<ImageRegistrationOptions>,
+    ) -> String {
+        if bytes.is_empty() {
+            AppLogger::e(TAG, "image bytes must not be empty");
             return "error".to_string();
         }
-        let Ok(bytes) = fs::read(path) else {
-            AppLogger::e(TAG, &format!("read image failed: {file_path}"));
-            return "error".to_string();
-        };
         let mime_type = mime_type_from_bytes(&bytes)
-            .or_else(|| mime_type_from_extension(path))
+            .or_else(|| mime_type.map(str::to_string))
             .unwrap_or_else(|| "image/png".to_string());
         let (width, height) = image_dimensions(&bytes).unwrap_or((0, 0));
         Self::insert(ImageData {
@@ -165,7 +142,7 @@ impl ImagePoolManager {
         {
             return Some(data);
         }
-        load_from_disk(id)
+        None
     }
 
     /// Returns the MIME type for a registered image.
@@ -178,7 +155,6 @@ impl ImagePoolManager {
         let mut guard = state().lock().expect("ImagePool mutex poisoned");
         guard.image_pool.remove(id);
         guard.order.retain(|item| item != id);
-        delete_from_disk_locked(&guard, id);
     }
 
     /// Clears all images from the pool and cache directory.
@@ -186,10 +162,6 @@ impl ImagePoolManager {
         let mut guard = state().lock().expect("ImagePool mutex poisoned");
         guard.image_pool.clear();
         guard.order.clear();
-        if let Some(dir) = &guard.cache_dir {
-            let _ = fs::remove_dir_all(dir);
-            let _ = fs::create_dir_all(dir);
-        }
     }
 
     /// Returns the current number of registered images.
@@ -201,46 +173,11 @@ impl ImagePoolManager {
             .len()
     }
 
-    /// Loads previously cached images from disk into the pool.
-    pub fn preload_from_disk() {
-        let ids = {
-            let guard = state().lock().expect("ImagePool mutex poisoned");
-            let Some(dir) = &guard.cache_dir else {
-                return;
-            };
-            let Ok(entries) = fs::read_dir(dir) else {
-                return;
-            };
-            entries
-                .filter_map(Result::ok)
-                .filter_map(|entry| {
-                    let path = entry.path();
-                    if path.extension().and_then(|ext| ext.to_str()) == Some("meta") {
-                        path.file_stem()
-                            .and_then(|stem| stem.to_str())
-                            .map(str::to_string)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-        };
-        for id in ids {
-            if let Some(data) = load_from_disk(&id) {
-                let mut guard = state().lock().expect("ImagePool mutex poisoned");
-                touch_locked(&mut guard, &id);
-                guard.image_pool.insert(id, data);
-                trim_locked(&mut guard);
-            }
-        }
-    }
-
     fn insert(data: ImageData) -> String {
         let id = new_id();
         let mut guard = state().lock().expect("ImagePool mutex poisoned");
         touch_locked(&mut guard, &id);
         guard.image_pool.insert(id.clone(), data.clone());
-        save_to_disk_locked(&guard, &id, &data);
         trim_locked(&mut guard);
         id
     }
@@ -255,36 +192,9 @@ fn trim_locked(state: &mut PoolState) {
     while state.image_pool.len() > state.max_pool_size {
         if let Some(id) = state.order.pop_front() {
             state.image_pool.remove(&id);
-            delete_from_disk_locked(state, &id);
         } else {
             break;
         }
-    }
-}
-
-fn save_to_disk_locked(state: &PoolState, id: &str, data: &ImageData) {
-    let Some(dir) = &state.cache_dir else {
-        return;
-    };
-    let _ = fs::create_dir_all(dir);
-    let _ = fs::write(dir.join(format!("{id}.dat")), &data.base64);
-    if let Ok(meta) = serde_json::to_string(data) {
-        let _ = fs::write(dir.join(format!("{id}.meta")), meta);
-    }
-}
-
-fn load_from_disk(id: &str) -> Option<ImageData> {
-    let guard = state().lock().expect("ImagePool mutex poisoned");
-    let dir = guard.cache_dir.clone()?;
-    drop(guard);
-    let meta = fs::read_to_string(dir.join(format!("{id}.meta"))).ok()?;
-    serde_json::from_str(&meta).ok()
-}
-
-fn delete_from_disk_locked(state: &PoolState, id: &str) {
-    if let Some(dir) = &state.cache_dir {
-        let _ = fs::remove_file(dir.join(format!("{id}.dat")));
-        let _ = fs::remove_file(dir.join(format!("{id}.meta")));
     }
 }
 
@@ -312,18 +222,6 @@ fn mime_type_or_png(mime_type: &str) -> String {
         "image/png".to_string()
     } else {
         mime_type.to_string()
-    }
-}
-
-fn mime_type_from_extension(path: &Path) -> Option<String> {
-    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
-        "jpg" | "jpeg" => Some("image/jpeg".to_string()),
-        "png" => Some("image/png".to_string()),
-        "gif" => Some("image/gif".to_string()),
-        "webp" => Some("image/webp".to_string()),
-        "bmp" => Some("image/bmp".to_string()),
-        "ico" => Some("image/x-ico".to_string()),
-        _ => None,
     }
 }
 
