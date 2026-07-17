@@ -31,6 +31,14 @@ from common import (
 WASI_SDK_MAJOR_VERSION = "20"
 WEB_ACCESS_ASSET_PREFIX = "    - path: assets/web_access/"
 WEB_ACCESS_ASSET_PLATFORM_LINE = "      platforms: [android, ios, linux, macos, windows]"
+WEB_EXCLUDED_DEPENDENCIES = frozenset(
+    {
+        "file_selector_ohos",
+        "path_provider_ohos",
+        "url_launcher_ohos",
+        "video_player_ohos",
+    }
+)
 WASM_SOURCE = (
     REPO_ROOT
     / "apps"
@@ -179,9 +187,55 @@ def remove_web_access_native_assets_from_pubspec(pubspec: Path) -> str:
     return original
 
 
-# Restores the pubspec after the temporary Web Access build view is finished.
-def restore_pubspec(pubspec: Path, content: str) -> None:
-    with pubspec.open("w", encoding="utf-8", newline="") as output:
+# Removes OpenHarmony-only dependencies from the temporary Flutter Web pubspec.
+def remove_web_excluded_dependencies_from_pubspec(pubspec: Path) -> str:
+    original = pubspec.read_text(encoding="utf-8")
+    lines = original.splitlines(keepends=True)
+    staged: list[str] = []
+    removed: set[str] = set()
+    inside_dependencies = False
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.rstrip("\r\n") == "dependencies:":
+            inside_dependencies = True
+            staged.append(line)
+            index += 1
+            continue
+        if inside_dependencies and not line.startswith(" ") and line.strip():
+            inside_dependencies = False
+        if (
+            inside_dependencies
+            and line.startswith("  ")
+            and not line.startswith("    ")
+            and line.rstrip("\r\n").endswith(":")
+        ):
+            dependency_name = line.strip().removesuffix(":")
+            if dependency_name in WEB_EXCLUDED_DEPENDENCIES:
+                removed.add(dependency_name)
+                index += 1
+                while index < len(lines) and lines[index].startswith("    "):
+                    index += 1
+                continue
+        staged.append(line)
+        index += 1
+    if removed != WEB_EXCLUDED_DEPENDENCIES:
+        missing = sorted(WEB_EXCLUDED_DEPENDENCIES - removed)
+        unexpected = sorted(removed - WEB_EXCLUDED_DEPENDENCIES)
+        raise RuntimeError(
+            "Unexpected OpenHarmony dependency declarations: "
+            f"missing={missing} unexpected={unexpected}"
+        )
+    staged_content = "".join(staged)
+    if "https://gitee.com/" in staged_content:
+        raise RuntimeError("Flutter Web pubspec still declares a Gitee dependency")
+    restore_staged_file(pubspec, staged_content)
+    return original
+
+
+# Restores one file after the temporary Flutter Web build view is finished.
+def restore_staged_file(path: Path, content: str) -> None:
+    with path.open("w", encoding="utf-8", newline="") as output:
         output.write(content)
 
 
@@ -266,15 +320,18 @@ def main(base_href: str) -> int:
         ]
     )
 
-    generate_dart_proxy_artifacts()
-    dart_pub_get(enforce_lockfile=True, env=env)
-    run(["rustup", "target", "add", "wasm32-unknown-unknown"])
-    compile_web_runtime_bridge(typescript_bin, terser_bin)
-    stage_web_access_source()
-    reset_dir(WEB_ACCESS_BUNDLE_DIR)
     pubspec = FLUTTER_APP_DIR / "pubspec.yaml"
-    original_pubspec = remove_web_access_native_assets_from_pubspec(pubspec)
+    pubspec_lock = FLUTTER_APP_DIR / "pubspec.lock"
+    original_pubspec = remove_web_excluded_dependencies_from_pubspec(pubspec)
+    original_pubspec_lock = pubspec_lock.read_text(encoding="utf-8")
     try:
+        generate_dart_proxy_artifacts()
+        dart_pub_get(enforce_lockfile=False, env=env)
+        run(["rustup", "target", "add", "wasm32-unknown-unknown"])
+        compile_web_runtime_bridge(typescript_bin, terser_bin)
+        stage_web_access_source()
+        reset_dir(WEB_ACCESS_BUNDLE_DIR)
+        remove_web_access_native_assets_from_pubspec(pubspec)
         run(
             [
                 flutter,
@@ -292,7 +349,8 @@ def main(base_href: str) -> int:
             env=env,
         )
     finally:
-        restore_pubspec(pubspec, original_pubspec)
+        restore_staged_file(pubspec, original_pubspec)
+        restore_staged_file(pubspec_lock, original_pubspec_lock)
     stage_web_runtime_files(wasm_bindgen_bin)
     manifest = write_web_access_version_manifest()
     print(
