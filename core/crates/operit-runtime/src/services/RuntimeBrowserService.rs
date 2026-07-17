@@ -9,7 +9,7 @@ use operit_host_api::{
     BrowserSessionSnapshot,
 };
 use operit_util::stream::HotStream::MutableSharedStreamImpl;
-use operit_util::stream::Stream::Stream;
+use operit_util::stream::Stream::{CollectFuture, Stream};
 use operit_util::AppLogger::AppLogger;
 use serde::{Deserialize, Serialize};
 
@@ -112,8 +112,11 @@ impl Stream for RuntimeBrowserEventStream {
     type Item = RuntimeBrowserStreamEvent;
 
     /// Collects serialized browser events from the shared stream.
-    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
-        self.upstream.collect(collector);
+    fn collect<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(Self::Item),
+    ) -> CollectFuture<'a> {
+        self.upstream.collect(collector)
     }
 }
 

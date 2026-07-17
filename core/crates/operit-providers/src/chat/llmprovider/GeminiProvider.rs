@@ -1036,43 +1036,43 @@ impl AIService for GeminiProvider {
         if request.stream {
             let event_channel = empty_revisable_event_channel();
             let streamEventChannel = event_channel.clone();
-            let mut provider = self.clone();
+            let mut ownedProvider = Some(self.clone());
             let mut ownedRequest = Some(request);
             let coldStream = FnStream::new(move |emit| {
                 let request = ownedRequest
                     .take()
                     .expect("GeminiProvider stream must only be collected once");
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("tokio runtime must build for GeminiProvider stream");
-                if let Ok(mut responseStream) =
-                    runtime.block_on(provider.send_streaming_message(request))
-                {
-                    responseStream.collect(emit);
-                }
-                streamEventChannel.close();
+                let mut provider = ownedProvider
+                    .take()
+                    .expect("GeminiProvider stream must only be collected once");
+                let eventChannel = streamEventChannel.clone();
+                Box::pin(async move {
+                    if let Ok(mut responseStream) = provider.send_streaming_message(request).await {
+                        responseStream.collect(emit).await;
+                    }
+                    eventChannel.close();
+                })
             });
             return Ok(Box::new(with_event_channel(coldStream, event_channel)));
         }
         let event_channel = empty_revisable_event_channel();
         let streamEventChannel = event_channel.clone();
-        let mut provider = self.clone();
+        let mut ownedProvider = Some(self.clone());
         let mut ownedRequest = Some(request);
         let coldStream = FnStream::new(move |emit| {
             let request = ownedRequest
                 .take()
                 .expect("GeminiProvider non-stream request must only be collected once");
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("tokio runtime must build for GeminiProvider non-stream request");
-            if let Ok(mut responseStream) =
-                runtime.block_on(provider.send_non_streaming_message(request))
-            {
-                responseStream.collect(emit);
-            }
-            streamEventChannel.close();
+            let mut provider = ownedProvider
+                .take()
+                .expect("GeminiProvider non-stream request must only be collected once");
+            let eventChannel = streamEventChannel.clone();
+            Box::pin(async move {
+                if let Ok(mut responseStream) = provider.send_non_streaming_message(request).await {
+                    responseStream.collect(emit).await;
+                }
+                eventChannel.close();
+            })
         });
         Ok(Box::new(with_event_channel(coldStream, event_channel)))
     }

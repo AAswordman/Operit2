@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use operit_core_proxy::LocalCoreProxy;
 use operit_host_api::HostManager::HostManager;
+use operit_link_access::LinkAccessStore;
 #[cfg(target_os = "macos")]
 use operit_host_apple_native::{
     AppleBrowserAutomationHost as NativeBrowserAutomationHost,
@@ -98,6 +99,15 @@ pub(crate) fn create_cli_application() -> OperitApplication {
 /// Creates the local core proxy used by CLI commands and services.
 pub(crate) fn create_local_core() -> LocalCoreProxy {
     LocalCoreProxy::new(create_cli_application())
+}
+
+/// Creates the runtime-owned Link Access repository for CLI commands.
+pub(crate) fn create_cli_link_access_store() -> LinkAccessStore {
+    let storageConfig = CliStorageConfig::read();
+    LinkAccessStore::new(Arc::new(NativeRuntimeStorageHost::new(
+        storageConfig.runtimeRoot,
+        storageConfig.workspaceRoot,
+    )))
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

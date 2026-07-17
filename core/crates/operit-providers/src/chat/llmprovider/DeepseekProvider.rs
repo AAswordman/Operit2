@@ -17,9 +17,12 @@ use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
     with_event_channel, RevisableTextStreamLike, TextStreamEventCarrier,
 };
-use operit_util::stream::Stream::FnStream;
+use operit_util::stream::Stream::{FnStream, Stream};
+use operit_util::AppLogger::AppLogger;
 use operit_util::ChatUtils::ChatUtils;
 use operit_util::TokenCacheManager::TokenCacheManager;
+
+const PROVIDER_TRANSPORT_LOG_TAG: &str = "ProviderTransport";
 
 #[derive(Clone)]
 pub struct DeepseekProvider {
@@ -443,6 +446,13 @@ impl AIService for DeepseekProvider {
 
         let request_body = self.create_request_body(&request)?;
         if request.stream {
+            AppLogger::i(
+                PROVIDER_TRANSPORT_LOG_TAG,
+                &format!(
+                    "provider.deepseek.parent.create providerModel={} stream=true",
+                    self.provider_model(),
+                ),
+            );
             let mut parent = OpenAIProvider::new_with_capabilities(
                 self.api_endpoint.clone(),
                 self.api_key.clone(),
@@ -455,22 +465,51 @@ impl AIService for DeepseekProvider {
                 self.enable_tool_call,
             );
             let mut result = parent.send_prepared_request(request, request_body).await?;
+            AppLogger::i(
+                PROVIDER_TRANSPORT_LOG_TAG,
+                &format!(
+                    "provider.deepseek.parent.stream.ready providerModel={}",
+                    self.provider_model(),
+                ),
+            );
             let event_channel = result.event_channel().clone();
             let mut provider = self.clone();
             let activeParentGeneration = provider.setActiveParent(parent.clone());
             if provider.isCancelled() {
                 parent.cancel_streaming();
             }
+            let mut ownedResult = Some(result);
+            let mut ownedParent = Some(parent);
+            let mut ownedProvider = Some(provider);
             let cold_stream = FnStream::new(move |emit| {
-                result.collect(&mut |content| {
-                    emit(content);
-                });
-                provider.apply_token_counts(TokenCounts {
-                    input: parent.input_token_count(),
-                    cached_input: parent.cached_input_token_count(),
-                    output: parent.output_token_count(),
-                });
-                provider.clearActiveParent(activeParentGeneration);
+                let mut result = ownedResult
+                    .take()
+                    .expect("Deepseek parent stream must only be collected once");
+                let parent = ownedParent
+                    .take()
+                    .expect("Deepseek parent stream must only be collected once");
+                let mut provider = ownedProvider
+                    .take()
+                    .expect("Deepseek parent stream must only be collected once");
+                Box::pin(async move {
+                    result.collect(emit).await;
+                    AppLogger::i(
+                        PROVIDER_TRANSPORT_LOG_TAG,
+                        &format!(
+                            "provider.deepseek.parent.stream.done providerModel={} inputTokens={} cachedInputTokens={} outputTokens={}",
+                            parent.provider_model(),
+                            parent.input_token_count(),
+                            parent.cached_input_token_count(),
+                            parent.output_token_count(),
+                        ),
+                    );
+                    provider.apply_token_counts(TokenCounts {
+                        input: parent.input_token_count(),
+                        cached_input: parent.cached_input_token_count(),
+                        output: parent.output_token_count(),
+                    });
+                    provider.clearActiveParent(activeParentGeneration);
+                })
             });
             return Ok(Box::new(with_event_channel(cold_stream, event_channel)));
         }

@@ -169,13 +169,15 @@ impl SkillRepository {
         let archiveBytes = match downloadArchiveBytes(&zipUrl) {
             Ok(bytes) => bytes,
             Err(error) => {
-            return format!("Failed to download skill zip: {error}");
+                return format!("Failed to download skill zip: {error}");
             }
         };
         let archiveLabel = PathBuf::from(format!("{}-{}.zip", target.owner, target.repo));
-        self
-            .skillManager
-            .importSkillArchiveBytes(&archiveBytes, &archiveLabel, target.subDir.as_deref())
+        self.skillManager.importSkillArchiveBytes(
+            &archiveBytes,
+            &archiveLabel,
+            target.subDir.as_deref(),
+        )
     }
 
     /// Creates a skill directly from text content and copied attachment files.

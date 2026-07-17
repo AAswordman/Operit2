@@ -7,6 +7,25 @@ import 'package:hooks/hooks.dart';
 
 const String _webAccessVersionFile = 'web_access_version.json';
 const int _webAccessVersionSchema = 1;
+const String _v86PackageVersion = '0.5.424';
+
+const List<_V86GuestAsset> _v86GuestAssets = <_V86GuestAsset>[
+  _V86GuestAsset(
+    relativePath: 'v86/seabios.bin',
+    url: 'https://raw.githubusercontent.com/copy/v86/master/bios/seabios.bin',
+    sha256: '73e3f359102e3a9982c35fce98eb7cd08f18303ac7f1ba6ebfbe6cdc1c244d98',
+  ),
+  _V86GuestAsset(
+    relativePath: 'v86/vgabios.bin',
+    url: 'https://raw.githubusercontent.com/copy/v86/master/bios/vgabios.bin',
+    sha256: 'a4bc0d80cc3ca028c73dafa8fee396b8d054ce87ebd8abfbd31b06b437607880',
+  ),
+  _V86GuestAsset(
+    relativePath: 'v86/buildroot-bzimage.bin',
+    url: 'https://i.copy.sh/buildroot-bzimage.bin',
+    sha256: '7befbaea31e249d9a518c4b95fa42b2a193d0e3de46250d617cbdeb866ee28b0',
+  ),
+];
 
 void main(List<String> args) async {
   await build(args, (input, output) async {
@@ -34,6 +53,12 @@ void main(List<String> args) async {
     );
     final webSourceDir = Directory.fromUri(
       input.packageRoot.resolve('../../../apps/web_access/web/'),
+    );
+    final webRuntimeSourceDir = Directory.fromUri(
+      input.packageRoot.resolve('../../../apps/web_access/src/'),
+    );
+    final webRuntimeTypescriptConfig = File.fromUri(
+      input.packageRoot.resolve('../../../apps/web_access/tsconfig.json'),
     );
     final webBuildDir = Directory.fromUri(
       input.packageRoot.resolve('../../../apps/web_access/build/bundle/'),
@@ -64,7 +89,7 @@ void main(List<String> args) async {
       '.ts',
       '.d.ts',
       '.py',
-    });
+    }, excludeGeneratedOutputs: true);
     await _addRustDependencies(output, bridgeCrate);
     await _addRustDependencies(output, coreRoot);
     await _addRustDependencies(output, webHostRoot);
@@ -76,7 +101,9 @@ void main(List<String> args) async {
       '.json',
       '.png',
       '.wasm',
-    });
+    }, excludeGeneratedOutputs: true);
+    await _addDirectoryFileDependencies(output, webRuntimeSourceDir, {'.ts'});
+    output.dependencies.add(webRuntimeTypescriptConfig.uri);
 
     await _run(_pythonExecutable(repoRoot), [
       syncScript.path,
@@ -111,7 +138,15 @@ void main(List<String> args) async {
         '--prefix',
         depsDir.path,
         'sql.js@1.14.1',
+        'typescript@5.9.3',
+        'v86@$_v86PackageVersion',
       ], workingDirectory: packageRoot.path);
+
+      await _compileWebRuntimeBridge(
+        depsDir,
+        webRuntimeTypescriptConfig,
+        packageRoot,
+      );
 
       await File.fromUri(
         sqlDist.uri.resolve('sql-wasm.js'),
@@ -119,6 +154,7 @@ void main(List<String> args) async {
       await File.fromUri(
         sqlDist.uri.resolve('sql-wasm.wasm'),
       ).copy(File.fromUri(webBuildDir.uri.resolve('sql-wasm.wasm')).path);
+      await _stageV86RuntimeAssets(depsDir, webBuildDir);
       await _syncWebRuntimeArtifacts(webBuildDir, webSourceDir);
       final versionManifest = await _writeWebAccessVersionManifest(
         webBuildDir,
@@ -338,11 +374,25 @@ class _DigestSink implements Sink<Digest> {
   void close() {}
 }
 
+/// Describes one immutable Linux guest artifact used by the browser VM.
+class _V86GuestAsset {
+  const _V86GuestAsset({
+    required this.relativePath,
+    required this.url,
+    required this.sha256,
+  });
+
+  final String relativePath;
+  final String url;
+  final String sha256;
+}
+
 Future<void> _addDirectoryFileDependencies(
   BuildOutputBuilder output,
   Directory root,
-  Set<String> extensions,
-) async {
+  Set<String> extensions, {
+  bool excludeGeneratedOutputs = false,
+}) async {
   if (!root.existsSync()) {
     throw StateError('Dependency root does not exist: ${root.path}');
   }
@@ -356,10 +406,49 @@ Future<void> _addDirectoryFileDependencies(
     )) {
       continue;
     }
+    if (excludeGeneratedOutputs && _isGeneratedInputDependency(entity)) {
+      continue;
+    }
     if (extensions.any(path.endsWith)) {
       output.dependencies.add(entity.uri);
     }
   }
+}
+
+/// Detects build-owned outputs that must not be registered as hook inputs.
+bool _isGeneratedInputDependency(File file) {
+  final path = file.path;
+  final separator = Platform.pathSeparator;
+  if (path.contains('$separator.out$separator')) {
+    return true;
+  }
+  final fileName = file.uri.pathSegments.isEmpty
+      ? path
+      : file.uri.pathSegments.last;
+  if (fileName == '.sync_state.json' ||
+      fileName == '.sync_hot_reload_state.json') {
+    return true;
+  }
+  return _generatedWebRuntimeFileNames.contains(fileName);
+}
+
+/// Compiles the browser runtime bridge required by the Flutter Web shell.
+Future<void> _compileWebRuntimeBridge(
+  Directory dependencies,
+  File typescriptConfig,
+  Directory workingDirectory,
+) async {
+  final executable = Platform.isWindows ? 'tsc.cmd' : 'tsc';
+  final compiler = File.fromUri(
+    dependencies.uri.resolve('node_modules/.bin/$executable'),
+  );
+  if (!compiler.existsSync()) {
+    throw StateError('TypeScript compiler does not exist: ${compiler.path}');
+  }
+  await _run(compiler.path, [
+    '-p',
+    typescriptConfig.path,
+  ], workingDirectory: workingDirectory.path);
 }
 
 Future<void> _addRustDependencies(
@@ -417,13 +506,7 @@ Future<void> _syncWebRuntimeArtifacts(
   Directory source,
   Directory destination,
 ) async {
-  const fileNames = <String>[
-    'operit_flutter_bridge.js',
-    'operit_flutter_bridge_bg.wasm',
-    'sql-wasm.js',
-    'sql-wasm.wasm',
-  ];
-  for (final fileName in fileNames) {
+  for (final fileName in _webRuntimeArtifactNames) {
     final sourceFile = File.fromUri(source.uri.resolve(fileName));
     if (!sourceFile.existsSync()) {
       throw StateError(
@@ -434,20 +517,113 @@ Future<void> _syncWebRuntimeArtifacts(
     await destinationFile.parent.create(recursive: true);
     await sourceFile.copy(destinationFile.path);
   }
+  await _syncGeneratedWebRuntimeDirectory(
+    Directory.fromUri(source.uri.resolve('v86/')),
+    Directory.fromUri(destination.uri.resolve('v86/')),
+  );
+}
+
+/// Copies one generated browser runtime directory into the Flutter Web source tree.
+Future<void> _syncGeneratedWebRuntimeDirectory(
+  Directory source,
+  Directory destination,
+) async {
+  if (!source.existsSync()) {
+    throw StateError(
+      'Generated web runtime directory does not exist: ${source.path}',
+    );
+  }
+  if (destination.existsSync()) {
+    await destination.delete(recursive: true);
+  }
+  await destination.create(recursive: true);
+  await for (final entity in source.list(recursive: true, followLinks: false)) {
+    if (entity is! File) {
+      continue;
+    }
+    final relativePath = _relativePath(source, entity);
+    final target = File(_joinPath(destination.path, relativePath));
+    await target.parent.create(recursive: true);
+    await entity.copy(target.path);
+  }
+}
+
+/// Stages the v86 emulator runtime and verified Linux guest resources.
+Future<void> _stageV86RuntimeAssets(
+  Directory dependencies,
+  Directory webBuildDir,
+) async {
+  final v86BuildDir = Directory.fromUri(
+    dependencies.uri.resolve('node_modules/v86/build/'),
+  );
+  await _copyRequiredWebRuntimeAsset(
+    File.fromUri(v86BuildDir.uri.resolve('libv86.mjs')),
+    File.fromUri(webBuildDir.uri.resolve('v86/libv86.mjs')),
+  );
+  await _copyRequiredWebRuntimeAsset(
+    File.fromUri(v86BuildDir.uri.resolve('v86.wasm')),
+    File.fromUri(webBuildDir.uri.resolve('v86/v86.wasm')),
+  );
+  for (final asset in _v86GuestAssets) {
+    await _downloadVerifiedWebRuntimeAsset(
+      Uri.parse(asset.url),
+      File.fromUri(webBuildDir.uri.resolve(asset.relativePath)),
+      asset.sha256,
+    );
+  }
+}
+
+/// Copies one required browser runtime artifact into the generated bundle.
+Future<void> _copyRequiredWebRuntimeAsset(File source, File destination) async {
+  if (!source.existsSync()) {
+    throw StateError(
+      'Required web runtime asset does not exist: ${source.path}',
+    );
+  }
+  await destination.parent.create(recursive: true);
+  await source.copy(destination.path);
+}
+
+/// Downloads one browser runtime artifact and verifies its pinned SHA-256 digest.
+Future<void> _downloadVerifiedWebRuntimeAsset(
+  Uri url,
+  File destination,
+  String expectedSha256,
+) async {
+  final client = HttpClient();
+  try {
+    final request = await client.getUrl(url);
+    final response = await request.close();
+    if (response.statusCode != HttpStatus.ok) {
+      throw HttpException(
+        'Failed to download $url: HTTP ${response.statusCode}',
+        uri: url,
+      );
+    }
+    final content = await response.fold<BytesBuilder>(
+      BytesBuilder(copy: false),
+      (builder, chunk) => builder..add(chunk),
+    );
+    final bytes = content.takeBytes();
+    final actualSha256 = sha256.convert(bytes).toString();
+    if (actualSha256 != expectedSha256) {
+      throw StateError(
+        'Invalid SHA-256 for $url: expected $expectedSha256, got $actualSha256',
+      );
+    }
+    await destination.parent.create(recursive: true);
+    await destination.writeAsBytes(bytes, flush: true);
+  } finally {
+    client.close(force: true);
+  }
 }
 
 /// Removes generated web runtime artifacts before compiling their replacement.
 Future<void> _invalidateWebRuntimeArtifacts(
   Iterable<Directory> directories,
 ) async {
-  const fileNames = <String>[
-    'operit_flutter_bridge.js',
-    'operit_flutter_bridge_bg.wasm',
-    'operit_flutter_bridge_bg.wasm.d.ts',
-    'operit_flutter_bridge.d.ts',
-  ];
   for (final directory in directories) {
-    for (final fileName in fileNames) {
+    for (final fileName in _generatedWebRuntimeFileNames) {
       final file = File.fromUri(directory.uri.resolve(fileName));
       if (file.existsSync()) {
         await file.delete();
@@ -455,6 +631,25 @@ Future<void> _invalidateWebRuntimeArtifacts(
     }
   }
 }
+
+const Set<String> _webRuntimeArtifactNames = <String>{
+  'operit_flutter_bridge.js',
+  'operit_flutter_bridge_bg.wasm',
+  'operit_flutter_bridge_bg.wasm.d.ts',
+  'operit_flutter_bridge.d.ts',
+  'sql-wasm.js',
+  'sql-wasm.wasm',
+};
+
+const Set<String> _generatedWebRuntimeFileNames = <String>{
+  ..._webRuntimeArtifactNames,
+  'operit_runtime_bridge.js',
+  'libv86.mjs',
+  'v86.wasm',
+  'seabios.bin',
+  'vgabios.bin',
+  'buildroot-bzimage.bin',
+};
 
 /// Computes a path relative to the copied Web Access bundle root.
 String _relativePath(Directory root, FileSystemEntity entity) {

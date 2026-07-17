@@ -137,7 +137,7 @@ fn collect_file_violations(
     visitor.visit_file(&file);
 }
 
-/// Traverses one source file and reports forbidden standard-library platform APIs.
+/// Traverses one source file and reports forbidden platform APIs.
 struct PlatformApiVisitor<'a> {
     source_root: &'a SourceRoot,
     path: &'a Path,
@@ -189,7 +189,7 @@ impl PlatformApiViolation {
 }
 
 impl<'ast> Visit<'ast> for PlatformApiVisitor<'_> {
-    /// Rejects imports that introduce direct file, clock, or thread APIs.
+    /// Rejects imports that introduce direct file, network, clock, or thread APIs.
     fn visit_item_use(&mut self, item_use: &ItemUse) {
         if is_excluded_from_wasm(&item_use.attrs) {
             return;
@@ -320,10 +320,11 @@ fn prohibited_path_api(path: &SynPath) -> Option<&'static str> {
     prohibited_segments_api(&segments)
 }
 
-/// Identifies restricted standard-library file, clock, and thread API paths.
+/// Identifies restricted platform file, network, clock, and thread API paths.
 fn prohibited_segments_api(segments: &[String]) -> Option<&'static str> {
     match segments {
         [std, fs, ..] if std == "std" && fs == "fs" => Some("std::fs"),
+        [std, net, ..] if std == "std" && net == "net" => Some("std::net"),
         [std, thread, ..] if std == "std" && thread == "thread" => Some("std::thread"),
         [std, time, clock, ..]
             if std == "std"
@@ -333,6 +334,9 @@ fn prohibited_segments_api(segments: &[String]) -> Option<&'static str> {
             Some("std::time clock")
         }
         [std, time] if std == "std" && time == "time" => Some("std::time module alias"),
+        [reqwest, blocking, ..] if reqwest == "reqwest" && blocking == "blocking" => {
+            Some("reqwest::blocking")
+        }
         _ => None,
     }
 }

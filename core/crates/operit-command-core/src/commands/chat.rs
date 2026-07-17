@@ -548,7 +548,7 @@ async fn send_chat_message_with_application(
         let mut content = String::new();
         stream.collect(&mut |chunk| {
             content.push_str(&chunk);
-        });
+        }).await;
         aiMessage.content = content;
         aiMessage.contentStream = None;
     }

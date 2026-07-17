@@ -37,7 +37,7 @@ mod transcript;
 #[path = "transcript/typewriter.rs"]
 mod typewriter;
 
-use crate::access::{
+use operit_link_access::{
     PairedRemoteSession, PairedRemoteSessionRecord, RemoteLinkClient, RemoteLinkServer,
     RemoteLinkServerConfig,
 };

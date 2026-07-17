@@ -16,6 +16,7 @@ class AppRouteCatalog {
   static const String _toolPkgNavSurfaceToolbox = 'toolbox';
   static const String _toolPkgNavSurfaceMainSidebarPlugins =
       'main_sidebar_plugins';
+  static const String _toolPkgNavSurfaceAppBar = 'app_bar';
 
   static AppNavigationModel build(
     BuildContext context, {
@@ -131,6 +132,7 @@ class AppRouteCatalog {
       _toolPkgNavSurfaceToolbox => NavigationSurface.toolbox,
       _toolPkgNavSurfaceMainSidebarPlugins =>
         NavigationSurface.mainSidebarPlugins,
+      _toolPkgNavSurfaceAppBar => NavigationSurface.appBar,
       _ => null,
     };
   }

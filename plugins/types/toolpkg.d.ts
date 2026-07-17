@@ -1941,7 +1941,7 @@ export namespace ToolPkg {
   /**
    * Enumerates supported navigation surface values.
    */
-  export type NavigationSurface = "toolbox" | "main_sidebar_plugins";
+  export type NavigationSurface = "toolbox" | "main_sidebar_plugins" | "app_bar";
 
   /**
    * Describes a plugin action exposed through a host navigation surface.

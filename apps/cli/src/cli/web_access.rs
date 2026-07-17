@@ -1,10 +1,9 @@
 use super::*;
-use crate::create_local_core;
+use crate::{create_cli_link_access_store, create_local_core};
 
-use crate::access::{
-    link_token_hash, AcceptedRemoteSessionLoader, AcceptedRemoteSessionRecord,
-    AcceptedRemoteSessionStore, RemoteDeviceInfo, RemoteLinkServer, RemoteLinkServerConfig,
-    RemotePairingCodeRecord, RemotePairingCodeSink, RemoteWebAccessConfig,
+use operit_link_access::{
+    link_token_hash, LinkAccessStore, RemoteDeviceInfo, RemoteLinkServer,
+    RemoteLinkServerConfig, RemoteWebAccessConfig,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,7 +14,7 @@ use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -173,7 +172,12 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     let web_root = resolve_web_root(web_root)?;
     let shutdown_token = generate_token();
     let device_info = RemoteDeviceInfo::nativeCli("server")?;
-    let device_id = super::link::load_link_host_device_id()?;
+    let access_store = create_cli_link_access_store();
+    let identity = access_store.initializeIdentity(device_info)?;
+    let device_info = identity.deviceInfo.clone();
+    let device_id = identity.deviceId;
+    let web_asset_reader: Arc<dyn Fn(&Path) -> Result<Vec<u8>, String> + Send + Sync> =
+        Arc::new(|path| std::fs::read(path).map_err(|error| error.to_string()));
     let state = CliLinkHostState {
         device_id: device_id.clone(),
         bind_address: resolved_bind_address.clone(),
@@ -214,30 +218,6 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     );
     println!("webRoot={}", web_root.display());
 
-    let accepted_sessions_path = crate::client_paths::link_server_sessions_path();
-    let acceptedSessions: BTreeMap<String, AcceptedRemoteSessionRecord> =
-        load_accepted_sessions_from_file(&accepted_sessions_path)?;
-    let loader_path = accepted_sessions_path.clone();
-    let acceptedSessionLoader: AcceptedRemoteSessionLoader =
-        Arc::new(move || load_accepted_sessions_from_file(&loader_path));
-    let store_path = accepted_sessions_path.clone();
-    let acceptedSessionStore: AcceptedRemoteSessionStore = Arc::new(move |sessionId, record| {
-        save_accepted_session_to_file(&store_path, sessionId, record)
-    });
-    let pairingCodeSink: RemotePairingCodeSink = Arc::new(|record: RemotePairingCodeRecord| {
-        eprintln!(
-            "配对请求来自 {}: 配对码={}",
-            record.clientDeviceInfo.displayName(),
-            record.pairingCode
-        );
-        eprintln!(
-            "Pairing request from {}: code={}",
-            record.clientDeviceInfo.displayName(),
-            record.pairingCode
-        );
-        Ok(())
-    });
-
     if let Some(session_name) = link_session_name {
         let remote = super::link::load_link_session_resolved(&session_name).await?;
         println!("runtimeMode=remote");
@@ -254,12 +234,10 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
                     token: config.token,
                     shutdownToken: shutdown_token.clone(),
                     webRoot: web_root,
+                    readAsset: web_asset_reader.clone(),
                 }),
                 printStartupInfo: false,
-                acceptedSessions,
-                acceptedSessionLoader: Some(acceptedSessionLoader),
-                acceptedSessionStore: Some(acceptedSessionStore),
-                pairingCodeSink: Some(pairingCodeSink),
+                accessStore: access_store.clone(),
             },
             listener,
             listener_address,
@@ -298,12 +276,10 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
                 token: config.token,
                 shutdownToken: shutdown_token.clone(),
                 webRoot: web_root,
+                readAsset: web_asset_reader,
             }),
             printStartupInfo: false,
-            acceptedSessions,
-            acceptedSessionLoader: Some(acceptedSessionLoader),
-            acceptedSessionStore: Some(acceptedSessionStore),
-            pairingCodeSink: Some(pairingCodeSink),
+            accessStore: access_store,
         },
         listener,
         listener_address,
@@ -544,31 +520,6 @@ fn unix_millis() -> i64 {
         .duration_since(UNIX_EPOCH)
         .expect("system time must be after UNIX_EPOCH")
         .as_millis() as i64
-}
-
-fn load_accepted_sessions_from_file(
-    path: &PathBuf,
-) -> Result<BTreeMap<String, AcceptedRemoteSessionRecord>, String> {
-    if !path.exists() {
-        return Ok(BTreeMap::new());
-    }
-    let content = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-    serde_json::from_str(&content).map_err(|error| error.to_string())
-}
-
-fn save_accepted_session_to_file(
-    path: &PathBuf,
-    sessionId: String,
-    record: AcceptedRemoteSessionRecord,
-) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("invalid accepted session path: {}", path.display()))?;
-    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let mut sessions = load_accepted_sessions_from_file(path)?;
-    sessions.insert(sessionId, record);
-    let content = serde_json::to_string_pretty(&sessions).map_err(|error| error.to_string())?;
-    std::fs::write(path, content).map_err(|error| error.to_string())
 }
 
 fn print_web_access_usage() {

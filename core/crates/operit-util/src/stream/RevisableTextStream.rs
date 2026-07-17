@@ -1,7 +1,7 @@
 use crate::stream::HotStream::{
     mutable_shared_stream, share, MutableSharedStreamImpl, SharedStream, StreamStart,
 };
-use crate::stream::Stream::Stream;
+use crate::stream::Stream::{CollectFuture, Stream};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TextStreamEvent {
@@ -34,9 +34,9 @@ pub trait RevisableSharedTextStream: SharedStream<String> + RevisableTextStream 
 
 pub trait RevisableCharStream: Stream<Item = char> + TextStreamEventCarrier {}
 
-pub trait RevisableTextStreamLike: RevisableTextStream + Send {}
+pub trait RevisableTextStreamLike: RevisableTextStream {}
 
-impl<T> RevisableTextStreamLike for T where T: RevisableTextStream + Send {}
+impl<T> RevisableTextStreamLike for T where T: RevisableTextStream {}
 
 #[derive(Clone, Debug)]
 pub struct DelegatingRevisableTextStream<S>
@@ -85,9 +85,13 @@ where
         self.upstream.clear_buffer();
     }
 
-    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
-        self.upstream.collect(collector);
+    fn collect<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(Self::Item),
+    ) -> CollectFuture<'a> {
+        self.upstream.collect(collector)
     }
+
 }
 
 impl<S> TextStreamEventCarrier for DelegatingRevisableTextStream<S>
@@ -142,9 +146,13 @@ impl Stream for DelegatingRevisableSharedTextStream {
         self.upstream.clear_buffer();
     }
 
-    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
-        self.upstream.collect(collector);
+    fn collect<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(Self::Item),
+    ) -> CollectFuture<'a> {
+        self.upstream.collect(collector)
     }
+
 }
 
 impl SharedStream<String> for DelegatingRevisableSharedTextStream {
@@ -213,9 +221,13 @@ where
         self.upstream.clear_buffer();
     }
 
-    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
-        self.upstream.collect(collector);
+    fn collect<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(Self::Item),
+    ) -> CollectFuture<'a> {
+        self.upstream.collect(collector)
     }
+
 }
 
 impl<S> TextStreamEventCarrier for DelegatingRevisableCharStream<S>

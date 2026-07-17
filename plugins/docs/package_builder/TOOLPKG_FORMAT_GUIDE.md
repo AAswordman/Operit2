@@ -253,6 +253,17 @@ function registerToolPkg() {
     }
   });
 
+  ToolPkg.registerNavigationEntry({
+    id: "windows_refresh_action",
+    surface: "app_bar",
+    icon: "Refresh",
+    title: {
+      zh: "刷新 Windows 信息",
+      en: "Refresh Windows information"
+    },
+    action: refreshWindowsDashboard
+  });
+
   ToolPkg.registerDesktopWidget({
     id: "windows_dashboard_widget",
     route: "toolpkg:com.example.windows_bundle:ui:windows_dashboard",
@@ -351,8 +362,8 @@ exports.onInputMenuToggle = onInputMenuToggle;
 | `ToolPkg.registerUiRoute` | `params` | 否 | UI 模块初始化参数对象 |
 | `ToolPkg.registerUiRoute` | `title` | 否 | 路由标题（支持 `LocalizedText`） |
 | `ToolPkg.registerNavigationEntry` | `id` | 是 | 导航入口唯一标识 |
-| `ToolPkg.registerNavigationEntry` | `route` | 是 | 已注册路由 ID |
-| `ToolPkg.registerNavigationEntry` | `surface` | 是 | 挂载面，当前支持 `toolbox`、`main_sidebar_plugins` |
+| `ToolPkg.registerNavigationEntry` | `route` | 与 `action` 至少填写一项 | 已注册路由 ID |
+| `ToolPkg.registerNavigationEntry` | `surface` | 是 | 挂载面，当前支持 `toolbox`、`main_sidebar_plugins`、`app_bar` |
 | `ToolPkg.registerNavigationEntry` | `title` | 否 | 导航入口标题（支持 `LocalizedText`） |
 | `ToolPkg.registerNavigationEntry` | `icon` | 否 | 图标名 |
 | `ToolPkg.registerNavigationEntry` | `order` | 否 | 同一 surface 内排序值，越小越靠前 |
@@ -949,6 +960,30 @@ exports.default = Screen;
 - `Checkbox`：复选框
 - `Card`：卡片
 - `Icon`：图标
+- `AiChat`：不含工作区的可嵌入 AI 聊天控件
+- `AdaptiveSidePanel`：宽屏可拖拽分栏、手机覆盖层的自适应侧边控件
+
+#### 宿主挂载与嵌入
+
+`surface: "app_bar"` 会将导航入口渲染为宿主顶部栏的图标按钮。入口可声明 `action` 执行主脚本函数，也可声明 `route` 打开已注册页面。
+
+`AdaptiveSidePanel` 使用 `content` 作为主内容、`side` 作为侧栏内容；`open` 与 `onOpenChanged` 由插件状态管理。`AiChat` 提供当前主聊天运行时的消息列表和输入区，不包含工作区。
+
+```javascript
+function Screen(ctx) {
+    const [sideOpen, setSideOpen] = ctx.useState('sideOpen', true);
+
+    return ctx.UI.AdaptiveSidePanel({
+        open: sideOpen,
+        onOpenChanged: setSideOpen,
+        side: ctx.UI.Column({ padding: 16 }, [
+            ctx.UI.Text({ text: 'Plugin side panel' })
+        ])
+    }, ctx.UI.AiChat());
+}
+
+exports.default = Screen;
+```
 
 #### 进度组件
 - `LinearProgressIndicator`：线性进度条

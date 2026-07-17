@@ -1,4 +1,426 @@
+type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | Uint8Array
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+type DynamicValue = {
+  readonly [key: string]: DynamicValue;
+  readonly [index: number]: DynamicValue;
+} & {
+  readonly length: number;
+  new (...args: JsonValue[]): DynamicValue;
+  (...args: JsonValue[]): DynamicValue;
+  slice(start?: number, end?: number): DynamicValue;
+  [Symbol.iterator](): IterableIterator<DynamicValue>;
+};
+
+type DynamicRecord = Record<string, DynamicValue>;
+
+declare const MessagePack: {
+  encode(value: JsonValue | DynamicValue | object): Uint8Array;
+  decode(bytes: Uint8Array): DynamicValue;
+};
+
+type SqlValue = null | number | string | Uint8Array;
+
+interface SqlStatement {
+  bind(values: SqlValue[]): void;
+  step(): boolean;
+  get(): SqlValue[];
+  getColumnNames(): string[];
+  free(): void;
+}
+
+interface SqlDatabase {
+  exec(sql: string): void;
+  run(sql: string, values?: SqlValue[]): void;
+  prepare(sql: string): SqlStatement;
+  export(): Uint8Array;
+  getRowsModified(): number;
+  close(): void;
+}
+
+interface SqlJsModule {
+  Database: new (bytes?: Uint8Array) => SqlDatabase;
+}
+
+interface SqlJsFactoryConfig {
+  locateFile(file: string): string;
+}
+
+type SqlJsFactory = (config: SqlJsFactoryConfig) => Promise<SqlJsModule>;
+
+interface SqliteConnection {
+  path: string;
+  db: SqlDatabase;
+}
+
+interface FileStorageEntry {
+  path: string;
+  isDirectory: boolean;
+  size: number;
+}
+
+type SqliteParameter =
+  | { kind: "null" }
+  | { kind: "integer"; value: string }
+  | { kind: "real"; value: number }
+  | { kind: "text"; value: string }
+  | { kind: "blob"; value: Uint8Array };
+
+type SqliteSerializedValue = SqliteParameter;
+
+interface SqliteQueryRow {
+  columns: string[];
+  values: SqliteSerializedValue[];
+}
+
+interface RuntimeBridge {
+  call(request: Uint8Array): Promise<Uint8Array>;
+  pushOpen(request: Uint8Array): Promise<Uint8Array>;
+  pushItem(item: Uint8Array): Promise<Uint8Array>;
+  pushClose(pushId: string): Promise<Uint8Array>;
+  watchSnapshot(request: Uint8Array): Promise<Uint8Array>;
+  watchStream(request: Uint8Array, onEvent: (event: Uint8Array) => void): Promise<Uint8Array>;
+  closeWatchStream(subscriptionId: string): Promise<Uint8Array>;
+}
+
+interface WasmBridgeModule {
+  default(options: { module_or_path: string }): Promise<{ memory: WebAssembly.Memory }>;
+  OperitFlutterBridgeWasm: new () => RuntimeBridge;
+}
+
+interface WasiModule {
+  setWasiMemory(memory: WebAssembly.Memory): void;
+}
+
+interface WebAccessConfig {
+  mode?: string;
+  baseUrl?: string;
+}
+
+interface WebAccessSession {
+  baseUrl: string;
+  sessionId: string;
+  deviceId: string;
+  coreDeviceId: string;
+  remoteDeviceInfo: JsonValue;
+  pairingServiceVersion: number;
+  sessionSecret: string;
+}
+
+interface WatchChannel {
+  channelId: string;
+  controller: AbortController;
+  subscriptionCount: number;
+}
+
+interface LinkPushOpenRequest {
+  requestId: DynamicValue;
+  targetPath: { segments: DynamicValue };
+  methodName: DynamicValue;
+}
+
+interface PairStartResponse {
+  pairingId: string;
+  corePublicKey: string;
+  serverNonce: string;
+  coreDeviceId: string;
+  coreDeviceInfo: JsonValue;
+}
+
+interface PairFinishResponse {
+  sessionId: string;
+  coreProof: string;
+  pairingServiceVersion: number;
+}
+
+interface WebDeviceInfo {
+  platform: string;
+  model: string;
+}
+
+interface WebTtsBundle {
+  worker: Worker;
+  numSpeakers: number;
+  sampleRate: number;
+}
+
+interface AsrBundlePaths {
+  recognizerScript: string;
+  runtimeScript: string;
+  runtimeWasm: string;
+  runtimeData: string;
+}
+
+interface TtsBundlePaths {
+  ttsScript: string;
+  runtimeScript: string;
+  runtimeWasm: string;
+  runtimeData: string;
+}
+
+interface WebTtsWorkerReady {
+  numSpeakers: number;
+  sampleRate: number;
+}
+
+interface AsrSpeechRequest {
+  driverJson: string;
+  modelDirectory: string;
+  audioPath: string;
+}
+
+interface TtsSpeechRequest {
+  driverJson: string;
+  modelDirectory: string;
+  voice: string;
+  text: string;
+  speed: number;
+  outputPath: string;
+}
+
+interface SherpaAsrDriver {
+  recognizerScript: string;
+}
+
+interface SherpaTtsDriver {
+  ttsScript: string;
+  speakerCount: number;
+}
+
+interface SherpaStream {
+  acceptWaveform(sampleRate: number, samples: Float32Array): void;
+  free(): void;
+}
+
+interface SherpaRecognizer {
+  createStream(): SherpaStream;
+  decode(stream: SherpaStream): void;
+  getResult(stream: SherpaStream): { text?: string; [key: string]: JsonValue | undefined };
+  free(): void;
+}
+
+interface SherpaModuleConfig {
+  mainScriptUrlOrBlob?: string;
+  locateFile?: (path: string) => string;
+  setStatus?: (status: string) => void;
+  onRuntimeInitialized?: () => void;
+  onAbort?: (reason: string) => void;
+}
+
+interface SherpaAsrClasses {
+  OfflineRecognizer: new (
+    config: { modelConfig: JsonValue },
+    module: SherpaModuleConfig,
+  ) => SherpaRecognizer;
+}
+
+interface WebAsrBundle {
+  recognizer: SherpaRecognizer;
+  moduleValue: SherpaModuleConfig;
+}
+
+interface WebLocalInferenceState {
+  asrBundles: Map<string, WebAsrBundle>;
+  ttsBundles: Map<string, WebTtsBundle>;
+  blobUrls: string[];
+}
+
+interface WebLocalInferenceRunner {
+  transcribeLocalSpeech(requestJson: string): string;
+  synthesizeLocalSpeech(requestJson: string): string;
+}
+
+interface MusicRequest {
+  sourceType: string;
+  source: string;
+  title?: string | null;
+  artist?: string | null;
+  loopPlayback?: boolean;
+  volume?: number;
+  startPositionMs?: number;
+}
+
+interface BluetoothCharacteristicProperties {
+  read: boolean;
+  write: boolean;
+  writeWithoutResponse: boolean;
+  notify: boolean;
+  indicate: boolean;
+}
+
+interface BluetoothCharacteristic {
+  uuid: string;
+  properties: BluetoothCharacteristicProperties;
+  readValue(): Promise<DataView>;
+  writeValue(value: Uint8Array): Promise<void>;
+  startNotifications(): Promise<BluetoothCharacteristic>;
+  stopNotifications(): Promise<BluetoothCharacteristic>;
+  addEventListener(
+    type: "characteristicvaluechanged",
+    listener: (event: { target: { value: DataView } }) => void,
+  ): void;
+}
+
+interface BluetoothService {
+  uuid: string;
+  getCharacteristics(): Promise<BluetoothCharacteristic[]>;
+}
+
+interface BluetoothServer {
+  getPrimaryServices(): Promise<BluetoothService[]>;
+}
+
+interface BluetoothGatt {
+  connected: boolean;
+  connect(): Promise<BluetoothServer>;
+  disconnect(): void;
+}
+
+interface BluetoothDevice {
+  id: string;
+  name?: string;
+  gatt: BluetoothGatt;
+}
+
+interface BluetoothApi {
+  requestDevice(options: {
+    acceptAllDevices: boolean;
+    optionalServices?: string[];
+  }): Promise<BluetoothDevice>;
+}
+
+interface BleSession {
+  device: BluetoothDevice;
+  server: BluetoothServer;
+  characteristics: Map<string, BluetoothCharacteristic>;
+}
+
+interface BleNotification {
+  characteristicUuid: string;
+  bytesRead: number;
+  text: string;
+  dataBase64: string;
+  timestamp: number;
+}
+
+interface BluetoothReadAddress {
+  sessionId: string;
+  serviceUuid: string;
+  characteristicUuid: string;
+}
+
+interface BluetoothWriteRequest extends BluetoothReadAddress {
+  text?: string;
+  dataBase64?: string;
+}
+
+interface BluetoothWriteAndReadRequest {
+  sessionId: string;
+  writeServiceUuid: string;
+  writeCharacteristicUuid: string;
+  readServiceUuid: string;
+  readCharacteristicUuid: string;
+  text?: string;
+  dataBase64?: string;
+}
+
+interface BluetoothSubscribeRequest extends BluetoothReadAddress {
+  enable: boolean;
+}
+
+type HttpHeader = [string, string] | { key: string; value: string };
+
+interface HttpFilePart {
+  fieldName: string;
+  content: Uint8Array;
+  contentType: string;
+  fileName: string;
+}
+
+interface HttpRequest {
+  method: string;
+  url: string;
+  headers?: HttpHeader[];
+  formFields?: HttpHeader[];
+  fileParts?: HttpFilePart[];
+  body?: Uint8Array;
+}
+
+interface DownloadRequest {
+  fileId: string;
+  url: string;
+  headers?: HttpHeader[];
+  expectedBytes?: number;
+  targetPath: string;
+}
+
+interface V86StarterConfiguration {
+  wasm_path: string;
+  memory_size: number;
+  vga_memory_size: number;
+  bios: { url: string };
+  vga_bios: { url: string };
+  bzimage: { url: string };
+  cmdline: string;
+  autostart: boolean;
+  disable_keyboard: boolean;
+  disable_mouse: boolean;
+  disable_speaker: boolean;
+}
+
+interface V86StarterInstance {
+  add_listener(event: string, listener: (value: unknown) => void): void;
+  serial_send_bytes(serial: number, data: Uint8Array): void;
+  destroy(): Promise<void>;
+}
+
+interface V86Module {
+  V86: new (configuration: V86StarterConfiguration) => V86StarterInstance;
+}
+
+type LinuxVmSessionState = "starting" | "running" | "failed" | "closed";
+
+interface LinuxVmSession {
+  readonly id: string;
+  emulator: V86StarterInstance | null;
+  state: LinuxVmSessionState;
+  exitCode: number | null;
+  rows: number;
+  cols: number;
+  output: Uint8Array;
+  outputLength: number;
+  inputQueue: Uint8Array[];
+}
+
+interface RuntimeGlobals {
+  __OPERIT_WEB_ACCESS__?: WebAccessConfig;
+  __operitRuntime?: RuntimeBridge;
+  initSqlJs?: SqlJsFactory;
+  Module?: SherpaModuleConfig;
+  __operitSherpaAsrClasses?: SherpaAsrClasses;
+  __operitLocalInference?: WebLocalInferenceRunner;
+  __OPERIT_LOCAL_INFERENCE_TEST__?: boolean;
+  __operitLocalInferenceTest?: object;
+  __operitHost?: object;
+}
+
 (function () {
+  const runtimeGlobal = globalThis as typeof globalThis & RuntimeGlobals;
+  const browserNavigator = navigator as Navigator & {
+    bluetooth?: BluetoothApi;
+  };
+  const importRuntimeScript = (path: string): Promise<object> => import(path);
+  /** Creates a Blob-compatible copy of browser-hosted bytes. */
+  const blobPart = (bytes: Uint8Array): BlobPart => Uint8Array.from(bytes);
+  /** Creates an ArrayBuffer-backed byte view for Web Crypto and Fetch. */
+  const ownedBytes = (bytes: Uint8Array): Uint8Array<ArrayBuffer> => Uint8Array.from(bytes);
+
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder();
   const runtimePrefix = "operit2.runtime.";
@@ -7,60 +429,65 @@
   const secretPrefix = "operit2.secrets.";
   const storageDatabaseName = "operit2.host.storage";
   const storageObjectStoreName = "entries";
-  const storageCache = new Map();
-  const fileDirectories = new Set();
-  const sqliteConnections = new Map();
-  const sqliteTransactions = new Map();
+  const storageCache = new Map<string, Uint8Array>();
+  const fileDirectories = new Set<string>();
+  const sqliteConnections = new Map<string, SqliteConnection>();
+  const sqliteTransactions = new Map<string, SqliteConnection>();
   let sqliteConnectionIndex = 0;
   let sqliteTransactionIndex = 0;
-  let sqliteModulePromise;
-  let SQLite;
-  let storageDatabasePromise;
-  let storageReadyPromise;
-  let webLocalInferenceReadyPromise;
-  let webLocalInferenceState;
+  let sqliteModulePromise: Promise<void> | null = null;
+  let SQLite: SqlJsModule | null = null;
+  let storageDatabasePromise: Promise<IDBDatabase> | null = null;
+  let storageReadyPromise: Promise<void> | null = null;
+  let webLocalInferenceReadyPromise: Promise<void> | null = null;
+  let webLocalInferenceState: WebLocalInferenceState | null = null;
+  const linuxVmSessions = new Map<string, LinuxVmSession>();
+  const linuxVmOutputLimit = 4 * 1024 * 1024;
 
   const webAccessSessionStorageKey = "operit2.webAccess.session";
   const pairingServiceVersion = 1;
   let webAccessSessionReloading = false;
-  const webAccessConfig = globalThis.__OPERIT_WEB_ACCESS__;
+  const webAccessConfig = runtimeGlobal.__OPERIT_WEB_ACCESS__;
   if (webAccessConfig && webAccessConfig.mode === "pair") {
     installPairingWebRuntime(webAccessConfig);
     return;
   }
 
-  function installPairingWebRuntime(config) {
+  function installPairingWebRuntime(config: WebAccessConfig): void {
     const baseUrl = String(config.baseUrl || "").replace(/\/+$/, "");
     const runtimePromise = webAccessSession(baseUrl).then(createLinkedWebRuntime);
-    globalThis.__operitRuntime = {
-      async call(request) {
+    runtimeGlobal.__operitRuntime = {
+      async call(request: Uint8Array): Promise<Uint8Array> {
         return (await runtimePromise).call(request);
       },
-      async pushOpen(request) {
+      async pushOpen(request: Uint8Array): Promise<Uint8Array> {
         return (await runtimePromise).pushOpen(request);
       },
-      async pushItem(item) {
+      async pushItem(item: Uint8Array): Promise<Uint8Array> {
         return (await runtimePromise).pushItem(item);
       },
-      async pushClose(pushId) {
+      async pushClose(pushId: string): Promise<Uint8Array> {
         return (await runtimePromise).pushClose(pushId);
       },
-      async watchSnapshot(request) {
+      async watchSnapshot(request: Uint8Array): Promise<Uint8Array> {
         return (await runtimePromise).watchSnapshot(request);
       },
-      async watchStream(request, onEvent) {
+      async watchStream(
+        request: Uint8Array,
+        onEvent: (event: Uint8Array) => void,
+      ): Promise<Uint8Array> {
         return (await runtimePromise).watchStream(request, onEvent);
       },
-      async closeWatchStream(subscriptionId) {
+      async closeWatchStream(subscriptionId: string): Promise<Uint8Array> {
         return (await runtimePromise).closeWatchStream(subscriptionId);
       },
     };
   }
 
-  async function webAccessSession(baseUrl) {
+  async function webAccessSession(baseUrl: string): Promise<WebAccessSession> {
     const savedSession = localStorage.getItem(webAccessSessionStorageKey);
     if (savedSession !== null) {
-      return JSON.parse(savedSession);
+      return JSON.parse(savedSession) as WebAccessSession;
     }
     const session = await pairWebAccessSession(baseUrl);
     localStorage.setItem(webAccessSessionStorageKey, JSON.stringify(session));
@@ -75,25 +502,25 @@
     }
   }
 
-  async function pairWebAccessSession(baseUrl) {
+  async function pairWebAccessSession(baseUrl: string): Promise<WebAccessSession> {
     const keyPair = await crypto.subtle.generateKey(
       { name: "X25519" },
       true,
       ["deriveBits"],
-    );
+    ) as CryptoKeyPair;
     const clientPublicKey = bytesToBase64(
       new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey)),
     );
     const clientDeviceId = `web-client-${crypto.randomUUID()}`;
     const clientNonce = crypto.randomUUID();
-    let start;
+    let start: PairStartResponse;
     while (true) {
       const token = globalThis.prompt("Operit Web Access token");
       if (token === null || token.trim().length === 0) {
         throw new Error("web access token is required");
       }
       try {
-        start = await postJson(`${baseUrl}/link/pair/start`, {
+        start = await postJson<PairStartResponse>(`${baseUrl}/link/pair/start`, {
           pairingServiceVersion,
           tokenHash: await linkTokenHash(token.trim()),
           clientDeviceId,
@@ -108,7 +535,7 @@
     }
     const corePublicKey = await crypto.subtle.importKey(
       "raw",
-      base64ToBytes(start.corePublicKey),
+      ownedBytes(base64ToBytes(start.corePublicKey)),
       { name: "X25519" },
       false,
       [],
@@ -120,14 +547,14 @@
         256,
       ),
     );
-    let finish;
+    let finish: PairFinishResponse;
     while (true) {
       const pairingCode = globalThis.prompt("Operit Web Access pairing code");
       if (pairingCode === null || pairingCode.trim().length === 0) {
         throw new Error("web access pairing code is required");
       }
       try {
-        finish = await postJson(`${baseUrl}/link/pair/finish`, {
+        finish = await postJson<PairFinishResponse>(`${baseUrl}/link/pair/finish`, {
           pairingId: start.pairingId,
           pairingCode: pairingCode.trim(),
           clientProof: await proof(sharedSecret, clientNonce, start.serverNonce, "client"),
@@ -152,7 +579,7 @@
     };
   }
 
-  async function postJson(url, body) {
+  async function postJson<T>(url: string, body: object): Promise<T> {
     const response = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -162,17 +589,17 @@
     if (!response.ok) {
       throw new Error(text);
     }
-    return JSON.parse(text);
+    return JSON.parse(text) as T;
   }
 
-  function webDeviceInfo() {
+  function webDeviceInfo(): WebDeviceInfo {
     return {
       platform: navigator.platform,
       model: browserName(navigator.userAgent),
     };
   }
 
-  function browserName(userAgent) {
+  function browserName(userAgent: string): string {
     const match = /(Edg|OPR|Firefox|Chrome|CriOS|FxiOS|Version)\/([0-9]+)/.exec(userAgent);
     if (match === null) {
       throw new Error("browser name is not available in userAgent");
@@ -187,23 +614,28 @@
     return `${name} ${match[2]}`;
   }
 
-  async function proof(sharedSecret, clientNonce, serverNonce, role) {
+  async function proof(
+    sharedSecret: Uint8Array,
+    clientNonce: string,
+    serverNonce: string,
+    role: string,
+  ): Promise<string> {
     return bytesToBase64(
       new Uint8Array(
         await crypto.subtle.digest(
           "SHA-256",
-          concatBytes(
-            sharedSecret,
-            textEncoder.encode(clientNonce),
-            textEncoder.encode(serverNonce),
-            textEncoder.encode(role),
-          ),
+            ownedBytes(concatBytes(
+              sharedSecret,
+              textEncoder.encode(clientNonce),
+              textEncoder.encode(serverNonce),
+              textEncoder.encode(role),
+            )),
         ),
       ),
     );
   }
 
-  async function linkTokenHash(token) {
+  async function linkTokenHash(token: string): Promise<string> {
     return bytesToBase64(
       new Uint8Array(
         await crypto.subtle.digest("SHA-256", textEncoder.encode(token)),
@@ -211,23 +643,27 @@
     );
   }
 
-  async function sessionSecret(sharedSecret, clientNonce, serverNonce) {
+  async function sessionSecret(
+    sharedSecret: Uint8Array,
+    clientNonce: string,
+    serverNonce: string,
+  ): Promise<string> {
     return bytesToBase64(
       new Uint8Array(
         await crypto.subtle.digest(
           "SHA-256",
-          concatBytes(
+          ownedBytes(concatBytes(
             sharedSecret,
             textEncoder.encode(clientNonce),
             textEncoder.encode(serverNonce),
             textEncoder.encode("session"),
-          ),
+          )),
         ),
       ),
     );
   }
 
-  function concatBytes(...parts) {
+  function concatBytes(...parts: Uint8Array[]): Uint8Array {
     const length = parts.reduce((sum, part) => sum + part.length, 0);
     const output = new Uint8Array(length);
     let offset = 0;
@@ -238,30 +674,30 @@
     return output;
   }
 
-  async function createLinkedWebRuntime(config) {
+  async function createLinkedWebRuntime(config: WebAccessSession): Promise<RuntimeBridge> {
     const baseUrl = String(config.baseUrl || "").replace(/\/+$/, "");
     const sessionId = String(config.sessionId);
     const deviceId = String(config.deviceId);
     const sessionSecret = String(config.sessionSecret);
-    const streamCallbacks = new Map();
-    const streamChannels = new Map();
-    const channels = new Map();
-    let hmacKeyPromise = null;
-    let openingChannelPromise = null;
+    const streamCallbacks = new Map<string, (event: Uint8Array) => void>();
+    const streamChannels = new Map<string, string>();
+    const channels = new Map<string, WatchChannel>();
+    let hmacKeyPromise: Promise<CryptoKey> | null = null;
+    let openingChannelPromise: Promise<WatchChannel> | null = null;
     const maxSubscriptionsPerChannel = 16;
-    let pushSocketPromise = null;
-    let pushSendTail = Promise.resolve();
-    let pushError = null;
+    let pushSocketPromise: Promise<WebSocket> | null = null;
+    let pushSendTail: Promise<void> = Promise.resolve();
+    let pushError: Error | null = null;
 
-    function linkPath(path) {
+    function linkPath(path: string): string {
       return `${baseUrl}${path}`;
     }
 
-    async function hmacKey() {
+    async function hmacKey(): Promise<CryptoKey> {
       if (!hmacKeyPromise) {
         hmacKeyPromise = crypto.subtle.importKey(
           "raw",
-          base64ToBytes(sessionSecret),
+          ownedBytes(base64ToBytes(sessionSecret)),
           { name: "HMAC", hash: "SHA-256" },
           false,
           ["sign"],
@@ -271,15 +707,15 @@
     }
 
     /** Encodes one MessagePack body into an exact-length byte buffer. */
-    function encodeLinkBody(body) {
+    function encodeLinkBody(body: JsonValue | DynamicValue | object): Uint8Array {
       return MessagePack.encode(body).slice();
     }
 
-    async function linkHeaders(bodyBytes) {
+    async function linkHeaders(bodyBytes: Uint8Array): Promise<Record<string, string>> {
       const signature = await crypto.subtle.sign(
         "HMAC",
         await hmacKey(),
-        bodyBytes,
+        ownedBytes(bodyBytes),
       );
       return {
         "content-type": "application/msgpack",
@@ -290,12 +726,16 @@
       };
     }
 
-    async function postLink(path, body, signal) {
+    async function postLink(
+      path: string,
+      body: JsonValue | DynamicValue | object,
+      signal: AbortSignal | undefined = undefined,
+    ): Promise<Uint8Array> {
       const bodyBytes = encodeLinkBody(body);
       const response = await fetch(linkPath(path), {
         method: "POST",
         headers: await linkHeaders(bodyBytes),
-        body: bodyBytes,
+        body: ownedBytes(bodyBytes),
         signal,
       });
       const bytes = new Uint8Array(await response.arrayBuffer());
@@ -306,7 +746,7 @@
     }
 
     /** Opens the authenticated binary carrier used by client-owned push streams. */
-    function pushSocket() {
+    function pushSocket(): Promise<WebSocket> {
       if (pushSocketPromise === null) {
         pushSocketPromise = new Promise((resolve, reject) => {
           const url = new URL(linkPath("/link/ws"), globalThis.location.href);
@@ -317,7 +757,7 @@
           socket.addEventListener("error", () => reject(new Error("Link push socket failed to open")), { once: true });
           socket.addEventListener("message", (event) => {
             const response = MessagePack.decode(new Uint8Array(event.data));
-            if (response.type === "Error") {
+            if (String(response.type) === "Error") {
               pushError = new Error(`${response.body.code}: ${response.body.message}`);
             }
           });
@@ -330,36 +770,41 @@
     }
 
     /** Signs and queues one push protocol frame without waiting for a per-item acknowledgement. */
-    function sendPushPayload(payload) {
+    function sendPushPayload(payload: JsonValue | DynamicValue | object): Promise<void> {
       pushSendTail = pushSendTail.then(async () => {
         if (pushError !== null) throw pushError;
         const bodyBytes = encodeLinkBody(payload);
-        const signature = await crypto.subtle.sign("HMAC", await hmacKey(), bodyBytes);
+        const signature = await crypto.subtle.sign("HMAC", await hmacKey(), ownedBytes(bodyBytes));
         const socket = await pushSocket();
-        socket.send(encodeLinkBody({
+        socket.send(ownedBytes(encodeLinkBody({
           protocolVersion: 3,
           sessionId,
           deviceId,
           signature: bytesToBase64(new Uint8Array(signature)),
           payloadBytes: bodyBytes,
-        }));
+        })));
       });
       return pushSendTail;
     }
 
     /** Returns whether the link error requests a saved Web Access session reset. */
-    function shouldResetWebAccessSession(status, error) {
+    function shouldResetWebAccessSession(status: number, error: DynamicValue): boolean {
       const details = error.details;
-      return status === 401 &&
-        error.code === "UNAUTHORIZED" &&
-        details !== null &&
-        typeof details === "object" &&
-        details.type === "remote_session_auth" &&
-        details.resetWebAccessSession === true;
+      if (
+        status !== 401 ||
+        String(error.code) !== "UNAUTHORIZED" ||
+        details === null ||
+        typeof details !== "object"
+      ) {
+        return false;
+      }
+      const authenticatedDetails = details as DynamicValue;
+      return String(authenticatedDetails.type) === "remote_session_auth" &&
+        String(authenticatedDetails.resetWebAccessSession) === "true";
     }
 
     /** Decodes and throws one MessagePack Link error response. */
-    function throwLinkErrorResponse(status, bytes) {
+    function throwLinkErrorResponse(status: number, bytes: Uint8Array): never {
       const error = MessagePack.decode(bytes);
       if (shouldResetWebAccessSession(status, error)) {
         resetWebAccessSession();
@@ -367,7 +812,7 @@
       throw new Error(`${error.code}: ${error.message}`);
     }
 
-    async function openChannel() {
+    async function openChannel(): Promise<WatchChannel> {
       const channelId = `watch-channel-${crypto.randomUUID()}`;
       const controller = new AbortController();
       const channel = {
@@ -380,7 +825,7 @@
       const response = await fetch(linkPath("/link/watch/channel/events"), {
         method: "POST",
         headers: await linkHeaders(bodyBytes),
-        body: bodyBytes,
+        body: ownedBytes(bodyBytes),
         signal: controller.signal,
       });
       const errorBytes = response.ok ? null : new Uint8Array(await response.arrayBuffer());
@@ -392,7 +837,10 @@
       return channel;
     }
 
-    async function readWatchChannel(channel, response) {
+    async function readWatchChannel(channel: WatchChannel, response: Response): Promise<void> {
+      if (response.body === null) {
+        throw new Error("Link watch channel response has no body");
+      }
       const reader = response.body.getReader();
       let buffer = new Uint8Array();
       try {
@@ -411,10 +859,11 @@
             const frame = buffer.slice(4, 4 + frameLength);
             buffer = buffer.slice(4 + frameLength);
             const event = MessagePack.decode(frame);
-            const callback = streamCallbacks.get(event.subscriptionId);
+            const subscriptionId = String(event.subscriptionId);
+            const callback = streamCallbacks.get(subscriptionId);
             if (callback) {
               callback(MessagePack.encode([
-                event.subscriptionId,
+                subscriptionId,
                 linkEventToNativeTuple(event.event),
               ]));
             }
@@ -440,7 +889,7 @@
       }
     }
 
-    async function acquireChannel() {
+    async function acquireChannel(): Promise<WatchChannel> {
       for (const channel of channels.values()) {
         if (channel.subscriptionCount < maxSubscriptionsPerChannel) {
           return channel;
@@ -455,7 +904,7 @@
     }
 
     /** Converts one compact native call tuple into a Link CoreCallRequest. */
-    function nativeCallTupleToLinkRequest(tuple) {
+    function nativeCallTupleToLinkRequest(tuple: DynamicValue): object {
       return {
         requestId: tuple[0],
         targetPath: { segments: tuple[1] },
@@ -465,7 +914,7 @@
     }
 
     /** Converts one compact native push-open tuple into a Link CorePushRequest. */
-    function nativePushOpenTupleToLinkRequest(tuple) {
+    function nativePushOpenTupleToLinkRequest(tuple: DynamicValue): LinkPushOpenRequest {
       return {
         requestId: tuple[0],
         targetPath: { segments: tuple[1] },
@@ -474,7 +923,7 @@
     }
 
     /** Converts one compact native push item tuple into a Link CorePushItem. */
-    function nativePushItemTupleToLinkItem(tuple) {
+    function nativePushItemTupleToLinkItem(tuple: DynamicValue): object {
       return {
         pushId: tuple[0],
         sequence: tuple[1],
@@ -483,7 +932,7 @@
     }
 
     /** Converts one compact native watch tuple into a Link CoreWatchRequest. */
-    function nativeWatchTupleToLinkRequest(tuple) {
+    function nativeWatchTupleToLinkRequest(tuple: DynamicValue): object {
       return {
         requestId: tuple[0],
         targetPath: { segments: tuple[1] },
@@ -493,7 +942,10 @@
     }
 
     /** Converts one compact native watch stream tuple into a Link channel request. */
-    function nativeWatchStreamTupleToLinkOpen(tuple) {
+    function nativeWatchStreamTupleToLinkOpen(tuple: DynamicValue): {
+      subscriptionId: DynamicValue;
+      request: object;
+    } {
       return {
         subscriptionId: tuple[0],
         request: {
@@ -506,7 +958,7 @@
     }
 
     /** Converts one Link CoreEvent into a compact native event tuple. */
-    function linkEventToNativeTuple(event) {
+    function linkEventToNativeTuple(event: DynamicValue): DynamicValue[] {
       return [
         event.requestId ?? null,
         event.targetPath.segments,
@@ -517,7 +969,7 @@
     }
 
     /** Encodes one Link CoreCallResponse payload as a compact native bridge result. */
-    function encodeCallResponseAsNative(bytes) {
+    function encodeCallResponseAsNative(bytes: Uint8Array): Uint8Array {
       const response = MessagePack.decode(bytes);
       const result = response.result;
       if (Object.prototype.hasOwnProperty.call(result, "Ok")) {
@@ -538,32 +990,32 @@
     }
 
     /** Encodes one Link CoreEvent payload as a compact native watch snapshot result. */
-    function encodeWatchSnapshotAsNative(bytes) {
+    function encodeWatchSnapshotAsNative(bytes: Uint8Array): Uint8Array {
       return MessagePack.encode([0, linkEventToNativeTuple(MessagePack.decode(bytes))]);
     }
 
     const sessionNonce = `web-${crypto.randomUUID()}`;
     const sessionBytes = await postLink("/link/session", { nonce: sessionNonce });
     const sessionInfo = MessagePack.decode(sessionBytes);
-    if (sessionInfo.protocolVersion !== 3) {
+    if (Number(sessionInfo.protocolVersion) !== 3) {
       throw new Error(`Link protocol version ${sessionInfo.protocolVersion} is not supported`);
     }
 
     return {
       /** Forwards one compact native call through authenticated HTTP Link. */
-      async call(request) {
+      async call(request: Uint8Array): Promise<Uint8Array> {
         return encodeCallResponseAsNative(await postLink("/link/call", {
           request: nativeCallTupleToLinkRequest(MessagePack.decode(request)),
         }));
       },
       /** Opens one compact native push stream through authenticated WebSocket Link. */
-      async pushOpen(request) {
+      async pushOpen(request: Uint8Array): Promise<Uint8Array> {
         const decoded = nativePushOpenTupleToLinkRequest(MessagePack.decode(request));
         await sendPushPayload({ type: "PushOpen", body: decoded });
         return MessagePack.encode([0, decoded.requestId]);
       },
       /** Sends one compact native push item through authenticated WebSocket Link. */
-      async pushItem(item) {
+      async pushItem(item: Uint8Array): Promise<Uint8Array> {
         await sendPushPayload({
           type: "PushItem",
           body: nativePushItemTupleToLinkItem(MessagePack.decode(item)),
@@ -571,24 +1023,27 @@
         return MessagePack.encode([0, null]);
       },
       /** Closes one compact native push stream through authenticated WebSocket Link. */
-      async pushClose(pushId) {
+      async pushClose(pushId: string): Promise<Uint8Array> {
         await sendPushPayload({ type: "PushClose", body: pushId });
         return MessagePack.encode([0, null]);
       },
       /** Reads one compact native watch snapshot through authenticated HTTP Link. */
-      async watchSnapshot(request) {
+      async watchSnapshot(request: Uint8Array): Promise<Uint8Array> {
         return encodeWatchSnapshotAsNative(await postLink("/link/watch/snapshot", {
           request: nativeWatchTupleToLinkRequest(MessagePack.decode(request)),
         }));
       },
       /** Opens one compact native watch stream through authenticated HTTP Link. */
-      async watchStream(request, onEvent) {
+      async watchStream(
+        request: Uint8Array,
+        onEvent: (event: Uint8Array) => void,
+      ): Promise<Uint8Array> {
         if (typeof onEvent !== "function") {
           throw new Error("watchStream expects an event callback");
         }
         const channel = await acquireChannel();
         const envelope = nativeWatchStreamTupleToLinkOpen(MessagePack.decode(request));
-        const subscriptionId = envelope.subscriptionId;
+        const subscriptionId = String(envelope.subscriptionId);
         streamCallbacks.set(subscriptionId, onEvent);
         streamChannels.set(subscriptionId, channel.channelId);
         channel.subscriptionCount += 1;
@@ -599,7 +1054,7 @@
             request: envelope.request,
           });
           const response = MessagePack.decode(responseBytes);
-          if (response.subscriptionId !== subscriptionId) {
+          if (String(response.subscriptionId) !== subscriptionId) {
             throw new Error("watch channel subscription id mismatch");
           }
           return MessagePack.encode([0, subscriptionId]);
@@ -611,7 +1066,7 @@
         }
       },
       /** Closes one compact native watch stream through authenticated HTTP Link. */
-      async closeWatchStream(subscriptionId) {
+      async closeWatchStream(subscriptionId: string): Promise<Uint8Array> {
         const channelId = streamChannels.get(subscriptionId);
         if (!channelId) {
           throw new Error(`link watch stream not found: ${subscriptionId}`);
@@ -635,11 +1090,11 @@
     };
   }
 
-  function key(prefix, path) {
+  function key(prefix: string, path: string): string {
     return prefix + String(path).replace(/^\/+/, "");
   }
 
-  function bytesToBase64(bytes) {
+  function bytesToBase64(bytes: Uint8Array): string {
     let binary = "";
     for (const byte of bytes) {
       binary += String.fromCharCode(byte);
@@ -647,7 +1102,7 @@
     return btoa(binary);
   }
 
-  function base64ToBytes(value) {
+  function base64ToBytes(value: string | null): Uint8Array {
     const binary = atob(value || "");
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
@@ -656,14 +1111,14 @@
     return bytes;
   }
 
-  function nowIso() {
+  function nowIso(): string {
     return new Date().toISOString();
   }
 
   // Opens the browser storage database used for large runtime files.
-  function openStorageDatabase() {
+  function openStorageDatabase(): Promise<IDBDatabase> {
     if (!storageDatabasePromise) {
-      storageDatabasePromise = new Promise((resolve, reject) => {
+      storageDatabasePromise = new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open(storageDatabaseName, 1);
         request.onupgradeneeded = () => {
           request.result.createObjectStore(storageObjectStoreName);
@@ -676,23 +1131,23 @@
   }
 
   // Loads the persisted storage entries into the synchronous memory view.
-  async function ensureBrowserStorage() {
+  async function ensureBrowserStorage(): Promise<void> {
     if (!storageReadyPromise) {
       storageReadyPromise = (async () => {
         const database = await openStorageDatabase();
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           const transaction = database.transaction(storageObjectStoreName, "readonly");
           const store = transaction.objectStore(storageObjectStoreName);
           const request = store.openCursor();
           request.onsuccess = () => {
             const cursor = request.result;
             if (cursor) {
-              storageCache.set(cursor.key, new Uint8Array(cursor.value));
+              storageCache.set(String(cursor.key), new Uint8Array(cursor.value));
               cursor.continue();
             }
           };
           request.onerror = () => reject(request.error || new Error("indexedDB cursor failed"));
-          transaction.oncomplete = resolve;
+          transaction.oncomplete = () => resolve();
           transaction.onerror = () => reject(transaction.error || new Error("indexedDB read failed"));
         });
         migrateLocalStorageEntries(runtimePrefix);
@@ -704,13 +1159,14 @@
   }
 
   // Copies existing localStorage-hosted entries into the synchronous storage view.
-  function migrateLocalStorageEntries(prefix) {
-    const migratedKeys = [];
+  function migrateLocalStorageEntries(prefix: string): void {
+    const migratedKeys: string[] = [];
     for (let index = 0; index < localStorage.length; index += 1) {
       const itemKey = localStorage.key(index);
       if (itemKey && itemKey.startsWith(prefix)) {
-        storageCache.set(itemKey, base64ToBytes(localStorage.getItem(itemKey)));
-        persistStorageEntry(itemKey, storageCache.get(itemKey));
+        const bytes = base64ToBytes(localStorage.getItem(itemKey));
+        storageCache.set(itemKey, bytes);
+        void persistStorageEntry(itemKey, bytes);
         migratedKeys.push(itemKey);
       }
     }
@@ -720,32 +1176,32 @@
   }
 
   // Persists one memory-view entry into IndexedDB.
-  async function persistStorageEntry(itemKey, bytes) {
+  async function persistStorageEntry(itemKey: string, bytes: Uint8Array): Promise<void> {
     const database = await openStorageDatabase();
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(storageObjectStoreName, "readwrite");
       transaction.objectStore(storageObjectStoreName).put(new Uint8Array(bytes), itemKey);
-      transaction.oncomplete = resolve;
+      transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error || new Error("indexedDB write failed"));
     });
   }
 
   // Removes one memory-view entry from IndexedDB.
-  async function removeStorageEntry(itemKey) {
+  async function removeStorageEntry(itemKey: string): Promise<void> {
     const database = await openStorageDatabase();
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(storageObjectStoreName, "readwrite");
       transaction.objectStore(storageObjectStoreName).delete(itemKey);
-      transaction.oncomplete = resolve;
+      transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error || new Error("indexedDB delete failed"));
     });
   }
 
-  function storageRead(prefix, path) {
+  function storageRead(prefix: string, path: string): Uint8Array {
     return storageCache.get(key(prefix, path)) || new Uint8Array();
   }
 
-  function storageWrite(prefix, path, content) {
+  function storageWrite(prefix: string, path: string, content: Uint8Array | ArrayBuffer): void {
     const itemKey = key(prefix, path);
     const bytes = new Uint8Array(content);
     storageCache.set(itemKey, bytes);
@@ -755,7 +1211,7 @@
     }
   }
 
-  function storageExists(prefix, path) {
+  function storageExists(prefix: string, path: string): boolean {
     const exact = key(prefix, path);
     const directory = exact.endsWith("/") ? exact : exact + "/";
     if (storageCache.has(exact)) {
@@ -769,7 +1225,7 @@
     return false;
   }
 
-  function storageDelete(prefix, path, recursive) {
+  function storageDelete(prefix: string, path: string, recursive: boolean): void {
     const exact = key(prefix, path);
     const directory = exact.endsWith("/") ? exact : exact + "/";
     storageCache.delete(exact);
@@ -792,16 +1248,16 @@
   }
 
   // Returns whether one storage mutation commits the local model registry.
-  function isLocalModelRegistryPath(prefix, path) {
+  function isLocalModelRegistryPath(prefix: string, path: string): boolean {
     return prefix === runtimePrefix &&
       normalizeRuntimePath(path) ===
         "runtime/config/preferences/local_model_registry.preferences.json";
   }
 
-  function storageList(prefix, path) {
+  function storageList(prefix: string, path: string): FileStorageEntry[] {
     const root = key(prefix, path);
     const directory = root.endsWith(".") || root.endsWith("/") ? root : root + "/";
-    const entries = [];
+    const entries: FileStorageEntry[] = [];
     for (const itemKey of storageCache.keys()) {
       if (!itemKey.startsWith(directory)) {
         continue;
@@ -817,13 +1273,13 @@
   }
 
   // Builds the canonical in-memory key for one browser-host directory.
-  function fileDirectoryKey(path) {
+  function fileDirectoryKey(path: string): string {
     const normalized = normalizeRuntimePath(path);
     return normalized.length === 0 ? filePrefix : `${filePrefix}${normalized}/`;
   }
 
   // Reports whether the browser host can resolve one directory from explicit or file-backed state.
-  function fileDirectoryExists(path) {
+  function fileDirectoryExists(path: string): boolean {
     const directory = fileDirectoryKey(path);
     if (fileDirectories.has(directory)) {
       return true;
@@ -837,7 +1293,7 @@
   }
 
   // Creates one browser-host directory and, when requested, all of its parents.
-  function makeFileDirectory(path, createParents) {
+  function makeFileDirectory(path: string, createParents: boolean): void {
     const normalized = normalizeRuntimePath(path);
     if (normalized.length === 0) {
       return;
@@ -857,9 +1313,9 @@
   }
 
   // Lists immediate file-system children from browser-host directory and file state.
-  function listFileDirectory(path) {
+  function listFileDirectory(path: string): FileStorageEntry[] {
     const directory = fileDirectoryKey(path);
-    const entries = new Map();
+    const entries = new Map<string, FileStorageEntry>();
     for (const candidate of fileDirectories) {
       if (!candidate.startsWith(directory) || candidate === directory) {
         continue;
@@ -886,7 +1342,7 @@
   }
 
   // Removes one browser-host directory from the in-memory directory index.
-  function deleteFileDirectory(path, recursive) {
+  function deleteFileDirectory(path: string, recursive: boolean): void {
     const directory = fileDirectoryKey(path);
     fileDirectories.delete(directory);
     if (!recursive) {
@@ -899,28 +1355,36 @@
     }
   }
 
-  function loadScript(src) {
-    return new Promise((resolve, reject) => {
-      const existing = document.querySelector(`script[src="${src}"]`);
+  function loadScript(src: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const existing = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
       if (existing) {
-        existing.addEventListener("load", resolve, { once: true });
-        existing.addEventListener("error", reject, { once: true });
+        existing.addEventListener("load", () => resolve(), { once: true });
+        existing.addEventListener(
+          "error",
+          () => reject(new Error(`failed to load ${src}`)),
+          { once: true },
+        );
         return;
       }
       const script = document.createElement("script");
       script.src = src;
-      script.onload = resolve;
+      script.onload = () => resolve();
       script.onerror = () => reject(new Error(`failed to load ${src}`));
       document.head.appendChild(script);
     });
   }
 
-  async function ensureSqlite() {
+  async function ensureSqlite(): Promise<void> {
     if (!sqliteModulePromise) {
       sqliteModulePromise = (async () => {
         await loadScript("sql-wasm.js");
-        SQLite = await globalThis.initSqlJs({
-          locateFile(file) {
+        const initializeSqlJs = runtimeGlobal.initSqlJs;
+        if (initializeSqlJs === undefined) {
+          throw new Error("sql.js initializer is not loaded");
+        }
+        SQLite = await initializeSqlJs({
+          locateFile(file: string): string {
             return file;
           },
         });
@@ -929,15 +1393,15 @@
     await sqliteModulePromise;
   }
 
-  function sqliteKey(path) {
+  function sqliteKey(path: string): string {
     return key(sqlitePrefix, path);
   }
 
-  function saveSqliteDatabase(connection) {
+  function saveSqliteDatabase(connection: SqliteConnection): void {
     storageWrite(sqlitePrefix, connection.path, connection.db.export());
   }
 
-  function sqliteConnection(id) {
+  function sqliteConnection(id: string): SqliteConnection {
     const connection = sqliteConnections.get(id);
     if (!connection) {
       throw new Error(`sqlite connection not found: ${id}`);
@@ -945,7 +1409,7 @@
     return connection;
   }
 
-  function sqliteTransaction(id) {
+  function sqliteTransaction(id: string): SqliteConnection {
     const transaction = sqliteTransactions.get(id);
     if (!transaction) {
       throw new Error(`sqlite transaction not found: ${id}`);
@@ -953,7 +1417,7 @@
     return transaction;
   }
 
-  function sqliteParam(param) {
+  function sqliteParam(param: SqliteParameter): SqlValue {
     if (param.kind === "null") {
       return null;
     }
@@ -969,14 +1433,14 @@
     if (param.kind === "blob") {
       return new Uint8Array(param.value);
     }
-    throw new Error(`unknown sqlite value kind: ${param.kind}`);
+    throw new Error("unknown sqlite value kind");
   }
 
-  function sqliteParams(params) {
+  function sqliteParams(params: SqliteParameter[] | undefined): SqlValue[] {
     return (params || []).map(sqliteParam);
   }
 
-  function sqliteValue(value) {
+  function sqliteValue(value: SqlValue | undefined): SqliteSerializedValue {
     if (value === null || value === undefined) {
       return { kind: "null" };
     }
@@ -991,9 +1455,13 @@
     return { kind: "text", value: String(value) };
   }
 
-  function querySqlite(db, sql, params) {
+  function querySqlite(
+    db: SqlDatabase,
+    sql: string,
+    params: SqliteParameter[] | undefined,
+  ): SqliteQueryRow[] {
     const statement = db.prepare(sql);
-    const rows = [];
+    const rows: SqliteQueryRow[] = [];
     try {
       statement.bind(sqliteParams(params));
       const columns = statement.getColumnNames();
@@ -1009,7 +1477,17 @@
     return rows;
   }
 
-  function fileInfo(path) {
+  function fileInfo(path: string): {
+    path: string;
+    exists: boolean;
+    fileType: string;
+    size: number;
+    permissions: string;
+    owner: string;
+    group: string;
+    lastModified: string;
+    rawStatOutput: string;
+  } {
     const exists = storageExists(filePrefix, path);
     const bytes = exists ? storageRead(filePrefix, path) : new Uint8Array();
     return {
@@ -1025,20 +1503,20 @@
     };
   }
 
-  function unavailable(name) {
+  function unavailable(name: string): never {
     throw new Error(`${name} is not available in the browser host`);
   }
 
   const ttsPlayback = (() => {
-    let activeUtterance = null;
-    let activeAudio = null;
-    let activeAudioUrl = null;
+    let activeUtterance: SpeechSynthesisUtterance | null = null;
+    let activeAudio: HTMLAudioElement | null = null;
+    let activeAudioUrl: string | null = null;
     let activeAudioPaused = false;
     let activePath = "";
     let utteranceIndex = 0;
     let lastDetails = "browser speech synthesis idle";
 
-    function synthesis() {
+    function synthesis(): SpeechSynthesis {
       const value = globalThis.speechSynthesis;
       if (value === undefined || value === null) {
         throw new Error("browser speechSynthesis is not available");
@@ -1046,28 +1524,28 @@
       return value;
     }
 
-    function requireText(value, name) {
+    function requireText(value: JsonValue | DynamicValue, name: string): string {
       if (typeof value !== "string") {
         throw new Error(`${name} must be a string`);
       }
       return value.trim();
     }
 
-    function requireNumber(value, name) {
+    function requireNumber(value: JsonValue | DynamicValue, name: string): number {
       if (typeof value !== "number" || !Number.isFinite(value)) {
         throw new Error(`${name} must be a finite number`);
       }
       return value;
     }
 
-    function requireBoolean(value, name) {
+    function requireBoolean(value: JsonValue | DynamicValue, name: string): boolean {
       if (typeof value !== "boolean") {
         throw new Error(`${name} must be a boolean`);
       }
       return value;
     }
 
-    function selectedVoice(voiceName) {
+    function selectedVoice(voiceName: string): SpeechSynthesisVoice | null {
       if (voiceName.length === 0) {
         return null;
       }
@@ -1080,7 +1558,12 @@
       return voice;
     }
 
-    function currentStatus(details) {
+    function currentStatus(details: string): {
+      path: string;
+      active: boolean;
+      paused: boolean;
+      details: string;
+    } {
       if (activeAudio !== null) {
         return {
           path: activePath,
@@ -1100,7 +1583,7 @@
     }
 
     // Resolves the media type for one generated TTS resource path.
-    function audioContentType(path) {
+    function audioContentType(path: string): string {
       const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
       switch (extension) {
         case "aac": return "audio/aac";
@@ -1117,7 +1600,7 @@
     }
 
     // Releases the browser audio element and its object URL.
-    function releaseAudio() {
+    function releaseAudio(): void {
       if (activeAudio !== null) {
         activeAudio.pause();
         activeAudio.onended = null;
@@ -1132,7 +1615,7 @@
     }
 
     return {
-      playAudio(path) {
+      playAudio(path: JsonValue | DynamicValue) {
         const audioPath = requireText(path, "tts audio path");
         if (audioPath.length === 0) {
           throw new Error("tts audio path is empty");
@@ -1145,7 +1628,7 @@
         activeUtterance = null;
         releaseAudio();
         activeAudioUrl = URL.createObjectURL(
-          new Blob([bytes], { type: audioContentType(audioPath) })
+          new Blob([blobPart(bytes)], { type: audioContentType(audioPath) })
         );
         const audio = new Audio(activeAudioUrl);
         activeAudio = audio;
@@ -1172,7 +1655,7 @@
         });
         return currentStatus(lastDetails);
       },
-      speakText(request) {
+      speakText(request: DynamicValue) {
         const text = requireText(request.text, "tts text");
         if (text.length === 0) {
           throw new Error("tts text is empty");
@@ -1256,17 +1739,17 @@
   })();
 
   const musicPlayback = (() => {
-    let audio = null;
-    let source = null;
-    let sourceType = null;
-    let title = null;
-    let artist = null;
+    let audio: HTMLAudioElement | null = null;
+    let source: string | null = null;
+    let sourceType: string | null = null;
+    let title: string | null = null;
+    let artist: string | null = null;
     let loopPlayback = false;
     let volume = 1;
     let state = "idle";
     let message = "browser music player idle";
 
-    function currentStatus(details) {
+    function currentStatus(details: string) {
       const activeAudio = audio;
       return {
         state,
@@ -1283,14 +1766,14 @@
       };
     }
 
-    function bufferedPositionMs(activeAudio) {
+    function bufferedPositionMs(activeAudio: HTMLAudioElement | null): number {
       if (!activeAudio || activeAudio.buffered.length === 0) {
         return activeAudio ? Math.round(activeAudio.currentTime * 1000) : 0;
       }
       return Math.round(activeAudio.buffered.end(activeAudio.buffered.length - 1) * 1000);
     }
 
-    function setSource(activeAudio, request) {
+    function setSource(activeAudio: HTMLAudioElement, request: MusicRequest): void {
       if (request.sourceType === "path" || request.sourceType === "url" || request.sourceType === "uri") {
         activeAudio.src = request.source;
         return;
@@ -1299,12 +1782,12 @@
     }
 
     return {
-      playAudio(path) {
+      playAudio(path: string) {
         const oneShot = new Audio(String(path));
         oneShot.play();
         return { path: String(path), started: true, details: "browser audio playback started" };
       },
-      playMusic(request) {
+      playMusic(request: MusicRequest) {
         if (audio !== null) {
           audio.pause();
         }
@@ -1362,7 +1845,7 @@
         message = "browser music playback stopped";
         return currentStatus(message);
       },
-      seekMusic(positionMs) {
+      seekMusic(positionMs: number) {
         if (audio === null) {
           throw new Error("browser music player is not initialized");
         }
@@ -1370,7 +1853,7 @@
         message = "browser music playback seeked";
         return currentStatus(message);
       },
-      setMusicVolume(value) {
+      setMusicVolume(value: number) {
         if (audio === null) {
           throw new Error("browser music player is not initialized");
         }
@@ -1386,18 +1869,18 @@
   })();
 
   const bluetooth = (() => {
-    const bleSessions = new Map();
-    const notifications = new Map();
+    const bleSessions = new Map<string, BleSession>();
+    const notifications = new Map<string, BleNotification[]>();
 
-    function browserBluetooth() {
-      const api = navigator.bluetooth;
+    function browserBluetooth(): BluetoothApi {
+      const api = browserNavigator.bluetooth;
       if (!api) {
         throw new Error("browser Web Bluetooth is not available");
       }
       return api;
     }
 
-    function bytesFromPayload(payload) {
+    function bytesFromPayload(payload: BluetoothWriteRequest | BluetoothWriteAndReadRequest): Uint8Array {
       if (payload.text && payload.dataBase64) {
         throw new Error("Provide exactly one of text or dataBase64");
       }
@@ -1410,7 +1893,12 @@
       throw new Error("Provide exactly one of text or dataBase64");
     }
 
-    function readData(sessionId, bytes) {
+    function readData(sessionId: string, bytes: DataView | Uint8Array): {
+      sessionId: string;
+      bytesRead: number;
+      text: string;
+      dataBase64: string;
+    } {
       const value = bytes instanceof DataView ? new Uint8Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)) : new Uint8Array(bytes);
       return {
         sessionId,
@@ -1420,7 +1908,7 @@
       };
     }
 
-    function session(id) {
+    function session(id: string): BleSession {
       const value = bleSessions.get(id);
       if (!value) {
         throw new Error(`BLE session not found: ${id}`);
@@ -1428,7 +1916,11 @@
       return value;
     }
 
-    function characteristic(sessionId, serviceUuid, characteristicUuid) {
+    function characteristic(
+      sessionId: string,
+      serviceUuid: string,
+      characteristicUuid: string,
+    ): BluetoothCharacteristic {
       const value = session(sessionId);
       const key = `${serviceUuid}:${characteristicUuid}`;
       const cached = value.characteristics.get(key);
@@ -1438,7 +1930,7 @@
       return cached;
     }
 
-    function classicUnavailable(name) {
+    function classicUnavailable(name: string): never {
       throw new Error(`browser Bluetooth classic ${name} is not available`);
     }
 
@@ -1449,9 +1941,9 @@
       },
       bluetoothState() {
         return {
-          supported: !!navigator.bluetooth,
-          enabled: !!navigator.bluetooth,
-          state: navigator.bluetooth ? "available" : "unavailable",
+          supported: !!browserNavigator.bluetooth,
+          enabled: !!browserNavigator.bluetooth,
+          state: browserNavigator.bluetooth ? "available" : "unavailable",
         };
       },
       requestEnableBluetooth() {
@@ -1459,11 +1951,19 @@
         return "browser_bluetooth_enable_controlled_by_system";
       },
       listBluetoothBondedDevices() {
-        return { devices: [] };
+        return {
+          devices: [] as Array<{
+            name: string | null;
+            address: string;
+            type: string;
+            bondState: string;
+            source: string;
+            rssi: number | null;
+          }>,
+        };
       },
-      scanBluetoothDevices(request) {
-        const filters = [];
-        const optionalServices = [];
+      scanBluetoothDevices(request: { durationMs?: number }) {
+        const optionalServices: string[] = [];
         const deviceRequest = { acceptAllDevices: true, optionalServices };
         return browserBluetooth().requestDevice(deviceRequest).then((device) => ({
           devices: [{
@@ -1472,7 +1972,7 @@
             type: "ble",
             bondState: "unknown",
             source: "browser.web_bluetooth",
-            rssi: null,
+            rssi: null as number | null,
           }],
           durationMs: request.durationMs || 0,
           includesBle: true,
@@ -1484,7 +1984,7 @@
       bluetoothSend() { classicUnavailable("send"); },
       bluetoothRead() { classicUnavailable("read"); },
       bluetoothSendAndRead() { classicUnavailable("sendAndRead"); },
-      bluetoothClose(sessionId) {
+      bluetoothClose(sessionId: string) {
         const value = bleSessions.get(sessionId);
         if (value && value.device.gatt.connected) {
           value.device.gatt.disconnect();
@@ -1493,7 +1993,7 @@
         notifications.delete(sessionId);
         return `browser_bluetooth_session_closed:${sessionId}`;
       },
-      bluetoothBleConnect(request) {
+      bluetoothBleConnect() {
         return browserBluetooth().requestDevice({ acceptAllDevices: true }).then((device) =>
           device.gatt.connect().then((server) => {
             const sessionId = `web-ble-${crypto.randomUUID()}`;
@@ -1503,7 +2003,7 @@
           })
         );
       },
-      bluetoothBleDiscoverServices(sessionId) {
+      bluetoothBleDiscoverServices(sessionId: string) {
         const value = session(sessionId);
         return value.server.getPrimaryServices().then((services) =>
           Promise.all(services.map((service) =>
@@ -1522,18 +2022,18 @@
           )).then((items) => ({ sessionId, services: items }))
         );
       },
-      bluetoothBleReadCharacteristic(address) {
+      bluetoothBleReadCharacteristic(address: BluetoothReadAddress) {
         return characteristic(address.sessionId, address.serviceUuid, address.characteristicUuid)
           .readValue()
           .then((value) => readData(address.sessionId, value));
       },
-      bluetoothBleWriteCharacteristic(request) {
+      bluetoothBleWriteCharacteristic(request: BluetoothWriteRequest) {
         const bytes = bytesFromPayload(request);
         return characteristic(request.sessionId, request.serviceUuid, request.characteristicUuid)
           .writeValue(bytes)
           .then(() => ({ sessionId: request.sessionId, bytesWritten: bytes.length }));
       },
-      bluetoothBleWriteAndReadCharacteristic(request) {
+      bluetoothBleWriteAndReadCharacteristic(request: BluetoothWriteAndReadRequest) {
         const bytes = bytesFromPayload(request);
         return characteristic(request.sessionId, request.writeServiceUuid, request.writeCharacteristicUuid)
           .writeValue(bytes)
@@ -1542,7 +2042,7 @@
           )
           .then((value) => readData(request.sessionId, value));
       },
-      bluetoothBleSubscribeCharacteristic(request) {
+      bluetoothBleSubscribeCharacteristic(request: BluetoothSubscribeRequest) {
         const item = characteristic(request.sessionId, request.serviceUuid, request.characteristicUuid);
         if (!request.enable) {
           return item.stopNotifications().then(() => ({ sessionId: request.sessionId, bytesWritten: 0 }));
@@ -1559,7 +2059,7 @@
         });
         return item.startNotifications().then(() => ({ sessionId: request.sessionId, bytesWritten: 0 }));
       },
-      bluetoothBleReadNotifications(sessionId, limit) {
+      bluetoothBleReadNotifications(sessionId: string, limit: number) {
         const queue = notifications.get(sessionId);
         if (!queue) {
           throw new Error(`BLE session not found: ${sessionId}`);
@@ -1572,8 +2072,8 @@
     };
   })();
 
-  function characteristicPropertyNames(properties) {
-    const names = [];
+  function characteristicPropertyNames(properties: BluetoothCharacteristicProperties): string[] {
+    const names: string[] = [];
     if (properties.read) names.push("read");
     if (properties.write) names.push("write");
     if (properties.writeWithoutResponse) names.push("write_without_response");
@@ -1583,7 +2083,7 @@
   }
 
   // Schedules browser local inference discovery after storage changes.
-  function scheduleWebLocalInferenceRefresh() {
+  function scheduleWebLocalInferenceRefresh(): void {
     webLocalInferenceReadyPromise = null;
     queueMicrotask(() => {
       void ensureWebLocalInference().catch((error) => {
@@ -1593,12 +2093,12 @@
   }
 
   // Initializes installed browser local inference bundles.
-  async function ensureWebLocalInference() {
+  async function ensureWebLocalInference(): Promise<void> {
     if (!webLocalInferenceReadyPromise) {
       webLocalInferenceReadyPromise = (async () => {
-        const state = {
-          asrBundles: new Map(),
-          ttsBundles: new Map(),
+        const state: WebLocalInferenceState = {
+          asrBundles: new Map<string, WebAsrBundle>(),
+          ttsBundles: new Map<string, WebTtsBundle>(),
           blobUrls: [],
         };
         try {
@@ -1610,7 +2110,7 @@
         }
         disposeWebLocalInferenceState(webLocalInferenceState);
         webLocalInferenceState = state;
-        globalThis.__operitLocalInference = {
+        runtimeGlobal.__operitLocalInference = {
           transcribeLocalSpeech: transcribeWebLocalSpeech,
           synthesizeLocalSpeech: synthesizeWebLocalSpeech,
         };
@@ -1620,7 +2120,7 @@
   }
 
   // Releases all native objects and Blob URLs owned by one Web inference state.
-  function disposeWebLocalInferenceState(state) {
+  function disposeWebLocalInferenceState(state: WebLocalInferenceState | null): void {
     if (!state) {
       return;
     }
@@ -1636,10 +2136,10 @@
   }
 
   // Loads every complete browser ASR bundle visible in runtime storage.
-  async function loadInstalledWebAsrBundles(state) {
+  async function loadInstalledWebAsrBundles(state: WebLocalInferenceState): Promise<void> {
     const roots = runtimeBundleRoots("sherpa-onnx-asr.js");
     for (const root of roots) {
-      const paths = {
+      const paths: AsrBundlePaths = {
         recognizerScript: `${root}/sherpa-onnx-asr.js`,
         runtimeScript: `${root}/sherpa-onnx-wasm-main-vad-asr.js`,
         runtimeWasm: `${root}/sherpa-onnx-wasm-main-vad-asr.wasm`,
@@ -1652,10 +2152,10 @@
   }
 
   // Loads every complete browser TTS bundle visible in runtime storage.
-  async function loadInstalledWebTtsBundles(state) {
+  async function loadInstalledWebTtsBundles(state: WebLocalInferenceState): Promise<void> {
     const roots = runtimeBundleRoots("sherpa-onnx-tts.js");
     for (const root of roots) {
-      const paths = {
+      const paths: TtsBundlePaths = {
         ttsScript: `${root}/sherpa-onnx-tts.js`,
         runtimeScript: `${root}/sherpa-onnx-wasm-main-tts.js`,
         runtimeWasm: `${root}/sherpa-onnx-wasm-main-tts.wasm`,
@@ -1668,9 +2168,9 @@
   }
 
   // Returns storage roots ending with one exact bundle file name.
-  function runtimeBundleRoots(fileName) {
+  function runtimeBundleRoots(fileName: string): string[] {
     const suffix = `/${fileName}`;
-    const roots = [];
+    const roots: string[] = [];
     for (const itemKey of storageCache.keys()) {
       if (!itemKey.startsWith(runtimePrefix) || !itemKey.endsWith(suffix)) {
         continue;
@@ -1681,23 +2181,31 @@
   }
 
   // Checks that every runtime path is present in the synchronous storage view.
-  function runtimePathsExist(paths) {
+  function runtimePathsExist(paths: string[]): boolean {
     return paths.every((path) => storageExists(runtimePrefix, path));
   }
 
   // Creates a blob URL for one runtime-storage file.
-  function runtimeBlobUrl(path, contentType, state) {
+  function runtimeBlobUrl(
+    path: string,
+    contentType: string,
+    state: WebLocalInferenceState,
+  ): string {
     const bytes = storageRead(runtimePrefix, path);
     if (bytes.length === 0) {
       throw new Error(`runtime file is empty or missing: ${path}`);
     }
-    const url = URL.createObjectURL(new Blob([bytes], { type: contentType }));
+    const url = URL.createObjectURL(new Blob([blobPart(bytes)], { type: contentType }));
     state.blobUrls.push(url);
     return url;
   }
 
   // Creates a JavaScript Blob URL with one exact source suffix.
-  function runtimeJavaScriptUrl(path, suffix, state) {
+  function runtimeJavaScriptUrl(
+    path: string,
+    suffix: string,
+    state: WebLocalInferenceState,
+  ): string {
     const bytes = storageRead(runtimePrefix, path);
     if (bytes.length === 0) {
       throw new Error(`runtime file is empty or missing: ${path}`);
@@ -1709,18 +2217,21 @@
   }
 
   // Loads a classic script from a blob URL.
-  function loadClassicScriptUrl(src) {
-    return new Promise((resolve, reject) => {
+  function loadClassicScriptUrl(src: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       const script = document.createElement("script");
       script.src = src;
-      script.onload = resolve;
+      script.onload = () => resolve();
       script.onerror = () => reject(new Error(`failed to load ${src}`));
       document.head.appendChild(script);
     });
   }
 
   // Builds one browser ASR bundle from installed Sherpa files.
-  async function createWebAsrBundle(paths, state) {
+  async function createWebAsrBundle(
+    paths: AsrBundlePaths,
+    state: WebLocalInferenceState,
+  ): Promise<WebAsrBundle> {
     requireCrossOriginIsolation("ASR");
     const urls = {
       recognizerScript: runtimeJavaScriptUrl(
@@ -1732,23 +2243,23 @@
       runtimeWasm: runtimeBlobUrl(paths.runtimeWasm, "application/wasm", state),
       runtimeData: runtimeBlobUrl(paths.runtimeData, "application/octet-stream", state),
     };
-    const moduleValue = {};
-    const ready = new Promise((resolve, reject) => {
+    const moduleValue: SherpaModuleConfig = {};
+    const ready = new Promise<void>((resolve, reject) => {
       moduleValue.mainScriptUrlOrBlob = urls.runtimeScript;
-      moduleValue.locateFile = (path) => {
+      moduleValue.locateFile = (path: string): string => {
         if (path === "sherpa-onnx-wasm-main-vad-asr.wasm") return urls.runtimeWasm;
         if (path === "sherpa-onnx-wasm-main-vad-asr.data") return urls.runtimeData;
         return path;
       };
-      moduleValue.setStatus = (status) => console.debug("[Operit ASR]", status);
-      moduleValue.onRuntimeInitialized = () => resolve(moduleValue);
-      moduleValue.onAbort = (reason) => reject(new Error(String(reason)));
+      moduleValue.setStatus = (status: string): void => console.debug("[Operit ASR]", status);
+      moduleValue.onRuntimeInitialized = () => resolve();
+      moduleValue.onAbort = (reason: string): void => reject(new Error(reason));
     });
-    globalThis.Module = moduleValue;
+    runtimeGlobal.Module = moduleValue;
     await loadClassicScriptUrl(urls.runtimeScript);
     await ready;
     await loadClassicScriptUrl(urls.recognizerScript);
-    const classes = globalThis.__operitSherpaAsrClasses;
+    const classes = runtimeGlobal.__operitSherpaAsrClasses;
     if (!classes || typeof classes.OfflineRecognizer !== "function") {
       throw new Error("Web ASR recognizer class was not exported");
     }
@@ -1757,7 +2268,7 @@
   }
 
   // Returns the Paraformer ASR config embedded in the Web bundle.
-  function webAsrConfig() {
+  function webAsrConfig(): { modelConfig: JsonValue } {
     return {
       modelConfig: {
         debug: 0,
@@ -1770,7 +2281,10 @@
   }
 
   // Builds one browser TTS bundle from installed Sherpa files.
-  async function createWebTtsBundle(paths, state) {
+  async function createWebTtsBundle(
+    paths: TtsBundlePaths,
+    state: WebLocalInferenceState,
+  ): Promise<WebTtsBundle> {
     requireCrossOriginIsolation("TTS");
     const urls = {
       ttsScript: runtimeBlobUrl(paths.ttsScript, "text/javascript", state),
@@ -1791,7 +2305,12 @@
   }
 
   // Builds the isolated module-worker source required by Sherpa Web TTS.
-  function webTtsWorkerSource(urls) {
+  function webTtsWorkerSource(urls: {
+    ttsScript: string;
+    runtimeScript: string;
+    runtimeWasm: string;
+    runtimeData: string;
+  }): string {
     return `
 import createModule from ${JSON.stringify(urls.runtimeScript)};
 import { createOfflineTts } from ${JSON.stringify(urls.ttsScript)};
@@ -1916,9 +2435,9 @@ self.onmessage = (event) => {
   }
 
   // Waits for one Web TTS worker to initialize its model instance.
-  function waitForWebTtsWorker(worker) {
+  function waitForWebTtsWorker(worker: Worker): Promise<WebTtsWorkerReady> {
     return new Promise((resolve, reject) => {
-      const onMessage = (event) => {
+      const onMessage = (event: MessageEvent<WebTtsWorkerReady & { type: string; status?: string; message?: string }>) => {
         const message = event.data;
         if (message.type === "status") {
           console.debug("[Operit TTS]", message.status);
@@ -1936,7 +2455,7 @@ self.onmessage = (event) => {
           reject(new Error(message.message));
         }
       };
-      const onError = (event) => {
+      const onError = (event: ErrorEvent): void => {
         worker.removeEventListener("message", onMessage);
         worker.removeEventListener("error", onError);
         reject(new Error(event.message || "Web TTS worker initialization failed"));
@@ -1947,7 +2466,12 @@ self.onmessage = (event) => {
   }
 
   // Runs one synchronous command against an initialized Web TTS worker.
-  function generateWebTtsWav(bundle, text, speaker, speed) {
+  function generateWebTtsWav(
+    bundle: WebTtsBundle,
+    text: string,
+    speaker: number,
+    speed: number,
+  ): Uint8Array {
     const requestId = crypto.randomUUID();
     const controlBuffer = new SharedArrayBuffer(65_536);
     const control = new Int32Array(controlBuffer, 0, 3);
@@ -1977,7 +2501,7 @@ self.onmessage = (event) => {
   }
 
   // Waits for one exact worker state while preserving worker error text.
-  function waitForWebTtsControl(control, expectedState) {
+  function waitForWebTtsControl(control: Int32Array, expectedState: number) {
     const deadline = performance.now() + 600_000;
     while (true) {
       const state = Atomics.load(control, 0);
@@ -1996,7 +2520,7 @@ self.onmessage = (event) => {
   }
 
   // Requires the response isolation headers needed by threaded Sherpa WASM.
-  function requireCrossOriginIsolation(capability) {
+  function requireCrossOriginIsolation(capability: string): void {
     if (globalThis.crossOriginIsolated !== true) {
       throw new Error(
         `Web local ${capability} requires Cross-Origin-Opener-Policy: same-origin and ` +
@@ -2006,10 +2530,10 @@ self.onmessage = (event) => {
   }
 
   // Transcribes one local Web speech request.
-  function transcribeWebLocalSpeech(requestJson) {
+  function transcribeWebLocalSpeech(requestJson: string): string {
     const state = requireWebLocalInferenceState();
-    const request = JSON.parse(requestJson);
-    const driver = parseTaggedDriver(request.driverJson, "SherpaOnnxWebAsrBundle");
+    const request = JSON.parse(requestJson) as AsrSpeechRequest;
+    const driver = parseTaggedDriver<SherpaAsrDriver>(request.driverJson, "SherpaOnnxWebAsrBundle");
     const root = runtimeDirectoryForDriver(request.modelDirectory, driver.recognizerScript);
     const bundle = state.asrBundles.get(root);
     if (!bundle) {
@@ -2031,10 +2555,10 @@ self.onmessage = (event) => {
   }
 
   // Synthesizes one local Web speech request.
-  function synthesizeWebLocalSpeech(requestJson) {
+  function synthesizeWebLocalSpeech(requestJson: string): string {
     const state = requireWebLocalInferenceState();
-    const request = JSON.parse(requestJson);
-    const driver = parseTaggedDriver(request.driverJson, "SherpaOnnxWebTtsBundle");
+    const request = JSON.parse(requestJson) as TtsSpeechRequest;
+    const driver = parseTaggedDriver<SherpaTtsDriver>(request.driverJson, "SherpaOnnxWebTtsBundle");
     const speaker = Number.parseInt(String(request.voice), 10);
     if (!Number.isInteger(speaker) || speaker < 0 || speaker >= driver.speakerCount) {
       throw new Error(`Web TTS speaker is outside 0..${driver.speakerCount - 1}`);
@@ -2064,7 +2588,7 @@ self.onmessage = (event) => {
   }
 
   // Returns the initialized Web local inference state.
-  function requireWebLocalInferenceState() {
+  function requireWebLocalInferenceState(): WebLocalInferenceState {
     if (!webLocalInferenceState) {
       throw new Error("Web local inference runner is still initializing");
     }
@@ -2072,8 +2596,8 @@ self.onmessage = (event) => {
   }
 
   // Parses one externally tagged local model driver.
-  function parseTaggedDriver(driverJson, expectedTag) {
-    const root = JSON.parse(driverJson);
+  function parseTaggedDriver<T>(driverJson: string, expectedTag: string): T {
+    const root = JSON.parse(driverJson) as Record<string, T>;
     const keys = Object.keys(root);
     if (keys.length !== 1 || keys[0] !== expectedTag) {
       throw new Error(`Web local inference driver must be ${expectedTag}`);
@@ -2082,7 +2606,7 @@ self.onmessage = (event) => {
   }
 
   // Resolves a model bundle root from model directory and driver script path.
-  function runtimeDirectoryForDriver(modelDirectory, relativeFilePath) {
+  function runtimeDirectoryForDriver(modelDirectory: string, relativeFilePath: string): string {
     const directory = normalizeRuntimePath(modelDirectory);
     const filePath = normalizeRuntimePath(relativeFilePath);
     const slash = filePath.lastIndexOf("/");
@@ -2093,12 +2617,12 @@ self.onmessage = (event) => {
   }
 
   // Normalizes runtime storage paths to slash separators.
-  function normalizeRuntimePath(path) {
+  function normalizeRuntimePath(path: string): string {
     return String(path).replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
   }
 
   // Decodes one mono PCM WAV byte payload into Float32 samples.
-  function decodeMonoPcmWav(bytes) {
+  function decodeMonoPcmWav(bytes: Uint8Array): { sampleRate: number; samples: Float32Array } {
     if (bytes.length < 44) {
       throw new Error("WAV input is too small");
     }
@@ -2143,13 +2667,15 @@ self.onmessage = (event) => {
   }
 
   // Resolves a synchronous browser local inference runner method.
-  function localInferenceRunner(method) {
-    const runner = globalThis.__operitLocalInference;
+  function localInferenceRunner(
+    method: keyof WebLocalInferenceRunner,
+  ): (requestJson: string) => string {
+    const runner = runtimeGlobal.__operitLocalInference;
     if (!runner || typeof runner[method] !== "function") {
       throw new Error(`web local inference method is not installed: ${method}`);
     }
     // Calls the resolved runner and validates its JSON string contract.
-    return function runLocalInference(requestJson) {
+    return function runLocalInference(requestJson: string): string {
       const responseJson = runner[method](requestJson);
       if (typeof responseJson !== "string") {
         throw new Error(`web local inference method returned non-string JSON: ${method}`);
@@ -2158,26 +2684,215 @@ self.onmessage = (event) => {
     };
   }
 
-  // Installs an isolated smoke-test API when explicitly requested by the test page.
-  function installWebLocalInferenceTestApi() {
-    if (globalThis.__OPERIT_LOCAL_INFERENCE_TEST__ !== true) {
+  /** Returns one local URL for a browser-hosted v86 runtime artifact. */
+  function v86AssetUrl(name: string): string {
+    return new URL(`./v86/${name}`, import.meta.url).href;
+  }
+
+  /** Returns one active Linux VM session or raises a terminal lifecycle error. */
+  function linuxVmSession(sessionId: string): LinuxVmSession {
+    const session = linuxVmSessions.get(sessionId);
+    if (session === undefined) {
+      throw new Error(`Linux VM terminal session does not exist: ${sessionId}`);
+    }
+    return session;
+  }
+
+  /** Adds bytes to one session's terminal output buffer without dropping data. */
+  function appendLinuxVmOutput(session: LinuxVmSession, bytes: Uint8Array): void {
+    const requiredLength = session.outputLength + bytes.length;
+    if (requiredLength > linuxVmOutputLimit) {
+      failLinuxVmSession(session, new Error("Linux VM terminal output exceeded 4 MiB"));
       return;
     }
-    globalThis.__operitLocalInferenceTest = {
-      putRuntimeFile(path, content) {
+    if (requiredLength > session.output.length) {
+      const nextLength = Math.min(
+        linuxVmOutputLimit,
+        Math.max(requiredLength, session.output.length * 2),
+      );
+      const expanded = new Uint8Array(nextLength);
+      expanded.set(session.output.subarray(0, session.outputLength));
+      session.output = expanded;
+    }
+    session.output.set(bytes, session.outputLength);
+    session.outputLength = requiredLength;
+  }
+
+  /** Marks one Linux VM session as failed and makes the reason visible in its terminal stream. */
+  function failLinuxVmSession(session: LinuxVmSession, error: unknown): void {
+    if (session.state === "closed" || session.state === "failed") {
+      return;
+    }
+    session.state = "failed";
+    session.exitCode = 1;
+    const message = error instanceof Error ? error.message : String(error);
+    const output = textEncoder.encode(`\r\n[Linux VM failed: ${message}]\r\n`);
+    if (session.outputLength + output.length <= linuxVmOutputLimit) {
+      appendLinuxVmOutput(session, output);
+    }
+    if (session.emulator !== null) {
+      void session.emulator.destroy().catch((destroyError: unknown) => {
+        console.error("Failed to stop Linux VM terminal after an error", destroyError);
+      });
+    }
+  }
+
+  /** Flushes terminal input accepted before the Linux guest reaches its running state. */
+  function flushLinuxVmInput(session: LinuxVmSession): void {
+    const emulator = session.emulator;
+    if (emulator === null || session.state !== "running") {
+      return;
+    }
+    for (const data of session.inputQueue) {
+      emulator.serial_send_bytes(0, data);
+    }
+    session.inputQueue = [];
+  }
+
+  /** Starts the v86 Linux guest and connects its virtual serial console to one terminal session. */
+  async function startLinuxVm(session: LinuxVmSession): Promise<void> {
+    try {
+      const modulePath = v86AssetUrl("libv86.mjs");
+      const module = await import(modulePath) as unknown as V86Module;
+      if (!linuxVmSessions.has(session.id) || session.state === "closed") {
+        return;
+      }
+      const emulator = new module.V86({
+        wasm_path: v86AssetUrl("v86.wasm"),
+        memory_size: 128 * 1024 * 1024,
+        vga_memory_size: 2 * 1024 * 1024,
+        bios: { url: v86AssetUrl("seabios.bin") },
+        vga_bios: { url: v86AssetUrl("vgabios.bin") },
+        bzimage: { url: v86AssetUrl("buildroot-bzimage.bin") },
+        cmdline: "console=ttyS0 tsc=reliable mitigations=off random.trust_cpu=on",
+        autostart: true,
+        disable_keyboard: true,
+        disable_mouse: true,
+        disable_speaker: true,
+      });
+      session.emulator = emulator;
+      emulator.add_listener("serial0-output-byte", (value: unknown) => {
+        if (typeof value === "number" && session.state !== "closed") {
+          appendLinuxVmOutput(session, Uint8Array.of(value & 0xff));
+        }
+      });
+      emulator.add_listener("emulator-started", () => {
+        if (session.state === "starting") {
+          session.state = "running";
+          flushLinuxVmInput(session);
+        }
+      });
+      emulator.add_listener("emulator-stopped", () => {
+        if (session.state !== "closed" && session.state !== "failed") {
+          session.state = "closed";
+          session.exitCode = 0;
+        }
+      });
+      emulator.add_listener("download-error", (value: unknown) => {
+        failLinuxVmSession(session, new Error(`Linux VM asset download failed: ${String(value)}`));
+      });
+    } catch (error) {
+      failLinuxVmSession(session, error);
+    }
+  }
+
+  /** Allocates one browser-local Linux VM terminal session and begins guest boot. */
+  function startLinuxVmSession(sessionId: string, rows: number, cols: number): void {
+    if (linuxVmSessions.has(sessionId)) {
+      throw new Error(`Linux VM terminal session already exists: ${sessionId}`);
+    }
+    if (!Number.isInteger(rows) || rows < 1 || !Number.isInteger(cols) || cols < 1) {
+      throw new Error(`Invalid Linux VM terminal dimensions: ${rows}x${cols}`);
+    }
+    const session: LinuxVmSession = {
+      id: sessionId,
+      emulator: null,
+      state: "starting",
+      exitCode: null,
+      rows,
+      cols,
+      output: new Uint8Array(4096),
+      outputLength: 0,
+      inputQueue: [],
+    };
+    linuxVmSessions.set(sessionId, session);
+    void startLinuxVm(session);
+  }
+
+  /** Drains the raw virtual serial bytes emitted by one Linux VM terminal session. */
+  function readLinuxVmPty(sessionId: string): Uint8Array {
+    const session = linuxVmSession(sessionId);
+    const output = session.output.slice(0, session.outputLength);
+    session.outputLength = 0;
+    return output;
+  }
+
+  /** Writes raw terminal bytes into one Linux guest virtual serial console. */
+  function writeLinuxVmPty(sessionId: string, data: Uint8Array): number {
+    const session = linuxVmSession(sessionId);
+    if (session.state === "failed" || session.state === "closed") {
+      throw new Error(`Linux VM terminal is not running: ${sessionId}`);
+    }
+    const bytes = new Uint8Array(data);
+    if (session.state === "starting") {
+      session.inputQueue.push(bytes);
+    } else {
+      const emulator = session.emulator;
+      if (emulator === null) {
+        throw new Error(`Linux VM terminal emulator is unavailable: ${sessionId}`);
+      }
+      emulator.serial_send_bytes(0, bytes);
+    }
+    return bytes.length;
+  }
+
+  /** Records the terminal dimensions requested by the browser-side terminal renderer. */
+  function resizeLinuxVmPty(sessionId: string, rows: number, cols: number): void {
+    const session = linuxVmSession(sessionId);
+    if (!Number.isInteger(rows) || rows < 1 || !Number.isInteger(cols) || cols < 1) {
+      throw new Error(`Invalid Linux VM terminal dimensions: ${rows}x${cols}`);
+    }
+    session.rows = rows;
+    session.cols = cols;
+  }
+
+  /** Returns the Linux VM process exit code once the virtual machine has stopped. */
+  function linuxVmPtyExitCode(sessionId: string): number | null {
+    return linuxVmSession(sessionId).exitCode;
+  }
+
+  /** Stops and releases one browser-local Linux VM terminal session. */
+  function closeLinuxVmPty(sessionId: string): void {
+    const session = linuxVmSession(sessionId);
+    session.state = "closed";
+    linuxVmSessions.delete(sessionId);
+    if (session.emulator !== null) {
+      void session.emulator.destroy().catch((error: unknown) => {
+        console.error("Failed to stop Linux VM terminal", error);
+      });
+    }
+  }
+
+  // Installs an isolated smoke-test API when explicitly requested by the test page.
+  function installWebLocalInferenceTestApi(): void {
+    if (runtimeGlobal.__OPERIT_LOCAL_INFERENCE_TEST__ !== true) {
+      return;
+    }
+    runtimeGlobal.__operitLocalInferenceTest = {
+      putRuntimeFile(path: string, content: Uint8Array) {
         storageCache.set(key(runtimePrefix, path), new Uint8Array(content));
       },
-      readRuntimeFile(path) {
+      readRuntimeFile(path: string): Uint8Array {
         return storageRead(runtimePrefix, path);
       },
       async initialize() {
         webLocalInferenceReadyPromise = null;
         await ensureWebLocalInference();
       },
-      transcribe(request) {
+      transcribe(request: AsrSpeechRequest) {
         return JSON.parse(transcribeWebLocalSpeech(JSON.stringify(request)));
       },
-      synthesize(request) {
+      synthesize(request: TtsSpeechRequest) {
         return JSON.parse(synthesizeWebLocalSpeech(JSON.stringify(request)));
       },
       dispose() {
@@ -2190,41 +2905,67 @@ self.onmessage = (event) => {
 
   installWebLocalInferenceTestApi();
 
-  globalThis.__operitHost = {
+  runtimeGlobal.__operitHost = {
+    terminal: {
+      /** Starts one browser-local Linux VM terminal session. */
+      startPty(sessionId: string, rows: number, cols: number): void {
+        startLinuxVmSession(sessionId, rows, cols);
+      },
+      /** Drains raw virtual serial bytes from one browser-local Linux VM terminal. */
+      readPty(sessionId: string): Uint8Array {
+        return readLinuxVmPty(sessionId);
+      },
+      /** Writes raw terminal bytes into one browser-local Linux VM terminal. */
+      writePty(sessionId: string, data: Uint8Array): number {
+        return writeLinuxVmPty(sessionId, data);
+      },
+      /** Records terminal dimensions requested for one browser-local Linux VM terminal. */
+      resizePty(sessionId: string, rows: number, cols: number): void {
+        resizeLinuxVmPty(sessionId, rows, cols);
+      },
+      /** Returns one browser-local Linux VM terminal exit code after shutdown. */
+      exitCode(sessionId: string): number | null {
+        return linuxVmPtyExitCode(sessionId);
+      },
+      /** Stops and releases one browser-local Linux VM terminal. */
+      closePty(sessionId: string): void {
+        closeLinuxVmPty(sessionId);
+      },
+    },
     runtimeStorage: {
-      readBytes(path) {
+      readBytes(path: string): Uint8Array {
         return storageRead(runtimePrefix, path);
       },
-      writeBytes(path, content) {
+      writeBytes(path: string, content: Uint8Array): void {
         storageWrite(runtimePrefix, path, content);
       },
-      delete(path, recursive) {
+      delete(path: string, recursive: boolean): void {
         storageDelete(runtimePrefix, path, recursive);
       },
-      exists(path) {
+      exists(path: string): boolean {
         return storageExists(runtimePrefix, path);
       },
-      list(prefix) {
+      list(prefix: string): FileStorageEntry[] {
         return storageList(runtimePrefix, prefix);
       },
     },
     hostSecretStore: {
       // Reads a host-owned secret from browser-local protected storage.
-      readSecret(key) {
+      readSecret(key: string): Uint8Array | null {
         const value = localStorage.getItem(`${secretPrefix}${key}`);
         return value === null ? null : base64ToBytes(value);
       },
       // Writes a host-owned secret into browser-local protected storage.
-      writeSecret(key, content) {
+      writeSecret(key: string, content: Uint8Array): void {
         localStorage.setItem(`${secretPrefix}${key}`, bytesToBase64(new Uint8Array(content)));
       },
       // Deletes a host-owned secret from browser-local protected storage.
-      deleteSecret(key) {
+      deleteSecret(key: string): void {
         localStorage.removeItem(`${secretPrefix}${key}`);
       },
     },
     sqlite: {
-      open(path) {
+      open(path: string): string {
         if (!SQLite) {
           throw new Error("sqlite host is not initialized");
         }
@@ -2236,44 +2977,52 @@ self.onmessage = (event) => {
         });
         return id;
       },
-      executeBatch(id, sql) {
+      executeBatch(id: string, sql: string): void {
         const connection = sqliteConnection(id);
         connection.db.exec(sql);
         saveSqliteDatabase(connection);
       },
-      execute(id, sql, params) {
+      execute(id: string, sql: string, params: SqliteParameter[]): number {
         const connection = sqliteConnection(id);
         connection.db.run(sql, sqliteParams(params));
         saveSqliteDatabase(connection);
         return connection.db.getRowsModified();
       },
-      query(id, sql, params) {
+      query(id: string, sql: string, params: SqliteParameter[]): SqliteQueryRow[] {
         return querySqlite(sqliteConnection(id).db, sql, params);
       },
-      lastInsertRowId(id) {
+      lastInsertRowId(id: string): string | number {
         const rows = querySqlite(sqliteConnection(id).db, "SELECT last_insert_rowid()", []);
-        return rows.length === 0 ? "0" : rows[0].values[0].value;
+        const value = rows[0]?.values[0];
+        return value !== undefined &&
+          (value.kind === "integer" || value.kind === "real" || value.kind === "text")
+          ? value.value
+          : "0";
       },
-      beginTransaction(id) {
+      beginTransaction(id: string): string {
         const transactionId = `sqlite-tx-${++sqliteTransactionIndex}`;
         const connection = sqliteConnection(id);
         connection.db.run("BEGIN IMMEDIATE");
         sqliteTransactions.set(transactionId, connection);
         return transactionId;
       },
-      transactionExecute(id, sql, params) {
+      transactionExecute(id: string, sql: string, params: SqliteParameter[]): number {
         const connection = sqliteTransaction(id);
         connection.db.run(sql, sqliteParams(params));
         return connection.db.getRowsModified();
       },
-      transactionQuery(id, sql, params) {
+      transactionQuery(id: string, sql: string, params: SqliteParameter[]): SqliteQueryRow[] {
         return querySqlite(sqliteTransaction(id).db, sql, params);
       },
-      transactionLastInsertRowId(id) {
+      transactionLastInsertRowId(id: string): string | number {
         const rows = querySqlite(sqliteTransaction(id).db, "SELECT last_insert_rowid()", []);
-        return rows.length === 0 ? "0" : rows[0].values[0].value;
+        const value = rows[0]?.values[0];
+        return value !== undefined &&
+          (value.kind === "integer" || value.kind === "real" || value.kind === "text")
+          ? value.value
+          : "0";
       },
-      commitTransaction(id) {
+      commitTransaction(id: string): void {
         const connection = sqliteTransaction(id);
         connection.db.run("COMMIT");
         saveSqliteDatabase(connection);
@@ -2282,7 +3031,7 @@ self.onmessage = (event) => {
     },
     fileSystem: {
       validatePath() {},
-      listFiles(path) {
+      listFiles(path: string) {
         return listFileDirectory(path).map((entry) => ({
           name: entry.path.split("/").pop() || entry.path,
           isDirectory: entry.isDirectory,
@@ -2291,29 +3040,29 @@ self.onmessage = (event) => {
           lastModified: nowIso(),
         }));
       },
-      readFile(path) {
+      readFile(path: string): string {
         return textDecoder.decode(storageRead(filePrefix, path));
       },
-      readFileWithLimit(path, maxBytes) {
+      readFileWithLimit(path: string, maxBytes: number): string {
         return textDecoder.decode(storageRead(filePrefix, path).slice(0, maxBytes));
       },
-      readFileBytes(path) {
+      readFileBytes(path: string): Uint8Array {
         return storageRead(filePrefix, path);
       },
-      writeFile(path, content, append) {
+      writeFile(path: string, content: string, append: boolean): void {
         const previous = append && storageExists(filePrefix, path)
           ? textDecoder.decode(storageRead(filePrefix, path))
           : "";
         storageWrite(filePrefix, path, textEncoder.encode(previous + content));
       },
-      writeFileBytes(path, content) {
+      writeFileBytes(path: string, content: Uint8Array): void {
         storageWrite(filePrefix, path, content);
       },
-      deleteFile(path, recursive) {
+      deleteFile(path: string, recursive: boolean): void {
         storageDelete(filePrefix, path, recursive);
         deleteFileDirectory(path, recursive);
       },
-      fileExists(path) {
+      fileExists(path: string) {
         const itemKey = key(filePrefix, path);
         const isDirectory = !storageCache.has(itemKey) && fileDirectoryExists(path);
         const exists = storageCache.has(itemKey) || isDirectory;
@@ -2323,22 +3072,22 @@ self.onmessage = (event) => {
           size: storageCache.has(itemKey) ? storageRead(filePrefix, path).length : 0,
         };
       },
-      moveFile(source, destination) {
+      moveFile(source: string, destination: string): void {
         const content = storageRead(filePrefix, source);
         storageWrite(filePrefix, destination, content);
         storageDelete(filePrefix, source, false);
       },
-      copyFile(source, destination) {
+      copyFile(source: string, destination: string): void {
         storageWrite(filePrefix, destination, storageRead(filePrefix, source));
       },
-      makeDirectory(path, createParents) {
+      makeDirectory(path: string, createParents: boolean): void {
         makeFileDirectory(path, createParents);
       },
-      findFiles() {
+      findFiles(): FileStorageEntry[] {
         return [];
       },
       fileInfo,
-      grepCode() {
+      grepCode(): { matches: string[]; totalMatches: number; filesSearched: number } {
         return { matches: [], totalMatches: 0, filesSearched: 0 };
       },
       zipFiles() {
@@ -2351,29 +3100,29 @@ self.onmessage = (event) => {
       shareFile() {},
     },
     webVisit: {
-      visitWeb(request) {
+      visitWeb(request: { url: string }) {
         return {
           url: request.url,
           title: request.url,
           content: "",
-          metadata: [],
-          links: [],
-          imageLinks: [],
+          metadata: [] as string[],
+          links: [] as string[],
+          imageLinks: [] as string[],
         };
       },
     },
     localInference: {
       // Transcribes one local speech request through the installed browser runner.
-      transcribeLocalSpeech(requestJson) {
+      transcribeLocalSpeech(requestJson: string): string {
         return localInferenceRunner("transcribeLocalSpeech")(requestJson);
       },
       // Synthesizes one local speech request through the installed browser runner.
-      synthesizeLocalSpeech(requestJson) {
+      synthesizeLocalSpeech(requestJson: string): string {
         return localInferenceRunner("synthesizeLocalSpeech")(requestJson);
       },
     },
     http: {
-      executeHttpRequest(request) {
+      executeHttpRequest(request: HttpRequest) {
         const xhr = new XMLHttpRequest();
         xhr.open(request.method, request.url, false);
         xhr.overrideMimeType("text/plain; charset=x-user-defined");
@@ -2399,7 +3148,7 @@ self.onmessage = (event) => {
           }
           body = form;
         } else if (request.body && request.body.length) {
-          body = new Uint8Array(request.body);
+          body = ownedBytes(request.body);
         }
         xhr.send(body);
         const raw = xhr.responseText || "";
@@ -2422,7 +3171,7 @@ self.onmessage = (event) => {
           body: responseBytes,
         };
       },
-      downloadFile(request) {
+      downloadFile(request: DownloadRequest) {
         const xhr = new XMLHttpRequest();
         xhr.open("GET", request.url, false);
         xhr.overrideMimeType("text/plain; charset=x-user-defined");
@@ -2456,7 +3205,7 @@ self.onmessage = (event) => {
       runtimeWorkspaceDir() {
         return "operit2/workspace";
       },
-      resolveRuntimeExecutable(program) {
+      resolveRuntimeExecutable(program: string): string {
         return program;
       },
       startRuntimeProcess() {
@@ -2469,7 +3218,7 @@ self.onmessage = (event) => {
     managedRuntimeProcess: {
       writeLine() {},
       writeLines() {},
-      readStdoutLine() {
+      readStdoutLine(): null {
         return null;
       },
       drainStderr() {
@@ -2484,37 +3233,42 @@ self.onmessage = (event) => {
     bluetooth,
     ttsPlayback,
     systemOperation: {
-      toast(message) {
+      toast(message: string): void {
         console.info("[Operit toast]", message);
       },
-      sendNotification(title, message) {
+      sendNotification(title: string, message: string): void {
         console.info("[Operit notification]", title, message);
       },
-      modifySystemSetting(namespace, setting, value) {
+      modifySystemSetting(namespace: string, setting: string, value: string) {
         return { namespace, setting, value };
       },
-      getSystemSetting(namespace, setting) {
+      getSystemSetting(namespace: string, setting: string) {
         return { namespace, setting, value: "" };
       },
-      installApp(path) {
+      installApp(path: string) {
         return { operationType: "install", packageName: path, success: false, details: "" };
       },
-      uninstallApp(packageName) {
+      uninstallApp(packageName: string) {
         return { operationType: "uninstall", packageName, success: false, details: "" };
       },
-      listInstalledApps(includeSystemApps) {
-        return { includesSystemApps: includeSystemApps, packages: [] };
+      listInstalledApps(includeSystemApps: boolean) {
+        return { includesSystemApps: includeSystemApps, packages: [] as string[] };
       },
-      startApp(packageName) {
+      startApp(packageName: string) {
         return { operationType: "start", packageName, success: false, details: "" };
       },
-      stopApp(packageName) {
+      stopApp(packageName: string) {
         return { operationType: "stop", packageName, success: false, details: "" };
       },
       getNotifications() {
-        return { notifications: [], timestamp: Date.now() };
+        return { notifications: [] as string[], timestamp: Date.now() };
       },
-      getAppUsageTime(packageName, sinceHours, limit, includeSystemApps) {
+      getAppUsageTime(
+        packageName: string,
+        sinceHours: number,
+        limit: number,
+        includeSystemApps: boolean,
+      ) {
         return {
           startTime: Date.now(),
           endTime: Date.now(),
@@ -2522,7 +3276,7 @@ self.onmessage = (event) => {
           requestedPackageName: packageName,
           includesSystemApps: includeSystemApps,
           totalEntries: 0,
-          entries: [],
+          entries: [] as string[],
         };
       },
       getDeviceLocation() {
@@ -2562,10 +3316,13 @@ self.onmessage = (event) => {
     },
   };
 
-  let bridgePromise;
+  let bridgePromise: Promise<RuntimeBridge> | null = null;
 
   /** Initializes the WebAssembly bridge with its browser WASI host. */
-  async function initializeWasmBridge(module, wasi) {
+  async function initializeWasmBridge(
+    module: WasmBridgeModule,
+    wasi: WasiModule,
+  ): Promise<RuntimeBridge> {
     await ensureBrowserStorage();
     await ensureSqlite();
     await ensureWebLocalInference();
@@ -2576,34 +3333,37 @@ self.onmessage = (event) => {
 
   async function bridge() {
     if (!bridgePromise) {
-      bridgePromise = Promise.all([
-        import("./operit_flutter_bridge.js"),
-        import("./wasi_snapshot_preview1.js"),
-      ]).then(([module, wasi]) => initializeWasmBridge(module, wasi));
+      const wasmModule = importRuntimeScript("./operit_flutter_bridge.js") as Promise<WasmBridgeModule>;
+      const wasiModule = importRuntimeScript("./wasi_snapshot_preview1.js") as Promise<WasiModule>;
+      bridgePromise = Promise.all([wasmModule, wasiModule])
+        .then(([module, wasi]) => initializeWasmBridge(module, wasi));
     }
     return bridgePromise;
   }
 
-  globalThis.__operitRuntime = {
-    async call(request) {
+  runtimeGlobal.__operitRuntime = {
+    async call(request: Uint8Array): Promise<Uint8Array> {
       return (await bridge()).call(request);
     },
-    async pushOpen(request) {
+    async pushOpen(request: Uint8Array): Promise<Uint8Array> {
       return (await bridge()).pushOpen(request);
     },
-    async pushItem(item) {
+    async pushItem(item: Uint8Array): Promise<Uint8Array> {
       return (await bridge()).pushItem(item);
     },
-    async pushClose(pushId) {
+    async pushClose(pushId: string): Promise<Uint8Array> {
       return (await bridge()).pushClose(pushId);
     },
-    async watchSnapshot(request) {
+    async watchSnapshot(request: Uint8Array): Promise<Uint8Array> {
       return (await bridge()).watchSnapshot(request);
     },
-    async watchStream(request, onEvent) {
+    async watchStream(
+      request: Uint8Array,
+      onEvent: (event: Uint8Array) => void,
+    ): Promise<Uint8Array> {
       return (await bridge()).watchStream(request, onEvent);
     },
-    async closeWatchStream(subscriptionId) {
+    async closeWatchStream(subscriptionId: string): Promise<Uint8Array> {
       return (await bridge()).closeWatchStream(subscriptionId);
     },
   };

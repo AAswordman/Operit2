@@ -505,11 +505,10 @@ impl SkillManager {
         if finalDirInfo.exists {
             return format!("Skill '{}' already exists", finalDirName);
         }
-        if let Err(error) = self.fileSystemHost.copyFile(
-            &hostPath(selectedSkillDir),
-            &finalDirPath,
-            true,
-        ) {
+        if let Err(error) =
+            self.fileSystemHost
+                .copyFile(&hostPath(selectedSkillDir), &finalDirPath, true)
+        {
             return format!("Failed to import skill: {}", error);
         }
 
@@ -687,8 +686,8 @@ fn unzipBytesToDirectory(
     zipBytes: &[u8],
     destinationDir: &Path,
 ) -> Result<(), String> {
-    let mut archive = zip::ZipArchive::new(Cursor::new(zipBytes))
-        .map_err(|error| error.to_string())?;
+    let mut archive =
+        zip::ZipArchive::new(Cursor::new(zipBytes)).map_err(|error| error.to_string())?;
 
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
@@ -746,11 +745,7 @@ fn directSkillFile(fileSystemHost: &dyn FileSystemHost, root: &Path) -> Option<P
 }
 
 #[allow(non_snake_case)]
-fn findSkillFiles(
-    fileSystemHost: &dyn FileSystemHost,
-    root: &Path,
-    limit: usize,
-) -> Vec<PathBuf> {
+fn findSkillFiles(fileSystemHost: &dyn FileSystemHost, root: &Path, limit: usize) -> Vec<PathBuf> {
     let mut result = Vec::new();
     findSkillFilesInner(fileSystemHost, root, limit, &mut result);
     result
@@ -775,7 +770,9 @@ fn findSkillFilesInner(
         }
         let path = root.join(&child.name);
         if !child.isDirectory {
-            if child.name.eq_ignore_ascii_case("SKILL.md") || child.name.eq_ignore_ascii_case("skill.md") {
+            if child.name.eq_ignore_ascii_case("SKILL.md")
+                || child.name.eq_ignore_ascii_case("skill.md")
+            {
                 result.push(path);
             }
         } else {

@@ -88,6 +88,7 @@ void main(List<String> _) async {
         error: error,
         stackTrace: stackTrace,
       );
+      runApp(const FatalErrorApplication());
     },
   );
 }
@@ -103,7 +104,7 @@ void _runMainWindow() {
         thickness: 36,
         quality: GlassQuality.standard,
       ),
-      child: const OperitApp(),
+      child: const FatalErrorHost(child: OperitApp()),
     ),
   );
 }
@@ -119,7 +120,7 @@ void _runDetachedChatWindow(DetachedChatWindowArguments arguments) {
         thickness: 36,
         quality: GlassQuality.standard,
       ),
-      child: DetachedChatWindowApp(arguments: arguments),
+      child: FatalErrorHost(child: DetachedChatWindowApp(arguments: arguments)),
     ),
   );
 }

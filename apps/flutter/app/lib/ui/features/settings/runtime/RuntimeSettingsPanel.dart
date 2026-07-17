@@ -8,8 +8,8 @@ import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/runtime/RemotePairingBridge.dart';
 import '../../../../core/runtime/RuntimeAutoSyncManager.dart';
 import '../../../../core/runtime/RuntimeConnectionManager.dart';
-import '../../../../core/link_host/LinkHostServer.dart';
-import '../../../../core/link_host/LinkHostConfig.dart';
+import '../../../../core/link_access/LinkAccessHost.dart';
+import '../../../../core/link_access/LinkAccessHostConfig.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
@@ -33,9 +33,6 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       <RuntimeDiscoveredDevice>[];
   bool _scanning = false;
   String? _scanError;
-  Map<String, InboundLinkSessionRecord> _acceptedSessions =
-      <String, InboundLinkSessionRecord>{};
-  String? _pendingPairingId;
   Map<String, _PairedRemoteProbeState> _pairedRemoteStates =
       <String, _PairedRemoteProbeState>{};
   int _pairedRemoteProbeGeneration = 0;
@@ -49,9 +46,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     super.initState();
     _manager.addListener(_onManagerChanged);
     _autoSync.addListener(_onAutoSyncChanged);
-    LinkHostServer.instance.addListener(_onWebAccessChanged);
     unawaited(_autoSync.initialize());
-    _loadAcceptedSessions();
     _loadDiscoverable();
     unawaited(_refreshPairedRemoteStates());
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -65,7 +60,6 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   void dispose() {
     _manager.removeListener(_onManagerChanged);
     _autoSync.removeListener(_onAutoSyncChanged);
-    LinkHostServer.instance.removeListener(_onWebAccessChanged);
     super.dispose();
   }
 
@@ -82,50 +76,8 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
   }
 
-  void _onWebAccessChanged() {
-    final code = LinkHostServer.instance.lastPairingCode;
-    if (code != null && _pendingPairingId == null) {
-      // A new pairing code appeared - someone started pairing
-      _pendingPairingId = code.pairingId;
-      // Defer a check to see if pairing completes or gets rejected
-      Future.delayed(const Duration(seconds: 12), () {
-        if (_pendingPairingId != null && mounted) {
-          _loadAcceptedSessions();
-        }
-      });
-    }
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
-  Future<void> _loadAcceptedSessions() async {
-    final sessions = await InboundLinkSessionStore.read();
-    if (mounted) {
-      if (_pendingPairingId != null) {
-        final currentCount = sessions.length;
-        final previousCount = _acceptedSessions.length;
-        if (currentCount <= previousCount) {
-          // Pairing code was consumed but no accepted session was created
-          // -> the connection was rejected
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                AppLocalizations.of(context)!.settingsRuntimePairingRejected,
-              ),
-            ),
-          );
-        }
-        _pendingPairingId = null;
-      }
-      setState(() {
-        _acceptedSessions = sessions;
-      });
-    }
-  }
-
   Future<void> _loadDiscoverable() async {
-    final config = await LinkHostConfigStore.read();
+    final config = await LinkAccessHostConfigStore.read();
     if (mounted) {
       setState(() => _discoverable = config.discoveryEnabled);
     }
@@ -307,29 +259,12 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
   }
 
-  Future<void> _deleteAcceptedSession(String sessionId) async {
-    setState(() => _busy = true);
-    try {
-      final sessions = Map<String, InboundLinkSessionRecord>.of(
-        _acceptedSessions,
-      )..remove(sessionId);
-      await InboundLinkSessionStore.write(sessions);
-      if (mounted) {
-        setState(() => _acceptedSessions = sessions);
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
   Future<void> _setDiscoverable(bool value) async {
     final l10n = AppLocalizations.of(context)!;
     setState(() => _busy = true);
     try {
-      final config = await LinkHostConfigStore.read();
-      final server = LinkHostServer.instance;
+      final config = await LinkAccessHostConfigStore.read();
+      final server = LinkAccessHost.instance;
       if (value) {
         final next = _linkHostConfigForWrite(
           config.copyWith(
@@ -338,7 +273,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
           ),
         );
         await server.start(next);
-        await LinkHostConfigStore.write(next);
+        await LinkAccessHostConfigStore.write(next);
       } else {
         final next = _linkHostConfigForWrite(
           config.copyWith(
@@ -348,10 +283,10 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
         );
         if (config.webAccessEnabled) {
           await server.start(next);
-          await LinkHostConfigStore.write(next);
+          await LinkAccessHostConfigStore.write(next);
         } else {
           await server.stop(updateConfig: false);
-          await LinkHostConfigStore.write(next);
+          await LinkAccessHostConfigStore.write(next);
         }
       }
       if (mounted) {
@@ -385,7 +320,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       _discoveredDevices = <RuntimeDiscoveredDevice>[];
     });
     try {
-      final json = await LinkHostServer.instance.discoverDevices(2000);
+      final json = await LinkAccessHost.instance.discoverDevices(2000);
       final list = (jsonDecode(json) as List<dynamic>)
           .cast<Map<String, Object?>>();
       final devices = list
@@ -414,7 +349,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   Future<void> _refreshPairedRemoteBaseUrls(
     List<RuntimeDiscoveredDevice> devices,
   ) async {
-    final localDeviceId = await LinkHostDeviceIdStore.read();
+    final localDeviceId = LinkAccessHost.instance.deviceId;
     for (final device in devices) {
       if (device.deviceId == localDeviceId) {
         continue;
@@ -434,7 +369,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   Future<List<RuntimeDiscoveredDevice>> _visibleDiscoveredDevices(
     List<RuntimeDiscoveredDevice> devices,
   ) async {
-    final localDeviceId = await LinkHostDeviceIdStore.read();
+    final localDeviceId = LinkAccessHost.instance.deviceId;
     final visibleDevices = <RuntimeDiscoveredDevice>[];
     final checkedStates = <String, _PairedRemoteProbeState>{};
     for (final device in devices) {
@@ -606,16 +541,6 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
             onAutoSyncChanged: _setRemoteAutoSync,
             onDelete: _deletePairedRemote,
           ),
-          if (_acceptedSessions.isNotEmpty)
-            ..._acceptedSessions.entries.map(
-              (entry) => _AcceptedSessionTile(
-                sessionId: entry.key,
-                record: entry.value,
-                onDelete: _busy
-                    ? null
-                    : () => _deleteAcceptedSession(entry.key),
-              ),
-            ),
         ],
       ),
       _SectionCard(
@@ -718,9 +643,9 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   }
 }
 
-LinkHostConfig _linkHostConfigForWrite(LinkHostConfig config) {
-  if (config.portMode == LinkHostPortMode.automatic) {
-    return config.copyWith(bindAddress: LinkHostConfig.automaticBindAddress);
+LinkAccessHostConfig _linkHostConfigForWrite(LinkAccessHostConfig config) {
+  if (config.portMode == LinkAccessHostPortMode.automatic) {
+    return config.copyWith(bindAddress: LinkAccessHostConfig.automaticBindAddress);
   }
   return config;
 }
@@ -1050,39 +975,6 @@ class _RemoteProbeText extends StatelessWidget {
       style: Theme.of(context).textTheme.bodySmall?.copyWith(
         color: color,
         fontWeight: FontWeight.w700,
-      ),
-    );
-  }
-}
-
-class _AcceptedSessionTile extends StatelessWidget {
-  const _AcceptedSessionTile({
-    required this.sessionId,
-    required this.record,
-    required this.onDelete,
-  });
-
-  final String sessionId;
-  final InboundLinkSessionRecord record;
-  final VoidCallback? onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return ListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      leading: const Icon(Icons.devices_other_outlined),
-      title: Text(
-        record.deviceInfo.displayName,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(sessionId, maxLines: 1, overflow: TextOverflow.ellipsis),
-      trailing: IconButton(
-        tooltip: l10n.delete,
-        icon: const Icon(Icons.delete_outline),
-        onPressed: onDelete,
       ),
     );
   }

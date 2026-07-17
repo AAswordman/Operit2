@@ -27,7 +27,7 @@ impl HostRuntimeTaskSchedulerHost for WebHostRuntimeTaskSchedulerHost {
         _taskName: &str,
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()> {
-        wasm_bindgen_futures::spawn_local(task);
+        wasm_bindgen_futures::spawn_local(task());
         Ok(())
     }
 
@@ -49,7 +49,9 @@ impl HostRuntimeTaskSchedulerHost for WebHostRuntimeTaskSchedulerHost {
             .set_timeout_with_callback_and_timeout_and_arguments_0(function, delayMs)
             .map(|_| ())
             .map_err(|error| {
-                HostError::new(format!("schedule delayed browser runtime task failed: {error:?}"))
+                HostError::new(format!(
+                    "schedule delayed browser runtime task failed: {error:?}"
+                ))
             })
     }
 }

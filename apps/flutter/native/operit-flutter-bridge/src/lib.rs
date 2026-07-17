@@ -1,8 +1,8 @@
 #![allow(non_snake_case)]
 
+use std::any::Any;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 use std::ffi::{c_char, CStr, CString};
-use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -12,19 +12,15 @@ use std::time::Duration;
 use async_trait::async_trait;
 use operit_core_proxy::LocalCoreProxy;
 #[cfg(not(target_arch = "wasm32"))]
-mod access;
-
-#[cfg(not(target_arch = "wasm32"))]
 mod mdnss;
 
 #[cfg(not(target_arch = "wasm32"))]
-use access::{
-    link_token_hash, AcceptedRemoteSessionLoader, AcceptedRemoteSessionRecord,
-    AcceptedRemoteSessionStore, PairStartState, RemoteDeviceInfo, RemoteLinkClient,
-    RemoteLinkServer, RemoteLinkServerConfig, RemotePairingCodeRecord, RemotePairingCodeSink,
-    RemoteWebAccessConfig,
+use operit_link_access::{
+    link_token_hash, LinkAccessHostConfig, LinkAccessStore, PairStartState, RemoteDeviceInfo,
+    RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig, RemoteWebAccessConfig,
 };
 use operit_host_api::HostManager::HostManager;
+use operit_host_api::RuntimeStorageHost;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
     CoreLinkError, CoreLinkSharedClient, CorePushItem, CorePushRequest, CoreWatchRequest,
@@ -51,6 +47,7 @@ use operit_runtime::services::RuntimeHostInteractionService::{
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_tools::ToolExecutionManager::AITool;
+use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 #[cfg(target_arch = "wasm32")]
@@ -154,6 +151,7 @@ pub struct OperitFlutterBridge {
     #[cfg(not(target_arch = "wasm32"))]
     runtime: tokio::runtime::Runtime,
     proxyCore: Arc<LocalCoreProxy>,
+    runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
     #[cfg(not(target_arch = "wasm32"))]
     watchChannel: NativeWatchChannel,
     #[cfg(not(target_arch = "wasm32"))]
@@ -714,10 +712,12 @@ impl OperitFlutterBridge {
         )?;
         core.localApplicationMut().onCreate()?;
         install_permission_requester(&mut core);
+        let runtimeStorageHost = core.runtimeStorageHost();
         Ok(Self {
             #[cfg(not(target_arch = "wasm32"))]
             runtime,
             proxyCore: Arc::new(core),
+            runtimeStorageHost,
             #[cfg(not(target_arch = "wasm32"))]
             watchChannel: NativeWatchChannel::new(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1035,7 +1035,10 @@ impl OperitFlutterBridge {
         let session = self
             .runtime
             .block_on(pending.client.pairFinish(&pending.state, &pairingCode))?;
-        serde_json::to_string(&session.exportRecord()).map_err(|error| error.to_string())
+        let record = session.exportRecord();
+        LinkAccessStore::new(self.runtimeStorageHost.clone())
+            .saveOutboundSession(pairingId, record.clone())?;
+        serde_json::to_string(&record).map_err(|error| error.to_string())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1045,29 +1048,23 @@ impl OperitFlutterBridge {
         token: String,
         shutdownToken: String,
         webRoot: PathBuf,
-        deviceId: String,
-        acceptedSessionsJson: String,
-        acceptedSessionStorePath: PathBuf,
-        pairingCodePath: PathBuf,
         deviceInfo: RemoteDeviceInfo,
         enableWebAccess: bool,
         enableDiscovery: bool,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         self.stopWebAccessServer();
-        let acceptedSessions =
-            serde_json::from_str::<BTreeMap<String, AcceptedRemoteSessionRecord>>(
-                &acceptedSessionsJson,
-            )
-            .map_err(|error| format!("invalid accepted sessions JSON: {error}"))?;
-        let acceptedSessionLoaderPath = acceptedSessionStorePath.clone();
-        let acceptedSessionLoader: AcceptedRemoteSessionLoader =
-            Arc::new(move || load_accepted_remote_sessions(&acceptedSessionLoaderPath));
-        let acceptedSessionStore: AcceptedRemoteSessionStore =
-            Arc::new(move |sessionId, record| {
-                save_accepted_remote_session(&acceptedSessionStorePath, sessionId, record)
-            });
-        let pairingCodeSink: RemotePairingCodeSink =
-            Arc::new(move |record| save_remote_pairing_code(&pairingCodePath, record));
+        let accessStore = LinkAccessStore::new(self.runtimeStorageHost.clone());
+        let identity = accessStore.initializeIdentity(deviceInfo)?;
+        accessStore.saveHostConfig(&LinkAccessHostConfig {
+            bindAddress: bindAddress.clone(),
+            token: token.clone(),
+            webAccessEnabled: enableWebAccess,
+            discoveryEnabled: enableDiscovery,
+        })?;
+        let deviceId = identity.deviceId;
+        let deviceInfo = identity.deviceInfo;
+        let responseDeviceId = deviceId.clone();
+        let webAssetFileSystem = self.proxyCore.fileSystemHost();
         let address: SocketAddr = bindAddress
             .parse()
             .map_err(|error| format!("invalid bind address: {error}"))?;
@@ -1096,7 +1093,6 @@ impl OperitFlutterBridge {
         }
         let coreClient = SharedFlutterCoreClient {
             proxyCore: self.proxyCore.clone(),
-            runtimeHandle: self.runtime.handle().clone(),
         };
         let task = self.runtime.spawn(async move {
             RemoteLinkServer::serveWithListener(
@@ -1112,15 +1108,17 @@ impl OperitFlutterBridge {
                             token,
                             shutdownToken,
                             webRoot,
+                            readAsset: Arc::new(move |path| {
+                                webAssetFileSystem
+                                    .readFileBytes(&path.to_string_lossy())
+                                    .map_err(|error| error.to_string())
+                            }),
                         })
                     } else {
                         None
                     },
                     printStartupInfo: false,
-                    acceptedSessions,
-                    acceptedSessionLoader: Some(acceptedSessionLoader),
-                    acceptedSessionStore: Some(acceptedSessionStore),
-                    pairingCodeSink: Some(pairingCodeSink),
+                    accessStore,
                 },
                 listener,
                 address,
@@ -1131,7 +1129,7 @@ impl OperitFlutterBridge {
             .webAccessTask
             .lock()
             .expect("web access task mutex poisoned") = Some(task);
-        Ok(())
+        Ok(responseDeviceId)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1158,71 +1156,64 @@ impl OperitFlutterBridge {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn load_accepted_remote_sessions(
-    path: &PathBuf,
-) -> Result<BTreeMap<String, AcceptedRemoteSessionRecord>, String> {
-    if !path.exists() {
+/// Loads one string-keyed JSON record map from persistent storage.
+fn load_accepted_remote_sessions<T>(
+    storage: &dyn RuntimeStorageHost,
+    path: &str,
+) -> Result<BTreeMap<String, T>, String>
+where
+    T: DeserializeOwned,
+{
+    if !storage.exists(path).map_err(|error| error.to_string())? {
         return Ok(BTreeMap::new());
     }
-    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let content = storage.readBytes(path).map_err(|error| error.to_string())?;
+    let content = String::from_utf8(content).map_err(|error| error.to_string())?;
     serde_json::from_str(&content).map_err(|error| error.to_string())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn save_accepted_remote_session(
-    path: &PathBuf,
+/// Inserts one record into a string-keyed JSON record map.
+fn save_accepted_remote_session<T>(
+    storage: &dyn RuntimeStorageHost,
+    path: &str,
     sessionId: String,
-    record: AcceptedRemoteSessionRecord,
-) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("invalid accepted session path: {}", path.display()))?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let mut sessions = load_accepted_remote_sessions(path)?;
+    record: T,
+) -> Result<(), String>
+where
+    T: Serialize + DeserializeOwned,
+{
+    let mut sessions = load_accepted_remote_sessions(storage, path)?;
     sessions.insert(sessionId, record);
     let content = serde_json::to_string_pretty(&sessions).map_err(|error| error.to_string())?;
-    fs::write(path, content).map_err(|error| error.to_string())
+    storage
+        .writeBytes(path, content.as_bytes())
+        .map_err(|error| error.to_string())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn save_remote_pairing_code(path: &PathBuf, record: RemotePairingCodeRecord) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("invalid remote pairing code path: {}", path.display()))?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+/// Saves one JSON record for a remote pairing code.
+fn save_remote_pairing_code<T>(
+    storage: &dyn RuntimeStorageHost,
+    path: &str,
+    record: T,
+) -> Result<(), String>
+where
+    T: Serialize,
+{
     let content = serde_json::to_string_pretty(&record).map_err(|error| error.to_string())?;
-    fs::write(path, content).map_err(|error| error.to_string())
+    storage
+        .writeBytes(path, content.as_bytes())
+        .map_err(|error| error.to_string())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 struct SharedFlutterCoreClient {
     proxyCore: Arc<LocalCoreProxy>,
-    runtimeHandle: tokio::runtime::Handle,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[async_trait]
+#[async_trait(?Send)]
 impl CoreLinkClient for SharedFlutterCoreClient {
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
-        let requestId = request.requestId.clone();
-        let proxyCore = self.proxyCore.clone();
-        let runtimeHandle = self.runtimeHandle.clone();
-        match tokio::task::spawn_blocking(move || {
-            Ok::<CoreCallResponse, CoreLinkError>(
-                runtimeHandle.block_on(CoreLinkSharedClient::call(proxyCore.as_ref(), request)),
-            )
-        })
-        .await
-        {
-            Ok(Ok(response)) => response,
-            Ok(Err(error)) => CoreCallResponse::err(requestId, error),
-            Err(error) => CoreCallResponse::err(
-                requestId,
-                CoreLinkError::internal(format!("core call task join failed: {error}")),
-            ),
-        }
+        CoreLinkSharedClient::call(self.proxyCore.as_ref(), request).await
     }
 
     #[allow(non_snake_case)]
@@ -1230,28 +1221,11 @@ impl CoreLinkClient for SharedFlutterCoreClient {
         &mut self,
         request: CoreWatchRequest,
     ) -> Result<CoreEvent, CoreLinkError> {
-        let proxyCore = self.proxyCore.clone();
-        let runtimeHandle = self.runtimeHandle.clone();
-        tokio::task::spawn_blocking(move || {
-            runtimeHandle.block_on(CoreLinkSharedClient::watchSnapshot(
-                proxyCore.as_ref(),
-                request,
-            ))
-        })
-        .await
-        .map_err(|error| {
-            CoreLinkError::internal(format!("core watch snapshot task join failed: {error}"))
-        })?
+        CoreLinkSharedClient::watchSnapshot(self.proxyCore.as_ref(), request).await
     }
 
     async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
-        let proxyCore = self.proxyCore.clone();
-        let runtimeHandle = self.runtimeHandle.clone();
-        tokio::task::spawn_blocking(move || {
-            runtimeHandle.block_on(CoreLinkSharedClient::watch(proxyCore.as_ref(), request))
-        })
-        .await
-        .map_err(|error| CoreLinkError::internal(format!("core watch task join failed: {error}")))?
+        CoreLinkSharedClient::watch(self.proxyCore.as_ref(), request).await
     }
 }
 
@@ -2121,10 +2095,17 @@ fn create_local_core(
 #[no_mangle]
 #[cfg(not(target_env = "ohos"))]
 pub extern "C" fn operit_flutter_bridge_create() -> *mut OperitFlutterBridge {
-    match OperitFlutterBridge::new() {
-        Ok(bridge) => Box::into_raw(Box::new(bridge)),
-        Err(error) => {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(OperitFlutterBridge::new)) {
+        Ok(Ok(bridge)) => Box::into_raw(Box::new(bridge)),
+        Ok(Err(error)) => {
             set_last_create_error(error);
+            std::ptr::null_mut()
+        }
+        Err(payload) => {
+            set_last_create_error(format!(
+                "FATAL_CORE_PANIC: {}",
+                panic_payload_message(payload.as_ref())
+            ));
             std::ptr::null_mut()
         }
     }
@@ -2176,10 +2157,19 @@ pub unsafe extern "C" fn operit_flutter_bridge_create_with_storage_roots(
             return std::ptr::null_mut();
         }
     };
-    match OperitFlutterBridge::new_with_storage_roots(runtime_root, workspace_root) {
-        Ok(bridge) => Box::into_raw(Box::new(bridge)),
-        Err(error) => {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        OperitFlutterBridge::new_with_storage_roots(runtime_root, workspace_root)
+    })) {
+        Ok(Ok(bridge)) => Box::into_raw(Box::new(bridge)),
+        Ok(Err(error)) => {
             set_last_create_error(error);
+            std::ptr::null_mut()
+        }
+        Err(payload) => {
+            set_last_create_error(format!(
+                "FATAL_CORE_PANIC: {}",
+                panic_payload_message(payload.as_ref())
+            ));
             std::ptr::null_mut()
         }
     }
@@ -2283,7 +2273,35 @@ pub unsafe extern "C" fn operit_flutter_bridge_native_call(
         ));
     }
     let request_bytes = std::slice::from_raw_parts(request_ptr, request_len);
-    bytes_to_buffer(bridge_native_call(&*handle, request_bytes))
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bridge_native_call(&*handle, request_bytes)
+    })) {
+        Ok(response) => bytes_to_buffer(response),
+        Err(payload) => bytes_to_buffer(native_core_panic_result(payload.as_ref())),
+    }
+}
+
+/// Serializes one captured Core panic into the standard native Link result envelope.
+#[cfg(not(target_arch = "wasm32"))]
+fn native_core_panic_result(payload: &(dyn Any + Send)) -> Vec<u8> {
+    native_result_vec(Err::<operit_link::CoreValue, _>(CoreLinkError {
+        code: "FATAL_CORE_PANIC".to_string(),
+        message: format!("Core runtime panic: {}", panic_payload_message(payload)),
+        details: None,
+        location: None,
+        backtrace: Some(std::backtrace::Backtrace::force_capture().to_string()),
+    }))
+}
+
+/// Converts a Rust panic payload into the stable text carried by crash reports.
+fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "non-string panic payload".to_string()
 }
 
 /// Decodes and dispatches one compact native CoreProxy call.
@@ -2869,10 +2887,6 @@ pub unsafe extern "C" fn operit_flutter_bridge_start_web_access_server(
     token: *const c_char,
     shutdown_token: *const c_char,
     web_root: *const c_char,
-    device_id: *const c_char,
-    accepted_sessions_json: *const c_char,
-    accepted_session_store_path: *const c_char,
-    pairing_code_path: *const c_char,
     device_info_json: *const c_char,
     enable_web_access: *const c_char,
     enable_discovery: *const c_char,
@@ -2890,10 +2904,6 @@ pub unsafe extern "C" fn operit_flutter_bridge_start_web_access_server(
         ("token", token),
         ("shutdown token", shutdown_token),
         ("web root", web_root),
-        ("device id", device_id),
-        ("accepted sessions", accepted_sessions_json),
-        ("accepted session store path", accepted_session_store_path),
-        ("pairing code path", pairing_code_path),
         ("device info", device_info_json),
         ("enable web access", enable_web_access),
         ("enable discovery", enable_discovery),
@@ -2928,11 +2938,7 @@ pub unsafe extern "C" fn operit_flutter_bridge_start_web_access_server(
         values[1].clone(),
         values[2].clone(),
         PathBuf::from(&values[3]),
-        values[4].clone(),
-        values[5].clone(),
-        PathBuf::from(&values[6]),
-        PathBuf::from(&values[7]),
-        match serde_json::from_str::<RemoteDeviceInfo>(&values[8]) {
+        match serde_json::from_str::<RemoteDeviceInfo>(&values[4]) {
             Ok(value) => value,
             Err(error) => {
                 return string_to_ptr(
@@ -2944,10 +2950,12 @@ pub unsafe extern "C" fn operit_flutter_bridge_start_web_access_server(
                 );
             }
         },
-        values[9] == "true",
-        values[10] == "true",
+        values[5] == "true",
+        values[6] == "true",
     ) {
-        Ok(()) => string_to_ptr("{\"ok\":true}"),
+        Ok(deviceId) => string_to_ptr(
+            &serde_json::json!({"ok": true, "deviceId": deviceId}).to_string(),
+        ),
         Err(error) => string_to_ptr(
             &serde_json::to_string(&CoreLinkError::internal(error))
                 .expect("CoreLinkError must serialize"),
@@ -3401,11 +3409,21 @@ mod android_jni {
             set_last_create_error(error.to_string());
             return 0;
         }
-        match OperitFlutterBridge::new_with_storage_roots(runtime_root, workspace_root) {
-            Ok(bridge) => Box::into_raw(Box::new(bridge)) as jlong,
-            Err(error) => {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            OperitFlutterBridge::new_with_storage_roots(runtime_root, workspace_root)
+        })) {
+            Ok(Ok(bridge)) => Box::into_raw(Box::new(bridge)) as jlong,
+            Ok(Err(error)) => {
                 operit_host_android_native::clearAndroidHostSecretStoreBridge();
                 set_last_create_error(error);
+                0
+            }
+            Err(payload) => {
+                operit_host_android_native::clearAndroidHostSecretStoreBridge();
+                set_last_create_error(format!(
+                    "FATAL_CORE_PANIC: {}",
+                    panic_payload_message(payload.as_ref())
+                ));
                 0
             }
         }
@@ -3666,10 +3684,6 @@ mod android_jni {
         token: JString,
         shutdownToken: JString,
         webRoot: JString,
-        deviceId: JString,
-        acceptedSessionsJson: JString,
-        acceptedSessionStorePath: JString,
-        pairingCodePath: JString,
         deviceInfoJson: JString,
         enableWebAccess: JString,
         enableDiscovery: JString,
@@ -3735,58 +3749,6 @@ mod android_jni {
                 );
             }
         };
-        let deviceId = match env.get_string(&deviceId) {
-            Ok(value) => String::from(value),
-            Err(error) => {
-                return new_java_string(
-                    env,
-                    &serde_json::to_string(&CoreLinkError::new(
-                        "INVALID_ARGS",
-                        format!("invalid JNI deviceId: {error}"),
-                    ))
-                    .expect("CoreLinkError must serialize"),
-                );
-            }
-        };
-        let acceptedSessionsJson = match env.get_string(&acceptedSessionsJson) {
-            Ok(value) => String::from(value),
-            Err(error) => {
-                return new_java_string(
-                    env,
-                    &serde_json::to_string(&CoreLinkError::new(
-                        "INVALID_ARGS",
-                        format!("invalid JNI acceptedSessionsJson: {error}"),
-                    ))
-                    .expect("CoreLinkError must serialize"),
-                );
-            }
-        };
-        let acceptedSessionStorePath = match env.get_string(&acceptedSessionStorePath) {
-            Ok(value) => String::from(value),
-            Err(error) => {
-                return new_java_string(
-                    env,
-                    &serde_json::to_string(&CoreLinkError::new(
-                        "INVALID_ARGS",
-                        format!("invalid JNI acceptedSessionStorePath: {error}"),
-                    ))
-                    .expect("CoreLinkError must serialize"),
-                );
-            }
-        };
-        let pairingCodePath = match env.get_string(&pairingCodePath) {
-            Ok(value) => String::from(value),
-            Err(error) => {
-                return new_java_string(
-                    env,
-                    &serde_json::to_string(&CoreLinkError::new(
-                        "INVALID_ARGS",
-                        format!("invalid JNI pairingCodePath: {error}"),
-                    ))
-                    .expect("CoreLinkError must serialize"),
-                );
-            }
-        };
         let deviceInfoJson = match env.get_string(&deviceInfoJson) {
             Ok(value) => String::from(value),
             Err(error) => {
@@ -3838,15 +3800,14 @@ mod android_jni {
             token,
             shutdownToken,
             PathBuf::from(webRoot),
-            deviceId,
-            acceptedSessionsJson,
-            PathBuf::from(acceptedSessionStorePath),
-            PathBuf::from(pairingCodePath),
             deviceInfo,
             enableWebAccess,
             enableDiscovery,
         ) {
-            Ok(()) => new_java_string(env, "{\"ok\":true}"),
+            Ok(deviceId) => new_java_string(
+                env,
+                &serde_json::json!({"ok": true, "deviceId": deviceId}).to_string(),
+            ),
             Err(error) => new_java_string(
                 env,
                 &serde_json::to_string(&CoreLinkError::internal(error))

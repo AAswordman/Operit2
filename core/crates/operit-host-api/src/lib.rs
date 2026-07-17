@@ -1385,16 +1385,12 @@ pub trait HostRuntimeEventSchedulerHost: Send + Sync {
 /// Owns a one-shot runtime task that must execute outside Core's synchronous startup path.
 pub type HostRuntimeTask = Box<dyn FnOnce() + Send + 'static>;
 
-/// Owns an asynchronous runtime task scheduled by the platform event executor.
+/// Creates an asynchronous task on the executor that owns its future.
 ///
-/// Native schedulers move tasks to named threads, while browser futures remain
-/// local to the JavaScript event loop and therefore cannot require `Send`.
-#[cfg(not(target_arch = "wasm32"))]
-pub type HostRuntimeAsyncTask = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
-
-/// Owns a browser-local asynchronous runtime task.
-#[cfg(target_arch = "wasm32")]
-pub type HostRuntimeAsyncTask = Pin<Box<dyn Future<Output = ()> + 'static>>;
+/// The factory may cross a native thread boundary, but the returned future is
+/// created by that executor and remains local to it.
+pub type HostRuntimeAsyncTask =
+    Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + 'static>> + Send + 'static>;
 
 pub trait HostRuntimeTaskSchedulerHost: Send + Sync {
     /// Schedules a named one-shot runtime task through the platform execution mechanism.

@@ -243,12 +243,13 @@ interface RuntimeNativeModule {
   closeWatchStream(handle: bigint, subscriptionId: string): ArrayBuffer;
   startWebAccessServer(
     handle: bigint,
-    bindHost: string,
-    requestedPort: string,
-    authToken: string,
-    serverName: string,
-    advertise: string,
-    pairingCodePath: string
+    bindAddress: string,
+    token: string,
+    shutdownToken: string,
+    webRoot: string,
+    deviceInfo: string,
+    enableWebAccess: string,
+    enableDiscovery: string
   ): string;
   discoverDevices(handle: bigint, timeoutMs: string): string;
   stopWebAccessServer(handle: bigint): string;
@@ -943,15 +944,15 @@ export class OperitRuntimeChannel {
 
   /// Starts the Web Access server through the Rust bridge.
   private startWebAccessServer(call: MethodCall): string {
-    const pairingCodePath = `${this.context.filesDir}/runtime/link/pairing_codes.json`;
     return nativeBridge.startWebAccessServer(
       this.ensureRuntimeHandle(),
-      this.mapString(call, 'bindHost'),
-      `${this.mapNumber(call, 'requestedPort')}`,
-      this.mapString(call, 'authToken'),
-      this.mapString(call, 'serverName'),
-      `${this.mapBool(call, 'advertise')}`,
-      pairingCodePath
+      this.mapString(call, 'bindAddress'),
+      this.mapString(call, 'token'),
+      this.mapString(call, 'shutdownToken'),
+      this.mapString(call, 'webRoot'),
+      this.mapString(call, 'deviceInfo'),
+      this.mapString(call, 'enableWebAccess'),
+      this.mapString(call, 'enableDiscovery')
     );
   }
 

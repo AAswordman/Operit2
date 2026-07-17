@@ -1,9 +1,6 @@
-#[cfg(not(target_arch = "wasm32"))]
-use reqwest::blocking::Client;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use operit_host_api::HostManager::defaultHttpHost;
+use operit_host_api::HttpRequestData;
 use serde_json::Value;
-#[cfg(not(target_arch = "wasm32"))]
-use std::thread;
 
 use operit_model::BillingMode::BillingMode;
 use operit_model::ModelConfigData::{
@@ -15,6 +12,7 @@ use operit_model::ModelConfigData::{
 pub struct ModelListFetcher;
 
 impl ModelListFetcher {
+    /// Fetches provider models through the configured catalog operation.
     #[allow(non_snake_case)]
     pub fn fetch(
         provider: &ProviderProfile,
@@ -48,57 +46,53 @@ impl ModelListFetcher {
             .collect()
     }
 
+    /// Executes the provider model list request through the configured HTTP host.
     #[allow(non_snake_case)]
     fn requestJson(
         provider: &ProviderProfile,
         operation: &ProviderOperationSpec,
     ) -> Result<Value, String> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = provider;
-            let _ = operation;
-            return Err(
-                "list_models http_json operation is not available in wasm runtime".to_string(),
-            );
+        if operation.handlerId != "http_json" {
+            return Err(format!(
+                "unsupported provider operation handler: {}",
+                operation.handlerId
+            ));
+        }
+        if operation.method != "GET" {
+            return Err(format!(
+                "unsupported provider operation method: {}",
+                operation.method
+            ));
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if operation.handlerId != "http_json" {
-                return Err(format!(
-                    "unsupported provider operation handler: {}",
-                    operation.handlerId
-                ));
-            }
-            if operation.method != "GET" {
-                return Err(format!(
-                    "unsupported provider operation method: {}",
-                    operation.method
-                ));
-            }
-
-            let url = operationUrl(&provider.endpoint, &operation.path)?;
-            let headers = headers(provider, operation)?;
-            let response = thread::spawn(move || {
-                let response = Client::new()
-                    .get(url)
-                    .headers(headers)
-                    .send()
-                    .map_err(|error| error.to_string())?;
-                let status = response.status();
-                let body = response.text().map_err(|error| error.to_string())?;
-                Ok::<(reqwest::StatusCode, String), String>((status, body))
+        let response = defaultHttpHost()
+            .executeHttpRequest(HttpRequestData {
+                url: operationUrl(&provider.endpoint, &operation.path)?,
+                method: operation.method.clone(),
+                headers: headers(provider, operation)?,
+                body: Vec::new(),
+                formFields: Vec::new(),
+                fileParts: Vec::new(),
+                connectTimeoutSeconds: 30,
+                readTimeoutSeconds: 120,
+                followRedirects: true,
+                ignoreSsl: false,
+                proxyHost: String::new(),
+                proxyPort: 0,
             })
-            .join()
-            .map_err(|_| "list_models request thread panicked".to_string())??;
-            let (status, body) = response;
-            if !status.is_success() {
-                return Err(format!("list_models request failed: {status} {body}"));
-            }
-            serde_json::from_str(&body).map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        let body = String::from_utf8(response.body)
+            .map_err(|error| format!("list_models response body is not UTF-8: {error}"))?;
+        if response.statusCode < 200 || response.statusCode >= 300 {
+            return Err(format!(
+                "list_models request failed: {} {body}",
+                response.statusCode
+            ));
         }
+        serde_json::from_str(&body).map_err(|error| error.to_string())
     }
 
+    /// Parses one provider model item into a runtime model option.
     #[allow(non_snake_case)]
     fn parseItem(
         item: &Value,
@@ -126,6 +120,7 @@ impl ModelListFetcher {
     }
 }
 
+/// Builds the provider operation URL from the chat endpoint and operation path.
 #[allow(non_snake_case)]
 fn operationUrl(endpoint: &str, path: &str) -> Result<String, String> {
     let mut url = url::Url::parse(endpoint).map_err(|error| error.to_string())?;
@@ -135,16 +130,18 @@ fn operationUrl(endpoint: &str, path: &str) -> Result<String, String> {
     Ok(url.to_string())
 }
 
+/// Builds HTTP headers required by the provider operation.
+#[allow(non_snake_case)]
 fn headers(
     provider: &ProviderProfile,
     operation: &ProviderOperationSpec,
-) -> Result<HeaderMap, String> {
-    let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+) -> Result<Vec<(String, String)>, String> {
+    let mut headers = vec![("Content-Type".to_string(), "application/json".to_string())];
     if operation.requiresApiKey {
-        let value = HeaderValue::from_str(&format!("Bearer {}", apiKey(provider)?))
-            .map_err(|error| error.to_string())?;
-        headers.insert(AUTHORIZATION, value);
+        headers.push((
+            "Authorization".to_string(),
+            format!("Bearer {}", apiKey(provider)?),
+        ));
     }
     let customHeaders = serde_json::from_str::<serde_json::Value>(&provider.customHeaders)
         .map_err(|error| error.to_string())?;
@@ -155,14 +152,12 @@ fn headers(
         let headerValue = value
             .as_str()
             .ok_or_else(|| format!("customHeaders value for {name} is not a string"))?;
-        headers.insert(
-            HeaderName::from_bytes(name.as_bytes()).map_err(|error| error.to_string())?,
-            HeaderValue::from_str(headerValue).map_err(|error| error.to_string())?,
-        );
+        headers.push((name.clone(), headerValue.to_string()));
     }
     Ok(headers)
 }
 
+/// Selects the API key used by the provider model list request.
 #[allow(non_snake_case)]
 fn apiKey(provider: &ProviderProfile) -> Result<String, String> {
     if provider.useMultipleApiKeys {
@@ -185,6 +180,7 @@ fn apiKey(provider: &ProviderProfile) -> Result<String, String> {
     Ok(apiKey.to_string())
 }
 
+/// Reads pricing metadata from one provider model item.
 #[allow(non_snake_case)]
 fn readPricing(
     item: &Value,
@@ -217,6 +213,7 @@ fn readPricing(
     }
 }
 
+/// Reads context-window metadata from one provider model item.
 #[allow(non_snake_case)]
 fn readContext(
     item: &Value,
@@ -233,6 +230,7 @@ fn readContext(
     }
 }
 
+/// Reads model capability metadata from one provider model item.
 #[allow(non_snake_case)]
 fn readCapabilities(
     item: &Value,
@@ -255,6 +253,7 @@ fn readCapabilities(
     }))
 }
 
+/// Reads request-shape metadata from one provider model item.
 #[allow(non_snake_case)]
 fn readRequest(
     item: &Value,
@@ -270,11 +269,13 @@ fn readRequest(
     })
 }
 
+/// Reads a required string from one JSON path or literal spec.
 #[allow(non_snake_case)]
 fn readRequiredString(item: &Value, spec: &str) -> Result<String, String> {
     readOptionalString(item, Some(spec))?.ok_or_else(|| format!("required value not found: {spec}"))
 }
 
+/// Reads an optional string from one JSON path or literal spec.
 #[allow(non_snake_case)]
 fn readOptionalString(item: &Value, spec: Option<&str>) -> Result<Option<String>, String> {
     let Some(spec) = spec else {
@@ -286,6 +287,7 @@ fn readOptionalString(item: &Value, spec: Option<&str>) -> Result<Option<String>
     Ok(selectJsonPath(item, spec).and_then(jsonValueString))
 }
 
+/// Reads an optional f64 value from one JSON path or literal spec.
 #[allow(non_snake_case)]
 fn readOptionalF64(item: &Value, spec: Option<&str>) -> Result<Option<f64>, String> {
     let Some(value) = readOptionalString(item, spec)? else {
@@ -297,6 +299,7 @@ fn readOptionalF64(item: &Value, spec: Option<&str>) -> Result<Option<f64>, Stri
         .map_err(|error| error.to_string())
 }
 
+/// Reads an optional f32 value from one JSON path or literal spec.
 #[allow(non_snake_case)]
 fn readOptionalF32(item: &Value, spec: Option<&str>) -> Result<Option<f32>, String> {
     let Some(value) = readOptionalString(item, spec)? else {
@@ -308,6 +311,7 @@ fn readOptionalF32(item: &Value, spec: Option<&str>) -> Result<Option<f32>, Stri
         .map_err(|error| error.to_string())
 }
 
+/// Reads an optional boolean from one JSON path, literal spec, or containment spec.
 #[allow(non_snake_case)]
 fn readOptionalBool(item: &Value, spec: Option<&str>) -> Result<Option<bool>, String> {
     let Some(spec) = spec else {
@@ -328,6 +332,7 @@ fn readOptionalBool(item: &Value, spec: Option<&str>) -> Result<Option<bool>, St
     Ok(selectJsonPath(item, spec).and_then(Value::as_bool))
 }
 
+/// Selects a JSON value using the catalog's dot-and-index path syntax.
 #[allow(non_snake_case)]
 fn selectJsonPath<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     if path == "$" {
@@ -341,6 +346,7 @@ fn selectJsonPath<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     Some(current)
 }
 
+/// Selects one named or indexed segment from a JSON value.
 #[allow(non_snake_case)]
 fn selectSegment<'a>(value: &'a Value, segment: &str) -> Option<&'a Value> {
     let mut current = value;
@@ -360,6 +366,7 @@ fn selectSegment<'a>(value: &'a Value, segment: &str) -> Option<&'a Value> {
     Some(current)
 }
 
+/// Converts scalar JSON values into strings used by catalog readers.
 #[allow(non_snake_case)]
 fn jsonValueString(value: &Value) -> Option<String> {
     match value {
@@ -370,6 +377,7 @@ fn jsonValueString(value: &Value) -> Option<String> {
     }
 }
 
+/// Tests whether a JSON scalar or array contains the expected catalog value.
 #[allow(non_snake_case)]
 fn jsonContains(value: &Value, expected: &str) -> bool {
     match value {
@@ -383,6 +391,7 @@ fn jsonContains(value: &Value, expected: &str) -> bool {
     }
 }
 
+/// Parses a provider pricing currency literal.
 #[allow(non_snake_case)]
 fn parseCurrency(value: &str) -> Result<PricingCurrency, String> {
     match value.trim().to_ascii_uppercase().as_str() {

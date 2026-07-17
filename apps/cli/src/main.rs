@@ -2,9 +2,9 @@ use std::env;
 use std::process::ExitCode;
 
 use error::CliError;
+use futures_util::FutureExt;
 use operit_util::AppLogger::AppLogger;
 
-mod access;
 mod bootstrap;
 mod chat_runtime;
 mod cli;
@@ -15,7 +15,7 @@ mod mdns;
 mod tui;
 mod web_access_assets;
 
-pub(crate) use bootstrap::create_local_core;
+pub(crate) use bootstrap::{create_cli_link_access_store, create_local_core};
 pub(crate) use chat_runtime::{
     build_attachment_info, guess_mime_type, initialize_shell_chat, parse_shell_args, ChatSendArgs,
     ShellArgs,
@@ -24,10 +24,14 @@ pub(crate) use chat_runtime::{
 #[tokio::main]
 async fn main() -> ExitCode {
     error::install_panic_hook();
-    match run().await {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
+    match std::panic::AssertUnwindSafe(run()).catch_unwind().await {
+        Ok(Ok(())) => ExitCode::SUCCESS,
+        Ok(Err(error)) => {
             eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+        Err(_) => {
+            error::wait_for_panic_screen();
             ExitCode::FAILURE
         }
     }

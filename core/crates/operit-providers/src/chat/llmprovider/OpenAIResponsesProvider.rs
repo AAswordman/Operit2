@@ -13,7 +13,7 @@ use crate::runtime_support::ProviderRuntimeContext;
 use operit_util::stream::RevisableTextStream::{
     with_event_channel, RevisableTextStreamLike, TextStreamEventCarrier,
 };
-use operit_util::stream::Stream::FnStream;
+use operit_util::stream::Stream::{FnStream, Stream};
 
 #[derive(Clone)]
 pub struct OpenAIResponsesProvider {
@@ -785,18 +785,30 @@ impl AIService for OpenAIResponsesProvider {
             if provider.isCancelled() {
                 parent.cancel_streaming();
             }
+            let mut ownedParentStream = Some(parent_stream);
+            let mut ownedParent = Some(parent);
+            let mut ownedProvider = Some(provider);
             let cold_stream = FnStream::new(move |emit| {
-                parent_stream.collect(&mut |content| {
-                    emit(content);
-                });
-                provider.apply_usage_counts(&UsageCounts {
-                    totalInputTokens: parent.input_token_count()
-                        + parent.cached_input_token_count(),
-                    actualInputTokens: parent.input_token_count(),
-                    cachedInputTokens: parent.cached_input_token_count(),
-                    outputTokens: parent.output_token_count(),
-                });
-                provider.clearActiveParent(activeParentGeneration);
+                let mut parentStream = ownedParentStream
+                    .take()
+                    .expect("OpenAI Responses parent stream must only be collected once");
+                let parent = ownedParent
+                    .take()
+                    .expect("OpenAI Responses parent stream must only be collected once");
+                let mut provider = ownedProvider
+                    .take()
+                    .expect("OpenAI Responses parent stream must only be collected once");
+                Box::pin(async move {
+                    parentStream.collect(emit).await;
+                    provider.apply_usage_counts(&UsageCounts {
+                        totalInputTokens: parent.input_token_count()
+                            + parent.cached_input_token_count(),
+                        actualInputTokens: parent.input_token_count(),
+                        cachedInputTokens: parent.cached_input_token_count(),
+                        outputTokens: parent.output_token_count(),
+                    });
+                    provider.clearActiveParent(activeParentGeneration);
+                })
             });
             return Ok(Box::new(with_event_channel(cold_stream, event_channel)));
         }

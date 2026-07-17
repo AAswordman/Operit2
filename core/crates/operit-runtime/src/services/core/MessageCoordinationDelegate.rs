@@ -28,6 +28,7 @@ use operit_providers::chat::config::FunctionalPrompts::FunctionalPrompts;
 use operit_providers::chat::llmprovider::AIService::collect_stream_chunks;
 use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use operit_util::stream::Stream::Stream;
+use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, SEND_CHAIN};
 
 /// Queued continuation work scheduled after a summary completes.
@@ -246,6 +247,15 @@ impl MessageCoordinationDelegate {
         replyToMessage: Option<ChatMessage>,
         turnOptions: ChatTurnOptions,
     ) {
+        AppLogger::i(
+            "CoreSend",
+            &format!(
+                "dispatch entry messageChars={} attachments={} prompt={:?}",
+                messageText.chars().count(),
+                attachments.len(),
+                promptFunctionType
+            ),
+        );
         if chatIdOverride
             .as_ref()
             .map(|id| id.trim().is_empty())
@@ -310,6 +320,7 @@ impl MessageCoordinationDelegate {
             turnOptions,
         )
         .await;
+        AppLogger::i("CoreSend", "dispatch return");
     }
 
     /// Regenerates a single AI message variant using the surrounding conversation state.
@@ -398,7 +409,7 @@ impl MessageCoordinationDelegate {
         let mut content = String::new();
         contentStream.collect(&mut |chunk| {
             content.push_str(&chunk);
-        });
+        }).await;
         variantMessage.content = content;
         variantMessage.contentStream = None;
         variantMessage.isVariantPreview = false;
@@ -964,7 +975,9 @@ impl MessageCoordinationDelegate {
         options.enableThinking = false;
         options.stream = false;
         let response = enhancedAiService.sendMessage(options).await.ok()?;
-        let rawContent = removeThinkingContent(&collect_stream_chunks(response).join(""))
+        let rawContent = removeThinkingContent(
+            &collect_stream_chunks(Box::new(response)).await.join(""),
+        )
             .trim()
             .to_string();
         self.parsePlannedRounds(

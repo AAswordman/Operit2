@@ -29,10 +29,6 @@ char *operit_flutter_bridge_start_web_access_server(
     const char *token,
     const char *shutdown_token,
     const char *web_root,
-    const char *device_id,
-    const char *accepted_sessions_json,
-    const char *accepted_session_store_path,
-    const char *pairing_code_path,
     const char *device_info_json,
     const char *enable_web_access,
     const char *enable_discovery

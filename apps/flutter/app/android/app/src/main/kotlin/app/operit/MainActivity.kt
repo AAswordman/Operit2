@@ -18,6 +18,7 @@ class MainActivity : FlutterActivity() {
     private lateinit var runtimeHost: AndroidRuntimeHost
     private lateinit var ownerSystem: OwnerSystemCapabilityChannel
     private lateinit var runtimeRouter: RuntimeMethodChannelRouter
+    private lateinit var nativeCrashChannel: NativeCrashChannel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -46,6 +47,8 @@ class MainActivity : FlutterActivity() {
         val ownerSystem = ensureOwnerSystem(runtimeHost)
         runtimeRouter = RuntimeMethodChannelRouter(this, runtimeHost, ownerSystem)
         runtimeRouter.configure(flutterEngine.dartExecutor.binaryMessenger)
+        nativeCrashChannel = NativeCrashChannel(this)
+        nativeCrashChannel.configure(flutterEngine.dartExecutor.binaryMessenger)
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {

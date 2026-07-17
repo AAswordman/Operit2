@@ -8,7 +8,7 @@ import 'package:flutter/widgets.dart';
 
 import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../host/RuntimeHostInteractionSubscriber.dart';
-import '../link_host/LinkHostServer.dart';
+import '../link_access/LinkAccessHost.dart';
 import '../logging/ClientLogger.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart';
@@ -220,7 +220,7 @@ class CoreApplicationService with WidgetsBindingObserver {
     _linkHostStartAttempted = true;
     final linkHostStopwatch = Stopwatch()..start();
     ClientLogger.i('link host initialize start', tag: _logTag);
-    await LinkHostServer.instance.initializeFromConfig();
+    await LinkAccessHost.instance.initializeFromConfig();
     ClientLogger.i(
       'link host initialize done elapsedMs=${linkHostStopwatch.elapsedMilliseconds}',
       tag: _logTag,

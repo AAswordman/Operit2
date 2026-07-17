@@ -564,19 +564,21 @@ impl NativeMarkdownSplitter {
         Self::segments_to_stable_nodes(content, session.push(content), true)
     }
 
-    pub fn native_markdown_split_stream_by_block(
+    pub async fn native_markdown_split_stream_by_block(
         mut chars: impl Stream<Item = char>,
     ) -> Vec<MarkdownNodeStable> {
         let mut content = String::new();
-        chars.collect(&mut |ch| content.push(ch));
+        chars.collect(&mut |ch| content.push(ch)).await;
         Self::native_markdown_split_by_block(&content)
     }
 
-    pub fn native_markdown_split_string_stream_by_block(
+    pub async fn native_markdown_split_string_stream_by_block(
         mut source: impl Stream<Item = String>,
     ) -> Vec<MarkdownNodeStable> {
         let mut content = String::new();
-        source.collect(&mut |chunk| content.push_str(&chunk));
+        source
+            .collect(&mut |chunk| content.push_str(&chunk))
+            .await;
         Self::native_markdown_split_by_block(&content)
     }
 
@@ -585,19 +587,21 @@ impl NativeMarkdownSplitter {
         Self::segments_to_stable_nodes(content, session.push(content), false)
     }
 
-    pub fn native_markdown_split_stream_by_inline(
+    pub async fn native_markdown_split_stream_by_inline(
         mut chars: impl Stream<Item = char>,
     ) -> Vec<MarkdownNodeStable> {
         let mut content = String::new();
-        chars.collect(&mut |ch| content.push(ch));
+        chars.collect(&mut |ch| content.push(ch)).await;
         Self::native_markdown_split_by_inline(&content)
     }
 
-    pub fn native_markdown_split_string_stream_by_inline(
+    pub async fn native_markdown_split_string_stream_by_inline(
         mut source: impl Stream<Item = String>,
     ) -> Vec<MarkdownNodeStable> {
         let mut content = String::new();
-        source.collect(&mut |chunk| content.push_str(&chunk));
+        source
+            .collect(&mut |chunk| content.push_str(&chunk))
+            .await;
         Self::native_markdown_split_by_inline(&content)
     }
 

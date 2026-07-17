@@ -41,7 +41,9 @@
 </head>
 <body>
   <script src="msgpack.min.js"></script>
-  <script src="operit_runtime_bridge.js"></script>
+  <script>
+    globalThis.__operitRuntimeReady = import("./operit_runtime_bridge.js");
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

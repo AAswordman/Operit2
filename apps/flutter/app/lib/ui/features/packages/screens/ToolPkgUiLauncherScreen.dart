@@ -10,9 +10,11 @@ import 'package:flutter/services.dart';
 import '../../../../core/concurrency/AppWorkers.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../common/components/AdaptiveSidePanel.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../common/icons/MaterialIconNameResolver.dart';
 import '../../../common/markdown/StreamMarkdownRenderer.dart';
+import '../../chat/screens/AIChatScreen.dart';
 import '../utils/PackageDisplayUtils.dart';
 import 'ToolPkgComposeDslWebView.dart';
 
@@ -940,6 +942,10 @@ class _ComposeDslRenderer extends StatelessWidget {
         );
       case 'SnackbarHost':
         return _slotOrChildren('content');
+      case 'AiChat':
+        return const AIChatEmbed();
+      case 'AdaptiveSidePanel':
+        return _adaptiveSidePanel();
       case 'PullToRefreshBox':
         return _pullToRefreshBox(context);
       case 'DropdownMenu':
@@ -2219,6 +2225,40 @@ class _ComposeDslRenderer extends StatelessWidget {
         });
       },
       child: canvas,
+    );
+  }
+
+  /// Builds a plugin-controlled responsive trailing panel around the primary slot.
+  Widget _adaptiveSidePanel() {
+    final openChangedActionId = _requiredActionId(
+      node.props['onOpenChanged'],
+      'onOpenChanged',
+    );
+    return AdaptiveSidePanel(
+      open: node.props['open'] == true,
+      onOpenChanged: (open) {
+        unawaited(onAction(openChangedActionId, open));
+      },
+      breakpoint: _number(node.props['breakpoint']) ?? 600,
+      defaultWidth: _number(node.props['defaultWidth']) ?? 360,
+      minWidth: _number(node.props['minWidth']) ?? 280,
+      minContentWidth: _number(node.props['minContentWidth']) ?? 320,
+      panel: _adaptiveSidePanelSlot('side'),
+      child: _adaptiveSidePanelSlot('content', useChildren: true),
+    );
+  }
+
+  /// Renders one adaptive side-panel slot while preserving its available bounds.
+  Widget _adaptiveSidePanelSlot(String name, {bool useChildren = false}) {
+    final nodes = _slotNodes(name, useChildren: useChildren);
+    if (nodes.length != 1) {
+      throw StateError('AdaptiveSidePanel.$name requires exactly one child');
+    }
+    return _ComposeDslRenderer(
+      node: nodes.single,
+      onAction: onAction,
+      webViewHostContext: webViewHostContext,
+      nodePath: '$nodePath:$name/0',
     );
   }
 
@@ -3975,6 +4015,15 @@ String? _actionId(Object? raw) {
   }
   final text = raw?.toString().trim();
   return text == null || text.isEmpty ? null : text;
+}
+
+/// Reads one required Compose action identifier from a serialized node property.
+String _requiredActionId(Object? raw, String propertyName) {
+  final actionId = _actionId(raw);
+  if (actionId == null) {
+    throw StateError('$propertyName requires a Compose action');
+  }
+  return actionId;
 }
 
 Map<String, Object?> _stringMap(Object? raw) {

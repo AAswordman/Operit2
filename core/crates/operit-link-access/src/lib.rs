@@ -1,5 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -27,7 +26,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use operit_link::CoreLinkClient;
+use operit_link::{CoreLinkClient, CoreLinkTransportClient};
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError, CorePushItem,
     CorePushRequest, CoreWatchRequest,
@@ -35,6 +34,8 @@ use operit_link::{
 use operit_runtime::services::RuntimeHostInteractionService::{
     withRuntimeHostInteractionOrigin, RuntimeHostInteractionRequestOrigin,
 };
+use operit_host_api::{HostRuntimeTaskSchedulerHost, RuntimeStorageHost};
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 type HmacSha256 = Hmac<Sha256>;
 pub const REMOTE_PAIRING_SERVICE_VERSION: i32 = 1;
 
@@ -47,38 +48,10 @@ pub struct RemoteLinkServerConfig {
     pub deviceInfo: RemoteDeviceInfo,
     pub webAccess: Option<RemoteWebAccessConfig>,
     pub printStartupInfo: bool,
-    pub acceptedSessions: BTreeMap<String, AcceptedRemoteSessionRecord>,
-    pub acceptedSessionLoader: Option<AcceptedRemoteSessionLoader>,
-    pub acceptedSessionStore: Option<AcceptedRemoteSessionStore>,
-    pub pairingCodeSink: Option<RemotePairingCodeSink>,
-}
-
-impl Default for RemoteLinkServerConfig {
-    fn default() -> Self {
-        Self {
-            bindAddress: "0.0.0.0:37192".to_string(),
-            token: "operit-link-dev".to_string(),
-            localControlToken: None,
-            deviceId: format!("core-{}", Uuid::new_v4()),
-            deviceInfo: RemoteDeviceInfo::native(),
-            webAccess: None,
-            printStartupInfo: true,
-            acceptedSessions: BTreeMap::new(),
-            acceptedSessionLoader: None,
-            acceptedSessionStore: None,
-            pairingCodeSink: None,
-        }
-    }
+    pub accessStore: LinkAccessStore,
 }
 
 pub struct RemoteLinkServer;
-
-pub type AcceptedRemoteSessionStore =
-    Arc<dyn Fn(String, AcceptedRemoteSessionRecord) -> Result<(), String> + Send + Sync>;
-pub type AcceptedRemoteSessionLoader =
-    Arc<dyn Fn() -> Result<BTreeMap<String, AcceptedRemoteSessionRecord>, String> + Send + Sync>;
-pub type RemotePairingCodeSink =
-    Arc<dyn Fn(RemotePairingCodeRecord) -> Result<(), String> + Send + Sync>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemotePairingCodeRecord {
@@ -98,16 +71,173 @@ pub struct AcceptedRemoteSessionRecord {
     pub sessionSecret: String,
 }
 
+pub const LINK_ACCESS_IDENTITY_PATH: &str = "runtime/link_access/identity.json";
+pub const LINK_ACCESS_INBOUND_SESSIONS_PATH: &str = "runtime/link_access/inbound_sessions.json";
+pub const LINK_ACCESS_OUTBOUND_SESSIONS_PATH: &str = "runtime/link_access/outbound_sessions.json";
+pub const LINK_ACCESS_PENDING_PAIRINGS_PATH: &str = "runtime/link_access/pending_pairings.json";
+pub const LINK_ACCESS_HOST_CONFIG_PATH: &str = "runtime/link_access/host_config.json";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LinkAccessIdentity {
+    pub deviceId: String,
+    pub deviceInfo: RemoteDeviceInfo,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LinkAccessHostConfig {
+    pub bindAddress: String,
+    pub token: String,
+    pub webAccessEnabled: bool,
+    pub discoveryEnabled: bool,
+}
+
+#[derive(Clone)]
+pub struct LinkAccessStore {
+    storage: Arc<dyn RuntimeStorageHost>,
+}
+
+impl LinkAccessStore {
+    /// Creates the repository that owns Link Access records for one runtime.
+    pub fn new(storage: Arc<dyn RuntimeStorageHost>) -> Self {
+        Self { storage }
+    }
+
+    /// Initializes and returns the runtime's persisted Link device identity.
+    pub fn initializeIdentity(
+        &self,
+        deviceInfo: RemoteDeviceInfo,
+    ) -> Result<LinkAccessIdentity, String> {
+        match self
+            .storage
+            .exists(LINK_ACCESS_IDENTITY_PATH)
+            .map_err(|error| error.message)?
+        {
+            true => self.readJson(LINK_ACCESS_IDENTITY_PATH),
+            false => {
+                let identity = LinkAccessIdentity {
+                    deviceId: format!("core-{}", Uuid::new_v4()),
+                    deviceInfo,
+                };
+                self.writeJson(LINK_ACCESS_IDENTITY_PATH, &identity)?;
+                Ok(identity)
+            }
+        }
+    }
+
+    /// Returns every accepted inbound session owned by this runtime.
+    pub fn inboundSessions(&self) -> Result<BTreeMap<String, AcceptedRemoteSessionRecord>, String> {
+        self.readMap(LINK_ACCESS_INBOUND_SESSIONS_PATH)
+    }
+
+    /// Persists one accepted inbound session owned by this runtime.
+    pub fn saveInboundSession(
+        &self,
+        sessionId: String,
+        record: AcceptedRemoteSessionRecord,
+    ) -> Result<(), String> {
+        let mut sessions = self.inboundSessions()?;
+        sessions.insert(sessionId, record);
+        self.writeJson(LINK_ACCESS_INBOUND_SESSIONS_PATH, &sessions)
+    }
+
+    /// Removes one accepted inbound session owned by this runtime.
+    pub fn removeInboundSession(&self, sessionId: &str) -> Result<(), String> {
+        let mut sessions = self.inboundSessions()?;
+        sessions.remove(sessionId);
+        self.writeJson(LINK_ACCESS_INBOUND_SESSIONS_PATH, &sessions)
+    }
+
+    /// Returns every named outbound session owned by this runtime.
+    pub fn outboundSessions(&self) -> Result<BTreeMap<String, PairedRemoteSessionRecord>, String> {
+        self.readMap(LINK_ACCESS_OUTBOUND_SESSIONS_PATH)
+    }
+
+    /// Persists one named outbound session owned by this runtime.
+    pub fn saveOutboundSession(
+        &self,
+        name: String,
+        record: PairedRemoteSessionRecord,
+    ) -> Result<(), String> {
+        let mut sessions = self.outboundSessions()?;
+        sessions.insert(name, record);
+        self.writeJson(LINK_ACCESS_OUTBOUND_SESSIONS_PATH, &sessions)
+    }
+
+    /// Removes one named outbound session owned by this runtime.
+    pub fn removeOutboundSession(&self, name: &str) -> Result<(), String> {
+        let mut sessions = self.outboundSessions()?;
+        sessions.remove(name);
+        self.writeJson(LINK_ACCESS_OUTBOUND_SESSIONS_PATH, &sessions)
+    }
+
+    /// Returns every pending pairing owned by this runtime.
+    pub fn pendingPairings(&self) -> Result<BTreeMap<String, RemotePairingCodeRecord>, String> {
+        self.readMap(LINK_ACCESS_PENDING_PAIRINGS_PATH)
+    }
+
+    /// Persists one pending pairing owned by this runtime.
+    pub fn savePendingPairing(&self, record: RemotePairingCodeRecord) -> Result<(), String> {
+        let mut pairings = self.pendingPairings()?;
+        pairings.insert(record.pairingId.clone(), record);
+        self.writeJson(LINK_ACCESS_PENDING_PAIRINGS_PATH, &pairings)
+    }
+
+    /// Removes one pending pairing owned by this runtime.
+    pub fn removePendingPairing(&self, pairingId: &str) -> Result<(), String> {
+        let mut pairings = self.pendingPairings()?;
+        pairings.remove(pairingId);
+        self.writeJson(LINK_ACCESS_PENDING_PAIRINGS_PATH, &pairings)
+    }
+
+    /// Persists the active Link Access host configuration for this runtime.
+    pub fn saveHostConfig(&self, config: &LinkAccessHostConfig) -> Result<(), String> {
+        self.writeJson(LINK_ACCESS_HOST_CONFIG_PATH, config)
+    }
+
+    /// Reads the active Link Access host configuration for this runtime.
+    pub fn hostConfig(&self) -> Result<LinkAccessHostConfig, String> {
+        self.readJson(LINK_ACCESS_HOST_CONFIG_PATH)
+    }
+
+    /// Reads an initialized JSON record from runtime storage.
+    fn readJson<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, String> {
+        let bytes = self.storage.readBytes(path).map_err(|error| error.message)?;
+        serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+    }
+
+    /// Reads a JSON map and creates its explicit empty runtime record on first use.
+    fn readMap<T: serde::de::DeserializeOwned + Serialize>(
+        &self,
+        path: &str,
+    ) -> Result<BTreeMap<String, T>, String> {
+        match self.storage.exists(path).map_err(|error| error.message)? {
+            true => self.readJson(path),
+            false => {
+                let values = BTreeMap::<String, T>::new();
+                self.writeJson(path, &values)?;
+                Ok(values)
+            }
+        }
+    }
+
+    /// Writes a JSON record into runtime storage.
+    fn writeJson<T: Serialize>(&self, path: &str, value: &T) -> Result<(), String> {
+        let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
+        self.storage.writeBytes(path, &bytes).map_err(|error| error.message)
+    }
+}
+
 #[derive(Clone)]
 pub struct RemoteWebAccessConfig {
     pub token: String,
     pub shutdownToken: String,
     pub webRoot: PathBuf,
+    pub readAsset: Arc<dyn Fn(&Path) -> Result<Vec<u8>, String> + Send + Sync>,
 }
 
 #[derive(Clone)]
 struct RemoteLinkState {
-    core: Arc<Mutex<Box<dyn CoreLinkClient + Send>>>,
+    core: Arc<Mutex<SharedAccessCoreClient>>,
     linkDispatcher: operit_link::CoreLinkHttpDispatcher,
     token: String,
     localControlToken: Option<String>,
@@ -117,10 +247,7 @@ struct RemoteLinkState {
     deviceInfo: RemoteDeviceInfo,
     pairings: Arc<Mutex<BTreeMap<String, PendingPairing>>>,
     sessions: Arc<Mutex<BTreeMap<String, RemoteSession>>>,
-    acceptedSessionIds: Arc<Mutex<BTreeSet<String>>>,
-    acceptedSessionLoader: Option<AcceptedRemoteSessionLoader>,
-    acceptedSessionStore: Option<AcceptedRemoteSessionStore>,
-    pairingCodeSink: Option<RemotePairingCodeSink>,
+    accessStore: LinkAccessStore,
     webAccess: Option<RemoteWebAccessState>,
 }
 
@@ -130,9 +257,25 @@ struct SharedAccessCoreClient {
 }
 
 #[async_trait]
-impl CoreLinkClient for SharedAccessCoreClient {
+impl CoreLinkTransportClient for SharedAccessCoreClient {
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
-        self.core.lock().await.call(request).await
+        let requestId = request.requestId.clone();
+        let (sender, receiver) = oneshot::channel();
+        let core = self.core.clone();
+        if let Err(error) = defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
+            "link-access-call",
+            Box::new(move || {
+                Box::pin(async move {
+                    let response = core.lock().await.call(request).await;
+                    let _ = sender.send(response);
+                })
+            }),
+        ) {
+            return CoreCallResponse::err(requestId, CoreLinkError::internal(error.to_string()));
+        }
+        receiver
+            .await
+            .unwrap_or_else(|error| CoreCallResponse::err(requestId, CoreLinkError::internal(error.to_string())))
     }
 
     #[allow(non_snake_case)]
@@ -140,11 +283,41 @@ impl CoreLinkClient for SharedAccessCoreClient {
         &mut self,
         request: CoreWatchRequest,
     ) -> Result<CoreEvent, CoreLinkError> {
-        self.core.lock().await.watchSnapshot(request).await
+        let (sender, receiver) = oneshot::channel();
+        let core = self.core.clone();
+        defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask(
+                "link-access-watch-snapshot",
+                Box::new(move || {
+                    Box::pin(async move {
+                        let response = core.lock().await.watchSnapshot(request).await;
+                        let _ = sender.send(response);
+                    })
+                }),
+            )
+            .map_err(|error| CoreLinkError::internal(error.to_string()))?;
+        receiver
+            .await
+            .map_err(|error| CoreLinkError::internal(error.to_string()))?
     }
 
     async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
-        self.core.lock().await.watch(request).await
+        let (sender, receiver) = oneshot::channel();
+        let core = self.core.clone();
+        defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask(
+                "link-access-watch",
+                Box::new(move || {
+                    Box::pin(async move {
+                        let response = core.lock().await.watch(request).await;
+                        let _ = sender.send(response);
+                    })
+                }),
+            )
+            .map_err(|error| CoreLinkError::internal(error.to_string()))?;
+        receiver
+            .await
+            .map_err(|error| CoreLinkError::internal(error.to_string()))?
     }
 }
 
@@ -153,6 +326,7 @@ struct RemoteWebAccessState {
     shutdownToken: String,
     shutdownSender: Arc<StdMutex<Option<oneshot::Sender<()>>>>,
     webRoot: PathBuf,
+    readAsset: Arc<dyn Fn(&Path) -> Result<Vec<u8>, String> + Send + Sync>,
 }
 
 #[derive(Clone, Debug)]
@@ -188,6 +362,21 @@ pub struct RemoteDeviceInfo {
 }
 
 impl RemoteDeviceInfo {
+    /// Describes the local CLI device with its runtime role.
+    #[allow(non_snake_case)]
+    pub fn nativeCli(role: &str) -> Result<Self, String> {
+        let hostname = std::env::var("HOSTNAME")
+            .map_err(|error| format!("HOSTNAME unavailable: {error}"))?;
+        let hostname = hostname.trim();
+        if hostname.is_empty() {
+            return Err("HOSTNAME is empty".to_string());
+        }
+        Ok(Self {
+            platform: std::env::consts::OS.to_string(),
+            model: format!("{}-{}(cli)-{}", hostname, role, std::env::consts::ARCH),
+        })
+    }
+
     pub fn native() -> Self {
         Self {
             platform: std::env::consts::OS.to_string(),
@@ -195,54 +384,9 @@ impl RemoteDeviceInfo {
         }
     }
 
-    pub fn nativeCli(role: &str) -> Result<Self, String> {
-        Ok(Self {
-            platform: std::env::consts::OS.to_string(),
-            model: format!(
-                "{}-{}(cli)-{}",
-                native_hostname()?,
-                role,
-                std::env::consts::ARCH
-            ),
-        })
-    }
-
     pub fn displayName(&self) -> String {
         format!("{}-{}", self.platform, self.model)
     }
-}
-
-#[cfg(windows)]
-fn native_hostname() -> Result<String, String> {
-    use windows_sys::Win32::System::WindowsProgramming::GetComputerNameW;
-
-    let mut buffer = [0u16; 256];
-    let mut size = buffer.len() as u32;
-    let result = unsafe { GetComputerNameW(buffer.as_mut_ptr(), &mut size) };
-    if result == 0 {
-        return Err(format!(
-            "GetComputerNameW failed: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    let hostname = String::from_utf16(&buffer[..size as usize])
-        .map_err(|error| format!("GetComputerNameW returned invalid UTF-16: {error}"))?;
-    let hostname = hostname.trim().to_string();
-    if hostname.is_empty() {
-        return Err("GetComputerNameW returned empty hostname".to_string());
-    }
-    Ok(hostname)
-}
-
-#[cfg(not(windows))]
-fn native_hostname() -> Result<String, String> {
-    let hostname =
-        std::env::var("HOSTNAME").map_err(|error| format!("HOSTNAME unavailable: {error}"))?;
-    let hostname = hostname.trim().to_string();
-    if hostname.is_empty() {
-        return Err("HOSTNAME is empty".to_string());
-    }
-    Ok(hostname)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -402,12 +546,11 @@ pub struct PairedRemoteSessionRecord {
 }
 
 impl PairedRemoteSessionRecord {
-    /// Creates a copy of this paired session record with a new endpoint URL.
+    /// Returns this paired session with an updated remote endpoint.
     #[allow(non_snake_case)]
     pub fn withBaseUrl(&self, baseUrl: impl Into<String>) -> Self {
-        let baseUrl = baseUrl.into().trim_end_matches('/').to_string();
         Self {
-            baseUrl,
+            baseUrl: baseUrl.into().trim_end_matches('/').to_string(),
             sessionId: self.sessionId.clone(),
             deviceId: self.deviceId.clone(),
             coreDeviceId: self.coreDeviceId.clone(),
@@ -465,8 +608,8 @@ impl RemoteLinkServer {
         let webAccessConfig = config.webAccess.clone();
         let (shutdownSender, shutdownReceiver) = oneshot::channel::<()>();
         let sessions = Arc::new(Mutex::new(BTreeMap::new()));
-        let acceptedSessionIds = Arc::new(Mutex::new(BTreeSet::new()));
-        for (sessionId, session) in config.acceptedSessions.iter() {
+        let acceptedSessions = config.accessStore.inboundSessions()?;
+        for (sessionId, session) in acceptedSessions.iter() {
             sessions.lock().await.insert(
                 sessionId.clone(),
                 RemoteSession {
@@ -478,18 +621,18 @@ impl RemoteLinkServer {
                         .map_err(|error| error.to_string())?,
                 },
             );
-            acceptedSessionIds.lock().await.insert(sessionId.clone());
         }
         let webAccess = webAccessConfig.clone().map(|value| RemoteWebAccessState {
             shutdownToken: value.shutdownToken,
             shutdownSender: Arc::new(StdMutex::new(Some(shutdownSender))),
             webRoot: value.webRoot,
+            readAsset: value.readAsset,
         });
         let core = Arc::new(Mutex::new(Box::new(core) as Box<dyn CoreLinkClient + Send>));
-        let linkDispatcher =
-            operit_link::CoreLinkHttpDispatcher::new(SharedAccessCoreClient { core: core.clone() });
+        let transportCore = SharedAccessCoreClient { core: core.clone() };
+        let linkDispatcher = operit_link::CoreLinkHttpDispatcher::new(transportCore.clone());
         let state = RemoteLinkState {
-            core,
+            core: Arc::new(Mutex::new(transportCore)),
             linkDispatcher,
             token: config.token.clone(),
             localControlToken: config.localControlToken.clone(),
@@ -499,10 +642,7 @@ impl RemoteLinkServer {
             deviceInfo: config.deviceInfo.clone(),
             pairings: Arc::new(Mutex::new(BTreeMap::new())),
             sessions,
-            acceptedSessionIds,
-            acceptedSessionLoader: config.acceptedSessionLoader.clone(),
-            acceptedSessionStore: config.acceptedSessionStore.clone(),
-            pairingCodeSink: config.pairingCodeSink.clone(),
+            accessStore: config.accessStore.clone(),
             webAccess,
         };
         let mut app = Router::new()
@@ -1012,7 +1152,7 @@ async fn remove_paired_watch_subscription(
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl CoreLinkClient for PairedRemoteSession {
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
@@ -1078,17 +1218,16 @@ async fn pair_start(
         "operit link pairing code for {}: {}",
         request.clientDeviceId, pairingCode
     );
-    if let Some(sink) = state.pairingCodeSink.as_ref() {
-        if let Err(error) = sink(RemotePairingCodeRecord {
-            pairingId: pairingId.clone(),
-            pairingServiceVersion: request.pairingServiceVersion,
-            clientDeviceId: request.clientDeviceId.clone(),
-            clientDeviceInfo: request.clientDeviceInfo.clone(),
-            pairingCode: pairingCode.clone(),
-            createdAt: unix_millis(),
-        }) {
-            return internal_server_error(error);
-        }
+    let pairingRecord = RemotePairingCodeRecord {
+        pairingId: pairingId.clone(),
+        pairingServiceVersion: request.pairingServiceVersion,
+        clientDeviceId: request.clientDeviceId.clone(),
+        clientDeviceInfo: request.clientDeviceInfo.clone(),
+        pairingCode: pairingCode.clone(),
+        createdAt: unix_millis(),
+    };
+    if let Err(error) = state.accessStore.savePendingPairing(pairingRecord) {
+        return internal_server_error(error);
     }
     state.pairings.lock().await.insert(
         pairingId.clone(),
@@ -1118,8 +1257,7 @@ async fn pair_finish(
     State(state): State<RemoteLinkState>,
     Json(request): Json<PairFinishRequest>,
 ) -> Response {
-    let mut pairings = state.pairings.lock().await;
-    let Some(pairing) = pairings.get(&request.pairingId) else {
+    let Some(pairing) = state.pairings.lock().await.remove(&request.pairingId) else {
         return bad_request("pairing not found");
     };
     if pairing.pairingCode != request.pairingCode.trim() {
@@ -1140,48 +1278,36 @@ async fn pair_finish(
         &pairing.clientNonce,
         &pairing.serverNonce,
     );
-    let pairingServiceVersion = pairing.pairingServiceVersion;
-    let clientDeviceId = pairing.clientDeviceId.clone();
-    let clientDeviceInfo = pairing.clientDeviceInfo.clone();
-    let coreProof = proof(
-        &pairing.sharedSecret,
-        &pairing.clientNonce,
-        &pairing.serverNonce,
-        "core",
-    );
-    pairings.remove(&request.pairingId);
-    drop(pairings);
-    if let Some(store) = state.acceptedSessionStore.as_ref() {
-        if let Err(error) = store(
-            sessionId.clone(),
-            AcceptedRemoteSessionRecord {
-                deviceId: clientDeviceId.clone(),
-                deviceInfo: clientDeviceInfo.clone(),
-                pairingServiceVersion,
-                sessionSecret: BASE64.encode(sessionSecret.as_slice()),
-            },
-        ) {
-            return internal_server_error(error);
-        }
+    let record = AcceptedRemoteSessionRecord {
+        deviceId: pairing.clientDeviceId.clone(),
+        deviceInfo: pairing.clientDeviceInfo.clone(),
+        pairingServiceVersion: pairing.pairingServiceVersion,
+        sessionSecret: BASE64.encode(sessionSecret.as_slice()),
+    };
+    if let Err(error) = state.accessStore.saveInboundSession(sessionId.clone(), record) {
+        return internal_server_error(error);
     }
-    state
-        .acceptedSessionIds
-        .lock()
-        .await
-        .insert(sessionId.clone());
+    if let Err(error) = state.accessStore.removePendingPairing(&request.pairingId) {
+        return internal_server_error(error);
+    }
     state.sessions.lock().await.insert(
         sessionId.clone(),
         RemoteSession {
-            deviceId: clientDeviceId,
-            deviceInfo: clientDeviceInfo,
-            pairingServiceVersion,
+            deviceId: pairing.clientDeviceId,
+            deviceInfo: pairing.clientDeviceInfo,
+            pairingServiceVersion: pairing.pairingServiceVersion,
             sessionSecret,
         },
     );
     Json(PairFinishResponse {
         sessionId,
-        pairingServiceVersion,
-        coreProof,
+        pairingServiceVersion: pairing.pairingServiceVersion,
+        coreProof: proof(
+            &pairing.sharedSecret,
+            &pairing.clientNonce,
+            &pairing.serverNonce,
+            "core",
+        ),
     })
     .into_response()
 }
@@ -1201,7 +1327,7 @@ async fn session_info(
             return encode_link_response(
                 StatusCode::BAD_REQUEST,
                 CoreLinkError::new("BAD_REQUEST", error.to_string()),
-            )
+            );
         }
     };
     let sessions = state.sessions.lock().await;
@@ -1570,14 +1696,17 @@ async fn verify_session_parts(
     signature: &str,
     body: &[u8],
 ) -> Result<VerifiedRemoteSession, CoreLinkError> {
-    refresh_accepted_session(state, sessionId).await?;
-    let sessions = state.sessions.lock().await;
-    let Some(session) = sessions.get(sessionId) else {
+    let records = state
+        .accessStore
+        .inboundSessions()
+        .map_err(CoreLinkError::internal)?;
+    let Some(record) = records.get(sessionId) else {
         return Err(remote_session_auth_error(
             "invalid session",
             "invalid_session",
         ));
     };
+    let session = accepted_session_from_record(record)?;
     if session.deviceId != deviceId {
         return Err(remote_session_auth_error(
             "device mismatch",
@@ -1638,31 +1767,6 @@ fn accepted_session_from_record(
             .decode(record.sessionSecret.as_bytes())
             .map_err(|error| CoreLinkError::new("INVALID_SESSION_STORE", error.to_string()))?,
     })
-}
-
-async fn refresh_accepted_session(
-    state: &RemoteLinkState,
-    sessionId: &str,
-) -> Result<(), CoreLinkError> {
-    let known_accepted_session = state.acceptedSessionIds.lock().await.contains(sessionId);
-    if !known_accepted_session {
-        return Ok(());
-    }
-    let Some(loader) = state.acceptedSessionLoader.as_ref() else {
-        return Ok(());
-    };
-    let records = loader().map_err(CoreLinkError::internal)?;
-    if let Some(record) = records.get(sessionId) {
-        state
-            .sessions
-            .lock()
-            .await
-            .insert(sessionId.to_string(), accepted_session_from_record(record)?);
-    } else {
-        state.acceptedSessionIds.lock().await.remove(sessionId);
-        state.sessions.lock().await.remove(sessionId);
-    }
-    Ok(())
 }
 
 fn token_matches(state: &RemoteLinkState, headers: &HeaderMap) -> bool {
@@ -1795,7 +1899,7 @@ fn serve_web_access_file(webAccess: &RemoteWebAccessState, path: &str) -> Respon
     if !fullPath.starts_with(&webAccess.webRoot) {
         return bad_request("web asset path escapes web root");
     }
-    let mut bytes = match fs::read(&fullPath) {
+    let mut bytes = match (webAccess.readAsset)(&fullPath) {
         Ok(value) => value,
         Err(error) => {
             return (
@@ -1815,9 +1919,6 @@ fn serve_web_access_file(webAccess: &RemoteWebAccessState, path: &str) -> Respon
     }
     Response::builder()
         .header("content-type", contentType)
-        .header("cross-origin-opener-policy", "same-origin")
-        .header("cross-origin-embedder-policy", "require-corp")
-        .header("cross-origin-resource-policy", "same-origin")
         .body(Body::from(bytes))
         .expect("web asset response must build")
 }

@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 
 import '../../core/application/CoreApplicationService.dart';
 import '../../core/host/ComposeWebViewControllerBridge.dart';
-import '../../core/link_host/LinkHostServer.dart';
 import '../../core/runtime/RuntimeConnectionManager.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../features/packages/screens/ToolPkgComposeDslWebView.dart';
@@ -106,12 +105,10 @@ class _AppDialogHost extends StatefulWidget {
 
 class _AppDialogHostState extends State<_AppDialogHost> {
   bool _shownStartupWebAccessError = false;
-  String _shownPairingId = '';
 
   @override
   void initState() {
     super.initState();
-    LinkHostServer.instance.addListener(_onWebAccessChanged);
     RuntimeConnectionManager.instance.addListener(_onManagerChanged);
   }
 
@@ -127,7 +124,6 @@ class _AppDialogHostState extends State<_AppDialogHost> {
 
   @override
   void dispose() {
-    LinkHostServer.instance.removeListener(_onWebAccessChanged);
     RuntimeConnectionManager.instance.removeListener(_onManagerChanged);
     super.dispose();
   }
@@ -157,40 +153,6 @@ class _AppDialogHostState extends State<_AppDialogHost> {
             title: Text(l10n.settingsWebAccessService),
             content: SingleChildScrollView(
               child: SelectableText(l10n.settingsWebAccessStartFailed(error)),
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text(l10n.ok),
-              ),
-            ],
-          );
-        },
-      );
-    });
-  }
-
-  void _onWebAccessChanged() {
-    final record = LinkHostServer.instance.lastPairingCode;
-    if (record == null || record.pairingId == _shownPairingId) {
-      return;
-    }
-    _shownPairingId = record.pairingId;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      final l10n = AppLocalizations.of(context)!;
-      showDialog<void>(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: Text(l10n.settingsWebAccessPairingRequest),
-            content: SelectableText(
-              l10n.settingsWebAccessPairingRequestMessage(
-                record.pairingCode,
-                record.clientDeviceId,
-              ),
             ),
             actions: <Widget>[
               TextButton(

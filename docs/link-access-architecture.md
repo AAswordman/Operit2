@@ -39,13 +39,13 @@ web access
 
 | Part | Owns | Must Not Own |
 | --- | --- | --- |
-| runtime/core | 核心执行、core 对象状态、进程内 core 能力 | 配对、session、签名、server 生命周期、Web Access UX |
+| runtime/core Link Access | 配对、session、签名、设备身份、Link Access 配置、远程连接生命周期与 RuntimeStorage 持久化 | Dart/CLI 私有 session 文件、JNI session 路径、静态 Web 资源读取 |
 | CoreProxy | app 侧 typed 调用投影、把 typed 调用转换成 link request | app 间信任、密钥、远程连接生命周期 |
 | operit-link | call/watch/push/event/error/stream 协议，link envelope 与承载工具 | 配对、session store、签名算法、设备信任、listener 启动、静态文件服务 |
 | app access | 配对、session、签名、设备信任、权限 UI、server 组合 | core 业务执行、runtime 内部状态 |
-| Flutter Dart | 配对 UI、session 持久化、remote link client、本地/远程选择 | core 内部对象、host server 监听 |
-| Flutter native Rust | host server、accepted session、access endpoint、link dispatcher 接入 LocalCoreProxy | Dart UI 状态、普通 Web wasm runtime 路径 |
-| CLI app | CLI session、配对命令、serve/connect/sync/watch | operit-link 内部 access 状态 |
+| Flutter Dart | 配对 UI 与 Core Link Access 状态投影 | session 持久化、签名、host server 生命周期 |
+| Flutter native Rust | 静态资源与平台 WebSocket listener 接入 | accepted session 文件、pairing code 文件、Dart UI 状态 |
+| CLI app | Link Access 命令与 Core Link Access 状态投影 | CLI session 文件、重复配对与验签实现 |
 | Web Access JS | 浏览器 app 的配对、session、签名、link 调用 | wasm local runtime 替换、host app server 生命周期 |
 
 ## 3. Module Ownership

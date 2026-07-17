@@ -2515,6 +2515,30 @@ pub struct SnackbarHostProps {
     /// Shared node layout, drawing, identity, and lifecycle properties.
     pub base_compose_common_props: ComposeCommonProps,
 }
+/// Properties for embedding the host AI chat content without its workspace panel.
+pub struct AiChatProps {
+    /// Shared node layout, drawing, identity, and lifecycle properties.
+    pub base_compose_common_props: ComposeCommonProps,
+}
+/// Properties for a responsive trailing panel controlled by the Compose screen.
+pub struct AdaptiveSidePanelProps {
+    /// Shared node layout, drawing, identity, and lifecycle properties.
+    pub base_compose_common_props: ComposeCommonProps,
+    /// Controls whether the trailing panel is visible.
+    pub open: bool,
+    /// Content rendered inside the trailing panel.
+    pub side: ComposeChildren,
+    /// Receives visibility changes initiated by the host surface.
+    pub onOpenChanged: Arc<dyn Fn(bool) -> () + Send + Sync>,
+    /// Width used by default on wide layouts.
+    pub defaultWidth: Option<f64>,
+    /// Smallest permitted width on wide layouts.
+    pub minWidth: Option<f64>,
+    /// Minimum width reserved for the primary content on wide layouts.
+    pub minContentWidth: Option<f64>,
+    /// Viewport width at which the panel switches to overlay mode.
+    pub breakpoint: Option<f64>,
+}
 /// Drawing commands, viewport transform, and gesture callbacks for a canvas node.
 pub struct CanvasProps {
     /// Shared node layout, drawing, identity, and lifecycle properties.
@@ -2731,6 +2755,10 @@ pub struct ComposeUiFactoryRegistry {
     pub CircularProgressIndicator: ComposeNodeFactory<CircularProgressIndicatorProps>,
     /// Creates the presentation slot for queued snackbars.
     pub SnackbarHost: ComposeNodeFactory<SnackbarHostProps>,
+    /// Embeds the host AI chat content without the workspace panel.
+    pub AiChat: ComposeNodeFactory<AiChatProps>,
+    /// Creates a responsive trailing panel around the supplied screen content.
+    pub AdaptiveSidePanel: ComposeNodeFactory<AdaptiveSidePanelProps>,
     /// Creates a command-driven drawing surface.
     pub Canvas: ComposeNodeFactory<CanvasProps>,
     /// Creates an embedded platform WebView.

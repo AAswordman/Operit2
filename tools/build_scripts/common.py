@@ -402,6 +402,27 @@ def ensure_typescript(version: str) -> Path:
     return tsc.parent
 
 
+# Ensures Terser is installed at the requested version.
+def ensure_terser(version: str) -> Path:
+    root = REPO_ROOT / ".ci-tools" / "terser"
+    terser = node_bin_command(root, "terser")
+    if not terser.exists():
+        npm = node_package_command("npm")
+        run(
+            [
+                npm,
+                "install",
+                "--prefix",
+                str(root),
+                "--no-audit",
+                "--no-fund",
+                f"terser@{version}",
+            ]
+        )
+    run([str(terser), "--version"])
+    return terser.parent
+
+
 def prepare_python_command() -> None:
     python = Path(sys.executable)
     if not python.is_file():
@@ -425,7 +446,6 @@ def prepare_python_command() -> None:
 
 def generate_dart_proxy_artifacts() -> None:
     manifest = REPO_ROOT / "core" / "crates" / "operit-core-proxy" / "Cargo.toml"
-    run(["cargo", "clean", "--manifest-path", str(manifest), "-p", "operit-core-proxy"])
     run(["cargo", "check", "--manifest-path", str(manifest), "--quiet"])
     for path in [
         FLUTTER_APP_DIR / "lib" / "core" / "proxy" / "generated" / "CoreProxyClients.g.dart",

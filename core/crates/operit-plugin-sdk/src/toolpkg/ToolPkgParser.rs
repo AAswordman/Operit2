@@ -894,6 +894,7 @@ impl ToolPkgArchiveParser {
             }
             if surface != TOOLPKG_NAV_SURFACE_TOOLBOX
                 && surface != TOOLPKG_NAV_SURFACE_MAIN_SIDEBAR_PLUGINS
+                && surface != TOOLPKG_NAV_SURFACE_APP_BAR
             {
                 return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].surface is unsupported: {surface}"));
             }

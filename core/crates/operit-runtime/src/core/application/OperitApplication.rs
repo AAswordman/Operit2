@@ -32,10 +32,10 @@ use operit_model::Memory::{Memory, MemoryLink};
 use operit_providers::chat::llmprovider::ModelConfigConnectionTester::ModelConnectionTestReport;
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_store::db::AppDatabase::AppDatabase;
+use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
 use operit_store::PreferencesDataStore::PreferencesDataStore;
-use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::PreferencesDataStore::StateFlow;
 use operit_store::RuntimeStorageHost::{
     defaultRuntimeStorageHost, setDefaultHostSecretStore, setDefaultRuntimeSqliteHost,

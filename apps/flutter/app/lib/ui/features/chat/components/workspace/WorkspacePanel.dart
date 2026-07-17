@@ -320,7 +320,9 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   /// Creates and opens a manual terminal session using the host-declared type.
   Future<void> _createAndOpenTerminalSession() async {
     final terminalType = await _terminalSessions.defaultTerminalType();
-    final workingDirectory = await _manualTerminalWorkingDirectory();
+    final workingDirectory = await _manualTerminalWorkingDirectory(
+      terminalType,
+    );
     final sessionId = await _terminalSessions.startPtySession(
       sessionName: _nextManualTerminalSessionName(),
       terminalType: terminalType,
@@ -337,7 +339,11 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     _openTerminalSessionTab(session);
   }
 
-  Future<String> _manualTerminalWorkingDirectory() async {
+  /// Resolves the initial directory supported by the selected terminal host.
+  Future<String> _manualTerminalWorkingDirectory(String terminalType) async {
+    if (terminalType == 'linux-vm') {
+      return '/';
+    }
     if (!widget.hasBoundWorkspace) {
       return const GeneratedCoreProxyClients(
         ProxyCoreRuntimeBridge(),

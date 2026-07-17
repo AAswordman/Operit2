@@ -46,37 +46,15 @@ class OperitClientPaths {
     return File(_join(<String>[directory.path, 'local_runtime_storage.json']));
   }
 
-  static Future<Directory> linkHostDir() {
-    return linkDir();
-  }
-
-  static Future<Directory> linkHostWebAccessBundleDir() {
+  /// Returns the host-owned directory used to materialize Web Access assets.
+  static Future<Directory> linkAccessWebAccessBundleDir() {
     return _directory(<String>['client', 'link', 'web_access_bundle']);
   }
 
-  static Future<File> linkHostConfigFile() async {
-    final directory = await linkHostDir();
+  /// Returns the local Link Access Host configuration file.
+  static Future<File> linkAccessHostConfigFile() async {
+    final directory = await linkDir();
     return File(_join(<String>[directory.path, 'host_config.json']));
-  }
-
-  static Future<File> linkHostStateFile() async {
-    final directory = await linkHostDir();
-    return File(_join(<String>[directory.path, 'host_state.json']));
-  }
-
-  static Future<File> linkHostDeviceIdFile() async {
-    final directory = await linkHostDir();
-    return File(_join(<String>[directory.path, 'host_device_id']));
-  }
-
-  static Future<File> inboundLinkSessionsFile() async {
-    final directory = await linkHostDir();
-    return File(_join(<String>[directory.path, 'inbound_sessions.json']));
-  }
-
-  static Future<File> pendingLinkPairingCodeFile() async {
-    final directory = await linkHostDir();
-    return File(_join(<String>[directory.path, 'pending_pairing_code.json']));
   }
 
   static Future<Directory> tempDir() {

@@ -13,6 +13,8 @@ use crate::chat::llmprovider::AIService::{
     SendMessageRequest, SharedAiResponseStream, TokenCounts,
 };
 use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_model::ModelParameter::ModelParameter;
 use operit_model::ModelParameter::ParameterValueType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
@@ -20,10 +22,12 @@ use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
     with_event_channel_shared, RevisableTextStreamLike, TextStreamEvent, TextStreamEventType,
 };
-use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+use operit_util::AppLogger::AppLogger;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ChatUtils::ChatUtils;
 use operit_util::TokenCacheManager::TokenCacheManager;
+
+const PROVIDER_TRANSPORT_LOG_TAG: &str = "ProviderTransport";
 
 #[derive(Clone)]
 pub struct OpenAIProvider {
@@ -519,19 +523,68 @@ impl OpenAIProvider {
         }
     }
 
+    /// Sends one provider request and records the response-header boundary.
     async fn sendHttpRequest(
         &self,
         request: reqwest::RequestBuilder,
     ) -> Result<reqwest::Response, AiServiceError> {
+        let provider_model = self.provider_model();
+        let endpoint = self.diagnosticEndpoint()?;
+        let started_at = currentTimeMillis();
+        AppLogger::i(
+            PROVIDER_TRANSPORT_LOG_TAG,
+            &format!(
+                "provider.http.request.start providerModel={} endpoint={}",
+                provider_model, endpoint
+            ),
+        );
         let receiver = self.cancel_receiver();
         let observedGeneration = *receiver.borrow();
         if self.is_cancelled() {
             return Err(AiServiceError::RequestCancelled);
         }
-        tokio::select! {
+        let result = tokio::select! {
             response = request.send() => response.map_err(|error| AiServiceError::ConnectionFailed(error.to_string())),
             _ = Self::waitForCancellation(receiver, observedGeneration) => Err(AiServiceError::RequestCancelled),
-        }
+        };
+        match &result {
+            Ok(response) => AppLogger::i(
+                PROVIDER_TRANSPORT_LOG_TAG,
+                &format!(
+                    "provider.http.response.headers providerModel={} endpoint={} status={} elapsedMs={}",
+                    provider_model,
+                    endpoint,
+                    response.status(),
+                    currentTimeMillis().saturating_sub(started_at),
+                ),
+            ),
+            Err(error) => AppLogger::e(
+                PROVIDER_TRANSPORT_LOG_TAG,
+                &format!(
+                    "provider.http.request.failed providerModel={} endpoint={} elapsedMs={} error={}",
+                    provider_model,
+                    endpoint,
+                    currentTimeMillis().saturating_sub(started_at),
+                    error,
+                ),
+            ),
+        };
+        result
+    }
+
+    /// Produces a secret-free endpoint identifier for provider transport diagnostics.
+    fn diagnosticEndpoint(&self) -> Result<String, AiServiceError> {
+        let url = reqwest::Url::parse(&self.api_endpoint).map_err(|error| {
+            AiServiceError::RequestFailed(format!("invalid provider endpoint: {error}"))
+        })?;
+        let host = url.host_str().ok_or_else(|| {
+            AiServiceError::RequestFailed("provider endpoint has no host".to_string())
+        })?;
+        let authority = match url.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_string(),
+        };
+        Ok(format!("{}://{}{}", url.scheme(), authority, url.path()))
     }
 
     async fn readResponseText(
@@ -747,6 +800,7 @@ impl OpenAIProvider {
         )
     }
 
+    /// Reads provider stream bytes and records first-byte and completion boundaries.
     async fn read_streaming_response(
         &self,
         response: reqwest::Response,
@@ -771,6 +825,10 @@ impl OpenAIProvider {
             toolCallState: ToolCallState::default(),
             lastProcessedToolIndex: None,
         };
+        let provider_model = self.provider_model();
+        let stream_started_at = currentTimeMillis();
+        let mut received_first_byte = false;
+        let mut received_byte_count = 0usize;
         let mut response_stream = response.bytes_stream();
 
         let result = async {
@@ -780,6 +838,18 @@ impl OpenAIProvider {
                 }
                 let bytes =
                     item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                received_byte_count += bytes.len();
+                if !received_first_byte {
+                    received_first_byte = true;
+                    AppLogger::i(
+                        PROVIDER_TRANSPORT_LOG_TAG,
+                        &format!(
+                            "provider.http.response.firstByte providerModel={} elapsedMs={}",
+                            provider_model,
+                            currentTimeMillis().saturating_sub(stream_started_at),
+                        ),
+                    );
+                }
                 state
                     .pending_line
                     .push_str(&String::from_utf8_lossy(&bytes));
@@ -807,6 +877,16 @@ impl OpenAIProvider {
             }
 
             self.apply_token_counts(state.usage.clone());
+            AppLogger::i(
+                PROVIDER_TRANSPORT_LOG_TAG,
+                &format!(
+                    "provider.http.response.stream.done providerModel={} elapsedMs={} bytes={} chunks={}",
+                    provider_model,
+                    currentTimeMillis().saturating_sub(stream_started_at),
+                    received_byte_count,
+                    state.chunkCount,
+                ),
+            );
             Ok(())
         }
         .await;
@@ -1640,12 +1720,21 @@ impl OpenAIProvider {
             defaultHostRuntimeTaskSchedulerHost()
                 .scheduleHostRuntimeAsyncTask(
                     "openai-response-stream",
-                    Box::pin(async move {
+                    Box::new(move || Box::pin(async move {
                         let request_savepoint_id = format!("attempt_{}", Uuid::new_v4().simple());
                         let mut emitter = StreamEmitter::new(producer.event_channel.clone());
                         emitter.emit_savepoint(&request_savepoint_id);
                         let mut retryCount = 0;
                         loop {
+                            let attempt = retryCount + 1;
+                            AppLogger::i(
+                                PROVIDER_TRANSPORT_LOG_TAG,
+                                &format!(
+                                    "provider.stream.attempt.start providerModel={} attempt={}",
+                                    provider.provider_model(),
+                                    attempt,
+                                ),
+                            );
                             let response = provider
                                 .sendHttpRequest(
                                     reqwest::Client::new()
@@ -1674,10 +1763,25 @@ impl OpenAIProvider {
                                 Ok(()) | Err(AiServiceError::RequestCancelled) => break,
                                 Err(error) => {
                                     retryCount += 1;
+                                    AppLogger::e(
+                                        PROVIDER_TRANSPORT_LOG_TAG,
+                                        &format!(
+                                            "provider.stream.attempt.failed providerModel={} attempt={} error={}",
+                                            provider.provider_model(),
+                                            attempt,
+                                            error,
+                                        ),
+                                    );
                                     if !enable_retry
                                         || retryCount
                                             > super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS
                                     {
+                                        if let Some(callback) = on_non_fatal_error.as_ref() {
+                                            callback(format!(
+                                                "provider request failed after {} attempt(s): {}",
+                                                attempt, error
+                                            ));
+                                        }
                                         break;
                                     }
                                     let _ = emitter.emit_rollback(&request_savepoint_id);
@@ -1692,7 +1796,7 @@ impl OpenAIProvider {
                         }
                         producer.upstream.close();
                         producer.event_channel.close();
-                    }),
+                    })),
                 )
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
             return Ok(Box::new(output));
@@ -1711,23 +1815,25 @@ impl OpenAIProvider {
         defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeAsyncTask(
                 "openai-response",
-                Box::pin(async move {
-                    if let Ok(chunks) = provider
-                        .sendNonStreamingPreparedRequest(
-                            api_endpoint,
-                            headers,
-                            request_body,
-                            enable_retry,
-                            on_non_fatal_error,
-                        )
-                        .await
-                    {
-                        for chunk in chunks {
-                            producer.upstream.emit(chunk);
+                Box::new(move || {
+                    Box::pin(async move {
+                        if let Ok(chunks) = provider
+                            .sendNonStreamingPreparedRequest(
+                                api_endpoint,
+                                headers,
+                                request_body,
+                                enable_retry,
+                                on_non_fatal_error,
+                            )
+                            .await
+                        {
+                            for chunk in chunks {
+                                producer.upstream.emit(chunk);
+                            }
                         }
-                    }
-                    producer.upstream.close();
-                    producer.event_channel.close();
+                        producer.upstream.close();
+                        producer.event_channel.close();
+                    })
                 }),
             )
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;

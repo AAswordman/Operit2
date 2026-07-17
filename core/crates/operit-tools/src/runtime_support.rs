@@ -11,11 +11,6 @@ use operit_plugin_sdk::javascript::JsExecutionProvider;
 use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 
 /// Future returned by runtime support async boundaries.
-#[cfg(not(target_arch = "wasm32"))]
-pub type ToolRuntimeSupportFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-/// Future returned by runtime support async boundaries on wasm targets.
-#[cfg(target_arch = "wasm32")]
 pub type ToolRuntimeSupportFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 /// Runtime-owned character card tool-access result consumed by tools.

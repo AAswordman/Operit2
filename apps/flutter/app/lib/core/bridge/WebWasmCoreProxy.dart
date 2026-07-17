@@ -175,7 +175,14 @@ Future<void> _closeNativeWebWatchStream(String subscriptionId) async {
 
 /// Invokes one binary wasm runtime method.
 Future<Uint8List> _invokeBytes(String method, List<JSAny?> args) async {
-  final runtime = globalContext.getProperty<JSAny?>('__operitRuntime'.toJS);
+  var runtime = globalContext.getProperty<JSAny?>('__operitRuntime'.toJS);
+  if (runtime.isUndefinedOrNull) {
+    final ready = globalContext.getProperty<JSAny?>('__operitRuntimeReady'.toJS);
+    if (ready.isA<JSPromise<JSAny?>>()) {
+      await (ready as JSPromise<JSAny?>).toDart;
+      runtime = globalContext.getProperty<JSAny?>('__operitRuntime'.toJS);
+    }
+  }
   if (runtime.isUndefinedOrNull) {
     throw const CoreLinkError(
       code: 'WEB_WASM_BRIDGE_NOT_INSTALLED',

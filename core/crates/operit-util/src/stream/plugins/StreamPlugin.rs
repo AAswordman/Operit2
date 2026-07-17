@@ -6,7 +6,7 @@ pub enum PluginState {
     WaitFor,
 }
 
-pub trait StreamPlugin {
+pub trait StreamPlugin: Send {
     fn name(&self) -> &'static str;
     fn state(&self) -> PluginState;
     fn process_char(&mut self, c: char, at_start_of_line: bool) -> bool;

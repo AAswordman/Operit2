@@ -1,10 +1,14 @@
 use std::collections::VecDeque;
-use std::sync::mpsc::{channel, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+
+use crate::AppLogger::AppLogger;
+
+const STREAM_DISPATCH_LOG_TAG: &str = "StreamDispatch";
 
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 
-use crate::stream::Stream::Stream;
+use crate::stream::Stream::{CollectFuture, Stream};
 
 /// Stream that can have multiple collectors and optional replayed items.
 pub trait SharedStream<T>: Stream<Item = T>
@@ -65,10 +69,9 @@ pub enum StreamStart {
 
 /// Hot shared stream implementation used by AI response streams and event channels.
 ///
-/// Collection blocks until `close` is called or all senders disconnect. Closing
-/// this stream is a producer-side action: it ends every active collector and
-/// rejects later emits.
-#[derive(Debug, Clone)]
+/// Collection waits asynchronously until `close` is called. Closing this stream
+/// ends every active collector and rejects later emits.
+#[derive(Clone)]
 pub struct MutableSharedStreamImpl<T>
 where
     T: Clone,
@@ -76,14 +79,13 @@ where
     inner: Arc<Mutex<MutableSharedStreamState<T>>>,
 }
 
-#[derive(Debug)]
 struct MutableSharedStreamState<T>
 where
     T: Clone,
 {
     replay_limit: usize,
     replay_buffer: VecDeque<T>,
-    subscribers: Vec<(usize, Sender<SharedEvent<T>>)>,
+    subscribers: Vec<(usize, UnboundedSender<SharedEvent<T>>)>,
     subscription_count: usize,
     next_subscriber_id: usize,
     closed: bool,
@@ -96,6 +98,53 @@ where
 {
     Value(T),
     Close,
+}
+
+/// Removes an asynchronous collector registration when its future is dropped.
+struct SharedStreamSubscription<T>
+where
+    T: Clone,
+{
+    inner: Weak<Mutex<MutableSharedStreamState<T>>>,
+    subscriberId: usize,
+}
+
+impl<T> Drop for SharedStreamSubscription<T>
+where
+    T: Clone,
+{
+    /// Removes the subscriber from the shared stream state.
+    fn drop(&mut self) {
+        if let Some(inner) = self.inner.upgrade() {
+            if let Ok(mut state) = inner.lock() {
+                state.subscribers.retain(|(id, _)| *id != self.subscriberId);
+                state.subscription_count = state.subscribers.len();
+            }
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for MutableSharedStreamImpl<T>
+where
+    T: Clone,
+{
+    /// Formats the shared-stream state without requiring its item type to implement Debug.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = self.inner.lock();
+        let mut debug = formatter.debug_struct("MutableSharedStreamImpl");
+        match state {
+            Ok(state) => {
+                debug
+                    .field("replayCount", &state.replay_buffer.len())
+                    .field("subscriptionCount", &state.subscription_count)
+                    .field("closed", &state.closed);
+            }
+            Err(_) => {
+                debug.field("state", &"poisoned");
+            }
+        }
+        debug.finish()
+    }
 }
 
 impl<T> MutableSharedStreamImpl<T>
@@ -126,7 +175,8 @@ where
                 return;
             }
             guard.closed = true;
-            let subscribers = guard.subscribers.clone();
+            let subscribers = std::mem::take(&mut guard.subscribers);
+            guard.subscription_count = 0;
             drop(guard);
             for (_, sender) in subscribers {
                 let _ = sender.send(SharedEvent::Close);
@@ -196,63 +246,60 @@ where
 
 impl<T> Stream for MutableSharedStreamImpl<T>
 where
-    T: Clone,
+    T: Clone + Send + 'static,
 {
     type Item = T;
 
-    /// Subscribes to this shared stream and blocks until `close` is observed.
+    /// Collects replay and live values while yielding during producer waits.
     ///
     /// The collector first receives a replay snapshot, then live values. When the
     /// producer closes the stream, this collector is removed from the subscriber
     /// list and the method returns.
-    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
-        let (subscriber_id, receiver, replay_snapshot, closed_immediately) = match self.inner.lock()
-        {
-            Ok(mut guard) => {
-                let replay_snapshot = guard.replay_buffer.iter().cloned().collect::<Vec<_>>();
-                if guard.closed {
-                    (None, None, replay_snapshot, true)
-                } else {
-                    let (tx, rx) = channel::<SharedEvent<T>>();
-                    let subscriber_id = guard.next_subscriber_id;
-                    guard.next_subscriber_id += 1;
-                    guard.subscribers.push((subscriber_id, tx));
-                    guard.subscription_count = guard.subscribers.len();
-                    (Some(subscriber_id), Some(rx), replay_snapshot, false)
+    fn collect<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(Self::Item),
+    ) -> CollectFuture<'a> {
+        Box::pin(async move {
+            let (subscriberId, mut receiver, replaySnapshot) = match self.inner.lock() {
+                Ok(mut state) => {
+                    let replaySnapshot = state.replay_buffer.iter().cloned().collect::<Vec<_>>();
+                    if state.closed {
+                        (None, None, replaySnapshot)
+                    } else {
+                        let (sender, receiver) = unbounded_channel::<SharedEvent<T>>();
+                        let subscriberId = state.next_subscriber_id;
+                        state.next_subscriber_id += 1;
+                        state.subscribers.push((subscriberId, sender));
+                        state.subscription_count = state.subscribers.len();
+                        (Some(subscriberId), Some(receiver), replaySnapshot)
+                    }
+                }
+                Err(_) => return,
+            };
+            let _subscription = subscriberId.map(|subscriberId| SharedStreamSubscription {
+                inner: Arc::downgrade(&self.inner),
+                subscriberId,
+            });
+
+            for value in replaySnapshot {
+                collector(value);
+            }
+
+            if let Some(receiver) = receiver.as_mut() {
+                while let Some(event) = receiver.recv().await {
+                    match event {
+                        SharedEvent::Value(value) => collector(value),
+                        SharedEvent::Close => break,
+                    }
                 }
             }
-            Err(_) => return,
-        };
-
-        for value in replay_snapshot {
-            collector(value);
-        }
-
-        if closed_immediately {
-            return;
-        }
-
-        if let Some(receiver) = receiver {
-            while let Ok(event) = receiver.recv() {
-                match event {
-                    SharedEvent::Value(value) => collector(value),
-                    SharedEvent::Close => break,
-                }
-            }
-        }
-
-        if let Some(subscriber_id) = subscriber_id {
-            if let Ok(mut guard) = self.inner.lock() {
-                guard.subscribers.retain(|(id, _)| *id != subscriber_id);
-                guard.subscription_count = guard.subscribers.len();
-            }
-        }
+        })
     }
 }
 
 impl<T> SharedStream<T> for MutableSharedStreamImpl<T>
 where
-    T: Clone,
+    T: Clone + Send + 'static,
 {
     fn subscription_count(&self) -> usize {
         MutableSharedStreamImpl::subscription_count(self)
@@ -265,7 +312,7 @@ where
 
 impl<T> MutableSharedStream<T> for MutableSharedStreamImpl<T>
 where
-    T: Clone,
+    T: Clone + Send + 'static,
 {
     fn emit(&mut self, value: T) {
         MutableSharedStreamImpl::emit(self, value);
@@ -305,18 +352,21 @@ where
 
 impl<T> Stream for MutableStateStreamImpl<T>
 where
-    T: Clone,
+    T: Clone + Send + 'static,
 {
     type Item = T;
 
-    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
-        self.shared.collect(collector);
+    fn collect<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(Self::Item),
+    ) -> CollectFuture<'a> {
+        self.shared.collect(collector)
     }
 }
 
 impl<T> SharedStream<T> for MutableStateStreamImpl<T>
 where
-    T: Clone,
+    T: Clone + Send + 'static,
 {
     fn subscription_count(&self) -> usize {
         self.shared.subscription_count()
@@ -329,7 +379,7 @@ where
 
 impl<T> MutableSharedStream<T> for MutableStateStreamImpl<T>
 where
-    T: Clone,
+    T: Clone + Send + 'static,
 {
     fn emit(&mut self, value: T) {
         if let Ok(mut current) = self.current.lock() {
@@ -350,7 +400,7 @@ where
 
 impl<T> StateStream<T> for MutableStateStreamImpl<T>
 where
-    T: Clone,
+    T: Clone + Send + 'static,
 {
     fn value(&self) -> T {
         self.current
@@ -368,7 +418,7 @@ where
 
 impl<T> MutableStateStream<T> for MutableStateStreamImpl<T>
 where
-    T: Clone + PartialEq,
+    T: Clone + PartialEq + Send + 'static,
 {
     fn set_value(&mut self, value: T) {
         self.emit(value);
@@ -442,20 +492,42 @@ fn scheduleSharedStreamCollection<S>(
     let retrySource = source.clone();
     let retryShared = shared.clone();
     defaultHostRuntimeTaskSchedulerHost()
-        .scheduleHostRuntimeTask(
+        .scheduleHostRuntimeAsyncTask(
             "operit-shared-stream-collection",
             Box::new(move || {
-                if matches!(started, StreamStart::Lazily) && retryShared.subscription_count() == 0 {
-                    scheduleSharedStreamCollectionAfterDelay(retrySource, retryShared, started);
-                    return;
-                }
-                let mut stream = retrySource
-                    .lock()
-                    .expect("shared stream source mutex poisoned")
-                    .take()
-                    .expect("shared stream collection must start exactly once");
-                stream.collect(&mut |value| retryShared.emit(value));
-                retryShared.close();
+                Box::pin(async move {
+                    if matches!(started, StreamStart::Lazily)
+                        && retryShared.subscription_count() == 0
+                    {
+                        AppLogger::d(
+                            STREAM_DISPATCH_LOG_TAG,
+                            "shared stream collection deferred until a subscriber is attached",
+                        );
+                        scheduleSharedStreamCollectionAfterDelay(retrySource, retryShared, started);
+                        return;
+                    }
+                    AppLogger::d(
+                        STREAM_DISPATCH_LOG_TAG,
+                        &format!(
+                            "shared stream collection started subscribers={}",
+                            retryShared.subscription_count()
+                        ),
+                    );
+                    let mut stream = retrySource
+                        .lock()
+                        .expect("shared stream source mutex poisoned")
+                        .take()
+                        .expect("shared stream collection must start exactly once");
+                    {
+                        let target = retryShared.clone();
+                        stream.collect(&mut move |value| target.emit(value)).await;
+                    }
+                    retryShared.close();
+                    AppLogger::d(
+                        STREAM_DISPATCH_LOG_TAG,
+                        "shared stream collection completed",
+                    );
+                })
             }),
         )
         .expect("shared stream collection task must be scheduled");
@@ -491,22 +563,30 @@ fn scheduleStateStreamCollection<S>(
     let retrySource = source.clone();
     let retryStateStream = stateStream.clone();
     defaultHostRuntimeTaskSchedulerHost()
-        .scheduleHostRuntimeTask(
+        .scheduleHostRuntimeAsyncTask(
             "operit-state-stream-collection",
             Box::new(move || {
-                if matches!(started, StreamStart::Lazily)
-                    && retryStateStream.subscription_count() == 0
-                {
-                    scheduleStateStreamCollectionAfterDelay(retrySource, retryStateStream, started);
-                    return;
-                }
-                let mut stream = retrySource
-                    .lock()
-                    .expect("state stream source mutex poisoned")
-                    .take()
-                    .expect("state stream collection must start exactly once");
-                let mut target = retryStateStream.clone();
-                stream.collect(&mut |value| target.set_value(value));
+                Box::pin(async move {
+                    if matches!(started, StreamStart::Lazily)
+                        && retryStateStream.subscription_count() == 0
+                    {
+                        scheduleStateStreamCollectionAfterDelay(
+                            retrySource,
+                            retryStateStream,
+                            started,
+                        );
+                        return;
+                    }
+                    let mut stream = retrySource
+                        .lock()
+                        .expect("state stream source mutex poisoned")
+                        .take()
+                        .expect("state stream collection must start exactly once");
+                    let mut target = retryStateStream.clone();
+                    stream
+                        .collect(&mut move |value| target.set_value(value))
+                        .await;
+                })
             }),
         )
         .expect("state stream collection task must be scheduled");
@@ -528,4 +608,64 @@ fn scheduleStateStreamCollectionAfterDelay<S>(
             Box::new(move || scheduleStateStreamCollection(source, stateStream, started)),
         )
         .expect("lazy state stream collection task must be scheduled");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MutableSharedStreamImpl;
+    use crate::stream::Stream::Stream;
+    use std::sync::{Arc, Mutex};
+
+    /// Verifies async collection replays values, forwards live values, and finishes on close.
+    #[tokio::test]
+    async fn collect_preserves_replay_live_order_and_close() {
+        let stream = MutableSharedStreamImpl::new(8);
+        stream.emit("replay".to_string());
+        let values = Arc::new(Mutex::new(Vec::new()));
+        let mut collectedStream = stream.clone();
+        let collectedValues = values.clone();
+        let collection = async move {
+            collectedStream
+                .collect(&mut move |value| {
+                    collectedValues
+                        .lock()
+                        .expect("test values mutex poisoned")
+                        .push(value);
+                })
+                .await;
+        };
+        let producer = async {
+            tokio::task::yield_now().await;
+            stream.emit("live".to_string());
+            stream.close();
+        };
+        tokio::join!(collection, producer);
+
+        assert_eq!(
+            values
+                .lock()
+                .expect("test values mutex poisoned")
+                .as_slice(),
+            ["replay", "live"]
+        );
+    }
+
+    /// Verifies dropping a collection future removes its shared-stream registration.
+    #[tokio::test]
+    async fn dropped_collection_removes_subscriber() {
+        let stream = MutableSharedStreamImpl::<String>::new(0);
+        let mut collectedStream = stream.clone();
+        {
+            let mut collector = |_| {};
+            let collection = collectedStream.collect(&mut collector);
+            tokio::pin!(collection);
+            tokio::select! {
+                _ = &mut collection => panic!("collection must wait for close"),
+                _ = tokio::task::yield_now() => {},
+            }
+            assert_eq!(stream.subscription_count(), 1);
+        }
+        tokio::task::yield_now().await;
+        assert_eq!(stream.subscription_count(), 0);
+    }
 }

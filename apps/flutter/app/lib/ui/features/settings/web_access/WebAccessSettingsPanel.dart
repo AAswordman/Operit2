@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../../../core/link_host/LinkHostServer.dart';
-import '../../../../core/link_host/LinkHostConfig.dart';
+import '../../../../core/link_access/LinkAccessHost.dart';
+import '../../../../core/link_access/LinkAccessHostConfig.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
@@ -22,9 +22,9 @@ class WebAccessSettingsPanel extends StatefulWidget {
 class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
   final TextEditingController _bindAddressController = TextEditingController();
   final TextEditingController _tokenController = TextEditingController();
-  LinkHostConfig? _config;
+  LinkAccessHostConfig? _config;
   List<String> _pairingBaseUrls = <String>[];
-  LinkHostPortMode _portMode = LinkHostPortMode.automatic;
+  LinkAccessHostPortMode _portMode = LinkAccessHostPortMode.automatic;
   bool _busy = false;
 
   @override
@@ -41,8 +41,8 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
   }
 
   Future<void> _load() async {
-    final config = await LinkHostConfigStore.read();
-    final server = LinkHostServer.instance;
+    final config = await LinkAccessHostConfigStore.read();
+    final server = LinkAccessHost.instance;
     final displayConfig = config.webAccessEnabled && server.isRunning
         ? server.currentConfig!
         : config;
@@ -80,19 +80,19 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
         token: _tokenController.text,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       );
-      LinkHostConfig displayConfig = next;
+      LinkAccessHostConfig displayConfig = next;
       if (next.webAccessEnabled || next.discoveryEnabled) {
-        await LinkHostServer.instance.start(next);
-        displayConfig = LinkHostServer.instance.currentConfig!;
-        await LinkHostConfigStore.write(next);
+        await LinkAccessHost.instance.start(next);
+        displayConfig = LinkAccessHost.instance.currentConfig!;
+        await LinkAccessHostConfigStore.write(next);
       } else {
-        await LinkHostConfigStore.write(next);
-        await LinkHostServer.instance.stop(updateConfig: false);
+        await LinkAccessHostConfigStore.write(next);
+        await LinkAccessHost.instance.stop(updateConfig: false);
       }
       if (!mounted) {
         return;
       }
-      final pairingBaseUrls = await LinkHostServer.instance.pairingBaseUrls(
+      final pairingBaseUrls = await LinkAccessHost.instance.pairingBaseUrls(
         displayConfig,
       );
       if (!mounted) {
@@ -137,16 +137,16 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
         token: _tokenController.text,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       );
-      LinkHostConfig displayConfig = next;
+      LinkAccessHostConfig displayConfig = next;
       if (next.webAccessEnabled || next.discoveryEnabled) {
-        await LinkHostServer.instance.start(next);
-        displayConfig = LinkHostServer.instance.currentConfig!;
+        await LinkAccessHost.instance.start(next);
+        displayConfig = LinkAccessHost.instance.currentConfig!;
       }
-      await LinkHostConfigStore.write(next);
+      await LinkAccessHostConfigStore.write(next);
       if (!mounted) {
         return;
       }
-      final pairingBaseUrls = await LinkHostServer.instance.pairingBaseUrls(
+      final pairingBaseUrls = await LinkAccessHost.instance.pairingBaseUrls(
         displayConfig,
       );
       if (!mounted) {
@@ -174,7 +174,7 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
     if (config == null) {
       return;
     }
-    final token = LinkHostToken.generate();
+    final token = LinkAccessHostToken.generate();
     _tokenController.text = token;
     final next = config.copyWith(
       token: token,
@@ -183,9 +183,9 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
     if (next.webAccessEnabled || next.discoveryEnabled) {
-      await LinkHostServer.instance.start(next);
+      await LinkAccessHost.instance.start(next);
     }
-    await LinkHostConfigStore.write(next);
+    await LinkAccessHostConfigStore.write(next);
     if (!mounted) {
       return;
     }
@@ -197,13 +197,13 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
   }
 
   bool _bindAddressInputIsValid() {
-    return _portMode == LinkHostPortMode.automatic ||
+    return _portMode == LinkAccessHostPortMode.automatic ||
         _bindAddressLooksValid(_bindAddressController.text);
   }
 
   String _bindAddressForPortMode() {
-    return _portMode == LinkHostPortMode.automatic
-        ? LinkHostConfig.automaticBindAddress
+    return _portMode == LinkAccessHostPortMode.automatic
+        ? LinkAccessHostConfig.automaticBindAddress
         : _bindAddressController.text.trim();
   }
 
@@ -238,7 +238,7 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
     if (config == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    final server = LinkHostServer.instance;
+    final server = LinkAccessHost.instance;
     final running = config.webAccessEnabled && server.isRunning;
     final displayConfig = running ? server.currentConfig! : config;
     final bindAddress = running
@@ -290,20 +290,20 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
           const SizedBox(height: 6),
           SizedBox(
             width: double.infinity,
-            child: SegmentedButton<LinkHostPortMode>(
-              segments: <ButtonSegment<LinkHostPortMode>>[
-                ButtonSegment<LinkHostPortMode>(
-                  value: LinkHostPortMode.automatic,
+            child: SegmentedButton<LinkAccessHostPortMode>(
+              segments: <ButtonSegment<LinkAccessHostPortMode>>[
+                ButtonSegment<LinkAccessHostPortMode>(
+                  value: LinkAccessHostPortMode.automatic,
                   icon: const Icon(Icons.auto_mode_outlined),
                   label: Text(l10n.settingsWebAccessPortAutomatic),
                 ),
-                ButtonSegment<LinkHostPortMode>(
-                  value: LinkHostPortMode.fixed,
+                ButtonSegment<LinkAccessHostPortMode>(
+                  value: LinkAccessHostPortMode.fixed,
                   icon: const Icon(Icons.push_pin_outlined),
                   label: Text(l10n.settingsWebAccessPortFixed),
                 ),
               ],
-              selected: <LinkHostPortMode>{_portMode},
+              selected: <LinkAccessHostPortMode>{_portMode},
               onSelectionChanged: _busy
                   ? null
                   : (selection) {
@@ -313,7 +313,7 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
           ),
           const SizedBox(height: 6),
           Text(
-            _portMode == LinkHostPortMode.automatic
+            _portMode == LinkAccessHostPortMode.automatic
                 ? l10n.settingsWebAccessPortAutomaticDescription
                 : l10n.settingsWebAccessPortFixedDescription,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -321,7 +321,7 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
             ),
           ),
           const SizedBox(height: 10),
-          if (_portMode == LinkHostPortMode.fixed) ...<Widget>[
+          if (_portMode == LinkAccessHostPortMode.fixed) ...<Widget>[
             TextField(
               controller: _bindAddressController,
               decoration: InputDecoration(

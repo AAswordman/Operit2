@@ -1,4 +1,6 @@
 use std::collections::VecDeque;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::AppLogger::AppLogger;
@@ -55,15 +57,19 @@ impl StreamLogger {
 static ENABLED: AtomicBool = AtomicBool::new(true);
 static VERBOSE_ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// Pull-style runtime stream.
+/// Future returned by an asynchronous stream collection.
+pub type CollectFuture<'a> = Pin<Box<dyn Future<Output = ()> + 'a>>;
+
+/// Future returned by a cold stream producer on its owning executor.
+pub type ProducerFuture<'a> = Pin<Box<dyn Future<Output = ()> + 'a>>;
+
+/// Pull-style asynchronous runtime stream.
 ///
-/// A `Stream` represents a producer of ordered items. Unlike DataStore `Flow`,
-/// cancellation is normally owned by the producer: a provider/service stops
-/// producing, closes a shared stream, or returns from `collect`. Dropping a UI
-/// watch subscription should not by itself be interpreted as cancelling the
-/// upstream operation.
+/// A `Stream` represents a producer of ordered items. Cancellation is normally
+/// owned by the producer, while dropping a collection future only stops that
+/// collector.
 pub trait Stream {
-    type Item;
+    type Item: Send;
 
     /// Returns whether this stream is currently buffering emitted items.
     fn is_locked(&self) -> bool {
@@ -86,10 +92,11 @@ pub trait Stream {
 
     /// Collects items from this stream until the producer finishes or closes.
     ///
-    /// Implementations may block while waiting for producer events. A caller that
-    /// needs cancellation must cancel/close the producer-side object rather than
-    /// assuming the collector can be interrupted externally.
-    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item));
+    /// Asynchronously collects items until the producer finishes or closes.
+    fn collect<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(Self::Item),
+    ) -> CollectFuture<'a>;
 }
 
 impl<S> Stream for Box<S>
@@ -118,8 +125,11 @@ where
         (**self).clear_buffer();
     }
 
-    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
-        (**self).collect(collector);
+    fn collect<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(Self::Item),
+    ) -> CollectFuture<'a> {
+        (**self).collect(collector)
     }
 }
 
@@ -167,7 +177,10 @@ impl<T> VecStream<T> {
     }
 }
 
-impl<T> Stream for VecStream<T> {
+impl<T> Stream for VecStream<T>
+where
+    T: Send,
+{
     type Item = T;
 
     fn is_locked(&self) -> bool {
@@ -192,33 +205,41 @@ impl<T> Stream for VecStream<T> {
         self.buffer.clear();
     }
 
-    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
-        while let Some(value) = self.buffer.pop_front() {
-            collector(value);
-        }
-        while let Some(value) = self.values.pop_front() {
-            match self.try_buffer(value) {
-                Ok(()) => {}
-                Err(value) => collector(value),
+    fn collect<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(Self::Item),
+    ) -> CollectFuture<'a> {
+        Box::pin(async move {
+            while let Some(value) = self.buffer.pop_front() {
+                collector(value);
             }
-        }
-        self.closed = true;
+            while let Some(value) = self.values.pop_front() {
+                match self.try_buffer(value) {
+                    Ok(()) => {}
+                    Err(value) => collector(value),
+                }
+            }
+            self.closed = true;
+        })
     }
 }
 
-/// Stream implemented by a callback that synchronously emits values.
+/// Cold stream implemented by an asynchronous producer callback.
 pub struct FnStream<T> {
-    block: Box<dyn FnMut(&mut dyn FnMut(T)) + Send>,
+    block:
+        Option<Box<dyn for<'a> FnMut(&'a mut dyn FnMut(T)) -> ProducerFuture<'a>>>,
     locked: bool,
     buffer: VecDeque<T>,
     closed: bool,
 }
 
 impl<T> FnStream<T> {
-    /// Creates a stream from a callback invoked during `collect`.
-    pub fn new(block: impl FnMut(&mut dyn FnMut(T)) + Send + 'static) -> Self {
+    /// Creates a cold stream whose producer runs during asynchronous collection.
+    pub fn new(
+        block: impl for<'a> FnMut(&'a mut dyn FnMut(T)) -> ProducerFuture<'a> + 'static,
+    ) -> Self {
         Self {
-            block: Box::new(block),
+            block: Some(Box::new(block)),
             locked: false,
             buffer: VecDeque::new(),
             closed: false,
@@ -226,7 +247,10 @@ impl<T> FnStream<T> {
     }
 }
 
-impl<T> Stream for FnStream<T> {
+impl<T> Stream for FnStream<T>
+where
+    T: Send + 'static,
+{
     type Item = T;
 
     fn is_locked(&self) -> bool {
@@ -251,19 +275,114 @@ impl<T> Stream for FnStream<T> {
         self.buffer.clear();
     }
 
-    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
-        while let Some(value) = self.buffer.pop_front() {
-            collector(value);
-        }
-        let locked = self.locked;
-        let buffer = &mut self.buffer;
-        (self.block)(&mut |value| {
-            if locked {
-                buffer.push_back(value);
-            } else {
+    fn collect<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(Self::Item),
+    ) -> CollectFuture<'a> {
+        Box::pin(async move {
+            while let Some(value) = self.buffer.pop_front() {
                 collector(value);
             }
+            let locked = self.locked;
+            let buffer = &mut self.buffer;
+            let mut block = self
+                .block
+                .take()
+                .expect("FnStream producer must only be collected once");
+            let mut emit = |value| {
+                if locked {
+                    buffer.push_back(value);
+                } else {
+                    collector(value);
+                }
+            };
+            block(&mut emit).await;
+            self.closed = true;
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FnStream, Stream};
+    use operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost;
+    use operit_host_api::{
+        HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost,
+    };
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Once};
+
+    /// Schedules test tasks on isolated current-thread Tokio runtimes.
+    #[derive(Clone, Copy, Debug, Default)]
+    struct TestHostRuntimeTaskScheduler;
+
+    impl HostRuntimeTaskSchedulerHost for TestHostRuntimeTaskScheduler {
+        /// Starts a synchronous test task on an isolated thread.
+        fn scheduleHostRuntimeTask(
+            &self,
+            _task_name: &str,
+            task: HostRuntimeTask,
+        ) -> HostResult<()> {
+            std::thread::spawn(task);
+            Ok(())
+        }
+
+        /// Starts an asynchronous test task on an isolated current-thread runtime.
+        fn scheduleHostRuntimeAsyncTask(
+            &self,
+            _task_name: &str,
+            task: HostRuntimeAsyncTask,
+        ) -> HostResult<()> {
+            std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("create test stream task runtime failed");
+                runtime.block_on(task());
+            });
+            Ok(())
+        }
+
+        /// Starts a delayed test task after the requested interval.
+        fn scheduleDelayedHostRuntimeTask(
+            &self,
+            _task_name: &str,
+            delay_ms: u64,
+            task: HostRuntimeTask,
+        ) -> HostResult<()> {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                task();
+            });
+            Ok(())
+        }
+    }
+
+    /// Installs the stream test scheduler once for this process.
+    fn install_test_host_runtime_task_scheduler() {
+        static INITIALIZED: Once = Once::new();
+        INITIALIZED.call_once(|| {
+            setDefaultHostRuntimeTaskSchedulerHost(Arc::new(TestHostRuntimeTaskScheduler));
         });
-        self.closed = true;
+    }
+
+    /// Verifies cold producer work starts only after asynchronous collection begins.
+    #[tokio::test]
+    async fn fn_stream_starts_producer_during_collection() {
+        install_test_host_runtime_task_scheduler();
+        let started = Arc::new(AtomicBool::new(false));
+        let producerStarted = started.clone();
+        let mut stream = FnStream::new(move |emit| {
+            producerStarted.store(true, Ordering::Release);
+            emit("value".to_string());
+            Box::pin(async {})
+        });
+        assert!(!started.load(Ordering::Acquire));
+
+        let mut values = Vec::new();
+        stream.collect(&mut |value| values.push(value)).await;
+
+        assert!(started.load(Ordering::Acquire));
+        assert_eq!(values, ["value"]);
     }
 }

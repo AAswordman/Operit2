@@ -3,21 +3,30 @@ use operit_host_api::{
 };
 use std::sync::OnceLock;
 
-static DELAY_RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
+static TIMER_RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
 
-/// Returns the shared asynchronous timer runtime used by delayed host tasks.
-fn delayRuntime() -> HostResult<&'static tokio::runtime::Runtime> {
-    let runtime = DELAY_RUNTIME.get_or_init(|| {
+/// Returns the asynchronous timer runtime used only to trigger delayed named tasks.
+fn timerRuntime() -> HostResult<&'static tokio::runtime::Runtime> {
+    let runtime = TIMER_RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .enable_time()
             .worker_threads(1)
-            .thread_name("operit-runtime-delay")
+            .thread_name("operit-runtime-timer")
             .build()
             .map_err(|error| error.to_string())
     });
     runtime
         .as_ref()
-        .map_err(|error| HostError::new(format!("create runtime delay executor failed: {error}")))
+        .map_err(|error| HostError::new(format!("create runtime timer executor failed: {error}")))
+}
+
+/// Runs one asynchronous runtime task on its dedicated named native thread.
+fn runAsyncRuntimeTask(task: HostRuntimeAsyncTask) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create runtime task executor failed");
+    runtime.block_on(task());
 }
 
 /// Schedules one-shot runtime tasks on named native threads.
@@ -45,14 +54,21 @@ impl HostRuntimeTaskSchedulerHost for NativeHostRuntimeTaskSchedulerHost {
             })
     }
 
-    /// Schedules an asynchronous task on the shared native runtime.
+    /// Starts an asynchronous task on its own named native thread.
     fn scheduleHostRuntimeAsyncTask(
         &self,
-        _taskName: &str,
+        taskName: &str,
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()> {
-        delayRuntime()?.spawn(task);
-        Ok(())
+        std::thread::Builder::new()
+            .name(taskName.to_string())
+            .spawn(move || runAsyncRuntimeTask(task))
+            .map(|_| ())
+            .map_err(|error| {
+                HostError::new(format!(
+                    "create runtime async task thread {taskName} failed: {error}"
+                ))
+            })
     }
 
     /// Starts a named native task after the requested delay.
@@ -62,11 +78,11 @@ impl HostRuntimeTaskSchedulerHost for NativeHostRuntimeTaskSchedulerHost {
         delayMs: u64,
         task: HostRuntimeTask,
     ) -> HostResult<()> {
-        let name = taskName.to_string();
-        delayRuntime()?.spawn(async move {
+        let taskName = taskName.to_string();
+        timerRuntime()?.spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(delayMs)).await;
             std::thread::Builder::new()
-                .name(name)
+                .name(taskName)
                 .spawn(task)
                 .expect("delayed runtime task thread must start");
         });

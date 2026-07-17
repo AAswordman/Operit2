@@ -103,8 +103,14 @@ apps/flutter/app/build/web
 apps/flutter/app/build/web/
 apps/web_access/web/operit_flutter_bridge.js
 apps/web_access/web/operit_flutter_bridge_bg.wasm
+apps/web_access/web/operit_runtime_bridge.js
+apps/web_access/web/operit_flutter_bridge*.d
+apps/web_access/web/operit_flutter_bridge*.d.ts
+apps/web_access/build/bundle/operit_flutter_bridge*.d
+apps/web_access/build/bundle/operit_flutter_bridge*.d.ts
 apps/web_access/web/sql-wasm.js
 apps/web_access/web/sql-wasm.wasm
+apps/web_access/web/v86/
 
 # Local dependency extraction/package scratch
 package/

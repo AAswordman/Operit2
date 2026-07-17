@@ -30,7 +30,8 @@ using BridgeCloseWatchStream = OperitByteBuffer (*)(BridgeHandle, const char*);
 using BridgeFreeBytes = void (*)(OperitByteBuffer);
 using BridgeFreeString = void (*)(char*);
 using BridgeStartWebAccessServer = char* (*)(
-    BridgeHandle, const char*, const char*, const char*, const char*, const char*, const char*);
+    BridgeHandle, const char*, const char*, const char*, const char*, const char*, const char*,
+    const char*);
 using BridgeDiscoverDevices = char* (*)(BridgeHandle, const char*);
 using BridgeStopWebAccessServer = char* (*)(BridgeHandle);
 using BridgeRemotePairStart = char* (*)(BridgeHandle, const char*, const char*, const char*);
@@ -151,19 +152,21 @@ class OperitBridgeLibrary {
 
   /// Starts the Rust Web Access server.
   std::string StartWebAccessServer(BridgeHandle handle,
-                                   const std::string& bind_host,
-                                   const std::string& requested_port,
-                                   const std::string& auth_token,
-                                   const std::string& server_name,
-                                   const std::string& advertise,
-                                   const std::string& pairing_code_path) {
+                                   const std::string& bind_address,
+                                   const std::string& token,
+                                   const std::string& shutdown_token,
+                                   const std::string& web_root,
+                                   const std::string& device_info_json,
+                                   const std::string& enable_web_access,
+                                   const std::string& enable_discovery) {
     return TakeString(start_web_access_server_(handle,
-                                               bind_host.c_str(),
-                                               requested_port.c_str(),
-                                               auth_token.c_str(),
-                                               server_name.c_str(),
-                                               advertise.c_str(),
-                                               pairing_code_path.c_str()));
+                                               bind_address.c_str(),
+                                               token.c_str(),
+                                               shutdown_token.c_str(),
+                                               web_root.c_str(),
+                                               device_info_json.c_str(),
+                                               enable_web_access.c_str(),
+                                               enable_discovery.c_str()));
   }
 
   /// Discovers nearby Operit devices through the Rust bridge.
@@ -474,7 +477,7 @@ napi_value StartWebAccessServer(napi_env env, napi_callback_info info) {
   if (!EnsureBridgeReady(env)) {
     return nullptr;
   }
-  auto args = CallbackArgs(env, info, 7);
+  auto args = CallbackArgs(env, info, 8);
   if (args.empty()) {
     return nullptr;
   }
@@ -488,7 +491,8 @@ napi_value StartWebAccessServer(napi_env env, napi_callback_info info) {
                                                                 ReadString(env, args[3]),
                                                                 ReadString(env, args[4]),
                                                                 ReadString(env, args[5]),
-                                                                ReadString(env, args[6])));
+                                                                ReadString(env, args[6]),
+                                                                ReadString(env, args[7])));
 }
 
 /// Discovers nearby Operit devices through Rust.

@@ -6,8 +6,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../link/RemoteRuntimeLinkClient.dart';
-import '../link_host/LinkHostConfig.dart';
-import '../link_host/LinkHostServer.dart';
+import '../link_access/LinkAccessHost.dart';
 import '../logging/ClientLogger.dart';
 import 'RuntimeConnectionManager.dart';
 import 'RuntimeDataSyncBridge.dart';
@@ -146,7 +145,7 @@ class RuntimeAutoSyncManager extends ChangeNotifier {
     }
     _scanRunning = true;
     try {
-      final json = await LinkHostServer.instance.discoverDevices(
+      final json = await LinkAccessHost.instance.discoverDevices(
         _discoveryTimeoutMs,
       );
       final devices = (jsonDecode(json) as List<dynamic>)
@@ -175,7 +174,7 @@ class RuntimeAutoSyncManager extends ChangeNotifier {
     if (enabledNames.isEmpty) {
       return;
     }
-    final localDeviceId = await LinkHostDeviceIdStore.read();
+    final localDeviceId = LinkAccessHost.instance.deviceId;
     final deviceByCoreDeviceId = <String, RuntimeDiscoveredDevice>{};
     for (final device in devices) {
       if (device.deviceId == localDeviceId) {

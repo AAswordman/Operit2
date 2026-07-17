@@ -22,8 +22,10 @@ class AppContent extends StatefulWidget {
     required this.enableNavigationAnimation,
     required this.isNavigatingBack,
     required this.topBarController,
+    required this.appBarEntries,
     required this.onGoBack,
     required this.onNavigationButtonPressed,
+    required this.onAppBarEntrySelected,
   });
 
   final AppRouterState routerState;
@@ -36,8 +38,10 @@ class AppContent extends StatefulWidget {
   final bool enableNavigationAnimation;
   final bool isNavigatingBack;
   final TopBarController topBarController;
+  final List<NavigationEntrySpec> appBarEntries;
   final VoidCallback onGoBack;
   final VoidCallback onNavigationButtonPressed;
+  final ValueChanged<NavigationEntrySpec> onAppBarEntrySelected;
 
   @override
   State<AppContent> createState() => _AppContentState();
@@ -246,6 +250,13 @@ class _AppContentState extends State<AppContent> {
                                 ),
                           ),
                           if (actions != null) ...actions(context),
+                          for (final entry in widget.appBarEntries)
+                            IconButton(
+                              tooltip: entry.title,
+                              onPressed: () =>
+                                  widget.onAppBarEntrySelected(entry),
+                              icon: Icon(entry.icon, color: appBarContentColor),
+                            ),
                         ],
                       ),
                     ),

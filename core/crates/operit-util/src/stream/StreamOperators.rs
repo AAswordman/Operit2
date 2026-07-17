@@ -3,96 +3,116 @@ use crate::stream::Stream::{Stream, VecStream};
 use crate::stream::StreamGroup::StreamGroup;
 use std::collections::VecDeque;
 
-pub fn map<S, R>(mut source: S, mut transform: impl FnMut(S::Item) -> R) -> VecStream<R>
+pub async fn map<S, R>(mut source: S, mut transform: impl FnMut(S::Item) -> R + Send) -> VecStream<R>
+where
+    S: Stream,
+    R: Send,
+{
+    let mut values = Vec::new();
+    source
+        .collect(&mut |value| values.push(transform(value)))
+        .await;
+    VecStream::new(values)
+}
+
+pub async fn filter<S>(
+    mut source: S,
+    mut predicate: impl FnMut(&S::Item) -> bool + Send,
+) -> VecStream<S::Item>
 where
     S: Stream,
 {
     let mut values = Vec::new();
-    source.collect(&mut |value| values.push(transform(value)));
+    source
+        .collect(&mut |value| {
+            if predicate(&value) {
+                values.push(value);
+            }
+        })
+        .await;
     VecStream::new(values)
 }
 
-pub fn filter<S>(mut source: S, mut predicate: impl FnMut(&S::Item) -> bool) -> VecStream<S::Item>
+pub async fn take<S>(mut source: S, count: usize) -> VecStream<S::Item>
 where
     S: Stream,
 {
     let mut values = Vec::new();
-    source.collect(&mut |value| {
-        if predicate(&value) {
-            values.push(value);
-        }
-    });
+    source
+        .collect(&mut |value| {
+            if values.len() < count {
+                values.push(value);
+            }
+        })
+        .await;
     VecStream::new(values)
 }
 
-pub fn take<S>(mut source: S, count: usize) -> VecStream<S::Item>
-where
-    S: Stream,
-{
-    let mut values = Vec::new();
-    source.collect(&mut |value| {
-        if values.len() < count {
-            values.push(value);
-        }
-    });
-    VecStream::new(values)
-}
-
-pub fn drop<S>(mut source: S, count: usize) -> VecStream<S::Item>
+pub async fn drop<S>(mut source: S, count: usize) -> VecStream<S::Item>
 where
     S: Stream,
 {
     let mut skipped = 0;
     let mut values = Vec::new();
-    source.collect(&mut |value| {
-        if skipped < count {
-            skipped += 1;
-        } else {
-            values.push(value);
-        }
-    });
+    source
+        .collect(&mut |value| {
+            if skipped < count {
+                skipped += 1;
+            } else {
+                values.push(value);
+            }
+        })
+        .await;
     VecStream::new(values)
 }
 
-pub fn flat_map<S, R, Inner>(
+pub async fn flat_map<S, R, Inner>(
     mut source: S,
-    mut transform: impl FnMut(S::Item) -> Inner,
+    mut transform: impl FnMut(S::Item) -> Inner + Send,
 ) -> VecStream<R>
 where
     S: Stream,
     Inner: Stream<Item = R>,
+    R: Send,
 {
+    let mut sourceValues = Vec::new();
+    source.collect(&mut |value| sourceValues.push(value)).await;
     let mut values = Vec::new();
-    source.collect(&mut |value| {
+    for value in sourceValues {
         let mut inner = transform(value);
-        inner.collect(&mut |item| values.push(item));
-    });
+        inner.collect(&mut |item| values.push(item)).await;
+    }
     VecStream::new(values)
 }
 
-pub fn on_each<S>(mut source: S, mut action: impl FnMut(&S::Item)) -> VecStream<S::Item>
+pub async fn on_each<S>(
+    mut source: S,
+    mut action: impl FnMut(&S::Item) + Send,
+) -> VecStream<S::Item>
 where
     S: Stream,
 {
     let mut values = Vec::new();
-    source.collect(&mut |value| {
-        action(&value);
-        values.push(value);
-    });
+    source
+        .collect(&mut |value| {
+            action(&value);
+            values.push(value);
+        })
+        .await;
     VecStream::new(values)
 }
 
-pub fn merge<S>(mut left: S, mut right: S) -> VecStream<S::Item>
+pub async fn merge<S>(mut left: S, mut right: S) -> VecStream<S::Item>
 where
     S: Stream,
 {
     let mut values = Vec::new();
-    left.collect(&mut |value| values.push(value));
-    right.collect(&mut |value| values.push(value));
+    left.collect(&mut |value| values.push(value)).await;
+    right.collect(&mut |value| values.push(value)).await;
     VecStream::new(values)
 }
 
-pub fn combine<L, R, O>(
+pub async fn combine<L, R, O>(
     mut left: L,
     mut right: R,
     mut transform: impl FnMut(L::Item, R::Item) -> O,
@@ -105,8 +125,8 @@ where
 {
     let mut left_values = Vec::new();
     let mut right_values = Vec::new();
-    left.collect(&mut |value| left_values.push(value));
-    right.collect(&mut |value| right_values.push(value));
+    left.collect(&mut |value| left_values.push(value)).await;
+    right.collect(&mut |value| right_values.push(value)).await;
 
     let mut values = Vec::new();
     let mut latest_left = None::<L::Item>;
@@ -126,73 +146,77 @@ where
     VecStream::new(values)
 }
 
-pub fn concat_with<S>(left: S, right: S) -> VecStream<S::Item>
+pub async fn concat_with<S>(left: S, right: S) -> VecStream<S::Item>
 where
     S: Stream,
 {
     let mut values = Vec::new();
     let mut left = left;
     let mut right = right;
-    left.collect(&mut |value| values.push(value));
-    right.collect(&mut |value| values.push(value));
+    left.collect(&mut |value| values.push(value)).await;
+    right.collect(&mut |value| values.push(value)).await;
     VecStream::new(values)
 }
 
-pub fn catch<S>(mut source: S, _action: impl FnMut(String)) -> VecStream<S::Item>
+pub async fn catch<S>(mut source: S, _action: impl FnMut(String)) -> VecStream<S::Item>
 where
     S: Stream,
 {
     let mut values = Vec::new();
-    source.collect(&mut |value| values.push(value));
+    source.collect(&mut |value| values.push(value)).await;
     VecStream::new(values)
 }
 
-pub fn finally<S>(mut source: S, mut action: impl FnMut()) -> VecStream<S::Item>
+pub async fn finally<S>(mut source: S, mut action: impl FnMut()) -> VecStream<S::Item>
 where
     S: Stream,
 {
     let mut values = Vec::new();
-    source.collect(&mut |value| values.push(value));
+    source.collect(&mut |value| values.push(value)).await;
     action();
     VecStream::new(values)
 }
 
-pub fn distinct_until_changed<S>(mut source: S) -> VecStream<S::Item>
+pub async fn distinct_until_changed<S>(mut source: S) -> VecStream<S::Item>
 where
     S: Stream,
     S::Item: PartialEq + Clone,
 {
     let mut last_value: Option<S::Item> = None;
     let mut values = Vec::new();
-    source.collect(&mut |value| {
-        if last_value.as_ref() != Some(&value) {
-            last_value = Some(value.clone());
-            values.push(value);
-        }
-    });
+    source
+        .collect(&mut |value| {
+            if last_value.as_ref() != Some(&value) {
+                last_value = Some(value.clone());
+                values.push(value);
+            }
+        })
+        .await;
     VecStream::new(values)
 }
 
-pub fn chunked<S>(mut source: S, size: usize) -> VecStream<Vec<S::Item>>
+pub async fn chunked<S>(mut source: S, size: usize) -> VecStream<Vec<S::Item>>
 where
     S: Stream,
 {
     assert!(size > 0, "Size must be positive.");
     let mut values = Vec::new();
     let mut current = Vec::new();
-    source.collect(&mut |value| {
-        current.push(value);
-        if current.len() == size {
-            values.push(std::mem::take(&mut current));
-        }
-    });
+    source
+        .collect(&mut |value| {
+            current.push(value);
+            if current.len() == size {
+                values.push(std::mem::take(&mut current));
+            }
+        })
+        .await;
     if !current.is_empty() {
         values.push(current);
     }
     VecStream::new(values)
 }
 
-pub fn split_chars_by(
+pub async fn split_chars_by(
     mut source: impl Stream<Item = char>,
     mut plugins: Vec<Box<dyn StreamPlugin>>,
 ) -> VecStream<StreamGroup<Option<String>>> {
@@ -201,7 +225,9 @@ pub fn split_chars_by(
     }
 
     let mut upstream_chars = VecDeque::new();
-    source.collect(&mut |ch| upstream_chars.push_back(ch));
+    source
+        .collect(&mut |ch| upstream_chars.push_back(ch))
+        .await;
 
     let mut groups: Vec<StreamGroup<Option<String>>> = Vec::new();
     let mut default_text_buffer = String::new();
@@ -340,13 +366,15 @@ pub fn split_chars_by(
     VecStream::new(groups)
 }
 
-pub fn split_strings_by(
+pub async fn split_strings_by(
     mut source: impl Stream<Item = String>,
     plugins: Vec<Box<dyn StreamPlugin>>,
 ) -> VecStream<StreamGroup<Option<String>>> {
     let mut chars = Vec::new();
-    source.collect(&mut |chunk| chars.extend(chunk.chars()));
-    split_chars_by(VecStream::new(chars), plugins)
+    source
+        .collect(&mut |chunk| chars.extend(chunk.chars()))
+        .await;
+    split_chars_by(VecStream::new(chars), plugins).await
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]

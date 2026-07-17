@@ -19,7 +19,7 @@ operit-tools = { path = "../operit-tools", default-features = false }
 operit-util = { path = "../operit-util" }
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["macros", "sync"] }
 
 [build-dependencies]
 quote = "1"

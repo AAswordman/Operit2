@@ -3168,6 +3168,46 @@ export interface SnackbarHostProps extends ComposeCommonProps {
 }
 
 /**
+ * Properties for embedding the host AI chat content without its workspace panel.
+ */
+export interface AiChatProps extends ComposeCommonProps {
+}
+
+/**
+ * Properties for a responsive trailing panel controlled by the Compose screen.
+ */
+export interface AdaptiveSidePanelProps extends ComposeCommonProps {
+  /**
+   * Controls whether the trailing panel is visible.
+   */
+  open: boolean;
+  /**
+   * Content rendered inside the trailing panel.
+   */
+  side: ComposeChildren;
+  /**
+   * Receives visibility changes initiated by the host surface.
+   */
+  onOpenChanged: (arg0: boolean) => void;
+  /**
+   * Width used by default on wide layouts.
+   */
+  defaultWidth?: number;
+  /**
+   * Smallest permitted width on wide layouts.
+   */
+  minWidth?: number;
+  /**
+   * Minimum width reserved for the primary content on wide layouts.
+   */
+  minContentWidth?: number;
+  /**
+   * Viewport width at which the panel switches to overlay mode.
+   */
+  breakpoint?: number;
+}
+
+/**
  * Drawing commands, viewport transform, and gesture callbacks for a canvas node.
  */
 export interface CanvasProps extends ComposeCommonProps {
@@ -3467,6 +3507,14 @@ export interface ComposeUiFactoryRegistry {
    * Creates the presentation slot for queued snackbars.
    */
   SnackbarHost: ComposeNodeFactory<SnackbarHostProps>;
+  /**
+   * Embeds the host AI chat content without the workspace panel.
+   */
+  AiChat: ComposeNodeFactory<AiChatProps>;
+  /**
+   * Creates a responsive trailing panel around the supplied screen content.
+   */
+  AdaptiveSidePanel: ComposeNodeFactory<AdaptiveSidePanelProps>;
   /**
    * Creates a command-driven drawing surface.
    */

@@ -24,6 +24,7 @@ use crate::chat::llmprovider::AIService::{
     TokenCounts,
 };
 use crate::runtime_support::{ProviderRuntimeContext, ProviderRuntimeSupport};
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_model::CharacterCard::CharacterCardMemoryBindingMode;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
@@ -35,7 +36,6 @@ use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
-use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_tools::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, ToolExposureMode as ResolvedToolExposureMode,
 };
@@ -47,9 +47,8 @@ use operit_tools::ConversationMarkupManager::{
 use operit_tools::ToolExecutionManager::{
     AITool as RuntimeAITool, ToolExecutionManager, ToolExposureMode as RuntimeToolExposureMode,
 };
-use operit_util::stream::RevisableTextStream::RevisableTextStreamLike;
 use operit_util::stream::RevisableTextStream::{with_event_channel_shared, TextStreamEventCarrier};
-use operit_util::stream::Stream::{FnStream, Stream};
+use operit_util::stream::Stream::Stream;
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
 use operit_util::ChatUtils::ChatUtils;
@@ -983,7 +982,7 @@ impl EnhancedAIService {
     pub async fn sendMessage(
         &mut self,
         options: SendMessageOptions,
-    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+    ) -> Result<SharedAiResponseStream, AiServiceError> {
         let runtime = self.createSendMessageRuntime(&options)?;
         self.sendMessageWithRuntime(options, runtime).await
     }
@@ -1074,7 +1073,8 @@ impl EnhancedAIService {
         &mut self,
         options: SendMessageOptions,
         runtime: SendMessageRuntime,
-    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+    ) -> Result<SharedAiResponseStream, AiServiceError> {
+        AppLogger::i("CoreSend", "provider response task schedule start");
         let responseStream = with_event_channel_shared(
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
@@ -1084,21 +1084,26 @@ impl EnhancedAIService {
         defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeAsyncTask(
                 "enhanced-ai-response",
-                Box::pin(async move {
-                    let result = service
-                        .executeSendMessageWithRuntime(options, runtime, producerStream.clone())
-                        .await;
-                    producerStream.upstream.close();
-                    producerStream.event_channel.close();
-                    if let Err(error) = result {
-                        service.setInputProcessingState(InputProcessingState::Error {
-                            message: error.to_string(),
-                        });
-                    }
+                Box::new(move || {
+                    Box::pin(async move {
+                        AppLogger::i("CoreSend", "provider response task entered");
+                        let result = service
+                            .executeSendMessageWithRuntime(options, runtime, producerStream.clone())
+                            .await;
+                        producerStream.upstream.close();
+                        producerStream.event_channel.close();
+                        AppLogger::i("CoreSend", "provider response task closed output streams");
+                        if let Err(error) = result {
+                            service.setInputProcessingState(InputProcessingState::Error {
+                                message: error.to_string(),
+                            });
+                        }
+                    })
                 }),
             )
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        Ok(Box::new(responseStream))
+        AppLogger::i("CoreSend", "provider response task scheduled");
+        Ok(responseStream)
     }
 
     async fn executeSendMessageWithRuntime(
@@ -1454,42 +1459,64 @@ impl EnhancedAIService {
         let mut chunkCount = 0;
         let mut lastLogTime = runtimeSupport.messageTimingNow().startedAtMs;
         let activeExecutionState = self.shared_state.clone();
-        provider_stream.collect(&mut |content| {
-            if !Self::isExecutionContextActiveInSharedState(&activeExecutionState, &execContext) {
-                return;
-            }
-            if isFirstChunk {
-                if !isSubTask {
-                    self.setInputProcessingState(InputProcessingState::Receiving {
-                        message: "enhanced_receiving_response".to_string(),
-                    });
+        AppLogger::i(
+            "CoreSend",
+            &format!("provider stream collect enter chatId={}", logChatId),
+        );
+        provider_stream
+            .collect(&mut |content| {
+                if !Self::isExecutionContextActiveInSharedState(&activeExecutionState, &execContext)
+                {
+                    return;
                 }
-                isFirstChunk = false;
-                runtimeSupport.logMessageTiming(
-                    "enhanced.sendMessage.firstResponseChunk",
-                    requestStartTime.clone(),
-                    Some(format!(
-                        "functionType={}, stream={}",
-                        function_type_name(&functionType),
-                        stream
-                    )),
-                );
-            }
-            chunkCount += 1;
-            totalChars += content.len() as i32;
-            let currentTime = runtimeSupport.messageTimingNow().startedAtMs;
-            if currentTime.saturating_sub(lastLogTime) > 5000 {
-                AppLogger::d(
-                    TAG,
-                    &format!("已接收 {} 个内容块，总计 {} 个字符", chunkCount, totalChars),
-                );
-                lastLogTime = currentTime;
-            }
-            execContext.streamBuffer.push_str(&content);
-            execContext.roundManager.appendContent(&content);
-            responseStream.upstream.emit(content.clone());
-            responseChunks.push(content);
-        });
+                if isFirstChunk {
+                    AppLogger::i(
+                        "CoreSend",
+                        &format!(
+                            "provider stream first chunk chatId={} chars={}",
+                            logChatId,
+                            content.chars().count()
+                        ),
+                    );
+                    if !isSubTask {
+                        self.setInputProcessingState(InputProcessingState::Receiving {
+                            message: "enhanced_receiving_response".to_string(),
+                        });
+                    }
+                    isFirstChunk = false;
+                    runtimeSupport.logMessageTiming(
+                        "enhanced.sendMessage.firstResponseChunk",
+                        requestStartTime.clone(),
+                        Some(format!(
+                            "functionType={}, stream={}",
+                            function_type_name(&functionType),
+                            stream
+                        )),
+                    );
+                }
+                chunkCount += 1;
+                totalChars += content.len() as i32;
+                let currentTime = runtimeSupport.messageTimingNow().startedAtMs;
+                if currentTime.saturating_sub(lastLogTime) > 5000 {
+                    AppLogger::d(
+                        TAG,
+                        &format!("已接收 {} 个内容块，总计 {} 个字符", chunkCount, totalChars),
+                    );
+                    lastLogTime = currentTime;
+                }
+                execContext.streamBuffer.push_str(&content);
+                execContext.roundManager.appendContent(&content);
+                responseStream.upstream.emit(content.clone());
+                responseChunks.push(content);
+            })
+            .await;
+        AppLogger::i(
+            "CoreSend",
+            &format!(
+                "provider stream collect return chatId={} chunks={}",
+                logChatId, chunkCount
+            ),
+        );
         for event in providerEventChannel.replay_cache() {
             responseStream.event_channel.emit(event);
         }
@@ -1619,8 +1646,22 @@ impl EnhancedAIService {
             self.unregisterExecutionContext(&execContext);
             return Err(error);
         }
+        AppLogger::d(
+            TAG,
+            &format!(
+                "response completion processing done chatId={} executionId={}",
+                logChatId, execContext.executionId
+            ),
+        );
 
         if !self.isExecutionContextActive(&execContext) {
+            AppLogger::d(
+                TAG,
+                &format!(
+                    "response completion inactive chatId={} executionId={}",
+                    logChatId, execContext.executionId
+                ),
+            );
             self.unregisterExecutionContext(&execContext);
             return Ok(());
         }
@@ -1637,6 +1678,13 @@ impl EnhancedAIService {
                 );
             }
         }
+        AppLogger::d(
+            TAG,
+            &format!(
+                "response post-processing done chatId={} executionId={}",
+                logChatId, execContext.executionId
+            ),
+        );
 
         lifecycle.push(SendMessageLifecycleStage::UnregisterExecutionContext);
         self.unregisterExecutionContext(&execContext);
@@ -1661,6 +1709,13 @@ impl EnhancedAIService {
         let _ = requestWindowSize;
         let _ = lifecycle;
         responseStream.upstream.close();
+        AppLogger::d(
+            TAG,
+            &format!(
+                "response stream closed chatId={} executionId={}",
+                logChatId, execContext.executionId
+            ),
+        );
         Ok(())
     }
 
@@ -1911,16 +1966,18 @@ impl EnhancedAIService {
         let activeExecutionState = self.shared_state.clone();
         let mut chunkCount = 0usize;
         let mut totalChars = 0usize;
-        response.collect(&mut |content| {
-            if !Self::isExecutionContextActiveInSharedState(&activeExecutionState, context) {
-                return;
-            }
-            chunkCount += 1;
-            totalChars += content.len();
-            context.streamBuffer.push_str(&content);
-            context.roundManager.appendContent(&content);
-            collector.upstream.emit(content);
-        });
+        response
+            .collect(&mut |content| {
+                if !Self::isExecutionContextActiveInSharedState(&activeExecutionState, context) {
+                    return;
+                }
+                chunkCount += 1;
+                totalChars += content.len();
+                context.streamBuffer.push_str(&content);
+                context.roundManager.appendContent(&content);
+                collector.upstream.emit(content);
+            })
+            .await;
         for event in responseEventChannel.replay_cache() {
             collector.event_channel.emit(event);
         }
@@ -2940,10 +2997,6 @@ struct TruncatedToolRoundRecovery {
     repairedContent: String,
     appendedSuffix: String,
     invalidatedToolNames: Vec<String>,
-}
-
-fn empty_ai_response_stream() -> Box<dyn RevisableTextStreamLike> {
-    response_stream_from_chunks(Vec::new())
 }
 
 fn resolveToolDisplayName(tool: &RuntimeAITool) -> String {

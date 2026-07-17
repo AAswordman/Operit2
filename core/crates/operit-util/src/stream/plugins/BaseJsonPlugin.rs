@@ -8,7 +8,7 @@ enum JsonType {
     Array,
 }
 
-pub trait JsonEmitMode {
+pub trait JsonEmitMode: Send {
     fn should_emit(&self, c: char, in_string: bool) -> bool;
     fn name(&self) -> &'static str;
 }

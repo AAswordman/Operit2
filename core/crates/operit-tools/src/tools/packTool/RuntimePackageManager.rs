@@ -1111,7 +1111,10 @@ impl RuntimePackageManager {
         }
 
         let packageFile = packageFile.expect("checked package file presence");
-        match self.fileSystemHost.deleteFile(&hostPath(&packageFile), false) {
+        match self
+            .fileSystemHost
+            .deleteFile(&hostPath(&packageFile), false)
+        {
             Ok(_) => {
                 if isToolPkgContainer {
                     self.disableToolPkgContainer(&normalizedPackageName);
@@ -1410,7 +1413,10 @@ impl RuntimePackageManager {
         let sourceSignature = sha256Hex(sourceAsset.bytes);
         let sourceFileName = packageSourceFileName(&sourcePath);
         let packagesDir = self.storePaths.packages_dir();
-        if let Err(error) = self.fileSystemHost.makeDirectory(&hostPath(&packagesDir), true) {
+        if let Err(error) = self
+            .fileSystemHost
+            .makeDirectory(&hostPath(&packagesDir), true)
+        {
             return format!("Error importing package: {error}");
         }
         let destinationFile = self.storePaths.packages_dir().join(&sourceFileName);
@@ -1736,7 +1742,10 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     fn scanExternalPackages(&mut self, baseSnapshot: &PackageScanSnapshot) -> PackageScanSnapshot {
         let packagesDir = self.storePaths.packages_dir();
-        if let Err(error) = self.fileSystemHost.makeDirectory(&hostPath(&packagesDir), true) {
+        if let Err(error) = self
+            .fileSystemHost
+            .makeDirectory(&hostPath(&packagesDir), true)
+        {
             logPackageManagerError(format!(
                 "External package directory creation failed: {}, error={error}",
                 packagesDir.display()
@@ -2255,9 +2264,7 @@ impl RuntimePackageManager {
             "{}|{}|{}",
             file.to_string_lossy(),
             metadata.as_ref().map(|value| value.size).unwrap_or(0),
-            metadata
-                .map(|value| value.lastModified)
-                .unwrap_or_default()
+            metadata.map(|value| value.lastModified).unwrap_or_default()
         )
     }
 
@@ -2538,11 +2545,10 @@ impl RuntimePackageManager {
         };
         let destinationFile = self.storePaths.packages_dir().join(fileName);
         if file != destinationFile {
-            if let Err(error) = self.fileSystemHost.copyFile(
-                &hostPath(&file),
-                &hostPath(&destinationFile),
-                false,
-            ) {
+            if let Err(error) =
+                self.fileSystemHost
+                    .copyFile(&hostPath(&file), &hostPath(&destinationFile), false)
+            {
                 return format!("Error importing package: {error}");
             }
         }
@@ -2608,7 +2614,10 @@ impl RuntimePackageManager {
         {
             return None;
         }
-        let bytes = self.fileSystemHost.readFileBytes(&hostPath(&resourceFile)).ok()?;
+        let bytes = self
+            .fileSystemHost
+            .readFileBytes(&hostPath(&resourceFile))
+            .ok()?;
         operit_plugin_sdk::toolpkg::ToolPkgProtection::decryptIfNeeded(&bytes).ok()
     }
 
@@ -3037,7 +3046,10 @@ impl RuntimePackageManager {
             return Some(jsFile);
         }
 
-        let entries = self.fileSystemHost.listFiles(&hostPath(&packagesDir)).ok()?;
+        let entries = self
+            .fileSystemHost
+            .listFiles(&hostPath(&packagesDir))
+            .ok()?;
         for entry in entries.into_iter().filter(|entry| !entry.isDirectory) {
             let file = packagesDir.join(entry.name);
             let lowerName = file.to_string_lossy().to_ascii_lowercase();

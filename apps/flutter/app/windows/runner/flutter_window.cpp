@@ -4,6 +4,7 @@
 
 #include <desktop_multi_window/desktop_multi_window_plugin.h>
 
+#include "crash_channel.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "operit_runtime_channel.h"
 
@@ -28,6 +29,7 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  RegisterOperitCrashChannel(flutter_controller_->engine());
   RegisterOperitRuntimeChannel(flutter_controller_->engine(), GetHandle());
   DesktopMultiWindowSetWindowCreatedCallback([](void* controller) {
     auto* flutter_view_controller =

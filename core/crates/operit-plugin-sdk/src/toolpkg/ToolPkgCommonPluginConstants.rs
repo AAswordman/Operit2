@@ -64,6 +64,7 @@ pub const TOOLPKG_REGISTRATION_AI_PROVIDER: &str = "registerToolPkgAiProvider";
 
 pub const TOOLPKG_NAV_SURFACE_TOOLBOX: &str = "toolbox";
 pub const TOOLPKG_NAV_SURFACE_MAIN_SIDEBAR_PLUGINS: &str = "main_sidebar_plugins";
+pub const TOOLPKG_NAV_SURFACE_APP_BAR: &str = "app_bar";
 
 /// Builds the globally unique route id used by a ToolPkg UI route.
 #[allow(non_snake_case)]

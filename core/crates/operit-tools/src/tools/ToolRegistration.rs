@@ -1,9 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use operit_host_api::HostManager::{
-    defaultHostRuntimeTaskSchedulerHost, HostManager,
-};
+use operit_host_api::HostManager::{defaultHostRuntimeTaskSchedulerHost, HostManager};
 use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_plugin_sdk::package::ToolPackage;
 use operit_tools::tools::climode::CliToolModeSupport::{

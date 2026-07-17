@@ -44,7 +44,9 @@ use operit_plugin_sdk::javascript::{
 };
 use operit_plugin_sdk::toolpkg::ToolPkgComposeDslRuntimeScript::buildComposeDslRuntimeWrappedScript;
 use operit_plugin_sdk::toolpkg::ToolPkgRegistrationBridge::buildToolPkgRegistrationBridgeScript;
-use operit_util::stream::Stream::Stream;
+use operit_util::stream::Stream::{CollectFuture, Stream};
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::sync::mpsc as tokio_mpsc;
 use operit_util::AppLogger::AppLogger;
 
 const TAG: &str = "OperitQuickJsEngine";
@@ -563,15 +565,20 @@ impl JsEngine {
 impl Stream for JsComposeDslActionEventStream {
     type Item = String;
 
-    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
+    /// Collects Compose DSL action events without blocking the collector task.
+    fn collect<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(Self::Item),
+    ) -> CollectFuture<'a> {
+        Box::pin(async move {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
             let engine = self.engine.clone();
             let actionId = self.actionId.clone();
             let payload = self.payload.clone();
             let runtimeOptions = self.runtimeOptions.clone();
             let envOverrides = self.envOverrides.clone();
-            let (sender, receiver) = mpsc::channel::<String>();
+            let (sender, mut receiver) = tokio_mpsc::unbounded_channel::<String>();
             std::thread::spawn(move || {
                 let intermediateSender = sender.clone();
                 runComposeDslActionDispatch(
@@ -588,12 +595,12 @@ impl Stream for JsComposeDslActionEventStream {
                     },
                 );
             });
-            for event in receiver {
+            while let Some(event) = receiver.recv().await {
                 collector(event);
             }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
             let engine = self.engine.clone();
             let actionId = self.actionId.clone();
             let payload = self.payload.clone();
@@ -628,7 +635,8 @@ impl Stream for JsComposeDslActionEventStream {
                     collector(event);
                 },
             );
-        }
+            }
+        })
     }
 }
 

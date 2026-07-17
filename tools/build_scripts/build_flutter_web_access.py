@@ -7,10 +7,12 @@ from pathlib import Path
 from common import (
     FLUTTER_APP_DIR,
     REPO_ROOT,
+    WEB_ACCESS_APP_DIR,
     WEB_ACCESS_BUNDLE_DIR,
     copy_required_file,
     dart_pub_get,
     ensure_node_and_npm,
+    ensure_terser,
     ensure_typescript,
     flutter_command,
     generate_dart_proxy_artifacts,
@@ -47,6 +49,27 @@ SQL_DIST_DIR = (
     / "sql.js"
     / "dist"
 )
+
+
+# Compiles and minifies the browser runtime bridge into Flutter's web shell.
+def compile_web_runtime_bridge(typescript_bin: Path, terser_bin: Path) -> None:
+    suffix = ".cmd" if sys.platform == "win32" else ""
+    run([typescript_bin / f"tsc{suffix}", "-p", WEB_ACCESS_APP_DIR / "tsconfig.json"])
+    bridge = WEB_ACCESS_APP_DIR / "web" / "operit_runtime_bridge.js"
+    minified = bridge.with_suffix(".min.js")
+    run(
+        [
+            terser_bin / f"terser{suffix}",
+            str(bridge),
+            "--compress",
+            "--mangle",
+            "--format",
+            "comments=false",
+            "--output",
+            str(minified),
+        ]
+    )
+    minified.replace(bridge)
 
 
 # Ensures wasm-bindgen is installed at the requested version.
@@ -176,6 +199,7 @@ def stage_web_runtime_files(wasm_bindgen_bin: Path) -> None:
 def main() -> int:
     os.environ.setdefault("RUSTFLAGS", "-Awarnings")
     typescript_version = os.environ.get("TYPESCRIPT_VERSION", "5.9.3")
+    terser_version = os.environ.get("TERSER_VERSION", "5.44.0")
     wasm_bindgen_version = os.environ.get("WASM_BINDGEN_VERSION", "0.2.122")
     wasi_sdk_version = os.environ.get("WASI_SDK_VERSION", "20.0")
 
@@ -186,6 +210,7 @@ def main() -> int:
 
     env = os.environ.copy()
     typescript_bin = ensure_typescript(typescript_version)
+    terser_bin = ensure_terser(terser_version)
     wasm_bindgen_bin = ensure_wasm_bindgen(wasm_bindgen_version)
     wasi_sdk = ensure_wasi_sdk(wasi_sdk_version)
     clang_resource_includes = sorted(
@@ -229,6 +254,7 @@ def main() -> int:
     generate_dart_proxy_artifacts()
     dart_pub_get(enforce_lockfile=True, env=env)
     run(["rustup", "target", "add", "wasm32-unknown-unknown"])
+    compile_web_runtime_bridge(typescript_bin, terser_bin)
     stage_web_access_source()
     reset_dir(WEB_ACCESS_BUNDLE_DIR)
     pubspec = FLUTTER_APP_DIR / "pubspec.yaml"

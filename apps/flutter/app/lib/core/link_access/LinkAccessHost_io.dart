@@ -1,6 +1,5 @@
 // ignore_for_file: file_names, unused_element
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -10,30 +9,27 @@ import 'package:flutter/services.dart';
 import '../link/CoreLinkProtocol.dart';
 import '../path/OperitClientPaths.dart';
 import '../runtime/RuntimeDeviceInfoProvider.dart';
-import 'LinkHostConfig.dart';
+import 'LinkAccessHostConfig.dart';
 
 const String _webAccessAssetPrefix = 'assets/web_access/';
 const String _webAccessVersionFile = 'web_access_version.json';
 const String _webAccessVersionAsset =
     '$_webAccessAssetPrefix$_webAccessVersionFile';
 
-class LinkHostServer extends ChangeNotifier {
-  LinkHostServer._();
+class LinkAccessHost extends ChangeNotifier {
+  LinkAccessHost._();
 
-  static final LinkHostServer instance = LinkHostServer._();
+  static final LinkAccessHost instance = LinkAccessHost._();
   static const MethodChannel _runtimeChannel = MethodChannel('operit/runtime');
 
   bool _running = false;
-  LinkHostConfig? _config;
+  LinkAccessHostConfig? _config;
   String? _shutdownToken;
-  Timer? _pairingCodePoller;
-  int _pairingCodeStartedAt = 0;
-  PendingLinkPairingCodeRecord? _lastPairingCode;
+  String? _deviceId;
 
   bool get isRunning => _running;
-  LinkHostConfig? get currentConfig => _config;
-  PendingLinkPairingCodeRecord? get lastPairingCode => _lastPairingCode;
-
+  LinkAccessHostConfig? get currentConfig => _config;
+  String? get deviceId => _deviceId;
   String? get baseUrl {
     final config = _config;
     if (config == null || !_running) {
@@ -50,7 +46,7 @@ class LinkHostServer extends ChangeNotifier {
     return responseText ?? '[]';
   }
 
-  Future<List<String>> pairingBaseUrls(LinkHostConfig config) async {
+  Future<List<String>> pairingBaseUrls(LinkAccessHostConfig config) async {
     final endpoint = _parseBindAddress(config.bindAddress);
     if (_isWildcardHost(endpoint.host)) {
       final hosts = await _lanIpv4Hosts();
@@ -65,23 +61,22 @@ class LinkHostServer extends ChangeNotifier {
   }
 
   Future<void> initializeFromConfig() async {
-    final config = await LinkHostConfigStore.read();
+    final config = await LinkAccessHostConfigStore.read();
     if (config.webAccessEnabled || config.discoveryEnabled) {
       await start(config);
     }
   }
 
-  Future<void> start(LinkHostConfig config) async {
+  Future<void> start(LinkAccessHostConfig config) async {
     if (_running) {
       await stop(updateConfig: false);
     }
     final webRoot = await _materializeWebAccessBundle();
-    final shutdownToken = LinkHostToken.generate();
+    final shutdownToken = LinkAccessHostToken.generate();
     _shutdownToken = shutdownToken;
-    _pairingCodeStartedAt = DateTime.now().millisecondsSinceEpoch;
-    late final LinkHostConfig runningConfig;
+    late final ({LinkAccessHostConfig config, String deviceId}) started;
     try {
-      runningConfig = await _startNativeWebAccessServerWithPortMode(
+      started = await _startNativeWebAccessServerWithPortMode(
         config,
         shutdownToken,
         webRoot,
@@ -91,10 +86,9 @@ class LinkHostServer extends ChangeNotifier {
       _shutdownToken = null;
       rethrow;
     }
-    _config = runningConfig;
+    _config = started.config;
+    _deviceId = started.deviceId;
     _running = true;
-    _startPairingCodePolling();
-    await _writeState(runningConfig);
   }
 
   Future<void> stop({bool updateConfig = true}) async {
@@ -108,14 +102,12 @@ class LinkHostServer extends ChangeNotifier {
     }
     await _stopNativeWebAccessServer();
     _running = false;
-    _pairingCodePoller?.cancel();
-    _pairingCodePoller = null;
     _config = null;
     _shutdownToken = null;
-    await _removeState();
+    _deviceId = null;
     if (updateConfig) {
-      final config = await LinkHostConfigStore.read();
-      await LinkHostConfigStore.write(
+      final config = await LinkAccessHostConfigStore.read();
+      await LinkAccessHostConfigStore.write(
         config.copyWith(
           webAccessEnabled: false,
           updatedAt: DateTime.now().millisecondsSinceEpoch,
@@ -124,52 +116,8 @@ class LinkHostServer extends ChangeNotifier {
     }
   }
 
-  void _startPairingCodePolling() {
-    _pairingCodePoller?.cancel();
-    _pairingCodePoller = Timer.periodic(const Duration(seconds: 1), (_) {
-      unawaited(_pollPairingCode());
-    });
-    unawaited(_pollPairingCode());
-  }
-
-  Future<void> _pollPairingCode() async {
-    final record = await PendingLinkPairingCodeStore.read();
-    if (record == null || record.createdAt < _pairingCodeStartedAt) {
-      return;
-    }
-    if (_lastPairingCode?.pairingId == record.pairingId) {
-      return;
-    }
-    _lastPairingCode = record;
-    notifyListeners();
-  }
-
-  Future<void> _writeState(LinkHostConfig config) async {
-    final file = await OperitClientPaths.linkHostStateFile();
-    await file.parent.create(recursive: true);
-    final deviceId = await LinkHostDeviceIdStore.read();
-    final content = const JsonEncoder.withIndent('  ').convert({
-      'deviceId': deviceId,
-      'bindAddress': config.bindAddress,
-      'baseUrl': _baseUrlForBindAddress(config.bindAddress),
-      'webAccessEnabled': config.webAccessEnabled,
-      'discoveryEnabled': config.discoveryEnabled,
-      'shutdownToken': _shutdownToken,
-      'processId': pid,
-      'startedAt': DateTime.now().millisecondsSinceEpoch,
-    });
-    await file.writeAsString(content);
-  }
-
-  Future<void> _removeState() async {
-    final file = await OperitClientPaths.linkHostStateFile();
-    if (await file.exists()) {
-      await file.delete();
-    }
-  }
-
   Future<Directory> _materializeWebAccessBundle() async {
-    final directory = await OperitClientPaths.linkHostWebAccessBundleDir();
+    final directory = await OperitClientPaths.linkAccessWebAccessBundleDir();
     final bundledVersion = await _readBundledWebAccessVersion();
     if (await _isMaterializedWebAccessCurrent(directory, bundledVersion)) {
       return directory;
@@ -202,17 +150,12 @@ class LinkHostServer extends ChangeNotifier {
     return directory;
   }
 
-  Future<void> _startNativeWebAccessServer(
-    LinkHostConfig config,
+  /// Starts the native Access Host and returns its Core-owned identity.
+  Future<String> _startNativeWebAccessServer(
+    LinkAccessHostConfig config,
     String shutdownToken,
     Directory webRoot,
   ) async {
-    final acceptedSessions = await InboundLinkSessionStore.read();
-    final acceptedSessionsFile =
-        await OperitClientPaths.inboundLinkSessionsFile();
-    final pairingCodeFile =
-        await OperitClientPaths.pendingLinkPairingCodeFile();
-    final deviceId = await LinkHostDeviceIdStore.read();
     final deviceInfo = await RuntimeDeviceInfoProvider.current();
     final responseText = await _runtimeChannel
         .invokeMethod<String>('startWebAccessServer', <String, Object?>{
@@ -220,27 +163,35 @@ class LinkHostServer extends ChangeNotifier {
           'token': config.token,
           'shutdownToken': shutdownToken,
           'webRoot': webRoot.path,
-          'deviceId': deviceId,
-          'acceptedSessions': jsonEncode(
-            acceptedSessions.map((key, value) => MapEntry(key, value.toJson())),
-          ),
-          'acceptedSessionStorePath': acceptedSessionsFile.path,
-          'pairingCodePath': pairingCodeFile.path,
           'deviceInfo': jsonEncode(deviceInfo.toJson()),
           'enableWebAccess': config.webAccessEnabled.toString(),
           'enableDiscovery': config.discoveryEnabled.toString(),
         });
-    _throwNativeWebAccessError(responseText);
+    final response = _throwNativeWebAccessError(responseText);
+    final deviceId = response['deviceId'];
+    if (deviceId is! String || deviceId.isEmpty) {
+      throw const CoreLinkError(
+        code: 'INVALID_RESPONSE',
+        message: 'runtime bridge did not return the Link Access identity',
+      );
+    }
+    return deviceId;
   }
 
-  Future<LinkHostConfig> _startNativeWebAccessServerWithPortMode(
-    LinkHostConfig config,
+  /// Starts the native Access Host on the configured port selection.
+  Future<({LinkAccessHostConfig config, String deviceId})>
+  _startNativeWebAccessServerWithPortMode(
+    LinkAccessHostConfig config,
     String shutdownToken,
     Directory webRoot,
   ) async {
-    if (config.portMode == LinkHostPortMode.fixed) {
-      await _startNativeWebAccessServer(config, shutdownToken, webRoot);
-      return config;
+    if (config.portMode == LinkAccessHostPortMode.fixed) {
+      final deviceId = await _startNativeWebAccessServer(
+        config,
+        shutdownToken,
+        webRoot,
+      );
+      return (config: config, deviceId: deviceId);
     }
     final endpoint = _parseBindAddress(config.bindAddress);
     Object? lastError;
@@ -248,8 +199,12 @@ class LinkHostServer extends ChangeNotifier {
     for (final bindAddress in _automaticBindAddresses(endpoint.host)) {
       final candidate = config.copyWith(bindAddress: bindAddress);
       try {
-        await _startNativeWebAccessServer(candidate, shutdownToken, webRoot);
-        return candidate;
+        final deviceId = await _startNativeWebAccessServer(
+          candidate,
+          shutdownToken,
+          webRoot,
+        );
+        return (config: candidate, deviceId: deviceId);
       } catch (error, stackTrace) {
         lastError = error;
         lastStackTrace = stackTrace;
@@ -288,7 +243,8 @@ class LinkHostServer extends ChangeNotifier {
     }
   }
 
-  void _throwNativeWebAccessError(String? responseText) {
+  /// Validates a native Access Host response and returns its JSON payload.
+  Map<String, Object?> _throwNativeWebAccessError(String? responseText) {
     if (responseText == null) {
       throw const CoreLinkError(
         code: 'EMPTY_RESPONSE',
@@ -297,7 +253,7 @@ class LinkHostServer extends ChangeNotifier {
     }
     final response = jsonDecode(responseText) as Map<String, Object?>;
     if (response['ok'] == true) {
-      return;
+      return response;
     }
     if (response.containsKey('code') && response.containsKey('message')) {
       throw CoreLinkError.fromJson(response);
@@ -442,7 +398,7 @@ Future<List<String>> _lanIpv4Hosts() async {
 }
 
 List<String> _automaticBindAddresses(String host) {
-  return LinkHostConfig.automaticPortSequence
+  return LinkAccessHostConfig.automaticPortSequence
       .map((port) => '$host:$port')
       .toList(growable: false);
 }

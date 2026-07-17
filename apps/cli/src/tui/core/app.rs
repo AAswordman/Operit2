@@ -2350,6 +2350,7 @@ impl OperitTui {
         Ok(())
     }
 
+    /// Handles installed-skill commands through the application skill repository.
     async fn handle_skill_command(&mut self, args: &[String]) -> Result<(), String> {
         if args.first().map(String::as_str) == Some("toggle") {
             let name = args
@@ -2364,8 +2365,9 @@ impl OperitTui {
         }
         let skills = self
             .core
-            .permissions_skill_manager()
-            .getAvailableSkills()
+            .application()
+            .skillRepository()
+            .getAvailableSkillPackages()
             .await
             .map_err(|error| error.to_string())?;
         if skills.is_empty() {

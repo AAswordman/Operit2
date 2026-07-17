@@ -72,6 +72,12 @@ pub(crate) fn call_music_playback(method: &str, args: &[JsValue]) -> HostResult<
     call_function(&module, method, args)
 }
 
+/// Calls one browser-local Linux VM terminal bridge function.
+pub(crate) fn call_terminal(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
+    let module = bridge_module("terminal")?;
+    call_function(&module, method, args)
+}
+
 pub(crate) fn call_bluetooth(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
     let module = bridge_module("bluetooth")?;
     call_function(&module, method, args)

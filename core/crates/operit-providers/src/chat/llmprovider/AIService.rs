@@ -10,7 +10,7 @@ use operit_util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel, DelegatingRevisableSharedTextStream,
     RevisableTextStreamLike,
 };
-use operit_util::stream::Stream::VecStream;
+use operit_util::stream::Stream::{Stream, VecStream};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -63,11 +63,12 @@ pub fn empty_response_stream() -> Box<dyn RevisableTextStreamLike> {
 }
 
 /// Collects every chunk from a revisable response stream.
-pub fn collect_stream_chunks(mut stream: Box<dyn RevisableTextStreamLike>) -> Vec<String> {
+pub async fn collect_stream_chunks(mut stream: Box<dyn RevisableTextStreamLike>) -> Vec<String> {
     let mut chunks = Vec::new();
     stream.collect(&mut |chunk| {
         chunks.push(chunk);
-    });
+    })
+    .await;
     chunks
 }
 

@@ -815,7 +815,9 @@ impl StandardFileSystemTools {
                 },
             ],
         });
-        results.remove(results.len() - 1)
+        let mut result = results.remove(results.len() - 1);
+        result.toolName = tool.name.clone();
+        result
     }
 
     #[allow(non_snake_case)]
@@ -845,7 +847,9 @@ impl StandardFileSystemTools {
                 },
             ],
         });
-        results.remove(results.len() - 1)
+        let mut result = results.remove(results.len() - 1);
+        result.toolName = tool.name.clone();
+        result
     }
 
     #[allow(non_snake_case)]

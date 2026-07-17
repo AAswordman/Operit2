@@ -25,7 +25,7 @@
 
     <application
         android:label="Operit2"
-        android:name="${applicationName}"
+        android:name=".OperitApplication"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="true">
@@ -51,6 +51,11 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <activity
+            android:name=".NativeCrashActivity"
+            android:exported="false"
+            android:process=":crash"
+            android:theme="@style/NormalTheme" />
         <activity
             android:name=".core.tools.system.ScreenCaptureActivity"
             android:exported="false"

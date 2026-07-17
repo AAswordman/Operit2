@@ -10,7 +10,7 @@ import '../bridge/CoreProxy.dart';
 import '../bridge/PlatformCoreProxy.dart';
 import '../link/CoreLinkProtocol.dart';
 import '../link/RemoteRuntimeLinkClient.dart';
-import '../link_host/LinkHostServer.dart';
+import '../link_access/LinkAccessHost.dart';
 import '../logging/ClientLogger.dart';
 import 'RuntimeConnectionConfigStore.dart';
 
@@ -815,7 +815,7 @@ class RuntimeConnectionManager extends ChangeNotifier {
 
   /// Finds the LAN endpoint announced by a specific core device identity.
   Future<String?> _discoveredBaseUrlForCoreDevice(String coreDeviceId) async {
-    final json = await LinkHostServer.instance.discoverDevices(
+    final json = await LinkAccessHost.instance.discoverDevices(
       _remoteStartupDiscoveryTimeoutMs,
     );
     final devices = (jsonDecode(json) as List<dynamic>)

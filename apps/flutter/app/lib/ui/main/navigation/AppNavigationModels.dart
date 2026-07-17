@@ -11,6 +11,7 @@ enum NavigationSurface {
   mainSidebarPlugins,
   mainSidebarSystem,
   toolbox,
+  appBar,
 }
 
 enum NavigationEntryKind { host, plugin }

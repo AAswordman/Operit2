@@ -14,6 +14,7 @@ enum SettingsCategory {
   appearance,
   data,
   accessLinks,
+  about,
 }
 
 class SettingsCategorySpec {
@@ -87,6 +88,12 @@ class SettingsCategorySpec {
         subtitle: l10n.settingsCategoryAccessLinksSubtitle,
         description: l10n.settingsCategoryAccessLinksDescription,
         icon: Icons.devices_outlined,
+      ),
+      SettingsCategory.about => const SettingsCategorySpec(
+        title: '关于 Operit2',
+        subtitle: '版本、项目与许可',
+        description: '查看 Operit2 的版本信息、项目链接和开源许可证。',
+        icon: Icons.info_outline,
       ),
     };
   }

@@ -23,7 +23,8 @@ import '../viewmodel/ChatViewModel.dart';
 
 bool _chatWorkspaceOpen = false;
 
-class AIChatScreen extends StatefulWidget {
+class AIChatScreen extends StatelessWidget {
+  /// Creates the full host-owned AI chat screen.
   const AIChatScreen({
     super.key,
     this.viewModel,
@@ -33,8 +34,50 @@ class AIChatScreen extends StatefulWidget {
   final ChatViewModel? viewModel;
   final ChatRuntimeSurface runtimeSurface;
 
+  /// Builds the full chat surface owned by the main application host.
   @override
-  State<AIChatScreen> createState() => _AIChatScreenState();
+  Widget build(BuildContext context) {
+    return _AIChatSurface(
+      viewModel: viewModel,
+      runtimeSurface: runtimeSurface,
+      embedded: false,
+    );
+  }
+}
+
+/// Renders AI chat content without the host workspace or top-bar integration.
+class AIChatEmbed extends StatelessWidget {
+  /// Creates an AI chat control for embedding in another host surface.
+  const AIChatEmbed({super.key, this.viewModel});
+
+  final ChatViewModel? viewModel;
+
+  /// Builds the workspace-free chat control for the surrounding surface.
+  @override
+  Widget build(BuildContext context) {
+    return _AIChatSurface(
+      viewModel: viewModel,
+      runtimeSurface: ChatRuntimeSurface.main,
+      embedded: true,
+    );
+  }
+}
+
+class _AIChatSurface extends StatefulWidget {
+  /// Creates the shared implementation for a full chat screen or embedded chat.
+  const _AIChatSurface({
+    required this.viewModel,
+    required this.runtimeSurface,
+    required this.embedded,
+  });
+
+  final ChatViewModel? viewModel;
+  final ChatRuntimeSurface runtimeSurface;
+  final bool embedded;
+
+  /// Creates the state shared by the full and embedded chat surfaces.
+  @override
+  State<_AIChatSurface> createState() => _AIChatSurfaceState();
 }
 
 final Map<String, Map<String?, TextEditingValue>> _chatInputDraftStores =
@@ -88,7 +131,7 @@ class _ChatContentData {
   final bool isSpeechTranscribing;
 }
 
-class _AIChatScreenState extends State<AIChatScreen>
+class _AIChatSurfaceState extends State<_AIChatSurface>
     with WidgetsBindingObserver {
   late final ChatViewModel _viewModel =
       widget.viewModel ?? ChatViewModel(runtimeSurface: widget.runtimeSurface);
@@ -184,6 +227,10 @@ class _AIChatScreenState extends State<AIChatScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (widget.embedded) {
+      _isCurrentMainScreen = false;
+      return;
+    }
     _topBarController = TopBarScope.of(context);
     _mainLayoutController = MainLayoutScope.of(context);
     _isCurrentMainScreen = MainScreenActivityScope.isCurrentScreenOf(context);
@@ -1177,6 +1224,9 @@ class _AIChatScreenState extends State<AIChatScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.embedded) {
+      return _buildChatContent();
+    }
     _isCurrentMainScreen = MainScreenActivityScope.isCurrentScreenOf(context);
     final useMainLayoutWorkspace =
         MediaQuery.sizeOf(context).width >= workspaceTabletBreakpoint;

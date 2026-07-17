@@ -1,10 +1,10 @@
 use super::*;
-use crate::create_local_core;
+use crate::{create_cli_link_access_store, create_local_core};
 
-use crate::access::{
-    link_token_hash, AcceptedRemoteSessionLoader, AcceptedRemoteSessionRecord,
-    AcceptedRemoteSessionStore, PairedRemoteSession, PairedRemoteSessionRecord, RemoteDeviceInfo,
-    RemoteLinkClient, RemoteLinkServer, RemoteLinkServerConfig,
+use operit_link_access::{
+    link_token_hash, AcceptedRemoteSessionRecord, LinkAccessStore, PairedRemoteSession,
+    PairedRemoteSessionRecord, RemoteDeviceInfo, RemoteLinkClient, RemoteLinkServer,
+    RemoteLinkServerConfig,
 };
 use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest};
 use operit_providers::chat::enhance::ConversationService::ConversationService;
@@ -108,25 +108,20 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
         holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService = Some(enhanced_ai_service);
     }
     install_link_permission_requester(&mut core);
-    let accepted_sessions = load_link_server_sessions()?;
-    let accepted_session_loader: AcceptedRemoteSessionLoader = Arc::new(load_link_server_sessions);
-    let accepted_session_store: AcceptedRemoteSessionStore = Arc::new(save_link_server_session);
     let device_info = RemoteDeviceInfo::nativeCli("server")?;
-    let device_id = load_link_host_device_id()?;
+    let access_store = LinkAccessStore::new(core.runtimeStorageHost());
+    let identity = access_store.initializeIdentity(device_info.clone())?;
     RemoteLinkServer::serve(
         core,
         RemoteLinkServerConfig {
             bindAddress: bind_address,
             token,
             localControlToken: None,
-            deviceId: device_id,
-            deviceInfo: device_info,
+            deviceId: identity.deviceId,
+            deviceInfo: identity.deviceInfo,
             webAccess: None,
             printStartupInfo: true,
-            acceptedSessions: accepted_sessions,
-            acceptedSessionLoader: Some(accepted_session_loader),
-            acceptedSessionStore: Some(accepted_session_store),
-            pairingCodeSink: None,
+            accessStore: access_store,
         },
     )
     .await
@@ -763,12 +758,7 @@ fn parse_remote_url_token_save(
 
 /// Loads all saved paired session records.
 fn load_link_sessions() -> Result<BTreeMap<String, PairedRemoteSessionRecord>, String> {
-    let path = crate::client_paths::link_sessions_path();
-    if !path.exists() {
-        return Ok(BTreeMap::new());
-    }
-    let content = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-    serde_json::from_str(&content).map_err(|error| error.to_string())
+    create_cli_link_access_store().outboundSessions()
 }
 
 /// Loads one saved paired session record by name.
@@ -862,57 +852,36 @@ fn save_link_session(name: &str, record: PairedRemoteSessionRecord) -> Result<()
 fn write_link_sessions(
     sessions: BTreeMap<String, PairedRemoteSessionRecord>,
 ) -> Result<(), String> {
-    let path = crate::client_paths::link_sessions_path();
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("invalid link session path: {}", path.display()))?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let content = serde_json::to_string_pretty(&sessions).map_err(|error| error.to_string())?;
-    fs::write(path, content).map_err(|error| error.to_string())
+    let store = create_cli_link_access_store();
+    for (name, record) in sessions {
+        store.saveOutboundSession(name, record)?;
+    }
+    Ok(())
 }
 
 fn remove_link_session(name: &str) -> Result<(), String> {
-    let path = crate::client_paths::link_sessions_path();
-    let mut sessions = load_link_sessions()?;
-    if sessions.remove(name).is_none() {
+    if !load_link_sessions()?.contains_key(name) {
         return Err(format!("link session not found: {name}"));
     }
-    let content = serde_json::to_string_pretty(&sessions).map_err(|error| error.to_string())?;
-    fs::write(path, content).map_err(|error| error.to_string())
+    create_cli_link_access_store().removeOutboundSession(name)
 }
 
 fn load_link_server_sessions() -> Result<BTreeMap<String, AcceptedRemoteSessionRecord>, String> {
-    let path = crate::client_paths::link_server_sessions_path();
-    if !path.exists() {
-        return Ok(BTreeMap::new());
-    }
-    let content = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-    serde_json::from_str(&content).map_err(|error| error.to_string())
+    create_cli_link_access_store().inboundSessions()
 }
 
 fn save_link_server_session(
     session_id: String,
     record: AcceptedRemoteSessionRecord,
 ) -> Result<(), String> {
-    let path = crate::client_paths::link_server_sessions_path();
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("invalid link server session path: {}", path.display()))?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let mut sessions = load_link_server_sessions()?;
-    sessions.insert(session_id, record);
-    let content = serde_json::to_string_pretty(&sessions).map_err(|error| error.to_string())?;
-    fs::write(path, content).map_err(|error| error.to_string())
+    create_cli_link_access_store().saveInboundSession(session_id, record)
 }
 
 fn remove_link_server_session(session_id: &str) -> Result<(), String> {
-    let path = crate::client_paths::link_server_sessions_path();
-    let mut sessions = load_link_server_sessions()?;
-    if sessions.remove(session_id).is_none() {
+    if !load_link_server_sessions()?.contains_key(session_id) {
         return Err(format!("accepted link session not found: {session_id}"));
     }
-    let content = serde_json::to_string_pretty(&sessions).map_err(|error| error.to_string())?;
-    fs::write(path, content).map_err(|error| error.to_string())
+    create_cli_link_access_store().removeInboundSession(session_id)
 }
 
 fn print_link_usage() {

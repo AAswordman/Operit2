@@ -61,8 +61,8 @@ def android_release_store_file(signing: dict[str, str], signing_properties: Path
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the Operit2 Android Flutter app.")
-    parser.add_argument("--build-name", required=True)
-    parser.add_argument("--build-number", required=True)
+    parser.add_argument("--build-name")
+    parser.add_argument("--build-number")
     parser.add_argument("--enforce-lockfile", action="store_true")
     parser.add_argument("--skip-signing", action="store_true")
     parser.add_argument("--dist-dir", type=Path, default=DIST_DIR)
@@ -77,21 +77,12 @@ def main() -> int:
     flutter = flutter_command()
     configure_android_flutter_sdk(flutter)
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
-    run(
-        [
-            flutter,
-            "build",
-            "apk",
-            "--release",
-            "--no-pub",
-            "--split-per-abi",
-            "--build-name",
-            args.build_name,
-            "--build-number",
-            args.build_number,
-        ],
-        cwd=FLUTTER_APP_DIR,
-    )
+    command = [flutter, "build", "apk", "--release", "--no-pub", "--split-per-abi"]
+    if args.build_name:
+        command.extend(["--build-name", args.build_name])
+    if args.build_number:
+        command.extend(["--build-number", args.build_number])
+    run(command, cwd=FLUTTER_APP_DIR)
 
     apk_dir = FLUTTER_APP_DIR / "build" / "app" / "outputs" / "flutter-apk"
     outputs = {

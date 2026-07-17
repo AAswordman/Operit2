@@ -2164,6 +2164,7 @@ dependencies = [
  "operit-host-linux-native",
  "operit-host-windows-native",
  "operit-link",
+ "operit-link-access",
  "operit-model",
  "operit-providers",
  "operit-runtime",
@@ -2289,10 +2290,34 @@ dependencies = [
 name = "operit-host-native-common"
 version = "0.1.0"
 dependencies = [
+ "operit-host-native-http",
+ "operit-host-native-scheduler",
+ "operit-host-native-terminal",
+]
+
+[[package]]
+name = "operit-host-native-http"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+ "reqwest",
+]
+
+[[package]]
+name = "operit-host-native-scheduler"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+ "tokio",
+]
+
+[[package]]
+name = "operit-host-native-terminal"
+version = "0.1.0"
+dependencies = [
  "base64",
  "operit-host-api",
  "portable-pty",
- "reqwest",
  "uuid",
 ]
 
@@ -2339,6 +2364,7 @@ dependencies = [
  "rquickjs",
  "serde",
  "serde_json",
+ "tokio",
  "uuid",
  "wasm-bindgen",
  "web-sys",
@@ -2355,6 +2381,29 @@ dependencies = [
  "serde",
  "serde_bytes",
  "tokio",
+]
+
+[[package]]
+name = "operit-link-access"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64",
+ "futures-util",
+ "hmac",
+ "operit-host-api",
+ "operit-link",
+ "operit-runtime",
+ "rand_core 0.6.4",
+ "reqwest",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "uuid",
+ "x25519-dalek",
 ]
 
 [[package]]
@@ -2389,6 +2438,7 @@ version = "2.0.0-preview.4"
 dependencies = [
  "chrono",
  "json5",
+ "operit-host-api",
  "operit-plugin-sdk-codegen",
  "regex",
  "serde",

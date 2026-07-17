@@ -29,6 +29,7 @@ operit-core-proxy = { path = "../../core/crates/operit-core-proxy" }
 operit-command-core = { path = "../../core/crates/operit-command-core" }
 operit-host-api = { path = "../../core/crates/operit-host-api" }
 operit-link = { path = "../../core/crates/operit-link" }
+operit-link-access = { path = "../../core/crates/operit-link-access" }
 operit-model = { path = "../../core/crates/operit-model" }
 operit-providers = { path = "../../core/crates/operit-providers" }
 operit-runtime = { path = "../../core/crates/operit-runtime" }

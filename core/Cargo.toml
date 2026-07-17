@@ -4,6 +4,7 @@ members = [
     "crates/operit-command-core",
     "crates/operit-core-proxy",
     "crates/operit-link",
+    "crates/operit-link-access",
     "crates/operit-store",
     "crates/operit-model",
     "crates/operit-util",

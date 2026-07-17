@@ -1,7 +1,16 @@
 use crate::stream::Stream::{Stream, VecStream};
+use std::future::Future;
+use std::pin::Pin;
 
-pub trait StreamProcessor<T, R> {
-    fn process(&mut self, stream: &mut dyn Stream<Item = T>) -> R;
+pub trait StreamProcessor<T, R>
+where
+    T: Send,
+{
+    /// Processes one stream asynchronously and returns the processor result.
+    fn process<'a>(
+        &'a mut self,
+        stream: &'a mut dyn Stream<Item = T>,
+    ) -> Pin<Box<dyn Future<Output = R> + 'a>>;
 }
 
 pub struct CompositeStreamProcessor<T, R> {
@@ -30,17 +39,24 @@ impl<T, R> CompositeStreamProcessor<T, R> {
 
 impl<T, R> StreamProcessor<T, R> for CompositeStreamProcessor<T, R>
 where
-    T: Clone,
+    T: Clone + Send + 'static,
+    R: Send,
 {
-    fn process(&mut self, stream: &mut dyn Stream<Item = T>) -> R {
-        let mut values = Vec::new();
-        stream.collect(&mut |value| values.push(value));
-        for processor in &mut self.processors {
-            let mut clone_stream = VecStream::new(values.clone());
-            processor.process(&mut clone_stream);
-        }
-        let mut final_stream = VecStream::new(values);
-        self.final_processor.process(&mut final_stream)
+    /// Runs intermediate processors before the final processor.
+    fn process<'a>(
+        &'a mut self,
+        stream: &'a mut dyn Stream<Item = T>,
+    ) -> Pin<Box<dyn Future<Output = R> + 'a>> {
+        Box::pin(async move {
+            let mut values = Vec::new();
+            stream.collect(&mut |value| values.push(value)).await;
+            for processor in &mut self.processors {
+                let mut clone_stream = VecStream::new(values.clone());
+                processor.process(&mut clone_stream).await;
+            }
+            let mut final_stream = VecStream::new(values);
+            self.final_processor.process(&mut final_stream).await
+        })
     }
 }
 
@@ -74,8 +90,8 @@ impl<TAG> StreamGroup<TAG> {
         }
     }
 
-    pub fn collect(&mut self, collector: &mut dyn FnMut(String)) {
-        self.stream.collect(collector);
+    pub async fn collect(&mut self, collector: &mut dyn FnMut(String)) {
+        self.stream.collect(collector).await;
     }
 
     pub fn add_child(&mut self, child: StreamGroup<String>) -> &mut Self {
@@ -96,10 +112,11 @@ impl<TAG> StreamGroup<TAG> {
         }
     }
 
-    pub fn process_with_bound_processor(&mut self) -> Option<()> {
-        self.processor
-            .as_mut()
-            .map(|processor| processor.process(&mut *self.stream))
+    pub async fn process_with_bound_processor(&mut self) -> Option<()> {
+        match self.processor.as_mut() {
+            Some(processor) => Some(processor.process(&mut *self.stream).await),
+            None => None,
+        }
     }
 
     pub fn to_pair(self) -> (TAG, Box<dyn Stream<Item = String>>) {
@@ -204,19 +221,20 @@ pub fn as_stream_group<TAG>(
 
 pub struct StreamInterceptor<T, R> {
     values: Vec<T>,
-    on_each: Box<dyn FnMut(T) -> R>,
+    on_each: Box<dyn FnMut(T) -> R + Send>,
 }
 
 impl<T, R> StreamInterceptor<T, R>
 where
-    T: Clone,
+    T: Clone + Send,
+    R: Send,
 {
-    pub fn new(
+    pub async fn new(
         mut source_stream: impl Stream<Item = T>,
-        on_each: impl FnMut(T) -> R + 'static,
+        on_each: impl FnMut(T) -> R + Send + 'static,
     ) -> Self {
         let mut values = Vec::new();
-        source_stream.collect(&mut |value| values.push(value));
+        source_stream.collect(&mut |value| values.push(value)).await;
         Self {
             values,
             on_each: Box::new(on_each),
@@ -233,7 +251,7 @@ where
         )
     }
 
-    pub fn set_on_each(&mut self, on_each: impl FnMut(T) -> R + 'static) {
+    pub fn set_on_each(&mut self, on_each: impl FnMut(T) -> R + Send + 'static) {
         self.on_each = Box::new(on_each);
     }
 }

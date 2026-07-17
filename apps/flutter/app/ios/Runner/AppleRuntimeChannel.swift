@@ -44,6 +44,7 @@ final class AppleRuntimeChannel: NSObject {
 
   /// Attaches the process-level Runtime channel to the current Flutter engine.
   static func register(binaryMessenger: FlutterBinaryMessenger) {
+    AppleCrashChannel.register(binaryMessenger: binaryMessenger)
     if let shared {
       shared.attach(binaryMessenger: binaryMessenger)
       return
@@ -566,10 +567,6 @@ final class AppleRuntimeChannel: NSObject {
       let token = args["token"] as? String,
       let shutdownToken = args["shutdownToken"] as? String,
       let webRoot = args["webRoot"] as? String,
-      let deviceId = args["deviceId"] as? String,
-      let acceptedSessions = args["acceptedSessions"] as? String,
-      let acceptedSessionStorePath = args["acceptedSessionStorePath"] as? String,
-      let pairingCodePath = args["pairingCodePath"] as? String,
       let deviceInfo = args["deviceInfo"] as? String,
       let enableWebAccess = args["enableWebAccess"] as? String,
       let enableDiscovery = args["enableDiscovery"] as? String
@@ -584,10 +581,6 @@ final class AppleRuntimeChannel: NSObject {
         token,
         shutdownToken,
         webRoot,
-        deviceId,
-        acceptedSessions,
-        acceptedSessionStorePath,
-        pairingCodePath,
         deviceInfo,
         enableWebAccess,
         enableDiscovery
@@ -1070,6 +1063,39 @@ final class AppleRuntimeChannel: NSObject {
     let data = Data(bytes: pointer, count: Int(buffer.len))
     operit_flutter_bridge_free_bytes(buffer)
     return data
+  }
+}
+
+private enum AppleCrashChannel {
+  private static var channel: FlutterMethodChannel?
+
+  static func register(binaryMessenger: FlutterBinaryMessenger) {
+    channel?.setMethodCallHandler(nil)
+    let crashChannel = FlutterMethodChannel(name: "operit/crash", binaryMessenger: binaryMessenger)
+    crashChannel.setMethodCallHandler { call, result in
+      guard call.method == "present" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard let arguments = call.arguments as? [String: Any],
+            let details = arguments["details"] as? String else {
+        result(FlutterError(code: "INVALID_ARGS", message: "present requires crash details", details: nil))
+        return
+      }
+      DispatchQueue.main.async {
+        guard let windowScene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first,
+              let viewController = windowScene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+          result(FlutterError(code: "CRASH_VIEW_UNAVAILABLE", message: "native crash view is unavailable", details: nil))
+          return
+        }
+        let alert = UIAlertController(title: "Operit2 has stopped", message: details, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Close", style: .destructive))
+        viewController.present(alert, animated: true) {
+          result(nil)
+        }
+      }
+    }
+    channel = crashChannel
   }
 }
 

@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../core/logging/ClientLogger.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../core/runtime/RuntimeConnectionManager.dart';
@@ -22,6 +23,8 @@ const XTypeGroup _operit1SnapshotFileTypeGroup = XTypeGroup(
   extensions: <String>['opsnapshot', 'zip'],
 );
 
+enum _AiSetupPage { intro, agreement, storage, permission, mode, model, import }
+
 void registerOnboardingStartupRoute(StartupRouteRegistry registry) {
   registry.register(const OnboardingStartupRouteStrategy());
 }
@@ -34,27 +37,26 @@ class OnboardingStartupRouteStrategy extends StartupRouteStrategy {
   );
   static const String _preferencesFileName = 'onboarding_preferences';
   static const String _guideSeenKey = 'ai_setup_guide_seen';
+  static const String _agreementAcceptedVersionKey =
+      'accepted_agreement_version';
+  static const String _currentAgreementVersion = '2026-07-15';
 
   @override
   Future<StartupRouteDecision?> resolve() async {
     final localStorage = RuntimeConnectionManager.instance.config.localStorage;
-    if (!localStorage.confirmed) {
-      return StartupRouteDecision(
-        builder: (context, complete) => _AiSetupGuidePage(
-          clients: _clients,
-          onComplete: () => _finishGuide(complete),
-          onSkip: () => _finishGuide(complete),
-        ),
-      );
-    }
-    final configured = await _hasConfiguredChatModel();
-    final guideSeen = await _readGuideSeen();
-    if (configured || guideSeen) {
-      return null;
+    var agreementAccepted = false;
+    if (localStorage.confirmed) {
+      agreementAccepted = await _isCurrentAgreementAccepted();
+      final configured = await _hasConfiguredChatModel();
+      final guideSeen = await _readGuideSeen();
+      if (agreementAccepted && (configured || guideSeen)) {
+        return null;
+      }
     }
     return StartupRouteDecision(
       builder: (context, complete) => _AiSetupGuidePage(
         clients: _clients,
+        agreementRequired: !agreementAccepted,
         onComplete: () => _finishGuide(complete),
         onSkip: () => _finishGuide(complete),
       ),
@@ -86,6 +88,25 @@ class OnboardingStartupRouteStrategy extends StartupRouteStrategy {
       fileName: _preferencesFileName,
       key: _guideSeenKey,
       value: 'true',
+    );
+  }
+
+  /// Checks whether the current agreement version has been accepted.
+  static Future<bool> _isCurrentAgreementAccepted() async {
+    final acceptedVersion = await _clients.preferencesPreferenceStorageManager
+        .getPreference(
+          fileName: _preferencesFileName,
+          key: _agreementAcceptedVersionKey,
+        );
+    return acceptedVersion == _currentAgreementVersion;
+  }
+
+  /// Persists acceptance of the current agreement version.
+  static Future<void> _markCurrentAgreementAccepted() {
+    return _clients.preferencesPreferenceStorageManager.setPreference(
+      fileName: _preferencesFileName,
+      key: _agreementAcceptedVersionKey,
+      value: _currentAgreementVersion,
     );
   }
 
@@ -146,11 +167,13 @@ class OnboardingStartupRouteStrategy extends StartupRouteStrategy {
 class _AiSetupGuidePage extends StatefulWidget {
   const _AiSetupGuidePage({
     required this.clients,
+    required this.agreementRequired,
     required this.onComplete,
     required this.onSkip,
   });
 
   final GeneratedCoreProxyClients clients;
+  final bool agreementRequired;
   final Future<void> Function() onComplete;
   final Future<void> Function() onSkip;
 
@@ -167,8 +190,12 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   final TextEditingController _runtimeRootController = TextEditingController();
   final TextEditingController _workspaceRootController =
       TextEditingController();
+  late final List<_AiSetupPage> _pages;
+  Timer? _agreementCountdownTimer;
   int _currentPage = 0;
-  bool _coreSetupStarted = false;
+  int _agreementWaitSeconds = 0;
+  bool _agreementAccepted = false;
+  Future<void>? _coreSetupFuture;
   bool _storageConfirmed = false;
   bool _loadingStoragePaths = false;
   bool _savingStorage = false;
@@ -185,7 +212,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   _AiSetupStartMode? _selectedStartMode;
   core_proxy.Operit1SnapshotPreview? _operit1Snapshot;
   core_proxy.Operit1SnapshotImportProgress? _operit1ImportProgress;
-  String? _operit1SnapshotPath;
+  Uint8List? _operit1SnapshotBytes;
   String? _operit1SnapshotFileName;
   List<core_proxy.ProviderCatalogEntry> _catalogEntries =
       const <core_proxy.ProviderCatalogEntry>[];
@@ -199,15 +226,34 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   late final AnimationController _introAnimationController;
   late final AnimationController _introExitController;
 
-  static const int _introPageIndex = 0;
-  static const int _storagePageIndex = 1;
-  static const int _modePageIndex = 2;
-  static const int _modelPageIndex = 3;
-  static const int _importPageIndex = 4;
-  static const int _permissionPageIndex = 5;
   static const String _defaultProviderId = 'DEEPSEEK';
 
-  int get _pageCount => 6;
+  /// Returns the welcome page index.
+  int get _introPageIndex => _pages.indexOf(_AiSetupPage.intro);
+
+  /// Returns the user agreement page index.
+  int get _agreementPageIndex => _pages.indexOf(_AiSetupPage.agreement);
+
+  /// Returns the system authorization page index.
+  int get _permissionPageIndex => _pages.indexOf(_AiSetupPage.permission);
+
+  /// Returns the storage configuration page index.
+  int get _storagePageIndex => _pages.indexOf(_AiSetupPage.storage);
+
+  /// Returns the startup mode page index.
+  int get _modePageIndex => _pages.indexOf(_AiSetupPage.mode);
+
+  /// Returns the model configuration page index.
+  int get _modelPageIndex => _pages.indexOf(_AiSetupPage.model);
+
+  /// Returns the import page index.
+  int get _importPageIndex => _pages.indexOf(_AiSetupPage.import);
+
+  /// Returns the number of pages in the active onboarding flow.
+  int get _pageCount => _pages.length;
+
+  /// Reports whether the agreement page is currently visible.
+  bool get _isAgreementPage => _currentPage == _agreementPageIndex;
   bool get _isStoragePage => _currentPage == _storagePageIndex;
   bool get _isModePage => _currentPage == _modePageIndex;
   bool get _isModelPage => _currentPage == _modelPageIndex;
@@ -237,6 +283,17 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   @override
   void initState() {
     super.initState();
+    _agreementAccepted = !widget.agreementRequired;
+    _agreementWaitSeconds = widget.agreementRequired ? 5 : 0;
+    _pages = <_AiSetupPage>[
+      _AiSetupPage.intro,
+      if (widget.agreementRequired) _AiSetupPage.agreement,
+      _AiSetupPage.storage,
+      _AiSetupPage.permission,
+      _AiSetupPage.mode,
+      _AiSetupPage.model,
+      _AiSetupPage.import,
+    ];
     WidgetsBinding.instance.addObserver(this);
     _introAnimationController = AnimationController(
       vsync: this,
@@ -258,13 +315,14 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       unawaited(_loadDefaultStoragePaths());
     }
     if (_storageConfirmed) {
-      _startCoreSetup();
+      unawaited(_startCoreSetupForPersistedStorage());
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _agreementCountdownTimer?.cancel();
     _operit1ImportProgressSubscription?.cancel();
     _introAnimationController.dispose();
     _introExitController.dispose();
@@ -283,14 +341,29 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     }
   }
 
-  /// Starts runtime-backed setup loading after storage is confirmed.
-  void _startCoreSetup() {
-    if (_coreSetupStarted) {
-      return;
+  /// Starts the one Core setup task required after storage configuration.
+  Future<void> _startCoreSetup() {
+    final activeSetup = _coreSetupFuture;
+    if (activeSetup != null) {
+      return activeSetup;
     }
-    _coreSetupStarted = true;
-    _subscribeOperit1ImportProgress();
-    unawaited(_loadSetupData());
+    final setup = _loadSetupData();
+    _coreSetupFuture = setup;
+    return setup;
+  }
+
+  /// Records failures while loading setup for already configured storage.
+  Future<void> _startCoreSetupForPersistedStorage() async {
+    try {
+      await _startCoreSetup();
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Core setup failed for confirmed local storage',
+        tag: 'Onboarding',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   /// Loads the platform default runtime and workspace roots.
@@ -360,6 +433,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     }
   }
 
+  /// Initializes Core-backed setup data before permission requirements are read.
   Future<void> _loadSetupData() async {
     try {
       final modelManager = widget.clients.preferencesModelConfigManager;
@@ -382,10 +456,15 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       setState(() {
         _setupError = '$error';
       });
+      rethrow;
     }
   }
 
+  /// Starts observing native Operit1 import progress for an active import.
   void _subscribeOperit1ImportProgress() {
+    if (_operit1ImportProgressSubscription != null) {
+      return;
+    }
     _operit1ImportProgressSubscription = widget.clients.application
         .operit1SnapshotImportProgressFlowChanges()
         .listen(
@@ -406,6 +485,55 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
             });
           },
         );
+  }
+
+  /// Starts the agreement confirmation countdown when its page becomes visible.
+  void _startAgreementCountdown() {
+    if (_agreementWaitSeconds == 0 || _agreementCountdownTimer != null) {
+      return;
+    }
+    _agreementCountdownTimer = Timer.periodic(const Duration(seconds: 1), (
+      timer,
+    ) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        _agreementWaitSeconds--;
+      });
+      if (_agreementWaitSeconds == 0) {
+        timer.cancel();
+        _agreementCountdownTimer = null;
+      }
+    });
+  }
+
+  /// Records the current agreement version before continuing onboarding.
+  Future<void> _acceptAgreement() async {
+    if (_agreementWaitSeconds != 0) {
+      return;
+    }
+    try {
+      if (_storageConfirmed) {
+        await OnboardingStartupRouteStrategy._markCurrentAgreementAccepted();
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _agreementAccepted = true;
+        _setupError = null;
+      });
+      await _animateToPage(_storagePageIndex);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _setupError = '$error';
+      });
+    }
   }
 
   void _applyCatalogDefaults(core_proxy.ProviderCatalogEntry entry) {
@@ -435,26 +563,28 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     if (_currentPage == 0) {
       return;
     }
+    if (_isAgreementPage) {
+      await _returnToIntro();
+      return;
+    }
+    if (_currentPage == _permissionPageIndex) {
+      await _animateToPage(_storagePageIndex);
+      return;
+    }
     if (_currentPage == _storagePageIndex) {
+      if (widget.agreementRequired) {
+        await _animateToPage(_agreementPageIndex);
+        return;
+      }
       await _returnToIntro();
       return;
     }
     if (_currentPage == _modePageIndex) {
-      await _animateToPage(_storagePageIndex);
+      await _animateToPage(_permissionPageIndex);
       return;
     }
     if (_currentPage == _importPageIndex) {
       await _animateToPage(_modePageIndex);
-      return;
-    }
-    if (_currentPage == _permissionPageIndex &&
-        _selectedStartMode == _AiSetupStartMode.quickStart) {
-      await _animateToPage(_modelPageIndex);
-      return;
-    }
-    if (_currentPage == _permissionPageIndex &&
-        _selectedStartMode == _AiSetupStartMode.operit1Import) {
-      await _animateToPage(_importPageIndex);
       return;
     }
     await _pageController.previousPage(
@@ -466,6 +596,14 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   Future<void> _goToNextPage() async {
     if (_currentPage == _introPageIndex) {
       await _advanceFromIntro();
+      return;
+    }
+    if (_isAgreementPage) {
+      await _acceptAgreement();
+      return;
+    }
+    if (_isPermissionPage) {
+      await _animateToPage(_modePageIndex);
       return;
     }
     if (_isStoragePage) {
@@ -486,10 +624,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     }
     if (_isImportPage) {
       await _saveOperit1Import();
-      return;
-    }
-    if (_isPermissionPage) {
-      await widget.onComplete();
       return;
     }
     _pageController.nextPage(
@@ -553,6 +687,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         runtimeRoot,
         workspaceRoot,
       );
+      if (_agreementAccepted) {
+        await OnboardingStartupRouteStrategy._markCurrentAgreementAccepted();
+      }
       final configured =
           await OnboardingStartupRouteStrategy._hasConfiguredChatModel();
       final guideSeen = await OnboardingStartupRouteStrategy._readGuideSeen();
@@ -567,8 +704,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         await widget.onComplete();
         return;
       }
-      _startCoreSetup();
-      await _animateToPage(_modePageIndex);
+      await _startCoreSetup();
+      await _animateToPage(_permissionPageIndex);
     } catch (error) {
       if (!mounted) {
         return;
@@ -745,7 +882,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         providerId: providerId,
         modelId: modelId,
       );
-      await _animateToPage(_permissionPageIndex);
+      await widget.onComplete();
     } catch (error) {
       if (!mounted) {
         return;
@@ -768,7 +905,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _setupError = null;
       _operit1Snapshot = null;
       _operit1ImportProgress = null;
-      _operit1SnapshotPath = null;
+      _operit1SnapshotBytes = null;
       _operit1SnapshotFileName = null;
     });
     try {
@@ -776,14 +913,15 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       if (picked == null) {
         return;
       }
-      final snapshot = await widget.clients.application
-          .inspectOperit1SnapshotFile(path: picked.path);
+      final snapshot = await widget.clients.application.inspectOperit1Snapshot(
+        bytes: picked.bytes,
+      );
       if (!mounted) {
         return;
       }
       setState(() {
         _operit1Snapshot = snapshot;
-        _operit1SnapshotPath = picked.path;
+        _operit1SnapshotBytes = picked.bytes;
         _operit1SnapshotFileName = picked.name;
       });
     } catch (error) {
@@ -809,16 +947,15 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     if (file == null) {
       return null;
     }
-    final path = file.path;
-    if (path.isEmpty) {
-      return null;
-    }
-    return _PickedOperit1SnapshotFile(path: path, name: file.name);
+    return _PickedOperit1SnapshotFile(
+      bytes: await file.readAsBytes(),
+      name: file.name,
+    );
   }
 
   Future<void> _saveOperit1Import() async {
-    final path = _operit1SnapshotPath;
-    if (path == null || path.isEmpty) {
+    final bytes = _operit1SnapshotBytes;
+    if (bytes == null || bytes.isEmpty) {
       setState(() {
         _setupError = '请选择 Operit1 快照文件';
       });
@@ -830,8 +967,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _setupError = null;
     });
     try {
-      await widget.clients.application.importOperit1SnapshotFile(path: path);
-      await _animateToPage(_permissionPageIndex);
+      _subscribeOperit1ImportProgress();
+      await widget.clients.application.importOperit1Snapshot(bytes: bytes);
+      await widget.onComplete();
     } catch (error) {
       if (!mounted) {
         return;
@@ -890,6 +1028,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     final storageReady =
         !_isStoragePage ||
         (!_loadingStoragePaths && !_savingStorage && _storagePaths != null);
+    final agreementReady = !_isAgreementPage || _agreementWaitSeconds == 0;
     final modeReady = !_isModePage || _selectedStartMode != null;
     final modelReady =
         !_isModelPage ||
@@ -906,6 +1045,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         !_importingOperit1Snapshot &&
         !_requestingPermission &&
         !_savingStorage &&
+        agreementReady &&
         storageReady &&
         modeReady &&
         modelReady &&
@@ -942,85 +1082,91 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
                               setState(() {
                                 _currentPage = index;
                               });
+                              if (index == _agreementPageIndex) {
+                                _startAgreementCountdown();
+                              }
                             },
                             itemCount: _pageCount,
                             itemBuilder: (context, index) {
-                              if (index == _introPageIndex) {
-                                return _AiSetupIntroPage(
-                                  animation: _introAnimationController,
-                                  exitAnimation: _introExitController,
-                                );
+                              switch (_pages[index]) {
+                                case _AiSetupPage.intro:
+                                  return _AiSetupIntroPage(
+                                    animation: _introAnimationController,
+                                    exitAnimation: _introExitController,
+                                  );
+                                case _AiSetupPage.agreement:
+                                  return _AiSetupAgreementPage(
+                                    waitSeconds: _agreementWaitSeconds,
+                                  );
+                                case _AiSetupPage.permission:
+                                  return _AiSetupPermissionPage(
+                                    requirements: _requirements,
+                                    requesting: _requestingPermission,
+                                    onRefresh: _refreshPermissionSnapshot,
+                                    onRequest: _requestPermission,
+                                    errorText: _setupError,
+                                  );
+                                case _AiSetupPage.storage:
+                                  return _AiSetupStoragePage(
+                                    runtimeRootController:
+                                        _runtimeRootController,
+                                    workspaceRootController:
+                                        _workspaceRootController,
+                                    loading: _loadingStoragePaths,
+                                    saving: _savingStorage,
+                                    onChooseRuntimeRoot: _selectRuntimeRoot,
+                                    onChooseWorkspaceRoot: _selectWorkspaceRoot,
+                                    onPathChanged: _handleStoragePathChanged,
+                                    errorText: _setupError,
+                                  );
+                                case _AiSetupPage.mode:
+                                  return _AiSetupModePage(
+                                    selectedMode: _selectedStartMode,
+                                    onModeChanged: (value) {
+                                      setState(() {
+                                        _selectedStartMode = value;
+                                        _setupError = null;
+                                      });
+                                    },
+                                  );
+                                case _AiSetupPage.model:
+                                  return _AiSetupModelPage(
+                                    formKey: _modelFormKey,
+                                    catalogEntries: _catalogEntries,
+                                    selectedProviderTypeId:
+                                        _selectedProviderTypeId,
+                                    providerConfirmed: _providerConfirmed,
+                                    endpointController: _endpointController,
+                                    apiKeyController: _apiKeyController,
+                                    availableModels: _availableModels,
+                                    selectedModelId: _selectedModelId,
+                                    loadingModels: _loadingModels,
+                                    onProviderChanged: _selectProviderType,
+                                    onProviderConfirmed: () {
+                                      setState(() {
+                                        _providerConfirmed = true;
+                                        _setupError = null;
+                                      });
+                                    },
+                                    onLoadModels: _loadAvailableModels,
+                                    onModelChanged: (value) {
+                                      setState(() {
+                                        _selectedModelId = value;
+                                      });
+                                    },
+                                    errorText: _setupError,
+                                  );
+                                case _AiSetupPage.import:
+                                  return _AiSetupImportPage(
+                                    snapshot: _operit1Snapshot,
+                                    fileName: _operit1SnapshotFileName,
+                                    reading: _readingOperit1Snapshot,
+                                    importing: _importingOperit1Snapshot,
+                                    progress: _operit1ImportProgress,
+                                    onPickSnapshot: _pickOperit1Snapshot,
+                                    errorText: _setupError,
+                                  );
                               }
-                              if (index == _storagePageIndex) {
-                                return _AiSetupStoragePage(
-                                  runtimeRootController: _runtimeRootController,
-                                  workspaceRootController:
-                                      _workspaceRootController,
-                                  loading: _loadingStoragePaths,
-                                  saving: _savingStorage,
-                                  onChooseRuntimeRoot: _selectRuntimeRoot,
-                                  onChooseWorkspaceRoot: _selectWorkspaceRoot,
-                                  onPathChanged: _handleStoragePathChanged,
-                                  errorText: _setupError,
-                                );
-                              }
-                              if (index == _modePageIndex) {
-                                return _AiSetupModePage(
-                                  selectedMode: _selectedStartMode,
-                                  onModeChanged: (value) {
-                                    setState(() {
-                                      _selectedStartMode = value;
-                                      _setupError = null;
-                                    });
-                                  },
-                                );
-                              }
-                              if (index == _modelPageIndex) {
-                                return _AiSetupModelPage(
-                                  formKey: _modelFormKey,
-                                  catalogEntries: _catalogEntries,
-                                  selectedProviderTypeId:
-                                      _selectedProviderTypeId,
-                                  providerConfirmed: _providerConfirmed,
-                                  endpointController: _endpointController,
-                                  apiKeyController: _apiKeyController,
-                                  availableModels: _availableModels,
-                                  selectedModelId: _selectedModelId,
-                                  loadingModels: _loadingModels,
-                                  onProviderChanged: _selectProviderType,
-                                  onProviderConfirmed: () {
-                                    setState(() {
-                                      _providerConfirmed = true;
-                                      _setupError = null;
-                                    });
-                                  },
-                                  onLoadModels: _loadAvailableModels,
-                                  onModelChanged: (value) {
-                                    setState(() {
-                                      _selectedModelId = value;
-                                    });
-                                  },
-                                  errorText: _setupError,
-                                );
-                              }
-                              if (index == _importPageIndex) {
-                                return _AiSetupImportPage(
-                                  snapshot: _operit1Snapshot,
-                                  fileName: _operit1SnapshotFileName,
-                                  reading: _readingOperit1Snapshot,
-                                  importing: _importingOperit1Snapshot,
-                                  progress: _operit1ImportProgress,
-                                  onPickSnapshot: _pickOperit1Snapshot,
-                                  errorText: _setupError,
-                                );
-                              }
-                              return _AiSetupPermissionPage(
-                                requirements: _requirements,
-                                requesting: _requestingPermission,
-                                onRefresh: _refreshPermissionSnapshot,
-                                onRequest: _requestPermission,
-                                errorText: _setupError,
-                              );
                             },
                           ),
                         ),
@@ -1037,6 +1183,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
                       pageCount: _pageCount,
                       progressLabel: _progressLabel,
                       primaryActionLabel: _primaryActionLabel,
+                      canSkip: _agreementAccepted && _storageConfirmed,
+                      isAgreementPage: _isAgreementPage,
                       isPermissionPage: _isPermissionPage,
                       onBack: _goToPreviousPage,
                       onPrimary: _primaryAction,
@@ -1055,6 +1203,12 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   String get _primaryActionLabel {
+    if (_isAgreementPage) {
+      if (_agreementWaitSeconds > 0) {
+        return '请稍候';
+      }
+      return '同意';
+    }
     if (_isStoragePage) {
       if (_savingStorage) {
         return '保存中';
@@ -1077,12 +1231,15 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       return _importingOperit1Snapshot ? '导入中' : '继续';
     }
     if (_isPermissionPage) {
-      return '完成';
+      return '继续';
     }
     return '继续';
   }
 
   String get _progressLabel {
+    if (_isAgreementPage) {
+      return '用户协议';
+    }
     if (_isStoragePage) {
       return '存储位置';
     }
@@ -1096,7 +1253,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       return '导入配置';
     }
     if (_isPermissionPage) {
-      return '开启权限';
+      return '系统授权';
     }
     return '欢迎';
   }
@@ -1157,7 +1314,8 @@ class _AiSetupProgressPill extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final compact = constraints.maxWidth < 150 || pageCount >= 5;
+        final showLabel = constraints.maxWidth >= 168;
+        final compact = !showLabel || pageCount >= 5;
         final horizontalPadding = compact ? 12.0 : 14.0;
         final activeDotWidth = compact ? 18.0 : 22.0;
         final dotSize = compact ? 6.0 : 7.0;
@@ -1189,19 +1347,21 @@ class _AiSetupProgressPill extends StatelessWidget {
                 ),
                 if (index != pageCount - 1) SizedBox(width: dotGap),
               ],
-              SizedBox(width: labelGap),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textTheme.labelMedium?.copyWith(
-                    color: textColor,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
+              if (showLabel) ...<Widget>[
+                SizedBox(width: labelGap),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.labelMedium?.copyWith(
+                      color: textColor,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
         );
@@ -1221,6 +1381,8 @@ class _AiSetupSharedChrome extends StatelessWidget {
     required this.pageCount,
     required this.progressLabel,
     required this.primaryActionLabel,
+    required this.canSkip,
+    required this.isAgreementPage,
     required this.isPermissionPage,
     required this.onBack,
     required this.onPrimary,
@@ -1236,6 +1398,8 @@ class _AiSetupSharedChrome extends StatelessWidget {
   final int pageCount;
   final String progressLabel;
   final String primaryActionLabel;
+  final bool canSkip;
+  final bool isAgreementPage;
   final bool isPermissionPage;
   final VoidCallback onBack;
   final VoidCallback onPrimary;
@@ -1315,7 +1479,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
           chromeProgress,
         )!;
         final titleAlignmentX = lerpDouble(0, -1, chromeProgress)!;
-        final buttonWidth = 104.0;
+        const buttonWidth = 104.0;
         final buttonHeight = lerpDouble(44, 46, chromeProgress)!;
         final buttonLeft = lerpDouble(
           (constraints.maxWidth - buttonWidth) * 0.5,
@@ -1411,7 +1575,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
                   opacity: skipOpacity,
                   child: Center(
                     child: TextButton(
-                      onPressed: onSkip,
+                      onPressed: canSkip ? onSkip : null,
                       style: TextButton.styleFrom(
                         minimumSize: const Size(0, 36),
                         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1442,7 +1606,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
             ),
             Positioned(
               left: 58,
-              right: 112,
+              right: buttonWidth + 8,
               bottom: 5,
               child: IgnorePointer(
                 ignoring: chromeProgress == 0,
@@ -1493,7 +1657,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
                         ),
                         const SizedBox(width: 6),
                         Icon(
-                          isPermissionPage
+                          isAgreementPage || isPermissionPage
                               ? Icons.check_rounded
                               : Icons.arrow_forward_rounded,
                           size: 18,
@@ -1715,6 +1879,149 @@ class _AiSetupModePage extends StatelessWidget {
                 onTap: () => onModeChanged(_AiSetupStartMode.operit1Import),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AiSetupAgreementPage extends StatelessWidget {
+  const _AiSetupAgreementPage({required this.waitSeconds});
+
+  final int waitSeconds;
+
+  /// Builds the user agreement and privacy policy reading view.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final bodyStyle = textTheme.bodyMedium?.copyWith(
+      color: colorScheme.onSurfaceVariant,
+      height: 1.5,
+    );
+    final headingStyle = textTheme.titleMedium?.copyWith(
+      color: colorScheme.onSurface,
+      fontWeight: FontWeight.w800,
+      letterSpacing: 0,
+    );
+
+    return Align(
+      alignment: Alignment.topCenter,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 680),
+          child: SelectionArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                const _SetupSectionHeader(
+                  icon: Icons.description_outlined,
+                  eyebrow: '用户协议',
+                  title: '用户协议与隐私政策',
+                  description: '请阅读本协议。确认同意后，才能继续完成设备设置。',
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '版本：${OnboardingStartupRouteStrategy._currentAgreementVersion}',
+                  style: textTheme.labelMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                    letterSpacing: 0,
+                  ),
+                ),
+                if (waitSeconds > 0) ...<Widget>[
+                  const SizedBox(height: 8),
+                  Text(
+                    '阅读确认将在 $waitSeconds 秒后开放。',
+                    style: textTheme.labelMedium?.copyWith(
+                      color: colorScheme.primary,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerLow,
+                    border: Border.all(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.6),
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text('人话版协议（非法律版本）', style: headingStyle),
+                      const SizedBox(height: 10),
+                      Text(
+                        'Operit 是在您的设备上运行的开源客户端。我们不运营模型推理服务、不托管聊天记录，也不向您提供共享 API Key。您配置云模型、语音、搜索、绘图、MCP 或其他网络功能时，数据会直接发送给相应服务商，并受其条款和隐私政策约束；本地模型在设备内推理。',
+                        style: bodyStyle,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        '应用可能使用文件、终端、自动化、系统授权、Root、ADB 和扩展等能力。请在执行前核对内容、备份重要数据并谨慎授予权限。因您的操作、配置、第三方服务或第三方扩展造成的设备、数据、账号或其他损失，应由实际操作人依适用法律处理。',
+                        style: bodyStyle,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        '市场中的插件、脚本、Skill、工具包和其他第三方内容，其著作权及责任归作者或权利人所有。展示或安装不代表 Operit 对其作出保证、背书或取得权利。',
+                        style: bodyStyle,
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 22),
+                        child: Divider(),
+                      ),
+                      Text('严谨版法律协议', style: headingStyle),
+                      const SizedBox(height: 12),
+                      Text(
+                        '1. 适用范围与协议版本\n本协议适用于 Operit 官方发布的客户端及其可选在线功能。使用本应用即表示您已阅读并同意当前版本。应用会记录您确认的版本；协议发生实质更新时，将要求重新确认。开源代码许可由仓库根目录 LICENSE 所载 LGPLv3 规定，本协议不排除或缩减适用法律及开源许可证赋予您的权利。',
+                        style: bodyStyle,
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        '2. 产品定位与第三方服务\nOperit 不提供大语言模型推理、共享 API Key、聊天请求中转或聊天记录云端托管。您自行选择、配置和启用第三方服务，并自行判断服务商、模型、端点和扩展的安全性、合法性与适用性，妥善保管凭据。',
+                        style: bodyStyle,
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        '3. 数据处理与隐私\n聊天记录、角色卡、记忆、模型配置和 API Key 通常保存在设备的应用数据中。您主动导出、备份、上传文件、使用第三方网络功能或向外部 HTTP 服务提交请求时，相关数据将依您的操作被复制、传输或披露。市场、公告、更新检查、GitHub 登录和发布等功能会访问 Operit、GitHub 或相关第三方资源。',
+                        style: bodyStyle,
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        '4. 对外部署与运营责任\n外部 HTTP 服务、机器人、自动回复及类似能力由您选择启用。您将其开放给他人或公众使用时，应作为实际部署或运营者负责访问控制、用户授权、内容安全、数据保护、未成年人保护、必要提示和其他适用义务。',
+                        style: bodyStyle,
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        '5. 合法使用与内容责任\n您应遵守适用法律法规、第三方服务规则及平台规则，不得利用本应用、扩展或配置实施违法活动、侵害他人权益、未经授权访问系统或数据，或传播违法有害内容。AI 输出可能包含错误、遗漏或偏差，不构成医疗、法律、金融或其他专业建议。',
+                        style: bodyStyle,
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        '6. 软件按现状提供\n在适用法律允许的范围内，本软件按“现状”和“可用”状态提供。贡献者不对软件或第三方服务的持续可用性、准确性、安全性、适销性、特定用途适用性或不侵权作出明示或默示保证。',
+                        style: bodyStyle,
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        '7. 协议更新与联系\n我们可能因功能、法律或安全要求更新本协议，并在应用内提供当前版本。对用户权益有实质影响的更新，将通过提高协议版本并要求重新确认的方式生效。您可通过项目仓库、应用内反馈入口或公开联系渠道提出问题和意见。',
+                        style: bodyStyle,
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        '人话版仅为便于理解；若与中文严谨版不一致，以中文严谨版为准。',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -2423,8 +2730,8 @@ class _AiSetupPermissionPage extends StatelessWidget {
               _SetupSectionHeader(
                 icon: Icons.admin_panel_settings_rounded,
                 eyebrow: '系统授权',
-                title: '按当前设备要求授权',
-                description: '每一项由当前运行环境声明、检查和申请；点击后会重新读取系统状态。',
+                title: '按需授予系统权限',
+                description: '权限可按您要使用的功能选择授予。您可以不授予任何一项并继续；未授予权限对应的功能将无法使用。',
               ),
               const SizedBox(height: 22),
               if (requirements.isEmpty)
@@ -2613,8 +2920,8 @@ String _requirementButtonLabel(_OnboardingRequirement requirement) {
 }
 
 class _PickedOperit1SnapshotFile {
-  const _PickedOperit1SnapshotFile({required this.path, required this.name});
+  const _PickedOperit1SnapshotFile({required this.bytes, required this.name});
 
-  final String path;
+  final Uint8List bytes;
   final String name;
 }

@@ -1,16 +1,15 @@
 // ignore_for_file: file_names
 
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../../../common/components/AdaptiveSidePanel.dart';
 import '../viewmodel/WorkspaceFileModels.dart';
 import 'workspace/WorkspaceLayoutMetrics.dart';
 import 'workspace/WorkspacePanel.dart';
-import 'workspace/WorkspaceResizeHandle.dart';
 
-class WorkspaceShell extends StatefulWidget {
+class WorkspaceShell extends StatelessWidget {
   const WorkspaceShell({
     super.key,
     required this.workspaceOpen,
@@ -45,221 +44,33 @@ class WorkspaceShell extends StatefulWidget {
   final Future<void> Function(String workspace) onBindWorkspace;
   final Widget child;
 
-  @override
-  State<WorkspaceShell> createState() => _WorkspaceShellState();
-}
-
-class _WorkspaceShellState extends State<WorkspaceShell> {
-  final GlobalKey _workspacePanelKey = GlobalKey();
-  double? _workspaceWidth;
-  double? _workspaceDragStartGlobalX;
-  double? _workspaceDragStartWidth;
-  bool _resizingWorkspace = false;
-
+  /// Builds the workspace panel with the common adaptive side-panel behavior.
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final useTabletMode = constraints.maxWidth >= workspaceTabletBreakpoint;
-        final maxWorkspaceWidth = useTabletMode
-            ? math.max(0.0, constraints.maxWidth - workspaceMinTabletChatWidth)
-            : constraints.maxWidth;
-        final minWorkspaceWidth = useTabletMode
-            ? math.min(workspaceMinWidth, maxWorkspaceWidth)
-            : constraints.maxWidth;
-        final defaultWidth = useTabletMode
-            ? workspaceDefaultTabletWidth
-            : constraints.maxWidth;
-        final workspaceWidth = _resolveWorkspaceWidth(
-          defaultWidth,
-          minWorkspaceWidth,
-          maxWorkspaceWidth,
-        );
-
-        if (useTabletMode) {
-          return _buildTabletLayout(
-            context,
-            workspaceWidth,
-            minWorkspaceWidth,
-            maxWorkspaceWidth,
-          );
-        }
-
-        return _buildPhoneLayout(context, workspaceWidth);
-      },
+    return AdaptiveSidePanel(
+      open: workspaceOpen,
+      onOpenChanged: onWorkspaceOpenChanged,
+      breakpoint: workspaceTabletBreakpoint,
+      defaultWidth: workspaceDefaultTabletWidth,
+      minWidth: workspaceMinWidth,
+      minContentWidth: workspaceMinTabletChatWidth,
+      resizeHandleHitWidth: workspaceResizeHandleHitWidth,
+      resizeHandleVisualWidth: workspaceResizeHandleVisualWidth,
+      resizeHandleHeight: workspaceResizeHandleHeight,
+      panel: WorkspacePanel(
+        hasBoundWorkspace: hasBoundWorkspace,
+        workspacePath: workspacePath,
+        onListWorkspaceFiles: onListWorkspaceFiles,
+        onListWorkspaceBindingDirectories: onListWorkspaceBindingDirectories,
+        onReadWorkspaceTextFile: onReadWorkspaceTextFile,
+        onReadWorkspaceFileBytes: onReadWorkspaceFileBytes,
+        onWriteWorkspaceFileBytes: onWriteWorkspaceFileBytes,
+        onOpenWorkspaceFile: onOpenWorkspaceFile,
+        onCreateDefaultWorkspace: onCreateDefaultWorkspace,
+        onBindWorkspace: onBindWorkspace,
+        onRevealRequested: () => onWorkspaceOpenChanged(true),
+      ),
+      child: child,
     );
-  }
-
-  double _resolveWorkspaceWidth(
-    double defaultWidth,
-    double minWorkspaceWidth,
-    double maxWorkspaceWidth,
-  ) {
-    final rawWidth = _workspaceWidth ?? defaultWidth;
-    return rawWidth.clamp(minWorkspaceWidth, maxWorkspaceWidth).toDouble();
-  }
-
-  Widget _buildTabletLayout(
-    BuildContext context,
-    double workspaceWidth,
-    double minWorkspaceWidth,
-    double maxWorkspaceWidth,
-  ) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: <Widget>[
-        Row(
-          children: <Widget>[
-            Expanded(child: widget.child),
-            AnimatedContainer(
-              duration: _workspaceAnimationDuration,
-              curve: Curves.easeOutCubic,
-              width: widget.workspaceOpen ? workspaceWidth : 0,
-            ),
-          ],
-        ),
-        AnimatedPositionedDirectional(
-          duration: _workspaceAnimationDuration,
-          curve: Curves.easeOutCubic,
-          top: 0,
-          bottom: 0,
-          end: widget.workspaceOpen ? 0 : -workspaceWidth,
-          width: workspaceWidth,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: <Widget>[
-              Positioned.fill(child: _buildWorkspacePanel()),
-              if (widget.workspaceOpen)
-                PositionedDirectional(
-                  top: 0,
-                  bottom: 0,
-                  start: -workspaceResizeHandleHitWidth / 2,
-                  width: workspaceResizeHandleHitWidth,
-                  child: WorkspaceResizeHandle(
-                    onDragStart: (details) {
-                      _startWorkspaceResize(
-                        details.globalPosition.dx,
-                        workspaceWidth,
-                      );
-                    },
-                    onDragUpdate: (details) {
-                      _updateWorkspaceWidthFromGlobalX(
-                        details.globalPosition.dx,
-                        minWorkspaceWidth,
-                        maxWorkspaceWidth,
-                      );
-                    },
-                    onDragEnd: _endWorkspaceResize,
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPhoneLayout(BuildContext context, double workspaceWidth) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: <Widget>[
-        Positioned.fill(child: widget.child),
-        if (widget.workspaceOpen)
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () {
-                widget.onWorkspaceOpenChanged(false);
-              },
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.18),
-                ),
-              ),
-            ),
-          ),
-        AnimatedPositionedDirectional(
-          duration: _workspaceAnimationDuration,
-          curve: Curves.easeOutCubic,
-          top: 0,
-          bottom: 0,
-          end: widget.workspaceOpen ? 0 : -workspaceWidth,
-          width: workspaceWidth,
-          child: _buildWorkspacePanel(),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildWorkspacePanel() {
-    return WorkspacePanel(
-      key: _workspacePanelKey,
-      hasBoundWorkspace: widget.hasBoundWorkspace,
-      workspacePath: widget.workspacePath,
-      onListWorkspaceFiles: widget.onListWorkspaceFiles,
-      onListWorkspaceBindingDirectories:
-          widget.onListWorkspaceBindingDirectories,
-      onReadWorkspaceTextFile: widget.onReadWorkspaceTextFile,
-      onReadWorkspaceFileBytes: widget.onReadWorkspaceFileBytes,
-      onWriteWorkspaceFileBytes: widget.onWriteWorkspaceFileBytes,
-      onOpenWorkspaceFile: widget.onOpenWorkspaceFile,
-      onCreateDefaultWorkspace: widget.onCreateDefaultWorkspace,
-      onBindWorkspace: widget.onBindWorkspace,
-      onRevealRequested: () => widget.onWorkspaceOpenChanged(true),
-    );
-  }
-
-  Duration get _workspaceAnimationDuration {
-    return _resizingWorkspace
-        ? Duration.zero
-        : const Duration(milliseconds: 220);
-  }
-
-  void _startWorkspaceResize(double globalX, double workspaceWidth) {
-    setState(() {
-      _resizingWorkspace = true;
-      _workspaceDragStartGlobalX = globalX;
-      _workspaceDragStartWidth = workspaceWidth;
-    });
-  }
-
-  void _endWorkspaceResize() {
-    if (!_resizingWorkspace) {
-      return;
-    }
-    setState(() {
-      _resizingWorkspace = false;
-      _workspaceDragStartGlobalX = null;
-      _workspaceDragStartWidth = null;
-    });
-  }
-
-  void _updateWorkspaceWidthFromGlobalX(
-    double globalX,
-    double minWorkspaceWidth,
-    double maxWorkspaceWidth,
-  ) {
-    final dragStartGlobalX = _workspaceDragStartGlobalX;
-    final dragStartWidth = _workspaceDragStartWidth;
-    if (dragStartGlobalX == null || dragStartWidth == null) {
-      return;
-    }
-    _updateWorkspaceWidth(
-      dragStartWidth - (globalX - dragStartGlobalX),
-      minWorkspaceWidth,
-      maxWorkspaceWidth,
-    );
-  }
-
-  void _updateWorkspaceWidth(
-    double width,
-    double minWorkspaceWidth,
-    double maxWorkspaceWidth,
-  ) {
-    setState(() {
-      _workspaceWidth = width
-          .clamp(minWorkspaceWidth, maxWorkspaceWidth)
-          .toDouble();
-    });
   }
 }

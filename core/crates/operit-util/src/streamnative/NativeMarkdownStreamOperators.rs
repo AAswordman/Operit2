@@ -64,12 +64,12 @@ impl NativeMarkdownStreamOperators for String {
 
 #[allow(non_snake_case)]
 pub trait NativeMarkdownCharStreamOperators: Stream<Item = char> {
-    fn nativeMarkdownSplitByBlockStream(&mut self) -> Vec<MarkdownNodeStable>;
-    fn nativeMarkdownSplitByInlineStream(&mut self) -> Vec<MarkdownNodeStable>;
-    fn nativeMarkdownSplitByBlockGroupStream(
+    async fn nativeMarkdownSplitByBlockStream(&mut self) -> Vec<MarkdownNodeStable>;
+    async fn nativeMarkdownSplitByInlineStream(&mut self) -> Vec<MarkdownNodeStable>;
+    async fn nativeMarkdownSplitByBlockGroupStream(
         &mut self,
     ) -> VecStream<StreamGroup<Option<MarkdownProcessorType>>>;
-    fn nativeMarkdownSplitByInlineGroupStream(
+    async fn nativeMarkdownSplitByInlineGroupStream(
         &mut self,
     ) -> VecStream<StreamGroup<Option<MarkdownProcessorType>>>;
 }
@@ -79,47 +79,49 @@ impl<S> NativeMarkdownCharStreamOperators for S
 where
     S: Stream<Item = char>,
 {
-    fn nativeMarkdownSplitByBlockStream(&mut self) -> Vec<MarkdownNodeStable> {
+    async fn nativeMarkdownSplitByBlockStream(&mut self) -> Vec<MarkdownNodeStable> {
         let mut chars = Vec::new();
-        self.collect(&mut |ch| chars.push(ch));
+        self.collect(&mut |ch| chars.push(ch)).await;
         NativeMarkdownSplitter::native_markdown_split_stream_by_block(
             crate::stream::Stream::VecStream::new(chars),
         )
+        .await
     }
 
-    fn nativeMarkdownSplitByInlineStream(&mut self) -> Vec<MarkdownNodeStable> {
+    async fn nativeMarkdownSplitByInlineStream(&mut self) -> Vec<MarkdownNodeStable> {
         let mut chars = Vec::new();
-        self.collect(&mut |ch| chars.push(ch));
+        self.collect(&mut |ch| chars.push(ch)).await;
         NativeMarkdownSplitter::native_markdown_split_stream_by_inline(
             crate::stream::Stream::VecStream::new(chars),
         )
+        .await
     }
 
-    fn nativeMarkdownSplitByBlockGroupStream(
+    async fn nativeMarkdownSplitByBlockGroupStream(
         &mut self,
     ) -> VecStream<StreamGroup<Option<MarkdownProcessorType>>> {
         let mut content = String::new();
-        self.collect(&mut |ch| content.push(ch));
+        self.collect(&mut |ch| content.push(ch)).await;
         NativeMarkdownSplitter::native_markdown_split_by_block_groups(&content)
     }
 
-    fn nativeMarkdownSplitByInlineGroupStream(
+    async fn nativeMarkdownSplitByInlineGroupStream(
         &mut self,
     ) -> VecStream<StreamGroup<Option<MarkdownProcessorType>>> {
         let mut content = String::new();
-        self.collect(&mut |ch| content.push(ch));
+        self.collect(&mut |ch| content.push(ch)).await;
         NativeMarkdownSplitter::native_markdown_split_by_inline_groups(&content)
     }
 }
 
 #[allow(non_snake_case)]
 pub trait NativeMarkdownStringStreamOperators: Stream<Item = String> {
-    fn nativeMarkdownSplitByBlockStringStream(&mut self) -> Vec<MarkdownNodeStable>;
-    fn nativeMarkdownSplitByInlineStringStream(&mut self) -> Vec<MarkdownNodeStable>;
-    fn nativeMarkdownSplitByBlockStringGroupStream(
+    async fn nativeMarkdownSplitByBlockStringStream(&mut self) -> Vec<MarkdownNodeStable>;
+    async fn nativeMarkdownSplitByInlineStringStream(&mut self) -> Vec<MarkdownNodeStable>;
+    async fn nativeMarkdownSplitByBlockStringGroupStream(
         &mut self,
     ) -> VecStream<StreamGroup<Option<MarkdownProcessorType>>>;
-    fn nativeMarkdownSplitByInlineStringGroupStream(
+    async fn nativeMarkdownSplitByInlineStringGroupStream(
         &mut self,
     ) -> VecStream<StreamGroup<Option<MarkdownProcessorType>>>;
 }
@@ -129,35 +131,37 @@ impl<S> NativeMarkdownStringStreamOperators for S
 where
     S: Stream<Item = String>,
 {
-    fn nativeMarkdownSplitByBlockStringStream(&mut self) -> Vec<MarkdownNodeStable> {
+    async fn nativeMarkdownSplitByBlockStringStream(&mut self) -> Vec<MarkdownNodeStable> {
         let mut chunks = Vec::new();
-        self.collect(&mut |chunk| chunks.push(chunk));
+        self.collect(&mut |chunk| chunks.push(chunk)).await;
         NativeMarkdownSplitter::native_markdown_split_string_stream_by_block(
             crate::stream::Stream::VecStream::new(chunks),
         )
+        .await
     }
 
-    fn nativeMarkdownSplitByInlineStringStream(&mut self) -> Vec<MarkdownNodeStable> {
+    async fn nativeMarkdownSplitByInlineStringStream(&mut self) -> Vec<MarkdownNodeStable> {
         let mut chunks = Vec::new();
-        self.collect(&mut |chunk| chunks.push(chunk));
+        self.collect(&mut |chunk| chunks.push(chunk)).await;
         NativeMarkdownSplitter::native_markdown_split_string_stream_by_inline(
             crate::stream::Stream::VecStream::new(chunks),
         )
+        .await
     }
 
-    fn nativeMarkdownSplitByBlockStringGroupStream(
+    async fn nativeMarkdownSplitByBlockStringGroupStream(
         &mut self,
     ) -> VecStream<StreamGroup<Option<MarkdownProcessorType>>> {
         let mut content = String::new();
-        self.collect(&mut |chunk| content.push_str(&chunk));
+        self.collect(&mut |chunk| content.push_str(&chunk)).await;
         NativeMarkdownSplitter::native_markdown_split_by_block_groups(&content)
     }
 
-    fn nativeMarkdownSplitByInlineStringGroupStream(
+    async fn nativeMarkdownSplitByInlineStringGroupStream(
         &mut self,
     ) -> VecStream<StreamGroup<Option<MarkdownProcessorType>>> {
         let mut content = String::new();
-        self.collect(&mut |chunk| content.push_str(&chunk));
+        self.collect(&mut |chunk| content.push_str(&chunk)).await;
         NativeMarkdownSplitter::native_markdown_split_by_inline_groups(&content)
     }
 }

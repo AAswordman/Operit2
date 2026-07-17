@@ -14,7 +14,7 @@ use operit_host_api::HostManager::HostManager;
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_util::stream::HotStream::MutableSharedStreamImpl;
-use operit_util::stream::Stream::Stream;
+use operit_util::stream::Stream::{CollectFuture, Stream};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// Published terminal session metadata for UI session lists.
@@ -60,8 +60,12 @@ impl RuntimeTerminalPtyOutputStream {
 impl Stream for RuntimeTerminalPtyOutputStream {
     type Item = String;
 
-    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
-        self.upstream.collect(collector);
+    /// Collects PTY output asynchronously until the host closes the stream.
+    fn collect<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(Self::Item),
+    ) -> CollectFuture<'a> {
+        self.upstream.collect(collector)
     }
 }
 

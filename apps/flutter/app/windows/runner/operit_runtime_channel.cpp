@@ -43,8 +43,7 @@ using BridgeCloseWatchStream = OperitByteBuffer (*)(BridgeHandle, const char*);
 using BridgeFreeBytes = void (*)(OperitByteBuffer);
 using BridgeStartWebAccessServer =
     char* (*)(BridgeHandle, const char*, const char*, const char*, const char*,
-              const char*, const char*, const char*, const char*, const char*,
-              const char*, const char*);
+              const char*, const char*, const char*);
 using BridgeDiscoverDevices =
     char* (*)(BridgeHandle, const char*);
 using BridgeStopWebAccessServer = char* (*)(BridgeHandle);
@@ -463,10 +462,6 @@ class OperitRuntimeLibrary {
                             const std::string& token,
                             const std::string& shutdown_token,
                             const std::string& web_root,
-                            const std::string& device_id,
-                            const std::string& accepted_sessions,
-                            const std::string& accepted_session_store_path,
-                            const std::string& pairing_code_path,
                             const std::string& device_info,
                             const std::string& enable_web_access,
                             const std::string& enable_discovery,
@@ -476,9 +471,7 @@ class OperitRuntimeLibrary {
     }
       char* raw_response = start_web_access_server_(
           handle_, bind_address.c_str(), token.c_str(), shutdown_token.c_str(),
-          web_root.c_str(), device_id.c_str(), accepted_sessions.c_str(),
-          accepted_session_store_path.c_str(), pairing_code_path.c_str(),
-          device_info.c_str(), enable_web_access.c_str(),
+          web_root.c_str(), device_info.c_str(), enable_web_access.c_str(),
           enable_discovery.c_str());
     return TakeBridgeString(raw_response, response, error);
   }
@@ -1082,15 +1075,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
           const std::string* token = StringMapValue(method_call, "token");
           const std::string* shutdown_token =
               StringMapValue(method_call, "shutdownToken");
-            const std::string* web_root = StringMapValue(method_call, "webRoot");
-            const std::string* device_id =
-                StringMapValue(method_call, "deviceId");
-            const std::string* accepted_sessions =
-                StringMapValue(method_call, "acceptedSessions");
-          const std::string* accepted_session_store_path =
-              StringMapValue(method_call, "acceptedSessionStorePath");
-          const std::string* pairing_code_path =
-              StringMapValue(method_call, "pairingCodePath");
+          const std::string* web_root = StringMapValue(method_call, "webRoot");
           const std::string* device_info =
               StringMapValue(method_call, "deviceInfo");
           const std::string* enable_web_access =
@@ -1099,13 +1084,10 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
               StringMapValue(method_call, "enableDiscovery");
           if (bind_address == nullptr || token == nullptr ||
                 shutdown_token == nullptr || web_root == nullptr ||
-                device_id == nullptr ||
-                accepted_sessions == nullptr ||
-                accepted_session_store_path == nullptr ||
-                pairing_code_path == nullptr || device_info == nullptr ||
+                device_info == nullptr ||
                 enable_web_access == nullptr || enable_discovery == nullptr) {
               result->Error("INVALID_ARGS",
-                           "startWebAccessServer expects bindAddress, token, shutdownToken, webRoot, deviceId, acceptedSessions, acceptedSessionStorePath, pairingCodePath, deviceInfo, enableWebAccess and enableDiscovery");
+                           "startWebAccessServer expects bindAddress, token, shutdownToken, webRoot, deviceInfo, enableWebAccess and enableDiscovery");
               return;
             }
           RespondRuntimeStringAsync(
@@ -1114,18 +1096,12 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
                token = *token,
                shutdown_token = *shutdown_token,
                web_root = *web_root,
-               device_id = *device_id,
-               accepted_sessions = *accepted_sessions,
-               accepted_session_store_path = *accepted_session_store_path,
-               pairing_code_path = *pairing_code_path,
                device_info = *device_info,
                enable_web_access = *enable_web_access,
                enable_discovery = *enable_discovery](
                   std::string* response, std::string* operation_error) {
                 return runtime_library->StartWebAccessServer(
-                    bind_address, token, shutdown_token, web_root, device_id,
-                    accepted_sessions, accepted_session_store_path,
-                    pairing_code_path, device_info, enable_web_access,
+                    bind_address, token, shutdown_token, web_root, device_info, enable_web_access,
                     enable_discovery, response, operation_error);
               },
               std::move(result));

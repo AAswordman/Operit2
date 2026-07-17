@@ -6,6 +6,7 @@
 #endif
 
 #include "flutter/generated_plugin_registrant.h"
+#include "crash_channel.h"
 #include "operit_runtime_channel.h"
 
 struct _MyApplication {
@@ -75,6 +76,7 @@ static void my_application_activate(GApplication* application) {
   gtk_widget_realize(GTK_WIDGET(view));
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
+  register_operit_crash_channel(view);
   register_operit_runtime_channel(view);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));

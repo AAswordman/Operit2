@@ -1,13 +1,17 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
+use js_sys::Uint8Array;
 use operit_host_api::{
-    FileSystemHost, HiddenTerminalCommandOutput, HostError, HostResult, TerminalCloseOutput,
-    TerminalCommandOutput, TerminalHost, TerminalInfo, TerminalInputOutput, TerminalScreenOutput,
-    TerminalSessionInfo, TerminalSessionListEntry, TerminalTypeInfo,
+    HiddenTerminalCommandOutput, HostError, HostResult, TerminalCloseOutput, TerminalCommandOutput,
+    TerminalHost, TerminalInfo, TerminalInputOutput, TerminalScreenOutput, TerminalSessionInfo,
+    TerminalSessionListEntry, TerminalTypeInfo,
 };
+use wasm_bindgen::JsValue;
 
-use crate::tools::fs::WebFileSystemHost;
+use crate::common::{bytes_to_js, call_terminal, js_i64, js_usize};
+
+const LINUX_VM_TERMINAL_TYPE: &str = "linux-vm";
 
 #[derive(Clone)]
 struct WebTerminalSession {
@@ -16,8 +20,6 @@ struct WebTerminalSession {
     workingDir: String,
     rows: u16,
     cols: u16,
-    screen: String,
-    output: Vec<u8>,
 }
 
 thread_local! {
@@ -25,32 +27,32 @@ thread_local! {
     static TERMINAL_SESSIONS: RefCell<BTreeMap<String, WebTerminalSession>> = const { RefCell::new(BTreeMap::new()) };
 }
 
-/// Simulates terminal sessions in browser memory.
+/// Hosts browser-local Linux VM terminal sessions.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WebTerminalHost;
 
 impl WebTerminalHost {
-    /// Creates the browser terminal simulator host.
+    /// Creates the browser-local Linux VM terminal host.
     pub fn new() -> Self {
         Self
     }
 }
 
 impl TerminalHost for WebTerminalHost {
-    /// Describes the browser terminal simulator.
+    /// Describes the Linux VM terminal available in browser builds.
     fn terminalInfo(&self) -> HostResult<TerminalInfo> {
         Ok(TerminalInfo {
-            platform: "web".to_string(),
-            defaultType: "web-simulator".to_string(),
+            platform: "web-linux-vm".to_string(),
+            defaultType: LINUX_VM_TERMINAL_TYPE.to_string(),
             types: vec![TerminalTypeInfo {
-                terminalType: "web-simulator".to_string(),
+                terminalType: LINUX_VM_TERMINAL_TYPE.to_string(),
                 available: true,
-                description: "In-memory browser terminal simulator".to_string(),
+                description: "Browser-local Buildroot Linux VM terminal".to_string(),
             }],
         })
     }
 
-    /// Creates an in-memory pseudo-terminal session.
+    /// Starts one browser-local Linux virtual machine terminal session.
     fn startPtySession(
         &self,
         sessionName: &str,
@@ -59,16 +61,32 @@ impl TerminalHost for WebTerminalHost {
         rows: u16,
         cols: u16,
     ) -> HostResult<String> {
+        let normalizedSessionName = requiredText(sessionName, "session_name")?;
+        requireLinuxVmTerminalType(terminalType)?;
+        let normalizedWorkingDir = requiredText(workingDir, "working_directory")?;
+        if normalizedWorkingDir != "/" {
+            return Err(HostError::new(
+                "browser-local Linux VM terminals currently expose only the guest root directory: /",
+            ));
+        }
+        if rows == 0 || cols == 0 {
+            return Err(HostError::new("terminal dimensions must be positive"));
+        }
         let sessionId = nextTerminalSessionId();
-        let banner = format!("Web microkernel booted\n{workingDir} $ ");
+        call_terminal(
+            "startPty",
+            &[
+                JsValue::from_str(&sessionId),
+                JsValue::from_f64(rows as f64),
+                JsValue::from_f64(cols as f64),
+            ],
+        )?;
         let session = WebTerminalSession {
-            sessionName: sessionName.to_string(),
-            terminalType: terminalType.to_string(),
-            workingDir: workingDir.to_string(),
+            sessionName: normalizedSessionName,
+            terminalType: LINUX_VM_TERMINAL_TYPE.to_string(),
+            workingDir: normalizedWorkingDir,
             rows,
             cols,
-            screen: banner.clone(),
-            output: banner.into_bytes(),
         };
         TERMINAL_SESSIONS.with(|sessions| {
             sessions.borrow_mut().insert(sessionId.clone(), session);
@@ -76,28 +94,37 @@ impl TerminalHost for WebTerminalHost {
         Ok(sessionId)
     }
 
-    /// Drains unread pseudo-terminal output.
+    /// Drains raw virtual serial output emitted by one Linux VM session.
     fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>> {
-        TERMINAL_SESSIONS.with(|sessions| {
-            let mut sessions = sessions.borrow_mut();
-            let session = terminalSession(&mut sessions, sessionId)?;
-            Ok(std::mem::take(&mut session.output))
-        })
+        ensureTerminalSession(sessionId)?;
+        let output = call_terminal("readPty", &[JsValue::from_str(sessionId)])?;
+        Ok(Uint8Array::new(&output).to_vec())
     }
 
-    /// Appends terminal input to the simulated screen.
+    /// Writes raw terminal input bytes to one Linux VM virtual serial console.
     fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
-        TERMINAL_SESSIONS.with(|sessions| {
-            let mut sessions = sessions.borrow_mut();
-            let session = terminalSession(&mut sessions, sessionId)?;
-            session.screen.push_str(&String::from_utf8_lossy(data));
-            session.output.extend_from_slice(data);
-            Ok(data.len())
-        })
+        ensureTerminalSession(sessionId)?;
+        let accepted = call_terminal(
+            "writePty",
+            &[JsValue::from_str(sessionId), bytes_to_js(data)],
+        )?;
+        js_usize(accepted, "Linux VM terminal write")
     }
 
-    /// Updates the simulated pseudo-terminal dimensions.
+    /// Records the renderer dimensions for one Linux VM terminal session.
     fn resizePtySession(&self, sessionId: &str, rows: u16, cols: u16) -> HostResult<()> {
+        if rows == 0 || cols == 0 {
+            return Err(HostError::new("terminal dimensions must be positive"));
+        }
+        ensureTerminalSession(sessionId)?;
+        call_terminal(
+            "resizePty",
+            &[
+                JsValue::from_str(sessionId),
+                JsValue::from_f64(rows as f64),
+                JsValue::from_f64(cols as f64),
+            ],
+        )?;
         TERMINAL_SESSIONS.with(|sessions| {
             let mut sessions = sessions.borrow_mut();
             let session = terminalSession(&mut sessions, sessionId)?;
@@ -107,47 +134,61 @@ impl TerminalHost for WebTerminalHost {
         })
     }
 
-    /// Reports that simulated sessions remain open until explicitly closed.
+    /// Returns the Linux VM exit code after the virtual machine has stopped.
     fn pollPtyExitCode(&self, sessionId: &str) -> HostResult<Option<i32>> {
-        TERMINAL_SESSIONS.with(|sessions| {
-            let mut sessions = sessions.borrow_mut();
-            terminalSession(&mut sessions, sessionId)?;
-            Ok(None)
-        })
+        ensureTerminalSession(sessionId)?;
+        let value = call_terminal("exitCode", &[JsValue::from_str(sessionId)])?;
+        if value.is_null() || value.is_undefined() {
+            return Ok(None);
+        }
+        i32::try_from(js_i64(value, "Linux VM terminal exit code")?)
+            .map(Some)
+            .map_err(|error| HostError::new(error.to_string()))
     }
 
-    /// Closes one simulated pseudo-terminal session.
+    /// Stops one Linux VM terminal session and releases its browser resources.
     fn closePtySession(&self, sessionId: &str) -> HostResult<()> {
+        ensureTerminalSession(sessionId)?;
+        call_terminal("closePty", &[JsValue::from_str(sessionId)])?;
         removeTerminalSession(sessionId)
     }
 
-    /// Lists active simulated terminal sessions.
+    /// Lists Linux VM terminal sessions that have not exited.
     fn listSessions(&self) -> HostResult<Vec<TerminalSessionListEntry>> {
-        TERMINAL_SESSIONS.with(|sessions| {
-            Ok(sessions
+        let entries = TERMINAL_SESSIONS.with(|sessions| {
+            sessions
                 .borrow()
                 .iter()
-                .map(|(sessionId, session)| TerminalSessionListEntry {
-                    sessionId: sessionId.clone(),
-                    sessionName: session.sessionName.clone(),
-                    terminalType: session.terminalType.clone(),
-                    sessionKind: "web-simulator".to_string(),
-                    workingDir: session.workingDir.clone(),
-                    commandRunning: false,
-                })
-                .collect())
-        })
+                .map(|(sessionId, session)| (sessionId.clone(), session.clone()))
+                .collect::<Vec<_>>()
+        });
+        let mut active = Vec::new();
+        for (sessionId, session) in entries {
+            if self.pollPtyExitCode(&sessionId)?.is_none() {
+                active.push(TerminalSessionListEntry {
+                    sessionId,
+                    sessionName: session.sessionName,
+                    terminalType: session.terminalType,
+                    sessionKind: "linux-vm".to_string(),
+                    workingDir: session.workingDir,
+                    commandRunning: true,
+                });
+            }
+        }
+        Ok(active)
     }
 
-    /// Returns an existing named simulated terminal session or creates one.
+    /// Returns a named Linux VM terminal session or starts it at the guest root.
     fn createOrGetSession(
         &self,
         sessionName: &str,
         terminalType: &str,
     ) -> HostResult<TerminalSessionInfo> {
+        requireLinuxVmTerminalType(terminalType)?;
+        let normalizedSessionName = requiredText(sessionName, "session_name")?;
         let existing = TERMINAL_SESSIONS.with(|sessions| {
             sessions.borrow().iter().find_map(|(sessionId, session)| {
-                (session.sessionName == sessionName).then(|| TerminalSessionInfo {
+                (session.sessionName == normalizedSessionName).then(|| TerminalSessionInfo {
                     sessionId: sessionId.clone(),
                     sessionName: session.sessionName.clone(),
                     terminalType: session.terminalType.clone(),
@@ -158,53 +199,42 @@ impl TerminalHost for WebTerminalHost {
         if let Some(session) = existing {
             return Ok(session);
         }
-        let sessionId = self.startPtySession(sessionName, terminalType, "/", 24, 80)?;
+        let sessionId =
+            self.startPtySession(&normalizedSessionName, LINUX_VM_TERMINAL_TYPE, "/", 24, 80)?;
         Ok(TerminalSessionInfo {
             sessionId,
-            sessionName: sessionName.to_string(),
-            terminalType: terminalType.to_string(),
+            sessionName: normalizedSessionName,
+            terminalType: LINUX_VM_TERMINAL_TYPE.to_string(),
             isNewSession: true,
         })
     }
 
-    /// Runs one command through the browser microkernel.
+    /// Rejects synchronous command execution because guest output is asynchronous.
     fn executeInSession(
         &self,
-        sessionId: &str,
-        command: &str,
+        _sessionId: &str,
+        _command: &str,
         _timeoutMs: u64,
     ) -> HostResult<TerminalCommandOutput> {
-        let (terminalType, output, exitCode) = runKernelCommand(sessionId, command)?;
-        Ok(TerminalCommandOutput {
-            command: command.to_string(),
-            output,
-            exitCode,
-            sessionId: sessionId.to_string(),
-            terminalType,
-            timedOut: false,
-        })
+        Err(HostError::new(
+            "browser-local Linux VM terminals are interactive; use PTY input and output streams",
+        ))
     }
 
-    /// Reports that hidden operating-system commands are unavailable in browsers.
+    /// Rejects hidden command execution because the Linux guest exposes interactive sessions only.
     fn executeHiddenCommand(
         &self,
-        command: &str,
-        terminalType: &str,
-        executorKey: &str,
+        _command: &str,
+        _terminalType: &str,
+        _executorKey: &str,
         _timeoutMs: u64,
     ) -> HostResult<HiddenTerminalCommandOutput> {
-        Ok(HiddenTerminalCommandOutput {
-            command: command.to_string(),
-            output: "browser terminal simulator cannot execute operating-system commands"
-                .to_string(),
-            exitCode: 127,
-            executorKey: executorKey.to_string(),
-            terminalType: terminalType.to_string(),
-            timedOut: false,
-        })
+        Err(HostError::new(
+            "browser-local Linux VM terminals do not expose hidden command execution",
+        ))
     }
 
-    /// Appends textual or control input to a simulated session.
+    /// Sends textual or control input through one Linux VM terminal session.
     fn inputInSession(
         &self,
         sessionId: &str,
@@ -219,56 +249,59 @@ impl TerminalHost for WebTerminalHost {
         })
     }
 
-    /// Closes one simulated terminal session and reports its result.
+    /// Stops one Linux VM terminal session and returns its close result.
     fn closeSession(&self, sessionId: &str) -> HostResult<TerminalCloseOutput> {
-        removeTerminalSession(sessionId)?;
+        self.closePtySession(sessionId)?;
         Ok(TerminalCloseOutput {
             sessionId: sessionId.to_string(),
             success: true,
-            message: "browser terminal simulator session closed".to_string(),
+            message: "Linux VM terminal session closed".to_string(),
         })
     }
 
-    /// Returns the current simulated terminal screen.
-    fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
-        TERMINAL_SESSIONS.with(|sessions| {
-            let mut sessions = sessions.borrow_mut();
-            let session = terminalSession(&mut sessions, sessionId)?;
-            Ok(TerminalScreenOutput {
-                sessionId: sessionId.to_string(),
-                terminalType: session.terminalType.clone(),
-                rows: session.rows as usize,
-                cols: session.cols as usize,
-                content: session.screen.clone(),
-                commandRunning: false,
-            })
-        })
+    /// Rejects terminal screen snapshots because the Flutter terminal owns screen state.
+    fn getSessionScreen(&self, _sessionId: &str) -> HostResult<TerminalScreenOutput> {
+        Err(HostError::new(
+            "browser-local Linux VM terminal screen snapshots are unavailable; consume PTY output",
+        ))
     }
 }
 
-/// Allocates one unique browser terminal session identifier.
-#[allow(non_snake_case)]
+/// Allocates one unique browser-local Linux VM terminal session identifier.
 fn nextTerminalSessionId() -> String {
     NEXT_TERMINAL_SESSION_ID.with(|next| {
         let value = next.get().saturating_add(1);
         next.set(value);
-        format!("web-terminal-{value}")
+        format!("linux-vm-terminal-{value}")
     })
 }
 
-/// Returns one mutable simulated terminal session.
-#[allow(non_snake_case)]
+/// Returns one mutable terminal session entry or reports an unknown session identifier.
 fn terminalSession<'a>(
     sessions: &'a mut BTreeMap<String, WebTerminalSession>,
     sessionId: &str,
 ) -> HostResult<&'a mut WebTerminalSession> {
-    sessions
-        .get_mut(sessionId)
-        .ok_or_else(|| HostError::new(format!("browser terminal session not found: {sessionId}")))
+    sessions.get_mut(sessionId).ok_or_else(|| {
+        HostError::new(format!(
+            "Linux VM terminal session does not exist: {sessionId}"
+        ))
+    })
 }
 
-/// Removes one simulated terminal session.
-#[allow(non_snake_case)]
+/// Verifies that one browser-local Linux VM terminal session exists.
+fn ensureTerminalSession(sessionId: &str) -> HostResult<()> {
+    TERMINAL_SESSIONS.with(|sessions| {
+        if sessions.borrow().contains_key(sessionId) {
+            Ok(())
+        } else {
+            Err(HostError::new(format!(
+                "Linux VM terminal session does not exist: {sessionId}"
+            )))
+        }
+    })
+}
+
+/// Removes one Linux VM terminal session entry after its browser resources have stopped.
 fn removeTerminalSession(sessionId: &str) -> HostResult<()> {
     TERMINAL_SESSIONS.with(|sessions| {
         sessions
@@ -276,134 +309,32 @@ fn removeTerminalSession(sessionId: &str) -> HostResult<()> {
             .remove(sessionId)
             .map(|_| ())
             .ok_or_else(|| {
-                HostError::new(format!("browser terminal session not found: {sessionId}"))
+                HostError::new(format!(
+                    "Linux VM terminal session does not exist: {sessionId}"
+                ))
             })
     })
 }
 
-/// Executes one browser microkernel command against the active terminal session.
-#[allow(non_snake_case)]
-fn runKernelCommand(sessionId: &str, command: &str) -> HostResult<(String, String, i32)> {
-    TERMINAL_SESSIONS.with(|sessions| {
-        let mut sessions = sessions.borrow_mut();
-        let session = terminalSession(&mut sessions, sessionId)?;
-        let (name, arguments) = splitKernelCommand(command);
-        let outcome = executeKernelCommand(session, name, arguments);
-        let (output, exitCode) = match outcome {
-            Ok(output) => (output, 0),
-            Err(error) => (error.message, 1),
-        };
-        let frame = format!(
-            "\n{} $ {command}\n{output}\n{} $ ",
-            session.workingDir, session.workingDir
-        );
-        session.screen.push_str(&frame);
-        session.output.extend_from_slice(frame.as_bytes());
-        Ok((session.terminalType.clone(), output, exitCode))
-    })
-}
-
-/// Splits one microkernel command into its name and unparsed argument text.
-#[allow(non_snake_case)]
-fn splitKernelCommand(command: &str) -> (&str, &str) {
-    match command.trim().split_once(char::is_whitespace) {
-        Some((name, arguments)) => (name, arguments.trim()),
-        None => (command.trim(), ""),
-    }
-}
-
-/// Executes a supported browser microkernel command.
-#[allow(non_snake_case)]
-fn executeKernelCommand(
-    session: &mut WebTerminalSession,
-    name: &str,
-    arguments: &str,
-) -> HostResult<String> {
-    match name {
-        "" => Ok(String::new()),
-        "help" => Ok("help pwd cd ls cat write mkdir rm echo js clear".to_string()),
-        "pwd" => Ok(session.workingDir.clone()),
-        "cd" => {
-            session.workingDir = kernelPath(&session.workingDir, arguments)?;
-            Ok(session.workingDir.clone())
-        }
-        "echo" => Ok(arguments.to_string()),
-        "clear" => {
-            session.screen.clear();
-            Ok(String::new())
-        }
-        "ls" => {
-            let path = kernelPath(&session.workingDir, arguments)?;
-            WebFileSystemHost::new().listFiles(&path).map(|entries| {
-                entries
-                    .into_iter()
-                    .map(|entry| entry.name)
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-        }
-        "cat" => {
-            let path = kernelRequiredPath(&session.workingDir, arguments, "cat")?;
-            WebFileSystemHost::new().readFile(&path)
-        }
-        "write" => {
-            let (path, content) = splitKernelCommand(arguments);
-            let path = kernelRequiredPath(&session.workingDir, path, "write")?;
-            WebFileSystemHost::new().writeFile(&path, content, false)?;
-            Ok(path)
-        }
-        "mkdir" => {
-            let path = kernelRequiredPath(&session.workingDir, arguments, "mkdir")?;
-            WebFileSystemHost::new().makeDirectory(&path, true)?;
-            Ok(path)
-        }
-        "rm" => {
-            let path = kernelRequiredPath(&session.workingDir, arguments, "rm")?;
-            WebFileSystemHost::new().deleteFile(&path, true)?;
-            Ok(path)
-        }
-        "js" => js_sys::eval(arguments)
-            .map_err(|error| HostError::new(format!("microkernel JavaScript failed: {error:?}")))
-            .map(|value| format!("{value:?}")),
-        _ => Err(HostError::new(format!(
-            "microkernel command not found: {name}"
-        ))),
-    }
-}
-
-/// Resolves a microkernel path against the terminal working directory.
-#[allow(non_snake_case)]
-fn kernelPath(workingDir: &str, argument: &str) -> HostResult<String> {
-    let raw = if argument.is_empty() {
-        workingDir
+/// Validates the only terminal type implemented by the browser-local Linux guest.
+fn requireLinuxVmTerminalType(terminalType: &str) -> HostResult<()> {
+    if terminalType.trim() == LINUX_VM_TERMINAL_TYPE {
+        Ok(())
     } else {
-        argument
-    };
-    let combined = if raw.starts_with('/') {
-        raw.to_string()
-    } else {
-        format!("{}/{}", workingDir.trim_end_matches('/'), raw)
-    };
-    let mut segments = Vec::new();
-    for segment in combined.split('/') {
-        match segment {
-            "" | "." => {}
-            ".." => {
-                segments.pop();
-            }
-            value => segments.push(value),
-        }
+        Err(HostError::new(format!(
+            "browser-local Linux VM terminal type must be {LINUX_VM_TERMINAL_TYPE}: {terminalType}"
+        )))
     }
-    Ok(format!("/{}", segments.join("/")))
 }
 
-/// Resolves a required command path or returns a command-specific error.
-#[allow(non_snake_case)]
-fn kernelRequiredPath(workingDir: &str, argument: &str, command: &str) -> HostResult<String> {
-    if argument.is_empty() {
-        return Err(HostError::new(format!(
-            "microkernel {command} requires a path"
-        )));
+/// Validates one required non-blank terminal value.
+fn requiredText(value: &str, field: &str) -> HostResult<String> {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        Err(HostError::new(format!(
+            "terminal {field} must not be blank"
+        )))
+    } else {
+        Ok(normalized.to_string())
     }
-    kernelPath(workingDir, argument)
 }

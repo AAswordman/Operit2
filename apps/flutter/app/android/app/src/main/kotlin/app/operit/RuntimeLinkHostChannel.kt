@@ -24,10 +24,6 @@ class RuntimeLinkHostChannel(private val runtimeHost: AndroidRuntimeHost) {
         val token = args?.get("token") as? String
         val shutdownToken = args?.get("shutdownToken") as? String
         val webRoot = args?.get("webRoot") as? String
-        val deviceId = args?.get("deviceId") as? String
-        val acceptedSessions = args?.get("acceptedSessions") as? String
-        val acceptedSessionStorePath = args?.get("acceptedSessionStorePath") as? String
-        val pairingCodePath = args?.get("pairingCodePath") as? String
         val deviceInfoJson = args?.get("deviceInfo") as? String
         val enableWebAccess = args?.get("enableWebAccess") as? String
         val enableDiscovery = args?.get("enableDiscovery") as? String
@@ -36,17 +32,13 @@ class RuntimeLinkHostChannel(private val runtimeHost: AndroidRuntimeHost) {
                 token == null ||
                 shutdownToken == null ||
                 webRoot == null ||
-                deviceId == null ||
-                acceptedSessions == null ||
-                acceptedSessionStorePath == null ||
-                pairingCodePath == null ||
                 deviceInfoJson == null ||
                 enableWebAccess == null ||
                 enableDiscovery == null
         ) {
             result.error(
                 "INVALID_ARGS",
-                "startWebAccessServer expects bindAddress, token, shutdownToken, webRoot, deviceId, acceptedSessions, acceptedSessionStorePath, pairingCodePath, deviceInfo, enableWebAccess and enableDiscovery",
+                "startWebAccessServer expects bindAddress, token, shutdownToken, webRoot, deviceInfo, enableWebAccess and enableDiscovery",
                 null,
             )
             return
@@ -58,10 +50,6 @@ class RuntimeLinkHostChannel(private val runtimeHost: AndroidRuntimeHost) {
                 token,
                 shutdownToken,
                 webRoot,
-                deviceId,
-                acceptedSessions,
-                acceptedSessionStorePath,
-                pairingCodePath,
                 deviceInfoJson,
                 enableWebAccess,
                 enableDiscovery,

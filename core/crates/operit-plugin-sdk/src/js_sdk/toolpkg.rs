@@ -1553,6 +1553,9 @@ pub enum ToolPkgNavigationSurface {
     /// Places the entry in the main sidebar plugin section.
     #[serde(rename = "main_sidebar_plugins")]
     MainSidebarPlugins,
+    /// Places an icon button in the application top bar.
+    #[serde(rename = "app_bar")]
+    AppBar,
 }
 /// Describes a plugin action exposed through a host navigation surface.
 pub struct ToolPkgNavigationEntryRegistration {

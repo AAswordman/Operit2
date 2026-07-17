@@ -100,18 +100,20 @@ impl MemoryLibrary {
         defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeAsyncTask(
                 "operit-memory-persistence",
-                Box::pin(async move {
-                    let result = Self::saveMemoryNow(
-                        conversationHistory,
-                        content,
-                        aiService,
-                        characterCardId,
-                        runtimeContext,
-                    )
-                    .await;
-                    if let Err(error) = result {
-                        AppLogger::e(TAG, &format!("保存记忆失败: {error}"));
-                    }
+                Box::new(move || {
+                    Box::pin(async move {
+                        let result = Self::saveMemoryNow(
+                            conversationHistory,
+                            content,
+                            aiService,
+                            characterCardId,
+                            runtimeContext,
+                        )
+                        .await;
+                        if let Err(error) = result {
+                            AppLogger::e(TAG, &format!("保存记忆失败: {error}"));
+                        }
+                    })
                 }),
             )
             .expect("memory persistence task must be scheduled");
@@ -411,9 +413,11 @@ impl MemoryLibrary {
                 })
                 .await
                 .map_err(|error| error.to_string())?;
-            stream.collect(&mut |chunk| {
-                result.push_str(&chunk);
-            });
+            stream
+                .collect(&mut |chunk| {
+                    result.push_str(&chunk);
+                })
+                .await;
             (
                 providerModel,
                 service.input_token_count(),

@@ -10,7 +10,8 @@ use uuid::Uuid;
 
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::TimeUtils::tryCurrentTimeMillisU128;
-use operit_util::stream::Stream::Stream;
+use operit_util::stream::Stream::{CollectFuture, Stream};
+use tokio::sync::Notify;
 
 tokio::task_local! {
     static RUNTIME_HOST_INTERACTION_ORIGIN: RuntimeHostInteractionRequestOrigin;
@@ -715,6 +716,7 @@ struct RuntimeHostInteractionState {
 struct RuntimeHostInteractionBroker {
     state: Mutex<RuntimeHostInteractionState>,
     changed: Condvar,
+    asyncChanged: Notify,
 }
 
 impl Default for RuntimeHostInteractionBroker {
@@ -722,6 +724,7 @@ impl Default for RuntimeHostInteractionBroker {
         Self {
             state: Mutex::new(RuntimeHostInteractionState::default()),
             changed: Condvar::new(),
+            asyncChanged: Notify::new(),
         }
     }
 }
@@ -742,37 +745,36 @@ impl Stream for RuntimeHostInteractionEventStream {
     type Item = RuntimeHostInteractionRequest;
 
     /// Collects matching pending interactions in broker insertion order.
-    fn collect(&mut self, collector: &mut dyn FnMut(Self::Item)) {
-        let broker = runtimeHostInteractionBroker();
-        let mut delivered = BTreeSet::<String>::new();
-        let mut state = broker
-            .state
-            .lock()
-            .expect("host interaction mutex poisoned");
-        loop {
-            let next = state
-                .pending
-                .values()
-                .filter(|pending| {
-                    !delivered.contains(&pending.request.requestId) && self.matchesPending(pending)
-                })
-                .min_by_key(|pending| pending.sequence)
-                .map(|pending| pending.request.clone());
-            if let Some(request) = next {
-                delivered.insert(request.requestId.clone());
-                drop(state);
-                collector(request);
-                state = broker
+    fn collect<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(Self::Item),
+    ) -> CollectFuture<'a> {
+        Box::pin(async move {
+            let broker = runtimeHostInteractionBroker();
+            let mut delivered = BTreeSet::<String>::new();
+            loop {
+                let changed = broker.asyncChanged.notified();
+                let next = broker
                     .state
                     .lock()
-                    .expect("host interaction mutex poisoned");
-                continue;
+                    .expect("host interaction mutex poisoned")
+                    .pending
+                    .values()
+                    .filter(|pending| {
+                        !delivered.contains(&pending.request.requestId)
+                            && self.matchesPending(pending)
+                    })
+                    .min_by_key(|pending| pending.sequence)
+                    .map(|pending| pending.request.clone());
+                match next {
+                    Some(request) => {
+                        delivered.insert(request.requestId.clone());
+                        collector(request);
+                    }
+                    None => changed.await,
+                }
             }
-            state = broker
-                .changed
-                .wait(state)
-                .expect("host interaction mutex poisoned");
-        }
+        })
     }
 }
 
@@ -1094,6 +1096,12 @@ impl RuntimeHostInteractionEventStream {
 }
 
 impl RuntimeHostInteractionBroker {
+    /// Wakes synchronous and asynchronous observers after broker state changes.
+    fn notifyChanged(&self) {
+        self.changed.notify_all();
+        self.asyncChanged.notify_waiters();
+    }
+
     /// Enqueues one interaction and waits for its response or timeout.
     fn request(
         &self,
@@ -1117,11 +1125,11 @@ impl RuntimeHostInteractionBroker {
                 sequence,
             },
         );
-        self.changed.notify_all();
+        self.notifyChanged();
         loop {
             if let Some(response) = state.responses.remove(&requestId) {
                 state.pending.remove(&requestId);
-                self.changed.notify_all();
+                self.notifyChanged();
                 if let Some(error) = response.error.as_ref() {
                     return Err(error.clone());
                 }
@@ -1134,7 +1142,7 @@ impl RuntimeHostInteractionBroker {
             );
             if elapsed >= timeout {
                 state.pending.remove(&requestId);
-                self.changed.notify_all();
+                self.notifyChanged();
                 return Err(format!("host interaction timed out: {requestId}"));
             }
             let wait = timeout.saturating_sub(elapsed);
@@ -1159,7 +1167,7 @@ impl RuntimeHostInteractionBroker {
             return Err(format!("host interaction request not found: {requestId}"));
         }
         state.responses.insert(requestId.to_string(), response);
-        self.changed.notify_all();
+        self.notifyChanged();
         Ok(())
     }
 }

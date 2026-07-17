@@ -2,22 +2,22 @@
 
 import 'package:flutter/foundation.dart';
 
-import 'LinkHostConfig.dart';
+import 'LinkAccessHostConfig.dart';
 
-class LinkHostServer extends ChangeNotifier {
-  LinkHostServer._();
+class LinkAccessHost extends ChangeNotifier {
+  LinkAccessHost._();
 
-  static final LinkHostServer instance = LinkHostServer._();
+  static final LinkAccessHost instance = LinkAccessHost._();
 
   bool get isRunning => false;
 
-  LinkHostConfig? get currentConfig => null;
+  LinkAccessHostConfig? get currentConfig => null;
 
-  PendingLinkPairingCodeRecord? get lastPairingCode => null;
+  String? get deviceId => null;
 
   String? get baseUrl => null;
 
-  Future<List<String>> pairingBaseUrls(LinkHostConfig config) async {
+  Future<List<String>> pairingBaseUrls(LinkAccessHostConfig config) async {
     return <String>[];
   }
 

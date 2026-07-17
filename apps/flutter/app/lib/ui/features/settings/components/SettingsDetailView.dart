@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../appearance/AppearanceSettingsPanel.dart';
 import '../access_links/AccessLinksSettingsPanel.dart';
+import '../about/AboutOperitScreen.dart';
 import '../characters/CharacterSettingsPanel.dart';
 import '../data/DataSettingsPanel.dart';
 import '../model/ModelSettingsPanel.dart';
@@ -35,6 +36,7 @@ class SettingsDetailView extends StatelessWidget {
       SettingsCategory.appearance => const AppearanceSettingsPanel(),
       SettingsCategory.data => const DataSettingsPanel(),
       SettingsCategory.accessLinks => const AccessLinksSettingsPanel(),
+      SettingsCategory.about => const AboutOperitScreen(),
     };
   }
 }

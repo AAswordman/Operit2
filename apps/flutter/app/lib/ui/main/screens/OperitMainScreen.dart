@@ -492,6 +492,9 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
               (entry) => entry.surface == NavigationSurface.mainSidebarPlugins,
             )
             .toList(growable: false);
+        final appBarEntries = _navigationModel.navigationEntries
+            .where((entry) => entry.surface == NavigationSurface.appBar)
+            .toList(growable: false);
         final currentRouteTitle =
             _navigationModel.routesById[currentRouteEntry.routeId]!.title ??
             currentScreen.title ??
@@ -509,6 +512,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
           enableNavigationAnimation: true,
           isNavigatingBack: _isNavigatingBack,
           topBarController: _topBarController,
+          appBarEntries: appBarEntries,
           onGoBack: _goBack,
           onNavigationButtonPressed: () {
             if (useTabletLayout) {
@@ -519,6 +523,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
               _drawerOpenState.value = true;
             }
           },
+          onAppBarEntrySelected: _navigateToNavigationEntry,
         );
 
         return MainLayoutScope(
@@ -595,5 +600,6 @@ String _toolPkgNavigationSurfaceName(NavigationSurface surface) {
     NavigationSurface.mainSidebarPlugins => 'main_sidebar_plugins',
     NavigationSurface.mainSidebarSystem => 'main_sidebar_system',
     NavigationSurface.toolbox => 'toolbox',
+    NavigationSurface.appBar => 'app_bar',
   };
 }

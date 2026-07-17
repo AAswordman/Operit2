@@ -487,7 +487,7 @@ impl ConversationService {
                 })
                 .await?
         };
-        let summaryChunks = collect_stream_chunks(summaryStream);
+        let summaryChunks = collect_stream_chunks(summaryStream).await;
         let mut summaryContent = removeThinkingContent(&summaryChunks.join("").trim().to_string());
         let (summaryInputTokens, summaryCachedInputTokens, summaryOutputTokens) = {
             let service = summaryService.lock().await;

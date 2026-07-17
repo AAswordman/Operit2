@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::client::{CoreLinkClient, CoreLinkSharedClient};
+use crate::client::CoreLinkTransportClient;
 use crate::codec::{decodeLink, encodeLink};
 use crate::protocol::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreLinkError, CorePushItem,
@@ -37,8 +37,7 @@ struct LinkPushState {
 
 #[derive(Clone)]
 enum CoreLinkHttpCore {
-    Locked(Arc<Mutex<Box<dyn CoreLinkClient + Send>>>),
-    Shared(Arc<dyn CoreLinkSharedClient + Send + Sync>),
+    Locked(Arc<Mutex<Box<dyn CoreLinkTransportClient>>>),
 }
 
 struct LinkWatchChannel {
@@ -176,22 +175,10 @@ pub enum CoreLinkWsResponse {
 
 impl CoreLinkHttpDispatcher {
     /// Creates an HTTP/WebSocket dispatcher around a core link client.
-    pub fn new(core: impl CoreLinkClient + Send + 'static) -> Self {
+    pub fn new(core: impl CoreLinkTransportClient + 'static) -> Self {
         Self {
             state: Arc::new(CoreLinkHttpState {
                 core: CoreLinkHttpCore::Locked(Arc::new(Mutex::new(Box::new(core)))),
-                watchChannels: Arc::new(Mutex::new(BTreeMap::new())),
-                pushStreams: Arc::new(Mutex::new(BTreeMap::new())),
-            }),
-        }
-    }
-
-    /// Creates an HTTP/WebSocket dispatcher around a shared core link client.
-    #[allow(non_snake_case)]
-    pub fn newShared(core: impl CoreLinkSharedClient + Send + Sync + 'static) -> Self {
-        Self {
-            state: Arc::new(CoreLinkHttpState {
-                core: CoreLinkHttpCore::Shared(Arc::new(core)),
                 watchChannels: Arc::new(Mutex::new(BTreeMap::new())),
                 pushStreams: Arc::new(Mutex::new(BTreeMap::new())),
             }),
@@ -212,14 +199,9 @@ impl CoreLinkHttpDispatcher {
 
     #[allow(non_snake_case)]
     async fn executeCall(&self, request: CoreCallRequest) -> CoreCallResponse {
-        let response = match &self.state.core {
-            CoreLinkHttpCore::Locked(core) => {
-                let mut core = core.lock().await;
-                core.call(request).await
-            }
-            CoreLinkHttpCore::Shared(core) => core.call(request).await,
-        };
-        response
+        let CoreLinkHttpCore::Locked(core) = &self.state.core;
+        let mut core = core.lock().await;
+        core.call(request).await
     }
 
     /// Handles a MessagePack watch snapshot request and returns a MessagePack event.
@@ -243,14 +225,9 @@ impl CoreLinkHttpDispatcher {
         &self,
         request: CoreWatchRequest,
     ) -> Result<CoreEvent, CoreLinkError> {
-        let response = match &self.state.core {
-            CoreLinkHttpCore::Locked(core) => {
-                let mut core = core.lock().await;
-                core.watchSnapshot(request).await
-            }
-            CoreLinkHttpCore::Shared(core) => core.watchSnapshot(request).await,
-        };
-        response
+        let CoreLinkHttpCore::Locked(core) = &self.state.core;
+        let mut core = core.lock().await;
+        core.watchSnapshot(request).await
     }
 
     /// Drains queued events for an opened watch channel.
@@ -459,13 +436,9 @@ impl CoreLinkHttpDispatcher {
                     CoreLinkError::new("WATCH_CHANNEL_NOT_FOUND", "watch channel not found")
                 })?
         };
-        let receiver = match &self.state.core {
-            CoreLinkHttpCore::Locked(core) => {
-                let mut core = core.lock().await;
-                core.watch(request).await?
-            }
-            CoreLinkHttpCore::Shared(core) => core.watch(request).await?,
-        };
+        let CoreLinkHttpCore::Locked(core) = &self.state.core;
+        let mut core = core.lock().await;
+        let receiver = core.watch(request).await?;
         let task_subscription_id = subscriptionId.clone();
         let task_channel_id = channelId.clone();
         let task_watch_channels = self.state.watchChannels.clone();
@@ -553,23 +526,15 @@ impl CoreLinkHttpDispatcher {
     async fn handleWsPayload(&self, payload: CoreLinkWsPayload) -> CoreLinkWsResponse {
         match payload {
             CoreLinkWsPayload::Call(request) => {
-                let response = match &self.state.core {
-                    CoreLinkHttpCore::Locked(core) => {
-                        let mut core = core.lock().await;
-                        core.call(request.request).await
-                    }
-                    CoreLinkHttpCore::Shared(core) => core.call(request.request).await,
-                };
+                let CoreLinkHttpCore::Locked(core) = &self.state.core;
+                let mut core = core.lock().await;
+                let response = core.call(request.request).await;
                 CoreLinkWsResponse::Call(response)
             }
             CoreLinkWsPayload::WatchSnapshot(request) => {
-                let response = match &self.state.core {
-                    CoreLinkHttpCore::Locked(core) => {
-                        let mut core = core.lock().await;
-                        core.watchSnapshot(request.request).await
-                    }
-                    CoreLinkHttpCore::Shared(core) => core.watchSnapshot(request.request).await,
-                };
+                let CoreLinkHttpCore::Locked(core) = &self.state.core;
+                let mut core = core.lock().await;
+                let response = core.watchSnapshot(request.request).await;
                 match response {
                     Ok(event) => CoreLinkWsResponse::WatchSnapshot(event),
                     Err(error) => CoreLinkWsResponse::Error(error),

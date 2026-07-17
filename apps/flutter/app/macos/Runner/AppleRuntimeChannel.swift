@@ -42,6 +42,7 @@ final class AppleRuntimeChannel: NSObject {
 
   /// Attaches the process-level Runtime channel to the current Flutter engine.
   static func register(binaryMessenger: FlutterBinaryMessenger) {
+    AppleCrashChannel.register(binaryMessenger: binaryMessenger)
     if let shared {
       shared.attach(binaryMessenger: binaryMessenger)
       return
@@ -481,10 +482,6 @@ final class AppleRuntimeChannel: NSObject {
       let token = args["token"] as? String,
       let shutdownToken = args["shutdownToken"] as? String,
       let webRoot = args["webRoot"] as? String,
-      let deviceId = args["deviceId"] as? String,
-      let acceptedSessions = args["acceptedSessions"] as? String,
-      let acceptedSessionStorePath = args["acceptedSessionStorePath"] as? String,
-      let pairingCodePath = args["pairingCodePath"] as? String,
       let deviceInfo = args["deviceInfo"] as? String,
       let enableWebAccess = args["enableWebAccess"] as? String,
       let enableDiscovery = args["enableDiscovery"] as? String
@@ -499,10 +496,6 @@ final class AppleRuntimeChannel: NSObject {
         token,
         shutdownToken,
         webRoot,
-        deviceId,
-        acceptedSessions,
-        acceptedSessionStorePath,
-        pairingCodePath,
         deviceInfo,
         enableWebAccess,
         enableDiscovery
@@ -972,6 +965,36 @@ final class AppleRuntimeChannel: NSObject {
     let data = Data(bytes: pointer, count: Int(buffer.len))
     operit_flutter_bridge_free_bytes(buffer)
     return data
+  }
+}
+
+private enum AppleCrashChannel {
+  private static var channel: FlutterMethodChannel?
+
+  static func register(binaryMessenger: FlutterBinaryMessenger) {
+    channel?.setMethodCallHandler(nil)
+    let crashChannel = FlutterMethodChannel(name: "operit/crash", binaryMessenger: binaryMessenger)
+    crashChannel.setMethodCallHandler { call, result in
+      guard call.method == "present" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard let arguments = call.arguments as? [String: Any],
+            let details = arguments["details"] as? String else {
+        result(FlutterError(code: "INVALID_ARGS", message: "present requires crash details", details: nil))
+        return
+      }
+      DispatchQueue.main.async {
+        let alert = NSAlert()
+        alert.messageText = "Operit2 has stopped"
+        alert.informativeText = details
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "Close")
+        alert.runModal()
+        result(nil)
+      }
+    }
+    channel = crashChannel
   }
 }
 

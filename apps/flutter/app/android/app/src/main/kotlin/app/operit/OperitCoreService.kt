@@ -107,6 +107,10 @@ class OperitCoreService : Service() {
                     "OperitCoreService",
                     "Core Runtime startup failed: ${error.stackTraceToString()}",
                 )
+                NativeCrashActivity.start(
+                    applicationContext,
+                    "Core Runtime startup failed\n\n${error.stackTraceToString()}",
+                )
             }
         }
     }

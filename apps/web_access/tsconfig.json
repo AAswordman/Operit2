@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "rootDir": "src",
+    "outDir": "web",
+    "removeComments": true,
+    "strict": false,
+    "noImplicitAny": true,
+    "noEmitOnError": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/operit_runtime_bridge.ts"]
+}
