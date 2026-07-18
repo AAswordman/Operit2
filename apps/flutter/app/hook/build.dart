@@ -129,6 +129,9 @@ void main(List<String> args) async {
         'operit_flutter_bridge',
         wasmSource.path,
       ], workingDirectory: packageRoot.path);
+      await _validateWasmBindgenImports(
+        File.fromUri(webBuildDir.uri.resolve('operit_flutter_bridge.js')),
+      );
 
       await _run(_command('npm'), [
         'install',
@@ -747,16 +750,18 @@ String _targetOs(BuildInput input) {
 Future<Map<String, String>> _wasmCargoEnvironment(Directory repoRoot) async {
   final environment = Map<String, String>.from(Platform.environment)
     ..['RUSTFLAGS'] = '-Awarnings';
-  if (!Platform.isWindows && !Platform.isMacOS) {
-    return environment;
-  }
 
   final toolsDir = Directory.fromUri(
     repoRoot.uri.resolve('target/operit-build-tools/'),
   );
-  final wasiSdkName = Platform.isWindows
-      ? 'wasi-sdk-20.0.m-mingw'
-      : 'wasi-sdk-20.0-macos';
+  final wasiSdkName = switch (Platform.operatingSystem) {
+    'windows' => 'wasi-sdk-20.0.m-mingw',
+    'macos' => 'wasi-sdk-20.0-macos',
+    'linux' => 'wasi-sdk-20.0-linux',
+    _ => throw StateError(
+      'Unsupported Web Access WASI SDK host: ${Platform.operatingSystem}',
+    ),
+  };
   final wasiSdk = Directory.fromUri(toolsDir.uri.resolve('$wasiSdkName/'));
   final clangName = Platform.isWindows ? 'clang.exe' : 'clang';
 
@@ -773,6 +778,11 @@ Future<Map<String, String>> _wasmCargoEnvironment(Directory repoRoot) async {
   final clangResourceDir = File.fromUri(
     wasiSdk.uri.resolve('lib/clang/16'),
   ).path.replaceAll(r'\', '/');
+  if (!Directory(clangResourceDir).existsSync()) {
+    throw StateError(
+      'WASI SDK Clang resource directory does not exist: $clangResourceDir',
+    );
+  }
   final bindgenClangArgs = '-resource-dir=$clangResourceDir';
   final wasiLibDir = Directory.fromUri(
     wasiSdk.uri.resolve('share/wasi-sysroot/lib/wasm32-wasi/'),
@@ -803,6 +813,8 @@ Future<Map<String, String>> _wasmCargoEnvironment(Directory repoRoot) async {
     '-l',
     'static=clang_rt.builtins-wasm32',
   ].join(' ');
+  environment['BINDGEN_EXTRA_CLANG_ARGS_wasm32_unknown_unknown'] =
+      bindgenClangArgs;
   if (Platform.isWindows) {
     final libclangDir = Directory.fromUri(
       toolsDir.uri.resolve(
@@ -823,10 +835,25 @@ Future<Map<String, String>> _wasmCargoEnvironment(Directory repoRoot) async {
     );
     environment['LIBCLANG_PATH'] = libclangDir.path;
     environment['BINDGEN_EXTRA_CLANG_ARGS'] = bindgenClangArgs;
-    environment['BINDGEN_EXTRA_CLANG_ARGS_wasm32_unknown_unknown'] =
-        bindgenClangArgs;
   }
   return environment;
+}
+
+/// Verifies that wasm-bindgen generated browser-resolvable imports.
+Future<void> _validateWasmBindgenImports(File bridgeScript) async {
+  if (!bridgeScript.existsSync()) {
+    throw StateError(
+      'wasm-bindgen bridge script does not exist: ${bridgeScript.path}',
+    );
+  }
+  final source = await bridgeScript.readAsString();
+  final invalidImport = RegExp(r'''from\s+["']env["']''').firstMatch(source);
+  if (invalidImport != null) {
+    throw StateError(
+      'wasm-bindgen generated an unresolved env import in ${bridgeScript.path}. '
+      'Check the Web Access WASI SDK link configuration.',
+    );
+  }
 }
 
 Future<void> _ensureExtractedArchive({

@@ -38,6 +38,240 @@
       }
     }
   </script>
+  <style>
+    #operit-web-error-surface {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483647;
+      box-sizing: border-box;
+      padding: 20px;
+      background: #111827;
+      color: #f9fafb;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow: auto;
+    }
+
+    #operit-web-error-surface * {
+      box-sizing: border-box;
+    }
+
+    .operit-web-error-card {
+      width: min(920px, 100%);
+      margin: 0 auto;
+      border: 1px solid #374151;
+      border-radius: 16px;
+      background: #1f2937;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+      overflow: hidden;
+    }
+
+    .operit-web-error-header {
+      padding: 20px;
+      border-bottom: 1px solid #374151;
+    }
+
+    .operit-web-error-title {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.25;
+      font-weight: 700;
+    }
+
+    .operit-web-error-subtitle {
+      margin: 10px 0 0;
+      color: #d1d5db;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .operit-web-error-details {
+      margin: 0;
+      padding: 20px;
+      max-height: 62vh;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: #030712;
+      color: #fca5a5;
+      font: 12px/1.5 "Cascadia Mono", Consolas, monospace;
+    }
+
+    .operit-web-error-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: flex-end;
+      padding: 16px 20px 20px;
+    }
+
+    .operit-web-error-button {
+      border: 1px solid #4b5563;
+      border-radius: 999px;
+      padding: 10px 14px;
+      background: #374151;
+      color: #f9fafb;
+      font: inherit;
+    }
+  </style>
+  <script>
+    (() => {
+      const originalConsoleError = console.error.bind(console);
+      let latestOperitWebError = "";
+
+      /** Converts one JavaScript value into readable diagnostic text. */
+      function formatOperitWebErrorValue(value) {
+        if (value instanceof Error) {
+          return value.stack || value.message || String(value);
+        }
+        if (typeof value === "string") {
+          return value;
+        }
+        try {
+          return JSON.stringify(value, null, 2);
+        } catch (_) {
+          return String(value);
+        }
+      }
+
+      /** Joins console.error arguments into one diagnostic block. */
+      function formatOperitConsoleError(args) {
+        return args.map(formatOperitWebErrorValue).join("\n");
+      }
+
+      /** Builds a diagnostic block for browser error events. */
+      function formatOperitBrowserError(event) {
+        if (event.error instanceof Error) {
+          return event.error.stack || event.error.message;
+        }
+        const target = event.target;
+        if (target instanceof HTMLScriptElement) {
+          return `Script failed to load: ${target.src}`;
+        }
+        if (target instanceof HTMLLinkElement) {
+          return `Link failed to load: ${target.href}`;
+        }
+        if (target instanceof HTMLImageElement) {
+          return `Image failed to load: ${target.src}`;
+        }
+        return event.message || formatOperitWebErrorValue(event);
+      }
+
+      /** Builds a diagnostic block for unhandled promise rejections. */
+      function formatOperitPromiseRejection(event) {
+        return formatOperitWebErrorValue(event.reason);
+      }
+
+      /** Creates one element used by the Web error surface. */
+      function createOperitWebErrorElement(tagName, className, text) {
+        const element = document.createElement(tagName);
+        element.className = className;
+        element.textContent = text;
+        return element;
+      }
+
+      /** Adds the Web error surface to the document body. */
+      function attachOperitWebErrorSurface(surface) {
+        if (document.body !== null) {
+          document.body.appendChild(surface);
+          return;
+        }
+        document.addEventListener(
+          "DOMContentLoaded",
+          () => document.body.appendChild(surface),
+          { once: true }
+        );
+      }
+
+      /** Copies the active diagnostic block to the browser clipboard. */
+      async function copyOperitWebError() {
+        if (latestOperitWebError.length === 0) {
+          return;
+        }
+        await navigator.clipboard.writeText(latestOperitWebError);
+      }
+
+      /** Removes the active Web error surface from the page. */
+      function closeOperitWebError() {
+        document.getElementById("operit-web-error-surface")?.remove();
+      }
+
+      /** Renders a mobile-readable Web error surface above Flutter. */
+      function showOperitWebError(source, details) {
+        const renderedDetails = `${new Date().toISOString()}\n${source}\n\n${details}`;
+        latestOperitWebError = renderedDetails;
+        document.getElementById("operit-web-error-surface")?.remove();
+
+        const surface = document.createElement("section");
+        surface.id = "operit-web-error-surface";
+
+        const card = createOperitWebErrorElement("div", "operit-web-error-card", "");
+        const header = createOperitWebErrorElement("div", "operit-web-error-header", "");
+        const title = createOperitWebErrorElement(
+          "h1",
+          "operit-web-error-title",
+          "Operit2 Web stopped"
+        );
+        const subtitle = createOperitWebErrorElement(
+          "p",
+          "operit-web-error-subtitle",
+          "The browser captured a Web runtime error. Copy these details when reporting the issue."
+        );
+        const detailsBlock = createOperitWebErrorElement(
+          "pre",
+          "operit-web-error-details",
+          renderedDetails
+        );
+        const actions = createOperitWebErrorElement("div", "operit-web-error-actions", "");
+        const closeButton = createOperitWebErrorElement(
+          "button",
+          "operit-web-error-button",
+          "Close"
+        );
+        const copyButton = createOperitWebErrorElement(
+          "button",
+          "operit-web-error-button",
+          "Copy details"
+        );
+
+        closeButton.type = "button";
+        closeButton.addEventListener("click", closeOperitWebError);
+        copyButton.type = "button";
+        copyButton.addEventListener("click", copyOperitWebError);
+
+        header.append(title, subtitle);
+        actions.append(closeButton, copyButton);
+        card.append(header, detailsBlock, actions);
+        surface.append(card);
+        attachOperitWebErrorSurface(surface);
+      }
+
+      /** Handles browser error events and opens the Web error surface. */
+      function handleOperitBrowserError(event) {
+        showOperitWebError("Browser error", formatOperitBrowserError(event));
+      }
+
+      /** Handles promise rejection events and opens the Web error surface. */
+      function handleOperitPromiseRejection(event) {
+        showOperitWebError("Unhandled promise rejection", formatOperitPromiseRejection(event));
+      }
+
+      /** Handles console.error calls and opens the Web error surface. */
+      function handleOperitConsoleError(...args) {
+        originalConsoleError(...args);
+        showOperitWebError("Console error", formatOperitConsoleError(args));
+      }
+
+      /** Installs Web error listeners before Flutter starts. */
+      function installOperitWebErrorSurface() {
+        window.addEventListener("error", handleOperitBrowserError, true);
+        window.addEventListener("unhandledrejection", handleOperitPromiseRejection);
+        console.error = handleOperitConsoleError;
+        window.__operitShowWebError = showOperitWebError;
+      }
+
+      installOperitWebErrorSurface();
+    })();
+  </script>
 </head>
 <body>
   <script src="msgpack.min.js"></script>
