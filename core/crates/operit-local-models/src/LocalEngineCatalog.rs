@@ -5,6 +5,7 @@ use crate::LocalEngineManifest::{
 
 const SHERPA_ONNX_ENGINE_ID: &str = "sherpa-onnx";
 const SHERPA_ONNX_ENGINE_VERSION: &str = "1.13.2";
+const SHERPA_ONNX_WEB_ASSET_BASE_URL: &str = "https://models.operit.app/sherpa-onnx/v1.13.2";
 
 pub struct LocalEngineCatalog;
 
@@ -171,7 +172,7 @@ fn webArtifact() -> LocalEngineArtifact {
         },
         delivery: LocalEngineDelivery::Embedded,
         url: format!(
-            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v{SHERPA_ONNX_ENGINE_VERSION}/sherpa-onnx-wasm-simd-v{SHERPA_ONNX_ENGINE_VERSION}-vad.tar.bz2"
+            "{SHERPA_ONNX_WEB_ASSET_BASE_URL}/sherpa-onnx-wasm-simd-v{SHERPA_ONNX_ENGINE_VERSION}-vad.tar.bz2"
         ),
         sha256: "7c4f2260a98f5d3e00275eb6bd012f15b29f687d22e9f33329b3a333e6843974"
             .to_string(),

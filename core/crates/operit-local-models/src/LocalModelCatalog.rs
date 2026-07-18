@@ -23,6 +23,7 @@ const SHERPA_ONNX_WEB_ASR_ID: &str = "sherpa-onnx-web-paraformer-small-zh-en";
 const SHERPA_ONNX_WEB_ASR_VERSION: &str = "1.13.2";
 const SHERPA_ONNX_WEB_TTS_ID: &str = "sherpa-onnx-web-vits-piper-en-us-libritts-r-medium";
 const SHERPA_ONNX_WEB_TTS_VERSION: &str = "1.13.2";
+const SHERPA_ONNX_WEB_ASSET_BASE_URL: &str = "https://models.operit.app/sherpa-onnx/v1.13.2";
 
 pub struct LocalModelCatalog;
 
@@ -441,7 +442,7 @@ impl LocalModelCatalog {
 
     /// Returns the browser packaged Paraformer STT manifest.
     pub fn sherpaOnnxWebAsr() -> LocalModelManifest {
-        let sourceId = "github-sherpa-onnx-web-asr";
+        let sourceId = "cloudflare-sherpa-onnx-web-asr";
         let modelRoot = "sherpa-onnx-wasm-simd-1.13.2-vad-asr-zh_en-paraformer_small";
         LocalModelManifest {
             id: SHERPA_ONNX_WEB_ASR_ID.to_string(),
@@ -470,10 +471,9 @@ impl LocalModelCatalog {
             sources: vec![LocalModelSource {
                 id: sourceId.to_string(),
                 kind: LocalModelSourceKind::DirectHttp,
-                repository: "k2-fsa/sherpa-onnx".to_string(),
-                revision: "v1.13.2".to_string(),
-                baseUrl: "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2"
-                    .to_string(),
+                repository: "operit/model-assets".to_string(),
+                revision: "sherpa-onnx-v1.13.2".to_string(),
+                baseUrl: SHERPA_ONNX_WEB_ASSET_BASE_URL.to_string(),
             }],
             installSource: LocalModelInstallSource::Archives {
                 archives: vec![LocalModelArchive {
@@ -519,7 +519,7 @@ impl LocalModelCatalog {
 
     /// Returns the browser packaged VITS Piper TTS manifest.
     pub fn sherpaOnnxWebVitsTts() -> LocalModelManifest {
-        let sourceId = "github-sherpa-onnx-web-tts";
+        let sourceId = "cloudflare-sherpa-onnx-web-tts";
         let modelRoot = "sherpa-onnx-wasm-simd-1.13.2-vits-piper-en_US-libritts_r-medium";
         LocalModelManifest {
             id: SHERPA_ONNX_WEB_TTS_ID.to_string(),
@@ -551,10 +551,9 @@ impl LocalModelCatalog {
             sources: vec![LocalModelSource {
                 id: sourceId.to_string(),
                 kind: LocalModelSourceKind::DirectHttp,
-                repository: "k2-fsa/sherpa-onnx".to_string(),
-                revision: "v1.13.2".to_string(),
-                baseUrl: "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2"
-                    .to_string(),
+                repository: "operit/model-assets".to_string(),
+                revision: "sherpa-onnx-v1.13.2".to_string(),
+                baseUrl: SHERPA_ONNX_WEB_ASSET_BASE_URL.to_string(),
             }],
             installSource: LocalModelInstallSource::Archives {
                 archives: vec![LocalModelArchive {
