@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use chrono::Utc;
+use operit_host_api::TimeUtils::currentTimeMillis;
 use uuid::Uuid;
 
 use operit_model::Memory::{
@@ -850,7 +850,7 @@ impl MemoryRepository {
 }
 
 fn nowMillis() -> i64 {
-    Utc::now().timestamp_millis()
+    currentTimeMillis()
 }
 
 fn buildTags(tags: Vec<String>) -> Vec<MemoryTag> {

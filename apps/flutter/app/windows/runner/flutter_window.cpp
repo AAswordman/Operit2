@@ -8,11 +8,14 @@
 #include "flutter/generated_plugin_registrant.h"
 #include "operit_runtime_channel.h"
 
+/// Creates a window that owns one Flutter view controller.
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
 
+/// Destroys the window after Win32 teardown has released hosted content.
 FlutterWindow::~FlutterWindow() {}
 
+/// Initializes Flutter, plugins, and native channels for the window.
 bool FlutterWindow::OnCreate() {
   if (!Win32Window::OnCreate()) {
     return false;
@@ -53,14 +56,18 @@ bool FlutterWindow::OnCreate() {
   return true;
 }
 
+/// Releases native channels before destroying the Flutter controller.
 void FlutterWindow::OnDestroy() {
   if (flutter_controller_) {
+    ShutdownOperitRuntimeChannel();
+    ShutdownOperitCrashChannel();
     flutter_controller_ = nullptr;
   }
 
   Win32Window::OnDestroy();
 }
 
+/// Dispatches Windows messages through runtime hooks, Flutter, and Win32.
 LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
@@ -79,12 +86,12 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     if (result) {
       return *result;
     }
-  }
 
-  switch (message) {
-    case WM_FONTCHANGE:
-      flutter_controller_->engine()->ReloadSystemFonts();
-      break;
+    switch (message) {
+      case WM_FONTCHANGE:
+        flutter_controller_->engine()->ReloadSystemFonts();
+        break;
+    }
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

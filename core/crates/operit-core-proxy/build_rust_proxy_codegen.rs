@@ -76,19 +76,33 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
         );
         output.push_str("        Self { client, target_path }\n");
         output.push_str("    }\n\n");
-        output.push_str("    async fn callGenerated<T: serde::de::DeserializeOwned>(&mut self, methodName: &str, args: operit_link::CoreValue) -> Result<T, operit_link::CoreLinkError> {\n");
-        output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_path.clone(), methodName, args)).await;\n");
-        output.push_str("        let value = response.result?;\n");
-        output.push_str("        operit_link::fromCoreValue(value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
+        output.push_str("    /// Returns mutable access to the link client behind this generated proxy.\n");
+        output.push_str("    pub fn generatedClientMut(&mut self) -> &mut C {\n");
+        output.push_str("        self.client\n");
         output.push_str("    }\n\n");
-        output.push_str("    async fn callGeneratedUnit(&mut self, methodName: &str, args: operit_link::CoreValue) -> Result<(), operit_link::CoreLinkError> {\n");
-        output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_path.clone(), methodName, args)).await;\n");
-        output.push_str("        response.result.map(|_| ())\n");
+        output.push_str("    /// Returns the object path used by this generated proxy.\n");
+        output.push_str("    pub fn generatedTargetPath(&self) -> &operit_link::CoreObjectPath {\n");
+        output.push_str("        &self.target_path\n");
         output.push_str("    }\n\n");
-        output.push_str("    async fn watchGenerated<T: serde::de::DeserializeOwned>(&mut self, propertyName: &str, args: operit_link::CoreValue) -> Result<T, operit_link::CoreLinkError> {\n");
-        output.push_str("        let event = self.client.watchSnapshot(operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), propertyName, args)).await?;\n");
-        output.push_str("        operit_link::fromCoreValue(event.value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
-        output.push_str("    }\n\n");
+        if object.has_proxy_value_call_methods() {
+            output.push_str("    async fn callGenerated<T: serde::de::DeserializeOwned>(&mut self, methodName: &str, args: operit_link::CoreValue) -> Result<T, operit_link::CoreLinkError> {\n");
+            output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_path.clone(), methodName, args)).await;\n");
+            output.push_str("        let value = response.result?;\n");
+            output.push_str("        operit_link::fromCoreValue(value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
+            output.push_str("    }\n\n");
+        }
+        if object.has_proxy_unit_call_methods() {
+            output.push_str("    async fn callGeneratedUnit(&mut self, methodName: &str, args: operit_link::CoreValue) -> Result<(), operit_link::CoreLinkError> {\n");
+            output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_path.clone(), methodName, args)).await;\n");
+            output.push_str("        response.result.map(|_| ())\n");
+            output.push_str("    }\n\n");
+        }
+        if object.has_proxy_snapshot_watch_methods() {
+            output.push_str("    async fn watchGenerated<T: serde::de::DeserializeOwned>(&mut self, propertyName: &str, args: operit_link::CoreValue) -> Result<T, operit_link::CoreLinkError> {\n");
+            output.push_str("        let event = self.client.watchSnapshot(operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), propertyName, args)).await?;\n");
+            output.push_str("        operit_link::fromCoreValue(event.value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
+            output.push_str("    }\n\n");
+        }
         for method in object
             .methods
             .iter()

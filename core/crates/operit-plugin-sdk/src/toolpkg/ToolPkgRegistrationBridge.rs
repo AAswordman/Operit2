@@ -338,6 +338,114 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
             throw new Error('plugin config dir is unavailable for ' + target);
         }
 
+        function normalizeToolPkgWasmValueType(valueType) {
+            var normalizedType = String(valueType || '').trim().toLowerCase();
+            if (
+                normalizedType !== 'i32' &&
+                normalizedType !== 'i64' &&
+                normalizedType !== 'f32' &&
+                normalizedType !== 'f64'
+            ) {
+                throw new Error('ToolPkg.wasm arg type is invalid: ' + normalizedType);
+            }
+            return normalizedType;
+        }
+
+        function normalizeToolPkgWasmArgs(args) {
+            if (args == null) {
+                return [];
+            }
+            if (!Array.isArray(args)) {
+                throw new Error('ToolPkg.wasm args must be an array');
+            }
+            var normalizedArgs = [];
+            for (var i = 0; i < args.length; i += 1) {
+                var arg = args[i];
+                if (!arg || typeof arg !== 'object' || Array.isArray(arg)) {
+                    throw new Error('ToolPkg.wasm arg ' + i + ' must be an object');
+                }
+                var valueType = normalizeToolPkgWasmValueType(arg.type);
+                if (!Object.prototype.hasOwnProperty.call(arg, 'value')) {
+                    throw new Error('ToolPkg.wasm arg ' + i + ' value is required');
+                }
+                var value = arg.value;
+                if (valueType === 'i32' && typeof value !== 'number') {
+                    throw new Error('ToolPkg.wasm arg ' + i + ' i32 value must be a number');
+                }
+                if (valueType === 'i64' && typeof value !== 'number' && typeof value !== 'string') {
+                    throw new Error('ToolPkg.wasm arg ' + i + ' i64 value must be a number or string');
+                }
+                if (
+                    (valueType === 'f32' || valueType === 'f64') &&
+                    typeof value !== 'number' &&
+                    typeof value !== 'string'
+                ) {
+                    throw new Error('ToolPkg.wasm arg ' + i + ' float value must be a number or string');
+                }
+                normalizedArgs.push({ type: valueType, value: value });
+            }
+            return normalizedArgs;
+        }
+
+        function callToolPkgWasm(moduleId, exportName, args) {
+            var normalizedModuleId = String(moduleId || '').trim();
+            if (!normalizedModuleId) {
+                return Promise.reject(new Error('ToolPkg.wasm module id is required'));
+            }
+            var normalizedExportName = String(exportName || '').trim();
+            if (!normalizedExportName) {
+                return Promise.reject(new Error('ToolPkg.wasm export name is required'));
+            }
+            var normalizedArgs;
+            try {
+                normalizedArgs = normalizeToolPkgWasmArgs(args);
+            } catch (error) {
+                return Promise.reject(error);
+            }
+            var target = resolveCurrentToolPkgTarget();
+            if (!target) {
+                return Promise.reject(new Error('package/toolpkg runtime target is empty'));
+            }
+            if (
+                typeof NativeInterface === 'undefined' ||
+                !NativeInterface ||
+                typeof NativeInterface.callToolPkgWasm !== 'function'
+            ) {
+                return Promise.reject(new Error('NativeInterface.callToolPkgWasm is unavailable'));
+            }
+            var resultJson;
+            try {
+                resultJson = NativeInterface.callToolPkgWasm(
+                    target,
+                    normalizedModuleId,
+                    normalizedExportName,
+                    JSON.stringify(normalizedArgs)
+                );
+            } catch (error) {
+                return Promise.reject(error);
+            }
+            var parsed;
+            try {
+                parsed = JSON.parse(String(resultJson || 'null'));
+            } catch (error) {
+                return Promise.reject(
+                    new Error('ToolPkg.wasm returned invalid JSON: ' + String(error && error.message ? error.message : error))
+                );
+            }
+            if (parsed && parsed.success === true) {
+                return Promise.resolve(
+                    Object.prototype.hasOwnProperty.call(parsed, 'value') ? parsed.value : null
+                );
+            }
+            return Promise.reject(
+                new Error(
+                    parsed && typeof parsed.message === 'string' && parsed.message.trim().length > 0
+                        ? parsed.message.trim()
+                        : 'ToolPkg.wasm call failed'
+                )
+            );
+        }
+
         var api = {
             registerToolboxUiModule: registerScreen('toolboxUiModules', 'registerToolPkgToolboxUiModule'),
             registerUiRoute: registerScreen('uiRoutes', 'registerToolPkgUiRoute'),
@@ -366,6 +474,9 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
             registerSummaryGenerateHook: registerFunction('summaryGenerateHooks', 'registerSummaryGenerateHook'),
             readResource: readToolPkgResource,
             getConfigDir: getToolPkgConfigDir,
+            wasm: {
+                call: callToolPkgWasm
+            },
             registerAiProvider: function(definition) {
                 capture.aiProviders.push(normalizeSpec(normalizeAiProviderDefinition(definition, 'registerAiProvider')));
             }

@@ -137,6 +137,58 @@ pub(crate) struct SourceObject {
     pub(crate) methods: Vec<SourceMethod>,
 }
 
+impl SourceObject {
+    /// Returns whether generated call dispatch has at least one routable arm.
+    pub(crate) fn has_call_dispatch(&self) -> bool {
+        self.schema_key == "application"
+            || self
+                .methods
+                .iter()
+                .any(|method| method.call_protocol().is_some())
+    }
+
+    /// Returns whether generated sync call dispatch has direct non-async calls.
+    pub(crate) fn has_sync_call_dispatch(&self) -> bool {
+        self.methods
+            .iter()
+            .any(|method| !method.is_async && method.call_protocol().is_some())
+    }
+
+    /// Returns whether generated proxy calls need the typed value helper.
+    pub(crate) fn has_proxy_value_call_methods(&self) -> bool {
+        self.methods.iter().any(|method| {
+            matches!(
+                method.call_protocol(),
+                Some(CallProtocol::Value(_) | CallProtocol::ResultValue { .. })
+            )
+        })
+    }
+
+    /// Returns whether generated proxy calls need the unit helper.
+    pub(crate) fn has_proxy_unit_call_methods(&self) -> bool {
+        self.methods.iter().any(|method| {
+            matches!(
+                method.call_protocol(),
+                Some(CallProtocol::Unit | CallProtocol::ResultUnit { .. })
+            )
+        })
+    }
+
+    /// Returns whether generated proxy watches need the snapshot helper.
+    pub(crate) fn has_proxy_snapshot_watch_methods(&self) -> bool {
+        self.methods.iter().any(|method| {
+            matches!(
+                method.watch_protocol(),
+                Some(WatchProtocol {
+                    snapshot_type: Some(_),
+                    stream: WatchStreamProtocol::JsonFlow { .. }
+                        | WatchStreamProtocol::JsonState { .. },
+                })
+            )
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SourceMethod {
     pub(crate) name: String,
@@ -168,8 +220,6 @@ pub(crate) enum SerializableTypeKind {
         fields: Vec<SerializableField>,
     },
     TaggedEnum {
-        tag_name: String,
-        content_name: Option<String>,
         externally_tagged: bool,
         variants: Vec<SerializableEnumVariant>,
     },
@@ -190,7 +240,6 @@ pub(crate) struct SerializableField {
 pub(crate) struct SerializableEnumVariant {
     pub(crate) name: String,
     pub(crate) json_name: String,
-    pub(crate) fields_are_unnamed: bool,
     pub(crate) fields_are_unit: bool,
     pub(crate) fields: Vec<SerializableField>,
 }

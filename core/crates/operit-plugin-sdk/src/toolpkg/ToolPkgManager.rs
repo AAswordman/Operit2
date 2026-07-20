@@ -454,7 +454,7 @@ impl ToolPkgManager {
     ) -> Option<Vec<u8>> {
         let normalizedResourcePath = normalizeToolPkgEntryPath(resourcePath)?;
         match runtime.sourceType {
-            ToolPkgSourceType::EXTERNAL => {
+            ToolPkgSourceType::EXTERNAL | ToolPkgSourceType::MARKET => {
                 let sourceInfo = self.fileSystemHost.fileExists(&runtime.sourcePath).ok()?;
                 if sourceInfo.isDirectory {
                     let resourceFile =

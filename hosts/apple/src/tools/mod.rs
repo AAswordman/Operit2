@@ -6,6 +6,7 @@ pub mod fs;
 pub mod host_runtime_event;
 pub mod http;
 pub mod local_inference;
+#[cfg(target_os = "macos")]
 pub mod runtime;
 pub mod storage;
 pub mod system;

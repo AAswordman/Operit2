@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use bzip2_rs::DecoderReader;
 use operit_host_api::{
-    HttpDownloadControl, HttpDownloadFileRequest, HttpDownloadProgress, HttpDownloadProgressState,
-    HttpDownloadRequest, HttpHost, RuntimeStorageHost,
+    httpDownloadPartialTargetPath, HttpDownloadControl, HttpDownloadFileRequest,
+    HttpDownloadProgress, HttpDownloadProgressState, HttpDownloadRequest, HttpHost,
+    RuntimeStorageHost,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -18,6 +19,8 @@ use crate::LocalEngineManifest::{
     LocalEngineArchiveFormat, LocalEngineDelivery, LocalEngineManifest, LocalPlatformTarget,
 };
 use crate::LocalModelRegistry::{InstalledLocalEngine, LocalModelRegistrySnapshot};
+#[cfg(test)]
+use crate::LocalModelRegistryStore::testRuntimeStorageHost;
 use crate::LocalModelRegistryStore::LocalModelRegistryStore;
 use crate::LocalModelStorage::{buildLocalEngineStoragePath, validatedStorageSegment};
 
@@ -103,13 +106,13 @@ impl LocalEngineInstaller {
         runtimeRoot: PathBuf,
         httpHost: Arc<dyn HttpHost>,
     ) -> Result<Self, LocalEngineDownloadError> {
-        let registryStore = LocalModelRegistryStore::forRuntimeRoot(runtimeRoot.clone())
-            .map_err(|error| LocalEngineDownloadError::Registry(error.to_string()))?;
+        let storageHost = testRuntimeStorageHost(runtimeRoot.clone());
+        let registryStore = LocalModelRegistryStore::forRuntimeStorage(storageHost.clone());
         Ok(Self {
             runtimeRoot,
             registryStore,
             httpHost,
-            storageHost: None,
+            storageHost: Some(storageHost),
         })
     }
 
@@ -183,7 +186,6 @@ impl LocalEngineInstaller {
             request.manifest.id,
             request.target.storageSegment()
         ));
-        self.removePath(&archivePath)?;
         self.removePath(&stagingDir)?;
         let progressCallback = engineDownloadProgressCallback(onProgress.clone());
         let downloadResult = self.httpHost.downloadFiles(
@@ -214,11 +216,12 @@ impl LocalEngineInstaller {
             progressCallback,
         );
         if let Err(error) = downloadResult {
-            self.removePath(&archivePath)?;
-            self.removePath(&stagingDir)?;
             return Err(LocalEngineDownloadError::Http(error.to_string()));
         }
-        self.verifyArchive(&archivePath, artifact.byteSize, &artifact.sha256)?;
+        if let Err(error) = self.verifyArchive(&archivePath, artifact.byteSize, &artifact.sha256) {
+            self.removeDownloadTarget(&archivePath)?;
+            return Err(error);
+        }
         onProgress(LocalEngineDownloadProgress::Extracting {
             engineId: request.manifest.id.clone(),
         });
@@ -226,7 +229,7 @@ impl LocalEngineInstaller {
         self.extractArchive(&archivePath, &stagingDir, &artifact.archiveFormat)?;
         self.verifyEngineRuntimeFiles(&stagingDir, &artifact)?;
         self.commitStagingDirectory(&stagingDir, &installDir)?;
-        self.removePath(&archivePath)?;
+        self.removeDownloadTarget(&archivePath)?;
 
         let installedEngine = InstalledLocalEngine {
             manifest: request.manifest,
@@ -372,6 +375,32 @@ impl LocalEngineInstaller {
         })
     }
 
+    /// Deletes retained download and staging artifacts for one uninstalled engine target.
+    pub fn removePendingInstallArtifacts(
+        &self,
+        manifest: &LocalEngineManifest,
+        target: &LocalPlatformTarget,
+    ) -> Result<(), LocalEngineDownloadError> {
+        let storagePath = buildLocalEngineStoragePath(&manifest.id, &manifest.version, target)
+            .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?;
+        let installDir = runtimeLayoutPath(&self.runtimeRoot, &storagePath)?;
+        let parent = installDir
+            .parent()
+            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePath.clone()))?;
+        let archivePath = parent.join(format!(
+            ".{}-{}.archive.part",
+            manifest.id,
+            target.storageSegment()
+        ));
+        let stagingDir = parent.join(format!(
+            ".{}-{}.installing",
+            manifest.id,
+            target.storageSegment()
+        ));
+        self.removeDownloadTarget(&archivePath)?;
+        self.removePath(&stagingDir)
+    }
+
     /// Reads the shared model and engine registry snapshot.
     pub fn readRegistry(&self) -> Result<LocalModelRegistrySnapshot, LocalEngineDownloadError> {
         self.registryStore
@@ -381,19 +410,28 @@ impl LocalEngineInstaller {
 
     /// Verifies that the installer has a runtime storage host.
     fn createDirectory(&self, path: &Path) -> Result<(), LocalEngineDownloadError> {
+        let pathString = nativePathString(path)?;
         self.storageHost
             .as_ref()
-            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePathString(path)))?;
+            .ok_or_else(|| LocalEngineDownloadError::Storage(pathString))?;
         Ok(())
     }
 
     /// Removes a file or directory from the configured storage backend.
     fn removePath(&self, path: &Path) -> Result<(), LocalEngineDownloadError> {
+        let storagePath = self.runtimeStoragePathString(path)?;
         self.storageHost
             .as_ref()
-            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePathString(path)))?
-            .delete(&storagePathString(path), true)
+            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePath.clone()))?
+            .delete(&storagePath, true)
             .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))
+    }
+
+    /// Removes one completed or retained partial HTTP download target.
+    fn removeDownloadTarget(&self, target: &Path) -> Result<(), LocalEngineDownloadError> {
+        self.removePath(target)?;
+        let partial = PathBuf::from(httpDownloadPartialTargetPath(&nativePathString(target)?));
+        self.removePath(&partial)
     }
 
     /// Verifies one downloaded archive against its declared size and SHA-256.
@@ -403,13 +441,14 @@ impl LocalEngineInstaller {
         declaredBytes: u64,
         declaredSha256: &str,
     ) -> Result<(), LocalEngineDownloadError> {
+        let storagePath = self.runtimeStoragePathString(archivePath)?;
         let storageHost = self
             .storageHost
             .as_ref()
-            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePathString(archivePath)))?;
+            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePath.clone()))?;
         verifyArchiveBytes(
             &storageHost
-                .readBytes(&storagePathString(archivePath))
+                .readBytes(&storagePath)
                 .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?,
             declaredBytes,
             declaredSha256,
@@ -423,14 +462,18 @@ impl LocalEngineInstaller {
         stagingDir: &Path,
         archiveFormat: &LocalEngineArchiveFormat,
     ) -> Result<(), LocalEngineDownloadError> {
+        let storagePath = self.runtimeStoragePathString(archivePath)?;
         let storageHost = self
             .storageHost
             .as_ref()
-            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePathString(archivePath)))?;
+            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePath))?;
         match archiveFormat {
-            LocalEngineArchiveFormat::TarBz2 => {
-                extractTarBz2ArchiveToStorage(archivePath, stagingDir, storageHost)
-            }
+            LocalEngineArchiveFormat::TarBz2 => extractTarBz2ArchiveToStorage(
+                &self.runtimeRoot,
+                archivePath,
+                stagingDir,
+                storageHost,
+            ),
         }
     }
 
@@ -442,16 +485,15 @@ impl LocalEngineInstaller {
     ) -> Result<(), LocalEngineDownloadError> {
         let requiredPaths = requiredEngineRuntimeFiles(installDir, artifact);
         for path in requiredPaths {
+            let storagePath = self.runtimeStoragePathString(&path)?;
             let exists = self
                 .storageHost
                 .as_ref()
-                .ok_or_else(|| LocalEngineDownloadError::Storage(storagePathString(&path)))?
-                .exists(&storagePathString(&path))
+                .ok_or_else(|| LocalEngineDownloadError::Storage(storagePath.clone()))?
+                .exists(&storagePath)
                 .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?;
             if !exists {
-                return Err(LocalEngineDownloadError::RuntimeFileMissing(
-                    storagePathString(&path),
-                ));
+                return Err(LocalEngineDownloadError::RuntimeFileMissing(storagePath));
             }
         }
         Ok(())
@@ -463,13 +505,19 @@ impl LocalEngineInstaller {
         stagingDir: &Path,
         installDir: &Path,
     ) -> Result<(), LocalEngineDownloadError> {
+        let storagePath = self.runtimeStoragePathString(installDir)?;
         let storageHost = self
             .storageHost
             .as_ref()
-            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePathString(installDir)))?;
+            .ok_or_else(|| LocalEngineDownloadError::Storage(storagePath))?;
         self.removePath(installDir)?;
-        copyStorageDirectory(storageHost, stagingDir, installDir)?;
+        copyStorageDirectory(storageHost, &self.runtimeRoot, stagingDir, installDir)?;
         self.removePath(stagingDir)
+    }
+
+    /// Maps a native runtime-root path back to a virtual runtime storage path.
+    fn runtimeStoragePathString(&self, path: &Path) -> Result<String, LocalEngineDownloadError> {
+        runtimeStoragePathString(&self.runtimeRoot, path)
     }
 }
 
@@ -570,12 +618,14 @@ fn extractTarBz2ArchiveToNative(
 
 /// Extracts a Tar+Bzip2 engine archive into runtime storage.
 fn extractTarBz2ArchiveToStorage(
+    runtimeRoot: &Path,
     archivePath: &Path,
     stagingDir: &Path,
     storageHost: &Arc<dyn RuntimeStorageHost>,
 ) -> Result<(), LocalEngineDownloadError> {
+    let archiveStoragePath = runtimeStoragePathString(runtimeRoot, archivePath)?;
     let archiveBytes = storageHost
-        .readBytes(&storagePathString(archivePath))
+        .readBytes(&archiveStoragePath)
         .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?;
     let decoder = DecoderReader::new(Cursor::new(archiveBytes));
     let mut archive = tar::Archive::new(decoder);
@@ -598,8 +648,9 @@ fn extractTarBz2ArchiveToStorage(
             .read_to_end(&mut content)
             .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?;
         let target = stagingDir.join(path);
+        let targetStoragePath = runtimeStoragePathString(runtimeRoot, &target)?;
         storageHost
-            .writeBytes(&storagePathString(&target), &content)
+            .writeBytes(&targetStoragePath, &content)
             .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?;
     }
     Ok(())
@@ -702,26 +753,46 @@ fn runtimeLayoutPath(
     Ok(runtimeRoot.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR)))
 }
 
+/// Maps a native runtime-root path into a virtual runtime storage path.
+fn runtimeStoragePathString(
+    runtimeRoot: &Path,
+    path: &Path,
+) -> Result<String, LocalEngineDownloadError> {
+    let relative = path
+        .strip_prefix(runtimeRoot)
+        .map_err(|_| LocalEngineDownloadError::Storage(path.to_string_lossy().to_string()))?;
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    if relative.is_empty() {
+        Ok("runtime".to_string())
+    } else {
+        Ok(format!("runtime/{relative}"))
+    }
+}
+
 /// Copies every staged runtime-storage file into a final directory.
 fn copyStorageDirectory(
     storageHost: &Arc<dyn RuntimeStorageHost>,
+    runtimeRoot: &Path,
     sourceDir: &Path,
     targetDir: &Path,
 ) -> Result<(), LocalEngineDownloadError> {
-    let sourcePrefix = storagePathString(sourceDir);
+    let sourcePrefix = runtimeStoragePathString(runtimeRoot, sourceDir)?;
     let sourcePrefixWithSlash = format!("{}/", sourcePrefix.trim_end_matches('/'));
     let entries = storageHost
         .list(&sourcePrefix)
         .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?;
     for entry in entries {
-        if entry.isDirectory {
-            continue;
-        }
         let relative = entry
             .path
             .strip_prefix(&sourcePrefixWithSlash)
             .ok_or_else(|| LocalEngineDownloadError::Storage(entry.path.clone()))?;
-        let targetPath = storagePathString(&targetDir.join(relative));
+        let target = targetDir.join(relative);
+        if entry.isDirectory {
+            let source = runtimeLayoutPath(runtimeRoot, &entry.path)?;
+            copyStorageDirectory(storageHost, runtimeRoot, &source, &target)?;
+            continue;
+        }
+        let targetPath = runtimeStoragePathString(runtimeRoot, &target)?;
         let content = storageHost
             .readBytes(&entry.path)
             .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?;
@@ -730,11 +801,6 @@ fn copyStorageDirectory(
             .map_err(|error| LocalEngineDownloadError::Storage(error.to_string()))?;
     }
     Ok(())
-}
-
-/// Converts a path into the virtual runtime-storage representation.
-fn storagePathString(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 /// Removes one temporary file or directory used by native engine installation.

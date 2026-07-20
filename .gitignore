@@ -89,6 +89,8 @@ DerivedData/
 apps/flutter/app/apple/Frameworks/
 apps/flutter/app/apple/downloads/
 apps/flutter/app/apple/.sherpa-staging/
+apps/flutter/app/apple/.ios-native-runtime-staging/
+apps/flutter/app/ios/Runner/python/
 
 # Rust
 target/
@@ -104,6 +106,8 @@ apps/flutter/app/build/web/
 apps/web_access/web/operit_flutter_bridge.js
 apps/web_access/web/operit_flutter_bridge_bg.wasm
 apps/web_access/web/operit_runtime_bridge.js
+apps/web_access/web/operit_model_install_worker.js
+apps/web_access/web/v86_runtime_worker.js
 apps/web_access/web/operit_flutter_bridge*.d
 apps/web_access/web/operit_flutter_bridge*.d.ts
 apps/web_access/build/bundle/operit_flutter_bridge*.d
@@ -111,6 +115,7 @@ apps/web_access/build/bundle/operit_flutter_bridge*.d.ts
 apps/web_access/web/sql-wasm.js
 apps/web_access/web/sql-wasm.wasm
 apps/web_access/web/v86/
+apps/web_access/v86/runtime/
 
 # Local dependency extraction/package scratch
 package/

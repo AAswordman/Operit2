@@ -47,7 +47,7 @@ impl TerminalHost for WebTerminalHost {
             types: vec![TerminalTypeInfo {
                 terminalType: LINUX_VM_TERMINAL_TYPE.to_string(),
                 available: true,
-                description: "Browser-local Buildroot Linux VM terminal".to_string(),
+                description: "Browser-local Buildroot VM with BusyBox, Node, and Python".to_string(),
             }],
         })
     }

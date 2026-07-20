@@ -6,6 +6,7 @@ use operit_host_api::HostManager::HostManager;
 use operit_plugin_sdk::javascript::{
     JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolCallResultData,
     JsToolNameResolutionRequest, JsToolPkgIpcRequest, JsToolPkgResourceRequest,
+    JsToolPkgWasmRequest, JsToolPkgWasmResult,
 };
 use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_plugin_sdk::package::ToolPackage;
@@ -579,6 +580,7 @@ impl AIToolHandler {
         }
     }
 
+    /// Rejects interactive permission requests from synchronous execution callers.
     fn executeAccessPreflight(
         &self,
         tool: &AITool,
@@ -627,66 +629,120 @@ impl AIToolHandler {
             && matches!(accessSpec.boundary, ToolBoundary::None)
             && tool.name.split_once(':').is_none()
         {
-            match permissionSystem.checkSandboxEscapeApproval(tool) {
-                Ok(true) => {
-                    self.notifyToolPermissionChecked(
-                        tool,
-                        true,
-                        Some("WorkspaceWrite non-file WRITE approved for this session."),
-                    );
-                }
-                Ok(false) => {
-                    let error = "User cancelled the tool execution.".to_string();
-                    self.notifyToolPermissionChecked(tool, false, Some(&error));
-                    return Err(ToolResult {
-                        toolName: tool.name.clone(),
-                        success: false,
-                        result: stringResultData(""),
-                        error: Some(error),
-                    });
-                }
-                Err(error) => {
-                    let message = error.to_string();
-                    self.notifyToolPermissionChecked(tool, false, Some(&message));
-                    return Err(ToolResult {
-                        toolName: tool.name.clone(),
-                        success: false,
-                        result: stringResultData(""),
-                        error: Some(message),
-                    });
-                }
-            }
+            return Err(self.asyncPermissionRequiredResult(tool));
         }
 
         if tool.name.split_once(':').is_some() {
-            match permissionSystem.checkPackageToolApproval(tool) {
-                Ok(true) => {
-                    self.notifyToolPermissionChecked(tool, true, Some("PackageTool approved."));
-                }
-                Ok(false) => {
-                    let error = "User cancelled the tool execution.".to_string();
-                    self.notifyToolPermissionChecked(tool, false, Some(&error));
-                    return Err(ToolResult {
-                        toolName: tool.name.clone(),
-                        success: false,
-                        result: stringResultData(""),
-                        error: Some(error),
-                    });
-                }
-                Err(error) => {
-                    let message = error.to_string();
-                    self.notifyToolPermissionChecked(tool, false, Some(&message));
-                    return Err(ToolResult {
-                        toolName: tool.name.clone(),
-                        success: false,
-                        result: stringResultData(""),
-                        error: Some(message),
-                    });
-                }
-            }
+            return Err(self.asyncPermissionRequiredResult(tool));
         }
 
         Ok(accessSpec)
+    }
+
+    /// Runs access validation and asynchronously obtains every required approval.
+    async fn executeAccessPreflightAsync(
+        &self,
+        tool: &AITool,
+        accessSpec: ToolAccessSpec,
+    ) -> Result<ToolAccessSpec, ToolResult> {
+        let permissionSystem = self.getToolPermissionSystem();
+        let mode = permissionSystem
+            .getAiPermissionMode()
+            .map_err(|error| ToolResult {
+                toolName: tool.name.clone(),
+                success: false,
+                result: stringResultData(""),
+                error: Some(error.to_string()),
+            })?;
+        if !mode.allowsEffect(accessSpec.effect) {
+            return Err(ToolResult {
+                toolName: tool.name.clone(),
+                success: false,
+                result: stringResultData(""),
+                error: Some(format!(
+                    "AI permission mode {} does not allow {:?} tool execution.",
+                    mode.name(),
+                    accessSpec.effect
+                )),
+            });
+        }
+
+        if let Err(error) = self.checkWorkspaceBoundary(tool, &accessSpec) {
+            return Err(ToolResult {
+                toolName: tool.name.clone(),
+                success: false,
+                result: stringResultData(""),
+                error: Some(error),
+            });
+        }
+
+        if mode == AiPermissionMode::WorkspaceWrite
+            && accessSpec.effect == ToolEffect::WRITE
+            && matches!(accessSpec.boundary, ToolBoundary::None)
+            && tool.name.split_once(':').is_none()
+        {
+            let approved = permissionSystem
+                .checkSandboxEscapeApprovalAsync(tool)
+                .await
+                .map_err(|error| ToolResult {
+                    toolName: tool.name.clone(),
+                    success: false,
+                    result: stringResultData(""),
+                    error: Some(error.to_string()),
+                })?;
+            if !approved {
+                let error = "User cancelled the tool execution.".to_string();
+                self.notifyToolPermissionChecked(tool, false, Some(&error));
+                return Err(ToolResult {
+                    toolName: tool.name.clone(),
+                    success: false,
+                    result: stringResultData(""),
+                    error: Some(error),
+                });
+            }
+            self.notifyToolPermissionChecked(
+                tool,
+                true,
+                Some("WorkspaceWrite non-file WRITE approved for this session."),
+            );
+        }
+
+        if tool.name.split_once(':').is_some() {
+            let approved = permissionSystem
+                .checkPackageToolApprovalAsync(tool)
+                .await
+                .map_err(|error| ToolResult {
+                    toolName: tool.name.clone(),
+                    success: false,
+                    result: stringResultData(""),
+                    error: Some(error.to_string()),
+                })?;
+            if !approved {
+                let error = "User cancelled the tool execution.".to_string();
+                self.notifyToolPermissionChecked(tool, false, Some(&error));
+                return Err(ToolResult {
+                    toolName: tool.name.clone(),
+                    success: false,
+                    result: stringResultData(""),
+                    error: Some(error),
+                });
+            }
+            self.notifyToolPermissionChecked(tool, true, Some("PackageTool approved."));
+        }
+
+        Ok(accessSpec)
+    }
+
+    /// Builds a typed denial for callers that have not migrated to asynchronous execution.
+    fn asyncPermissionRequiredResult(&self, tool: &AITool) -> ToolResult {
+        let error = "Interactive tool permission requires asynchronous tool execution.".to_string();
+        self.notifyToolPermissionChecked(tool, false, Some(&error));
+        ToolResult {
+            toolName: tool.name.clone(),
+            success: false,
+            result: stringResultData(""),
+            error: Some(error),
+        }
     }
 
     fn checkWorkspaceBoundary(
@@ -749,7 +805,7 @@ impl AIToolHandler {
 
     /// Executes a tool through hooks, permissions, limits, and a resolved executor.
     #[allow(non_snake_case)]
-    pub fn executeToolSafelyWithResolvedExecutor(
+    pub async fn executeToolSafelyWithResolvedExecutor(
         &mut self,
         tool: &AITool,
     ) -> Option<Vec<ToolResult>> {
@@ -790,19 +846,28 @@ impl AIToolHandler {
         let validationResult = executor.validateParameters(tool);
         let startMs = operit_host_api::TimeUtils::currentTimeMillis();
         let collected = if validationResult.valid {
-            match self.executeAccessPreflight(tool, executor.as_ref()) {
-                Ok(accessSpec) => {
-                    ChainLogger::info(
-                        TOOL_CHAIN,
-                        "tool.stream.start",
-                        &[
-                            ("tool", tool.name.clone()),
-                            ("parameters", parameterSummary.clone()),
-                            ("effect", format!("{:?}", accessSpec.effect)),
-                        ],
-                    );
-                    executor.invokeAndStream(tool)
-                }
+            let accessSpec = executor.accessSpec(tool).map_err(|error| ToolResult {
+                toolName: tool.name.clone(),
+                success: false,
+                result: stringResultData(""),
+                error: Some(format!("Tool access declaration failed: {error}")),
+            });
+            match accessSpec {
+                Ok(accessSpec) => match self.executeAccessPreflightAsync(tool, accessSpec).await {
+                    Ok(accessSpec) => {
+                        ChainLogger::info(
+                            TOOL_CHAIN,
+                            "tool.stream.start",
+                            &[
+                                ("tool", tool.name.clone()),
+                                ("parameters", parameterSummary.clone()),
+                                ("effect", format!("{:?}", accessSpec.effect)),
+                            ],
+                        );
+                        executor.invokeAndStream(tool)
+                    }
+                    Err(errorResult) => vec![errorResult],
+                },
                 Err(errorResult) => vec![errorResult],
             }
         } else {
@@ -1156,6 +1221,17 @@ impl JsExecutionHost for AIToolHandler {
         request: JsToolPkgResourceRequest,
     ) -> Result<String, String> {
         crate::tools::ToolJsRuntime::materializeToolPkgResource(self, request)
+    }
+
+    /// Calls one ToolPkg WASM export through the active package manager.
+    fn call_toolpkg_wasm(
+        &self,
+        request: JsToolPkgWasmRequest,
+    ) -> Result<JsToolPkgWasmResult, String> {
+        self.getOrCreatePackageManager()
+            .lock()
+            .expect("package manager mutex poisoned")
+            .callToolPkgWasm(request, true)
     }
 
     /// Dispatches one Compose DSL controller command.

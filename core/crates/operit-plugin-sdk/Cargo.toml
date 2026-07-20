@@ -10,6 +10,7 @@ repository = "https://github.com/AAswordman/Operit2"
 documentation = "https://docs.rs/operit-plugin-sdk"
 
 [dependencies]
+chacha20poly1305 = "0.10"
 chrono.workspace = true
 json5.workspace = true
 operit-host-api = { path = "../operit-host-api" }
@@ -20,6 +21,15 @@ serde_json.workspace = true
 zip.workspace = true
 sha2.workspace = true
 uuid.workspace = true
+
+[target.'cfg(all(not(target_arch = "wasm32"), not(any(target_os = "android", target_os = "ios", target_env = "ohos"))))'.dependencies]
+rquickjs.workspace = true
+
+[target.'cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))'.dependencies]
+rquickjs = { workspace = true, features = ["bindgen"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wasmi.workspace = true
 
 [build-dependencies]
 operit-plugin-sdk-codegen = { version = "=2.0.0-preview.4", path = "../operit-plugin-sdk-codegen" }

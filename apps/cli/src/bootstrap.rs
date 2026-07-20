@@ -7,16 +7,16 @@ use operit_core_proxy::LocalCoreProxy;
 use operit_host_api::HostManager::HostManager;
 use operit_link_access::LinkAccessStore;
 #[cfg(target_os = "macos")]
-use operit_host_apple_native::{
-    AppleBrowserAutomationHost as NativeBrowserAutomationHost,
-    AppleFileSystemHost as NativeFileSystemHost,
-    AppleHostRuntimeEventHost as NativeHostRuntimeEventHost,
-    AppleHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
-    AppleHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
-    AppleHttpHost as NativeHttpHost, AppleManagedRuntimeHost as NativeManagedRuntimeHost,
-    AppleRuntimeStorageHost as NativeRuntimeStorageHost,
-    AppleSystemOperationHost as NativeSystemOperationHost, AppleTerminalHost as NativeTerminalHost,
-    AppleWebVisitHost as NativeWebVisitHost,
+use operit_host_macos_native::{
+    MacosBrowserAutomationHost as NativeBrowserAutomationHost,
+    MacosFileSystemHost as NativeFileSystemHost,
+    MacosHostRuntimeEventHost as NativeHostRuntimeEventHost,
+    MacosHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    MacosHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
+    MacosHttpHost as NativeHttpHost, MacosManagedRuntimeHost as NativeManagedRuntimeHost,
+    MacosRuntimeStorageHost as NativeRuntimeStorageHost,
+    MacosSystemOperationHost as NativeSystemOperationHost,
+    MacosTerminalHost as NativeTerminalHost, MacosWebVisitHost as NativeWebVisitHost,
 };
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{

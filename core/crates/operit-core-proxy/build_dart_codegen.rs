@@ -681,7 +681,6 @@ fn render_dart_tagged_enum(
                 dart_string_literal(&variant.json_name)
             ));
             for field in &variant.fields {
-                let field_name = dart_identifier(&field.name);
                 let field_type = dart_type(&field.ty, serializable_types);
                 output.push_str(&format!(
                     "        '{}': {},\n",

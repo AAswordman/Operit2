@@ -135,3 +135,33 @@ pub struct ToolResultMap {
 }
 
 include!(concat!(env!("OUT_DIR"), "/builtin_tool_names.rs"));
+
+#[cfg(test)]
+mod tests {
+    use super::super::results::{FileApplyResultData, FileOperationData, ToolResultData};
+    use super::BuiltinToolName;
+
+    /// Builds a representative file-apply result payload.
+    fn file_apply_result() -> ToolResultData {
+        ToolResultData::FileApplyResultData(FileApplyResultData {
+            operation: FileOperationData {
+                operation: "create".to_string(),
+                path: "/workspace/example.txt".to_string(),
+                successful: true,
+                details: "created".to_string(),
+            },
+            aiDiffInstructions: String::new(),
+            diffContent: Some("--- old\n+++ new".to_string()),
+        })
+    }
+
+    #[test]
+    /// Ensures file wrapper tools accept the delegated apply-file payload.
+    fn create_and_edit_file_accept_file_apply_results() {
+        let result = file_apply_result();
+
+        assert!(BuiltinToolName::ApplyFile.accepts_runtime_result(&result));
+        assert!(BuiltinToolName::CreateFile.accepts_runtime_result(&result));
+        assert!(BuiltinToolName::EditFile.accepts_runtime_result(&result));
+    }
+}

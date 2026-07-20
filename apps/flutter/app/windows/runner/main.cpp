@@ -9,11 +9,13 @@
 #include "operit_runtime_channel.h"
 #include "utils.h"
 
+/// Presents the native crash dialog for unhandled Windows exceptions.
 LONG WINAPI OperitUnhandledExceptionFilter(EXCEPTION_POINTERS*) {
   ShowOperitWindowsCrashScreen("Unhandled Windows exception outside Flutter.");
   return EXCEPTION_EXECUTE_HANDLER;
 }
 
+/// Runs the Windows Flutter application message loop.
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
   ::SetUnhandledExceptionFilter(OperitUnhandledExceptionFilter);
@@ -49,6 +51,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       ::DispatchMessage(&msg);
     }
 
+    ShutdownOperitCrashChannel();
     ShutdownOperitRuntimeChannel();
     ::CoUninitialize();
     return EXIT_SUCCESS;

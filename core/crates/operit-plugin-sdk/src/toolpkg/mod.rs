@@ -45,3 +45,6 @@ pub mod ToolPkgRegistrationBridge;
 
 #[path = "ToolPkgTemplateModels.rs"]
 pub mod ToolPkgTemplateModels;
+
+#[path = "ToolPkgWasmRuntime.rs"]
+pub mod ToolPkgWasmRuntime;

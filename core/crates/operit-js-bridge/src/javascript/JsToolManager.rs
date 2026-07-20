@@ -404,24 +404,36 @@ impl JsPackageExecutor for JsToolManager {
 mod tests {
     use super::JsToolManager;
     use crate::javascript::JsEngine::JsEngine;
+    use crate::javascript::TestJsToolsHost::{expect_js_output, register_test_runtime_storage};
+    use operit_host_api::{
+        FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
+        GrepCodeResult, HostEnvironmentDescriptor, HostError, HostResult,
+    };
     use operit_plugin_sdk::javascript::{
         JsExecutionEngine, JsExecutionHost, JsPackageRuntime, JsToolCallRequest, JsToolCallResult,
         JsToolNameResolutionRequest, JsToolPkgIpcRequest, JsToolPkgResourceRequest,
+        JsToolPkgWasmRequest, JsToolPkgWasmResult,
     };
     use operit_plugin_sdk::package::{PackageTool, ToolPackage};
+    use operit_plugin_sdk::toolpkg::ToolPkgLoader::ToolPkgLoader;
     use operit_plugin_sdk::toolpkg::ToolPkgManager::{
         ToolPkgAssetSource, ToolPkgExecutionEngineFactory,
     };
     use operit_plugin_sdk::toolpkg::ToolPkgParser::{
         ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSourceType, ToolPkgSubpackageRuntime,
     };
+    use operit_plugin_sdk::toolpkg::ToolPkgProtection;
+    use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
     use operit_plugin_sdk::PackageManager::{PackageStateResolver, PluginPackageManager};
     use serde_json::Value;
     use std::collections::BTreeMap;
+    use std::io::{Cursor, Read, Write};
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Copy)]
     struct TestJsExecutionHost;
+
+    crate::impl_rejecting_js_tools_host!(TestJsExecutionHost);
 
     impl JsExecutionHost for TestJsExecutionHost {
         /// Rejects unexpected host tool calls from package execution tests.
@@ -466,6 +478,14 @@ mod tests {
             _request: JsToolPkgResourceRequest,
         ) -> Result<String, String> {
             Err("ToolPkg resources are not part of this test".to_string())
+        }
+
+        /// Rejects ToolPkg WASM calls in manager tests.
+        fn call_toolpkg_wasm(
+            &self,
+            _request: JsToolPkgWasmRequest,
+        ) -> Result<JsToolPkgWasmResult, String> {
+            Err("ToolPkg WASM is not part of this test".to_string())
         }
 
         /// Rejects Compose DSL controller commands in manager tests.
@@ -538,6 +558,551 @@ mod tests {
     }
 
     #[derive(Clone, Copy)]
+    struct RejectingFileSystemHost;
+
+    impl RejectingFileSystemHost {
+        /// Builds the unsupported operation result used by this file-system host.
+        fn unsupported<T>() -> HostResult<T> {
+            Err(HostError::new(
+                "File-system host is not part of JsToolManager tests",
+            ))
+        }
+    }
+
+    impl FileSystemHost for RejectingFileSystemHost {
+        /// Returns the test host label.
+        fn envLabel(&self) -> &str {
+            "test"
+        }
+
+        /// Returns the test environment descriptor.
+        fn environmentDescriptor(&self) -> HostEnvironmentDescriptor {
+            HostEnvironmentDescriptor::linux()
+        }
+
+        /// Rejects path validation.
+        fn validatePath(&self, _path: &str, _param_name: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects directory listing.
+        fn listFiles(&self, _path: &str) -> HostResult<Vec<FileEntry>> {
+            Self::unsupported()
+        }
+
+        /// Rejects text reads.
+        fn readFile(&self, _path: &str) -> HostResult<String> {
+            Self::unsupported()
+        }
+
+        /// Rejects bounded text reads.
+        fn readFileWithLimit(&self, _path: &str, _max_bytes: usize) -> HostResult<String> {
+            Self::unsupported()
+        }
+
+        /// Rejects byte reads.
+        fn readFileBytes(&self, _path: &str) -> HostResult<Vec<u8>> {
+            Self::unsupported()
+        }
+
+        /// Rejects text writes.
+        fn writeFile(&self, _path: &str, _content: &str, _append: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects byte writes.
+        fn writeFileBytes(&self, _path: &str, _content: &[u8]) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects deletion.
+        fn deleteFile(&self, _path: &str, _recursive: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects file existence checks.
+        fn fileExists(&self, _path: &str) -> HostResult<FileExistence> {
+            Self::unsupported()
+        }
+
+        /// Rejects moves.
+        fn moveFile(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects copies.
+        fn copyFile(&self, _source: &str, _destination: &str, _recursive: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects directory creation.
+        fn makeDirectory(&self, _path: &str, _create_parents: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects file searching.
+        fn findFiles(&self, _request: FindFilesRequest) -> HostResult<Vec<String>> {
+            Self::unsupported()
+        }
+
+        /// Rejects file metadata reads.
+        fn fileInfo(&self, _path: &str) -> HostResult<FileInfo> {
+            Self::unsupported()
+        }
+
+        /// Rejects code searches.
+        fn grepCode(&self, _request: GrepCodeRequest) -> HostResult<GrepCodeResult> {
+            Self::unsupported()
+        }
+
+        /// Rejects archive creation.
+        fn zipFiles(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects archive extraction.
+        fn unzipFiles(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects host file opening.
+        fn openFile(&self, _path: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects host file sharing.
+        fn shareFile(&self, _path: &str, _title: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+    }
+
+    #[derive(Clone)]
+    struct DownloadedToolPkgFileSystemHost {
+        source_path: String,
+        source_bytes: Vec<u8>,
+    }
+
+    impl DownloadedToolPkgFileSystemHost {
+        /// Creates a host that exposes one downloaded ToolPkg file by exact path.
+        fn new(source_path: &str, source_bytes: Vec<u8>) -> Self {
+            Self {
+                source_path: source_path.to_string(),
+                source_bytes,
+            }
+        }
+
+        /// Builds the unsupported operation result used by this file-system host.
+        fn unsupported<T>() -> HostResult<T> {
+            Err(HostError::new(
+                "Only downloaded ToolPkg byte reads are part of this test",
+            ))
+        }
+    }
+
+    impl FileSystemHost for DownloadedToolPkgFileSystemHost {
+        /// Returns the test host label.
+        fn envLabel(&self) -> &str {
+            "downloaded-toolpkg-test"
+        }
+
+        /// Returns the test environment descriptor.
+        fn environmentDescriptor(&self) -> HostEnvironmentDescriptor {
+            HostEnvironmentDescriptor::linux()
+        }
+
+        /// Accepts the exact downloaded ToolPkg path.
+        fn validatePath(&self, path: &str, _param_name: &str) -> HostResult<()> {
+            if path == self.source_path {
+                Ok(())
+            } else {
+                Self::unsupported()
+            }
+        }
+
+        /// Rejects directory listing.
+        fn listFiles(&self, _path: &str) -> HostResult<Vec<FileEntry>> {
+            Self::unsupported()
+        }
+
+        /// Rejects text reads.
+        fn readFile(&self, _path: &str) -> HostResult<String> {
+            Self::unsupported()
+        }
+
+        /// Rejects bounded text reads.
+        fn readFileWithLimit(&self, _path: &str, _max_bytes: usize) -> HostResult<String> {
+            Self::unsupported()
+        }
+
+        /// Returns the exact downloaded ToolPkg bytes.
+        fn readFileBytes(&self, path: &str) -> HostResult<Vec<u8>> {
+            if path == self.source_path {
+                Ok(self.source_bytes.clone())
+            } else {
+                Self::unsupported()
+            }
+        }
+
+        /// Rejects text writes.
+        fn writeFile(&self, _path: &str, _content: &str, _append: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects byte writes.
+        fn writeFileBytes(&self, _path: &str, _content: &[u8]) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects deletion.
+        fn deleteFile(&self, _path: &str, _recursive: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects file existence checks.
+        fn fileExists(&self, _path: &str) -> HostResult<FileExistence> {
+            Self::unsupported()
+        }
+
+        /// Rejects moves.
+        fn moveFile(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects copies.
+        fn copyFile(&self, _source: &str, _destination: &str, _recursive: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects directory creation.
+        fn makeDirectory(&self, _path: &str, _create_parents: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects file searching.
+        fn findFiles(&self, _request: FindFilesRequest) -> HostResult<Vec<String>> {
+            Self::unsupported()
+        }
+
+        /// Rejects file metadata reads.
+        fn fileInfo(&self, _path: &str) -> HostResult<FileInfo> {
+            Self::unsupported()
+        }
+
+        /// Rejects code searches.
+        fn grepCode(&self, _request: GrepCodeRequest) -> HostResult<GrepCodeResult> {
+            Self::unsupported()
+        }
+
+        /// Rejects archive creation.
+        fn zipFiles(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects archive extraction.
+        fn unzipFiles(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects host file opening.
+        fn openFile(&self, _path: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects host file sharing.
+        fn shareFile(&self, _path: &str, _title: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+    }
+
+    #[derive(Clone)]
+    struct DownloadedStandaloneJsFileSystemHost {
+        source_path: String,
+        source_bytes: Vec<u8>,
+    }
+
+    impl DownloadedStandaloneJsFileSystemHost {
+        /// Creates a host that exposes one downloaded standalone JavaScript file by exact path.
+        fn new(source_path: &str, source_bytes: Vec<u8>) -> Self {
+            Self {
+                source_path: source_path.to_string(),
+                source_bytes,
+            }
+        }
+
+        /// Builds the unsupported operation result used by this file-system host.
+        fn unsupported<T>() -> HostResult<T> {
+            Err(HostError::new(
+                "Only downloaded standalone JavaScript byte reads are part of this test",
+            ))
+        }
+    }
+
+    impl FileSystemHost for DownloadedStandaloneJsFileSystemHost {
+        /// Returns the test host label.
+        fn envLabel(&self) -> &str {
+            "downloaded-standalone-js-test"
+        }
+
+        /// Returns the test environment descriptor.
+        fn environmentDescriptor(&self) -> HostEnvironmentDescriptor {
+            HostEnvironmentDescriptor::linux()
+        }
+
+        /// Accepts the exact downloaded standalone JavaScript path.
+        fn validatePath(&self, path: &str, _param_name: &str) -> HostResult<()> {
+            if path == self.source_path {
+                Ok(())
+            } else {
+                Self::unsupported()
+            }
+        }
+
+        /// Rejects directory listing.
+        fn listFiles(&self, _path: &str) -> HostResult<Vec<FileEntry>> {
+            Self::unsupported()
+        }
+
+        /// Rejects text reads.
+        fn readFile(&self, _path: &str) -> HostResult<String> {
+            Self::unsupported()
+        }
+
+        /// Rejects bounded text reads.
+        fn readFileWithLimit(&self, _path: &str, _max_bytes: usize) -> HostResult<String> {
+            Self::unsupported()
+        }
+
+        /// Returns the exact downloaded standalone JavaScript bytes.
+        fn readFileBytes(&self, path: &str) -> HostResult<Vec<u8>> {
+            if path == self.source_path {
+                Ok(self.source_bytes.clone())
+            } else {
+                Self::unsupported()
+            }
+        }
+
+        /// Rejects text writes.
+        fn writeFile(&self, _path: &str, _content: &str, _append: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects byte writes.
+        fn writeFileBytes(&self, _path: &str, _content: &[u8]) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects deletion.
+        fn deleteFile(&self, _path: &str, _recursive: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects file existence checks.
+        fn fileExists(&self, _path: &str) -> HostResult<FileExistence> {
+            Self::unsupported()
+        }
+
+        /// Rejects moves.
+        fn moveFile(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects copies.
+        fn copyFile(&self, _source: &str, _destination: &str, _recursive: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects directory creation.
+        fn makeDirectory(&self, _path: &str, _create_parents: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects file searching.
+        fn findFiles(&self, _request: FindFilesRequest) -> HostResult<Vec<String>> {
+            Self::unsupported()
+        }
+
+        /// Rejects file metadata reads.
+        fn fileInfo(&self, _path: &str) -> HostResult<FileInfo> {
+            Self::unsupported()
+        }
+
+        /// Rejects code searches.
+        fn grepCode(&self, _request: GrepCodeRequest) -> HostResult<GrepCodeResult> {
+            Self::unsupported()
+        }
+
+        /// Rejects archive creation.
+        fn zipFiles(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects archive extraction.
+        fn unzipFiles(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects host file opening.
+        fn openFile(&self, _path: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects host file sharing.
+        fn shareFile(&self, _path: &str, _title: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+    }
+
+    /// Returns whether a byte slice contains one exact byte sequence.
+    fn contains_bytes(bytes: &[u8], needle: &[u8]) -> bool {
+        bytes
+            .windows(needle.len())
+            .any(|candidate| candidate == needle)
+    }
+
+    /// Reads one ZIP entry into memory for protection assertions.
+    fn read_zip_entry_bytes(archive_bytes: &[u8], entry_name: &str) -> Vec<u8> {
+        let cursor = Cursor::new(archive_bytes);
+        let mut archive = zip::ZipArchive::new(cursor).expect("ToolPkg bytes should be a zip");
+        let mut entry = archive
+            .by_name(entry_name)
+            .expect("expected ToolPkg entry should exist");
+        let mut bytes = Vec::new();
+        entry
+            .read_to_end(&mut bytes)
+            .expect("expected ToolPkg entry should read");
+        bytes
+    }
+
+    /// Builds a ToolPkg archive before publish-time AST minification.
+    fn build_toolpkg_bytes() -> Vec<u8> {
+        let manifest = br#"{
+  "toolpkg_id": "market_flow_toolpkg",
+  "version": "1.0.0",
+  "main": "dist/main.js",
+  "display_name": "Market Flow ToolPkg",
+  "description": "Protected marketplace flow test",
+  "author": ["Operit"],
+  "subpackages": [
+    {
+      "id": "market_flow_sub",
+      "entry": "dist/sub.js",
+      "display_name": "Market Flow Sub",
+      "description": "Protected subpackage"
+    }
+  ],
+  "resources": [
+    {
+      "key": "payload",
+      "path": "assets/payload.txt",
+      "mime": "text/plain"
+    }
+  ]
+}"#;
+        let main_script = br#""use strict";exports.registerToolPkg=function(){return true};"#;
+        let subpackage_script = br#"/* METADATA
+{
+  name: market_flow_sub_source
+  displayName: Market Flow Source
+  tools: [
+    {
+      name: inspect
+      description: Inspect protected package flow
+      parameters: [
+        { name: text, description: Text to echo, type: string, required: true }
+      ]
+    }
+  ]
+}
+*/"use strict";exports.inspect=function(t){return"protected-flow:"+t.text+"|"+t.__operit_toolpkg_subpackage_id+"|"+t.__operit_script_screen};"#;
+        let asset_payload = b"asset-secret-value";
+
+        let mut source_bytes = Vec::new();
+        let mut writer = zip::ZipWriter::new(Cursor::new(&mut source_bytes));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        writer
+            .start_file("manifest.json", options)
+            .expect("manifest entry should start");
+        writer
+            .write_all(manifest)
+            .expect("manifest entry should write");
+        writer
+            .start_file("dist/main.js", options)
+            .expect("main entry should start");
+        writer
+            .write_all(main_script)
+            .expect("main entry should write");
+        writer
+            .start_file("dist/sub.js", options)
+            .expect("subpackage entry should start");
+        writer
+            .write_all(subpackage_script)
+            .expect("subpackage entry should write");
+        writer
+            .start_file("assets/payload.txt", options)
+            .expect("asset entry should start");
+        writer
+            .write_all(asset_payload)
+            .expect("asset entry should write");
+        writer.finish().expect("ToolPkg zip should finish");
+        source_bytes
+    }
+
+    /// Builds a standalone JavaScript package before publish-time AST minification.
+    fn build_standalone_js_bytes() -> Vec<u8> {
+        br#"/* METADATA
+{
+  name: standalone_market_flow
+  displayName: Standalone Market Flow
+  tools: [
+    {
+      name: inspect
+      description: Inspect protected standalone flow
+      parameters: [
+        { name: text, description: Text to echo, type: string, required: true }
+      ]
+    }
+  ]
+}
+*/"use strict";exports.inspect=function(t){return"standalone-protected:"+t.text};"#
+            .to_vec()
+    }
+
+    /// Loads a downloaded ToolPkg through the standard external-file path.
+    fn load_downloaded_toolpkg(downloaded_bytes: Vec<u8>) -> ToolPkgLoadResult {
+        let source_path = "/marketplace/downloaded/market_flow_toolpkg.toolpkg";
+        let host = DownloadedToolPkgFileSystemHost::new(source_path, downloaded_bytes);
+        let registration_engine = JsEngine::new(Arc::new(TestJsExecutionHost));
+        let load_errors = Mutex::new(Vec::<String>::new());
+        let load_result = ToolPkgLoader::loadToolPkgFromExternalFile(
+            &host,
+            source_path,
+            &registration_engine,
+            |package_name, error| {
+                load_errors
+                    .lock()
+                    .expect("load error mutex poisoned")
+                    .push(format!("{package_name}: {error}"));
+            },
+        )
+        .expect("installed market ToolPkg should load");
+        let load_errors = load_errors.lock().expect("load error mutex poisoned");
+        assert!(
+            load_errors.is_empty(),
+            "downloaded external ToolPkg reported load errors: {load_errors:?}"
+        );
+        load_result
+    }
+
+    /// Loads downloaded standalone JavaScript bytes through the SDK package loader.
+    fn load_downloaded_standalone_js(downloaded_bytes: Vec<u8>) -> ToolPackage {
+        let source_path = "/marketplace/downloaded/standalone_market_flow.js";
+        let host = DownloadedStandaloneJsFileSystemHost::new(source_path, downloaded_bytes);
+        JsPackageLoader::load_from_file(&host, source_path)
+            .expect("downloaded external standalone JavaScript should load")
+    }
+
+    #[derive(Clone, Copy)]
     struct TestPackageStateResolver;
 
     impl PackageStateResolver for TestPackageStateResolver {
@@ -554,13 +1119,28 @@ mod tests {
 
     impl TestPackageRuntime {
         /// Creates a pure SDK package runtime from one ToolPkg load result.
-        fn new(loadResult: ToolPkgLoadResult) -> Arc<Self> {
+        fn new(load_result: ToolPkgLoadResult) -> Arc<Self> {
             let mut package_manager = PluginPackageManager::new(
                 Arc::new(TestExecutionEngineFactory),
                 Arc::new(TestToolPkgAssetSource),
+                Arc::new(RejectingFileSystemHost),
                 Arc::new(TestPackageStateResolver),
             );
-            assert!(package_manager.registerToolPkg(loadResult));
+            assert!(package_manager.registerToolPkg(load_result));
+            Arc::new(Self {
+                package_manager: Mutex::new(package_manager),
+            })
+        }
+
+        /// Creates a pure SDK package runtime from one standalone JavaScript package.
+        fn new_with_package(package: ToolPackage) -> Arc<Self> {
+            let mut package_manager = PluginPackageManager::new(
+                Arc::new(TestExecutionEngineFactory),
+                Arc::new(TestToolPkgAssetSource),
+                Arc::new(RejectingFileSystemHost),
+                Arc::new(TestPackageStateResolver),
+            );
+            package_manager.registerPackage(package);
             Arc::new(Self {
                 package_manager: Mutex::new(package_manager),
             })
@@ -616,7 +1196,8 @@ mod tests {
     }
 
     fn toolpkg_manager(script: &str) -> (JsToolManager, Arc<TestPackageRuntime>) {
-        let loadResult = ToolPkgLoadResult {
+        register_test_runtime_storage("js-tool-manager-tests");
+        let load_result = ToolPkgLoadResult {
             containerPackage: ToolPackage {
                 name: "test_toolpkg".to_string(),
                 ..ToolPackage::default()
@@ -645,10 +1226,114 @@ mod tests {
                 ..ToolPkgContainerRuntime::default()
             },
         };
-        let packageRuntime = TestPackageRuntime::new(loadResult);
-        let manager =
-            JsToolManager::new(packageRuntime.clone(), Arc::new(TestExecutionEngineFactory));
-        (manager, packageRuntime)
+        let package_runtime = TestPackageRuntime::new(load_result);
+        let manager = JsToolManager::new(
+            package_runtime.clone(),
+            Arc::new(TestExecutionEngineFactory),
+        );
+        (manager, package_runtime)
+    }
+
+    #[test]
+    /// Verifies a minified ToolPkg downloads through the standard external path and executes.
+    fn minified_toolpkg_download_executes_registered_tool() {
+        register_test_runtime_storage("js-tool-manager-marketplace-flow");
+        let upload_source_bytes = build_toolpkg_bytes();
+        let upload_subpackage_bytes = read_zip_entry_bytes(&upload_source_bytes, "dist/sub.js");
+        let upload_asset_bytes = read_zip_entry_bytes(&upload_source_bytes, "assets/payload.txt");
+        assert!(contains_bytes(&upload_subpackage_bytes, b"protected-flow:"));
+        assert!(contains_bytes(&upload_asset_bytes, b"asset-secret-value"));
+
+        let downloaded_bytes = ToolPkgProtection::protectArtifactBytes(&upload_source_bytes, true)
+            .expect("ToolPkg upload bytes should be minified");
+        assert!(downloaded_bytes.starts_with(b"PK"));
+        assert!(!ToolPkgProtection::isMarketArchive(&downloaded_bytes));
+
+        let manifest_bytes = read_zip_entry_bytes(&downloaded_bytes, "manifest.json");
+        let main_bytes = read_zip_entry_bytes(&downloaded_bytes, "dist/main.js");
+        let subpackage_bytes = read_zip_entry_bytes(&downloaded_bytes, "dist/sub.js");
+        let asset_bytes = read_zip_entry_bytes(&downloaded_bytes, "assets/payload.txt");
+        assert!(contains_bytes(&manifest_bytes, b"market_flow_toolpkg"));
+        assert!(!contains_bytes(&manifest_bytes, b"market_only"));
+        assert!(contains_bytes(
+            &main_bytes,
+            b"exports.registerToolPkg=function"
+        ));
+        assert!(subpackage_bytes.starts_with(b"/* METADATA"));
+        assert!(contains_bytes(
+            &subpackage_bytes,
+            b"name: market_flow_sub_source"
+        ));
+        assert!(contains_bytes(
+            &subpackage_bytes,
+            b"exports.inspect=function(t){return\"protected-flow:\""
+        ));
+        assert_eq!(asset_bytes, b"asset-secret-value");
+
+        let load_result = load_downloaded_toolpkg(downloaded_bytes);
+        assert_eq!(
+            load_result.containerRuntime.sourceType,
+            ToolPkgSourceType::EXTERNAL
+        );
+        assert_eq!(
+            load_result.containerRuntime.sourcePath,
+            "/marketplace/downloaded/market_flow_toolpkg.toolpkg"
+        );
+        assert_eq!(load_result.subpackagePackages.len(), 1);
+        assert_eq!(load_result.subpackagePackages[0].name, "market_flow_sub");
+        assert_eq!(load_result.subpackagePackages[0].tools.len(), 1);
+        assert_eq!(load_result.subpackagePackages[0].tools[0].name, "inspect");
+
+        let package_runtime = TestPackageRuntime::new(load_result);
+        let manager = JsToolManager::new(package_runtime, Arc::new(TestExecutionEngineFactory));
+        let params = BTreeMap::from([("text".to_string(), "downloaded".to_string())]);
+        let output = expect_js_output(
+            manager.executeScriptByName("market_flow_sub.inspect", params),
+            "minified ToolPkg download execution",
+        );
+
+        assert_eq!(
+            output,
+            "\"protected-flow:downloaded|market_flow_sub|dist/sub.js\""
+        );
+    }
+
+    #[test]
+    /// Verifies a minified standalone script downloads and executes without encryption.
+    fn minified_standalone_download_executes_registered_tool() {
+        register_test_runtime_storage("js-tool-manager-standalone-marketplace-flow");
+        let upload_source_bytes = build_standalone_js_bytes();
+        assert!(contains_bytes(
+            &upload_source_bytes,
+            b"standalone-protected:"
+        ));
+
+        let downloaded_bytes = ToolPkgProtection::protectArtifactBytes(&upload_source_bytes, false)
+            .expect("standalone upload bytes should be minified");
+        assert!(!ToolPkgProtection::isProtected(&downloaded_bytes));
+        let minified_script = String::from_utf8(downloaded_bytes.clone())
+            .expect("minified standalone script should be UTF-8");
+        assert!(minified_script.starts_with("/* METADATA"));
+        assert!(minified_script.contains("name: standalone_market_flow"));
+        assert!(
+            minified_script.contains("exports.inspect=function(t){return\"standalone-protected:\"")
+        );
+
+        let package = load_downloaded_standalone_js(downloaded_bytes);
+        assert_eq!(package.name, "standalone_market_flow");
+        assert_eq!(package.tools.len(), 1);
+        assert_eq!(package.tools[0].name, "inspect");
+        assert!(package.tools[0].script.contains("standalone-protected:"));
+
+        let package_runtime = TestPackageRuntime::new_with_package(package);
+        let manager = JsToolManager::new(package_runtime, Arc::new(TestExecutionEngineFactory));
+        let params = BTreeMap::from([("text".to_string(), "downloaded".to_string())]);
+        let output = expect_js_output(
+            manager.executeScriptByName("standalone_market_flow.inspect", params),
+            "minified standalone download execution",
+        );
+
+        assert_eq!(output, "\"standalone-protected:downloaded\"");
     }
 
     #[test]
@@ -667,7 +1352,10 @@ mod tests {
         "#;
         let (manager, _) = toolpkg_manager(script);
 
-        let output = manager.executeScriptByName("test_toolpkg_sub.inspect", BTreeMap::new());
+        let output = expect_js_output(
+            manager.executeScriptByName("test_toolpkg_sub.inspect", BTreeMap::new()),
+            "subpackage runtime params execution",
+        );
 
         assert_eq!(
             output,
@@ -682,33 +1370,37 @@ mod tests {
                 return globalThis.__toolpkg_engine_marker;
             };
         "#;
-        let (manager, packageRuntime) = toolpkg_manager(script);
+        let (manager, package_runtime) = toolpkg_manager(script);
         let engine =
-            packageRuntime.toolpkg_execution_engine("toolpkg_main:test_toolpkg", "test_toolpkg");
-        let seedScript = r#"
+            package_runtime.toolpkg_execution_engine("toolpkg_main:test_toolpkg", "test_toolpkg");
+        let seed_script = r#"
             exports.seed = function(_params) {
                 globalThis.__toolpkg_engine_marker = "same-engine";
                 return "ok";
             };
         "#;
-        let seedParams = BTreeMap::from([(
+        let seed_params = BTreeMap::from([(
             "__operit_package_lang".to_string(),
             Value::String("en".to_string()),
         )]);
-        let seedOutput = engine.execute_script_function(
-            seedScript,
+        let seed_output = engine.execute_script_function(
+            seed_script,
             "seed",
-            &seedParams,
+            &seed_params,
             &BTreeMap::new(),
             None,
             true,
             60,
         );
 
-        assert_eq!(seedOutput.as_deref(), Some("\"ok\""));
         assert_eq!(
-            manager.executeScriptByName("test_toolpkg_sub.inspect", BTreeMap::new()),
-            "\"same-engine\""
+            expect_js_output(seed_output, "ToolPkg main engine seed execution"),
+            "\"ok\""
         );
+        let output = expect_js_output(
+            manager.executeScriptByName("test_toolpkg_sub.inspect", BTreeMap::new()),
+            "subpackage shared-engine execution",
+        );
+        assert_eq!(output, "\"same-engine\"");
     }
 }

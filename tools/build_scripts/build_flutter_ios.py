@@ -24,6 +24,9 @@ from prepare_apple_sherpa import prepare_apple_sherpa
 
 IOS_RELEASE_APP_DIR = FLUTTER_APP_DIR / "build" / "ios" / "iphoneos" / "Runner.app"
 IOS_ARCHIVE_PATH = DIST_DIR / "operit2-app-ios-arm64.zip"
+IOS_RUNTIME_PREPARE_SCRIPT = (
+    Path(__file__).resolve().parents[1] / "ios-runtime" / "prepare.py"
+)
 
 
 # Packages the unsigned iOS app bundle produced by Flutter.
@@ -37,6 +40,11 @@ def package_ios_app(archive_path: Path) -> Path:
     if not archive_path.is_file() or archive_path.stat().st_size == 0:
         raise RuntimeError(f"iOS archive was not produced: {archive_path}")
     return archive_path
+
+
+# Invokes the dedicated iOS embedded-runtime preparation tool.
+def prepare_ios_runtime() -> None:
+    run([sys.executable, str(IOS_RUNTIME_PREPARE_SCRIPT)])
 
 
 # Parses command-line options for the unsigned iOS Flutter build.
@@ -56,6 +64,7 @@ def main() -> int:
     args = parse_args()
     prepare_web_access_embedded_assets()
     prepare_apple_sherpa()
+    prepare_ios_runtime()
     os.environ.setdefault("RUSTFLAGS", "-Awarnings")
     typescript_version = os.environ.get("TYPESCRIPT_VERSION", "5.9.3")
 

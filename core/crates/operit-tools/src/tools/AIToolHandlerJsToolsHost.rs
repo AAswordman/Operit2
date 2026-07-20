@@ -270,6 +270,7 @@ fn invoke_terminal_streaming(
     Box::pin(async move {
         let results = host
             .executeToolSafelyWithResolvedExecutor(&tool)
+            .await
             .ok_or_else(|| JsHostError::new("Terminal streaming tool is not registered"))?;
         let mut final_result = None;
         for result in results {

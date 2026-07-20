@@ -8,10 +8,10 @@ use std::sync::{Condvar, Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use operit_host_api::HostManager::HostManager;
+use operit_host_api::HostManager::{defaultHostRuntimeTaskSchedulerHost, HostManager};
 use operit_host_api::TimeUtils::tryCurrentTimeMillisU128;
 use operit_util::stream::Stream::{CollectFuture, Stream};
-use tokio::sync::Notify;
+use tokio::sync::{oneshot, Notify};
 
 tokio::task_local! {
     static RUNTIME_HOST_INTERACTION_ORIGIN: RuntimeHostInteractionRequestOrigin;
@@ -745,10 +745,7 @@ impl Stream for RuntimeHostInteractionEventStream {
     type Item = RuntimeHostInteractionRequest;
 
     /// Collects matching pending interactions in broker insertion order.
-    fn collect<'a>(
-        &'a mut self,
-        collector: &'a mut dyn FnMut(Self::Item),
-    ) -> CollectFuture<'a> {
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         Box::pin(async move {
             let broker = runtimeHostInteractionBroker();
             let mut delivered = BTreeSet::<String>::new();
@@ -1043,16 +1040,18 @@ pub fn requestOwnerLocalInference(
         .ok_or_else(|| "local inference response payload is missing".to_string())
 }
 
-/// Requests a tool permission decision from the active controller.
-pub fn requestOwnerToolPermission(
+/// Requests a tool permission decision without blocking the active runtime task.
+pub async fn requestOwnerToolPermissionAsync(
     payload: RuntimeHostInteractionToolPermissionPayload,
     timeout: Duration,
 ) -> Result<RuntimeHostInteractionToolPermissionResponse, String> {
-    let response = runtimeHostInteractionBroker().request(
-        RuntimeHostInteractionTarget::Controller(currentRuntimeHostInteractionOrigin()),
-        RuntimeHostInteractionRequest::toolPermission(payload),
-        timeout,
-    )?;
+    let response = runtimeHostInteractionBroker()
+        .requestAsync(
+            RuntimeHostInteractionTarget::Controller(currentRuntimeHostInteractionOrigin()),
+            RuntimeHostInteractionRequest::toolPermission(payload),
+            timeout,
+        )
+        .await?;
     response
         .toolPermission
         .ok_or_else(|| "tool permission response payload is missing".to_string())
@@ -1151,6 +1150,86 @@ impl RuntimeHostInteractionBroker {
                 .wait_timeout(state, wait)
                 .map_err(|error| format!("host interaction mutex poisoned: {error}"))?;
             state = nextState;
+        }
+    }
+
+    /// Enqueues one interaction and asynchronously waits for its response or timeout.
+    async fn requestAsync(
+        &self,
+        target: RuntimeHostInteractionTarget,
+        request: RuntimeHostInteractionRequest,
+        timeout: Duration,
+    ) -> Result<RuntimeHostInteractionResponse, String> {
+        let requestId = request.requestId.clone();
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|error| format!("host interaction mutex poisoned: {error}"))?;
+            let sequence = state.nextSequence;
+            state.nextSequence = state.nextSequence.wrapping_add(1);
+            state.pending.insert(
+                requestId.clone(),
+                RuntimeHostInteractionPending {
+                    target,
+                    request,
+                    sequence,
+                },
+            );
+        }
+        self.notifyChanged();
+
+        let timeoutMillis = u64::try_from(timeout.as_millis())
+            .map_err(|_| "host interaction timeout exceeds u64 milliseconds")?;
+        let (timeoutSender, mut timeoutReceiver) = oneshot::channel();
+        defaultHostRuntimeTaskSchedulerHost()
+            .scheduleDelayedHostRuntimeTask(
+                "runtime-host-interaction-timeout",
+                timeoutMillis,
+                Box::new(move || {
+                    let _ = timeoutSender.send(());
+                }),
+            )
+            .map_err(|error| error.message)?;
+
+        loop {
+            let changed = self.asyncChanged.notified();
+            {
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|error| format!("host interaction mutex poisoned: {error}"))?;
+                if let Some(response) = state.responses.remove(&requestId) {
+                    state.pending.remove(&requestId);
+                    self.notifyChanged();
+                    if let Some(error) = response.error.as_ref() {
+                        return Err(error.clone());
+                    }
+                    return Ok(response);
+                }
+            }
+
+            tokio::select! {
+                _ = changed => {}
+                timeout = &mut timeoutReceiver => {
+                    timeout.map_err(|_| "host interaction timeout task was cancelled".to_string())?;
+                    let mut state = self
+                        .state
+                        .lock()
+                        .map_err(|error| format!("host interaction mutex poisoned: {error}"))?;
+                    if let Some(response) = state.responses.remove(&requestId) {
+                        state.pending.remove(&requestId);
+                        self.notifyChanged();
+                        if let Some(error) = response.error.as_ref() {
+                            return Err(error.clone());
+                        }
+                        return Ok(response);
+                    }
+                    state.pending.remove(&requestId);
+                    self.notifyChanged();
+                    return Err(format!("host interaction timed out: {requestId}"));
+                }
+            }
         }
     }
 

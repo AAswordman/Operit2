@@ -26,16 +26,16 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use operit_link::{CoreLinkClient, CoreLinkTransportClient};
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+use operit_host_api::{HostRuntimeTaskSchedulerHost, RuntimeStorageHost};
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError, CorePushItem,
     CorePushRequest, CoreWatchRequest,
 };
+use operit_link::{CoreLinkClient, CoreLinkTransportClient};
 use operit_runtime::services::RuntimeHostInteractionService::{
     withRuntimeHostInteractionOrigin, RuntimeHostInteractionRequestOrigin,
 };
-use operit_host_api::{HostRuntimeTaskSchedulerHost, RuntimeStorageHost};
-use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 type HmacSha256 = Hmac<Sha256>;
 pub const REMOTE_PAIRING_SERVICE_VERSION: i32 = 1;
 
@@ -201,7 +201,10 @@ impl LinkAccessStore {
 
     /// Reads an initialized JSON record from runtime storage.
     fn readJson<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, String> {
-        let bytes = self.storage.readBytes(path).map_err(|error| error.message)?;
+        let bytes = self
+            .storage
+            .readBytes(path)
+            .map_err(|error| error.message)?;
         serde_json::from_slice(&bytes).map_err(|error| error.to_string())
     }
 
@@ -223,7 +226,9 @@ impl LinkAccessStore {
     /// Writes a JSON record into runtime storage.
     fn writeJson<T: Serialize>(&self, path: &str, value: &T) -> Result<(), String> {
         let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
-        self.storage.writeBytes(path, &bytes).map_err(|error| error.message)
+        self.storage
+            .writeBytes(path, &bytes)
+            .map_err(|error| error.message)
     }
 }
 
@@ -273,9 +278,9 @@ impl CoreLinkTransportClient for SharedAccessCoreClient {
         ) {
             return CoreCallResponse::err(requestId, CoreLinkError::internal(error.to_string()));
         }
-        receiver
-            .await
-            .unwrap_or_else(|error| CoreCallResponse::err(requestId, CoreLinkError::internal(error.to_string())))
+        receiver.await.unwrap_or_else(|error| {
+            CoreCallResponse::err(requestId, CoreLinkError::internal(error.to_string()))
+        })
     }
 
     #[allow(non_snake_case)]
@@ -365,8 +370,8 @@ impl RemoteDeviceInfo {
     /// Describes the local CLI device with its runtime role.
     #[allow(non_snake_case)]
     pub fn nativeCli(role: &str) -> Result<Self, String> {
-        let hostname = std::env::var("HOSTNAME")
-            .map_err(|error| format!("HOSTNAME unavailable: {error}"))?;
+        let hostname =
+            std::env::var("HOSTNAME").map_err(|error| format!("HOSTNAME unavailable: {error}"))?;
         let hostname = hostname.trim();
         if hostname.is_empty() {
             return Err("HOSTNAME is empty".to_string());
@@ -1284,7 +1289,10 @@ async fn pair_finish(
         pairingServiceVersion: pairing.pairingServiceVersion,
         sessionSecret: BASE64.encode(sessionSecret.as_slice()),
     };
-    if let Err(error) = state.accessStore.saveInboundSession(sessionId.clone(), record) {
+    if let Err(error) = state
+        .accessStore
+        .saveInboundSession(sessionId.clone(), record)
+    {
         return internal_server_error(error);
     }
     if let Err(error) = state.accessStore.removePendingPairing(&request.pairingId) {
@@ -1919,6 +1927,9 @@ fn serve_web_access_file(webAccess: &RemoteWebAccessState, path: &str) -> Respon
     }
     Response::builder()
         .header("content-type", contentType)
+        .header("cross-origin-opener-policy", "same-origin")
+        .header("cross-origin-embedder-policy", "require-corp")
+        .header("cross-origin-resource-policy", "same-origin")
         .body(Body::from(bytes))
         .expect("web asset response must build")
 }

@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'dart:convert';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
@@ -16,8 +15,9 @@ import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
 
 const String _forgeRepoName = 'OperitForge';
-const String _artifactProtectionId = 'operit-protected-v1';
 const List<String> _artifactMarketTypes = <String>['script', 'package'];
+
+enum _ArtifactPublishAssetSource { directUpload, githubReleaseAsset }
 
 class ArtifactPublishScreen extends StatefulWidget {
   const ArtifactPublishScreen({
@@ -56,14 +56,23 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
   final TextEditingController _versionController = TextEditingController();
   final TextEditingController _minVersionController = TextEditingController();
   final TextEditingController _maxVersionController = TextEditingController();
+  final TextEditingController _githubRepositoryController =
+      TextEditingController();
 
   bool _loading = true;
   bool _publishing = false;
   bool _retryingMarketRegistration = false;
   bool _allowPublicUpdates = true;
-  bool _encryptArtifact = false;
+  bool _minifyArtifact = false;
+  bool _loadingGitHubReleaseCatalog = false;
   String? _errorMessage;
   String? _progressMessage;
+  String? _githubReleaseCatalogError;
+  String? _selectedGitHubReleaseTag;
+  String? _selectedGitHubReleaseAssetName;
+  _ArtifactPublishAssetSource _assetSource =
+      _ArtifactPublishAssetSource.directUpload;
+  _GitHubReleaseCatalog? _githubReleaseCatalog;
   ArtifactPublishClusterContext? _publishContext;
   _PendingMarketRegistration? _pendingMarketRegistration;
   List<core_proxy.MarketCategoryInfo> _categories =
@@ -88,6 +97,7 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
     _versionController.dispose();
     _minVersionController.dispose();
     _maxVersionController.dispose();
+    _githubRepositoryController.dispose();
     super.dispose();
   }
 
@@ -159,9 +169,71 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
     });
   }
 
+  /// Loads selectable releases from the author-maintained GitHub repository.
+  Future<void> _loadGitHubReleaseCatalog() async {
+    final repositoryUrl = _githubRepositoryController.text.trim();
+    setState(() {
+      _loadingGitHubReleaseCatalog = true;
+      _githubReleaseCatalogError = null;
+      _githubReleaseCatalog = null;
+      _selectedGitHubReleaseTag = null;
+      _selectedGitHubReleaseAssetName = null;
+    });
+    try {
+      final catalog = await _loadGitHubReleaseCatalogFromRepository(
+        clients: widget.clients,
+        repositoryUrl: repositoryUrl,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _githubReleaseCatalog = catalog;
+        _loadingGitHubReleaseCatalog = false;
+      });
+    } catch (error, stackTrace) {
+      debugPrint('Failed to load GitHub release catalog: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _githubReleaseCatalogError = error.toString();
+        _loadingGitHubReleaseCatalog = false;
+      });
+    }
+  }
+
+  /// Resolves the selected resource source into the immutable publish reference.
+  _PublishArtifactSource? _selectedPublishAssetSource() {
+    if (_assetSource == _ArtifactPublishAssetSource.directUpload) {
+      return _DirectUploadArtifactSource(minifyArtifact: _minifyArtifact);
+    }
+    final catalog = _githubReleaseCatalog;
+    final selectedReleaseTag = _selectedGitHubReleaseTag;
+    final selectedAssetName = _selectedGitHubReleaseAssetName;
+    if (catalog == null ||
+        selectedReleaseTag == null ||
+        selectedAssetName == null) {
+      return null;
+    }
+    return _GitHubReleaseArtifactSource(
+      owner: catalog.repository.owner,
+      repository: catalog.repository.repository,
+      releaseTag: selectedReleaseTag,
+      assetName: selectedAssetName,
+    );
+  }
+
   Future<void> _publish({required bool allowCreateForgeRepo}) async {
     final source = _selectedSource;
     if (source == null || _publishing) {
+      return;
+    }
+    final publishAssetSource = _selectedPublishAssetSource();
+    if (publishAssetSource == null) {
+      setState(() {
+        _errorMessage = '请选择 GitHub Release 及其资源文件。';
+      });
       return;
     }
     setState(() {
@@ -179,7 +251,7 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
         detail: _detailController.text,
         categoryId: _selectedCategoryId ?? '',
         allowPublicUpdates: _allowPublicUpdates,
-        encryptArtifact: _encryptArtifact,
+        publishAssetSource: publishAssetSource,
         version: _versionController.text,
         minSupportedAppVersion: _minVersionController.text,
         maxSupportedAppVersion: _maxVersionController.text,
@@ -347,6 +419,11 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
     final publishContext = _publishContext;
     final isContinuationMode = publishContext != null;
     final lockedDisplayName = publishContext?.lockedDisplayName.trim() ?? '';
+    final githubReleaseCatalog = _githubReleaseCatalog;
+    final selectedGitHubRelease = _findGitHubRelease(
+      githubReleaseCatalog?.releases ?? const <_GitHubReleaseInfo>[],
+      _selectedGitHubReleaseTag,
+    );
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
@@ -425,6 +502,145 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                       },
               ),
               const SizedBox(height: 12),
+              Text('发布资源来源', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 8),
+              SegmentedButton<_ArtifactPublishAssetSource>(
+                segments: const <ButtonSegment<_ArtifactPublishAssetSource>>[
+                  ButtonSegment<_ArtifactPublishAssetSource>(
+                    value: _ArtifactPublishAssetSource.directUpload,
+                    icon: Icon(Icons.cloud_upload_outlined),
+                    label: Text('直接发布本地插件'),
+                  ),
+                  ButtonSegment<_ArtifactPublishAssetSource>(
+                    value: _ArtifactPublishAssetSource.githubReleaseAsset,
+                    icon: Icon(Icons.link_outlined),
+                    label: Text('引用 GitHub Release 资产'),
+                  ),
+                ],
+                selected: <_ArtifactPublishAssetSource>{_assetSource},
+                onSelectionChanged: _publishing
+                    ? null
+                    : (selected) {
+                        setState(() {
+                          _assetSource = selected.single;
+                          _errorMessage = null;
+                        });
+                      },
+              ),
+              if (_assetSource ==
+                  _ArtifactPublishAssetSource.githubReleaseAsset) ...<Widget>[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _githubRepositoryController,
+                  enabled: !_publishing,
+                  keyboardType: TextInputType.url,
+                  decoration: const InputDecoration(
+                    labelText: 'GitHub 仓库链接',
+                    hintText: 'https://github.com/owner/repository',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (_) {
+                    setState(() {
+                      _githubReleaseCatalog = null;
+                      _githubReleaseCatalogError = null;
+                      _selectedGitHubReleaseTag = null;
+                      _selectedGitHubReleaseAssetName = null;
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _publishing || _loadingGitHubReleaseCatalog
+                      ? null
+                      : _loadGitHubReleaseCatalog,
+                  icon: _loadingGitHubReleaseCatalog
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh),
+                  label: Text(
+                    _loadingGitHubReleaseCatalog
+                        ? '正在读取 Release'
+                        : '读取 Release',
+                  ),
+                ),
+                if (_githubReleaseCatalogError != null) ...<Widget>[
+                  const SizedBox(height: 8),
+                  Text(
+                    _githubReleaseCatalogError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+                if (githubReleaseCatalog != null) ...<Widget>[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    key: ValueKey<String?>(_selectedGitHubReleaseTag),
+                    initialValue: _selectedGitHubReleaseTag,
+                    isExpanded: true,
+                    style: OperitFormStyles.dropdownTextStyle(context),
+                    decoration: const InputDecoration(
+                      labelText: 'GitHub Release',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: githubReleaseCatalog.releases
+                        .map(
+                          (release) => DropdownMenuItem<String>(
+                            value: release.tagName,
+                            child: Text(
+                              release.name == null || release.name!.isEmpty
+                                  ? release.tagName
+                                  : '${release.name!} · ${release.tagName}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: _publishing
+                        ? null
+                        : (value) {
+                            setState(() {
+                              _selectedGitHubReleaseTag = value;
+                              _selectedGitHubReleaseAssetName = null;
+                            });
+                          },
+                  ),
+                ],
+                if (selectedGitHubRelease != null) ...<Widget>[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    key: ValueKey<String?>(_selectedGitHubReleaseAssetName),
+                    initialValue: _selectedGitHubReleaseAssetName,
+                    isExpanded: true,
+                    style: OperitFormStyles.dropdownTextStyle(context),
+                    decoration: const InputDecoration(
+                      labelText: 'Release 资产',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: selectedGitHubRelease.assets
+                        .map(
+                          (asset) => DropdownMenuItem<String>(
+                            value: asset.name,
+                            child: Text(
+                              asset.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: _publishing
+                        ? null
+                        : (value) {
+                            setState(() {
+                              _selectedGitHubReleaseAssetName = value;
+                            });
+                          },
+                  ),
+                ],
+              ],
+              const SizedBox(height: 12),
               TextField(
                 controller: _displayNameController,
                 enabled: !_publishing && lockedDisplayName.isEmpty,
@@ -497,21 +713,23 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                 subtitle: const Text('开启后，登录用户可为该插件提交新版本。'),
               ),
               const SizedBox(height: 12),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: _encryptArtifact,
-                onChanged: _publishing
-                    ? null
-                    : (value) {
-                        setState(() {
-                          _encryptArtifact = value;
-                        });
-                      },
-                title: const Text('保护插件文件'),
-                subtitle: const Text(
-                  '开启后上传受保护的 JS/ToolPkg；manifest.resources 下的网页资源保持明文。',
+              if (_assetSource ==
+                  _ArtifactPublishAssetSource.directUpload) ...<Widget>[
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _minifyArtifact,
+                  onChanged: _publishing
+                      ? null
+                      : (value) {
+                          setState(() {
+                            _minifyArtifact = value;
+                          });
+                        },
+                  title: const Text('压缩并混淆插件脚本'),
+                  subtitle: const Text('开启后会压缩可执行 JavaScript，产物仍可直接导入。'),
                 ),
-              ),
+              ],
               const SizedBox(height: 12),
               TextField(
                 controller: _versionController,
@@ -669,6 +887,50 @@ extension _PublishablePackageSourceArtifactType
   String get type => isToolPkg ? 'package' : 'script';
 }
 
+abstract class _PublishArtifactSource {
+  const _PublishArtifactSource();
+}
+
+class _DirectUploadArtifactSource extends _PublishArtifactSource {
+  const _DirectUploadArtifactSource({required this.minifyArtifact});
+
+  final bool minifyArtifact;
+}
+
+class _GitHubReleaseArtifactSource extends _PublishArtifactSource {
+  const _GitHubReleaseArtifactSource({
+    required this.owner,
+    required this.repository,
+    required this.releaseTag,
+    required this.assetName,
+  });
+
+  final String owner;
+  final String repository;
+  final String releaseTag;
+  final String assetName;
+}
+
+class _GitHubReleaseRepository {
+  const _GitHubReleaseRepository({
+    required this.owner,
+    required this.repository,
+  });
+
+  final String owner;
+  final String repository;
+}
+
+class _GitHubReleaseCatalog {
+  const _GitHubReleaseCatalog({
+    required this.repository,
+    required this.releases,
+  });
+
+  final _GitHubReleaseRepository repository;
+  final List<_GitHubReleaseInfo> releases;
+}
+
 class _ForgeRepoInfo {
   const _ForgeRepoInfo({
     required this.ownerLogin,
@@ -682,9 +944,16 @@ class _ForgeRepoInfo {
 }
 
 class _GitHubReleaseInfo {
-  const _GitHubReleaseInfo({required this.id, required this.assets});
+  const _GitHubReleaseInfo({
+    required this.id,
+    required this.tagName,
+    required this.name,
+    required this.assets,
+  });
 
   final int id;
+  final String tagName;
+  final String? name;
   final List<_GitHubReleaseAssetInfo> assets;
 }
 
@@ -706,6 +975,24 @@ class _GitHubReleaseAssetInfo {
   final int id;
   final String name;
   final String browserDownloadUrl;
+}
+
+class _ResolvedReleaseAsset {
+  const _ResolvedReleaseAsset({
+    required this.owner,
+    required this.repository,
+    required this.releaseTag,
+    required this.assetName,
+    required this.downloadUrl,
+    required this.sha256,
+  });
+
+  final String owner;
+  final String repository;
+  final String releaseTag;
+  final String assetName;
+  final String downloadUrl;
+  final String sha256;
 }
 
 class _PublishResult {
@@ -765,6 +1052,142 @@ _loadPublishablePackageSources(GeneratedCoreProxyClients clients) async {
   return clients.application.packageManager().getPublishablePackageSources();
 }
 
+/// Loads an author repository's releases and assets for market registration.
+Future<_GitHubReleaseCatalog> _loadGitHubReleaseCatalogFromRepository({
+  required GeneratedCoreProxyClients clients,
+  required String repositoryUrl,
+}) async {
+  final repository = _parseGitHubReleaseRepositoryUrl(repositoryUrl);
+  final response = await _githubJsonRequest(
+    clients: clients,
+    method: 'GET',
+    uri: Uri.https(
+      'api.github.com',
+      '/repos/${repository.owner}/${repository.repository}/releases',
+      <String, String>{'per_page': '100'},
+    ),
+  );
+  if (response is! List<Object?>) {
+    throw StateError('GitHub Release response is invalid.');
+  }
+  return _GitHubReleaseCatalog(
+    repository: repository,
+    releases: response
+        .map((item) => _releaseFromJson(item as Map<String, Object?>))
+        .toList(growable: false),
+  );
+}
+
+/// Reloads one selected release before registering its immutable asset.
+Future<_GitHubReleaseInfo> _loadGitHubReleaseByTag({
+  required GeneratedCoreProxyClients clients,
+  required String owner,
+  required String repository,
+  required String tagName,
+}) async {
+  final response = await _githubJsonRequest(
+    clients: clients,
+    method: 'GET',
+    uri: Uri.https(
+      'api.github.com',
+      '/repos/$owner/$repository/releases/tags/$tagName',
+    ),
+  );
+  return _releaseFromJson(response as Map<String, Object?>);
+}
+
+/// Downloads a selected GitHub asset so its digest can be compared to the local file.
+Future<Uint8List> _downloadGitHubReleaseAsset({
+  required GeneratedCoreProxyClients clients,
+  required _GitHubReleaseAssetInfo asset,
+}) async {
+  final response = await _githubHttpRequest(
+    clients: clients,
+    method: 'GET',
+    uri: Uri.parse(asset.browserDownloadUrl),
+  );
+  if (!_isSuccess(response.statusCode)) {
+    throw StateError(
+      'HTTP ${response.statusCode}: ${_summarizeHttpBody(response.body)}',
+    );
+  }
+  return Uint8List.fromList(response.bodyBytes);
+}
+
+/// Parses a canonical GitHub repository URL entered by the publisher.
+_GitHubReleaseRepository _parseGitHubReleaseRepositoryUrl(
+  String repositoryUrl,
+) {
+  final uri = Uri.tryParse(repositoryUrl.trim());
+  if (uri == null || uri.scheme.toLowerCase() != 'https') {
+    throw StateError('GitHub 仓库链接必须使用 HTTPS。');
+  }
+  if (uri.host.toLowerCase() != 'github.com' &&
+      uri.host.toLowerCase() != 'www.github.com') {
+    throw StateError('GitHub 仓库链接必须指向 github.com。');
+  }
+  final segments = uri.pathSegments
+      .where((segment) => segment.isNotEmpty)
+      .toList(growable: false);
+  if (segments.length < 2) {
+    throw StateError('GitHub 仓库链接必须包含 owner 和 repository。');
+  }
+  final owner = segments[0];
+  final repository = segments[1].endsWith('.git')
+      ? segments[1].substring(0, segments[1].length - 4)
+      : segments[1];
+  final segmentPattern = RegExp(r'^[A-Za-z0-9_.-]+$');
+  if (!segmentPattern.hasMatch(owner) || !segmentPattern.hasMatch(repository)) {
+    throw StateError('GitHub 仓库链接包含无效的 owner 或 repository。');
+  }
+  return _GitHubReleaseRepository(owner: owner, repository: repository);
+}
+
+/// Finds the release selected in the loaded repository catalog.
+_GitHubReleaseInfo? _findGitHubRelease(
+  List<_GitHubReleaseInfo> releases,
+  String? tagName,
+) {
+  if (tagName == null) {
+    return null;
+  }
+  for (final release in releases) {
+    if (release.tagName == tagName) {
+      return release;
+    }
+  }
+  return null;
+}
+
+/// Finds the asset selected from the loaded GitHub release.
+_GitHubReleaseAssetInfo? _findGitHubReleaseAsset(
+  List<_GitHubReleaseAssetInfo> assets,
+  String? assetName,
+) {
+  if (assetName == null) {
+    return null;
+  }
+  for (final asset in assets) {
+    if (asset.name == assetName) {
+      return asset;
+    }
+  }
+  return null;
+}
+
+/// Requires the named asset to remain present in the release reloaded for publishing.
+_GitHubReleaseAssetInfo _requireGitHubReleaseAsset({
+  required _GitHubReleaseInfo release,
+  required String assetName,
+}) {
+  final asset = _findGitHubReleaseAsset(release.assets, assetName);
+  if (asset == null) {
+    throw StateError('所选 GitHub Release 资产不存在。');
+  }
+  return asset;
+}
+
+/// Validates local publish metadata, resolves the selected resource, and registers it in the market.
 Future<_PublishResult> _publishArtifact({
   required GeneratedCoreProxyClients clients,
   required core_proxy.PublishablePackageSource source,
@@ -773,7 +1196,7 @@ Future<_PublishResult> _publishArtifact({
   required String detail,
   required String categoryId,
   required bool allowPublicUpdates,
-  required bool encryptArtifact,
+  required _PublishArtifactSource publishAssetSource,
   required String version,
   required String minSupportedAppVersion,
   required String maxSupportedAppVersion,
@@ -834,14 +1257,6 @@ Future<_PublishResult> _publishArtifact({
     }
   }
 
-  onProgress('正在准备 OperitForge');
-  final forgeRepo = await _ensureForgeRepository(
-    clients: clients,
-    publisherLogin: currentUser.login,
-    allowCreateForgeRepo: allowCreateForgeRepo,
-  );
-
-  final releaseNonce = _uuidV4().substring(0, 8);
   final resolvedDisplayName =
       publishContext?.lockedDisplayName.trim().isNotEmpty == true
       ? publishContext!.lockedDisplayName.trim()
@@ -852,75 +1267,113 @@ Future<_PublishResult> _publishArtifact({
   final extension = source.fileExtension.trim().isEmpty
       ? 'bin'
       : source.fileExtension.trim();
-  final assetName =
-      '$normalizedRuntimePackageId-v$cleanVersion-$releaseNonce.$extension';
-  final releaseTag =
-      '${_artifactReleaseTagPrefix(source.type)}-$normalizedRuntimePackageId-v$cleanVersion-$releaseNonce';
-  final releaseName = '$resolvedDisplayName v$cleanVersion';
-  final releaseBody = _buildReleaseBody(
-    type: source.type,
-    projectId: projectId,
-    runtimePackageId: source.packageName,
-    displayName: resolvedDisplayName,
-    version: cleanVersion,
-    minSupportedAppVersion: normalizedMinVersion,
-    maxSupportedAppVersion: normalizedMaxVersion,
-    protection: encryptArtifact ? _artifactProtectionId : null,
-  );
-
-  onProgress('正在创建 Release');
-  final release = await _createOrUpdateRelease(
-    clients: clients,
-    owner: currentUser.login,
-    repo: forgeRepo.repoName,
-    tagName: releaseTag,
-    name: releaseName,
-    body: releaseBody,
-  );
-
-  if (encryptArtifact) {
-    onProgress('正在保护插件文件');
+  late final _ResolvedReleaseAsset resolvedAsset;
+  if (publishAssetSource is _DirectUploadArtifactSource) {
+    onProgress('正在准备 OperitForge');
+    final forgeRepo = await _ensureForgeRepository(
+      clients: clients,
+      publisherLogin: currentUser.login,
+      allowCreateForgeRepo: allowCreateForgeRepo,
+    );
+    final assetName = '$normalizedRuntimePackageId-v$cleanVersion.$extension';
+    final releaseTag =
+        '${_artifactReleaseTagPrefix(source.type)}-$normalizedRuntimePackageId-v$cleanVersion';
+    onProgress('正在创建 Release');
+    final release = await _createOrUpdateRelease(
+      clients: clients,
+      owner: currentUser.login,
+      repo: forgeRepo.repoName,
+      tagName: releaseTag,
+      name: '$resolvedDisplayName v$cleanVersion',
+      body: _buildReleaseBody(
+        type: source.type,
+        projectId: projectId,
+        runtimePackageId: source.packageName,
+        displayName: resolvedDisplayName,
+        version: cleanVersion,
+        minSupportedAppVersion: normalizedMinVersion,
+        maxSupportedAppVersion: normalizedMaxVersion,
+      ),
+    );
+    if (publishAssetSource.minifyArtifact) {
+      onProgress('正在压缩插件脚本');
+    }
+    final Uint8List fileBytes = publishAssetSource.minifyArtifact
+        ? await clients.application.packageManager().protectArtifactFile(
+            sourcePath: source.sourcePath,
+            isToolPkg: source.isToolPkg,
+          )
+        : await XFile(source.sourcePath).readAsBytes();
+    onProgress('正在上传资源文件');
+    final asset = await _uploadReleaseAsset(
+      clients: clients,
+      owner: currentUser.login,
+      repo: forgeRepo.repoName,
+      release: release,
+      assetName: assetName,
+      contentType: _artifactContentType(source.type, extension),
+      content: fileBytes,
+    );
+    resolvedAsset = _ResolvedReleaseAsset(
+      owner: currentUser.login,
+      repository: forgeRepo.repoName,
+      releaseTag: releaseTag,
+      assetName: asset.name,
+      downloadUrl: asset.browserDownloadUrl,
+      sha256: crypto.sha256.convert(fileBytes).toString(),
+    );
+  } else if (publishAssetSource is _GitHubReleaseArtifactSource) {
+    onProgress('正在核对 GitHub Release 资产');
+    final release = await _loadGitHubReleaseByTag(
+      clients: clients,
+      owner: publishAssetSource.owner,
+      repository: publishAssetSource.repository,
+      tagName: publishAssetSource.releaseTag,
+    );
+    final asset = _requireGitHubReleaseAsset(
+      release: release,
+      assetName: publishAssetSource.assetName,
+    );
+    final remoteBytes = await _downloadGitHubReleaseAsset(
+      clients: clients,
+      asset: asset,
+    );
+    final localBytes = await XFile(source.sourcePath).readAsBytes();
+    final remoteSha256 = crypto.sha256.convert(remoteBytes).toString();
+    if (remoteSha256 != crypto.sha256.convert(localBytes).toString()) {
+      throw StateError('所选 GitHub Release 资产与本地插件文件不一致。');
+    }
+    resolvedAsset = _ResolvedReleaseAsset(
+      owner: publishAssetSource.owner,
+      repository: publishAssetSource.repository,
+      releaseTag: release.tagName,
+      assetName: asset.name,
+      downloadUrl: asset.browserDownloadUrl,
+      sha256: remoteSha256,
+    );
+  } else {
+    throw StateError('未知的发布资源来源。');
   }
-  final Uint8List fileBytes = encryptArtifact
-      ? await clients.application.packageManager().protectArtifactFile(
-          sourcePath: source.sourcePath,
-          isToolPkg: source.isToolPkg,
-        )
-      : await XFile(source.sourcePath).readAsBytes();
-  onProgress('正在上传资源文件');
-  final asset = await _uploadReleaseAsset(
-    clients: clients,
-    owner: currentUser.login,
-    repo: forgeRepo.repoName,
-    release: release,
-    assetName: assetName,
-    contentType: encryptArtifact && source.type == 'script'
-        ? 'application/octet-stream'
-        : _artifactContentType(source.type, extension),
-    content: fileBytes,
-  );
 
   final payload = <String, Object?>{
-    'type': source.type,
     'projectId': projectId,
     'detail': trimmedDetail,
     'categoryId': trimmedCategoryId,
     'allowPublicUpdates': allowPublicUpdates,
     'runtimePackageId': source.packageName,
     'publisherLogin': currentUser.login,
-    'releaseTag': releaseTag,
-    'assetName': asset.name,
-    'downloadUrl': asset.browserDownloadUrl,
-    'sha256': crypto.sha256.convert(fileBytes).toString(),
+    'releaseOwner': resolvedAsset.owner,
+    'releaseRepository': resolvedAsset.repository,
+    'releaseTag': resolvedAsset.releaseTag,
+    'assetName': resolvedAsset.assetName,
+    'downloadUrl': resolvedAsset.downloadUrl,
+    'sha256': resolvedAsset.sha256,
     'version': cleanVersion,
     'displayName': resolvedDisplayName,
     'description': trimmedDescription,
     'sourceFileName': source.sourceFileName,
     'minSupportedAppVersion': normalizedMinVersion,
     'maxSupportedAppVersion': normalizedMaxVersion,
-    'protection': encryptArtifact ? _artifactProtectionId : null,
-    'normalizedId': '',
-    'forgeRepo': forgeRepo.repoName,
   };
 
   onProgress('正在登记市场');
@@ -929,7 +1382,7 @@ Future<_PublishResult> _publishArtifact({
     projectId: projectId,
     entryId: '',
     versionId: '',
-    releaseTag: releaseTag,
+    releaseTag: resolvedAsset.releaseTag,
   );
   try {
     final response = await _registerMarketEntry(
@@ -944,7 +1397,7 @@ Future<_PublishResult> _publishArtifact({
       projectId: projectId,
       entryId: response.entryId,
       versionId: response.versionId,
-      releaseTag: releaseTag,
+      releaseTag: resolvedAsset.releaseTag,
     );
   } catch (error) {
     throw _RegistrationRetryRequired(
@@ -1135,6 +1588,7 @@ Future<_GitHubReleaseAssetInfo> _uploadReleaseAsset({
   );
 }
 
+/// Registers the resolved GitHub release asset as a new entry or version.
 Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
   required GeneratedCoreProxyClients clients,
   required String type,
@@ -1142,18 +1596,11 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
   required ArtifactPublishClusterContext? publishContext,
   required Map<String, Object?> payload,
 }) async {
-  final owner = payload['publisherLogin']?.toString() ?? '';
-  final repo = payload['forgeRepo']?.toString() ?? '';
+  final owner = payload['releaseOwner']?.toString() ?? '';
+  final repo = payload['releaseRepository']?.toString() ?? '';
   final releaseTag = payload['releaseTag']?.toString() ?? '';
   final assetName = payload['assetName']?.toString() ?? '';
   final sha256 = payload['sha256']?.toString() ?? '';
-  await clients.providersMarketStatsApiService.publishProof(
-    owner: owner,
-    repo: repo,
-    releaseTag: releaseTag,
-    assetName: assetName,
-    sha256: sha256,
-  );
   final description = payload['description']?.toString() ?? '';
   final detail = payload['detail']?.toString() ?? '';
   final categoryId = payload['categoryId']?.toString() ?? '';
@@ -1168,13 +1615,13 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
     return clients.providersMarketStatsApiService.publishArtifactVersion(
       entryId: publishContext.entryId,
       version: version,
-      formatVer: 'forge-v3',
+      formatVer: _artifactMarketFormatVersion(type),
       minAppVer: minAppVer,
       maxAppVer: maxAppVer,
       changelog: null,
       projectId: projectId,
       runtimePackageId: runtimePackageId,
-      assetKind: type,
+      assetKind: 'github_release_asset',
       assetUrl: assetUrl,
       ghOwner: owner,
       ghRepo: repo,
@@ -1198,13 +1645,13 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
     categoryId: categoryId,
     allowPublicUpdates: payload['allowPublicUpdates'] == true,
     version: version,
-    formatVer: 'forge-v3',
+    formatVer: _artifactMarketFormatVersion(type),
     minAppVer: minAppVer,
     maxAppVer: maxAppVer,
     changelog: null,
     projectId: projectId,
     runtimePackageId: runtimePackageId,
-    assetKind: type,
+    assetKind: 'github_release_asset',
     assetUrl: assetUrl,
     ghOwner: owner,
     ghRepo: repo,
@@ -1337,9 +1784,12 @@ Future<http.Response> _githubHttpRequest({
   return http.Response.fromStream(streamed);
 }
 
+/// Converts GitHub's release JSON response into the publish-screen model.
 _GitHubReleaseInfo _releaseFromJson(Map<String, Object?> json) {
   return _GitHubReleaseInfo(
     id: json['id'] as int,
+    tagName: json['tag_name'] as String,
+    name: json['name'] as String?,
     assets: (json['assets'] as List<Object?>)
         .map(
           (item) =>
@@ -1349,6 +1799,7 @@ _GitHubReleaseInfo _releaseFromJson(Map<String, Object?> json) {
   );
 }
 
+/// Builds the ordinary release notes for assets uploaded through OperitForge.
 String _buildReleaseBody({
   required String type,
   required String projectId,
@@ -1357,7 +1808,6 @@ String _buildReleaseBody({
   required String version,
   required String? minSupportedAppVersion,
   required String? maxSupportedAppVersion,
-  required String? protection,
 }) {
   final lines = <String>[
     '${_artifactTitleLabel(type)} artifact published by OperitForge.',
@@ -1366,8 +1816,6 @@ String _buildReleaseBody({
     'Runtime package ID: $runtimePackageId',
     'Display name: $displayName',
     'Version: $version',
-    if (protection != null && protection.trim().isNotEmpty)
-      'Protection: ${protection.trim()}',
     'Supported app versions: ${_formatSupportedAppVersions(minSupportedAppVersion, maxSupportedAppVersion)}',
     '',
   ];
@@ -1464,17 +1912,6 @@ String _normalizePublishTitle(String title) {
   return title.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
 }
 
-String _uuidV4() {
-  final random = Random.secure();
-  final bytes = List<int>.generate(16, (_) => random.nextInt(256));
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  final hex = bytes
-      .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
-      .join();
-  return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
-}
-
 bool _isSuccess(int statusCode) {
   return statusCode >= 200 && statusCode < 300;
 }
@@ -1504,6 +1941,11 @@ String _artifactTitleLabel(String type) {
 
 String _artifactReleaseTagPrefix(String type) {
   return type == 'package' ? 'package' : 'script';
+}
+
+/// Returns the marketplace format version required for each artifact type.
+String _artifactMarketFormatVersion(String type) {
+  return type == 'package' ? 'toolpkg_v2' : 'script_v2';
 }
 
 String _artifactContentType(String type, String extension) {

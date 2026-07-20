@@ -407,9 +407,11 @@ impl MessageCoordinationDelegate {
             return Err("Regenerated message stream is missing".to_string());
         };
         let mut content = String::new();
-        contentStream.collect(&mut |chunk| {
-            content.push_str(&chunk);
-        }).await;
+        contentStream
+            .collect(&mut |chunk| {
+                content.push_str(&chunk);
+            })
+            .await;
         variantMessage.content = content;
         variantMessage.contentStream = None;
         variantMessage.isVariantPreview = false;
@@ -975,11 +977,10 @@ impl MessageCoordinationDelegate {
         options.enableThinking = false;
         options.stream = false;
         let response = enhancedAiService.sendMessage(options).await.ok()?;
-        let rawContent = removeThinkingContent(
-            &collect_stream_chunks(Box::new(response)).await.join(""),
-        )
-            .trim()
-            .to_string();
+        let rawContent =
+            removeThinkingContent(&collect_stream_chunks(Box::new(response)).await.join(""))
+                .trim()
+                .to_string();
         self.parsePlannedRounds(
             &rawContent,
             members

@@ -2,7 +2,7 @@ use operit_host_api::{
     HostError, HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost,
 };
 use wasm_bindgen::closure::Closure;
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, JsValue};
 
 /// Schedules one-shot runtime tasks through the browser event queue.
 #[derive(Clone, Copy, Debug, Default)]
@@ -38,15 +38,20 @@ impl HostRuntimeTaskSchedulerHost for WebHostRuntimeTaskSchedulerHost {
         delayMs: u64,
         task: HostRuntimeTask,
     ) -> HostResult<()> {
-        let window =
-            web_sys::window().ok_or_else(|| HostError::new("browser window is unavailable"))?;
         let delayMs: i32 = delayMs
             .try_into()
             .map_err(|_| HostError::new("browser runtime task delay exceeds i32 milliseconds"))?;
         let callback = Closure::once_into_js(task);
         let function: &js_sys::Function = callback.unchecked_ref();
-        window
-            .set_timeout_with_callback_and_timeout_and_arguments_0(function, delayMs)
+        let global = js_sys::global();
+        let setTimeout = js_sys::Reflect::get(&global, &JsValue::from_str("setTimeout"))
+            .map_err(|error| {
+                HostError::new(format!("read browser runtime timer failed: {error:?}"))
+            })?
+            .dyn_into::<js_sys::Function>()
+            .map_err(|_| HostError::new("browser runtime timer is unavailable"))?;
+        setTimeout
+            .call2(&global, function, &JsValue::from_f64(f64::from(delayMs)))
             .map(|_| ())
             .map_err(|error| {
                 HostError::new(format!(

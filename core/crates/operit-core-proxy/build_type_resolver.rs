@@ -372,7 +372,7 @@ fn serializable_enum_type(
         .iter()
         .map(|variant| {
             let name = variant.ident.to_string();
-            let (fields_are_unnamed, fields_are_unit, fields) = match &variant.fields {
+            let (fields_are_unit, fields) = match &variant.fields {
                 Fields::Named(fields) => {
                     let fields = fields
                         .named
@@ -388,7 +388,7 @@ fn serializable_enum_type(
                             })
                         })
                         .collect::<Vec<_>>();
-                    (false, false, fields)
+                    (false, fields)
                 }
                 Fields::Unnamed(fields) => {
                     let fields = fields
@@ -408,13 +408,12 @@ fn serializable_enum_type(
                             }
                         })
                         .collect::<Vec<_>>();
-                    (true, false, fields)
+                    (false, fields)
                 }
-                Fields::Unit => (false, true, Vec::new()),
+                Fields::Unit => (true, Vec::new()),
             };
             SerializableEnumVariant {
                 json_name: serde_rename(&variant.attrs).unwrap_or_else(|| name.clone()),
-                fields_are_unnamed,
                 fields_are_unit,
                 fields,
                 name,
@@ -433,29 +432,16 @@ fn serializable_enum_type(
             },
         };
     }
-    let (tag_name, content_name, externally_tagged) = match serde_tag_content(&item_enum.attrs) {
-        Some((tag_name, content_name)) => (tag_name, content_name, false),
-        None => (
-            full_type.rsplit("::").next().unwrap_or("type").to_string(),
-            None,
-            true,
-        ),
-    };
+    let externally_tagged = serde_tag_content(&item_enum.attrs).is_none();
     SerializableType {
         full_type,
         supports_serialize: derives_serialize(&item_enum.attrs),
         supports_deserialize: derives_deserialize(&item_enum.attrs),
         kind: SerializableTypeKind::TaggedEnum {
-            tag_name,
-            content_name,
             externally_tagged,
             variants: mapped,
         },
     }
-}
-
-fn derives_serde_pair(attrs: &[syn::Attribute]) -> bool {
-    derives_serialize(attrs) && derives_deserialize(attrs)
 }
 
 fn derives_error(attrs: &[syn::Attribute]) -> bool {
@@ -567,15 +553,6 @@ impl TypeResolver {
         }
     }
 
-    pub(crate) fn default_from(_variants: &[&syn::Variant], _full_type: &str) -> Self {
-        Self {
-            names: HashMap::new(),
-            crate_name: String::new(),
-            serializable_types: HashSet::new(),
-            deserializable_types: HashSet::new(),
-            type_registry: TypeRegistry::default(),
-        }
-    }
 }
 
 fn collect_use_tree(
@@ -921,15 +898,6 @@ pub(crate) fn flow_inner(ty: &str) -> Option<&str> {
     single_generic_arg(ty, "Flow")
 }
 
-pub(crate) fn result_value_inner(ty: &str) -> Option<&str> {
-    let (value, _) = result_args(ty)?;
-    if value == "()" {
-        None
-    } else {
-        Some(value)
-    }
-}
-
 fn serde_tag_content(attrs: &[syn::Attribute]) -> Option<(String, Option<String>)> {
     for attr in attrs {
         if !attr.path().is_ident("serde") {
@@ -968,10 +936,6 @@ pub(crate) fn result_value_parts(ty: &str) -> Option<(&str, &str)> {
 pub(crate) fn result_unit_error_type(ty: &str) -> Option<&str> {
     let (value, error) = result_args(ty)?;
     (value == "()").then_some(error)
-}
-
-pub(crate) fn result_unit(ty: &str) -> bool {
-    result_unit_error_type(ty).is_some()
 }
 
 fn result_args(ty: &str) -> Option<(&str, &str)> {

@@ -40,14 +40,15 @@ use operit_plugin_sdk::execution_result::{
 };
 use operit_plugin_sdk::javascript::{
     JsExecutionEngine, JsExecutionHost, JsToolNameResolutionRequest, JsToolPkgIpcRequest,
-    JsToolPkgResourceRequest, ToolPkgMainRegistrationCapture,
+    JsToolPkgResourceRequest, JsToolPkgWasmArg, JsToolPkgWasmRequest,
+    ToolPkgMainRegistrationCapture,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgComposeDslRuntimeScript::buildComposeDslRuntimeWrappedScript;
 use operit_plugin_sdk::toolpkg::ToolPkgRegistrationBridge::buildToolPkgRegistrationBridgeScript;
 use operit_util::stream::Stream::{CollectFuture, Stream};
+use operit_util::AppLogger::AppLogger;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::mpsc as tokio_mpsc;
-use operit_util::AppLogger::AppLogger;
 
 const TAG: &str = "OperitQuickJsEngine";
 const TOOLPKG_SCRIPT_TIMEOUT_SECONDS: u64 = 60;
@@ -566,21 +567,47 @@ impl Stream for JsComposeDslActionEventStream {
     type Item = String;
 
     /// Collects Compose DSL action events without blocking the collector task.
-    fn collect<'a>(
-        &'a mut self,
-        collector: &'a mut dyn FnMut(Self::Item),
-    ) -> CollectFuture<'a> {
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         Box::pin(async move {
             #[cfg(not(target_arch = "wasm32"))]
             {
-            let engine = self.engine.clone();
-            let actionId = self.actionId.clone();
-            let payload = self.payload.clone();
-            let runtimeOptions = self.runtimeOptions.clone();
-            let envOverrides = self.envOverrides.clone();
-            let (sender, mut receiver) = tokio_mpsc::unbounded_channel::<String>();
-            std::thread::spawn(move || {
-                let intermediateSender = sender.clone();
+                let engine = self.engine.clone();
+                let actionId = self.actionId.clone();
+                let payload = self.payload.clone();
+                let runtimeOptions = self.runtimeOptions.clone();
+                let envOverrides = self.envOverrides.clone();
+                let (sender, mut receiver) = tokio_mpsc::unbounded_channel::<String>();
+                std::thread::spawn(move || {
+                    let intermediateSender = sender.clone();
+                    runComposeDslActionDispatch(
+                        engine,
+                        actionId,
+                        payload,
+                        runtimeOptions,
+                        envOverrides,
+                        Arc::new(move |event| {
+                            let _ = intermediateSender.send(event);
+                        }),
+                        move |event| {
+                            let _ = sender.send(event);
+                        },
+                    );
+                });
+                while let Some(event) = receiver.recv().await {
+                    collector(event);
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                let engine = self.engine.clone();
+                let actionId = self.actionId.clone();
+                let payload = self.payload.clone();
+                let runtimeOptions = self.runtimeOptions.clone();
+                let envOverrides = self.envOverrides.clone();
+                let intermediateEvents = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+                let intermediateEventsForCallback = intermediateEvents.clone();
+                let flushedIntermediateEvents = Arc::new(std::sync::Mutex::new(false));
+                let flushedIntermediateEventsForEmit = flushedIntermediateEvents.clone();
                 runComposeDslActionDispatch(
                     engine,
                     actionId,
@@ -588,53 +615,24 @@ impl Stream for JsComposeDslActionEventStream {
                     runtimeOptions,
                     envOverrides,
                     Arc::new(move |event| {
-                        let _ = intermediateSender.send(event);
+                        if let Ok(mut values) = intermediateEventsForCallback.lock() {
+                            values.push(event);
+                        }
                     }),
-                    move |event| {
-                        let _ = sender.send(event);
+                    |event| {
+                        if let Ok(mut flushed) = flushedIntermediateEventsForEmit.lock() {
+                            if !*flushed {
+                                if let Ok(values) = intermediateEvents.lock() {
+                                    for intermediate in values.iter() {
+                                        collector(intermediate.clone());
+                                    }
+                                }
+                                *flushed = true;
+                            }
+                        }
+                        collector(event);
                     },
                 );
-            });
-            while let Some(event) = receiver.recv().await {
-                collector(event);
-            }
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-            let engine = self.engine.clone();
-            let actionId = self.actionId.clone();
-            let payload = self.payload.clone();
-            let runtimeOptions = self.runtimeOptions.clone();
-            let envOverrides = self.envOverrides.clone();
-            let intermediateEvents = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-            let intermediateEventsForCallback = intermediateEvents.clone();
-            let flushedIntermediateEvents = Arc::new(std::sync::Mutex::new(false));
-            let flushedIntermediateEventsForEmit = flushedIntermediateEvents.clone();
-            runComposeDslActionDispatch(
-                engine,
-                actionId,
-                payload,
-                runtimeOptions,
-                envOverrides,
-                Arc::new(move |event| {
-                    if let Ok(mut values) = intermediateEventsForCallback.lock() {
-                        values.push(event);
-                    }
-                }),
-                |event| {
-                    if let Ok(mut flushed) = flushedIntermediateEventsForEmit.lock() {
-                        if !*flushed {
-                            if let Ok(values) = intermediateEvents.lock() {
-                                for intermediate in values.iter() {
-                                    collector(intermediate.clone());
-                                }
-                            }
-                            *flushed = true;
-                        }
-                    }
-                    collector(event);
-                },
-            );
             }
         })
     }
@@ -1240,6 +1238,20 @@ impl JsEngineState {
                     .set("__operitNativeReadToolPkgResource", readToolPkgResource)
                     .map_err(|error| error.to_string())?;
 
+                let callToolPkgWasm = QuickJsFunction::new(
+                    ctx.clone(),
+                    |packageTarget: String,
+                     moduleId: String,
+                     exportName: String,
+                     argsJson: String| {
+                        nativeCallToolPkgWasmStrings(packageTarget, moduleId, exportName, argsJson)
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                globals
+                    .set("__operitNativeCallToolPkgWasm", callToolPkgWasm)
+                    .map_err(|error| error.to_string())?;
+
                 let composeWebViewControllerCommand =
                     QuickJsFunction::new(ctx.clone(), |payloadJson: String| {
                         nativeComposeWebViewControllerCommandString(payloadJson)
@@ -1535,6 +1547,21 @@ impl JsEngineState {
                 .map_err(|error| error.to_string())?;
             globals
                 .set_property("__operitNativeReadToolPkgResource", readToolPkgResource)
+                .map_err(|error| error.to_string())?;
+
+            let callToolPkgWasm = self
+                .context
+                .wrap_callback(|_, _, args| {
+                    Ok(WasmQuickJsValue::String(nativeCallToolPkgWasmStrings(
+                        wasmQuickJsArgString(args, 0),
+                        wasmQuickJsArgString(args, 1),
+                        wasmQuickJsArgString(args, 2),
+                        wasmQuickJsArgString(args, 3),
+                    )))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property("__operitNativeCallToolPkgWasm", callToolPkgWasm)
                 .map_err(|error| error.to_string())?;
 
             let composeWebViewControllerCommand = self
@@ -2098,6 +2125,65 @@ fn nativeReadToolPkgResourceStrings(
     currentExecutionHost()
         .and_then(|host| host.materialize_toolpkg_resource(request))
         .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
+}
+
+#[allow(non_snake_case)]
+/// Builds the stable failure envelope for ToolPkg WASM calls.
+fn buildToolPkgWasmFailure(message: &str) -> String {
+    serde_json::json!({
+        "success": false,
+        "message": message.trim()
+    })
+    .to_string()
+}
+
+#[allow(non_snake_case)]
+/// Calls one ToolPkg WASM export through the current execution host.
+fn nativeCallToolPkgWasmStrings(
+    packageTarget: String,
+    moduleId: String,
+    exportName: String,
+    argsJson: String,
+) -> String {
+    let normalizedTarget = packageTarget.trim().to_string();
+    if normalizedTarget.is_empty() {
+        return buildToolPkgWasmFailure("ToolPkg.wasm package target is empty");
+    }
+    let normalizedModuleId = moduleId.trim().to_string();
+    if normalizedModuleId.is_empty() {
+        return buildToolPkgWasmFailure("ToolPkg.wasm module id is required");
+    }
+    let normalizedExportName = exportName.trim().to_string();
+    if normalizedExportName.is_empty() {
+        return buildToolPkgWasmFailure("ToolPkg.wasm export name is required");
+    }
+    let args = if argsJson.trim().is_empty() {
+        Vec::new()
+    } else {
+        match serde_json::from_str::<Vec<JsToolPkgWasmArg>>(argsJson.trim()) {
+            Ok(value) => value,
+            Err(error) => {
+                return buildToolPkgWasmFailure(&format!(
+                    "ToolPkg.wasm args JSON is invalid: {error}"
+                ))
+            }
+        }
+    };
+    let request = JsToolPkgWasmRequest {
+        package_target: normalizedTarget,
+        module_id: normalizedModuleId,
+        export_name: normalizedExportName,
+        args,
+    };
+    match currentExecutionHost().and_then(|host| host.call_toolpkg_wasm(request)) {
+        Ok(result) => serde_json::json!({
+            "success": true,
+            "valueType": result.value_type,
+            "value": result.value
+        })
+        .to_string(),
+        Err(error) => buildToolPkgWasmFailure(&error),
+    }
 }
 
 #[allow(non_snake_case)]

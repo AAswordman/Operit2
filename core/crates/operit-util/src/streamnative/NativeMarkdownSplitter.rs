@@ -576,9 +576,7 @@ impl NativeMarkdownSplitter {
         mut source: impl Stream<Item = String>,
     ) -> Vec<MarkdownNodeStable> {
         let mut content = String::new();
-        source
-            .collect(&mut |chunk| content.push_str(&chunk))
-            .await;
+        source.collect(&mut |chunk| content.push_str(&chunk)).await;
         Self::native_markdown_split_by_block(&content)
     }
 
@@ -599,9 +597,7 @@ impl NativeMarkdownSplitter {
         mut source: impl Stream<Item = String>,
     ) -> Vec<MarkdownNodeStable> {
         let mut content = String::new();
-        source
-            .collect(&mut |chunk| content.push_str(&chunk))
-            .await;
+        source.collect(&mut |chunk| content.push_str(&chunk)).await;
         Self::native_markdown_split_by_inline(&content)
     }
 

@@ -160,6 +160,18 @@ class LocalRuntimeStorageBridge {
       },
     );
   }
+
+  /// Rebuilds and restarts the Windows Debug Rust runtime process.
+  static Future<void> rebuildAndRestartForDebug() async {
+    if (!kDebugMode ||
+        kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.windows) {
+      throw UnsupportedError(
+        'Debug Rust runtime rebuild is only available on Windows Debug builds',
+      );
+    }
+    await _channel.invokeMethod<void>('debugRebuildAndRestartLocalRuntime');
+  }
 }
 
 class RuntimeConnectionConfig {

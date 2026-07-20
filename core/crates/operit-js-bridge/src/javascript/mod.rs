@@ -42,3 +42,7 @@ pub mod JsToolPkgExecutionContext;
 
 #[path = "ScriptExecutionReceiver.rs"]
 pub mod ScriptExecutionReceiver;
+
+#[cfg(test)]
+#[path = "tests/TestJsToolsHost.rs"]
+pub mod TestJsToolsHost;

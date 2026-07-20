@@ -319,7 +319,14 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   /// Creates and opens a manual terminal session using the host-declared type.
   Future<void> _createAndOpenTerminalSession() async {
-    final terminalType = await _terminalSessions.defaultTerminalType();
+    final terminalInfo = await _terminalSessions.terminalInfo();
+    if (!mounted) {
+      return;
+    }
+    final terminalType = await _selectTerminalType(terminalInfo);
+    if (terminalType == null) {
+      return;
+    }
     final workingDirectory = await _manualTerminalWorkingDirectory(
       terminalType,
     );
@@ -337,6 +344,66 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     }
     _updateTerminalSessionEntries(sessions);
     _openTerminalSessionTab(session);
+  }
+
+  /// Prompts the user to choose one terminal type exposed by the active host.
+  Future<String?> _selectTerminalType(
+    core_proxy.RuntimeTerminalInfo terminalInfo,
+  ) {
+    return showDialog<String>(
+      context: context,
+      builder: (context) {
+        final theme = Theme.of(context);
+        final availableTypes = terminalInfo.types
+            .where((item) => item.available)
+            .toList(growable: false);
+        return AlertDialog(
+          title: const Text('选择终端类型'),
+          content: SizedBox(
+            width: 460,
+            child: availableTypes.isEmpty
+                ? Text(
+                    '当前平台没有可用的终端类型。',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  )
+                : RadioGroup<String>(
+                    groupValue: terminalInfo.defaultType,
+                    onChanged: (value) => Navigator.of(context).pop(value),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: terminalInfo.types.length,
+                      separatorBuilder: (context, index) =>
+                          const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final item = terminalInfo.types[index];
+                        return ListTile(
+                          enabled: item.available,
+                          leading: Radio<String>(
+                            value: item.terminalType,
+                            enabled: item.available,
+                          ),
+                          title: Text(item.terminalType),
+                          subtitle: Text(item.description),
+                          onTap: item.available
+                              ? () =>
+                                    Navigator.of(context).pop(item.terminalType)
+                              : null,
+                        );
+                      },
+                    ),
+                  ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   /// Resolves the initial directory supported by the selected terminal host.

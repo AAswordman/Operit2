@@ -43,6 +43,15 @@ class _WorkspaceBrowserCompositorSurfaceState
   /// Builds the shared texture and forwards pointer input to the owner.
   @override
   Widget build(BuildContext context) {
+    final errorText = widget.tab.errorText;
+    if (errorText != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(errorText, textAlign: TextAlign.center),
+        ),
+      );
+    }
     final descriptor = widget.tab.surfaceDescriptor;
     if (descriptor == null) {
       return const Center(child: CircularProgressIndicator());

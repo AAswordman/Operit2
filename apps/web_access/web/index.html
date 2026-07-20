@@ -110,7 +110,13 @@
       padding: 10px 14px;
       background: #374151;
       color: #f9fafb;
+      cursor: pointer;
       font: inherit;
+    }
+
+    .operit-web-error-button:disabled {
+      cursor: default;
+      opacity: 0.72;
     }
   </style>
   <script>
@@ -185,7 +191,7 @@
       /** Copies the active diagnostic block to the browser clipboard. */
       async function copyOperitWebError() {
         if (latestOperitWebError.length === 0) {
-          return;
+          throw new Error("Web error details are unavailable");
         }
         await navigator.clipboard.writeText(latestOperitWebError);
       }
@@ -236,7 +242,18 @@
         closeButton.type = "button";
         closeButton.addEventListener("click", closeOperitWebError);
         copyButton.type = "button";
-        copyButton.addEventListener("click", copyOperitWebError);
+        copyButton.addEventListener("click", async () => {
+          copyButton.disabled = true;
+          copyButton.textContent = "Copying...";
+          try {
+            await copyOperitWebError();
+            copyButton.textContent = "Copied";
+          } catch (error) {
+            copyButton.disabled = false;
+            copyButton.textContent = "Copy failed";
+            originalConsoleError("Operit Web error details copy failed:", error);
+          }
+        });
 
         header.append(title, subtitle);
         actions.append(closeButton, copyButton);

@@ -432,7 +432,11 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
         tab.id,
         displayIntent: _surfaceDisplayIntent(),
       );
-      _applySurfaceDescriptor(tab, snapshot.resultJson);
+      if (snapshot.success) {
+        _applySurfaceDescriptor(tab, snapshot.resultJson);
+      } else {
+        tab.update(errorText: snapshot.error!, isLoading: false);
+      }
     }
     if (select) {
       _selectedIndex = _tabs.length - 1;

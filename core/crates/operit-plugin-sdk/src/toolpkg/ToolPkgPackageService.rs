@@ -1134,6 +1134,119 @@ impl<'a> ToolPkgPackageService<'a> {
 
         None
     }
+
+    /// Reads bytes for one declared ToolPkg WASM module export.
+    #[allow(non_snake_case)]
+    pub fn readToolPkgWasmModuleBytes(
+        &self,
+        packageNameOrSubpackageId: &str,
+        moduleId: &str,
+        exportName: &str,
+        preferEnabledContainer: bool,
+    ) -> Result<Vec<u8>, String> {
+        self.packageManager.ensureInitialized();
+        let target = self
+            .packageManager
+            .normalizePackageName(packageNameOrSubpackageId);
+        let moduleId = moduleId.trim();
+        let exportName = exportName.trim();
+        if target.is_empty() {
+            return Err("ToolPkg WASM package target is required".to_string());
+        }
+        if moduleId.is_empty() {
+            return Err("ToolPkg WASM module id is required".to_string());
+        }
+        if exportName.is_empty() {
+            return Err("ToolPkg WASM export name is required".to_string());
+        }
+
+        let toolPkgContainers = self.packageManager.toolPkgContainersInternal();
+        if let Some(containerRuntime) = toolPkgContainers.get(&target) {
+            return self.readToolPkgWasmModuleBytesFromContainer(
+                containerRuntime,
+                moduleId,
+                exportName,
+            );
+        }
+
+        let directSubpackageRuntime = self
+            .packageManager
+            .resolveToolPkgSubpackageRuntimeInternal(&target);
+        if let Some(directSubpackageRuntime) = directSubpackageRuntime {
+            let containerRuntime = toolPkgContainers
+                .get(&directSubpackageRuntime.containerPackageName)
+                .ok_or_else(|| {
+                    format!(
+                        "ToolPkg container not found: {}",
+                        directSubpackageRuntime.containerPackageName
+                    )
+                })?;
+            return self.readToolPkgWasmModuleBytesFromContainer(
+                containerRuntime,
+                moduleId,
+                exportName,
+            );
+        }
+
+        let subpackages = self
+            .packageManager
+            .toolPkgSubpackageByPackageNameInternal()
+            .values()
+            .filter(|subpackage| subpackage.subpackageId.eq_ignore_ascii_case(&target))
+            .cloned()
+            .collect::<Vec<_>>();
+        if subpackages.is_empty() {
+            return Err(format!("ToolPkg target not found: {target}"));
+        }
+
+        let candidateContainers = if preferEnabledContainer {
+            let enabledSet = self.packageManager.getEnabledPackageNameSetInternal();
+            distinctContainerNames(
+                subpackages
+                    .iter()
+                    .filter(|subpackage| enabledSet.contains(&subpackage.containerPackageName)),
+            )
+        } else {
+            distinctContainerNames(subpackages.iter())
+        };
+        let containerName = candidateContainers
+            .first()
+            .ok_or_else(|| format!("ToolPkg target is not enabled: {target}"))?;
+        let containerRuntime = toolPkgContainers
+            .get(containerName)
+            .ok_or_else(|| format!("ToolPkg container not found: {containerName}"))?;
+        self.readToolPkgWasmModuleBytesFromContainer(containerRuntime, moduleId, exportName)
+    }
+
+    /// Reads bytes for one declared WASM module from a concrete container.
+    #[allow(non_snake_case)]
+    fn readToolPkgWasmModuleBytesFromContainer(
+        &self,
+        runtime: &ToolPkgContainerRuntime,
+        moduleId: &str,
+        exportName: &str,
+    ) -> Result<Vec<u8>, String> {
+        let enabledSet = self.packageManager.getEnabledPackageNameSetInternal();
+        if !enabledSet.contains(&runtime.packageName) {
+            return Err(format!(
+                "ToolPkg container is not enabled: {}",
+                runtime.packageName
+            ));
+        }
+        let module = runtime
+            .wasmModules
+            .iter()
+            .find(|module| module.id.eq_ignore_ascii_case(moduleId))
+            .ok_or_else(|| format!("ToolPkg WASM module not found: {moduleId}"))?;
+        if !module.exports.iter().any(|name| name == exportName) {
+            return Err(format!(
+                "ToolPkg WASM export '{exportName}' is not declared by module '{moduleId}'"
+            ));
+        }
+        self.packageManager
+            .readToolPkgResourceBytes(runtime, &module.path)
+            .ok_or_else(|| format!("ToolPkg WASM module bytes not found: {}", module.path))
+    }
 }
 
 /// Returns distinct container package names while preserving subpackage iteration order.

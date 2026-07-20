@@ -1615,6 +1615,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "libm"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[package]]
 name = "libsqlite3-sys"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1969,8 +1975,9 @@ dependencies = [
  "operit-core-proxy",
  "operit-host-android-native",
  "operit-host-api",
- "operit-host-apple-native",
+ "operit-host-ios-native",
  "operit-host-linux-native",
+ "operit-host-macos-native",
  "operit-host-ohos-native",
  "operit-host-web",
  "operit-host-windows-native",
@@ -2039,6 +2046,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-host-ios-native"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+ "operit-host-apple-native",
+ "serde_json",
+]
+
+[[package]]
 name = "operit-host-linux-native"
 version = "0.1.0"
 dependencies = [
@@ -2061,6 +2077,13 @@ dependencies = [
  "uuid",
  "zbus",
  "zip",
+]
+
+[[package]]
+name = "operit-host-macos-native"
+version = "0.1.0"
+dependencies = [
+ "operit-host-apple-native",
 ]
 
 [[package]]
@@ -2092,6 +2115,7 @@ version = "0.1.0"
 dependencies = [
  "operit-host-api",
  "reqwest",
+ "tokio",
 ]
 
 [[package]]
@@ -2260,16 +2284,19 @@ dependencies = [
 name = "operit-plugin-sdk"
 version = "2.0.0-preview.4"
 dependencies = [
+ "chacha20poly1305",
  "chrono",
  "json5",
  "operit-host-api",
  "operit-plugin-sdk-codegen",
  "regex",
+ "rquickjs",
  "serde",
  "serde_bytes",
  "serde_json",
  "sha2",
  "uuid",
+ "wasmi",
  "zip",
 ]
 
@@ -3337,6 +3364,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
+name = "string-interner"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23de088478b31c349c9ba67816fa55d9355232d63c3afea8bf513e31f0f1d2c0"
+dependencies = [
+ "hashbrown 0.15.5",
+ "serde",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3910,7 +3947,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "990065f2fe63003fe337b932cfb5e3b80e0b4d0f5ff650e6985b1048f62c8319"
 dependencies = [
  "leb128fmt",
- "wasmparser",
+ "wasmparser 0.244.0",
 ]
 
 [[package]]
@@ -3922,7 +3959,7 @@ dependencies = [
  "anyhow",
  "indexmap",
  "wasm-encoder",
- "wasmparser",
+ "wasmparser 0.244.0",
 ]
 
 [[package]]
@@ -3936,6 +3973,56 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "wasmi"
+version = "2.0.0-beta.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2ccaa112ecda892f20071b6af052f60af3ff03f8d3de2bb20007415fb116dbc"
+dependencies = [
+ "spin",
+ "wasmi_collections",
+ "wasmi_core",
+ "wasmi_ir",
+ "wasmparser 0.228.0",
+]
+
+[[package]]
+name = "wasmi_collections"
+version = "2.0.0-beta.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "308acd69ff7c49bd127c5e63f48c17b830f2c06eff27c7dc45490da13c769735"
+dependencies = [
+ "string-interner",
+]
+
+[[package]]
+name = "wasmi_core"
+version = "2.0.0-beta.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "442ee40db8940c0b7b87b72ff9af6ed26281378d43de8c21baf1bbd80b9da628"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "wasmi_ir"
+version = "2.0.0-beta.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9de7004daf22eed130a448a25ad779509722d750273ae46b3fcdf72a8febc1b"
+dependencies = [
+ "wasmi_core",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.228.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4abf1132c1fdf747d56bbc1bb52152400c70f336870f968b85e89ea422198ae3"
+dependencies = [
+ "bitflags 2.11.1",
+ "indexmap",
 ]
 
 [[package]]
@@ -4445,7 +4532,7 @@ dependencies = [
  "serde_json",
  "wasm-encoder",
  "wasm-metadata",
- "wasmparser",
+ "wasmparser 0.244.0",
  "wit-parser",
 ]
 
@@ -4464,7 +4551,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "unicode-xid",
- "wasmparser",
+ "wasmparser 0.244.0",
 ]
 
 [[package]]

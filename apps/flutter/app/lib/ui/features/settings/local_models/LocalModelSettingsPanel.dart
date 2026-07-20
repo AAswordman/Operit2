@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -23,13 +25,50 @@ class LocalModelSettingsPanel extends StatefulWidget {
 
 class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
   Future<_LocalModelSettingsData>? _future;
-  String? _activeOperation;
+  final Set<String> _activeOperations = <String>{};
+  final Set<String> _pausedOperations = <String>{};
+  Timer? _progressTimer;
+  List<core_proxy.LocalModelInstallStatus>? _installStatuses;
+  bool _statusRefreshRunning = false;
 
   /// Loads local model state when the panel is created.
   @override
   void initState() {
     super.initState();
     _reload();
+    _progressTimer = Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) => _refreshInstallStatuses(),
+    );
+  }
+
+  /// Refreshes installation status snapshots while the settings panel is mounted.
+  Future<void> _refreshInstallStatuses() async {
+    if (!mounted || _statusRefreshRunning) {
+      return;
+    }
+    _statusRefreshRunning = true;
+    try {
+      final statuses = await widget.clients.servicesLocalModelService
+          .getInstallStatuses();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _installStatuses = statuses;
+      });
+    } catch (error) {
+      debugPrint('Local model status refresh failed: $error');
+    } finally {
+      _statusRefreshRunning = false;
+    }
+  }
+
+  /// Releases the installation status polling timer.
+  @override
+  void dispose() {
+    _progressTimer?.cancel();
+    super.dispose();
   }
 
   /// Reloads catalog, registry, and platform state from the runtime provider.
@@ -46,11 +85,13 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
       service.getCatalogStatus(),
       service.getRegistry(),
       service.getPlatformTarget(),
+      service.getInstallStatuses(),
     ]);
     return _LocalModelSettingsData(
       catalog: results[0] as List<core_proxy.LocalModelCatalogStatus>,
       registry: results[1] as core_proxy.LocalModelRegistrySnapshot,
       target: results[2] as core_proxy.LocalPlatformTarget,
+      installStatuses: results[3] as List<core_proxy.LocalModelInstallStatus>,
     );
   }
 
@@ -59,11 +100,11 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
     String operationKey,
     Future<void> Function() operation,
   ) async {
-    if (_activeOperation != null) {
+    if (_activeOperations.contains(operationKey)) {
       return;
     }
     setState(() {
-      _activeOperation = operationKey;
+      _activeOperations.add(operationKey);
     });
     try {
       await operation();
@@ -75,13 +116,17 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
       if (!mounted) {
         return;
       }
+      if (_pausedOperations.remove(operationKey)) {
+        _reload();
+        return;
+      }
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('本地模型操作失败：$error')));
     } finally {
       if (mounted) {
         setState(() {
-          _activeOperation = null;
+          _activeOperations.remove(operationKey);
         });
       }
     }
@@ -98,6 +143,30 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
         );
       },
     );
+  }
+
+  /// Pauses one active model download through the existing local model service.
+  Future<void> _pauseInstall(core_proxy.LocalModelManifest manifest) async {
+    final operationKey = 'install:${manifest.id}@${manifest.version}';
+    _pausedOperations.add(operationKey);
+    try {
+      await widget.clients.servicesLocalModelService.cancelInstall(
+        modelId: manifest.id,
+        version: manifest.version,
+      );
+      if (!mounted) {
+        return;
+      }
+      _reload();
+    } catch (error) {
+      _pausedOperations.remove(operationKey);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('本地模型操作失败：$error')));
+    }
   }
 
   /// Verifies one installed model and its exact platform engine dependency.
@@ -119,12 +188,40 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
     if (!confirmed) {
       return;
     }
+    final persistedStatus = _findInstallStatus(
+      manifest,
+      _installStatuses ?? const <core_proxy.LocalModelInstallStatus>[],
+    );
+    if (persistedStatus != null) {
+      if (_isInstallRunning(persistedStatus)) {
+        _pausedOperations.add('install:${manifest.id}@${manifest.version}');
+        await widget.clients.servicesLocalModelService.cancelInstall(
+          modelId: manifest.id,
+          version: manifest.version,
+        );
+        await _waitForInstallStop(manifest);
+      }
+    }
     await _runOperation('delete:${manifest.id}@${manifest.version}', () async {
       await widget.clients.servicesLocalModelService.deleteModel(
         modelId: manifest.id,
         version: manifest.version,
       );
     });
+  }
+
+  /// Waits until one cancelled installation no longer owns its host download files.
+  Future<void> _waitForInstallStop(
+    core_proxy.LocalModelManifest manifest,
+  ) async {
+    for (;;) {
+      final status = await widget.clients.servicesLocalModelService
+          .getInstallStatus(modelId: manifest.id, version: manifest.version);
+      if (status == null || !_isInstallRunning(status)) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
   }
 
   /// Confirms and deletes one installed platform engine.
@@ -198,7 +295,11 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
             Text('模型目录', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 10),
             for (final status in data.catalog) ...<Widget>[
-              _buildModelItem(context, status),
+              _buildModelItem(
+                context,
+                status,
+                _installStatuses ?? data.installStatuses,
+              ),
               const SizedBox(height: 10),
             ],
             const SizedBox(height: 10),
@@ -252,7 +353,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
           ),
         ),
         IconButton(
-          onPressed: _activeOperation == null ? _reload : null,
+          onPressed: _reload,
           icon: const Icon(Icons.refresh),
           tooltip: '刷新',
         ),
@@ -264,13 +365,23 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
   Widget _buildModelItem(
     BuildContext context,
     core_proxy.LocalModelCatalogStatus status,
+    List<core_proxy.LocalModelInstallStatus> installStatuses,
   ) {
     final manifest = status.manifest;
     final installed = status.installedModel != null;
-    final operationPrefix = _activeOperation?.split(':').first;
+    final installStatus = _findInstallStatus(manifest, installStatuses);
+    final operationSuffix = '${manifest.id}@${manifest.version}';
+    final localOperationActive = _activeOperations.any(
+      (operation) => operation.endsWith(operationSuffix),
+    );
+    final isPaused =
+        installStatus?.phase == core_proxy.LocalModelInstallPhase.cancelled;
+    final isCancelling =
+        installStatus?.phase == core_proxy.LocalModelInstallPhase.cancelling;
     final isBusy =
-        _activeOperation?.endsWith('${manifest.id}@${manifest.version}') ==
-        true;
+        localOperationActive ||
+        (installStatus != null && _isInstallRunning(installStatus));
+    final hasDownloadTask = installStatus != null && !installed;
     final colors = Theme.of(context).colorScheme;
     return OperitGlassSurface(
       color: colors.surfaceContainerLow.withValues(alpha: 0.72),
@@ -319,6 +430,29 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
               ],
             ),
             const SizedBox(height: 10),
+            if (hasDownloadTask) ...<Widget>[
+              LinearProgressIndicator(
+                value: installStatus.totalBytes == 0
+                    ? null
+                    : installStatus.downloadedBytes / installStatus.totalBytes,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                isCancelling
+                    ? '正在暂停'
+                    : isPaused
+                    ? '已暂停 · ${_formatBytes(installStatus.downloadedBytes)} '
+                          '/ ${_formatBytes(installStatus.totalBytes)}'
+                    : installStatus.downloadedBytes == installStatus.totalBytes
+                    ? '下载完成，正在安装'
+                    : '下载 ${_formatBytes(installStatus.downloadedBytes)} '
+                          '/ ${_formatBytes(installStatus.totalBytes)}',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+              ),
+              const SizedBox(height: 10),
+            ],
             Wrap(
               spacing: 12,
               runSpacing: 5,
@@ -337,30 +471,49 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
                 const Spacer(),
                 if (installed) ...<Widget>[
                   IconButton(
-                    onPressed: _activeOperation == null
-                        ? () => _verify(manifest)
-                        : null,
+                    onPressed: !isBusy ? () => _verify(manifest) : null,
                     icon: const Icon(Icons.verified_outlined),
                     tooltip: '校验模型和引擎',
                   ),
                   IconButton(
-                    onPressed: _activeOperation == null
-                        ? () => _deleteModel(manifest)
-                        : null,
+                    onPressed: !isBusy ? () => _deleteModel(manifest) : null,
                     icon: const Icon(Icons.delete_outline),
                     tooltip: '删除模型',
                   ),
-                ] else
+                ] else ...<Widget>[
+                  if (hasDownloadTask)
+                    IconButton(
+                      onPressed: isPaused || isCancelling
+                          ? null
+                          : () => _pauseInstall(manifest),
+                      icon: const Icon(Icons.pause),
+                      tooltip: '暂停下载',
+                    ),
+                  if (hasDownloadTask)
+                    IconButton(
+                      onPressed: () => _deleteModel(manifest),
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: '删除下载',
+                    ),
                   FilledButton.icon(
                     onPressed:
-                        status.platformCompatible && _activeOperation == null
+                        status.platformCompatible &&
+                            !localOperationActive &&
+                            (!isBusy || isPaused)
                         ? () => _install(manifest)
                         : null,
-                    icon: const Icon(Icons.download_outlined),
+                    icon: Icon(
+                      isPaused ? Icons.play_arrow : Icons.download_outlined,
+                    ),
                     label: Text(
-                      operationPrefix == 'install' && isBusy ? '下载中' : '安装',
+                      isPaused
+                          ? '继续'
+                          : isBusy
+                          ? '下载中'
+                          : '安装',
                     ),
                   ),
+                ],
               ],
             ),
           ],
@@ -385,7 +538,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
         '${_formatBytes(engine.artifact.byteSize)}',
       ),
       trailing: IconButton(
-        onPressed: _activeOperation == null
+        onPressed: _activeOperations.isEmpty
             ? () => _deleteEngine(engine)
             : null,
         icon: Icon(Icons.delete_outline, color: colors.error),
@@ -395,16 +548,44 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
   }
 }
 
+/// Returns whether one installation status still owns Host download resources.
+bool _isInstallRunning(core_proxy.LocalModelInstallStatus status) {
+  return switch (status.phase) {
+    core_proxy.LocalModelInstallPhase.preparing ||
+    core_proxy.LocalModelInstallPhase.engine ||
+    core_proxy.LocalModelInstallPhase.model ||
+    core_proxy.LocalModelInstallPhase.cancelling => true,
+    core_proxy.LocalModelInstallPhase.cancelled ||
+    core_proxy.LocalModelInstallPhase.completed ||
+    core_proxy.LocalModelInstallPhase.failed => false,
+  };
+}
+
 class _LocalModelSettingsData {
   const _LocalModelSettingsData({
     required this.catalog,
     required this.registry,
     required this.target,
+    required this.installStatuses,
   });
 
   final List<core_proxy.LocalModelCatalogStatus> catalog;
   final core_proxy.LocalModelRegistrySnapshot registry;
   final core_proxy.LocalPlatformTarget target;
+  final List<core_proxy.LocalModelInstallStatus> installStatuses;
+}
+
+/// Finds the active or persisted installation status for one exact model release.
+core_proxy.LocalModelInstallStatus? _findInstallStatus(
+  core_proxy.LocalModelManifest manifest,
+  List<core_proxy.LocalModelInstallStatus> statuses,
+) {
+  for (final status in statuses) {
+    if (status.modelId == manifest.id && status.version == manifest.version) {
+      return status;
+    }
+  }
+  return null;
 }
 
 /// Returns an icon for one local model capability.

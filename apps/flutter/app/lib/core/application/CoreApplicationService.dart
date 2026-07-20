@@ -36,6 +36,7 @@ class CoreApplicationService with WidgetsBindingObserver {
   bool _localBackgroundServiceStartAttempted = false;
   bool _linkHostStartAttempted = false;
   Future<void>? _runtimeServicesStart;
+  Future<void>? _debugRuntimeRebuild;
   Object? _pendingStartupError;
 
   Stream<Object> get startupErrors => _startupErrors.stream;
@@ -245,6 +246,48 @@ class CoreApplicationService with WidgetsBindingObserver {
     await _runtimeChannel.invokeMethod<void>('startLocalCoreService');
     ClientLogger.i(
       'local background service done elapsedMs=${stopwatch.elapsedMilliseconds}',
+      tag: _logTag,
+    );
+  }
+
+  /// Rebuilds the Windows Debug Rust runtime and restores local host services.
+  Future<void> rebuildAndRestartLocalRuntimeForDebug() {
+    final activeRebuild = _debugRuntimeRebuild;
+    if (activeRebuild != null) {
+      return activeRebuild;
+    }
+    final rebuild = _rebuildAndRestartLocalRuntimeForDebugOnce();
+    _debugRuntimeRebuild = rebuild;
+    return rebuild.whenComplete(() {
+      if (identical(_debugRuntimeRebuild, rebuild)) {
+        _debugRuntimeRebuild = null;
+      }
+    });
+  }
+
+  /// Performs one Windows Debug Rust runtime rebuild and host service restore.
+  Future<void> _rebuildAndRestartLocalRuntimeForDebugOnce() async {
+    if (!kDebugMode ||
+        kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.windows) {
+      throw UnsupportedError(
+        'Debug Rust runtime rebuild is only available on Windows Debug builds',
+      );
+    }
+    if (_runtimeManager.config.mode != RuntimeConnectionMode.local) {
+      throw StateError('Debug Rust runtime rebuild requires the local runtime');
+    }
+    final stopwatch = Stopwatch()..start();
+    ClientLogger.i('Debug Rust runtime rebuild start', tag: _logTag);
+    await RuntimeHostInteractionSubscriber.uninstall();
+    _hostSubscriberInstalled = false;
+    await LocalRuntimeStorageBridge.rebuildAndRestartForDebug();
+    if (_runtimeManager.config.localStorage.confirmed) {
+      await LinkAccessHost.instance.initializeFromConfig();
+    }
+    await _syncHostSubscriber();
+    ClientLogger.i(
+      'Debug Rust runtime rebuild done elapsedMs=${stopwatch.elapsedMilliseconds}',
       tag: _logTag,
     );
   }

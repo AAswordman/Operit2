@@ -7,13 +7,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use operit_host_api::{
-    HostError, HostResult, HttpDownloadControl, HttpDownloadFileRequest, HttpDownloadFileResult,
-    HttpDownloadProgress, HttpDownloadProgressCallback, HttpDownloadProgressState,
-    HttpDownloadRequest, HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData,
+    httpDownloadPartialTargetPath, HostError, HostResult, HttpDownloadControl,
+    HttpDownloadFileRequest, HttpDownloadFileResult, HttpDownloadProgress,
+    HttpDownloadProgressCallback, HttpDownloadProgressState, HttpDownloadRequest,
+    HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData,
 };
-use reqwest::blocking::{multipart, Client};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use reqwest::{Method, Proxy};
+use reqwest::blocking::{multipart, Client as BlockingClient};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_RANGE, RANGE};
+use reqwest::{Client as AsyncClient, Method, Proxy, StatusCode};
 
 #[derive(Clone, Debug, Default)]
 pub struct NativeHttpHost;
@@ -123,7 +124,7 @@ fn executeDownloadBatch(
     })?;
     let totalFiles = request.files.len();
     let workerCount = request.maxConcurrency.min(totalFiles);
-    let client = buildHttpClient(
+    let client = buildDownloadHttpClient(
         request.connectTimeoutSeconds,
         request.readTimeoutSeconds,
         request.followRedirects,
@@ -193,13 +194,6 @@ fn executeDownloadBatch(
                         }
                     },
                     Err(error) => {
-                        let error = match removeIncompleteDownload(&file.targetPath) {
-                            Ok(()) => error,
-                            Err(cleanupError) => HostError::new(format!(
-                                "{}; incomplete download cleanup failed: {}",
-                                error.message, cleanupError.message
-                            )),
-                        };
                         recordDownloadFailure(&failure, error);
                         break;
                     }
@@ -298,8 +292,34 @@ fn buildHttpClient(
     ignoreSsl: bool,
     proxyHost: &str,
     proxyPort: u16,
-) -> HostResult<Client> {
-    let mut builder = Client::builder()
+) -> HostResult<BlockingClient> {
+    let mut builder = BlockingClient::builder()
+        .connect_timeout(Duration::from_secs(connectTimeoutSeconds))
+        .timeout(Duration::from_secs(readTimeoutSeconds))
+        .danger_accept_invalid_certs(ignoreSsl);
+    if !followRedirects {
+        builder = builder.redirect(reqwest::redirect::Policy::none());
+    }
+    if !proxyHost.trim().is_empty() && proxyPort > 0 {
+        let proxyUrl = format!("http://{}:{}", proxyHost.trim(), proxyPort);
+        builder = builder
+            .proxy(Proxy::http(&proxyUrl).map_err(|error| HostError::new(error.to_string()))?);
+    }
+    builder
+        .build()
+        .map_err(|error| HostError::new(error.to_string()))
+}
+
+/// Builds one asynchronous client so an active request can observe cancellation immediately.
+fn buildDownloadHttpClient(
+    connectTimeoutSeconds: u64,
+    readTimeoutSeconds: u64,
+    followRedirects: bool,
+    ignoreSsl: bool,
+    proxyHost: &str,
+    proxyPort: u16,
+) -> HostResult<AsyncClient> {
+    let mut builder = AsyncClient::builder()
         .connect_timeout(Duration::from_secs(connectTimeoutSeconds))
         .timeout(Duration::from_secs(readTimeoutSeconds))
         .danger_accept_invalid_certs(ignoreSsl);
@@ -326,9 +346,42 @@ fn nextDownloadFile(
         .map_err(|error| HostError::new(format!("HTTP download queue lock poisoned: {error}")))
 }
 
-/// Downloads one file and publishes thread-safe aggregate progress.
+/// Downloads one file into its durable partial target and publishes aggregate progress.
 fn downloadOneFile(
-    client: &Client,
+    client: &AsyncClient,
+    downloadId: &str,
+    file: &HttpDownloadFileRequest,
+    totalBytes: u64,
+    totalFiles: usize,
+    downloadedBytes: &AtomicU64,
+    completedFiles: &AtomicUsize,
+    progressGate: &Mutex<()>,
+    control: &HttpDownloadControl,
+    failure: &Mutex<Option<HostError>>,
+    onProgress: &HttpDownloadProgressCallback,
+) -> HostResult<HttpDownloadFileResult> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| HostError::new(error.to_string()))?;
+    runtime.block_on(downloadOneFileAsync(
+        client,
+        downloadId,
+        file,
+        totalBytes,
+        totalFiles,
+        downloadedBytes,
+        completedFiles,
+        progressGate,
+        control,
+        failure,
+        onProgress,
+    ))
+}
+
+/// Streams one HTTP file while racing every network wait against cancellation.
+async fn downloadOneFileAsync(
+    client: &AsyncClient,
     downloadId: &str,
     file: &HttpDownloadFileRequest,
     totalBytes: u64,
@@ -353,20 +406,69 @@ fn downloadOneFile(
         ))
     })?;
     fs::create_dir_all(parent).map_err(|error| HostError::new(error.to_string()))?;
+    let partialPath = httpDownloadPartialTargetPath(&file.targetPath);
+    let partialTarget = Path::new(&partialPath);
+    let retainedBytes = prepareResumableDownload(target, partialTarget, file.expectedBytes)?;
+    if retainedBytes == file.expectedBytes {
+        completedFiles.fetch_add(1, Ordering::SeqCst);
+        downloadedBytes.fetch_add(retainedBytes, Ordering::SeqCst);
+        publishDownloadProgress(
+            progressGate,
+            downloadedBytes,
+            completedFiles,
+            onProgress,
+            HttpDownloadProgress {
+                downloadId: downloadId.to_string(),
+                fileId: file.fileId.clone(),
+                state: HttpDownloadProgressState::Completed,
+                fileDownloadedBytes: retainedBytes,
+                fileTotalBytes: file.expectedBytes,
+                downloadedBytes: 0,
+                totalBytes,
+                completedFiles: 0,
+                totalFiles,
+            },
+        )?;
+        return Ok(HttpDownloadFileResult {
+            fileId: file.fileId.clone(),
+            finalUrl: file.url.clone(),
+            targetPath: file.targetPath.clone(),
+            downloadedBytes: retainedBytes,
+        });
+    }
     let mut request = client.get(&file.url);
     request = request.headers(headersToReqwest(&file.headers)?);
-    let mut response = request
-        .send()
-        .map_err(|error| HostError::new(error.to_string()))?;
-    if !response.status().is_success() {
+    if retainedBytes > 0 {
+        request = request.header(RANGE, format!("bytes={retainedBytes}-"));
+    }
+    let mut response = tokio::select! {
+        response = request.send() => response.map_err(|error| HostError::new(error.to_string()))?,
+        () = waitForDownloadCancellation(control) => {
+            return Err(HostError::new(format!("HTTP download cancelled: {downloadId}")));
+        }
+    };
+    let expectedStatus = match retainedBytes {
+        0 => StatusCode::OK,
+        _ => StatusCode::PARTIAL_CONTENT,
+    };
+    if response.status() != expectedStatus {
         return Err(HostError::new(format!(
-            "HTTP download request failed: {} status={}",
+            "HTTP download request returned unexpected status: {} expected={} actual={}",
             file.url,
+            expectedStatus,
             response.status()
         )));
     }
+    if retainedBytes > 0 {
+        validateContentRange(response.headers(), retainedBytes, file.expectedBytes)?;
+    }
     let finalUrl = response.url().to_string();
-    let mut output = fs::File::create(target).map_err(|error| HostError::new(error.to_string()))?;
+    let mut output = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(partialTarget)
+        .map_err(|error| HostError::new(error.to_string()))?;
+    downloadedBytes.fetch_add(retainedBytes, Ordering::SeqCst);
     publishDownloadProgress(
         progressGate,
         downloadedBytes,
@@ -376,7 +478,7 @@ fn downloadOneFile(
             downloadId: downloadId.to_string(),
             fileId: file.fileId.clone(),
             state: HttpDownloadProgressState::Started,
-            fileDownloadedBytes: 0,
+            fileDownloadedBytes: retainedBytes,
             fileTotalBytes: file.expectedBytes,
             downloadedBytes: 0,
             totalBytes,
@@ -384,25 +486,27 @@ fn downloadOneFile(
             totalFiles,
         },
     )?;
-    let mut fileDownloadedBytes = 0u64;
-    let mut buffer = [0u8; 64 * 1024];
+    let mut fileDownloadedBytes = retainedBytes;
     loop {
         if control.isCancelled() || downloadHasFailed(failure) {
             return Err(HostError::new(format!(
                 "HTTP download interrupted: {downloadId}"
             )));
         }
-        let read = response
-            .read(&mut buffer)
-            .map_err(|error| HostError::new(error.to_string()))?;
-        if read == 0 {
+        let chunk = tokio::select! {
+            chunk = response.chunk() => chunk.map_err(|error| HostError::new(error.to_string()))?,
+            () = waitForDownloadCancellation(control) => {
+                return Err(HostError::new(format!("HTTP download interrupted: {downloadId}")));
+            }
+        };
+        let Some(chunk) = chunk else {
             break;
-        }
+        };
         output
-            .write_all(&buffer[..read])
+            .write_all(&chunk)
             .map_err(|error| HostError::new(error.to_string()))?;
-        fileDownloadedBytes += read as u64;
-        downloadedBytes.fetch_add(read as u64, Ordering::SeqCst);
+        fileDownloadedBytes += chunk.len() as u64;
+        downloadedBytes.fetch_add(chunk.len() as u64, Ordering::SeqCst);
         publishDownloadProgress(
             progressGate,
             downloadedBytes,
@@ -431,6 +535,7 @@ fn downloadOneFile(
         )));
     }
     completedFiles.fetch_add(1, Ordering::SeqCst);
+    fs::rename(partialTarget, target).map_err(|error| HostError::new(error.to_string()))?;
     publishDownloadProgress(
         progressGate,
         downloadedBytes,
@@ -454,6 +559,87 @@ fn downloadOneFile(
         targetPath: file.targetPath.clone(),
         downloadedBytes: fileDownloadedBytes,
     })
+}
+
+/// Resolves after a control token requests cancellation without blocking a network task.
+async fn waitForDownloadCancellation(control: &HttpDownloadControl) {
+    while !control.isCancelled() {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Reconciles final and partial files before one resumable HTTP request starts.
+fn prepareResumableDownload(
+    target: &Path,
+    partialTarget: &Path,
+    expectedBytes: u64,
+) -> HostResult<u64> {
+    if target.exists() {
+        let targetBytes = fs::metadata(target)
+            .map_err(|error| HostError::new(error.to_string()))?
+            .len();
+        if targetBytes == expectedBytes {
+            if partialTarget.exists() {
+                fs::remove_file(partialTarget)
+                    .map_err(|error| HostError::new(error.to_string()))?;
+            }
+            return Ok(targetBytes);
+        }
+        fs::remove_file(target).map_err(|error| HostError::new(error.to_string()))?;
+    }
+    if !partialTarget.exists() {
+        return Ok(0);
+    }
+    let partialBytes = fs::metadata(partialTarget)
+        .map_err(|error| HostError::new(error.to_string()))?
+        .len();
+    if partialBytes > expectedBytes {
+        fs::remove_file(partialTarget).map_err(|error| HostError::new(error.to_string()))?;
+        return Err(HostError::new(format!(
+            "HTTP partial download exceeds declared byte count: expected={expectedBytes} actual={partialBytes}"
+        )));
+    }
+    Ok(partialBytes)
+}
+
+/// Validates the exact byte interval returned for a resumed HTTP download.
+fn validateContentRange(
+    headers: &HeaderMap,
+    expectedStart: u64,
+    expectedTotal: u64,
+) -> HostResult<()> {
+    let value = headers
+        .get(CONTENT_RANGE)
+        .ok_or_else(|| HostError::new("HTTP partial download response has no Content-Range"))?
+        .to_str()
+        .map_err(|error| HostError::new(error.to_string()))?;
+    let (unit, range) = value
+        .split_once(' ')
+        .ok_or_else(|| HostError::new("HTTP Content-Range format is invalid"))?;
+    if unit != "bytes" {
+        return Err(HostError::new("HTTP Content-Range unit is not bytes"));
+    }
+    let (interval, total) = range
+        .split_once('/')
+        .ok_or_else(|| HostError::new("HTTP Content-Range total is missing"))?;
+    let (start, end) = interval
+        .split_once('-')
+        .ok_or_else(|| HostError::new("HTTP Content-Range interval is invalid"))?;
+    let start = start
+        .parse::<u64>()
+        .map_err(|error| HostError::new(error.to_string()))?;
+    let end = end
+        .parse::<u64>()
+        .map_err(|error| HostError::new(error.to_string()))?;
+    let total = total
+        .parse::<u64>()
+        .map_err(|error| HostError::new(error.to_string()))?;
+    if start != expectedStart || total != expectedTotal || end != expectedTotal - 1 {
+        return Err(HostError::new(format!(
+            "HTTP Content-Range does not match the requested resume: {value}"
+        )));
+    }
+    Ok(())
 }
 
 /// Serializes callbacks and refreshes aggregate counters at publication time.
@@ -541,8 +727,9 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc;
     use std::sync::Barrier;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     /// Verifies two files enter the server concurrently and publish aggregate progress.
     #[test]
@@ -660,18 +847,126 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// Verifies a retained partial file resumes through an exact HTTP byte range.
+    #[test]
+    fn resumesRetainedPartialDownload() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let requestText = readHttpRequest(&mut stream);
+            let range = requestText
+                .lines()
+                .find_map(|line| line.split_once(':'))
+                .filter(|(name, _)| name.eq_ignore_ascii_case("range"))
+                .map(|(_, value)| value.trim());
+            assert_eq!(range, Some("bytes=2-"));
+            stream.write_all(
+                b"HTTP/1.1 206 Partial Content\r\nContent-Length: 2\r\nContent-Range: bytes 2-3/4\r\nConnection: close\r\n\r\ncd",
+            ).unwrap();
+            stream.flush().unwrap();
+        });
+        let root = uniqueTempDir("resume");
+        let target = root.join("resume.bin");
+        let partial = httpDownloadPartialTargetPath(&target.to_string_lossy());
+        fs::write(&partial, b"ab").unwrap();
+        let progress = Arc::new(Mutex::new(Vec::<HttpDownloadProgress>::new()));
+        let progressEvents = progress.clone();
+        let result = NativeHttpHost::new()
+            .downloadFiles(
+                HttpDownloadRequest {
+                    downloadId: "resume-test".to_string(),
+                    files: vec![HttpDownloadFileRequest {
+                        fileId: "resume".to_string(),
+                        url: format!("http://{address}/resume"),
+                        targetPath: target.to_string_lossy().to_string(),
+                        headers: Vec::new(),
+                        expectedBytes: 4,
+                    }],
+                    maxConcurrency: 1,
+                    connectTimeoutSeconds: 5,
+                    readTimeoutSeconds: 5,
+                    followRedirects: true,
+                    ignoreSsl: false,
+                    proxyHost: String::new(),
+                    proxyPort: 0,
+                },
+                HttpDownloadControl::new(),
+                Arc::new(move |event| {
+                    progressEvents.lock().unwrap().push(event);
+                }),
+            )
+            .unwrap();
+        server.join().unwrap();
+
+        assert_eq!(result.downloadedBytes, 4);
+        assert_eq!(fs::read(&target).unwrap(), b"abcd");
+        assert!(!Path::new(&partial).exists());
+        assert!(progress.lock().unwrap().iter().any(|event| {
+            event.state == HttpDownloadProgressState::Started && event.fileDownloadedBytes == 2
+        }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Verifies cancellation interrupts a response whose next body chunk is stalled.
+    #[test]
+    fn cancellationInterruptsStalledResponseRead() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (headersSent, headersReceived) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            readHttpRequest(&mut stream);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            stream.flush().unwrap();
+            headersSent.send(()).unwrap();
+            std::thread::sleep(Duration::from_secs(1));
+        });
+        let root = uniqueTempDir("cancel-stalled-read");
+        let target = root.join("stalled.bin");
+        let control = HttpDownloadControl::new();
+        let taskControl = control.clone();
+        let task = std::thread::spawn(move || {
+            NativeHttpHost::new().downloadFiles(
+                HttpDownloadRequest {
+                    downloadId: "stalled-read-test".to_string(),
+                    files: vec![HttpDownloadFileRequest {
+                        fileId: "stalled".to_string(),
+                        url: format!("http://{address}/stalled"),
+                        targetPath: target.to_string_lossy().to_string(),
+                        headers: Vec::new(),
+                        expectedBytes: 4,
+                    }],
+                    maxConcurrency: 1,
+                    connectTimeoutSeconds: 5,
+                    readTimeoutSeconds: 5,
+                    followRedirects: true,
+                    ignoreSsl: false,
+                    proxyHost: String::new(),
+                    proxyPort: 0,
+                },
+                taskControl,
+                Arc::new(|_| {}),
+            )
+        });
+        headersReceived.recv().unwrap();
+        let started = Instant::now();
+        control.cancel();
+        let error = task
+            .join()
+            .unwrap()
+            .expect_err("cancelled download must fail");
+        assert!(started.elapsed() < Duration::from_millis(500));
+        assert_eq!(error.message, "HTTP download cancelled: stalled-read-test");
+        server.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// Serves one four-byte test file after both worker requests have arrived.
     fn serveDownloadConnection(mut stream: TcpStream, barrier: Arc<Barrier>) {
-        let mut request = Vec::new();
-        let mut buffer = [0u8; 1024];
-        loop {
-            let read = stream.read(&mut buffer).unwrap();
-            request.extend_from_slice(&buffer[..read]);
-            if request.windows(4).any(|window| window == b"\r\n\r\n") {
-                break;
-            }
-        }
-        let requestText = String::from_utf8(request).unwrap();
+        let requestText = readHttpRequest(&mut stream);
         let body = if requestText.starts_with("GET /a ") {
             b"aaaa".as_slice()
         } else if requestText.starts_with("GET /b ") {
@@ -685,6 +980,20 @@ mod tests {
             .unwrap();
         stream.write_all(body).unwrap();
         stream.flush().unwrap();
+    }
+
+    /// Reads one complete HTTP request header block from a test connection.
+    fn readHttpRequest(stream: &mut TcpStream) -> String {
+        let mut request = Vec::new();
+        let mut buffer = [0u8; 1024];
+        loop {
+            let read = stream.read(&mut buffer).unwrap();
+            request.extend_from_slice(&buffer[..read]);
+            if request.ends_with(b"\r\n\r\n") {
+                break;
+            }
+        }
+        String::from_utf8(request).unwrap()
     }
 
     /// Creates a unique native directory for one download test.

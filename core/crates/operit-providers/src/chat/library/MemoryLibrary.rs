@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use chrono::Utc;
 use regex::Regex;
 use serde_json::Value;
 
@@ -10,6 +9,7 @@ use crate::chat::enhance::MultiServiceManager::SharedAIServiceHandle;
 use crate::chat::llmprovider::AIService::SendMessageRequest;
 use crate::runtime_support::ProviderRuntimeContext;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_model::FunctionType::FunctionType;
 use operit_model::Memory::{Memory, MemoryTag};
 use operit_model::PromptTurn::{toPromptTurns, PromptTurn, PromptTurnKind};
@@ -805,7 +805,7 @@ fn newMemory(
     credibility: f32,
     importance: f32,
 ) -> Memory {
-    let now = Utc::now().timestamp_millis();
+    let now = currentTimeMillis();
     Memory {
         id: 0,
         uuid: uuid::Uuid::new_v4().to_string(),

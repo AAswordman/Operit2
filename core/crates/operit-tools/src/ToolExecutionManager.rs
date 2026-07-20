@@ -193,7 +193,7 @@ impl ToolExecutionManager {
     }
 
     /// Executes a batch of parsed tool invocations and returns emitted markup plus results.
-    pub fn executeInvocations(
+    pub async fn executeInvocations(
         invocations: &[ToolInvocation],
         toolHandler: &mut AIToolHandler,
         packageManager: &RuntimePackageManager,
@@ -358,8 +358,9 @@ impl ToolExecutionManager {
                 continue;
             }
             toolHandler.notifyToolExecutionStarted(&invocation.tool);
-            let Some(collected) =
-                toolHandler.executeToolSafelyWithResolvedExecutor(&invocation.tool)
+            let Some(collected) = toolHandler
+                .executeToolSafelyWithResolvedExecutor(&invocation.tool)
+                .await
             else {
                 toolHandler.notifyToolExecutionFinished(&invocation.tool);
                 AppLogger::w(

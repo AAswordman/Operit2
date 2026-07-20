@@ -112,10 +112,7 @@ impl Stream for RuntimeBrowserEventStream {
     type Item = RuntimeBrowserStreamEvent;
 
     /// Collects serialized browser events from the shared stream.
-    fn collect<'a>(
-        &'a mut self,
-        collector: &'a mut dyn FnMut(Self::Item),
-    ) -> CollectFuture<'a> {
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         self.upstream.collect(collector)
     }
 }

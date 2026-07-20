@@ -85,13 +85,9 @@ where
         self.upstream.clear_buffer();
     }
 
-    fn collect<'a>(
-        &'a mut self,
-        collector: &'a mut dyn FnMut(Self::Item),
-    ) -> CollectFuture<'a> {
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         self.upstream.collect(collector)
     }
-
 }
 
 impl<S> TextStreamEventCarrier for DelegatingRevisableTextStream<S>
@@ -146,13 +142,9 @@ impl Stream for DelegatingRevisableSharedTextStream {
         self.upstream.clear_buffer();
     }
 
-    fn collect<'a>(
-        &'a mut self,
-        collector: &'a mut dyn FnMut(Self::Item),
-    ) -> CollectFuture<'a> {
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         self.upstream.collect(collector)
     }
-
 }
 
 impl SharedStream<String> for DelegatingRevisableSharedTextStream {
@@ -221,13 +213,9 @@ where
         self.upstream.clear_buffer();
     }
 
-    fn collect<'a>(
-        &'a mut self,
-        collector: &'a mut dyn FnMut(Self::Item),
-    ) -> CollectFuture<'a> {
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         self.upstream.collect(collector)
     }
-
 }
 
 impl<S> TextStreamEventCarrier for DelegatingRevisableCharStream<S>

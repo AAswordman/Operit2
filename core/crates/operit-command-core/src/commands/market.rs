@@ -10,7 +10,8 @@ use crate::commands::util::read_content_arg;
 use crate::output::CoreCommandOutput;
 use operit_host_api::HostManager::HostManager;
 use operit_providers::market::MarketStatsApiService::{
-    MarketComment, MarketEntrySummary, MarketListPage, MarketNotification, MarketStatsApiService,
+    MarketComment, MarketEntryAsset, MarketEntrySummary, MarketListPage, MarketNotification,
+    MarketStatsApiService,
 };
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
@@ -659,34 +660,15 @@ fn run_comment(core: &mut MarketCommand, args: &[String]) -> Result<(), String> 
 
 fn run_publish(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
-        Some("proof") => publish_proof_cli(core, &args[1..]),
         Some("artifact") => publish_artifact_cli(core, &args[1..]),
         Some("repo") => publish_repo_cli(core, &args[1..]),
         Some("version") => publish_version_cli(core, &args[1..]),
         Some("update-entry") => update_entry_cli(core, &args[1..]),
         _ => Err(
-            "usage: operit2 market publish <proof|artifact|repo|version|update-entry> ..."
+            "usage: operit2 market publish <artifact|repo|version|update-entry> ..."
                 .to_string(),
         ),
     }
-}
-
-fn publish_proof_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
-    if args.len() < 5 {
-        return Err(
-            "usage: operit2 market publish proof <owner> <repo> <releaseTag> <assetName> <sha256>"
-                .to_string(),
-        );
-    }
-    require_login(core)?;
-    let resp = core
-        .api()
-        .publish_proof(&args[0], &args[1], &args[2], &args[3], &args[4])?;
-    println!("proof ok={}", resp.ok);
-    if !resp.proof.trim().is_empty() {
-        println!("proof={}", resp.proof);
-    }
-    Ok(())
 }
 
 fn publish_artifact_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
@@ -931,6 +913,7 @@ fn install_mcp_from_entry(
     }
 }
 
+/// Installs one artifact through the market asset endpoint and verifies its immutable digest.
 fn install_artifact_from_entry(
     core: &mut MarketCommand,
     entry: MarketEntrySummary,
@@ -964,10 +947,9 @@ fn install_artifact_from_entry(
             .find(|asset| !asset.id.trim().is_empty())
             .ok_or_else(|| "entry has no downloadable asset".to_string())?
     };
-    let temp_file = download_asset_to_temp_file(core, &asset.id)?;
-    let result = core
-        .package_manager()
-        .add_from_external(&temp_file.to_string_lossy());
+    let temp_file = download_asset_to_temp_file(core, asset)?;
+    let package_manager = core.package_manager();
+    let result = package_manager.add_from_external(&temp_file.to_string_lossy());
     let _ = fs::remove_file(&temp_file);
     if !result
         .to_ascii_lowercase()
@@ -979,15 +961,49 @@ fn install_artifact_from_entry(
     Ok(())
 }
 
+/// Downloads one market asset to a temporary file whose extension matches the published asset.
 fn download_asset_to_temp_file(
     core: &mut MarketCommand,
-    asset_id: &str,
+    asset: &MarketEntryAsset,
 ) -> Result<PathBuf, String> {
-    let bytes = core.api().download_asset(asset_id)?;
-    let mut tmp = env::temp_dir();
-    tmp.push(format!("operit_dl_{}", current_millis()));
+    let bytes = core.api().download_asset(&asset.id)?;
+    verify_market_asset_sha256(&bytes, &asset.sha256)?;
+    let tmp = market_asset_temp_path(asset)?;
     fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
     Ok(tmp)
+}
+
+/// Verifies the downloaded bytes against the SHA-256 recorded in the market entry.
+fn verify_market_asset_sha256(bytes: &[u8], expected_sha256: &str) -> Result<(), String> {
+    let normalized_expected = expected_sha256.trim().to_ascii_lowercase();
+    if normalized_expected.len() != 64
+        || !normalized_expected
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("market asset SHA-256 is invalid".to_string());
+    }
+    let actual = format!("{:x}", Sha256::digest(bytes));
+    if actual != normalized_expected {
+        return Err("market asset SHA-256 mismatch".to_string());
+    }
+    Ok(())
+}
+
+/// Creates an extension-preserving temporary path for one verified market asset.
+fn market_asset_temp_path(asset: &MarketEntryAsset) -> Result<PathBuf, String> {
+    let asset_name = asset
+        .asset_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "market asset name is missing".to_string())?;
+    if asset_name.contains('/') || asset_name.contains('\\') {
+        return Err("market asset name must not contain a path".to_string());
+    }
+    let mut path = env::temp_dir();
+    path.push(format!("operit_market_{}_{}", current_millis(), asset_name));
+    Ok(path)
 }
 
 fn sanitize_id(title: &str) -> String {
@@ -1118,22 +1134,43 @@ fn current_millis() -> i64 {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::path::PathBuf;
 
     use operit_host_api::HostManager::{setDefaultHttpHost, HostManager};
     use operit_host_api::{
         HostError, HostResult, HttpHost, HttpRequestData, HttpResponseData, RuntimeStorageEntry,
         RuntimeStorageHost,
     };
-    use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
 
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     struct MemoryStorageHost {
         files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+        runtime_root: PathBuf,
+        workspace_root: PathBuf,
+    }
+
+    impl MemoryStorageHost {
+        /// Creates isolated runtime and workspace roots for one market command test.
+        fn new(root: PathBuf) -> Self {
+            let runtime_root = root.join("runtime");
+            let workspace_root = root.join("workspace");
+            std::fs::create_dir_all(&runtime_root).expect("create test runtime root");
+            std::fs::create_dir_all(&workspace_root).expect("create test workspace root");
+            Self {
+                files: Arc::new(Mutex::new(BTreeMap::new())),
+                runtime_root,
+                workspace_root,
+            }
+        }
     }
 
     impl RuntimeStorageHost for MemoryStorageHost {
-        fn rootDir(&self) -> Option<std::path::PathBuf> {
-            None
+        fn runtimeRootDir(&self) -> Option<PathBuf> {
+            Some(self.runtime_root.clone())
+        }
+
+        fn workspaceRootDir(&self) -> Option<PathBuf> {
+            Some(self.workspace_root.clone())
         }
 
         fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
@@ -1190,8 +1227,36 @@ mod tests {
         }
     }
 
-    fn register_test_storage() {
-        setDefaultRuntimeStorageHost(Arc::new(MemoryStorageHost::default()));
+    /// Creates an application configured with isolated runtime storage for market commands.
+    fn market_test_application(root: PathBuf) -> OperitApplication {
+        let storage_host = Arc::new(MemoryStorageHost::new(root));
+        let mut host_manager = HostManager::new();
+        host_manager.runtimeStorageHost = Some(storage_host);
+        OperitApplication::newWithContext(host_manager)
+    }
+
+    /// Accepts bytes only when their digest matches the immutable market record.
+    #[test]
+    fn verifies_market_asset_sha256() {
+        let bytes = b"operit-market-asset";
+        let sha256 = format!("{:x}", Sha256::digest(bytes));
+        assert!(verify_market_asset_sha256(bytes, &sha256).is_ok());
+        assert!(verify_market_asset_sha256(bytes, "0".repeat(64).as_str()).is_err());
+    }
+
+    /// Preserves the market asset extension for the runtime package importer.
+    #[test]
+    fn market_asset_temp_path_preserves_asset_name() {
+        let asset = MarketEntryAsset {
+            id: "asset-1".to_string(),
+            version_id: "version-1".to_string(),
+            kind: "github_release_asset".to_string(),
+            url: "https://github.com/example/release/download/plugin.toolpkg".to_string(),
+            sha256: "0".repeat(64),
+            asset_name: Some("plugin.toolpkg".to_string()),
+        };
+        let path = market_asset_temp_path(&asset).expect("asset path should be created");
+        assert!(path.to_string_lossy().ends_with("plugin.toolpkg"));
     }
 
     struct ReqwestTestHttpHost;
@@ -1267,13 +1332,11 @@ mod tests {
         let mut root = std::env::temp_dir();
         root.push(format!("operit_market_test_{}", current_millis()));
         std::fs::create_dir_all(&root).expect("create test runtime root");
-        operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRoot(root);
-        register_test_storage();
-        let ctx = HostManager::new();
+        let application = market_test_application(root);
         let mut out = CoreCommandOutput::new();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         // Tests that parsing does not panic; network/IO errors are OK at this level.
-        let _ = run_market_command(ctx, &args, &mut out);
+        let _ = run_market_command(&application, &args, &mut out);
     }
 
     #[test]
@@ -1334,11 +1397,6 @@ mod tests {
     }
 
     #[test]
-    fn publish_proof_missing_args_prints_usage() {
-        run_market_cli(&["publish", "proof", "owner", "repo"]);
-    }
-
-    #[test]
     fn publish_artifact_missing_args_prints_usage() {
         run_market_cli(&["publish", "artifact", "script", "title"]);
     }
@@ -1363,13 +1421,10 @@ mod tests {
         let mut root = std::env::temp_dir();
         root.push(format!("operit_market_online_test_{}", current_millis()));
         std::fs::create_dir_all(&root).expect("create test runtime root");
-        operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRoot(root);
-        register_test_storage();
-
-        let ctx = HostManager::new();
+        let application = market_test_application(root);
         let mut out = CoreCommandOutput::new();
         let args = vec!["rank".to_string(), sort.to_string(), "1".to_string()];
-        run_market_command(ctx, &args, &mut out)
+        run_market_command(&application, &args, &mut out)
             .expect("online rank command should read cloud market");
         out.stdout
     }

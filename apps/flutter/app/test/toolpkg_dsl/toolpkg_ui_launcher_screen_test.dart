@@ -810,6 +810,7 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
     sourcePath: 'test',
     subpackages: <core_proxy.ToolPkgSubpackageRuntime>[],
     resources: <core_proxy.ToolPkgResourceRuntime>[],
+    wasmModules: <core_proxy.ToolPkgWasmModuleRuntime>[],
     workflowTemplates: <core_proxy.ToolPkgWorkflowTemplateRuntime>[],
     workspaceTemplates: <core_proxy.ToolPkgWorkspaceTemplateRuntime>[],
     uiModules: <core_proxy.ToolPkgUiModuleRuntime>[
@@ -873,6 +874,7 @@ core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
     sourcePath: 'test',
     subpackages: <core_proxy.ToolPkgSubpackageRuntime>[],
     resources: <core_proxy.ToolPkgResourceRuntime>[],
+    wasmModules: <core_proxy.ToolPkgWasmModuleRuntime>[],
     workflowTemplates: <core_proxy.ToolPkgWorkflowTemplateRuntime>[],
     workspaceTemplates: <core_proxy.ToolPkgWorkspaceTemplateRuntime>[],
     uiModules: <core_proxy.ToolPkgUiModuleRuntime>[

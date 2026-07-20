@@ -65,10 +65,11 @@ pub fn empty_response_stream() -> Box<dyn RevisableTextStreamLike> {
 /// Collects every chunk from a revisable response stream.
 pub async fn collect_stream_chunks(mut stream: Box<dyn RevisableTextStreamLike>) -> Vec<String> {
     let mut chunks = Vec::new();
-    stream.collect(&mut |chunk| {
-        chunks.push(chunk);
-    })
-    .await;
+    stream
+        .collect(&mut |chunk| {
+            chunks.push(chunk);
+        })
+        .await;
     chunks
 }
 

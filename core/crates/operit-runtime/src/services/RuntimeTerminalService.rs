@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use operit_host_api::{HostRuntimeTaskSchedulerHost, TerminalHost, TerminalSessionListEntry};
+use operit_host_api::{
+    HostRuntimeTaskSchedulerHost, TerminalHost, TerminalInfo, TerminalSessionListEntry,
+    TerminalTypeInfo,
+};
 use operit_store::{
     PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow},
     RuntimeStorePaths::RuntimeStorePaths,
@@ -38,6 +41,22 @@ pub struct RuntimeTerminalScreen {
     pub commandRunning: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Describes one terminal type that may be created by the active host.
+pub struct RuntimeTerminalTypeInfo {
+    pub terminalType: String,
+    pub available: bool,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Describes all terminal types exposed by the active host.
+pub struct RuntimeTerminalInfo {
+    pub platform: String,
+    pub defaultType: String,
+    pub types: Vec<RuntimeTerminalTypeInfo>,
+}
+
 /// Facade over host terminal APIs and shared terminal output streams.
 pub struct RuntimeTerminalService {
     terminalHost: Arc<dyn TerminalHost>,
@@ -61,10 +80,7 @@ impl Stream for RuntimeTerminalPtyOutputStream {
     type Item = String;
 
     /// Collects PTY output asynchronously until the host closes the stream.
-    fn collect<'a>(
-        &'a mut self,
-        collector: &'a mut dyn FnMut(Self::Item),
-    ) -> CollectFuture<'a> {
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         self.upstream.collect(collector)
     }
 }
@@ -95,6 +111,28 @@ fn runtime_terminal_session_info(session: TerminalSessionListEntry) -> RuntimeTe
         sessionKind: session.sessionKind,
         workingDir: session.workingDir,
         commandRunning: session.commandRunning,
+    }
+}
+
+/// Converts one host terminal type descriptor into the Core proxy model.
+fn runtime_terminal_type_info(terminal_type: TerminalTypeInfo) -> RuntimeTerminalTypeInfo {
+    RuntimeTerminalTypeInfo {
+        terminalType: terminal_type.terminalType,
+        available: terminal_type.available,
+        description: terminal_type.description,
+    }
+}
+
+/// Converts one host terminal capability descriptor into the Core proxy model.
+fn runtime_terminal_info(info: TerminalInfo) -> RuntimeTerminalInfo {
+    RuntimeTerminalInfo {
+        platform: info.platform,
+        defaultType: info.defaultType,
+        types: info
+            .types
+            .into_iter()
+            .map(runtime_terminal_type_info)
+            .collect(),
     }
 }
 
@@ -227,6 +265,15 @@ impl RuntimeTerminalService {
         self.terminalHost
             .terminalInfo()
             .map(|info| info.defaultType)
+            .map_err(|error| error.message)
+    }
+
+    #[allow(non_snake_case)]
+    /// Returns every terminal type that the active host exposes to users.
+    pub fn terminalInfo(&self) -> Result<RuntimeTerminalInfo, String> {
+        self.terminalHost
+            .terminalInfo()
+            .map(runtime_terminal_info)
             .map_err(|error| error.message)
     }
 

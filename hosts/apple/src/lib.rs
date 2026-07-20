@@ -15,6 +15,7 @@ pub use tools::fs::AppleFileSystemHost;
 pub use tools::host_runtime_event::AppleHostRuntimeEventHost;
 pub use tools::http::AppleHttpHost;
 pub use tools::local_inference::{AppleLocalInferenceCommand, AppleLocalInferenceHost};
+#[cfg(target_os = "macos")]
 pub use tools::runtime::AppleManagedRuntimeHost;
 pub use tools::storage::AppleRuntimeStorageHost;
 pub use tools::system::AppleSystemOperationHost;

@@ -358,15 +358,6 @@ pub struct MarketEntryUpdateItem {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-/// Proof response used to verify GitHub-backed publish ownership.
-pub struct MarketPublishProofResponse {
-    #[serde(default)]
-    pub ok: bool,
-    #[serde(default)]
-    pub proof: String,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 /// Paginated marketplace version response.
 pub struct MarketVersionPage {
     #[serde(default)]
@@ -462,7 +453,7 @@ pub struct MarketTypeStatsResponse {
     pub items: BTreeMap<String, MarketStatsEntryResponse>,
 }
 
-// ---- GitHub (kept for publish proof and token exchange) ----
+// ---- GitHub authentication ----
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 /// GitHub user profile returned during marketplace authentication.
@@ -746,31 +737,6 @@ impl MarketStatsApiService {
 
     // ── Publish ────────────────────────────────────────────
 
-    /// Creates a GitHub release asset proof for publishing.
-    pub fn publish_proof(
-        &self,
-        owner: &str,
-        repo: &str,
-        release_tag: &str,
-        asset_name: &str,
-        sha256: &str,
-    ) -> Result<MarketPublishProofResponse, String> {
-        self.decode_v2(
-            "POST",
-            &["publish", "proof"],
-            vec![("Content-Type".to_string(), "application/json".to_string())],
-            serde_json::to_vec(&serde_json::json!({
-                "owner": owner,
-                "repo": repo,
-                "releaseTag": release_tag,
-                "assetName": asset_name,
-                "sha256": sha256,
-            }))
-            .map_err(|e| e.to_string())?,
-            true,
-        )
-    }
-
     /// Publishes a marketplace artifact entry.
     pub fn publish_artifact(
         &self,
@@ -1015,7 +981,7 @@ impl MarketStatsApiService {
             return Err("asset id is empty".to_string());
         }
         let url = self.v2_url(&["assets", trimmed_asset_id, "download"])?;
-        let resp = self.request("GET", url.as_str(), Vec::new(), Vec::new(), false)?;
+        let resp = self.request("GET", url.as_str(), Vec::new(), Vec::new(), true)?;
         if is_success(resp.statusCode) {
             Ok(resp.body)
         } else {

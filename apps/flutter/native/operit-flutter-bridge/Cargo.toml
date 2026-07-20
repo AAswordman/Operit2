@@ -6,7 +6,15 @@ license = "MIT"
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+process-stdio = []
+
+[[bin]]
+name = "operit_flutter_bridge_process"
+path = "src/bin/operit_flutter_bridge_process.rs"
+required-features = ["process-stdio"]
 
 [dependencies]
 operit-core-proxy = { path = "../../../../core/crates/operit-core-proxy" }
@@ -48,8 +56,11 @@ operit-host-linux-native = { path = "../../../../hosts/linux" }
 [target.'cfg(target_env = "ohos")'.dependencies]
 operit-host-ohos-native = { path = "../../../../hosts/ohos" }
 
-[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
-operit-host-apple-native = { path = "../../../../hosts/apple" }
+[target.'cfg(target_os = "ios")'.dependencies]
+operit-host-ios-native = { path = "../../../../hosts/ios" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+operit-host-macos-native = { path = "../../../../hosts/macos" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"

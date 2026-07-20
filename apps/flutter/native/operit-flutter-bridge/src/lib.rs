@@ -13,6 +13,8 @@ use async_trait::async_trait;
 use operit_core_proxy::LocalCoreProxy;
 #[cfg(not(target_arch = "wasm32"))]
 mod mdnss;
+#[cfg(all(not(target_arch = "wasm32"), feature = "process-stdio"))]
+pub mod process_stdio;
 
 #[cfg(not(target_arch = "wasm32"))]
 use operit_link_access::{
@@ -32,7 +34,7 @@ use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerBrowserSession, requestOwnerComposeWebViewController, requestOwnerFileOpen,
     requestOwnerFileShare, requestOwnerLocalInference, requestOwnerMusicPlayback,
     requestOwnerSystemCaptureScreenshot, requestOwnerSystemOperation,
-    requestOwnerSystemRecognizeText, requestOwnerToolPermission, requestOwnerTtsPlayback,
+    requestOwnerSystemRecognizeText, requestOwnerToolPermissionAsync, requestOwnerTtsPlayback,
     requestOwnerTtsSynthesis, requestOwnerWebVisit, RuntimeHostInteractionAudioPlayPayload,
     RuntimeHostInteractionBluetoothPayload, RuntimeHostInteractionBrowserAutomationPayload,
     RuntimeHostInteractionBrowserSessionPayload,
@@ -68,22 +70,31 @@ use operit_host_android_native::{
 #[cfg(target_os = "android")]
 use operit_host_api::SystemOperationHost;
 #[cfg(target_os = "ios")]
-use operit_host_apple_native::AppleLocalInferenceHost as NativeLocalInferenceHost;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-use operit_host_apple_native::{
-    AppleAudioPlaybackHost as NativeAudioPlaybackHost, AppleBluetoothHost as NativeBluetoothHost,
-    AppleFileSystemHost as NativeFileSystemHost,
-    AppleHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
-    AppleHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
-    AppleHttpHost as NativeHttpHost, AppleManagedRuntimeHost as NativeManagedRuntimeHost,
-    AppleMusicCommand as NativeMusicCommand, AppleRuntimeStorageHost as NativeRuntimeStorageHost,
-    AppleSystemOperationHost as NativeSystemOperationHost,
-    AppleTtsPlaybackHost as NativeTtsPlaybackHost, AppleTtsSynthesisHost as NativeTtsSynthesisHost,
+use operit_host_ios_native::{
+    IosAudioPlaybackHost as NativeAudioPlaybackHost,
+    IosBluetoothHost as NativeBluetoothHost, IosFileSystemHost as NativeFileSystemHost,
+    IosHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    IosHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
+    IosHttpHost as NativeHttpHost, IosLocalInferenceHost as NativeLocalInferenceHost,
+    IosManagedRuntimeHost as NativeManagedRuntimeHost, IosMusicCommand as NativeMusicCommand,
+    IosRuntimeStorageHost as NativeRuntimeStorageHost,
+    IosSystemOperationHost as NativeSystemOperationHost,
+    IosTerminalHost as NativeTerminalHost,
+    IosTtsPlaybackHost as NativeTtsPlaybackHost,
+    IosTtsSynthesisHost as NativeTtsSynthesisHost,
 };
 #[cfg(target_os = "macos")]
-use operit_host_apple_native::{
-    AppleHostRuntimeEventHost as NativeHostRuntimeEventHost,
-    AppleTerminalHost as NativeTerminalHost,
+use operit_host_macos_native::{
+    MacosAudioPlaybackHost as NativeAudioPlaybackHost,
+    MacosBluetoothHost as NativeBluetoothHost, MacosFileSystemHost as NativeFileSystemHost,
+    MacosHostRuntimeEventHost as NativeHostRuntimeEventHost,
+    MacosHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    MacosHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
+    MacosHttpHost as NativeHttpHost, MacosManagedRuntimeHost as NativeManagedRuntimeHost,
+    MacosMusicCommand as NativeMusicCommand, MacosRuntimeStorageHost as NativeRuntimeStorageHost,
+    MacosSystemOperationHost as NativeSystemOperationHost, MacosTerminalHost as NativeTerminalHost,
+    MacosTtsPlaybackHost as NativeTtsPlaybackHost,
+    MacosTtsSynthesisHost as NativeTtsSynthesisHost,
 };
 #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 use operit_host_linux_native::{
@@ -169,6 +180,7 @@ pub struct OperitFlutterBridge {
         windows,
         all(target_os = "linux", not(target_env = "ohos")),
         target_os = "android",
+        target_os = "ios",
         target_os = "macos",
         target_env = "ohos"
     ))]
@@ -688,6 +700,7 @@ impl OperitFlutterBridge {
             windows,
             all(target_os = "linux", not(target_env = "ohos")),
             target_os = "android",
+            target_os = "ios",
             target_os = "macos",
             target_env = "ohos"
         ))]
@@ -705,6 +718,7 @@ impl OperitFlutterBridge {
                 windows,
                 all(target_os = "linux", not(target_env = "ohos")),
                 target_os = "android",
+                target_os = "ios",
                 target_os = "macos",
                 target_env = "ohos"
             ))]
@@ -735,6 +749,7 @@ impl OperitFlutterBridge {
                 windows,
                 all(target_os = "linux", not(target_env = "ohos")),
                 target_os = "android",
+                target_os = "ios",
                 target_os = "macos",
                 target_env = "ohos"
             ))]
@@ -1229,50 +1244,26 @@ impl CoreLinkClient for SharedFlutterCoreClient {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-/// Installs the owner-host permission requester for native runtimes.
+/// Installs the asynchronous controller permission requester for every runtime.
 fn install_permission_requester(core: &mut LocalCoreProxy) {
     let handler = core.localApplicationMut().toolHandler.clone();
     handler
         .getToolPermissionSystem()
-        .setPermissionRequester(move |tool, description| {
-            let response = requestOwnerToolPermission(
+        .setAsyncPermissionRequester(move |tool, description| async move {
+            let response = requestOwnerToolPermissionAsync(
                 RuntimeHostInteractionToolPermissionPayload {
-                    tool: tool_to_permission_payload(tool),
-                    description: description.to_string(),
+                    tool: tool_to_permission_payload(&tool),
+                    description,
                 },
                 Duration::from_millis(PERMISSION_REQUEST_TIMEOUT_MS),
-            );
-            let response = response.expect("permission request failed");
+            )
+            .await
+            .expect("permission request failed");
             match response.result.as_str() {
                 "allow" => PermissionRequestResult::ALLOW,
                 "allow_session" => PermissionRequestResult::ALLOW_SESSION,
                 "deny" => PermissionRequestResult::DENY,
                 other => panic!("unknown permission response result: {other}"),
-            }
-        });
-}
-
-#[cfg(target_arch = "wasm32")]
-/// Installs the browser-native synchronous permission requester for WebAssembly runtimes.
-fn install_permission_requester(core: &mut LocalCoreProxy) {
-    let handler = core.localApplicationMut().toolHandler.clone();
-    handler
-        .getToolPermissionSystem()
-        .setPermissionRequester(move |tool, description| {
-            let confirm = Reflect::get(&js_sys::global(), &JsValue::from_str("confirm"))
-                .expect("browser confirm function must be available")
-                .dyn_into::<Function>()
-                .expect("browser confirm must be a function");
-            let message = format!("Allow tool {}?\n\n{}", tool.name, description);
-            match confirm
-                .call1(&JsValue::NULL, &JsValue::from_str(&message))
-                .expect("browser permission prompt must complete")
-                .as_bool()
-            {
-                Some(true) => PermissionRequestResult::ALLOW,
-                Some(false) => PermissionRequestResult::DENY,
-                None => panic!("browser permission prompt must return a boolean"),
             }
         });
 }
@@ -1841,6 +1832,7 @@ fn create_local_core(
     browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
     browserSessionHost: Option<Arc<dyn operit_host_api::BrowserSessionHost>>,
     composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
+    terminalHost: Arc<NativeTerminalHost>,
 ) -> Result<LocalCoreProxy, String> {
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(runtime_root, workspace_root));
     let runtimeSqliteHost = runtimeStorageHost.clone();
@@ -1864,6 +1856,7 @@ fn create_local_core(
     if let Some(host) = composeDslWebViewHost {
         context = context.withComposeDslWebViewHost(host);
     }
+    context = context.withTerminalHost(terminalHost);
     context = context.withLocalInferenceHost(Arc::new(NativeLocalInferenceHost::fromExecutor(
         Arc::new(|command| {
             let response = requestOwnerLocalInference(

@@ -367,6 +367,7 @@ interface V86StarterConfiguration {
   bios: { url: string };
   vga_bios: { url: string };
   bzimage: { url: string };
+  initrd?: { url: string };
   cmdline: string;
   autostart: boolean;
   disable_keyboard: boolean;
@@ -396,11 +397,38 @@ interface LinuxVmSession {
   output: Uint8Array;
   outputLength: number;
   inputQueue: Uint8Array[];
+  startupText: string;
+  lastDownloadProgress: string | null;
+  progressVisible: boolean;
+}
+
+interface ManagedRuntimeRequest {
+  program: string;
+  executablePath?: string | null;
+  args: string[];
+  cwd?: string | null;
+  env: Record<string, string>;
+}
+
+interface ManagedRuntimeProcess {
+  readonly id: string;
+  readonly worker: Worker;
+  readonly header: Int32Array;
+  readonly output: Uint8Array;
+  readonly decoder: TextDecoder;
+  stdout: string;
+  stderr: string;
 }
 
 interface RuntimeGlobals {
   __OPERIT_WEB_ACCESS__?: WebAccessConfig;
+  __OPERIT_MODEL_INSTALL_WORKER__?: boolean;
   __operitRuntime?: RuntimeBridge;
+  __operitModelInstallWorkerStorageChanges?: () => Promise<ModelInstallWorkerStorageChange[]>;
+  __operitModelInstallWorkerSetSecrets?: (secrets: ModelInstallWorkerSecret[]) => void;
+  __operitModelInstallWorkerSetDownloads?: (downloads: ModelInstallWorkerDownload[]) => void;
+  __operitModelInstallWorkerDownloadRequests?: () => DownloadRequest[];
+  __operitModelInstallWorkerSecretChanges?: () => ModelInstallWorkerSecretChange[];
   initSqlJs?: SqlJsFactory;
   Module?: SherpaModuleConfig;
   __operitSherpaAsrClasses?: SherpaAsrClasses;
@@ -408,6 +436,80 @@ interface RuntimeGlobals {
   __OPERIT_LOCAL_INFERENCE_TEST__?: boolean;
   __operitLocalInferenceTest?: object;
   __operitHost?: object;
+  __operitHttpDownloadManager?: {
+    list(): Promise<HttpDownloadStatus[]>;
+    pause(url: string): void;
+    delete(url: string): Promise<void>;
+  };
+}
+
+interface ModelInstallWorkerStorageChange {
+  key: string;
+  bytes: Uint8Array | null;
+}
+
+interface ModelInstallWorkerSecret {
+  key: string;
+  bytes: Uint8Array;
+}
+
+interface ModelInstallWorkerSecretChange {
+  key: string;
+  bytes: Uint8Array | null;
+}
+
+interface ModelInstallWorkerDownload {
+  url: string;
+  bytes: Uint8Array;
+}
+
+interface ModelInstallWorkerResult {
+  type: "result";
+  response: Uint8Array;
+  changes: ModelInstallWorkerStorageChange[];
+  secretChanges: ModelInstallWorkerSecretChange[];
+}
+
+interface ModelInstallWorkerDownloadRequests {
+  type: "downloadRequests";
+  requests: DownloadRequest[];
+}
+
+interface PersistedHttpDownload {
+  url: string;
+  fileId: string;
+  expectedBytes: number;
+  downloadedBytes: number;
+  content: Blob;
+  modelId: string;
+  version: string;
+  paused: boolean;
+}
+
+interface HttpDownloadStatus {
+  url: string;
+  fileId: string;
+  expectedBytes: number;
+  downloadedBytes: number;
+  active: boolean;
+  modelId: string;
+  version: string;
+  paused: boolean;
+}
+
+interface LocalModelIdentity {
+  modelId: string;
+  version: string;
+}
+
+interface LocalModelDownloadCallResult {
+  handled: boolean;
+  response: Uint8Array;
+}
+
+interface ModelInstallWorkerError {
+  type: "error";
+  message: string;
 }
 
 (function () {
@@ -428,8 +530,15 @@ interface RuntimeGlobals {
   const sqlitePrefix = "operit2.sqlite.";
   const secretPrefix = "operit2.secrets.";
   const storageDatabaseName = "operit2.host.storage";
+  const httpDownloadDatabaseName = "operit2.http.downloads";
   const storageObjectStoreName = "entries";
+  const httpDownloadObjectStoreName = "downloads";
   const storageCache = new Map<string, Uint8Array>();
+  const workerChangedStorageKeys = new Set<string>();
+  const workerSecrets = new Map<string, Uint8Array>();
+  const workerDownloads = new Map<string, Uint8Array>();
+  const workerDownloadRequests = new Map<string, DownloadRequest>();
+  const workerChangedSecretKeys = new Set<string>();
   const fileDirectories = new Set<string>();
   const sqliteConnections = new Map<string, SqliteConnection>();
   const sqliteTransactions = new Map<string, SqliteConnection>();
@@ -438,11 +547,34 @@ interface RuntimeGlobals {
   let sqliteModulePromise: Promise<void> | null = null;
   let SQLite: SqlJsModule | null = null;
   let storageDatabasePromise: Promise<IDBDatabase> | null = null;
+  let httpDownloadDatabasePromise: Promise<IDBDatabase> | null = null;
+  let httpDownloadStatusCachePromise: Promise<void> | null = null;
+  const httpDownloadStatusCache = new Map<string, HttpDownloadStatus>();
+  const activeHttpDownloadControllers = new Map<string, AbortController>();
+  const activeHttpDownloadPromises = new Map<string, Promise<ModelInstallWorkerDownload>>();
+  const activeModelInstallAborters = new Map<string, () => void>();
+  const activeModelInstallPromises = new Map<string, Promise<Uint8Array>>();
+  const modelInstallTaskGenerations = new Map<string, number>();
+  let modelInstallTaskGeneration = 0;
+  let modelInstallCommitQueue: Promise<void> = Promise.resolve();
   let storageReadyPromise: Promise<void> | null = null;
   let webLocalInferenceReadyPromise: Promise<void> | null = null;
   let webLocalInferenceState: WebLocalInferenceState | null = null;
   const linuxVmSessions = new Map<string, LinuxVmSession>();
   const linuxVmOutputLimit = 4 * 1024 * 1024;
+  const managedRuntimeProcesses = new Map<string, ManagedRuntimeProcess>();
+  const managedRuntimeHeaderLength = 4;
+  const managedRuntimeOutputWriteIndex = 0;
+  const managedRuntimeOutputReadIndex = 1;
+  const managedRuntimeStateIndex = 2;
+  const managedRuntimeExitCodeIndex = 3;
+  const managedRuntimeStarting = 0;
+  const managedRuntimeRunning = 1;
+  const managedRuntimeFailed = 2;
+  const managedRuntimeStopped = 3;
+  const managedRuntimeOutputCapacity = 8 * 1024 * 1024;
+  const managedRuntimeCommandTimeoutMs = 180_000;
+  let managedRuntimeProcessIndex = 0;
 
   const webAccessSessionStorageKey = "operit2.webAccess.session";
   const pairingServiceVersion = 1;
@@ -1091,7 +1223,12 @@ interface RuntimeGlobals {
   }
 
   function key(prefix: string, path: string): string {
-    return prefix + String(path).replace(/^\/+/, "");
+    return prefix + normalizeRuntimePath(path);
+  }
+
+  /** Returns whether this bridge is executing in the model installation worker. */
+  function isModelInstallWorker(): boolean {
+    return runtimeGlobal.__OPERIT_MODEL_INSTALL_WORKER__ === true;
   }
 
   function bytesToBase64(bytes: Uint8Array): string {
@@ -1109,6 +1246,73 @@ interface RuntimeGlobals {
       bytes[index] = binary.charCodeAt(index);
     }
     return bytes;
+  }
+
+  /** Collects host secrets required by the isolated model installation worker. */
+  function collectModelInstallWorkerSecrets(): ModelInstallWorkerSecret[] {
+    const secrets: ModelInstallWorkerSecret[] = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const storageKey = localStorage.key(index);
+      if (storageKey === null || !storageKey.startsWith(secretPrefix)) {
+        continue;
+      }
+      const value = localStorage.getItem(storageKey);
+      if (value === null) {
+        continue;
+      }
+      secrets.push({
+        key: storageKey.slice(secretPrefix.length),
+        bytes: base64ToBytes(value),
+      });
+    }
+    return secrets;
+  }
+
+  /** Loads host secrets supplied by the browser UI thread into the worker runtime. */
+  function setModelInstallWorkerSecrets(secrets: ModelInstallWorkerSecret[]): void {
+    workerSecrets.clear();
+    for (const secret of secrets) {
+      workerSecrets.set(secret.key, Uint8Array.from(secret.bytes));
+    }
+  }
+
+  /** Loads archive bytes downloaded by the browser UI thread into the installation worker. */
+  function setModelInstallWorkerDownloads(downloads: ModelInstallWorkerDownload[]): void {
+    workerDownloads.clear();
+    for (const download of downloads) {
+      workerDownloads.set(download.url, Uint8Array.from(download.bytes));
+    }
+  }
+
+  /** Returns HTTP download requests discovered through the existing WebHttpHost interface. */
+  function collectModelInstallWorkerDownloadRequests(): DownloadRequest[] {
+    const requests = Array.from(workerDownloadRequests.values());
+    workerDownloadRequests.clear();
+    return requests;
+  }
+
+  /** Returns host secret mutations produced by the model installation worker. */
+  function collectModelInstallWorkerSecretChanges(): ModelInstallWorkerSecretChange[] {
+    const changes = Array.from(workerChangedSecretKeys, key => ({
+      key,
+      bytes: workerSecrets.has(key) ? Uint8Array.from(workerSecrets.get(key)!) : null,
+    }));
+    workerChangedSecretKeys.clear();
+    return changes;
+  }
+
+  /** Applies host secret mutations produced by the model installation worker. */
+  function applyModelInstallWorkerSecretChanges(
+    changes: ModelInstallWorkerSecretChange[],
+  ): void {
+    for (const change of changes) {
+      const storageKey = `${secretPrefix}${change.key}`;
+      if (change.bytes === null) {
+        localStorage.removeItem(storageKey);
+      } else {
+        localStorage.setItem(storageKey, bytesToBase64(change.bytes));
+      }
+    }
   }
 
   function nowIso(): string {
@@ -1150,9 +1354,11 @@ interface RuntimeGlobals {
           transaction.oncomplete = () => resolve();
           transaction.onerror = () => reject(transaction.error || new Error("indexedDB read failed"));
         });
-        migrateLocalStorageEntries(runtimePrefix);
-        migrateLocalStorageEntries(filePrefix);
-        migrateLocalStorageEntries(sqlitePrefix);
+        if (!isModelInstallWorker()) {
+          migrateLocalStorageEntries(runtimePrefix);
+          migrateLocalStorageEntries(filePrefix);
+          migrateLocalStorageEntries(sqlitePrefix);
+        }
       })();
     }
     return storageReadyPromise;
@@ -1197,6 +1403,217 @@ interface RuntimeGlobals {
     });
   }
 
+  /** Commits one installation change set in a single IndexedDB transaction. */
+  async function persistModelInstallStorageChanges(
+    changes: ModelInstallWorkerStorageChange[],
+  ): Promise<void> {
+    const database = await openStorageDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(storageObjectStoreName, "readwrite");
+      const store = transaction.objectStore(storageObjectStoreName);
+      for (const change of changes) {
+        if (change.bytes === null) {
+          store.delete(change.key);
+        } else {
+          store.put(change.bytes, change.key);
+        }
+      }
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(
+        transaction.error || new Error("model installation storage commit failed"),
+      );
+    });
+  }
+
+  /** Opens the persistent browser HTTP download database. */
+  function openHttpDownloadDatabase(): Promise<IDBDatabase> {
+    if (!httpDownloadDatabasePromise) {
+      httpDownloadDatabasePromise = new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(httpDownloadDatabaseName, 2);
+        request.onupgradeneeded = event => {
+          if (event.oldVersion === 0) {
+            request.result.createObjectStore(httpDownloadObjectStoreName);
+            return;
+          }
+          if (event.oldVersion !== 1 || request.transaction === null) {
+            throw new Error(`unsupported HTTP download database version: ${event.oldVersion}`);
+          }
+          const store = request.transaction.objectStore(httpDownloadObjectStoreName);
+          const cursorRequest = store.openCursor();
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result;
+            if (cursor === null) {
+              return;
+            }
+            const download = cursor.value as Omit<PersistedHttpDownload, "paused">;
+            cursor.update({ ...download, paused: false });
+            cursor.continue();
+          };
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error("HTTP download database open failed"));
+      });
+    }
+    return httpDownloadDatabasePromise;
+  }
+
+  /** Reads one persistent browser HTTP download by source URL. */
+  async function readHttpDownload(url: string): Promise<PersistedHttpDownload | null> {
+    const database = await openHttpDownloadDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction(httpDownloadObjectStoreName, "readonly");
+      const request = transaction.objectStore(httpDownloadObjectStoreName).get(url);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error || new Error("HTTP download read failed"));
+    });
+  }
+
+  /** Builds lightweight status metadata for one persistent HTTP download. */
+  function httpDownloadStatus(download: PersistedHttpDownload): HttpDownloadStatus {
+    return {
+      url: download.url,
+      fileId: download.fileId,
+      expectedBytes: download.expectedBytes,
+      downloadedBytes: download.downloadedBytes,
+      active: false,
+      modelId: download.modelId,
+      version: download.version,
+      paused: download.paused,
+    };
+  }
+
+  /** Loads persistent HTTP download metadata into the Host progress cache once. */
+  function ensureHttpDownloadStatusCache(): Promise<void> {
+    if (httpDownloadStatusCachePromise === null) {
+      httpDownloadStatusCachePromise = (async (): Promise<void> => {
+        const database = await openHttpDownloadDatabase();
+        const downloads = await new Promise<PersistedHttpDownload[]>((resolve, reject) => {
+          const transaction = database.transaction(httpDownloadObjectStoreName, "readonly");
+          const request = transaction.objectStore(httpDownloadObjectStoreName).getAll();
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(
+            request.error || new Error("HTTP download status cache load failed"),
+          );
+        });
+        for (const download of downloads) {
+          httpDownloadStatusCache.set(download.url, httpDownloadStatus(download));
+        }
+      })();
+    }
+    return httpDownloadStatusCachePromise;
+  }
+
+  /** Persists one resumable browser HTTP download. */
+  async function writeHttpDownload(download: PersistedHttpDownload): Promise<void> {
+    await ensureHttpDownloadStatusCache();
+    const database = await openHttpDownloadDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(httpDownloadObjectStoreName, "readwrite");
+      transaction.objectStore(httpDownloadObjectStoreName).put(download, download.url);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error("HTTP download write failed"));
+    });
+    httpDownloadStatusCache.set(download.url, httpDownloadStatus(download));
+  }
+
+  /** Deletes one persistent browser HTTP download. */
+  async function deleteHttpDownload(url: string): Promise<void> {
+    await stopHttpDownload(url);
+    await ensureHttpDownloadStatusCache();
+    const database = await openHttpDownloadDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(httpDownloadObjectStoreName, "readwrite");
+      transaction.objectStore(httpDownloadObjectStoreName).delete(url);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error("HTTP download delete failed"));
+    });
+    httpDownloadStatusCache.delete(url);
+  }
+
+  /** Lists every persistent browser HTTP download task. */
+  async function listHttpDownloads(): Promise<HttpDownloadStatus[]> {
+    await ensureHttpDownloadStatusCache();
+    return Array.from(httpDownloadStatusCache.values(), download => ({
+      ...download,
+      active: activeHttpDownloadPromises.has(download.url),
+    }));
+  }
+
+  /** Pauses one active browser HTTP download while preserving persisted bytes. */
+  function pauseHttpDownload(url: string): void {
+    activeHttpDownloadControllers.get(url)?.abort();
+  }
+
+  /** Stops one HTTP download loop and waits until it can no longer persist chunks. */
+  async function stopHttpDownload(url: string): Promise<void> {
+    const active = activeHttpDownloadPromises.get(url);
+    pauseHttpDownload(url);
+    if (active !== undefined) {
+      await active.then(
+        (): void => {},
+        (): void => {},
+      );
+    }
+  }
+
+  /** Builds the stable model installation task key used by Host controls. */
+  function localModelTaskKey(identity: LocalModelIdentity): string {
+    return `${identity.modelId}@${identity.version}`;
+  }
+
+  /** Starts a new generation for one exact model installation task. */
+  function startModelInstallTask(taskKey: string): number {
+    modelInstallTaskGeneration += 1;
+    modelInstallTaskGenerations.set(taskKey, modelInstallTaskGeneration);
+    return modelInstallTaskGeneration;
+  }
+
+  /** Invalidates every older generation for one exact model installation task. */
+  function invalidateModelInstallTask(taskKey: string): void {
+    modelInstallTaskGeneration += 1;
+    modelInstallTaskGenerations.set(taskKey, modelInstallTaskGeneration);
+    activeModelInstallAborters.get(taskKey)?.();
+    activeModelInstallPromises.delete(taskKey);
+  }
+
+  /** Checks whether an installation generation still owns its model task. */
+  function isCurrentModelInstallTask(taskKey: string, generation: number): boolean {
+    return modelInstallTaskGenerations.get(taskKey) === generation;
+  }
+
+  /** Writes one storage entry through the correct browser execution context. */
+  function persistStorageWrite(itemKey: string, bytes: Uint8Array): void {
+    if (isModelInstallWorker()) {
+      return;
+    }
+    void persistStorageEntry(itemKey, bytes);
+  }
+
+  /** Removes one storage entry through the correct browser execution context. */
+  function persistStorageDelete(itemKey: string): void {
+    if (isModelInstallWorker()) {
+      return;
+    }
+    void removeStorageEntry(itemKey);
+  }
+
+  /** Records one changed storage key during worker-owned model installation. */
+  function recordWorkerStorageChange(itemKey: string): void {
+    if (isModelInstallWorker()) {
+      workerChangedStorageKeys.add(itemKey);
+    }
+  }
+
+  /** Returns isolated storage changes produced by the model installation worker. */
+  async function collectWorkerStorageChanges(): Promise<ModelInstallWorkerStorageChange[]> {
+    const changes = Array.from(workerChangedStorageKeys, itemKey => ({
+      key: itemKey,
+      bytes: storageCache.has(itemKey) ? storageCache.get(itemKey)! : null,
+    }));
+    workerChangedStorageKeys.clear();
+    return changes;
+  }
+
   function storageRead(prefix: string, path: string): Uint8Array {
     return storageCache.get(key(prefix, path)) || new Uint8Array();
   }
@@ -1205,8 +1622,9 @@ interface RuntimeGlobals {
     const itemKey = key(prefix, path);
     const bytes = new Uint8Array(content);
     storageCache.set(itemKey, bytes);
-    void persistStorageEntry(itemKey, bytes);
-    if (isLocalModelRegistryPath(prefix, path)) {
+    persistStorageWrite(itemKey, bytes);
+    recordWorkerStorageChange(itemKey);
+    if (!isModelInstallWorker() && isLocalModelRegistryPath(prefix, path)) {
       scheduleWebLocalInferenceRefresh();
     }
   }
@@ -1229,7 +1647,8 @@ interface RuntimeGlobals {
     const exact = key(prefix, path);
     const directory = exact.endsWith("/") ? exact : exact + "/";
     storageCache.delete(exact);
-    void removeStorageEntry(exact);
+    persistStorageDelete(exact);
+    recordWorkerStorageChange(exact);
     if (recursive) {
       const keys = [];
       for (const itemKey of storageCache.keys()) {
@@ -1239,10 +1658,11 @@ interface RuntimeGlobals {
       }
       for (const itemKey of keys) {
         storageCache.delete(itemKey);
-        void removeStorageEntry(itemKey);
+        persistStorageDelete(itemKey);
+        recordWorkerStorageChange(itemKey);
       }
     }
-    if (isLocalModelRegistryPath(prefix, path)) {
+    if (!isModelInstallWorker() && isLocalModelRegistryPath(prefix, path)) {
       scheduleWebLocalInferenceRefresh();
     }
   }
@@ -1355,7 +1775,20 @@ interface RuntimeGlobals {
     }
   }
 
-  function loadScript(src: string): Promise<void> {
+  /** Loads one classic runtime script in the browser window or model installation worker. */
+  async function loadScript(src: string): Promise<void> {
+    if (isModelInstallWorker()) {
+      const response = await fetch(src);
+      if (!response.ok) {
+        throw new Error(`failed to load ${src}: HTTP ${response.status}`);
+      }
+      const source = await response.text();
+      const execute = new Function(
+        `${source}\nglobalThis.initSqlJs = initSqlJs;`,
+      ) as () => void;
+      execute();
+      return;
+    }
     return new Promise<void>((resolve, reject) => {
       const existing = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
       if (existing) {
@@ -2616,9 +3049,13 @@ self.onmessage = (event) => {
     return normalizeRuntimePath(`${directory}/${filePath.slice(0, slash)}`);
   }
 
-  // Normalizes runtime storage paths to slash separators.
+  // Normalizes runtime storage paths to canonical slash-separated segments.
   function normalizeRuntimePath(path: string): string {
-    return String(path).replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+    return String(path)
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter((segment) => segment.length > 0 && segment !== ".")
+      .join("/");
   }
 
   // Decodes one mono PCM WAV byte payload into Float32 samples.
@@ -2689,6 +3126,295 @@ self.onmessage = (event) => {
     return new URL(`./v86/${name}`, import.meta.url).href;
   }
 
+  /** Validates the structured process request received from the WebAssembly runtime host. */
+  function validateManagedRuntimeRequest(request: ManagedRuntimeRequest): void {
+    if (!Array.isArray(request.args) || !request.args.every(argument => typeof argument === "string")) {
+      throw new Error("managed runtime request arguments must be strings");
+    }
+    if (typeof request.env !== "object" || request.env === null || Array.isArray(request.env)) {
+      throw new Error("managed runtime request environment is invalid");
+    }
+    for (const [name, value] of Object.entries(request.env)) {
+      if (typeof name !== "string" || typeof value !== "string") {
+        throw new Error("managed runtime request environment must contain string values");
+      }
+    }
+  }
+
+  /** Maps one managed runtime program to its installed executable inside the guest. */
+  function guestRuntimeExecutable(program: string): { program: string; executable: string } {
+    switch (program) {
+      case "node":
+        return { program: "node", executable: "/usr/local/bin/node" };
+      case "python":
+        return { program: "python3", executable: "/usr/local/bin/python3" };
+      default:
+        throw new Error(`unsupported V86 managed runtime program: ${program}`);
+    }
+  }
+
+  /** Resolves a browser virtual-file-system path into a guest-relative workspace path. */
+  function guestWorkspacePath(path: string | null | undefined): string {
+    const segments = String(path || "")
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter(segment => segment.length > 0 && segment !== ".");
+    if (segments.some(segment => segment === "..")) {
+      throw new Error("managed runtime workspace path escapes the guest workspace");
+    }
+    return segments.length === 0 ? "." : segments.join("/");
+  }
+
+  /** Selects virtual files belonging to the requested managed runtime working directory. */
+  function managedRuntimeWorkspaceFrames(workingDirectory: string): string[] {
+    const prefix = workingDirectory === "." ? "" : `${workingDirectory}/`;
+    const frames: string[] = [];
+    for (const [storageKey, bytes] of storageCache.entries()) {
+      if (!storageKey.startsWith(filePrefix)) {
+        continue;
+      }
+      const filePath = guestWorkspacePath(storageKey.slice(filePrefix.length));
+      if (prefix.length > 0 && filePath !== workingDirectory && !filePath.startsWith(prefix)) {
+        continue;
+      }
+      frames.push(JSON.stringify({
+        kind: "file",
+        path: filePath,
+        base64: bytesToBase64(bytes),
+      }));
+    }
+    return frames;
+  }
+
+  /** Rewrites working-directory environment paths to their corresponding guest paths. */
+  function managedRuntimeEnvironment(
+    environment: Record<string, string>,
+    hostWorkingDirectory: string | null | undefined,
+    guestWorkingDirectory: string,
+  ): Record<string, string> {
+    const result: Record<string, string> = {};
+    const hostRoot = String(hostWorkingDirectory || "").replace(/\\/g, "/").replace(/\/+$/, "");
+    const guestRoot = guestWorkingDirectory === "."
+      ? "/workspace"
+      : `/workspace/${guestWorkingDirectory}`;
+    for (const [name, value] of Object.entries(environment)) {
+      const normalizedValue = value.replace(/\\/g, "/");
+      if (hostRoot.length > 0 && normalizedValue === hostRoot) {
+        result[name] = guestRoot;
+      } else if (hostRoot.length > 0 && normalizedValue.startsWith(`${hostRoot}/`)) {
+        result[name] = `${guestRoot}/${normalizedValue.slice(hostRoot.length + 1)}`;
+      } else {
+        result[name] = value;
+      }
+    }
+    return result;
+  }
+
+  /** Sends one structured command to a dedicated V86 worker. */
+  function postManagedRuntimeWorkerMessage(worker: Worker, message: object): void {
+    worker.postMessage(message);
+  }
+
+  /** Creates one worker-backed guest process and schedules its serial deployment frames. */
+  function startManagedRuntimeProcess(request: ManagedRuntimeRequest): string {
+    requireCrossOriginIsolation("managed Node/Python runtime");
+    validateManagedRuntimeRequest(request);
+    const runtime = guestRuntimeExecutable(request.program);
+    const executablePath = request.executablePath?.trim();
+    if (executablePath && executablePath !== runtime.executable) {
+      throw new Error(`V86 managed runtime cannot execute host path: ${executablePath}`);
+    }
+    const workingDirectory = guestWorkspacePath(request.cwd);
+    const startupFrames = managedRuntimeWorkspaceFrames(workingDirectory);
+    startupFrames.push(JSON.stringify({
+      kind: "start",
+      program: runtime.program,
+      arguments: request.args,
+      environment: managedRuntimeEnvironment(request.env, request.cwd, workingDirectory),
+      workingDirectory,
+    }));
+    const serialBuffer = new SharedArrayBuffer(
+      managedRuntimeHeaderLength * Int32Array.BYTES_PER_ELEMENT + managedRuntimeOutputCapacity,
+    );
+    const header = new Int32Array(serialBuffer, 0, managedRuntimeHeaderLength);
+    const output = new Uint8Array(serialBuffer, managedRuntimeHeaderLength * Int32Array.BYTES_PER_ELEMENT);
+    const id = `v86-runtime-${++managedRuntimeProcessIndex}`;
+    const worker = new Worker(new URL("./v86_runtime_worker.js", import.meta.url), {
+      type: "module",
+      name: id,
+    });
+    const process: ManagedRuntimeProcess = {
+      id,
+      worker,
+      header,
+      output,
+      decoder: new TextDecoder(),
+      stdout: "",
+      stderr: "",
+    };
+    worker.addEventListener("error", event => {
+      process.stderr += `[V86 runtime worker failed: ${event.message}]\n`;
+      Atomics.store(process.header, managedRuntimeStateIndex, managedRuntimeFailed);
+    });
+    managedRuntimeProcesses.set(id, process);
+    postManagedRuntimeWorkerMessage(worker, {
+      type: "boot",
+      serialBuffer,
+      outputCapacity: managedRuntimeOutputCapacity,
+      startupFrames,
+    });
+    return id;
+  }
+
+  /** Resolves one managed runtime process by its host-issued identifier. */
+  function managedRuntimeProcess(id: string): ManagedRuntimeProcess {
+    const process = managedRuntimeProcesses.get(id);
+    if (process === undefined) {
+      throw new Error(`managed runtime process does not exist: ${id}`);
+    }
+    return process;
+  }
+
+  /** Copies all serial bytes currently available from a guest's shared output ring. */
+  function drainManagedRuntimeOutputBytes(process: ManagedRuntimeProcess): Uint8Array {
+    const writeIndex = Atomics.load(process.header, managedRuntimeOutputWriteIndex);
+    const readIndex = Atomics.load(process.header, managedRuntimeOutputReadIndex);
+    const count = writeIndex - readIndex;
+    if (count === 0) {
+      return new Uint8Array();
+    }
+    if (count < 0 || count > managedRuntimeOutputCapacity) {
+      throw new Error("V86 managed runtime serial ring is corrupt");
+    }
+    const bytes = new Uint8Array(count);
+    const firstLength = Math.min(count, managedRuntimeOutputCapacity - (readIndex % managedRuntimeOutputCapacity));
+    bytes.set(process.output.subarray(readIndex % managedRuntimeOutputCapacity, (readIndex % managedRuntimeOutputCapacity) + firstLength));
+    if (firstLength < count) {
+      bytes.set(process.output.subarray(0, count - firstLength), firstLength);
+    }
+    Atomics.store(process.header, managedRuntimeOutputReadIndex, readIndex + count);
+    return bytes;
+  }
+
+  /** Decodes newly available guest stdout bytes into the process line buffer. */
+  function refreshManagedRuntimeStdout(process: ManagedRuntimeProcess): void {
+    const bytes = drainManagedRuntimeOutputBytes(process);
+    if (bytes.length > 0) {
+      process.stdout += process.decoder.decode(bytes, { stream: true });
+    }
+  }
+
+  /** Returns the current guest lifecycle state from the shared serial header. */
+  function managedRuntimeState(process: ManagedRuntimeProcess): number {
+    return Atomics.load(process.header, managedRuntimeStateIndex);
+  }
+
+  /** Reads one newline-delimited stdout frame without relying on browser event-loop progress. */
+  function readManagedRuntimeStdoutLine(id: string, timeoutMs: number): string | null {
+    const process = managedRuntimeProcess(id);
+    const deadline = performance.now() + Math.max(0, timeoutMs);
+    for (;;) {
+      refreshManagedRuntimeStdout(process);
+      const newlineIndex = process.stdout.indexOf("\n");
+      if (newlineIndex >= 0) {
+        const line = process.stdout.slice(0, newlineIndex).replace(/\r$/, "");
+        process.stdout = process.stdout.slice(newlineIndex + 1);
+        return line;
+      }
+      const state = managedRuntimeState(process);
+      if (state === managedRuntimeFailed) {
+        process.stderr += process.stdout;
+        process.stdout = "";
+        return null;
+      }
+      if (state === managedRuntimeStopped || performance.now() >= deadline) {
+        return null;
+      }
+    }
+  }
+
+  /** Writes protocol lines to one guest process serial input. */
+  function writeManagedRuntimeLines(id: string, lines: string[]): void {
+    const process = managedRuntimeProcess(id);
+    if (!Array.isArray(lines) || !lines.every(line => typeof line === "string")) {
+      throw new Error("managed runtime input lines must be strings");
+    }
+    const state = managedRuntimeState(process);
+    if (state === managedRuntimeFailed || state === managedRuntimeStopped) {
+      throw new Error(`managed runtime process is not running: ${id}`);
+    }
+    postManagedRuntimeWorkerMessage(process.worker, { type: "input", lines });
+  }
+
+  /** Drains guest diagnostics accumulated after a V86 worker failure. */
+  function drainManagedRuntimeStderr(id: string): string {
+    const process = managedRuntimeProcess(id);
+    if (managedRuntimeState(process) === managedRuntimeFailed) {
+      refreshManagedRuntimeStdout(process);
+      process.stderr += process.stdout;
+      process.stdout = "";
+    }
+    const output = process.stderr;
+    process.stderr = "";
+    return output;
+  }
+
+  /** Returns whether a guest process has not exited or failed. */
+  function isManagedRuntimeRunning(id: string): boolean {
+    const state = managedRuntimeState(managedRuntimeProcess(id));
+    return state === managedRuntimeStarting || state === managedRuntimeRunning;
+  }
+
+  /** Terminates a guest V86 process and releases its emulator worker. */
+  function killManagedRuntimeProcess(id: string): void {
+    const process = managedRuntimeProcess(id);
+    const state = managedRuntimeState(process);
+    if (state === managedRuntimeFailed || state === managedRuntimeStopped) {
+      return;
+    }
+    Atomics.store(process.header, managedRuntimeStateIndex, managedRuntimeStopped);
+    postManagedRuntimeWorkerMessage(process.worker, { type: "kill" });
+  }
+
+  /** Runs one finite guest command and collects all serial output before releasing its worker. */
+  function runManagedRuntimeCommand(request: ManagedRuntimeRequest): {
+    exitCode: number | null;
+    stdout: string;
+    stderr: string;
+  } {
+    const id = startManagedRuntimeProcess(request);
+    const process = managedRuntimeProcess(id);
+    const deadline = performance.now() + managedRuntimeCommandTimeoutMs;
+    for (;;) {
+      refreshManagedRuntimeStdout(process);
+      const state = managedRuntimeState(process);
+      if (state === managedRuntimeStopped) {
+        process.stdout += process.decoder.decode();
+        const exitCode = Atomics.load(process.header, managedRuntimeExitCodeIndex);
+        const result = {
+          exitCode: exitCode >= 0 ? exitCode : null,
+          stdout: process.stdout,
+          stderr: drainManagedRuntimeStderr(id),
+        };
+        managedRuntimeProcesses.delete(id);
+        process.worker.terminate();
+        return result;
+      }
+      if (state === managedRuntimeFailed) {
+        const stderr = drainManagedRuntimeStderr(id);
+        managedRuntimeProcesses.delete(id);
+        process.worker.terminate();
+        throw new Error(stderr.length > 0 ? stderr : "V86 managed runtime failed");
+      }
+      if (performance.now() >= deadline) {
+        killManagedRuntimeProcess(id);
+        managedRuntimeProcesses.delete(id);
+        process.worker.terminate();
+        throw new Error("V86 managed runtime command timed out");
+      }
+    }
+  }
+
   /** Returns one active Linux VM session or raises a terminal lifecycle error. */
   function linuxVmSession(sessionId: string): LinuxVmSession {
     const session = linuxVmSessions.get(sessionId);
@@ -2718,11 +3444,72 @@ self.onmessage = (event) => {
     session.outputLength = requiredLength;
   }
 
+  /** Redraws the single PTY progress line used while the Linux VM starts. */
+  function renderLinuxVmProgress(session: LinuxVmSession, message: string): void {
+    session.progressVisible = true;
+    appendLinuxVmOutput(session, textEncoder.encode(`\r\x1b[2K${message}`));
+  }
+
+  /** Clears the PTY progress line before terminal output or a completed startup stage. */
+  function finishLinuxVmProgress(session: LinuxVmSession, message: string | null): void {
+    if (!session.progressVisible) {
+      return;
+    }
+    session.progressVisible = false;
+    const suffix = message === null ? "" : `${message}\r\n`;
+    appendLinuxVmOutput(session, textEncoder.encode(`\r\x1b[2K${suffix}`));
+  }
+
+  /** Formats one V86 asset download event to fit on one interactive terminal line. */
+  function linuxVmDownloadStatus(value: unknown, columns: number): string | null {
+    if (typeof value !== "object" || value === null) {
+      return null;
+    }
+    const progress = value as Record<string, unknown>;
+    const fileIndex = progress.file_index;
+    const fileCount = progress.file_count;
+    const loaded = progress.loaded;
+    const total = progress.total;
+    if (
+      typeof fileIndex !== "number" ||
+      typeof fileCount !== "number" ||
+      typeof loaded !== "number" ||
+      typeof total !== "number" ||
+      !Number.isInteger(fileIndex) ||
+      !Number.isInteger(fileCount) ||
+      fileIndex < 0 ||
+      fileCount < 1 ||
+      loaded < 0 ||
+      total < 1
+    ) {
+      return null;
+    }
+    const percentage = Math.min(100, Math.floor((loaded * 100) / total));
+    const prefix = `${fileIndex + 1}/${fileCount}`;
+    const suffix = `${percentage}%`;
+    const availableBarWidth = columns - prefix.length - suffix.length - 4;
+    const width = Math.max(1, Math.min(24, availableBarWidth));
+    const filled = Math.round((percentage * width) / 100);
+    const bar = `${"=".repeat(filled)}${"-".repeat(width - filled)}`;
+    return `${prefix} [${bar}] ${suffix}`;
+  }
+
+  /** Marks the Linux VM terminal ready only after the guest init program accepts serial input. */
+  function markLinuxVmReady(session: LinuxVmSession): void {
+    if (session.state !== "starting") {
+      return;
+    }
+    session.state = "running";
+    finishLinuxVmProgress(session, "Runtime ready");
+    flushLinuxVmInput(session);
+  }
+
   /** Marks one Linux VM session as failed and makes the reason visible in its terminal stream. */
   function failLinuxVmSession(session: LinuxVmSession, error: unknown): void {
     if (session.state === "closed" || session.state === "failed") {
       return;
     }
+    finishLinuxVmProgress(session, null);
     session.state = "failed";
     session.exitCode = 1;
     const message = error instanceof Error ? error.message : String(error);
@@ -2752,19 +3539,22 @@ self.onmessage = (event) => {
   /** Starts the v86 Linux guest and connects its virtual serial console to one terminal session. */
   async function startLinuxVm(session: LinuxVmSession): Promise<void> {
     try {
+      renderLinuxVmProgress(session, "Preparing runtime");
       const modulePath = v86AssetUrl("libv86.mjs");
       const module = await import(modulePath) as unknown as V86Module;
       if (!linuxVmSessions.has(session.id) || session.state === "closed") {
         return;
       }
+      renderLinuxVmProgress(session, "Downloading runtime");
       const emulator = new module.V86({
         wasm_path: v86AssetUrl("v86.wasm"),
-        memory_size: 128 * 1024 * 1024,
+        memory_size: 512 * 1024 * 1024,
         vga_memory_size: 2 * 1024 * 1024,
         bios: { url: v86AssetUrl("seabios.bin") },
         vga_bios: { url: v86AssetUrl("vgabios.bin") },
-        bzimage: { url: v86AssetUrl("buildroot-bzimage.bin") },
-        cmdline: "console=ttyS0 tsc=reliable mitigations=off random.trust_cpu=on",
+        bzimage: { url: v86AssetUrl("runtime/operit-runtime-bzimage.bin") },
+        initrd: { url: v86AssetUrl("runtime/operit-runtime-initrd.cpio.gz") },
+        cmdline: `console=ttyS0 operit.mode=terminal operit.rows=${session.rows} operit.cols=${session.cols} tsc=reliable mitigations=off random.trust_cpu=on`,
         autostart: true,
         disable_keyboard: true,
         disable_mouse: true,
@@ -2773,13 +3563,27 @@ self.onmessage = (event) => {
       session.emulator = emulator;
       emulator.add_listener("serial0-output-byte", (value: unknown) => {
         if (typeof value === "number" && session.state !== "closed") {
-          appendLinuxVmOutput(session, Uint8Array.of(value & 0xff));
+          const byte = value & 0xff;
+          finishLinuxVmProgress(session, "Starting Linux");
+          appendLinuxVmOutput(session, Uint8Array.of(byte));
+          if (session.state === "starting") {
+            session.startupText = `${session.startupText}${String.fromCharCode(byte)}`.slice(-128);
+            if (session.startupText.includes("OPERIT_TERMINAL_READY")) {
+              markLinuxVmReady(session);
+            }
+          }
         }
       });
       emulator.add_listener("emulator-started", () => {
         if (session.state === "starting") {
-          session.state = "running";
-          flushLinuxVmInput(session);
+          renderLinuxVmProgress(session, "Starting Linux");
+        }
+      });
+      emulator.add_listener("download-progress", (value: unknown) => {
+        const status = linuxVmDownloadStatus(value, session.cols);
+        if (status !== null && status !== session.lastDownloadProgress) {
+          session.lastDownloadProgress = status;
+          renderLinuxVmProgress(session, status);
         }
       });
       emulator.add_listener("emulator-stopped", () => {
@@ -2814,6 +3618,9 @@ self.onmessage = (event) => {
       output: new Uint8Array(4096),
       outputLength: 0,
       inputQueue: [],
+      startupText: "",
+      lastDownloadProgress: null,
+      progressVisible: false,
     };
     linuxVmSessions.set(sessionId, session);
     void startLinuxVm(session);
@@ -2854,6 +3661,10 @@ self.onmessage = (event) => {
     }
     session.rows = rows;
     session.cols = cols;
+    if (session.state === "running" && session.emulator !== null) {
+      const resize = `\x1b]1337;OPERIT_RESIZE;${rows};${cols}\x07`;
+      session.emulator.serial_send_bytes(0, textEncoder.encode(resize));
+    }
   }
 
   /** Returns the Linux VM process exit code once the virtual machine has stopped. */
@@ -2952,15 +3763,29 @@ self.onmessage = (event) => {
     hostSecretStore: {
       // Reads a host-owned secret from browser-local protected storage.
       readSecret(key: string): Uint8Array | null {
+        if (isModelInstallWorker()) {
+          const value = workerSecrets.get(key);
+          return value === undefined ? null : Uint8Array.from(value);
+        }
         const value = localStorage.getItem(`${secretPrefix}${key}`);
         return value === null ? null : base64ToBytes(value);
       },
       // Writes a host-owned secret into browser-local protected storage.
       writeSecret(key: string, content: Uint8Array): void {
+        if (isModelInstallWorker()) {
+          workerSecrets.set(key, Uint8Array.from(content));
+          workerChangedSecretKeys.add(key);
+          return;
+        }
         localStorage.setItem(`${secretPrefix}${key}`, bytesToBase64(new Uint8Array(content)));
       },
       // Deletes a host-owned secret from browser-local protected storage.
       deleteSecret(key: string): void {
+        if (isModelInstallWorker()) {
+          workerSecrets.delete(key);
+          workerChangedSecretKeys.add(key);
+          return;
+        }
         localStorage.removeItem(`${secretPrefix}${key}`);
       },
     },
@@ -3172,22 +3997,10 @@ self.onmessage = (event) => {
         };
       },
       downloadFile(request: DownloadRequest) {
-        const xhr = new XMLHttpRequest();
-        xhr.open("GET", request.url, false);
-        xhr.overrideMimeType("text/plain; charset=x-user-defined");
-        for (const pair of request.headers || []) {
-          const name = Array.isArray(pair) ? pair[0] : pair.key;
-          const value = Array.isArray(pair) ? pair[1] : pair.value;
-          xhr.setRequestHeader(name, value);
-        }
-        xhr.send(null);
-        if (xhr.status < 200 || xhr.status >= 300) {
-          throw new Error(`download ${request.fileId} failed with HTTP ${xhr.status}`);
-        }
-        const raw = xhr.responseText || "";
-        const bytes = new Uint8Array(raw.length);
-        for (let index = 0; index < raw.length; index += 1) {
-          bytes[index] = raw.charCodeAt(index) & 0xff;
+        const bytes = workerDownloads.get(request.url);
+        if (bytes === undefined) {
+          workerDownloadRequests.set(request.url, structuredClone(request));
+          throw new Error(`download ${request.fileId} is pending in the browser HTTP host`);
         }
         if (typeof request.expectedBytes === "number" && bytes.length !== request.expectedBytes) {
           throw new Error(`download ${request.fileId} size mismatch: ${bytes.length} != ${request.expectedBytes}`);
@@ -3195,7 +4008,7 @@ self.onmessage = (event) => {
         storageWrite(runtimePrefix, request.targetPath, bytes);
         return {
           fileId: String(request.fileId),
-          finalUrl: xhr.responseURL || request.url,
+          finalUrl: request.url,
           targetPath: String(request.targetPath),
           downloadedBytes: bytes.length,
         };
@@ -3205,29 +4018,40 @@ self.onmessage = (event) => {
       runtimeWorkspaceDir() {
         return "operit2/workspace";
       },
-      resolveRuntimeExecutable(program: string): string {
-        return program;
+      resolveRuntimeExecutable(program: string, executablePath: string | null): string {
+        const runtime = guestRuntimeExecutable(program);
+        const requestedPath = executablePath?.trim();
+        if (requestedPath && requestedPath !== runtime.executable) {
+          throw new Error(`V86 managed runtime cannot execute host path: ${requestedPath}`);
+        }
+        return runtime.executable;
       },
-      startRuntimeProcess() {
-        unavailable("managedRuntime.startRuntimeProcess");
+      startRuntimeProcess(request: ManagedRuntimeRequest): string {
+        return startManagedRuntimeProcess(request);
       },
-      runRuntimeCommand() {
-        unavailable("managedRuntime.runRuntimeCommand");
+      runRuntimeCommand(request: ManagedRuntimeRequest) {
+        return runManagedRuntimeCommand(request);
       },
     },
     managedRuntimeProcess: {
-      writeLine() {},
-      writeLines() {},
-      readStdoutLine(): null {
-        return null;
+      writeLine(id: string, line: string): void {
+        writeManagedRuntimeLines(id, [line]);
       },
-      drainStderr() {
-        return "";
+      writeLines(id: string, lines: string[]): void {
+        writeManagedRuntimeLines(id, lines);
       },
-      isRunning() {
-        return false;
+      readStdoutLine(id: string, timeoutMs: number): string | null {
+        return readManagedRuntimeStdoutLine(id, timeoutMs);
       },
-      kill() {},
+      drainStderr(id: string): string {
+        return drainManagedRuntimeStderr(id);
+      },
+      isRunning(id: string): boolean {
+        return isManagedRuntimeRunning(id);
+      },
+      kill(id: string): void {
+        killManagedRuntimeProcess(id);
+      },
     },
     musicPlayback,
     bluetooth,
@@ -3325,7 +4149,9 @@ self.onmessage = (event) => {
   ): Promise<RuntimeBridge> {
     await ensureBrowserStorage();
     await ensureSqlite();
-    await ensureWebLocalInference();
+    if (!isModelInstallWorker()) {
+      await ensureWebLocalInference();
+    }
     const wasm = await module.default({ module_or_path: "./operit_flutter_bridge_bg.wasm" });
     wasi.setWasiMemory(wasm.memory);
     return new module.OperitFlutterBridgeWasm();
@@ -3333,7 +4159,10 @@ self.onmessage = (event) => {
 
   async function bridge() {
     if (!bridgePromise) {
-      const wasmModule = importRuntimeScript("./operit_flutter_bridge.js") as Promise<WasmBridgeModule>;
+      const wasmModulePath = isModelInstallWorker()
+        ? "./operit_flutter_bridge_worker.js"
+        : "./operit_flutter_bridge.js";
+      const wasmModule = importRuntimeScript(wasmModulePath) as Promise<WasmBridgeModule>;
       const wasiModule = importRuntimeScript("./wasi_snapshot_preview1.js") as Promise<WasiModule>;
       bridgePromise = Promise.all([wasmModule, wasiModule])
         .then(([module, wasi]) => initializeWasmBridge(module, wasi));
@@ -3341,8 +4170,460 @@ self.onmessage = (event) => {
     return bridgePromise;
   }
 
+  /** Checks whether one encoded Core request installs a local model. */
+  function isLocalModelInstallRequest(request: Uint8Array): boolean {
+    const decoded: unknown = MessagePack.decode(request);
+    if (!Array.isArray(decoded) || decoded.length !== 4) {
+      return false;
+    }
+    const targetPath = decoded[1];
+    return Array.isArray(targetPath) &&
+      targetPath.length === 2 &&
+      targetPath[0] === "services" &&
+      targetPath[1] === "localModelService" &&
+      decoded[2] === "installModel";
+  }
+
+  /** Reads the exact local model identity from one structured service request. */
+  function localModelIdentity(request: Uint8Array): LocalModelIdentity {
+    const decoded: unknown = MessagePack.decode(request);
+    if (!Array.isArray(decoded) || decoded.length !== 4) {
+      throw new Error("local model service request is invalid");
+    }
+    const args = decoded[3];
+    if (typeof args !== "object" || args === null || Array.isArray(args)) {
+      throw new Error("local model service arguments are invalid");
+    }
+    const modelId = (args as Record<string, unknown>).modelId;
+    const version = (args as Record<string, unknown>).version;
+    if (typeof modelId !== "string" || typeof version !== "string") {
+      throw new Error("local model service request requires modelId and version");
+    }
+    return { modelId, version };
+  }
+
+  /** Downloads requests discovered through the existing browser HTTP host interface. */
+  async function downloadModelInstallRequests(
+    requests: DownloadRequest[],
+    identity: LocalModelIdentity,
+  ): Promise<ModelInstallWorkerDownload[]> {
+    return Promise.all(requests.map(request => downloadHttpRequest(request, identity)));
+  }
+
+  /** Deduplicates concurrent consumers of one browser HTTP download task. */
+  function downloadHttpRequest(
+    request: DownloadRequest,
+    identity: LocalModelIdentity,
+  ): Promise<ModelInstallWorkerDownload> {
+    const active = activeHttpDownloadPromises.get(request.url);
+    if (active !== undefined) {
+      return active;
+    }
+    const promise = executeHttpDownloadRequest(request, identity).finally(() => {
+      activeHttpDownloadPromises.delete(request.url);
+      activeHttpDownloadControllers.delete(request.url);
+    });
+    activeHttpDownloadPromises.set(request.url, promise);
+    return promise;
+  }
+
+  /** Downloads or resumes one browser HTTP host request and persists every received chunk. */
+  async function executeHttpDownloadRequest(
+    request: DownloadRequest,
+    identity: LocalModelIdentity,
+  ): Promise<ModelInstallWorkerDownload> {
+    if (typeof request.expectedBytes !== "number") {
+      throw new Error(`download ${request.fileId} does not declare its byte size`);
+    }
+    let persisted = await readHttpDownload(request.url);
+    if (persisted === null) {
+      persisted = {
+        url: request.url,
+        fileId: request.fileId,
+        expectedBytes: request.expectedBytes,
+        downloadedBytes: 0,
+        content: new Blob(),
+        modelId: identity.modelId,
+        version: identity.version,
+        paused: false,
+      };
+      await writeHttpDownload(persisted);
+    }
+    if (
+      persisted.fileId !== request.fileId ||
+      persisted.expectedBytes !== request.expectedBytes ||
+      persisted.downloadedBytes !== persisted.content.size
+      || persisted.modelId !== identity.modelId
+      || persisted.version !== identity.version
+      || typeof persisted.paused !== "boolean"
+    ) {
+      throw new Error(`persisted HTTP download metadata mismatch: ${request.fileId}`);
+    }
+    if (persisted.paused) {
+      persisted.paused = false;
+      await writeHttpDownload(persisted);
+    }
+    if (persisted.downloadedBytes < persisted.expectedBytes) {
+      const headers = new Headers();
+      if (request.headers !== undefined) {
+        for (const pair of request.headers) {
+          headers.set(
+            Array.isArray(pair) ? pair[0] : pair.key,
+            Array.isArray(pair) ? pair[1] : pair.value,
+          );
+        }
+      }
+      if (persisted.downloadedBytes > 0) {
+        headers.set("Range", `bytes=${persisted.downloadedBytes}-`);
+      }
+      const controller = new AbortController();
+      activeHttpDownloadControllers.set(request.url, controller);
+      const response = await fetch(request.url, { headers, signal: controller.signal });
+      const expectedStatus = persisted.downloadedBytes === 0 ? 200 : 206;
+      if (response.status !== expectedStatus) {
+        throw new Error(
+          `download ${request.fileId} expected HTTP ${expectedStatus}, got ${response.status}`,
+        );
+      }
+      const body = response.body;
+      if (body === null) {
+        throw new Error(`download ${request.fileId} has no response body`);
+      }
+      const reader = body.getReader();
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          break;
+        }
+        persisted.content = new Blob([persisted.content, blobPart(chunk.value)]);
+        persisted.downloadedBytes += chunk.value.length;
+        if (persisted.downloadedBytes > persisted.expectedBytes) {
+          throw new Error(`download ${request.fileId} exceeded its declared byte size`);
+        }
+        await writeHttpDownload(persisted);
+      }
+    }
+    if (persisted.downloadedBytes !== persisted.expectedBytes) {
+      throw new Error(
+        `download ${request.fileId} size mismatch: ${persisted.downloadedBytes} != ${persisted.expectedBytes}`,
+      );
+    }
+    return {
+      url: request.url,
+      bytes: new Uint8Array(await persisted.content.arrayBuffer()),
+    };
+  }
+
+  /** Reloads transferred model archives from their complete persistent Blobs. */
+  async function reloadModelInstallDownloads(
+    downloads: ModelInstallWorkerDownload[],
+  ): Promise<void> {
+    await Promise.all(downloads.map(async download => {
+      const persisted = await readHttpDownload(download.url);
+      if (persisted === null) {
+        throw new Error(`model installation download is missing: ${download.url}`);
+      }
+      if (persisted.downloadedBytes !== persisted.expectedBytes) {
+        throw new Error(`model installation download is incomplete: ${download.url}`);
+      }
+      download.bytes = new Uint8Array(await persisted.content.arrayBuffer());
+    }));
+  }
+
+  /** Persists one atomic model installation result received from the worker. */
+  async function applyModelInstallWorkerStorageChanges(
+    changes: ModelInstallWorkerStorageChange[],
+  ): Promise<void> {
+    let registryChanged = false;
+    const registryKey = key(
+      runtimePrefix,
+      "runtime/config/preferences/local_model_registry.preferences.json",
+    );
+    await persistModelInstallStorageChanges(changes);
+    for (const change of changes) {
+      if (change.bytes === null) {
+        storageCache.delete(change.key);
+      } else {
+        storageCache.set(change.key, change.bytes);
+      }
+      if (change.key === registryKey) {
+        registryChanged = true;
+      }
+    }
+    if (registryChanged) {
+      scheduleWebLocalInferenceRefresh();
+    }
+  }
+
+  /** Installs one local model through an isolated browser worker. */
+  function installLocalModelInWorker(request: Uint8Array): Promise<Uint8Array> {
+    const identity = localModelIdentity(request);
+    const taskKey = localModelTaskKey(identity);
+    const active = activeModelInstallPromises.get(taskKey);
+    if (active !== undefined) {
+      return active;
+    }
+    const generation = startModelInstallTask(taskKey);
+    const operation = executeLocalModelInstall(request, identity, taskKey, generation)
+      .finally(() => {
+        if (activeModelInstallPromises.get(taskKey) === operation) {
+          activeModelInstallPromises.delete(taskKey);
+        }
+      });
+    activeModelInstallPromises.set(taskKey, operation);
+    return operation;
+  }
+
+  /** Runs downloads and installation commits for one owned model task generation. */
+  async function executeLocalModelInstall(
+    request: Uint8Array,
+    identity: LocalModelIdentity,
+    taskKey: string,
+    generation: number,
+  ): Promise<Uint8Array> {
+    const downloads: ModelInstallWorkerDownload[] = [];
+    for (;;) {
+      let message = downloads.length === 0
+        ? await executeModelInstallWorker(request, downloads, taskKey, generation)
+        : await enqueueModelInstallWorker(request, downloads, taskKey, generation);
+      if (downloads.length === 0 && message.type === "result") {
+        message = await enqueueModelInstallWorker(request, downloads, taskKey, generation);
+      }
+      if (message.type === "result") {
+        for (const download of downloads) {
+          httpDownloadStatusCache.delete(download.url);
+        }
+        await Promise.all(downloads.map(download => deleteHttpDownload(download.url)));
+        return message.response;
+      }
+      const [, completedDownloads] = await Promise.all([
+        reloadModelInstallDownloads(downloads),
+        downloadModelInstallRequests(message.requests, identity),
+      ]);
+      downloads.push(...completedDownloads);
+    }
+  }
+
+  /** Serializes model extraction and registry commits after parallel downloads complete. */
+  function enqueueModelInstallWorker(
+    request: Uint8Array,
+    downloads: ModelInstallWorkerDownload[],
+    taskKey: string,
+    generation: number,
+  ): Promise<ModelInstallWorkerResult | ModelInstallWorkerDownloadRequests> {
+    const result = modelInstallCommitQueue.then(async () => {
+      const message = await executeModelInstallWorker(request, downloads, taskKey, generation);
+      if (message.type === "result") {
+        await applyModelInstallWorkerStorageChanges(message.changes);
+        applyModelInstallWorkerSecretChanges(message.secretChanges);
+      }
+      return message;
+    });
+    modelInstallCommitQueue = result.then(
+      (): void => {},
+      (): void => {},
+    );
+    return result;
+  }
+
+  /** Executes one installation attempt and returns its result or discovered host downloads. */
+  function executeModelInstallWorker(
+    request: Uint8Array,
+    downloads: ModelInstallWorkerDownload[],
+    taskKey: string,
+    generation: number,
+  ): Promise<ModelInstallWorkerResult | ModelInstallWorkerDownloadRequests> {
+    if (!isCurrentModelInstallTask(taskKey, generation)) {
+      return Promise.reject(new Error(`local model installation paused: ${taskKey}`));
+    }
+    return new Promise((resolve, reject) => {
+      const worker = new Worker("./operit_model_install_worker.js", { type: "module" });
+      let settled = false;
+      let aborter: () => void;
+      /** Terminates the worker and releases its Host control entry. */
+      const close = (): void => {
+        worker.terminate();
+        if (activeModelInstallAborters.get(taskKey) === aborter) {
+          activeModelInstallAborters.delete(taskKey);
+        }
+      };
+      /** Rejects the installation worker exactly once. */
+      const fail = (error: Error): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        close();
+        reject(error);
+      };
+      /** Resolves the installation worker exactly once. */
+      const succeed = (
+        message: ModelInstallWorkerResult | ModelInstallWorkerDownloadRequests,
+      ): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        close();
+        resolve(message);
+      };
+      /** Stops this exact installation task through the Host control path. */
+      aborter = (): void => {
+        fail(new Error(`local model installation paused: ${taskKey}`));
+      };
+      activeModelInstallAborters.set(taskKey, aborter);
+      if (!isCurrentModelInstallTask(taskKey, generation)) {
+        aborter();
+        return;
+      }
+      worker.addEventListener("message", (event: MessageEvent<
+        ModelInstallWorkerResult | ModelInstallWorkerDownloadRequests | ModelInstallWorkerError
+      >) => {
+        const message = event.data;
+        if (message.type === "error") {
+          fail(new Error(message.message));
+          return;
+        }
+        succeed(message);
+      }, { once: true });
+      worker.addEventListener("error", event => {
+        fail(event.error instanceof Error ? event.error : new Error(event.message));
+      }, { once: true });
+      const ownedRequest = Uint8Array.from(request);
+      const secrets = collectModelInstallWorkerSecrets().map(secret => ({
+        key: secret.key,
+        bytes: Uint8Array.from(secret.bytes),
+      }));
+      const transferables: Transferable[] = [
+        ownedRequest.buffer,
+        ...secrets.map(secret => secret.bytes.buffer),
+        ...downloads.map(download => download.bytes.buffer),
+      ];
+      worker.postMessage(
+        { type: "install", request: ownedRequest, secrets, downloads },
+        transferables,
+      );
+    });
+  }
+
+  /** Builds one existing LocalModelInstallStatus payload from a Host download task. */
+  function localModelInstallStatus(downloads: HttpDownloadStatus[]): object {
+    if (downloads.length === 0) {
+      throw new Error("local model download status requires at least one file");
+    }
+    const first = downloads[0];
+    return {
+      operationId: `${first.modelId}@${first.version}`,
+      modelId: first.modelId,
+      version: first.version,
+      phase:
+        activeModelInstallPromises.has(localModelTaskKey(first)) &&
+          !downloads.every(download => download.paused)
+        ? "Model"
+        : "Cancelled",
+      currentFile: downloads.map(download => download.fileId).join(", "),
+      downloadedBytes: downloads.reduce((total, download) => total + download.downloadedBytes, 0),
+      totalBytes: downloads.reduce((total, download) => total + download.expectedBytes, 0),
+      error: null,
+    };
+  }
+
+  /** Groups persistent download files by their exact local model release. */
+  function groupLocalModelDownloads(
+    downloads: HttpDownloadStatus[],
+  ): HttpDownloadStatus[][] {
+    const groups = new Map<string, HttpDownloadStatus[]>();
+    for (const download of downloads) {
+      const taskKey = localModelTaskKey(download);
+      const group = groups.get(taskKey);
+      if (group === undefined) {
+        groups.set(taskKey, [download]);
+      } else {
+        group.push(download);
+      }
+    }
+    return Array.from(groups.values());
+  }
+
+  /** Handles existing local model status and control methods through the Host download manager. */
+  async function handleLocalModelDownloadCall(
+    request: Uint8Array,
+  ): Promise<LocalModelDownloadCallResult> {
+    const decoded: unknown = MessagePack.decode(request);
+    if (!Array.isArray(decoded) || decoded.length !== 4) {
+      return { handled: false, response: new Uint8Array() };
+    }
+    const targetPath = decoded[1];
+    if (
+      !Array.isArray(targetPath) || targetPath.length !== 2 ||
+      targetPath[0] !== "services" || targetPath[1] !== "localModelService"
+    ) {
+      return { handled: false, response: new Uint8Array() };
+    }
+    const method = decoded[2];
+    if (method !== "getInstallStatuses" && method !== "getInstallStatus" &&
+        method !== "cancelInstall" && method !== "deleteModel") {
+      return { handled: false, response: new Uint8Array() };
+    }
+    const downloads = await listHttpDownloads();
+    if (method === "getInstallStatuses") {
+      return {
+        handled: true,
+        response: MessagePack.encode([
+          0,
+          groupLocalModelDownloads(downloads).map(localModelInstallStatus),
+        ]),
+      };
+    }
+    const identity = localModelIdentity(request);
+    const matching = downloads.filter(download =>
+      download.modelId === identity.modelId && download.version === identity.version
+    );
+    if (method === "getInstallStatus") {
+      return {
+        handled: true,
+        response: MessagePack.encode([0, matching.length === 0 ? null : localModelInstallStatus(matching)]),
+      };
+    }
+    if (matching.length === 0) {
+      return { handled: false, response: new Uint8Array() };
+    }
+    if (method === "cancelInstall") {
+      const taskKey = localModelTaskKey(identity);
+      invalidateModelInstallTask(taskKey);
+      await Promise.all(matching.map(download => stopHttpDownload(download.url)));
+      for (const download of matching) {
+        const persisted = await readHttpDownload(download.url);
+        if (persisted === null) {
+          throw new Error(`HTTP download disappeared while pausing: ${download.url}`);
+        }
+        persisted.paused = true;
+        await writeHttpDownload(persisted);
+        download.active = false;
+        download.paused = true;
+      }
+      return {
+        handled: true,
+        response: MessagePack.encode([0, localModelInstallStatus(matching)]),
+      };
+    }
+    const taskKey = localModelTaskKey(identity);
+    invalidateModelInstallTask(taskKey);
+    await Promise.all(matching.map(download => deleteHttpDownload(download.url)));
+    return { handled: true, response: MessagePack.encode([0, null]) };
+  }
+
   runtimeGlobal.__operitRuntime = {
     async call(request: Uint8Array): Promise<Uint8Array> {
+      if (!isModelInstallWorker() && isLocalModelInstallRequest(request)) {
+        return installLocalModelInWorker(request);
+      }
+      if (!isModelInstallWorker()) {
+        const downloadCall = await handleLocalModelDownloadCall(request);
+        if (downloadCall.handled) {
+          return downloadCall.response;
+        }
+      }
       return (await bridge()).call(request);
     },
     async pushOpen(request: Uint8Array): Promise<Uint8Array> {
@@ -3367,4 +4648,18 @@ self.onmessage = (event) => {
       return (await bridge()).closeWatchStream(subscriptionId);
     },
   };
+  runtimeGlobal.__operitHttpDownloadManager = {
+    list: listHttpDownloads,
+    pause: pauseHttpDownload,
+    delete: deleteHttpDownload,
+  };
+  if (isModelInstallWorker()) {
+    runtimeGlobal.__operitModelInstallWorkerStorageChanges = collectWorkerStorageChanges;
+    runtimeGlobal.__operitModelInstallWorkerSetSecrets = setModelInstallWorkerSecrets;
+    runtimeGlobal.__operitModelInstallWorkerSetDownloads = setModelInstallWorkerDownloads;
+    runtimeGlobal.__operitModelInstallWorkerDownloadRequests =
+      collectModelInstallWorkerDownloadRequests;
+    runtimeGlobal.__operitModelInstallWorkerSecretChanges =
+      collectModelInstallWorkerSecretChanges;
+  }
 })();

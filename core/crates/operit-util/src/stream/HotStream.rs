@@ -255,10 +255,7 @@ where
     /// The collector first receives a replay snapshot, then live values. When the
     /// producer closes the stream, this collector is removed from the subscriber
     /// list and the method returns.
-    fn collect<'a>(
-        &'a mut self,
-        collector: &'a mut dyn FnMut(Self::Item),
-    ) -> CollectFuture<'a> {
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         Box::pin(async move {
             let (subscriberId, mut receiver, replaySnapshot) = match self.inner.lock() {
                 Ok(mut state) => {
@@ -356,10 +353,7 @@ where
 {
     type Item = T;
 
-    fn collect<'a>(
-        &'a mut self,
-        collector: &'a mut dyn FnMut(Self::Item),
-    ) -> CollectFuture<'a> {
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         self.shared.collect(collector)
     }
 }

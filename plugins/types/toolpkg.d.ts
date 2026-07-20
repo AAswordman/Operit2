@@ -2884,6 +2884,30 @@ export namespace ToolPkg {
   export type RuntimeKind = "main" | "ui" | "sandbox" | "provider";
 
   /**
+   * Identifies the scalar ABI value type used by ToolPkg WASM exports.
+   */
+  export type WasmValueType = "i32" | "i64" | "f32" | "f64";
+
+  /**
+   * Stores one scalar value passed into or returned from a ToolPkg WASM export.
+   */
+  export type WasmScalarValue = number | string | null;
+
+  /**
+   * Describes one scalar ABI argument for a ToolPkg WASM export.
+   */
+  export interface WasmArg {
+    /**
+     * Identifies the scalar ABI type.
+     */
+    type: WasmValueType;
+    /**
+     * Stores the scalar argument value.
+     */
+    value: number | string;
+  }
+
+  /**
    * Metadata passed to a handler registered with {@link IpcApi.on}.
    */
   export interface IpcMeta {
@@ -2942,6 +2966,16 @@ export namespace ToolPkg {
   }
 
   /**
+   * Represents the WASM API exposed on a ToolPkg registry.
+   */
+  export interface WasmApi {
+    /**
+     * Calls one WASM export and resolves with its scalar result.
+     */
+    call(moduleId: string, exportName: string, args?: WasmArg[]): Promise<WasmScalarValue>;
+  }
+
+  /**
    * Provides IPC and registration services for the current ToolPkg package.
    */
   export interface Registry {
@@ -2949,6 +2983,10 @@ export namespace ToolPkg {
      * Exposes inter-context messaging for this ToolPkg registry.
      */
     ipc: IpcApi;
+    /**
+     * Exposes declared WASM exports for this ToolPkg registry.
+     */
+    wasm: WasmApi;
     /**
      * Registers a Compose DSL screen in the toolbox UI.
      */

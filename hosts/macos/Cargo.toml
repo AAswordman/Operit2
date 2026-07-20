@@ -1,0 +1,9 @@
+[package]
+name = "operit-host-macos-native"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+operit-host-apple-native = { path = "../apple" }

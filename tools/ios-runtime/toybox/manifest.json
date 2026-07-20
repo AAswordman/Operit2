@@ -1,0 +1,8 @@
+{
+  "source": {
+    "name": "toybox",
+    "version": "0.8.12",
+    "url": "https://landley.net/toybox/downloads/toybox-0.8.12.tar.gz",
+    "sha256": "ad88a921133ae2231d9f2df875ec0bd42af4429145caea7d7db9e02208a6fd2e"
+  }
+}

@@ -6,7 +6,7 @@ use operit_host_api::{
     HostRuntimeEventScheduleKind, HostRuntimeEventScheduleSink, HostRuntimeEventSchedulerHost,
 };
 use wasm_bindgen::closure::Closure;
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, JsValue};
 
 #[derive(Clone)]
 struct ActiveSchedule {
@@ -109,7 +109,13 @@ fn validateSchedule(schedule: &HostRuntimeEventSchedule) -> HostResult<()> {
 #[allow(non_snake_case)]
 fn cancelTimeout(state: &mut WebSchedulerState) -> HostResult<()> {
     if let Some(handle) = state.timeoutHandle.take() {
-        browserWindow()?.clear_timeout_with_handle(handle);
+        browserTimerFunction("clearTimeout")?
+            .call1(&js_sys::global(), &JsValue::from_f64(f64::from(handle)))
+            .map_err(|error| {
+                HostError::new(format!(
+                    "clear browser host event timeout failed: {error:?}"
+                ))
+            })?;
     }
     state.timeoutClosure = None;
     Ok(())
@@ -129,16 +135,20 @@ fn armNextTimeout(state: &mut WebSchedulerState) -> HostResult<()> {
     let remaining = nextFireAtMillis.saturating_sub(browserMillis());
     let delay = remaining.min(i32::MAX as u64) as i32;
     let callback = Closure::wrap(Box::new(processDueSchedules) as Box<dyn FnMut()>);
-    let handle = browserWindow()?
-        .set_timeout_with_callback_and_timeout_and_arguments_0(
+    let handle = browserTimerFunction("setTimeout")?
+        .call2(
+            &js_sys::global(),
             callback.as_ref().unchecked_ref(),
-            delay,
+            &JsValue::from_f64(f64::from(delay)),
         )
         .map_err(|error| {
             HostError::new(format!(
                 "browser host event timeout registration failed: {error:?}"
             ))
-        })?;
+        })?
+        .as_f64()
+        .ok_or_else(|| HostError::new("browser host event timeout handle is not numeric"))?
+        as i32;
     state.timeoutHandle = Some(handle);
     state.timeoutClosure = Some(callback);
     Ok(())
@@ -190,11 +200,8 @@ fn processDueSchedules() {
                         .schedules
                         .get_mut(&scheduleId)
                         .expect("active browser interval must exist")
-                        .nextFireAtMillis = nextIntervalTime(
-                        active.nextFireAtMillis,
-                        intervalMs,
-                        firedAtMillis,
-                    );
+                        .nextFireAtMillis =
+                        nextIntervalTime(active.nextFireAtMillis, intervalMs, firedAtMillis);
                 }
             }
         }
@@ -220,10 +227,13 @@ fn nextIntervalTime(scheduledAtMillis: u64, intervalMs: u64, nowMillis: u64) -> 
         .expect("validated browser interval must fit epoch milliseconds")
 }
 
-/// Returns the active browser window used for scheduling.
+/// Returns one timer API from the browser global object.
 #[allow(non_snake_case)]
-fn browserWindow() -> HostResult<web_sys::Window> {
-    web_sys::window().ok_or_else(|| HostError::new("browser window is unavailable"))
+fn browserTimerFunction(name: &str) -> HostResult<js_sys::Function> {
+    js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str(name))
+        .map_err(|error| HostError::new(format!("read browser timer {name} failed: {error:?}")))?
+        .dyn_into::<js_sys::Function>()
+        .map_err(|_| HostError::new(format!("browser timer {name} is unavailable")))
 }
 
 /// Returns the browser wall-clock timestamp in epoch milliseconds.

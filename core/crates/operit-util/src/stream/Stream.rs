@@ -93,10 +93,7 @@ pub trait Stream {
     /// Collects items from this stream until the producer finishes or closes.
     ///
     /// Asynchronously collects items until the producer finishes or closes.
-    fn collect<'a>(
-        &'a mut self,
-        collector: &'a mut dyn FnMut(Self::Item),
-    ) -> CollectFuture<'a>;
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a>;
 }
 
 impl<S> Stream for Box<S>
@@ -125,10 +122,7 @@ where
         (**self).clear_buffer();
     }
 
-    fn collect<'a>(
-        &'a mut self,
-        collector: &'a mut dyn FnMut(Self::Item),
-    ) -> CollectFuture<'a> {
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         (**self).collect(collector)
     }
 }
@@ -205,10 +199,7 @@ where
         self.buffer.clear();
     }
 
-    fn collect<'a>(
-        &'a mut self,
-        collector: &'a mut dyn FnMut(Self::Item),
-    ) -> CollectFuture<'a> {
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         Box::pin(async move {
             while let Some(value) = self.buffer.pop_front() {
                 collector(value);
@@ -226,8 +217,7 @@ where
 
 /// Cold stream implemented by an asynchronous producer callback.
 pub struct FnStream<T> {
-    block:
-        Option<Box<dyn for<'a> FnMut(&'a mut dyn FnMut(T)) -> ProducerFuture<'a>>>,
+    block: Option<Box<dyn for<'a> FnMut(&'a mut dyn FnMut(T)) -> ProducerFuture<'a>>>,
     locked: bool,
     buffer: VecDeque<T>,
     closed: bool,
@@ -275,10 +265,7 @@ where
         self.buffer.clear();
     }
 
-    fn collect<'a>(
-        &'a mut self,
-        collector: &'a mut dyn FnMut(Self::Item),
-    ) -> CollectFuture<'a> {
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         Box::pin(async move {
             while let Some(value) = self.buffer.pop_front() {
                 collector(value);

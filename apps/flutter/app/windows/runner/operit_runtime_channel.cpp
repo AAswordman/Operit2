@@ -5,15 +5,18 @@
 #include <flutter/standard_method_codec.h>
 #include <windows.h>
 #include <shellapi.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <deque>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -57,8 +60,29 @@ std::vector<std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>>
 HWND g_operit_runtime_window = nullptr;
 DWORD g_operit_runtime_platform_thread_id = 0;
 std::atomic_bool g_watch_channel_pump_running{false};
+std::atomic_uint64_t g_watch_channel_pump_generation{0};
 
 constexpr UINT kOperitRuntimePlatformTaskMessage = WM_APP + 0x520;
+#if !defined(NDEBUG)
+constexpr uint8_t kProcessOpCreate = 1;
+constexpr uint8_t kProcessOpCall = 2;
+constexpr uint8_t kProcessOpPushOpen = 3;
+constexpr uint8_t kProcessOpPushItem = 4;
+constexpr uint8_t kProcessOpPushClose = 5;
+constexpr uint8_t kProcessOpWatchSnapshot = 6;
+constexpr uint8_t kProcessOpWatchStream = 7;
+constexpr uint8_t kProcessOpCloseWatchStream = 8;
+constexpr uint8_t kProcessOpStartWebAccessServer = 9;
+constexpr uint8_t kProcessOpDiscoverDevices = 10;
+constexpr uint8_t kProcessOpStopWebAccessServer = 11;
+constexpr uint8_t kProcessOpRemotePairStart = 12;
+constexpr uint8_t kProcessOpRemotePairFinish = 13;
+constexpr uint8_t kProcessFrameResponse = 101;
+constexpr uint8_t kProcessFrameWatchEvent = 102;
+constexpr uint8_t kProcessStatusOk = 0;
+constexpr uint8_t kProcessPayloadBytes = 1;
+constexpr uint8_t kProcessPayloadString = 2;
+#endif
 
 /// Builds a filesystem path from UTF-8 bytes under C++20 char8_t rules.
 std::filesystem::path PathFromUtf8(const std::string& value) {
@@ -621,7 +645,826 @@ class OperitRuntimeLibrary {
   BridgeFreeBytes free_bytes_ = nullptr;
 };
 
-std::shared_ptr<OperitRuntimeLibrary> g_operit_runtime_library;
+#if !defined(NDEBUG)
+struct OperitProcessPendingResponse {
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool completed = false;
+  bool ok = false;
+  uint8_t payload_kind = 0;
+  std::vector<uint8_t> payload;
+  std::string error;
+};
+
+class OperitRuntimeProcessLibrary {
+ public:
+  /// Creates a Debug bridge process client.
+  OperitRuntimeProcessLibrary() = default;
+
+  /// Stops the bridge child process and releases Windows handles.
+  ~OperitRuntimeProcessLibrary() { Shutdown(); }
+
+  /// Ensures the bridge child process has created its runtime instance.
+  bool EnsureReady(std::string* error) {
+    if (bridge_created_) {
+      return true;
+    }
+    if (configured_runtime_root_.empty() || configured_workspace_root_.empty()) {
+      AssignError(error,
+                  "Runtime and workspace roots must be configured before runtime creation");
+      return false;
+    }
+    if (!StartProcessLocked(error)) {
+      return false;
+    }
+    std::vector<uint8_t> payload;
+    AppendString(&payload, configured_runtime_root_);
+    AppendString(&payload, configured_workspace_root_);
+    std::string response;
+    if (!SendRequest(kProcessOpCreate, payload, kProcessPayloadString, nullptr,
+                     &response, error)) {
+      return false;
+    }
+    bridge_created_ = true;
+    return true;
+  }
+
+  /// Dispatches one compact core call through the bridge process.
+  bool Call(const std::vector<uint8_t>& request, std::vector<uint8_t>* response,
+            std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    return SendBytesOperation(kProcessOpCall, request, response, error);
+  }
+
+  /// Opens one local Link push stream through the bridge process.
+  bool PushOpen(const std::vector<uint8_t>& request,
+                std::vector<uint8_t>* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    return SendBytesOperation(kProcessOpPushOpen, request, response, error);
+  }
+
+  /// Dispatches one local Link push item through the bridge process.
+  bool PushItem(const std::vector<uint8_t>& item,
+                std::vector<uint8_t>* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    return SendBytesOperation(kProcessOpPushItem, item, response, error);
+  }
+
+  /// Closes one local Link push stream through the bridge process.
+  bool PushClose(const std::string& push_id,
+                 std::vector<uint8_t>* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    std::vector<uint8_t> payload;
+    AppendString(&payload, push_id);
+    return SendRequest(kProcessOpPushClose, payload, kProcessPayloadBytes,
+                       response, nullptr, error);
+  }
+
+  /// Reads one watch snapshot through the bridge process.
+  bool WatchSnapshot(const std::vector<uint8_t>& request,
+                     std::vector<uint8_t>* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    return SendBytesOperation(kProcessOpWatchSnapshot, request, response, error);
+  }
+
+  /// Opens one watch stream through the bridge process.
+  bool WatchStream(const std::vector<uint8_t>& request,
+                   std::vector<uint8_t>* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    return SendBytesOperation(kProcessOpWatchStream, request, response, error);
+  }
+
+  /// Pops one watch event delivered by the bridge process reader thread.
+  bool NextWatchChannelEvent(std::vector<uint8_t>* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    std::unique_lock<std::mutex> lock(watch_events_mutex_);
+    watch_events_condition_.wait(
+        lock, [this]() { return !watch_events_.empty() || !running_; });
+    if (watch_events_.empty()) {
+      AssignError(error, "runtime bridge process stopped");
+      return false;
+    }
+    *response = std::move(watch_events_.front());
+    watch_events_.pop_front();
+    return true;
+  }
+
+  /// Closes one watch stream through the bridge process.
+  bool CloseWatchStream(const std::string& subscription,
+                        std::vector<uint8_t>* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    std::vector<uint8_t> payload;
+    AppendString(&payload, subscription);
+    return SendRequest(kProcessOpCloseWatchStream, payload, kProcessPayloadBytes,
+                       response, nullptr, error);
+  }
+
+  /// Starts the local web access server inside the bridge process.
+  bool StartWebAccessServer(const std::string& bind_address,
+                            const std::string& token,
+                            const std::string& shutdown_token,
+                            const std::string& web_root,
+                            const std::string& device_info,
+                            const std::string& enable_web_access,
+                            const std::string& enable_discovery,
+                            std::string* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    std::vector<uint8_t> payload;
+    AppendString(&payload, bind_address);
+    AppendString(&payload, token);
+    AppendString(&payload, shutdown_token);
+    AppendString(&payload, web_root);
+    AppendString(&payload, device_info);
+    AppendString(&payload, enable_web_access);
+    AppendString(&payload, enable_discovery);
+    return SendRequest(kProcessOpStartWebAccessServer, payload,
+                       kProcessPayloadString, nullptr, response, error);
+  }
+
+  /// Discovers link devices from inside the bridge process.
+  bool DiscoverDevices(const std::string& timeout_ms,
+                       std::string* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    std::vector<uint8_t> payload;
+    AppendString(&payload, timeout_ms);
+    return SendRequest(kProcessOpDiscoverDevices, payload, kProcessPayloadString,
+                       nullptr, response, error);
+  }
+
+  /// Stops the local web access server inside the bridge process.
+  bool StopWebAccessServer(std::string* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    return SendRequest(kProcessOpStopWebAccessServer, {}, kProcessPayloadString,
+                       nullptr, response, error);
+  }
+
+  /// Starts one remote pairing flow inside the bridge process.
+  bool RemotePairStart(const std::string& base_url,
+                       const std::string& token_hash,
+                       const std::string& client_device_info,
+                       std::string* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    std::vector<uint8_t> payload;
+    AppendString(&payload, base_url);
+    AppendString(&payload, token_hash);
+    AppendString(&payload, client_device_info);
+    return SendRequest(kProcessOpRemotePairStart, payload,
+                       kProcessPayloadString, nullptr, response, error);
+  }
+
+  /// Finishes one remote pairing flow inside the bridge process.
+  bool RemotePairFinish(const std::string& pairing_id,
+                        const std::string& pairing_code,
+                        std::string* response, std::string* error) {
+    if (!EnsureReadyThreadSafe(error)) {
+      return false;
+    }
+    std::vector<uint8_t> payload;
+    AppendString(&payload, pairing_id);
+    AppendString(&payload, pairing_code);
+    return SendRequest(kProcessOpRemotePairFinish, payload,
+                       kProcessPayloadString, nullptr, response, error);
+  }
+
+  /// Rebuilds and replaces the Debug child process before creating a new runtime.
+  bool RebuildAndRestart(std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!BuildBridgeProcess(error)) {
+      return false;
+    }
+    ShutdownLocked();
+    if (!CopyBuiltBridgeProcess(error)) {
+      return false;
+    }
+    return EnsureReady(error);
+  }
+
+  /// Sets the runtime and workspace roots used by the bridge process.
+  bool SetStorageRoots(const std::string& runtime_root,
+                       const std::string& workspace_root,
+                       std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::string resolved_runtime_root;
+    std::string resolved_workspace_root;
+    if (!NormalizeWindowsStorageRoot(runtime_root, "runtimeRoot",
+                                     &resolved_runtime_root, error)) {
+      return false;
+    }
+    if (!NormalizeWindowsStorageRoot(workspace_root, "workspaceRoot",
+                                     &resolved_workspace_root, error)) {
+      return false;
+    }
+    if (bridge_created_) {
+      if (configured_runtime_root_ == resolved_runtime_root &&
+          configured_workspace_root_ == resolved_workspace_root) {
+        return true;
+      }
+      AssignError(
+          error,
+          "Runtime and workspace roots cannot change after runtime creation");
+      return false;
+    }
+    configured_runtime_root_ = std::move(resolved_runtime_root);
+    configured_workspace_root_ = std::move(resolved_workspace_root);
+    return true;
+  }
+
+ private:
+  /// Ensures the bridge process is ready while holding the root mutex.
+  bool EnsureReadyThreadSafe(std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return EnsureReady(error);
+  }
+
+  /// Assigns an optional error output.
+  static void AssignError(std::string* target, const std::string& value) {
+    if (target != nullptr) {
+      *target = value;
+    }
+  }
+
+  /// Sends one operation whose payload is a single byte vector.
+  bool SendBytesOperation(uint8_t operation, const std::vector<uint8_t>& bytes,
+                          std::vector<uint8_t>* response,
+                          std::string* error) {
+    std::vector<uint8_t> payload;
+    AppendBytes(&payload, bytes);
+    return SendRequest(operation, payload, kProcessPayloadBytes, response,
+                       nullptr, error);
+  }
+
+  /// Starts the stdio bridge child process.
+  bool StartProcessLocked(std::string* error) {
+    if (process_.hProcess != nullptr) {
+      return true;
+    }
+    SECURITY_ATTRIBUTES security_attributes{};
+    security_attributes.nLength = sizeof(SECURITY_ATTRIBUTES);
+    security_attributes.bInheritHandle = TRUE;
+
+    HANDLE stdout_read = nullptr;
+    HANDLE stdout_write = nullptr;
+    HANDLE stdin_read = nullptr;
+    HANDLE stdin_write = nullptr;
+    if (::CreatePipe(&stdout_read, &stdout_write, &security_attributes, 0) == 0) {
+      AssignError(error, "failed to create bridge process stdout pipe");
+      return false;
+    }
+    if (::SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT, 0) == 0) {
+      CloseOwnedHandle(stdout_read);
+      CloseOwnedHandle(stdout_write);
+      AssignError(error, "failed to mark bridge process stdout pipe");
+      return false;
+    }
+    if (::CreatePipe(&stdin_read, &stdin_write, &security_attributes, 0) == 0) {
+      CloseOwnedHandle(stdout_read);
+      CloseOwnedHandle(stdout_write);
+      AssignError(error, "failed to create bridge process stdin pipe");
+      return false;
+    }
+    if (::SetHandleInformation(stdin_write, HANDLE_FLAG_INHERIT, 0) == 0) {
+      CloseOwnedHandle(stdout_read);
+      CloseOwnedHandle(stdout_write);
+      CloseOwnedHandle(stdin_read);
+      CloseOwnedHandle(stdin_write);
+      AssignError(error, "failed to mark bridge process stdin pipe");
+      return false;
+    }
+
+    std::wstring executable = BridgeProcessExecutablePath(error);
+    if (executable.empty()) {
+      CloseOwnedHandle(stdout_read);
+      CloseOwnedHandle(stdout_write);
+      CloseOwnedHandle(stdin_read);
+      CloseOwnedHandle(stdin_write);
+      return false;
+    }
+
+    STARTUPINFOW startup_info{};
+    startup_info.cb = sizeof(startup_info);
+    startup_info.dwFlags = STARTF_USESTDHANDLES;
+    startup_info.hStdInput = stdin_read;
+    startup_info.hStdOutput = stdout_write;
+    startup_info.hStdError = ::GetStdHandle(STD_ERROR_HANDLE);
+    PROCESS_INFORMATION process_info{};
+    std::wstring command_line = L"\"" + executable + L"\"";
+    const BOOL created = ::CreateProcessW(
+        executable.c_str(), command_line.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &startup_info, &process_info);
+    CloseOwnedHandle(stdin_read);
+    CloseOwnedHandle(stdout_write);
+    if (created == 0) {
+      CloseOwnedHandle(stdout_read);
+      CloseOwnedHandle(stdin_write);
+      AssignError(error, "failed to start operit_flutter_bridge_process.exe");
+      return false;
+    }
+
+    child_stdout_read_ = stdout_read;
+    child_stdin_write_ = stdin_write;
+    process_ = process_info;
+    running_ = true;
+    reader_thread_ = std::thread([this]() { ReaderLoop(); });
+    return true;
+  }
+
+  /// Stops the child process and releases handles from the current thread.
+  void Shutdown() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ShutdownLocked();
+  }
+
+  /// Stops the child process while the root mutex is held.
+  void ShutdownLocked() {
+    running_ = false;
+    g_watch_channel_pump_running.store(false);
+    g_watch_channel_pump_generation.fetch_add(1);
+    CloseOwnedHandle(child_stdin_write_);
+    CloseOwnedHandle(child_stdout_read_);
+    if (process_.hProcess != nullptr) {
+      const DWORD wait_result = ::WaitForSingleObject(process_.hProcess, 2000);
+      if (wait_result != WAIT_OBJECT_0) {
+        ::TerminateProcess(process_.hProcess, 0);
+        ::WaitForSingleObject(process_.hProcess, 2000);
+      }
+    }
+    if (reader_thread_.joinable()) {
+      reader_thread_.join();
+    }
+    CloseOwnedHandle(process_.hThread);
+    CloseOwnedHandle(process_.hProcess);
+    bridge_created_ = false;
+    {
+      std::lock_guard<std::mutex> watch_lock(watch_events_mutex_);
+      watch_events_.clear();
+    }
+    MarkProcessStopped("runtime bridge process stopped");
+  }
+
+  /// Builds the Debug stdio bridge process with Cargo.
+  bool BuildBridgeProcess(std::string* error) {
+    std::vector<wchar_t> environment;
+    if (!BuildRustEnvironment(&environment, error)) {
+      return false;
+    }
+    const std::wstring cargo_path(OPERIT_CARGO_EXECUTABLE_PATH);
+    const std::wstring crate_path(OPERIT_FLUTTER_BRIDGE_CRATE_PATH);
+    std::wstring command_line =
+        L"\"" + cargo_path + L"\" build --quiet --features process-stdio "
+        L"--manifest-path \"" + crate_path + L"\\Cargo.toml\"";
+    STARTUPINFOW startup_info{};
+    startup_info.cb = sizeof(startup_info);
+    startup_info.dwFlags = STARTF_USESHOWWINDOW;
+    startup_info.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION process_info{};
+    if (::CreateProcessW(cargo_path.c_str(), command_line.data(), nullptr,
+                         nullptr, FALSE, CREATE_NO_WINDOW, environment.data(),
+                         crate_path.c_str(), &startup_info, &process_info) == 0) {
+      AssignError(error, "failed to start Cargo for Debug Rust runtime build");
+      return false;
+    }
+    ::CloseHandle(process_info.hThread);
+    ::WaitForSingleObject(process_info.hProcess, INFINITE);
+    DWORD exit_code = 0;
+    const BOOL read_exit_code =
+        ::GetExitCodeProcess(process_info.hProcess, &exit_code);
+    ::CloseHandle(process_info.hProcess);
+    if (read_exit_code == 0 || exit_code != 0) {
+      AssignError(error, "Debug Rust runtime build failed");
+      return false;
+    }
+    return true;
+  }
+
+  /// Copies the rebuilt Debug bridge process beside the Flutter runner.
+  bool CopyBuiltBridgeProcess(std::string* error) {
+    const std::filesystem::path source =
+        std::filesystem::path(OPERIT_FLUTTER_BRIDGE_CRATE_PATH) / L"target" /
+        L"debug" / L"operit_flutter_bridge_process.exe";
+    const std::wstring destination = BridgeProcessExecutablePath(error);
+    if (destination.empty()) {
+      return false;
+    }
+    if (::CopyFileW(source.c_str(), destination.c_str(), FALSE) == 0) {
+      AssignError(error, "failed to update operit_flutter_bridge_process.exe");
+      return false;
+    }
+    return true;
+  }
+
+  /// Builds an inherited environment that disables Rust compiler warnings.
+  static bool BuildRustEnvironment(std::vector<wchar_t>* environment,
+                                   std::string* error) {
+    LPWCH current_environment = ::GetEnvironmentStringsW();
+    if (current_environment == nullptr) {
+      AssignError(error, "failed to read the process environment");
+      return false;
+    }
+    for (const wchar_t* current = current_environment; *current != L'\0';) {
+      const size_t length = std::wcslen(current);
+      if (!HasEnvironmentVariableName(current, L"RUSTFLAGS")) {
+        environment->insert(environment->end(), current, current + length + 1);
+      }
+      current += length + 1;
+    }
+    ::FreeEnvironmentStringsW(current_environment);
+    const std::wstring rust_flags = L"RUSTFLAGS=-Awarnings";
+    environment->insert(environment->end(), rust_flags.begin(), rust_flags.end());
+    environment->push_back(L'\0');
+    environment->push_back(L'\0');
+    return true;
+  }
+
+  /// Returns whether one environment entry declares the supplied variable.
+  static bool HasEnvironmentVariableName(const wchar_t* entry,
+                                         const wchar_t* variable_name) {
+    const size_t variable_length = std::wcslen(variable_name);
+    return std::wcslen(entry) > variable_length &&
+           entry[variable_length] == L'=' &&
+           ::CompareStringOrdinal(entry, static_cast<int>(variable_length),
+                                  variable_name,
+                                  static_cast<int>(variable_length), TRUE) ==
+               CSTR_EQUAL;
+  }
+
+  /// Sends one request and waits for its matching response.
+  bool SendRequest(uint8_t operation, const std::vector<uint8_t>& payload,
+                   uint8_t expected_payload_kind,
+                   std::vector<uint8_t>* bytes_response,
+                   std::string* string_response, std::string* error) {
+    const uint64_t request_id = NextRequestId();
+    auto pending = std::make_shared<OperitProcessPendingResponse>();
+    {
+      std::lock_guard<std::mutex> lock(pending_responses_mutex_);
+      pending_responses_[request_id] = pending;
+    }
+    const std::vector<uint8_t> frame =
+        BuildRequestFrame(operation, request_id, payload);
+    if (!WriteProcessFrame(frame, error)) {
+      RemovePendingResponse(request_id);
+      return false;
+    }
+    std::unique_lock<std::mutex> response_lock(pending->mutex);
+    pending->condition.wait(response_lock,
+                            [&pending]() { return pending->completed; });
+    if (!pending->ok) {
+      AssignError(error, pending->error);
+      return false;
+    }
+    if (pending->payload_kind != expected_payload_kind) {
+      AssignError(error, "bridge process returned an unexpected payload kind");
+      return false;
+    }
+    if (expected_payload_kind == kProcessPayloadBytes) {
+      if (bytes_response != nullptr) {
+        *bytes_response = std::move(pending->payload);
+      }
+      return true;
+    }
+    if (string_response != nullptr) {
+      string_response->assign(pending->payload.begin(), pending->payload.end());
+    }
+    return true;
+  }
+
+  /// Generates the next process request id.
+  uint64_t NextRequestId() {
+    std::lock_guard<std::mutex> lock(request_id_mutex_);
+    return next_request_id_++;
+  }
+
+  /// Removes one pending response entry.
+  void RemovePendingResponse(uint64_t request_id) {
+    std::lock_guard<std::mutex> lock(pending_responses_mutex_);
+    pending_responses_.erase(request_id);
+  }
+
+  /// Reads process frames and dispatches responses or watch events.
+  void ReaderLoop() {
+    while (running_) {
+      std::vector<uint8_t> frame;
+      if (!ReadProcessFrame(&frame)) {
+        break;
+      }
+      ProcessOutputFrame(frame);
+    }
+    MarkProcessStopped("runtime bridge process stopped");
+  }
+
+  /// Reads one length-prefixed frame from the child stdout pipe.
+  bool ReadProcessFrame(std::vector<uint8_t>* frame) {
+    uint8_t length_bytes[4]{};
+    if (!ReadExactPipe(child_stdout_read_, length_bytes, sizeof(length_bytes))) {
+      return false;
+    }
+    const uint32_t length = ReadUint32(length_bytes);
+    frame->assign(length, 0);
+    if (length == 0) {
+      return true;
+    }
+    return ReadExactPipe(child_stdout_read_, frame->data(), frame->size());
+  }
+
+  /// Dispatches one decoded child process output frame.
+  void ProcessOutputFrame(const std::vector<uint8_t>& frame) {
+    size_t offset = 0;
+    uint8_t frame_kind = 0;
+    if (!ReadFrameByte(frame, &offset, &frame_kind)) {
+      return;
+    }
+    if (frame_kind == kProcessFrameResponse) {
+      ProcessResponseFrame(frame, offset);
+      return;
+    }
+    if (frame_kind == kProcessFrameWatchEvent) {
+      ProcessWatchFrame(frame, offset);
+    }
+  }
+
+  /// Dispatches one process response frame.
+  void ProcessResponseFrame(const std::vector<uint8_t>& frame, size_t offset) {
+    uint64_t request_id = 0;
+    uint8_t status = 0;
+    uint8_t payload_kind = 0;
+    std::vector<uint8_t> payload;
+    if (!ReadFrameUint64(frame, &offset, &request_id) ||
+        !ReadFrameByte(frame, &offset, &status) ||
+        !ReadFrameByte(frame, &offset, &payload_kind) ||
+        !ReadFrameBytes(frame, &offset, &payload)) {
+      return;
+    }
+    std::shared_ptr<OperitProcessPendingResponse> pending;
+    {
+      std::lock_guard<std::mutex> lock(pending_responses_mutex_);
+      auto found = pending_responses_.find(request_id);
+      if (found == pending_responses_.end()) {
+        return;
+      }
+      pending = found->second;
+      pending_responses_.erase(found);
+    }
+    {
+      std::lock_guard<std::mutex> lock(pending->mutex);
+      pending->completed = true;
+      pending->ok = status == kProcessStatusOk;
+      pending->payload_kind = payload_kind;
+      pending->payload = std::move(payload);
+      if (!pending->ok) {
+        pending->error.assign(pending->payload.begin(), pending->payload.end());
+      }
+    }
+    pending->condition.notify_all();
+  }
+
+  /// Dispatches one watch event frame from the child process.
+  void ProcessWatchFrame(const std::vector<uint8_t>& frame, size_t offset) {
+    std::vector<uint8_t> payload;
+    if (!ReadFrameBytes(frame, &offset, &payload)) {
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(watch_events_mutex_);
+      watch_events_.push_back(std::move(payload));
+    }
+    watch_events_condition_.notify_all();
+  }
+
+  /// Marks the process as stopped for all blocked callers.
+  void MarkProcessStopped(const std::string& message) {
+    running_ = false;
+    std::vector<std::shared_ptr<OperitProcessPendingResponse>> pending;
+    {
+      std::lock_guard<std::mutex> lock(pending_responses_mutex_);
+      for (const auto& item : pending_responses_) {
+        pending.push_back(item.second);
+      }
+      pending_responses_.clear();
+    }
+    for (const auto& response : pending) {
+      {
+        std::lock_guard<std::mutex> lock(response->mutex);
+        response->completed = true;
+        response->ok = false;
+        response->error = message;
+      }
+      response->condition.notify_all();
+    }
+    watch_events_condition_.notify_all();
+  }
+
+  /// Writes one length-prefixed frame to the child stdin pipe.
+  bool WriteProcessFrame(const std::vector<uint8_t>& frame, std::string* error) {
+    if (child_stdin_write_ == nullptr) {
+      AssignError(error, "runtime bridge process stdin is closed");
+      return false;
+    }
+    const uint32_t length = static_cast<uint32_t>(frame.size());
+    const uint8_t* length_bytes =
+        reinterpret_cast<const uint8_t*>(&length);
+    if (!WriteExactPipe(child_stdin_write_, length_bytes, sizeof(length))) {
+      AssignError(error, "failed to write bridge process frame length");
+      return false;
+    }
+    if (!frame.empty() &&
+        !WriteExactPipe(child_stdin_write_, frame.data(), frame.size())) {
+      AssignError(error, "failed to write bridge process frame payload");
+      return false;
+    }
+    return true;
+  }
+
+  /// Builds one request frame payload.
+  static std::vector<uint8_t> BuildRequestFrame(
+      uint8_t operation, uint64_t request_id,
+      const std::vector<uint8_t>& payload) {
+    std::vector<uint8_t> frame;
+    frame.push_back(operation);
+    AppendUint64(&frame, request_id);
+    frame.insert(frame.end(), payload.begin(), payload.end());
+    return frame;
+  }
+
+  /// Appends one little-endian u64 to a frame.
+  static void AppendUint64(std::vector<uint8_t>* frame, uint64_t value) {
+    for (size_t index = 0; index < sizeof(value); ++index) {
+      frame->push_back(static_cast<uint8_t>((value >> (index * 8)) & 0xff));
+    }
+  }
+
+  /// Appends one length-prefixed byte vector to a frame.
+  static void AppendBytes(std::vector<uint8_t>* frame,
+                          const std::vector<uint8_t>& value) {
+    AppendUint32(frame, static_cast<uint32_t>(value.size()));
+    frame->insert(frame->end(), value.begin(), value.end());
+  }
+
+  /// Appends one length-prefixed string to a frame.
+  static void AppendString(std::vector<uint8_t>* frame,
+                           const std::string& value) {
+    AppendUint32(frame, static_cast<uint32_t>(value.size()));
+    frame->insert(frame->end(), value.begin(), value.end());
+  }
+
+  /// Appends one little-endian u32 to a frame.
+  static void AppendUint32(std::vector<uint8_t>* frame, uint32_t value) {
+    for (size_t index = 0; index < sizeof(value); ++index) {
+      frame->push_back(static_cast<uint8_t>((value >> (index * 8)) & 0xff));
+    }
+  }
+
+  /// Reads one little-endian u32 from raw bytes.
+  static uint32_t ReadUint32(const uint8_t* value) {
+    return static_cast<uint32_t>(value[0]) |
+           (static_cast<uint32_t>(value[1]) << 8) |
+           (static_cast<uint32_t>(value[2]) << 16) |
+           (static_cast<uint32_t>(value[3]) << 24);
+  }
+
+  /// Reads one byte from a frame.
+  static bool ReadFrameByte(const std::vector<uint8_t>& frame, size_t* offset,
+                            uint8_t* value) {
+    if (*offset >= frame.size()) {
+      return false;
+    }
+    *value = frame[*offset];
+    ++(*offset);
+    return true;
+  }
+
+  /// Reads one little-endian u64 from a frame.
+  static bool ReadFrameUint64(const std::vector<uint8_t>& frame,
+                              size_t* offset, uint64_t* value) {
+    if (*offset + sizeof(uint64_t) > frame.size()) {
+      return false;
+    }
+    uint64_t result = 0;
+    for (size_t index = 0; index < sizeof(uint64_t); ++index) {
+      result |= static_cast<uint64_t>(frame[*offset + index]) << (index * 8);
+    }
+    *offset += sizeof(uint64_t);
+    *value = result;
+    return true;
+  }
+
+  /// Reads one length-prefixed byte vector from a frame.
+  static bool ReadFrameBytes(const std::vector<uint8_t>& frame, size_t* offset,
+                             std::vector<uint8_t>* value) {
+    if (*offset + sizeof(uint32_t) > frame.size()) {
+      return false;
+    }
+    const uint32_t length = ReadUint32(frame.data() + *offset);
+    *offset += sizeof(uint32_t);
+    if (*offset + length > frame.size()) {
+      return false;
+    }
+    value->assign(frame.begin() + *offset, frame.begin() + *offset + length);
+    *offset += length;
+    return true;
+  }
+
+  /// Writes every byte to a Windows pipe.
+  static bool WriteExactPipe(HANDLE pipe, const uint8_t* data, size_t size) {
+    size_t offset = 0;
+    while (offset < size) {
+      DWORD written = 0;
+      const DWORD chunk =
+          static_cast<DWORD>(std::min<size_t>(size - offset, 1 << 20));
+      if (::WriteFile(pipe, data + offset, chunk, &written, nullptr) == 0 ||
+          written == 0) {
+        return false;
+      }
+      offset += written;
+    }
+    return true;
+  }
+
+  /// Reads an exact byte count from a Windows pipe.
+  static bool ReadExactPipe(HANDLE pipe, uint8_t* data, size_t size) {
+    size_t offset = 0;
+    while (offset < size) {
+      DWORD read = 0;
+      const DWORD chunk =
+          static_cast<DWORD>(std::min<size_t>(size - offset, 1 << 20));
+      if (::ReadFile(pipe, data + offset, chunk, &read, nullptr) == 0 ||
+          read == 0) {
+        return false;
+      }
+      offset += read;
+    }
+    return true;
+  }
+
+  /// Closes one owned Windows handle.
+  static void CloseOwnedHandle(HANDLE& handle) {
+    if (handle != nullptr) {
+      ::CloseHandle(handle);
+      handle = nullptr;
+    }
+  }
+
+  /// Resolves the bridge process executable beside the Flutter runner.
+  static std::wstring BridgeProcessExecutablePath(std::string* error) {
+    wchar_t module_path[MAX_PATH];
+    const DWORD length =
+        ::GetModuleFileNameW(nullptr, module_path, static_cast<DWORD>(MAX_PATH));
+    if (length == 0 || length >= MAX_PATH) {
+      AssignError(error, "failed to resolve Flutter runner path");
+      return std::wstring();
+    }
+    std::filesystem::path path(module_path);
+    path = path.parent_path() / L"operit_flutter_bridge_process.exe";
+    return path.wstring();
+  }
+
+  bool bridge_created_ = false;
+  std::string configured_runtime_root_;
+  std::string configured_workspace_root_;
+  std::mutex mutex_;
+  PROCESS_INFORMATION process_{};
+  HANDLE child_stdin_write_ = nullptr;
+  HANDLE child_stdout_read_ = nullptr;
+  std::thread reader_thread_;
+  std::atomic_bool running_{false};
+  std::mutex request_id_mutex_;
+  uint64_t next_request_id_ = 1;
+  std::mutex pending_responses_mutex_;
+  std::map<uint64_t, std::shared_ptr<OperitProcessPendingResponse>>
+      pending_responses_;
+  std::mutex watch_events_mutex_;
+  std::condition_variable watch_events_condition_;
+  std::deque<std::vector<uint8_t>> watch_events_;
+};
+
+using OperitRuntimeActiveLibrary = OperitRuntimeProcessLibrary;
+#else
+using OperitRuntimeActiveLibrary = OperitRuntimeLibrary;
+#endif
+
+std::shared_ptr<OperitRuntimeActiveLibrary> g_operit_runtime_library;
 
 const std::string* StringArgument(
     const flutter::MethodCall<flutter::EncodableValue>& method_call) {
@@ -740,13 +1583,15 @@ void DispatchWatchChannelEvent(std::vector<uint8_t> frame) {
   });
 }
 
-void EnsureWatchChannelPump(std::shared_ptr<OperitRuntimeLibrary> library) {
+void EnsureWatchChannelPump(std::shared_ptr<OperitRuntimeActiveLibrary> library) {
   bool expected = false;
   if (!g_watch_channel_pump_running.compare_exchange_strong(expected, true)) {
     return;
   }
-  std::thread([library = std::move(library)]() {
-    while (g_watch_channel_pump_running.load()) {
+  const uint64_t generation = g_watch_channel_pump_generation.load();
+  std::thread([library = std::move(library), generation]() {
+    while (g_watch_channel_pump_running.load() &&
+           g_watch_channel_pump_generation.load() == generation) {
       std::vector<uint8_t> frame;
       std::string error;
       if (!library->NextWatchChannelEvent(&frame, &error)) {
@@ -754,7 +1599,9 @@ void EnsureWatchChannelPump(std::shared_ptr<OperitRuntimeLibrary> library) {
       }
       DispatchWatchChannelEvent(std::move(frame));
     }
-    g_watch_channel_pump_running.store(false);
+    if (g_watch_channel_pump_generation.load() == generation) {
+      g_watch_channel_pump_running.store(false);
+    }
   }).detach();
 }
 
@@ -819,6 +1666,41 @@ void RespondRuntimeBytesAsync(
         [result = std::move(platform_result), ok, response = std::move(response), error = std::move(error)]() mutable {
           if (ok) {
             result->Success(flutter::EncodableValue(response));
+          } else {
+            result->Error("RUNTIME_BRIDGE_ERROR", error);
+          }
+        });
+  });
+  if (!submitted) {
+    auto platform_result = std::move(*result_holder);
+    platform_result->Error("RUNTIME_WORKER_QUEUE_CLOSED",
+                           "runtime worker queue is not accepting work");
+  }
+}
+
+/// Runs one void Rust bridge operation off the Windows platform thread.
+template <typename Operation>
+void RespondRuntimeVoidAsync(
+    Operation operation,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  auto* workers = g_operit_runtime_workers.get();
+  if (workers == nullptr) {
+    result->Error("RUNTIME_WORKER_QUEUE_CLOSED",
+                  "runtime worker queue is not available");
+    return;
+  }
+  auto result_holder = std::make_shared<
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>>(
+      std::move(result));
+  const bool submitted = workers->Post(
+      [operation = std::move(operation), result_holder]() mutable {
+    std::string error;
+    const bool ok = operation(&error);
+    auto platform_result = std::move(*result_holder);
+    PostOperitRuntimePlatformTask(
+        [result = std::move(platform_result), ok, error = std::move(error)]() mutable {
+          if (ok) {
+            result->Success();
           } else {
             result->Error("RUNTIME_BRIDGE_ERROR", error);
           }
@@ -898,7 +1780,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
     g_operit_runtime_platform_thread_id = ::GetCurrentThreadId();
   }
   if (!g_operit_runtime_library) {
-    g_operit_runtime_library = std::make_shared<OperitRuntimeLibrary>();
+    g_operit_runtime_library = std::make_shared<OperitRuntimeActiveLibrary>();
   }
   if (!g_operit_runtime_workers) {
     g_operit_runtime_workers = std::make_unique<OperitRuntimeWorkerQueue>(4);
@@ -974,6 +1856,17 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
           result->Success();
           return;
         }
+#if !defined(NDEBUG)
+        if (method_call.method_name().compare(
+                "debugRebuildAndRestartLocalRuntime") == 0) {
+          RespondRuntimeVoidAsync(
+              [runtime_library](std::string* operation_error) {
+                return runtime_library->RebuildAndRestart(operation_error);
+              },
+              std::move(result));
+          return;
+        }
+#endif
         if (method_call.method_name().compare("call") == 0) {
           const std::vector<uint8_t>* request =
               std::get_if<std::vector<uint8_t>>(method_call.arguments());
@@ -1215,6 +2108,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
 
 void ShutdownOperitRuntimeChannel() {
   g_watch_channel_pump_running.store(false);
+  g_watch_channel_pump_generation.fetch_add(1);
   g_operit_runtime_workers.reset();
   g_operit_runtime_channels.clear();
   ClearOperitRuntimePlatformTasks();

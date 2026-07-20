@@ -23,7 +23,8 @@ implementation. Applications implement the SDK traits and inject their own host 
 
 ## Entry Points
 
-- `JsPackageLoader::JsPackageLoader`: loads and parses standalone `.js` and `.ts` packages.
+- `JsPackageLoader::JsPackageLoader`: loads and parses standalone `.js` and `.ts` packages,
+  including ToolPkg standalone artifact bytes.
 - `JsTools::getJsToolsDefinition`: returns the stable JavaScript `Tools` namespace installed by
   JavaScript engine implementations.
 - `JsExecutionScriptBuilder`: returns the fixed JavaScript package execution prelude, runtime
@@ -58,13 +59,20 @@ implementation. Applications implement the SDK traits and inject their own host 
   hooks when host events occur.
 - `javascript::JsExecutionEngine`: host-supplied JavaScript execution contract.
 
+## Compressed Artifacts
+
+Marketplace publishing can AST-minify executable JavaScript with `compress: false` and
+`mangle: false`, so export names and externally called symbols stay stable. A leading standalone
+`/* METADATA ... */` block is preserved. ToolPkg archives remain standard ZIP files: manifests and
+resources are unchanged, while executable JavaScript entries are minified.
+
 ## JavaScript Execution Contract
 
 JavaScript packages call the fixed `toolCall` interface. The JavaScript bridge converts that call
 into `JsToolCallRequest` without depending on Operit's internal tool types. The embedding
 application implements `JsExecutionHost` and owns permission checks, tool lookup, execution,
 environment access, plugin configuration paths, ToolPkg resources, package state, tool-name
-resolution, and ToolPkg IPC. Every method is required; the SDK contains no host fallback behavior.
+resolution, and ToolPkg IPC. Every method is required; hosts must provide the behavior explicitly.
 
 `JsToolCallResultData::Value` preserves JSON values. `JsToolCallResultData::Binary` lets the
 JavaScript bridge choose its transport encoding without exposing host-specific result types.

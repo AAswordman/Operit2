@@ -1,4 +1,5 @@
 use super::JsEngineState;
+use crate::javascript::TestJsToolsHost::expect_js_output;
 use std::collections::BTreeMap;
 
 #[test]
@@ -60,5 +61,8 @@ fn plugin_config_proxy_persists_and_reads_values() {
         None,
     );
 
-    assert_eq!(output.as_deref(), Some("{\"count\":42,\"name\":\"saved\"}"));
+    assert_eq!(
+        expect_js_output(output, "plugin config roundtrip execution"),
+        "{\"count\":42,\"name\":\"saved\"}"
+    );
 }

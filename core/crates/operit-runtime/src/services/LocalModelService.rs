@@ -364,12 +364,36 @@ impl LocalModelService {
         self.catalogStatus(&modelId, &version)
     }
 
-    /// Deletes one installed local model from the asset repository.
+    /// Deletes one installed or retained local model download from the asset repository.
     pub fn deleteModel(&self, modelId: String, version: String) -> Result<(), String> {
-        self.modelInstaller()?
-            .deleteInstalledModel(&modelId, &version)
-            .map(|_| ())
-            .map_err(errorString)
+        let operationId = installOperationId(&modelId, &version);
+        removeTerminalInstallOperation(&operationId)?;
+        let manifest = self.catalogModel(&modelId, &version)?;
+        let target = LocalPlatformTarget::current()?;
+        let modelInstaller = self.modelInstaller()?;
+        let registry = modelInstaller.readRegistry().map_err(errorString)?;
+        if registry.getInstalledModel(&modelId, &version).is_some() {
+            modelInstaller
+                .deleteInstalledModel(&modelId, &version)
+                .map_err(errorString)?;
+        } else {
+            modelInstaller
+                .removePendingInstallArtifacts(&manifest)
+                .map_err(errorString)?;
+        }
+        if let Some(requirement) = manifest.engineRequirement.as_ref() {
+            if registry
+                .getInstalledEngine(&requirement.engineId, &requirement.version, &target)
+                .is_none()
+            {
+                let engineManifest =
+                    self.catalogEngine(&requirement.engineId, &requirement.version)?;
+                self.engineInstaller()?
+                    .removePendingInstallArtifacts(&engineManifest, &target)
+                    .map_err(errorString)?;
+            }
+        }
+        Ok(())
     }
 
     /// Deletes one engine target that is not required by installed models.
@@ -582,6 +606,22 @@ fn failInstallOperation(operationId: &str, errorMessage: &str) -> Result<(), Str
         true => None,
         false => Some(errorMessage.to_string()),
     };
+    Ok(())
+}
+
+/// Removes one terminal installation operation after its retained files are deleted.
+fn removeTerminalInstallOperation(operationId: &str) -> Result<(), String> {
+    let mut operations = installOperations()
+        .lock()
+        .map_err(|error| format!("local model install operation lock poisoned: {error}"))?;
+    if let Some(operation) = operations.get(operationId) {
+        if !isTerminalInstallPhase(&operation.status.phase) {
+            return Err(format!(
+                "local model installation must be cancelled before deletion: {operationId}"
+            ));
+        }
+    }
+    operations.remove(operationId);
     Ok(())
 }
 

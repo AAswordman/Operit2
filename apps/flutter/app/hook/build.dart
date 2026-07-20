@@ -20,11 +20,6 @@ const List<_V86GuestAsset> _v86GuestAssets = <_V86GuestAsset>[
     url: 'https://raw.githubusercontent.com/copy/v86/master/bios/vgabios.bin',
     sha256: 'a4bc0d80cc3ca028c73dafa8fee396b8d054ce87ebd8abfbd31b06b437607880',
   ),
-  _V86GuestAsset(
-    relativePath: 'v86/buildroot-bzimage.bin',
-    url: 'https://i.copy.sh/buildroot-bzimage.bin',
-    sha256: '7befbaea31e249d9a518c4b95fa42b2a193d0e3de46250d617cbdeb866ee28b0',
-  ),
 ];
 
 void main(List<String> args) async {
@@ -53,6 +48,9 @@ void main(List<String> args) async {
     );
     final webSourceDir = Directory.fromUri(
       input.packageRoot.resolve('../../../apps/web_access/web/'),
+    );
+    final v86RuntimeSourceDir = Directory.fromUri(
+      input.packageRoot.resolve('../../../apps/web_access/v86/runtime/'),
     );
     final webRuntimeSourceDir = Directory.fromUri(
       input.packageRoot.resolve('../../../apps/web_access/src/'),
@@ -102,6 +100,11 @@ void main(List<String> args) async {
       '.png',
       '.wasm',
     }, excludeGeneratedOutputs: true);
+    await _addDirectoryFileDependencies(output, v86RuntimeSourceDir, {
+      '.bin',
+      '.gz',
+      '.json',
+    });
     await _addDirectoryFileDependencies(output, webRuntimeSourceDir, {'.ts'});
     output.dependencies.add(webRuntimeTypescriptConfig.uri);
 
@@ -132,6 +135,12 @@ void main(List<String> args) async {
       await _validateWasmBindgenImports(
         File.fromUri(webBuildDir.uri.resolve('operit_flutter_bridge.js')),
       );
+      await _writeWorkerWasmBridgeModule(
+        File.fromUri(webBuildDir.uri.resolve('operit_flutter_bridge.js')),
+        File.fromUri(
+          webBuildDir.uri.resolve('operit_flutter_bridge_worker.js'),
+        ),
+      );
 
       await _run(_command('npm'), [
         'install',
@@ -157,7 +166,7 @@ void main(List<String> args) async {
       await File.fromUri(
         sqlDist.uri.resolve('sql-wasm.wasm'),
       ).copy(File.fromUri(webBuildDir.uri.resolve('sql-wasm.wasm')).path);
-      await _stageV86RuntimeAssets(depsDir, webBuildDir);
+      await _stageV86RuntimeAssets(depsDir, v86RuntimeSourceDir, webBuildDir);
       await _syncWebRuntimeArtifacts(webBuildDir, webSourceDir);
       final versionManifest = await _writeWebAccessVersionManifest(
         webBuildDir,
@@ -174,6 +183,7 @@ void main(List<String> args) async {
       await _requireWebAccessVersionManifest(webBuildDir);
       await _addDirectoryFileDependencies(output, webBuildDir, {
         '.bin',
+        '.gz',
         '.html',
         '.js',
         '.json',
@@ -526,6 +536,25 @@ Future<void> _syncWebRuntimeArtifacts(
   );
 }
 
+/// Writes the worker bridge from the matching wasm-bindgen output with relative WASI imports.
+Future<void> _writeWorkerWasmBridgeModule(
+  File bridgeModule,
+  File workerBridgeModule,
+) async {
+  final bridgeContents = await bridgeModule.readAsString();
+  final workerContents = bridgeContents.replaceAll(
+    'from "wasi_snapshot_preview1"',
+    'from "./wasi_snapshot_preview1.js"',
+  );
+  if (workerContents == bridgeContents) {
+    throw StateError(
+      'wasm-bindgen bridge did not declare the WASI module import: '
+      '${bridgeModule.path}',
+    );
+  }
+  await workerBridgeModule.writeAsString(workerContents, flush: true);
+}
+
 /// Copies one generated browser runtime directory into the Flutter Web source tree.
 Future<void> _syncGeneratedWebRuntimeDirectory(
   Directory source,
@@ -554,6 +583,7 @@ Future<void> _syncGeneratedWebRuntimeDirectory(
 /// Stages the v86 emulator runtime and verified Linux guest resources.
 Future<void> _stageV86RuntimeAssets(
   Directory dependencies,
+  Directory runtimeSource,
   Directory webBuildDir,
 ) async {
   final v86BuildDir = Directory.fromUri(
@@ -572,6 +602,12 @@ Future<void> _stageV86RuntimeAssets(
       Uri.parse(asset.url),
       File.fromUri(webBuildDir.uri.resolve(asset.relativePath)),
       asset.sha256,
+    );
+  }
+  for (final fileName in _v86RuntimeAssetNames) {
+    await _copyRequiredWebRuntimeAsset(
+      File.fromUri(runtimeSource.uri.resolve(fileName)),
+      File.fromUri(webBuildDir.uri.resolve('v86/runtime/$fileName')),
     );
   }
 }
@@ -637,6 +673,7 @@ Future<void> _invalidateWebRuntimeArtifacts(
 
 const Set<String> _webRuntimeArtifactNames = <String>{
   'operit_flutter_bridge.js',
+  'operit_flutter_bridge_worker.js',
   'operit_flutter_bridge_bg.wasm',
   'operit_flutter_bridge_bg.wasm.d.ts',
   'operit_flutter_bridge.d.ts',
@@ -651,7 +688,12 @@ const Set<String> _generatedWebRuntimeFileNames = <String>{
   'v86.wasm',
   'seabios.bin',
   'vgabios.bin',
-  'buildroot-bzimage.bin',
+};
+
+const Set<String> _v86RuntimeAssetNames = <String>{
+  'operit-runtime-manifest.json',
+  'operit-runtime-bzimage.bin',
+  'operit-runtime-initrd.cpio.gz',
 };
 
 /// Computes a path relative to the copied Web Access bundle root.

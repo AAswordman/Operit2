@@ -44,3 +44,4 @@ bzip2 = "0.4"
 bzip2-rs = "0.1.2"
 tar = "0.4"
 lmdb = { package = "lmdb-rkv", version = "0.14" }
+wasmi = { version = "2.0.0-beta.7", default-features = false, features = ["stable", "std", "validate", "auto-dispatch"] }

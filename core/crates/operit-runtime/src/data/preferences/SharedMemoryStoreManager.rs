@@ -4,6 +4,7 @@ use operit_store::PreferencesDataStore::{
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use uuid::Uuid;
 
+use operit_host_api::TimeUtils::currentTimeMillis as hostCurrentTimeMillis;
 use operit_model::Memory::SharedMemoryStore;
 
 #[derive(Clone)]
@@ -262,5 +263,5 @@ fn writeSharedMemoryStore(preferences: &mut Preferences, store: &SharedMemorySto
 
 #[allow(non_snake_case)]
 fn currentTimeMillis() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    hostCurrentTimeMillis()
 }

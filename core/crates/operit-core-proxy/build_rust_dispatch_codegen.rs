@@ -120,7 +120,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
     output.push_str("    }\n");
     if let Some(application) = objects
         .iter()
-        .find(|object| object.access == ObjectAccess::Application)
+        .find(|object| object.access == ObjectAccess::Application && object.has_call_dispatch())
     {
         output.push_str(&format!(
             "    if request.targetPath.key() == {:?} {{\n        let mut application = proxy.application.lock().await;\n        return generated_dispatch_{}_call(&mut application, request).await;\n    }}\n",
@@ -129,7 +129,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
     }
     if let Some(chat_runtime) = objects
         .iter()
-        .find(|object| object.access == ObjectAccess::ChatRuntimeMain)
+        .find(|object| object.access == ObjectAccess::ChatRuntimeMain && object.has_call_dispatch())
     {
         output.push_str(&format!(
             "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let mut holder = proxy.chatRuntimeHolder.lock().await;\n        let core = holder.getCore(slot);\n        return generated_dispatch_{}_call(core, request).await;\n    }}\n",
@@ -139,6 +139,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
     output.push_str("    match request.targetPath.key().as_str() {\n");
     for object in objects
         .iter()
+        .filter(|object| object.has_call_dispatch())
         .filter(|object| matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. }))
     {
         output.push_str(&render_factory_constructible_dispatch(
@@ -148,6 +149,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
     }
     for object in objects
         .iter()
+        .filter(|object| object.has_call_dispatch())
         .filter(|object| object.access == ObjectAccess::StringNewConstruct)
     {
         output.push_str(&render_string_constructible_dispatch(
@@ -156,7 +158,8 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         ));
     }
     for object in objects.iter().filter(|object| {
-        object.access.is_constructible()
+        object.has_call_dispatch()
+            && object.access.is_constructible()
             && object.access != ObjectAccess::StringNewConstruct
             && !matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. })
     }) {

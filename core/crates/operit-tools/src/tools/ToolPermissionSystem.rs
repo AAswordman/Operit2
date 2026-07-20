@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -58,8 +60,10 @@ pub enum PermissionRequestResult {
     ALLOW_SESSION,
 }
 
-type PermissionRequester =
-    Arc<dyn Fn(&AITool, &str) -> PermissionRequestResult + Send + Sync + 'static>;
+type AsyncPermissionRequestFuture =
+    Pin<Box<dyn Future<Output = PermissionRequestResult> + Send + 'static>>;
+type AsyncPermissionRequester =
+    Arc<dyn Fn(AITool, String) -> AsyncPermissionRequestFuture + Send + Sync + 'static>;
 type OperationDescriptionGenerator = Arc<dyn Fn(&AITool) -> String + Send + Sync + 'static>;
 
 /// Persists tool permission policy and mediates interactive permission checks.
@@ -67,7 +71,7 @@ type OperationDescriptionGenerator = Arc<dyn Fn(&AITool) -> String + Send + Sync
 pub struct ToolPermissionSystem {
     dataStore: PreferencesDataStore,
     operationDescriptionRegistry: Arc<Mutex<BTreeMap<String, OperationDescriptionGenerator>>>,
-    permissionRequester: Arc<Mutex<Option<PermissionRequester>>>,
+    asyncPermissionRequester: Arc<Mutex<Option<AsyncPermissionRequester>>>,
     sessionApprovedTools: Arc<Mutex<BTreeSet<String>>>,
 }
 
@@ -77,7 +81,7 @@ impl ToolPermissionSystem {
         Self {
             dataStore: PreferencesDataStore::new(paths.tool_permissions_preferences_path()),
             operationDescriptionRegistry: Arc::new(Mutex::new(BTreeMap::new())),
-            permissionRequester: Arc::new(Mutex::new(None)),
+            asyncPermissionRequester: Arc::new(Mutex::new(None)),
             sessionApprovedTools: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
@@ -106,25 +110,29 @@ impl ToolPermissionSystem {
             .insert(toolName.to_string(), Arc::new(descriptionGenerator));
     }
 
-    /// Installs the callback used when a tool requires user approval.
+    /// Installs the asynchronous callback used when a tool requires user approval.
     #[allow(non_snake_case)]
-    pub fn setPermissionRequester<F>(&self, requester: F)
+    pub fn setAsyncPermissionRequester<F, TFuture>(&self, requester: F)
     where
-        F: Fn(&AITool, &str) -> PermissionRequestResult + Send + Sync + 'static,
+        F: Fn(AITool, String) -> TFuture + Send + Sync + 'static,
+        TFuture: Future<Output = PermissionRequestResult> + Send + 'static,
     {
         *self
-            .permissionRequester
+            .asyncPermissionRequester
             .lock()
-            .expect("tool permission requester mutex poisoned") = Some(Arc::new(requester));
+            .expect("tool async permission requester mutex poisoned") =
+            Some(Arc::new(move |tool, description| {
+                Box::pin(requester(tool, description))
+            }));
     }
 
     /// Removes the active interactive permission requester.
     #[allow(non_snake_case)]
-    pub fn clearPermissionRequester(&self) {
+    pub fn clearAsyncPermissionRequester(&self) {
         *self
-            .permissionRequester
+            .asyncPermissionRequester
             .lock()
-            .expect("tool permission requester mutex poisoned") = None;
+            .expect("tool async permission requester mutex poisoned") = None;
     }
 
     /// Clears approvals that were granted for the current runtime session.
@@ -169,22 +177,22 @@ impl ToolPermissionSystem {
             .unwrap_or_else(|| format!("Tool operation: {}", tool.name))
     }
 
-    /// Requests approval for a package tool invocation.
+    /// Asynchronously requests approval for a package tool invocation.
     #[allow(non_snake_case)]
-    pub fn checkPackageToolApproval(
+    pub async fn checkPackageToolApprovalAsync(
         &self,
         tool: &AITool,
     ) -> Result<bool, PreferencesDataStoreError> {
-        self.requestPermission(tool)
+        self.requestPermissionAsync(tool).await
     }
 
-    /// Requests approval for a tool invocation that can escape the sandbox boundary.
+    /// Asynchronously requests approval for a tool invocation that can escape the sandbox boundary.
     #[allow(non_snake_case)]
-    pub fn checkSandboxEscapeApproval(
+    pub async fn checkSandboxEscapeApprovalAsync(
         &self,
         tool: &AITool,
     ) -> Result<bool, PreferencesDataStoreError> {
-        self.requestPermission(tool)
+        self.requestPermissionAsync(tool).await
     }
 
     /// Refreshes permission request state exposed to front-end observers.
@@ -193,8 +201,12 @@ impl ToolPermissionSystem {
         false
     }
 
+    /// Awaits one registered approval callback and applies its result to session state.
     #[allow(non_snake_case)]
-    fn requestPermission(&self, tool: &AITool) -> Result<bool, PreferencesDataStoreError> {
+    async fn requestPermissionAsync(
+        &self,
+        tool: &AITool,
+    ) -> Result<bool, PreferencesDataStoreError> {
         if self
             .sessionApprovedTools
             .lock()
@@ -206,15 +218,25 @@ impl ToolPermissionSystem {
 
         let description = self.getOperationDescription(tool);
         let requester = self
-            .permissionRequester
+            .asyncPermissionRequester
             .lock()
-            .expect("tool permission requester mutex poisoned")
+            .expect("tool async permission requester mutex poisoned")
             .clone();
+        let result = match requester {
+            Some(callback) => callback(tool.clone(), description).await,
+            None => PermissionRequestResult::DENY,
+        };
 
-        let result = requester
-            .map(|callback| callback(tool, &description))
-            .unwrap_or(PermissionRequestResult::DENY);
+        self.applyPermissionResult(tool, result)
+    }
 
+    /// Applies an approval decision to the current tool request and session state.
+    #[allow(non_snake_case)]
+    fn applyPermissionResult(
+        &self,
+        tool: &AITool,
+        result: PermissionRequestResult,
+    ) -> Result<bool, PreferencesDataStoreError> {
         match result {
             PermissionRequestResult::ALLOW => Ok(true),
             PermissionRequestResult::DENY => Ok(false),

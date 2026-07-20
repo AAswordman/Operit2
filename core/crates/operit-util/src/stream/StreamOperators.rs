@@ -3,7 +3,10 @@ use crate::stream::Stream::{Stream, VecStream};
 use crate::stream::StreamGroup::StreamGroup;
 use std::collections::VecDeque;
 
-pub async fn map<S, R>(mut source: S, mut transform: impl FnMut(S::Item) -> R + Send) -> VecStream<R>
+pub async fn map<S, R>(
+    mut source: S,
+    mut transform: impl FnMut(S::Item) -> R + Send,
+) -> VecStream<R>
 where
     S: Stream,
     R: Send,
@@ -225,9 +228,7 @@ pub async fn split_chars_by(
     }
 
     let mut upstream_chars = VecDeque::new();
-    source
-        .collect(&mut |ch| upstream_chars.push_back(ch))
-        .await;
+    source.collect(&mut |ch| upstream_chars.push_back(ch)).await;
 
     let mut groups: Vec<StreamGroup<Option<String>>> = Vec::new();
     let mut default_text_buffer = String::new();

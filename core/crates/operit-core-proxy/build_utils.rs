@@ -1,13 +1,5 @@
 use std::path::Path;
 
-pub(crate) fn full_type_for_source(
-    runtime_src: &Path,
-    source_path: &Path,
-    type_name: &str,
-) -> String {
-    full_type_for_source_with_crate(runtime_src, source_path, type_name, "operit_runtime")
-}
-
 pub(crate) fn full_type_for_source_with_crate(
     source_root: &Path,
     source_path: &Path,
@@ -18,10 +10,6 @@ pub(crate) fn full_type_for_source_with_crate(
         "{}::{type_name}",
         module_path_for_source_with_crate(source_root, source_path, crate_name)
     )
-}
-
-pub(crate) fn module_path_for_source(runtime_src: &Path, source_path: &Path) -> String {
-    module_path_for_source_with_crate(runtime_src, source_path, "operit_runtime")
 }
 
 pub(crate) fn module_path_for_source_with_crate(

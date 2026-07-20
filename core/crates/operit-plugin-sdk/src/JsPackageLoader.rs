@@ -1,6 +1,7 @@
 use crate::package::{
     EnvVar, LocalizedText, PackageTool, PackageToolParameter, ToolPackage, ToolPackageState,
 };
+use crate::toolpkg::ToolPkgProtection;
 use operit_host_api::FileSystemHost;
 
 /// Loads and parses standalone JavaScript plugin packages.
@@ -12,9 +13,10 @@ impl JsPackageLoader {
         fileSystemHost: &dyn FileSystemHost,
         sourcePath: &str,
     ) -> Result<ToolPackage, String> {
-        let js_content = fileSystemHost
-            .readFile(sourcePath)
+        let source_bytes = fileSystemHost
+            .readFileBytes(sourcePath)
             .map_err(|error| error.to_string())?;
+        let js_content = ToolPkgProtection::decodeUtf8(&source_bytes)?;
         Self::parse(&js_content)
     }
 
@@ -462,6 +464,38 @@ mod tests {
         assert!(package.enabled_by_default);
         assert_eq!(package.tools.len(), 1);
         assert_eq!(package.tools[0].name, "echo");
+        assert_eq!(package.tools[0].script, source);
+    }
+
+    /// Verifies package metadata still parses when the executable body is minified.
+    #[test]
+    fn parses_metadata_from_minified_package_body() {
+        let source = r#"/* METADATA
+{
+  name: minified_package
+  displayName: Minified Package
+  enabledByDefault: true
+  tools: [
+    {
+      name: echo
+      description: Echo text
+      parameters: [
+        { name: text, description: Text to echo, type: string, required: true }
+      ]
+    }
+  ]
+}
+*/"use strict";Object.defineProperty(exports,"__esModule",{value:!0});exports.echo=function(t){return t.text};"#;
+
+        let package = JsPackageLoader::parse(source).expect("package metadata should parse");
+
+        assert_eq!(package.name, "minified_package");
+        assert_eq!(package.display_name.resolve(true), "Minified Package");
+        assert!(package.enabled_by_default);
+        assert_eq!(package.tools.len(), 1);
+        assert_eq!(package.tools[0].name, "echo");
+        assert_eq!(package.tools[0].parameters.len(), 1);
+        assert_eq!(package.tools[0].parameters[0].name, "text");
         assert_eq!(package.tools[0].script, source);
     }
 }

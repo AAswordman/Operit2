@@ -103,6 +103,11 @@ class WorkspaceTerminalSessions {
     return _terminal.defaultTerminalType();
   }
 
+  /// Returns every terminal type exposed by the active runtime host.
+  Future<core_proxy.RuntimeTerminalInfo> terminalInfo() {
+    return _terminal.terminalInfo();
+  }
+
   /// Starts a typed PTY session.
   Future<String> startPtySession({
     required String sessionName,

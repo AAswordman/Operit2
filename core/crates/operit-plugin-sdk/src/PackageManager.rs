@@ -341,6 +341,127 @@ mod tests {
     use crate::toolpkg::ToolPkgParser::{
         ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSourceType,
     };
+    use operit_host_api::{
+        FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
+        GrepCodeResult, HostEnvironmentDescriptor, HostError, HostResult,
+    };
+
+    /// Rejects filesystem operations because these package manager tests do not access host files.
+    struct RejectingFileSystemHost;
+
+    impl RejectingFileSystemHost {
+        /// Returns the explicit error used for unsupported test filesystem operations.
+        fn unsupported<T>() -> HostResult<T> {
+            Err(HostError::new("filesystem access is not used by this test"))
+        }
+    }
+
+    impl FileSystemHost for RejectingFileSystemHost {
+        /// Returns the test host label.
+        fn envLabel(&self) -> &str {
+            "test"
+        }
+
+        /// Returns the test environment descriptor.
+        fn environmentDescriptor(&self) -> HostEnvironmentDescriptor {
+            HostEnvironmentDescriptor::linux()
+        }
+
+        /// Rejects path validation.
+        fn validatePath(&self, _path: &str, _paramName: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects directory listing.
+        fn listFiles(&self, _path: &str) -> HostResult<Vec<FileEntry>> {
+            Self::unsupported()
+        }
+
+        /// Rejects text reads.
+        fn readFile(&self, _path: &str) -> HostResult<String> {
+            Self::unsupported()
+        }
+
+        /// Rejects bounded text reads.
+        fn readFileWithLimit(&self, _path: &str, _maxBytes: usize) -> HostResult<String> {
+            Self::unsupported()
+        }
+
+        /// Rejects byte reads.
+        fn readFileBytes(&self, _path: &str) -> HostResult<Vec<u8>> {
+            Self::unsupported()
+        }
+
+        /// Rejects text writes.
+        fn writeFile(&self, _path: &str, _content: &str, _append: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects byte writes.
+        fn writeFileBytes(&self, _path: &str, _content: &[u8]) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects deletion.
+        fn deleteFile(&self, _path: &str, _recursive: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects file existence checks.
+        fn fileExists(&self, _path: &str) -> HostResult<FileExistence> {
+            Self::unsupported()
+        }
+
+        /// Rejects moves.
+        fn moveFile(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects copies.
+        fn copyFile(&self, _source: &str, _destination: &str, _recursive: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects directory creation.
+        fn makeDirectory(&self, _path: &str, _createParents: bool) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects file searching.
+        fn findFiles(&self, _request: FindFilesRequest) -> HostResult<Vec<String>> {
+            Self::unsupported()
+        }
+
+        /// Rejects file metadata reads.
+        fn fileInfo(&self, _path: &str) -> HostResult<FileInfo> {
+            Self::unsupported()
+        }
+
+        /// Rejects code searches.
+        fn grepCode(&self, _request: GrepCodeRequest) -> HostResult<GrepCodeResult> {
+            Self::unsupported()
+        }
+
+        /// Rejects archive creation.
+        fn zipFiles(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects archive extraction.
+        fn unzipFiles(&self, _source: &str, _destination: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects host file opening.
+        fn openFile(&self, _path: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+
+        /// Rejects host file sharing.
+        fn shareFile(&self, _path: &str, _title: &str) -> HostResult<()> {
+            Self::unsupported()
+        }
+    }
 
     /// JavaScript engine used by package manager contract tests.
     struct TestExecutionEngine;
@@ -442,6 +563,7 @@ mod tests {
         PluginPackageManager::new(
             Arc::new(TestExecutionEngineFactory),
             Arc::new(TestAssetSource),
+            Arc::new(RejectingFileSystemHost),
             Arc::new(TestPackageStateResolver),
         )
     }

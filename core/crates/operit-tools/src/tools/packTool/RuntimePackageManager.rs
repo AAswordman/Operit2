@@ -13,6 +13,7 @@ use crate::tools::ToolJsRuntime::{JsExecutionEngine, JsExecutionProvider};
 use crate::tools::ToolResultDataClasses::stringResultData;
 use crate::ConversationMarkupManager::ToolResult;
 use operit_host_api::{FileSystemHost, HostManager::HostManager};
+use operit_plugin_sdk::javascript::{JsToolPkgWasmRequest, JsToolPkgWasmResult};
 use operit_plugin_sdk::package::{LocalizedText, PublishablePackageSource, ToolPackage};
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::{ToolPkgHookDispatcher, ToolPkgHookInvocation};
 use operit_plugin_sdk::toolpkg::ToolPkgLoader::ToolPkgLoader;
@@ -31,6 +32,7 @@ use operit_plugin_sdk::toolpkg::ToolPkgParser::{
     ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgResourceRuntime,
     ToolPkgSourceType, ToolPkgSubpackageRuntime,
 };
+use operit_plugin_sdk::toolpkg::ToolPkgProtection;
 use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
 use operit_plugin_sdk::PackageManager::{PackageStateResolver, PluginPackageManager};
 use operit_store::PreferencesDataStore::{
@@ -45,7 +47,9 @@ const ENABLED_PACKAGES_KEY: &str = "imported_packages";
 const DISABLED_PACKAGES_KEY: &str = "disabled_packages";
 const BUNDLED_EXTERNAL_IMPORTS_KEY: &str = "bundled_external_imports";
 const TOOLPKG_SUBPACKAGE_STATES_KEY: &str = "toolpkg_subpackage_states";
+const MARKET_TOOLPKG_INSTALLATION_ID_KEY: &str = "toolpkg_market_installation_id";
 const TOOLPKG_CACHE_SIGNATURE_FILE: &str = ".toolpkg-cache-signature";
+const MARKET_TOOLPKG_FILE_PREFIX: &str = "market-";
 const PACKAGE_MANAGER_LOG_TAG: &str = "ToolPkg";
 
 /// Creates SDK-owned ToolPkg execution engines through the installed JavaScript bridge.
@@ -380,6 +384,43 @@ impl RuntimePackageManager {
             .join(Self::toolPkgCacheDirName(packageName))
     }
 
+    /// Returns the stable local identifier that binds installed market ToolPkg seals to this client.
+    #[allow(non_snake_case)]
+    fn marketToolPkgInstallationId(
+        &self,
+    ) -> Result<[u8; ToolPkgProtection::MARKET_INSTALLATION_ID_SIZE], String> {
+        let key = stringPreferencesKey(MARKET_TOOLPKG_INSTALLATION_ID_KEY);
+        self.dataStore
+            .try_edit_result(|preferences| {
+                let existing = preferences.get(&key).cloned();
+                match existing {
+                    Some(encoded) => decodeMarketToolPkgInstallationId(&encoded)
+                        .map_err(PreferencesDataStoreError::Message),
+                    None => {
+                        let installationId = ToolPkgProtection::createMarketInstallationId();
+                        preferences.set(&key, encodeMarketToolPkgInstallationId(&installationId));
+                        Ok(installationId)
+                    }
+                }
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    /// Returns whether one existing package file carries a valid local market installation seal.
+    #[allow(non_snake_case)]
+    fn isInstalledMarketToolPkg(&self, file: &Path) -> bool {
+        let Ok(installationId) = self.marketToolPkgInstallationId() else {
+            return false;
+        };
+        let Ok(bytes) = self.fileSystemHost.readFileBytes(&hostPath(file)) else {
+            return false;
+        };
+        matches!(
+            ToolPkgProtection::verifyMarketInstallSeal(&bytes, &installationId),
+            Ok(true)
+        )
+    }
+
     #[allow(non_snake_case)]
     fn deleteToolPkgCacheDir(&self, packageName: &str) {
         let _guard = self
@@ -473,14 +514,19 @@ impl RuntimePackageManager {
         mainEntry: &str,
     ) -> Option<String> {
         match sourceType {
-            ToolPkgSourceType::EXTERNAL => {
+            ToolPkgSourceType::EXTERNAL | ToolPkgSourceType::MARKET => {
                 let sourceFile = PathBuf::from(sourcePath);
                 let metadata = self.fileSystemHost.fileInfo(sourcePath).ok()?;
                 if !metadata.exists {
                     return None;
                 }
                 Some(format!(
-                    "external|{}|{}|{}|{}|{}",
+                    "{}|{}|{}|{}|{}|{}",
+                    if *sourceType == ToolPkgSourceType::MARKET {
+                        "market"
+                    } else {
+                        "external"
+                    },
                     sourceFile.to_string_lossy(),
                     metadata.size,
                     metadata.lastModified,
@@ -525,8 +571,7 @@ impl RuntimePackageManager {
         destinationDir: &Path,
     ) -> bool {
         match runtime.sourceType {
-            ToolPkgSourceType::EXTERNAL => {
-                let sourcePath = PathBuf::from(&runtime.sourcePath);
+            ToolPkgSourceType::EXTERNAL | ToolPkgSourceType::MARKET => {
                 if self
                     .fileSystemHost
                     .fileExists(&runtime.sourcePath)
@@ -1073,7 +1118,7 @@ impl RuntimePackageManager {
             .getToolPkgContainerRuntime(&normalizedPackageName);
         if containerRuntime
             .as_ref()
-            .is_some_and(|runtime| runtime.sourceType != ToolPkgSourceType::EXTERNAL)
+            .is_some_and(|runtime| runtime.sourceType == ToolPkgSourceType::ASSET)
         {
             return false;
         }
@@ -1620,7 +1665,11 @@ impl RuntimePackageManager {
         let sourceBytes = fileSystemHost
             .readFileBytes(&sourcePath)
             .map_err(|error| error.to_string())?;
-        operit_plugin_sdk::toolpkg::ToolPkgProtection::protectArtifactBytes(&sourceBytes, isToolPkg)
+        operit_plugin_sdk::toolpkg::ToolPkgProtection::protectArtifactNamedBytes(
+            &sourceBytes,
+            &sourcePath,
+            isToolPkg,
+        )
     }
 
     #[allow(non_snake_case)]
@@ -1771,12 +1820,27 @@ impl RuntimePackageManager {
         let mut results = Vec::new();
         for file in files {
             let cacheKey = file.to_string_lossy().to_string();
-            let signature = self.buildExternalPackageScanSignature(&file);
+            let isMarketToolPkg = self.isInstalledMarketToolPkg(&file);
+            let signature = format!(
+                "{}|{}",
+                self.buildExternalPackageScanSignature(&file),
+                if isMarketToolPkg {
+                    "market"
+                } else {
+                    "external"
+                }
+            );
             let result = previousCache
                 .get(&cacheKey)
                 .filter(|entry| entry.signature == signature)
                 .map(|entry| entry.result.clone())
-                .unwrap_or_else(|| self.parseExternalPackageCandidate(&file));
+                .unwrap_or_else(|| {
+                    if isMarketToolPkg {
+                        self.parseMarketToolPkgCandidate(&file)
+                    } else {
+                        self.parseExternalPackageCandidate(&file)
+                    }
+                });
             nextCache.insert(
                 cacheKey,
                 ExternalPackageScanCacheEntry {
@@ -1883,14 +1947,12 @@ impl RuntimePackageManager {
         };
         let lowerName = asset.name.to_ascii_lowercase();
         if lowerName.ends_with(".js") || lowerName.ends_with(".ts") {
-            match std::str::from_utf8(asset.bytes)
-                .map_err(|error| error.to_string())
-                .and_then(|script| {
-                    JsPackageLoader::parse(script).map(|package| ToolPackage {
-                        is_built_in: true,
-                        ..package
-                    })
-                }) {
+            match ToolPkgProtection::decodeUtf8(asset.bytes).and_then(|script| {
+                JsPackageLoader::parse(&script).map(|package| ToolPackage {
+                    is_built_in: true,
+                    ..package
+                })
+            }) {
                 Ok(package) => result.toolPackage = Some(package),
                 Err(error) => logPackageManagerError(format!(
                     "Built-in JavaScript package load error [{}]: {error}",
@@ -1936,9 +1998,8 @@ impl RuntimePackageManager {
         };
         let lowerName = asset.name.to_ascii_lowercase();
         if lowerName.ends_with(".js") || lowerName.ends_with(".ts") {
-            match std::str::from_utf8(asset.bytes)
-                .map_err(|error| error.to_string())
-                .and_then(|script| JsPackageLoader::parse(script))
+            match ToolPkgProtection::decodeUtf8(asset.bytes)
+                .and_then(|script| JsPackageLoader::parse(&script))
             {
                 Ok(package) => result.toolPackage = Some(package),
                 Err(error) => logPackageManagerError(format!(
@@ -2007,6 +2068,27 @@ impl RuntimePackageManager {
                     "External ToolPkg package load error [{sourcePath}]: {error}"
                 )),
             }
+        }
+        result
+    }
+
+    /// Parses one locally sealed marketplace ToolPkg from the normal package storage directory.
+    #[allow(non_snake_case)]
+    fn parseMarketToolPkgCandidate(&self, path: &Path) -> PackageScanCandidateResult {
+        let sourcePath = path.to_string_lossy().to_string();
+        let mut result = PackageScanCandidateResult {
+            phase: "external".to_string(),
+            sourcePath: sourcePath.clone(),
+            ..Default::default()
+        };
+        if !sourcePath.to_ascii_lowercase().ends_with(".toolpkg") {
+            return result;
+        }
+        match self.loadToolPkgFromMarketFile(path) {
+            Ok(loadResult) => result.toolPkgLoadResult = Some(loadResult),
+            Err(error) => logPackageManagerError(format!(
+                "Installed market ToolPkg package load error [{sourcePath}]: {error}"
+            )),
         }
         result
     }
@@ -2434,12 +2516,11 @@ impl RuntimePackageManager {
     /// Imports a package file from external storage into package storage.
     pub fn addPackageFileFromExternalStorage(&mut self, filePath: &str) -> String {
         let file = PathBuf::from(filePath);
-        if !self
-            .fileSystemHost
-            .fileExists(filePath)
-            .map(|info| info.exists && !info.isDirectory)
-            .unwrap_or(false)
-        {
+        let downloadedFileExists = matches!(
+            self.fileSystemHost.fileExists(filePath),
+            Ok(info) if info.exists && !info.isDirectory
+        );
+        if !downloadedFileExists {
             return format!("Cannot access file at path: {filePath}");
         }
 
@@ -2565,6 +2646,136 @@ impl RuntimePackageManager {
     }
 
     #[allow(non_snake_case)]
+    /// Installs one signed marketplace ToolPkg as a locally authenticated package archive.
+    pub fn addMarketToolPkgFileFromExternalStorage(
+        &mut self,
+        filePath: &str,
+        expectedMarketAssetSha256: &str,
+    ) -> String {
+        let downloadedFileExists = matches!(
+            self.fileSystemHost.fileExists(filePath),
+            Ok(info) if info.exists && !info.isDirectory
+        );
+        if !downloadedFileExists {
+            return format!("Cannot access market ToolPkg at path: {filePath}");
+        }
+        if !filePath.to_ascii_lowercase().ends_with(".toolpkg") {
+            return "Market ToolPkg install only supports .toolpkg files".to_string();
+        }
+        let normalizedAssetSha256 = expectedMarketAssetSha256.trim().to_ascii_lowercase();
+        if !isSha256Hex(&normalizedAssetSha256) {
+            return "Market ToolPkg asset SHA-256 is invalid".to_string();
+        }
+        let downloadedBytes = match self.fileSystemHost.readFileBytes(filePath) {
+            Ok(bytes) => bytes,
+            Err(error) => return format!("Error installing market ToolPkg: {error}"),
+        };
+        if !ToolPkgProtection::isMarketArchive(&downloadedBytes) {
+            return "Market ToolPkg archive is missing marketplace authentication".to_string();
+        }
+        if sha256Hex(&downloadedBytes) != normalizedAssetSha256 {
+            return "Market ToolPkg asset SHA-256 mismatch".to_string();
+        }
+        let rawArchive = match ToolPkgProtection::unwrapMarketArchive(&downloadedBytes) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return "Encrypted ToolPkg decryption failed. The plugin is damaged or not authorized"
+                    .to_string()
+            }
+        };
+        match ToolPkgProtection::toolPkgArchiveContainsProtectedEntries(&rawArchive) {
+            Ok(true) => {}
+            Ok(false) => {
+                return "Market ToolPkg archive does not contain protected entries".to_string()
+            }
+            Err(error) => return format!("Error installing market ToolPkg: {error}"),
+        }
+        let installationId = match self.marketToolPkgInstallationId() {
+            Ok(value) => value,
+            Err(error) => return format!("Error installing market ToolPkg: {error}"),
+        };
+        let installedArchive =
+            match ToolPkgProtection::attachMarketInstallSeal(&rawArchive, &installationId) {
+                Ok(bytes) => bytes,
+                Err(error) => return format!("Error installing market ToolPkg: {error}"),
+            };
+        if let Err(error) = self.storePaths.ensure_packages_dir() {
+            return format!("Error installing market ToolPkg: {error}");
+        }
+        let packagesDir = self.storePaths.packages_dir();
+        let stagingFile =
+            packagesDir.join(format!(".market-install-{normalizedAssetSha256}.toolpkg"));
+        let destinationFile = packagesDir.join(format!(
+            "{MARKET_TOOLPKG_FILE_PREFIX}{normalizedAssetSha256}.toolpkg"
+        ));
+        let mut installed = false;
+        let mut destinationStored = false;
+        let outcome = (|| -> Result<String, String> {
+            self.fileSystemHost
+                .writeFileBytes(&hostPath(&stagingFile), &installedArchive)
+                .map_err(|error| error.to_string())?;
+            if !self.isInstalledMarketToolPkg(&stagingFile) {
+                return Err("ToolPkg market installation authentication failed".to_string());
+            }
+            let preview = self.loadToolPkgFromMarketFile(&stagingFile)?;
+            let packageName = preview.containerPackage.name.clone();
+            if !self
+                .toolPkgManager()
+                .canRegisterToolPkg(&preview, self.availablePackages())
+            {
+                return Err(format!(
+                    "A package with name '{}' already exists in available packages",
+                    packageName
+                ));
+            }
+            let destinationExists = matches!(
+                self.fileSystemHost.fileExists(&hostPath(&destinationFile)),
+                Ok(info) if info.exists
+            );
+            if destinationExists {
+                self.fileSystemHost
+                    .deleteFile(&hostPath(&destinationFile), false)
+                    .map_err(|error| error.to_string())?;
+            }
+            self.fileSystemHost
+                .moveFile(&hostPath(&stagingFile), &hostPath(&destinationFile))
+                .map_err(|error| error.to_string())?;
+            destinationStored = true;
+            let loaded = self.loadToolPkgFromMarketFile(&destinationFile)?;
+            if !self.registerToolPkg(loaded) {
+                return Err(format!(
+                    "Failed to register toolpkg '{}' due to naming conflict",
+                    packageName
+                ));
+            }
+            installed = true;
+            Ok(format!("Successfully imported toolpkg: {packageName}"))
+        })();
+        let stagingExists = matches!(
+            self.fileSystemHost.fileExists(&hostPath(&stagingFile)),
+            Ok(info) if info.exists
+        );
+        if stagingExists {
+            let _ = self
+                .fileSystemHost
+                .deleteFile(&hostPath(&stagingFile), false);
+        }
+        let destinationExists = matches!(
+            self.fileSystemHost.fileExists(&hostPath(&destinationFile)),
+            Ok(info) if info.exists
+        );
+        if !installed && destinationStored && destinationExists {
+            let _ = self
+                .fileSystemHost
+                .deleteFile(&hostPath(&destinationFile), false);
+        }
+        match outcome {
+            Ok(message) => message,
+            Err(error) => format!("Error installing market ToolPkg: {error}"),
+        }
+    }
+
+    #[allow(non_snake_case)]
     /// Persists the complete enabled package name list.
     pub fn setEnabledPackageNames(
         &self,
@@ -2634,6 +2845,26 @@ impl RuntimePackageManager {
             &normalizedPackageName,
             resourcePath,
             preferEnabledContainer,
+        )
+    }
+
+    #[allow(non_snake_case)]
+    /// Calls one declared ToolPkg WASM export.
+    pub fn callToolPkgWasm(
+        &self,
+        request: JsToolPkgWasmRequest,
+        preferEnabledContainer: bool,
+    ) -> Result<JsToolPkgWasmResult, String> {
+        let bytes = ToolPkgPackageService::new(self).readToolPkgWasmModuleBytes(
+            &request.package_target,
+            &request.module_id,
+            &request.export_name,
+            preferEnabledContainer,
+        )?;
+        operit_plugin_sdk::toolpkg::ToolPkgWasmRuntime::callWasmExport(
+            &bytes,
+            &request.export_name,
+            &request.args,
         )
     }
 
@@ -3023,7 +3254,10 @@ impl RuntimePackageManager {
             .toolPkgManager()
             .getToolPkgContainerRuntime(&normalizedPackageName)
         {
-            if containerRuntime.sourceType == ToolPkgSourceType::EXTERNAL {
+            if matches!(
+                containerRuntime.sourceType,
+                ToolPkgSourceType::EXTERNAL | ToolPkgSourceType::MARKET
+            ) {
                 let candidate = PathBuf::from(containerRuntime.sourcePath);
                 if self
                     .fileSystemHost
@@ -3133,6 +3367,31 @@ impl RuntimePackageManager {
                     AppLogger::e(
                         PACKAGE_MANAGER_LOG_TAG,
                         &format!("ToolPkg package load error [{packageName}]: {error}"),
+                    );
+                },
+            )
+        })
+    }
+
+    /// Loads one local package file only after its device-bound market installation seal verifies.
+    #[allow(non_snake_case)]
+    fn loadToolPkgFromMarketFile(&self, file: &Path) -> Result<ToolPkgLoadResult, String> {
+        if !self.isInstalledMarketToolPkg(file) {
+            return Err("ToolPkg market installation authentication failed".to_string());
+        }
+        let fileSystemHost =
+            self.context.fileSystemHost.as_ref().ok_or_else(|| {
+                "FileSystemHost is required for market ToolPkg loading".to_string()
+            })?;
+        self.withToolPkgRegistrationEngine(|registrationEngine| {
+            ToolPkgLoader::loadToolPkgFromMarketFile(
+                fileSystemHost.as_ref(),
+                &file.to_string_lossy(),
+                registrationEngine,
+                |packageName, error| {
+                    AppLogger::e(
+                        PACKAGE_MANAGER_LOG_TAG,
+                        &format!("Market ToolPkg package load error [{packageName}]: {error}"),
                     );
                 },
             )
@@ -3381,6 +3640,40 @@ fn buildBundledPluginAssetSignature(asset: &RuntimePluginAsset) -> String {
 #[allow(non_snake_case)]
 fn sha256Hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+/// Returns whether text is one normalized lowercase SHA-256 hexadecimal digest.
+fn isSha256Hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Encodes one local market installation identifier for the existing package preferences store.
+fn encodeMarketToolPkgInstallationId(
+    installationId: &[u8; ToolPkgProtection::MARKET_INSTALLATION_ID_SIZE],
+) -> String {
+    installationId
+        .iter()
+        .map(|value| format!("{value:02x}"))
+        .collect()
+}
+
+/// Decodes one persisted local market installation identifier without accepting malformed values.
+fn decodeMarketToolPkgInstallationId(
+    encoded: &str,
+) -> Result<[u8; ToolPkgProtection::MARKET_INSTALLATION_ID_SIZE], String> {
+    if encoded.len() != ToolPkgProtection::MARKET_INSTALLATION_ID_SIZE * 2 {
+        return Err("ToolPkg market installation identifier is invalid".to_string());
+    }
+    let mut installationId = [0u8; ToolPkgProtection::MARKET_INSTALLATION_ID_SIZE];
+    for (index, target) in installationId.iter_mut().enumerate() {
+        let offset = index * 2;
+        *target = u8::from_str_radix(&encoded[offset..offset + 2], 16)
+            .map_err(|_| "ToolPkg market installation identifier is invalid".to_string())?;
+    }
+    Ok(installationId)
 }
 
 #[allow(non_snake_case)]

@@ -2507,7 +2507,8 @@ impl EnhancedAIService {
             roleCardId.clone(),
             context.workspacePath.clone(),
             toolExposureMode,
-        );
+        )
+        .await;
         let emittedChars = emittedToolResultMessages
             .iter()
             .map(|content| content.len())

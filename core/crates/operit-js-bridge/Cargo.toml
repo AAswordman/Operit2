@@ -30,3 +30,6 @@ rquickjs = { workspace = true, features = ["bindgen"] }
 quickjs-wasm-rs = "3.1.0"
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = ["Window", "XmlHttpRequest"] }
+
+[dev-dependencies]
+zip.workspace = true

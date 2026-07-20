@@ -2254,6 +2254,35 @@ pub enum ToolPkgRuntimeKind {
     #[serde(rename = "provider")]
     Provider,
 }
+/// Identifies the scalar ABI value type used by ToolPkg WASM exports.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgWasmValueType {
+    /// Identifies a signed 32-bit integer value.
+    #[serde(rename = "i32")]
+    I32,
+    /// Identifies a signed 64-bit integer value.
+    #[serde(rename = "i64")]
+    I64,
+    /// Identifies a 32-bit floating-point value.
+    #[serde(rename = "f32")]
+    F32,
+    /// Identifies a 64-bit floating-point value.
+    #[serde(rename = "f64")]
+    F64,
+}
+/// Stores one scalar value passed into or returned from a ToolPkg WASM export.
+pub enum ToolPkgWasmScalarValue {
+    Variant1(f64),
+    Variant2(String),
+    Null,
+}
+/// Describes one scalar ABI argument for a ToolPkg WASM export.
+pub struct ToolPkgWasmArg {
+    /// Identifies the scalar ABI type.
+    pub r#type: ToolPkgWasmValueType,
+    /// Stores the scalar argument value.
+    pub value: ToolPkgWasmScalarValue,
+}
 ///Metadata passed to a handler registered with {@link IpcApi.on}.
 pub struct ToolPkgIpcMeta {
     ///Channel name used for this call.
@@ -2307,10 +2336,25 @@ pub trait ToolPkgIpcApiMethods: Send + Sync {
         options: Option<ToolPkgIpcCallOptions>,
     ) -> JsFuture<TResult>;
 }
+/// Represents the WASM API exposed on a ToolPkg registry.
+pub struct ToolPkgWasmApi;
+
+/// Calls scalar ToolPkg WASM exports declared by the current package manifest.
+pub trait ToolPkgWasmApiMethods: Send + Sync {
+    /// Calls one WASM export and resolves with its scalar result.
+    fn call(
+        &self,
+        moduleId: String,
+        exportName: String,
+        args: Option<Vec<ToolPkgWasmArg>>,
+    ) -> JsFuture<ToolPkgWasmScalarValue>;
+}
 /// Provides IPC and registration services for the current ToolPkg package.
 pub struct ToolPkgRegistry {
     /// Exposes inter-context messaging for this ToolPkg registry.
     pub ipc: ToolPkgIpcApi,
+    /// Exposes declared WASM exports for this ToolPkg registry.
+    pub wasm: ToolPkgWasmApi,
 }
 /// Requires the host to implement every registry methods operation.
 pub trait ToolPkgRegistryMethods: Send + Sync {

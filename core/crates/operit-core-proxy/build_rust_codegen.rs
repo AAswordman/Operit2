@@ -33,10 +33,14 @@ pub(crate) fn render_generated(
                 object.schema_key
             );
         }
-        output.push_str(&render_object_call_dispatch(object, error_types));
-        output.push('\n');
-        output.push_str(&render_object_sync_call_dispatch(object, error_types));
-        output.push('\n');
+        if object.has_call_dispatch() && !object_uses_arc_mutex_instance(&object.access) {
+            output.push_str(&render_object_call_dispatch(object, error_types));
+            output.push('\n');
+        }
+        if object_uses_arc_mutex_instance(&object.access) && object.has_sync_call_dispatch() {
+            output.push_str(&render_object_sync_call_dispatch(object, error_types));
+            output.push('\n');
+        }
         output.push_str(&render_object_watch_snapshot_dispatch(object));
         output.push('\n');
         output.push_str(&render_object_watch_dispatch(object));

@@ -17,8 +17,10 @@ const String _appStartupLogTag = 'AppStartup';
 
 /// Runs the application startup sequence with structured diagnostics.
 void main(List<String> _) async {
+  late Zone startupZone;
   await runZonedGuarded(
     () async {
+      startupZone = Zone.current;
       final startupStopwatch = Stopwatch()..start();
       final bindingStopwatch = Stopwatch()..start();
       WidgetsFlutterBinding.ensureInitialized();
@@ -75,20 +77,22 @@ void main(List<String> _) async {
       );
     },
     (error, stackTrace) {
-      if (ClientLogger.isInitialized) {
-        ClientLogger.e(
-          'Uncaught zone error',
-          tag: _appStartupLogTag,
+      startupZone.runGuarded(() {
+        if (ClientLogger.isInitialized) {
+          ClientLogger.e(
+            'Uncaught zone error',
+            tag: _appStartupLogTag,
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
+        UnhandledErrorReporter.report(
+          source: 'Zone',
           error: error,
           stackTrace: stackTrace,
         );
-      }
-      UnhandledErrorReporter.report(
-        source: 'Zone',
-        error: error,
-        stackTrace: stackTrace,
-      );
-      runApp(const FatalErrorApplication());
+        runApp(const FatalErrorApplication());
+      });
     },
   );
 }
@@ -104,7 +108,9 @@ void _runMainWindow() {
         thickness: 36,
         quality: GlassQuality.standard,
       ),
-      child: const FatalErrorHost(child: OperitApp()),
+      child: const _DebugRustRuntimeHotReload(
+        child: FatalErrorHost(child: OperitApp()),
+      ),
     ),
   );
 }
@@ -163,4 +169,50 @@ void _installClientLogHooks() {
     );
     return true;
   };
+}
+
+/// Rebuilds the Windows Debug Rust runtime whenever Flutter performs Hot Reload.
+class _DebugRustRuntimeHotReload extends StatefulWidget {
+  const _DebugRustRuntimeHotReload({required this.child});
+
+  final Widget child;
+
+  /// Creates the Hot Reload runtime rebuild state.
+  @override
+  State<_DebugRustRuntimeHotReload> createState() =>
+      _DebugRustRuntimeHotReloadState();
+}
+
+class _DebugRustRuntimeHotReloadState
+    extends State<_DebugRustRuntimeHotReload> {
+  /// Starts the Rust rebuild after Flutter has installed the reloaded Dart code.
+  @override
+  void reassemble() {
+    super.reassemble();
+    if (!kDebugMode ||
+        kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.windows) {
+      return;
+    }
+    unawaited(_rebuildRustRuntime());
+  }
+
+  /// Rebuilds and restarts the local Rust runtime for one Flutter Hot Reload.
+  Future<void> _rebuildRustRuntime() async {
+    try {
+      await CoreApplicationService.instance
+          .rebuildAndRestartLocalRuntimeForDebug();
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Debug Rust runtime Hot Reload failed',
+        tag: _appStartupLogTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  /// Builds the wrapped application tree.
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

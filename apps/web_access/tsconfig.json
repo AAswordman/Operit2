@@ -11,5 +11,9 @@
     "noEmitOnError": true,
     "skipLibCheck": true
   },
-  "include": ["src/operit_runtime_bridge.ts"]
+  "include": [
+    "src/operit_runtime_bridge.ts",
+    "src/operit_model_install_worker.ts",
+    "src/v86_runtime_worker.ts"
+  ]
 }

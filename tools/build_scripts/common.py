@@ -29,6 +29,9 @@ WEB_ACCESS_REQUIRED_FILES = (
     "operit_flutter_bridge_bg.wasm",
     "sql-wasm.js",
     "sql-wasm.wasm",
+    "v86/runtime/operit-runtime-manifest.json",
+    "v86/runtime/operit-runtime-bzimage.bin",
+    "v86/runtime/operit-runtime-initrd.cpio.gz",
     WEB_ACCESS_VERSION_FILE,
 )
 RELEASE_DIR = REPO_ROOT / "tools" / "release"

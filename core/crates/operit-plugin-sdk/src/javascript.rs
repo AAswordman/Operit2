@@ -61,6 +61,30 @@ pub struct JsToolPkgResourceRequest {
     pub internal: bool,
 }
 
+/// Describes one scalar argument passed from JavaScript into a ToolPkg WASM export.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct JsToolPkgWasmArg {
+    #[serde(rename = "type")]
+    pub value_type: String,
+    pub value: Value,
+}
+
+/// Describes one ToolPkg WASM export call requested by JavaScript.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct JsToolPkgWasmRequest {
+    pub package_target: String,
+    pub module_id: String,
+    pub export_name: String,
+    pub args: Vec<JsToolPkgWasmArg>,
+}
+
+/// Contains one ToolPkg WASM export result returned to JavaScript.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct JsToolPkgWasmResult {
+    pub value_type: Option<String>,
+    pub value: Value,
+}
+
 /// Describes one package-aware tool name resolution request.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct JsToolNameResolutionRequest {
@@ -107,6 +131,12 @@ pub trait JsExecutionHost: crate::js_sdk::JsToolsHost + Send + Sync {
         &self,
         request: JsToolPkgResourceRequest,
     ) -> Result<String, String>;
+
+    /// Calls one scalar ToolPkg WASM export.
+    fn call_toolpkg_wasm(
+        &self,
+        request: JsToolPkgWasmRequest,
+    ) -> Result<JsToolPkgWasmResult, String>;
 
     /// Handles one Compose DSL WebView controller command.
     fn handle_compose_webview_controller_command(

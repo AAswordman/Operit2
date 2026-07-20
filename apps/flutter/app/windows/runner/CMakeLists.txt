@@ -53,15 +53,17 @@ find_program(OPERIT_CARGO_EXECUTABLE
   HINTS "$ENV{USERPROFILE}/.cargo/bin" "$ENV{CARGO_HOME}/bin"
   REQUIRED
 )
+target_compile_definitions(${BINARY_NAME} PRIVATE
+  "$<$<CONFIG:Debug>:OPERIT_CARGO_EXECUTABLE_PATH=L\"${OPERIT_CARGO_EXECUTABLE}\">"
+  "$<$<CONFIG:Debug>:OPERIT_FLUTTER_BRIDGE_CRATE_PATH=L\"${OPERIT_FLUTTER_BRIDGE_CRATE}\">"
+)
 add_custom_target(operit_flutter_bridge ALL
-  COMMAND ${CMAKE_COMMAND} -E env
-    "RUSTFLAGS=-Awarnings"
-    "CARGO_TERM_COLOR=never"
-    "${OPERIT_CARGO_EXECUTABLE}" build --quiet --manifest-path "${OPERIT_FLUTTER_BRIDGE_CRATE}/Cargo.toml" $<$<NOT:$<CONFIG:Debug>>:--release>
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${OPERIT_FLUTTER_BRIDGE_CRATE}/target/$<IF:$<CONFIG:Debug>,debug,release>/operit_flutter_bridge.dll"
-    "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/operit_flutter_bridge.dll"
-  WORKING_DIRECTORY "${OPERIT_FLUTTER_BRIDGE_CRATE}"
+  COMMAND ${CMAKE_COMMAND}
+    "-DOPERIT_BUILD_CONFIG=$<CONFIG>"
+    "-DOPERIT_CARGO_EXECUTABLE=${OPERIT_CARGO_EXECUTABLE}"
+    "-DOPERIT_FLUTTER_BRIDGE_CRATE=${OPERIT_FLUTTER_BRIDGE_CRATE}"
+    "-DOPERIT_OUTPUT_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/operit_flutter_bridge_build.cmake"
 )
 add_dependencies(operit_flutter_bridge sync_operit_plugins)
 add_dependencies(${BINARY_NAME} operit_flutter_bridge)

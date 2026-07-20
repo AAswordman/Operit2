@@ -966,6 +966,11 @@ pub struct HttpDownloadFileRequest {
     pub expectedBytes: u64,
 }
 
+/// Returns the durable partial-file path reserved for one HTTP download target.
+pub fn httpDownloadPartialTargetPath(targetPath: &str) -> String {
+    format!("{targetPath}.operit-download.partial")
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpDownloadRequest {
     pub downloadId: String,
