@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -10,8 +9,10 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:liquid_glass_widgets/widgets/shared/glass_effect.dart';
 
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
+import '../../../../../theme/OperitThemeAssets.dart';
 
 class BubbleImageStyle {
+  /// Creates image slicing parameters for a bubble surface asset.
   const BubbleImageStyle({
     required this.imagePath,
     this.cropLeftRatio = 0,
@@ -43,6 +44,7 @@ class BubbleImageStyle {
 }
 
 class BubbleSurface extends StatelessWidget {
+  /// Creates a bubble surface with optional imported image decoration.
   const BubbleSurface({
     super.key,
     required this.color,
@@ -108,6 +110,7 @@ class BubbleSurface extends StatelessWidget {
 }
 
 class _BubbleTransparentGlassSurface extends StatelessWidget {
+  /// Creates the transparent glass layer used by bubble surfaces.
   const _BubbleTransparentGlassSurface({
     required this.glassRadius,
     required this.settings,
@@ -135,6 +138,7 @@ class _BubbleTransparentGlassSurface extends StatelessWidget {
   }
 }
 
+/// Builds glass settings for transparent bubble surfaces.
 LiquidGlassSettings _bubbleTransparentGlassSettings(Color color) {
   return LiquidGlassSettings(
     glassColor: color.withValues(alpha: 0.018),
@@ -151,6 +155,7 @@ LiquidGlassSettings _bubbleTransparentGlassSettings(Color color) {
   );
 }
 
+/// Returns the largest corner radius in a border radius.
 double _dominantCornerRadius(BorderRadius borderRadius) {
   return <double>[
     borderRadius.topLeft.x,
@@ -165,10 +170,12 @@ double _dominantCornerRadius(BorderRadius borderRadius) {
 }
 
 class BubbleImageBackgroundSurface extends StatefulWidget {
+  /// Creates a painted bubble image background from an imported theme asset.
   const BubbleImageBackgroundSurface({super.key, required this.imageStyle});
 
   final BubbleImageStyle imageStyle;
 
+  /// Creates the state that owns the decoded UI image.
   @override
   State<BubbleImageBackgroundSurface> createState() =>
       _BubbleImageBackgroundSurfaceState();
@@ -179,12 +186,14 @@ class _BubbleImageBackgroundSurfaceState
   ui.Image? _image;
   int _loadToken = 0;
 
+  /// Starts loading the referenced runtime image asset.
   @override
   void initState() {
     super.initState();
     unawaited(_loadImage());
   }
 
+  /// Reloads the image when the referenced runtime asset changes.
   @override
   void didUpdateWidget(covariant BubbleImageBackgroundSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -193,9 +202,12 @@ class _BubbleImageBackgroundSurfaceState
     }
   }
 
+  /// Decodes imported theme asset bytes into a UI image.
   Future<void> _loadImage() async {
     final token = ++_loadToken;
-    final bytes = await File(widget.imageStyle.imagePath).readAsBytes();
+    final bytes = await ThemeAssetStore().readBytes(
+      widget.imageStyle.imagePath,
+    );
     final codec = await ui.instantiateImageCodec(bytes);
     final frame = await codec.getNextFrame();
     if (!mounted || token != _loadToken) {
@@ -209,6 +221,7 @@ class _BubbleImageBackgroundSurfaceState
     previous?.dispose();
   }
 
+  /// Releases the decoded UI image.
   @override
   void dispose() {
     _loadToken++;
@@ -216,6 +229,7 @@ class _BubbleImageBackgroundSurfaceState
     super.dispose();
   }
 
+  /// Builds the custom-painted bubble image.
   @override
   Widget build(BuildContext context) {
     final image = _image;

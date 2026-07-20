@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -13,6 +12,7 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../chat/components/style/bubble/BubbleSurface.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../../../theme/OperitTheme.dart';
+import '../../../theme/OperitThemeAssets.dart';
 import '../components/SettingsControlStyles.dart';
 
 class AppearanceSettingsPanel extends StatelessWidget {
@@ -599,6 +599,7 @@ class AppearanceSettingsPanel extends StatelessWidget {
   }
 }
 
+/// Imports and saves a selected image as the active background asset.
 Future<void> _pickBackgroundImage(OperitThemeController themeController) async {
   const imageGroup = XTypeGroup(
     label: 'image',
@@ -608,13 +609,15 @@ Future<void> _pickBackgroundImage(OperitThemeController themeController) async {
   if (file == null) {
     return;
   }
+  final imported = await ThemeAssetStore().importFile(file);
   await themeController.saveThemeSettings(
     useBackgroundImage: true,
-    backgroundImageUri: file.path,
+    backgroundImageUri: imported.storagePath,
     backgroundMediaType: UserPreferencesManager.MEDIA_TYPE_IMAGE,
   );
 }
 
+/// Imports and saves a selected video as the active background asset.
 Future<void> _pickBackgroundVideo(OperitThemeController themeController) async {
   const videoGroup = XTypeGroup(
     label: 'video',
@@ -624,15 +627,17 @@ Future<void> _pickBackgroundVideo(OperitThemeController themeController) async {
   if (file == null) {
     return;
   }
+  final imported = await ThemeAssetStore().importFile(file);
   await themeController.saveThemeSettings(
     useBackgroundImage: true,
-    backgroundImageUri: file.path,
+    backgroundImageUri: imported.storagePath,
     backgroundMediaType: UserPreferencesManager.MEDIA_TYPE_VIDEO,
     videoBackgroundMuted: true,
     videoBackgroundLoop: true,
   );
 }
 
+/// Imports and saves a selected image as the active user avatar asset.
 Future<void> _pickUserAvatarImage(OperitThemeController themeController) async {
   const imageGroup = XTypeGroup(
     label: 'image',
@@ -642,11 +647,13 @@ Future<void> _pickUserAvatarImage(OperitThemeController themeController) async {
   if (file == null) {
     return;
   }
+  final imported = await ThemeAssetStore().importFile(file);
   await themeController.saveActiveThemeUserAvatarSettings(
-    customUserAvatarUri: file.path,
+    customUserAvatarUri: imported.storagePath,
   );
 }
 
+/// Imports and saves a selected font as the active custom font asset.
 Future<void> _pickCustomFont(OperitThemeController themeController) async {
   const fontGroup = XTypeGroup(
     label: 'font',
@@ -656,13 +663,15 @@ Future<void> _pickCustomFont(OperitThemeController themeController) async {
   if (file == null) {
     return;
   }
+  final imported = await ThemeAssetStore().importFile(file);
   await themeController.saveThemeSettings(
     useCustomFont: true,
     fontType: UserPreferencesManager.FONT_TYPE_FILE,
-    customFontPath: file.path,
+    customFontPath: imported.storagePath,
   );
 }
 
+/// Shows font controls for the selected message bubble side.
 Future<void> _showBubbleFontDialog(
   BuildContext context,
   OperitThemeController themeController,
@@ -688,6 +697,7 @@ Future<void> _showBubbleFontDialog(
     builder: (dialogContext) {
       return StatefulBuilder(
         builder: (context, setDialogState) {
+          /// Imports a selected file font for this bubble side.
           Future<void> pickFontFile() async {
             const fontGroup = XTypeGroup(
               label: 'font',
@@ -699,10 +709,11 @@ Future<void> _showBubbleFontDialog(
             if (file == null) {
               return;
             }
+            final imported = await ThemeAssetStore().importFile(file);
             setDialogState(() {
               useCustomFont = true;
               fontType = UserPreferencesManager.FONT_TYPE_FILE;
-              customFontPath = file.path;
+              customFontPath = imported.storagePath;
             });
           }
 
@@ -807,6 +818,7 @@ Future<void> _showBubbleFontDialog(
   );
 }
 
+/// Imports and saves a selected image as a bubble surface asset.
 Future<void> _pickBubbleImage(
   OperitThemeController themeController, {
   required ThemePreferenceSnapshot snapshot,
@@ -820,9 +832,10 @@ Future<void> _pickBubbleImage(
   if (file == null) {
     return;
   }
+  final imported = await ThemeAssetStore().importFile(file);
   final useImage = !snapshot.transparentSurfaceEnabled;
-  if (_isNinePatchPngPath(file.path)) {
-    final autoParams = await _parseNinePatchBubbleParams(file.path);
+  if (_isNinePatchPngPath(imported.fileName)) {
+    final autoParams = await _parseNinePatchBubbleParams(imported.bytes);
     await themeController.saveThemeSettings(
       bubbleUserImageRenderMode: isUser
           ? UserPreferencesManager.BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH
@@ -832,8 +845,8 @@ Future<void> _pickBubbleImage(
           : UserPreferencesManager.BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH,
       bubbleUserUseImage: isUser ? useImage : null,
       bubbleAiUseImage: isUser ? null : useImage,
-      bubbleUserImageUri: isUser ? file.path : null,
-      bubbleAiImageUri: isUser ? null : file.path,
+      bubbleUserImageUri: isUser ? imported.storagePath : null,
+      bubbleAiImageUri: isUser ? null : imported.storagePath,
       bubbleUserImageCropLeft: isUser ? autoParams.cropLeftRatio : null,
       bubbleUserImageCropTop: isUser ? autoParams.cropTopRatio : null,
       bubbleUserImageCropRight: isUser ? autoParams.cropRightRatio : null,
@@ -864,12 +877,13 @@ Future<void> _pickBubbleImage(
         : UserPreferencesManager.BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE,
     bubbleUserUseImage: isUser ? useImage : null,
     bubbleAiUseImage: isUser ? null : useImage,
-    bubbleUserImageUri: isUser ? file.path : null,
-    bubbleAiImageUri: isUser ? null : file.path,
+    bubbleUserImageUri: isUser ? imported.storagePath : null,
+    bubbleAiImageUri: isUser ? null : imported.storagePath,
   );
 }
 
 class _NinePatchBubbleAutoParams {
+  /// Creates parsed nine-patch ratios for bubble image rendering.
   const _NinePatchBubbleAutoParams({
     required this.cropLeftRatio,
     required this.cropTopRatio,
@@ -891,14 +905,15 @@ class _NinePatchBubbleAutoParams {
   final double repeatYEndRatio;
 }
 
+/// Returns whether a selected image file name uses Android nine-patch naming.
 bool _isNinePatchPngPath(String path) {
   return path.toLowerCase().endsWith('.9.png');
 }
 
+/// Parses nine-patch stretch markers from decoded PNG bytes.
 Future<_NinePatchBubbleAutoParams> _parseNinePatchBubbleParams(
-  String path,
+  Uint8List bytes,
 ) async {
-  final bytes = await File(path).readAsBytes();
   final codec = await ui.instantiateImageCodec(bytes);
   final frame = await codec.getNextFrame();
   final image = frame.image;
@@ -943,6 +958,7 @@ Future<_NinePatchBubbleAutoParams> _parseNinePatchBubbleParams(
   );
 }
 
+/// Returns whether one pixel is a nine-patch stretch marker.
 bool _isNinePatchMarker(ByteData bytes, int width, int x, int y) {
   final offset = ((y * width + x) * 4);
   final red = bytes.getUint8(offset);
@@ -952,6 +968,7 @@ bool _isNinePatchMarker(ByteData bytes, int width, int x, int y) {
   return alpha >= 0x80 && red < 32 && green < 32 && blue < 32;
 }
 
+/// Converts marked pixel positions into normalized stretch bounds.
 (double, double) _buildNinePatchRange(List<int> marked, int innerSize) {
   if (marked.isEmpty || innerSize <= 0) {
     throw StateError('nine-patch bubble image is missing stretch markers');

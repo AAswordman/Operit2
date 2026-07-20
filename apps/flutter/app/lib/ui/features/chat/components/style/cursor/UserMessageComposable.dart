@@ -1,12 +1,11 @@
 // ignore_for_file: file_names
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../../../../../../util/ChatMarkupRegex.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../theme/OperitTheme.dart';
+import '../../../../../theme/OperitThemeAssets.dart';
 import '../../attachments/AttachmentViewerDialog.dart';
 import '../bubble/BubbleSurface.dart';
 import '../../../viewmodel/ChatViewModel.dart';
@@ -212,6 +211,7 @@ Color? _optionalColor(int? value) {
 }
 
 class _MessageAvatar extends StatelessWidget {
+  /// Creates a cursor-style user avatar from an imported theme asset.
   const _MessageAvatar({
     required this.backgroundColor,
     required this.foregroundColor,
@@ -241,7 +241,7 @@ class _MessageAvatar extends StatelessWidget {
         ),
         clipBehavior: Clip.antiAlias,
         child: avatarImagePath != null && avatarImagePath.isNotEmpty
-            ? Image.file(File(avatarImagePath), fit: BoxFit.cover)
+            ? ThemeAssetImage(storagePath: avatarImagePath, fit: BoxFit.cover)
             : Icon(Icons.person, size: 15, color: foregroundColor),
       ),
     );

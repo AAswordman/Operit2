@@ -4,6 +4,8 @@ pub const CONFIG_PREFERENCES_DIR_PATH: &str = "runtime/config/preferences";
 
 pub const DATA_MEMORY_CHARACTERS_DIR_PATH: &str = "runtime/data/memory/characters";
 pub const DATA_MEMORY_SHARED_DIR_PATH: &str = "runtime/data/memory/shared";
+pub const RUNTIME_USER_ASSETS_DIR_PATH: &str = "runtime/data/user_assets";
+pub const RUNTIME_THEME_ASSETS_DIR_PATH: &str = "runtime/data/user_assets/theme";
 
 pub const EXTENSIONS_SKILLS_DIR_PATH: &str = "runtime/extensions/skills";
 pub const EXTENSIONS_PACKAGES_DIR_PATH: &str = "runtime/extensions/packages";

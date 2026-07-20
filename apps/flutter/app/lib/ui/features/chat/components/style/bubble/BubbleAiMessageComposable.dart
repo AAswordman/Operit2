@@ -9,6 +9,7 @@ import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../../common/markdown/StreamMarkdownRendererState.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../theme/OperitTheme.dart';
+import '../../../../../theme/OperitThemeAssets.dart';
 import '../../part/ThinkToolsXmlNodeGrouper.dart';
 import '../../../viewmodel/ChatViewModel.dart';
 import 'BubbleSurface.dart';
@@ -533,6 +534,7 @@ class _AiImageOnlyBubble extends StatelessWidget {
 }
 
 class _MessageAvatar extends StatelessWidget {
+  /// Creates an AI message avatar that can render an imported theme asset.
   const _MessageAvatar({
     required this.imagePath,
     required this.avatarShape,
@@ -562,7 +564,7 @@ class _MessageAvatar extends StatelessWidget {
         ),
         clipBehavior: Clip.antiAlias,
         child: avatarImagePath != null && avatarImagePath.isNotEmpty
-            ? Image.file(File(avatarImagePath), fit: BoxFit.cover)
+            ? ThemeAssetImage(storagePath: avatarImagePath, fit: BoxFit.cover)
             : Image.asset(_operitAvatarAsset, fit: BoxFit.cover),
       ),
     );

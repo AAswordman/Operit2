@@ -1,13 +1,12 @@
 // ignore_for_file: file_names
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../../util/ChatMarkupRegex.dart';
 import '../../../../../theme/OperitTheme.dart';
+import '../../../../../theme/OperitThemeAssets.dart';
 import '../../attachments/AttachmentViewerDialog.dart';
 import '../../../viewmodel/ChatViewModel.dart';
 import 'BubbleSurface.dart';
@@ -571,6 +570,7 @@ class _HiddenUserMessagePlaceholderContent extends StatelessWidget {
 }
 
 class _MessageAvatar extends StatelessWidget {
+  /// Creates a message avatar that can render an imported theme asset.
   const _MessageAvatar({
     required this.imagePath,
     required this.isProxySender,
@@ -599,7 +599,7 @@ class _MessageAvatar extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: avatarImagePath != null && avatarImagePath.isNotEmpty
-          ? Image.file(File(avatarImagePath), fit: BoxFit.cover)
+          ? ThemeAssetImage(storagePath: avatarImagePath, fit: BoxFit.cover)
           : Icon(icon, color: tint, size: 22),
     );
   }

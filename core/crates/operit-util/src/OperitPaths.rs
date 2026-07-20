@@ -10,6 +10,8 @@ pub const CONFIG_PREFERENCES_DIR_PATH: &str = Layout::CONFIG_PREFERENCES_DIR_PAT
 
 pub const DATA_MEMORY_CHARACTERS_DIR_PATH: &str = Layout::DATA_MEMORY_CHARACTERS_DIR_PATH;
 pub const DATA_MEMORY_SHARED_DIR_PATH: &str = Layout::DATA_MEMORY_SHARED_DIR_PATH;
+pub const RUNTIME_USER_ASSETS_DIR_PATH: &str = Layout::RUNTIME_USER_ASSETS_DIR_PATH;
+pub const RUNTIME_THEME_ASSETS_DIR_PATH: &str = Layout::RUNTIME_THEME_ASSETS_DIR_PATH;
 
 pub const EXTENSIONS_SKILLS_DIR_PATH: &str = Layout::EXTENSIONS_SKILLS_DIR_PATH;
 pub const EXTENSIONS_PACKAGES_DIR_PATH: &str = Layout::EXTENSIONS_PACKAGES_DIR_PATH;
@@ -85,6 +87,12 @@ pub fn memoryCharactersDir() -> Result<PathBuf, String> {
 #[allow(non_snake_case)]
 pub fn memorySharedDir() -> Result<PathBuf, String> {
     relativeDir(DATA_MEMORY_SHARED_DIR_PATH)
+}
+
+#[allow(non_snake_case)]
+/// Returns the directory used for imported UI theme assets.
+pub fn themeAssetsDir() -> Result<PathBuf, String> {
+    relativeDir(RUNTIME_THEME_ASSETS_DIR_PATH)
 }
 
 #[allow(non_snake_case)]

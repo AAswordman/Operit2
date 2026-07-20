@@ -84,6 +84,12 @@ impl RuntimeStorageRepository {
     }
 
     #[allow(non_snake_case)]
+    /// Returns the runtime storage directory path for imported theme assets.
+    pub fn themeAssetsDirPath(&self) -> String {
+        OperitPaths::RUNTIME_THEME_ASSETS_DIR_PATH.to_string()
+    }
+
+    #[allow(non_snake_case)]
     /// Returns the runtime storage path for userscript state data.
     pub fn webSessionUserscriptsStatePath(&self) -> String {
         OperitPaths::RUNTIME_WEBSESSION_USERSCRIPTS_STATE_PATH.to_string()

@@ -1,13 +1,12 @@
 // ignore_for_file: file_names
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../../common/markdown/StreamMarkdownRendererState.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../theme/OperitTheme.dart';
+import '../../../../../theme/OperitThemeAssets.dart';
 import '../bubble/BubbleSurface.dart';
 import '../../part/ThinkToolsXmlNodeGrouper.dart';
 import '../../../viewmodel/ChatViewModel.dart';
@@ -230,6 +229,7 @@ Color? _optionalColor(int? value) {
 }
 
 class _MessageAvatar extends StatelessWidget {
+  /// Creates a cursor-style AI avatar from an imported theme asset.
   const _MessageAvatar({
     required this.imagePath,
     required this.backgroundColor,
@@ -259,7 +259,7 @@ class _MessageAvatar extends StatelessWidget {
         ),
         clipBehavior: Clip.antiAlias,
         child: avatarImagePath != null && avatarImagePath.isNotEmpty
-            ? Image.file(File(avatarImagePath), fit: BoxFit.cover)
+            ? ThemeAssetImage(storagePath: avatarImagePath, fit: BoxFit.cover)
             : Image.asset(_operitAvatarAsset, fit: BoxFit.cover),
       ),
     );

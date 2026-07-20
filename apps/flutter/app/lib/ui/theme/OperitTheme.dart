@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -21,6 +20,7 @@ import '../features/chat/tts/TtsFloatingPanel.dart';
 import '../../core/host/browser/RuntimeBrowserOwnerHost.dart';
 import '../features/chat/components/workspace/browser/automation/WorkspaceWebVisitHost.dart';
 import '../permissions/ToolApprovalHost.dart';
+import 'OperitThemeAssets.dart';
 
 class OperitTheme extends StatefulWidget {
   const OperitTheme({
@@ -1022,9 +1022,7 @@ class _ThemeBackgroundMedia extends StatelessWidget {
   Widget build(BuildContext context) {
     final media = mediaType == UserPreferencesManager.MEDIA_TYPE_VIDEO
         ? _VideoThemeBackground(mediaPath: mediaPath, muted: muted, loop: loop)
-        : SizedBox.expand(
-            child: Image.file(File(mediaPath), fit: BoxFit.cover),
-          );
+        : ThemeAssetImage(storagePath: mediaPath, fit: BoxFit.cover);
     final blurred = blurEnabled
         ? ImageFiltered(
             imageFilter: ui.ImageFilter.blur(
@@ -1054,70 +1052,90 @@ class _VideoThemeBackground extends StatefulWidget {
   final bool muted;
   final bool loop;
 
+  /// Creates the video state that owns the runtime asset controller.
   @override
   State<_VideoThemeBackground> createState() => _VideoThemeBackgroundState();
 }
 
 class _VideoThemeBackgroundState extends State<_VideoThemeBackground> {
-  late VideoPlayerController _controller;
+  VideoPlayerController? _controller;
+  int _loadToken = 0;
 
+  /// Starts loading the runtime video asset when the widget mounts.
   @override
   void initState() {
     super.initState();
-    _controller = _createController();
-    unawaited(_initializeController());
+    unawaited(_loadController());
   }
 
+  /// Updates playback settings or reloads bytes when the video asset changes.
   @override
   void didUpdateWidget(covariant _VideoThemeBackground oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.mediaPath != widget.mediaPath) {
-      final previous = _controller;
-      _controller = _createController();
-      unawaited(_initializeController());
-      previous.dispose();
+      unawaited(_loadController());
+      return;
+    }
+    final controller = _controller;
+    if (controller == null) {
       return;
     }
     if (oldWidget.loop != widget.loop) {
-      unawaited(_controller.setLooping(widget.loop));
+      unawaited(controller.setLooping(widget.loop));
     }
     if (oldWidget.muted != widget.muted) {
-      unawaited(_controller.setVolume(widget.muted ? 0 : 1));
+      unawaited(controller.setVolume(widget.muted ? 0 : 1));
     }
   }
 
-  VideoPlayerController _createController() {
-    return VideoPlayerController.file(File(widget.mediaPath))
-      ..setLooping(widget.loop)
-      ..setVolume(widget.muted ? 0 : 1);
-  }
-
-  Future<void> _initializeController() async {
-    await _controller.initialize();
-    await _controller.play();
-    if (mounted) {
-      setState(() {});
+  /// Creates and starts a controller from imported runtime asset bytes.
+  Future<void> _loadController() async {
+    final token = ++_loadToken;
+    final bytes = await ThemeAssetStore().readBytes(widget.mediaPath);
+    final controller =
+        VideoPlayerController.networkUrl(
+            Uri.dataFromBytes(
+              bytes,
+              mimeType: themeAssetVideoMimeType(widget.mediaPath),
+            ),
+          )
+          ..setLooping(widget.loop)
+          ..setVolume(widget.muted ? 0 : 1);
+    await controller.initialize();
+    await controller.play();
+    if (!mounted || token != _loadToken) {
+      await controller.dispose();
+      return;
     }
+    final previous = _controller;
+    setState(() {
+      _controller = controller;
+    });
+    await previous?.dispose();
   }
 
+  /// Releases the active video controller.
   @override
   void dispose() {
-    _controller.dispose();
+    _loadToken++;
+    unawaited(_controller?.dispose());
     super.dispose();
   }
 
+  /// Builds the fitted video once the controller is initialized.
   @override
   Widget build(BuildContext context) {
-    if (!_controller.value.isInitialized) {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
       return const SizedBox.expand();
     }
     return SizedBox.expand(
       child: FittedBox(
         fit: BoxFit.cover,
         child: SizedBox(
-          width: _controller.value.size.width,
-          height: _controller.value.size.height,
-          child: VideoPlayer(_controller),
+          width: controller.value.size.width,
+          height: controller.value.size.height,
+          child: VideoPlayer(controller),
         ),
       ),
     );
@@ -1219,6 +1237,7 @@ List<String> _fontFamilyFallbackForSettings({
   };
 }
 
+/// Loads every custom font referenced by the active theme snapshot.
 Future<void> _loadCustomFontIfNeeded(
   ThemePreferenceSnapshot themePreferenceSnapshot,
 ) async {
@@ -1241,7 +1260,7 @@ Future<void> _loadCustomFontIfNeeded(
         _loadedCustomFontPaths.contains(fontPath)) {
       continue;
     }
-    final fontBytes = await File(fontPath).readAsBytes();
+    final fontBytes = await ThemeAssetStore().readBytes(fontPath);
     final loader = FontLoader(_customFontFamilyForPath(fontPath))
       ..addFont(Future<ByteData>.value(ByteData.sublistView(fontBytes)));
     await loader.load();
@@ -1249,6 +1268,7 @@ Future<void> _loadCustomFontIfNeeded(
   }
 }
 
+/// Builds a stable in-process font family name for a theme font asset.
 String _customFontFamilyForPath(String fontPath) {
   return 'OperitCustomFont_${fontPath.hashCode.abs()}';
 }
