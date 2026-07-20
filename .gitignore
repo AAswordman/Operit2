@@ -116,6 +116,7 @@ apps/web_access/web/sql-wasm.js
 apps/web_access/web/sql-wasm.wasm
 apps/web_access/web/v86/
 apps/web_access/v86/runtime/
+tools/web-runtime/.wrangler/
 
 # Local dependency extraction/package scratch
 package/

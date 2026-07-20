@@ -49,9 +49,6 @@ void main(List<String> args) async {
     final webSourceDir = Directory.fromUri(
       input.packageRoot.resolve('../../../apps/web_access/web/'),
     );
-    final v86RuntimeSourceDir = Directory.fromUri(
-      input.packageRoot.resolve('../../../apps/web_access/v86/runtime/'),
-    );
     final webRuntimeSourceDir = Directory.fromUri(
       input.packageRoot.resolve('../../../apps/web_access/src/'),
     );
@@ -100,11 +97,6 @@ void main(List<String> args) async {
       '.png',
       '.wasm',
     }, excludeGeneratedOutputs: true);
-    await _addDirectoryFileDependencies(output, v86RuntimeSourceDir, {
-      '.bin',
-      '.gz',
-      '.json',
-    });
     await _addDirectoryFileDependencies(output, webRuntimeSourceDir, {'.ts'});
     output.dependencies.add(webRuntimeTypescriptConfig.uri);
 
@@ -166,7 +158,7 @@ void main(List<String> args) async {
       await File.fromUri(
         sqlDist.uri.resolve('sql-wasm.wasm'),
       ).copy(File.fromUri(webBuildDir.uri.resolve('sql-wasm.wasm')).path);
-      await _stageV86RuntimeAssets(depsDir, v86RuntimeSourceDir, webBuildDir);
+      await _stageV86RuntimeAssets(depsDir, webBuildDir);
       await _syncWebRuntimeArtifacts(webBuildDir, webSourceDir);
       final versionManifest = await _writeWebAccessVersionManifest(
         webBuildDir,
@@ -580,10 +572,9 @@ Future<void> _syncGeneratedWebRuntimeDirectory(
   }
 }
 
-/// Stages the v86 emulator runtime and verified Linux guest resources.
+/// Stages the v86 emulator runtime and verified BIOS resources.
 Future<void> _stageV86RuntimeAssets(
   Directory dependencies,
-  Directory runtimeSource,
   Directory webBuildDir,
 ) async {
   final v86BuildDir = Directory.fromUri(
@@ -602,12 +593,6 @@ Future<void> _stageV86RuntimeAssets(
       Uri.parse(asset.url),
       File.fromUri(webBuildDir.uri.resolve(asset.relativePath)),
       asset.sha256,
-    );
-  }
-  for (final fileName in _v86RuntimeAssetNames) {
-    await _copyRequiredWebRuntimeAsset(
-      File.fromUri(runtimeSource.uri.resolve(fileName)),
-      File.fromUri(webBuildDir.uri.resolve('v86/runtime/$fileName')),
     );
   }
 }
@@ -688,12 +673,6 @@ const Set<String> _generatedWebRuntimeFileNames = <String>{
   'v86.wasm',
   'seabios.bin',
   'vgabios.bin',
-};
-
-const Set<String> _v86RuntimeAssetNames = <String>{
-  'operit-runtime-manifest.json',
-  'operit-runtime-bzimage.bin',
-  'operit-runtime-initrd.cpio.gz',
 };
 
 /// Computes a path relative to the copied Web Access bundle root.

@@ -3126,6 +3126,14 @@ self.onmessage = (event) => {
     return new URL(`./v86/${name}`, import.meta.url).href;
   }
 
+  /** Returns one immutable public URL for a V86 Linux guest asset. */
+  function v86RuntimeAssetUrl(name: string): string {
+    return new URL(
+      name,
+      "https://models.operit.app/v86-runtime/i686-buildroot-node20-python312-20260720/",
+    ).href;
+  }
+
   /** Validates the structured process request received from the WebAssembly runtime host. */
   function validateManagedRuntimeRequest(request: ManagedRuntimeRequest): void {
     if (!Array.isArray(request.args) || !request.args.every(argument => typeof argument === "string")) {
@@ -3552,8 +3560,8 @@ self.onmessage = (event) => {
         vga_memory_size: 2 * 1024 * 1024,
         bios: { url: v86AssetUrl("seabios.bin") },
         vga_bios: { url: v86AssetUrl("vgabios.bin") },
-        bzimage: { url: v86AssetUrl("runtime/operit-runtime-bzimage.bin") },
-        initrd: { url: v86AssetUrl("runtime/operit-runtime-initrd.cpio.gz") },
+        bzimage: { url: v86RuntimeAssetUrl("operit-runtime-bzimage.bin") },
+        initrd: { url: v86RuntimeAssetUrl("operit-runtime-initrd.cpio.gz") },
         cmdline: `console=ttyS0 operit.mode=terminal operit.rows=${session.rows} operit.cols=${session.cols} tsc=reliable mitigations=off random.trust_cpu=on`,
         autostart: true,
         disable_keyboard: true,

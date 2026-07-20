@@ -58,14 +58,6 @@ SQL_DIST_DIR = (
     / "sql.js"
     / "dist"
 )
-V86_RUNTIME_SOURCE_DIR = WEB_ACCESS_APP_DIR / "v86" / "runtime"
-V86_RUNTIME_ASSET_NAMES = (
-    "operit-runtime-manifest.json",
-    "operit-runtime-bzimage.bin",
-    "operit-runtime-initrd.cpio.gz",
-)
-
-
 # Parses the required deployment base path for the Flutter Web bundle.
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -245,7 +237,7 @@ def restore_staged_file(path: Path, content: str) -> None:
         output.write(content)
 
 
-# Writes bridge, SQL.js, and V86 runtime files after Flutter finalizes its output.
+# Writes bridge and SQL.js files after Flutter finalizes its output.
 def stage_web_runtime_files(wasm_bindgen_bin: Path) -> None:
     suffix = ".exe" if sys.platform == "win32" else ""
     run(
@@ -277,13 +269,6 @@ def stage_web_runtime_files(wasm_bindgen_bin: Path) -> None:
         SQL_DIST_DIR / "sql-wasm.wasm",
         WEB_ACCESS_BUNDLE_DIR / "sql-wasm.wasm",
     )
-    for asset_name in V86_RUNTIME_ASSET_NAMES:
-        copy_required_file(
-            V86_RUNTIME_SOURCE_DIR / asset_name,
-            WEB_ACCESS_BUNDLE_DIR / "v86" / "runtime" / asset_name,
-        )
-
-
 # Builds the shared Web Access Flutter Web bundle for one deployment base path.
 def main(base_href: str) -> int:
     os.environ.setdefault("RUSTFLAGS", "-Awarnings")

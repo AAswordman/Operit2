@@ -54,6 +54,7 @@ const runtimeFailed = 2;
 const runtimeStopped = 3;
 const readyMarker = "OPERIT_RUNTIME_READY";
 const exitMarkerPrefix = "OPERIT_RUNTIME_EXIT:";
+const v86RuntimeAssetBaseUrl = "https://models.operit.app/v86-runtime/i686-buildroot-node20-python312-20260720/";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const workerGlobal = globalThis as typeof globalThis;
@@ -131,8 +132,8 @@ async function bootGuest(message: V86RuntimeBootMessage): Promise<void> {
       vga_memory_size: 2 * 1024 * 1024,
       bios: { url: v86AssetUrl("seabios.bin") },
       vga_bios: { url: v86AssetUrl("vgabios.bin") },
-      bzimage: { url: v86AssetUrl("runtime/operit-runtime-bzimage.bin") },
-      initrd: { url: v86AssetUrl("runtime/operit-runtime-initrd.cpio.gz") },
+      bzimage: { url: v86RuntimeAssetUrl("operit-runtime-bzimage.bin") },
+      initrd: { url: v86RuntimeAssetUrl("operit-runtime-initrd.cpio.gz") },
       cmdline: "console=ttyS0 operit.mode=agent tsc=reliable mitigations=off random.trust_cpu=on",
       autostart: true,
       disable_keyboard: true,
@@ -157,6 +158,11 @@ async function bootGuest(message: V86RuntimeBootMessage): Promise<void> {
 /** Produces a URL for one V86 asset relative to this worker module. */
 function v86AssetUrl(name: string): string {
   return new URL(`./v86/${name}`, import.meta.url).href;
+}
+
+/** Produces an immutable public URL for one V86 Linux guest asset. */
+function v86RuntimeAssetUrl(name: string): string {
+  return new URL(name, v86RuntimeAssetBaseUrl).href;
 }
 
 /** Processes one serial byte and removes guest bootstrap control frames. */
