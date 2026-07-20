@@ -22,6 +22,14 @@ class LocalSpeechRecorder {
   static const int _sampleRate = 16000;
   static const int _channelCount = 1;
   static const int _bitsPerSample = 16;
+  static const int _streamBufferSize = 256;
+  static const int _minimumPcmDurationMs = 250;
+  static const int _minimumPcmBytes =
+      _sampleRate *
+      _channelCount *
+      (_bitsPerSample ~/ 8) *
+      _minimumPcmDurationMs ~/
+      1000;
 
   final AudioRecorder _recorder = AudioRecorder();
   BytesBuilder? _pcmBuilder;
@@ -47,6 +55,7 @@ class LocalSpeechRecorder {
         encoder: AudioEncoder.pcm16bits,
         sampleRate: _sampleRate,
         numChannels: _channelCount,
+        streamBufferSize: _streamBufferSize,
       ),
     );
     _pcmBuilder = pcmBuilder;
@@ -90,6 +99,9 @@ class LocalSpeechRecorder {
     }
     if (pcmBytes.length.isOdd) {
       throw StateError('The recorded PCM16 stream has an incomplete sample');
+    }
+    if (pcmBytes.length < _minimumPcmBytes) {
+      throw StateError('录音时间过短，请说完后再停止');
     }
     final timestamp = DateTime.now().microsecondsSinceEpoch;
     return RecordedAudio(
