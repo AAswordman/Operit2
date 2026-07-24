@@ -3,6 +3,8 @@
   "askOperitHint": "Ask Operit",
   "aiChat": "AI Chat",
   "fullscreenInput": "Fullscreen input",
+  "expandInput": "Expand input",
+  "collapseInput": "Collapse input",
   "settings": "Settings",
   "packageManager": "Package manager",
   "market": "Market",
@@ -314,6 +316,8 @@
   "protectedMedia": "Protected media",
   "midiDevice": "MIDI device",
   "browserPermissionRequestTitle": "Website permission request",
+  "chatSpeechInputFailed": "Speech input failed. Please try again.",
+  "chatSpeechNoTextRecognized": "No speech recognized.",
   "history": "History",
   "bookmarks": "Bookmarks",
   "downloads": "Downloads",
@@ -494,6 +498,28 @@
     }
   },
   "settingsModelDeleteProviderConfirmAction": "Delete provider",
+  "settingsTtsDeleteProvider": "Delete TTS provider",
+  "settingsTtsDeleteProviderConfirm": "Delete TTS provider “{name}” and its {count} voice configurations?",
+  "@settingsTtsDeleteProviderConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsTtsDeleteProviderFailed": "Failed to delete TTS provider: {error}",
+  "@settingsTtsDeleteProviderFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsTtsCurrentConfigCannotDelete": "The TTS configuration currently in use cannot be deleted.",
+  "settingsTtsConfigUsedByCharacter": "This TTS configuration is used by a character card and cannot be deleted.",
   "settingsModelChatAutoGlmWarning": "AutoGLM cannot be used as the main chat model. Chat and UI control use separate model assignments; choose another large model.",
   "settingsModelFunctionChat": "Chat",
   "settingsModelFunctionChatDescription": "Model used for main conversation replies.",

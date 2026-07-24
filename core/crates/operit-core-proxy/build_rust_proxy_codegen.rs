@@ -76,12 +76,15 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
         );
         output.push_str("        Self { client, target_path }\n");
         output.push_str("    }\n\n");
-        output.push_str("    /// Returns mutable access to the link client behind this generated proxy.\n");
+        output.push_str(
+            "    /// Returns mutable access to the link client behind this generated proxy.\n",
+        );
         output.push_str("    pub fn generatedClientMut(&mut self) -> &mut C {\n");
         output.push_str("        self.client\n");
         output.push_str("    }\n\n");
         output.push_str("    /// Returns the object path used by this generated proxy.\n");
-        output.push_str("    pub fn generatedTargetPath(&self) -> &operit_link::CoreObjectPath {\n");
+        output
+            .push_str("    pub fn generatedTargetPath(&self) -> &operit_link::CoreObjectPath {\n");
         output.push_str("        &self.target_path\n");
         output.push_str("    }\n\n");
         if object.has_proxy_value_call_methods() {

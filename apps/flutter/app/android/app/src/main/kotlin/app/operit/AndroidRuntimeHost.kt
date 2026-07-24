@@ -3,6 +3,7 @@ package app.operit
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.util.Locale
@@ -11,6 +12,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 class AndroidRuntimeHost(context: Context) {
+    private companion object {
+        private const val TAG = "AndroidRuntimeHost"
+    }
+
     private val applicationContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private val runtimeLock = Any()
@@ -42,13 +47,6 @@ class AndroidRuntimeHost(context: Context) {
             configuredRuntimeRoot = runtimeRoot
             configuredWorkspaceRoot = workspaceRoot
         }
-        AndroidRuntimeStorageConfigStore.write(
-            applicationContext,
-            AndroidRuntimeStorageRoots(
-                runtimeRoot = runtimeRoot.absolutePath,
-                workspaceRoot = workspaceRoot.absolutePath,
-            ),
-        )
     }
 
     /** Returns the active native runtime handle, creating it when required. */
@@ -59,17 +57,12 @@ class AndroidRuntimeHost(context: Context) {
             }
             val startedAtMillis = System.currentTimeMillis()
             updateRuntimeStartupStatus("preparingAssets", "正在准备本地运行时资源")
-            AndroidClientLogger.i(
-                applicationContext,
-                "AndroidRuntimeHost",
-                "native runtime create start",
-            )
+            Log.i(TAG, "native runtime create start")
             try {
                 val paths = prepareAndroidRuntimePaths()
                 updateRuntimeStartupStatus("initializingCore", "正在初始化本地核心服务")
-                AndroidClientLogger.i(
-                    applicationContext,
-                    "AndroidRuntimeHost",
+                Log.i(
+                    TAG,
                     "native runtime assets ready elapsedMs=" +
                         (System.currentTimeMillis() - startedAtMillis),
                 )
@@ -87,9 +80,8 @@ class AndroidRuntimeHost(context: Context) {
                 throw error
             }
             updateRuntimeStartupStatus("ready", "本地运行时已就绪")
-            AndroidClientLogger.i(
-                applicationContext,
-                "AndroidRuntimeHost",
+            Log.i(
+                TAG,
                 "native runtime create done elapsedMs=" +
                     (System.currentTimeMillis() - startedAtMillis),
             )

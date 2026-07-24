@@ -90,6 +90,42 @@ impl RuntimeStorageRepository {
     }
 
     #[allow(non_snake_case)]
+    /// Returns the runtime storage directory for generated share images.
+    pub fn shareImageDirPath(&self) -> String {
+        OperitPaths::RUNTIME_SHARE_IMAGE_DIR_PATH.to_string()
+    }
+
+    #[allow(non_snake_case)]
+    /// Returns the runtime storage directory for exported share images.
+    pub fn shareImageExportsDirPath(&self) -> String {
+        OperitPaths::RUNTIME_SHARE_IMAGE_EXPORTS_DIR_PATH.to_string()
+    }
+
+    #[allow(non_snake_case)]
+    /// Returns the runtime storage directory for staged workspace videos.
+    pub fn workspaceVideoDirPath(&self) -> String {
+        OperitPaths::RUNTIME_WORKSPACE_VIDEO_DIR_PATH.to_string()
+    }
+
+    #[allow(non_snake_case)]
+    /// Returns the runtime storage directory for Compose DSL selected files.
+    pub fn composeDslWebViewFilesDirPath(&self) -> String {
+        OperitPaths::RUNTIME_COMPOSE_DSL_WEBVIEW_FILES_DIR_PATH.to_string()
+    }
+
+    #[allow(non_snake_case)]
+    /// Returns the runtime storage directory for materialized Link Access web assets.
+    pub fn linkAccessWebAssetsDirPath(&self) -> String {
+        OperitPaths::RUNTIME_LINK_ACCESS_WEB_ASSETS_DIR_PATH.to_string()
+    }
+
+    #[allow(non_snake_case)]
+    /// Returns the runtime storage path for the client log.
+    pub fn clientLogPath(&self) -> String {
+        OperitPaths::RUNTIME_CLIENT_LOG_PATH.to_string()
+    }
+
+    #[allow(non_snake_case)]
     /// Returns the runtime storage path for userscript state data.
     pub fn webSessionUserscriptsStatePath(&self) -> String {
         OperitPaths::RUNTIME_WEBSESSION_USERSCRIPTS_STATE_PATH.to_string()

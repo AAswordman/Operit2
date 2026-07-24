@@ -20,7 +20,6 @@ import '../../../ChatLayoutMetrics.dart';
 import '../agent/AgentInputMenuPopup.dart';
 import '../agent/AgentModelSelectorPopup.dart';
 import '../common/PendingQueueMessageItem.dart';
-import 'ClassicChatSettingsBar.dart';
 
 class ClassicChatInputSection extends StatefulWidget {
   const ClassicChatInputSection({
@@ -95,11 +94,9 @@ class ClassicChatInputSection extends StatefulWidget {
 }
 
 class _ClassicChatInputSectionState extends State<ClassicChatInputSection> {
-  final LayerLink _settingsBarLink = LayerLink();
   final GlobalKey _modelPopupTargetKey = GlobalKey();
   final GlobalKey _inputMenuPopupTargetKey = GlobalKey();
   final GlobalKey _attachmentPopupTargetKey = GlobalKey();
-  OverlayEntry? _settingsBarEntry;
   OverlayEntry? _modelPopupEntry;
   OverlayEntry? _inputMenuPopupEntry;
   OverlayEntry? _attachmentPopupEntry;
@@ -108,6 +105,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection> {
   >?
   _modelBindingSubscription;
   bool _draggingFiles = false;
+  bool _inputExpanded = false;
   String _modelLabel = '';
 
   /// Starts text and model label listeners for the classic input.
@@ -116,19 +114,6 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection> {
     super.initState();
     widget.controller.addListener(_handleInputChanged);
     _watchCurrentModelLabel();
-  }
-
-  /// Schedules the floating settings bar overlay after layout begins.
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      _ensureSettingsBarOverlay();
-      _settingsBarEntry?.markNeedsBuild();
-    });
   }
 
   /// Rebinds listeners when the input controller changes.
@@ -141,40 +126,19 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection> {
     }
   }
 
-  /// Inserts the overlay entry used by the classic settings bar.
-  void _ensureSettingsBarOverlay() {
-    if (_settingsBarEntry != null) {
-      return;
-    }
-    _settingsBarEntry = OverlayEntry(builder: _buildSettingsBarOverlay);
-    Overlay.of(context).insert(_settingsBarEntry!);
-  }
-
-  /// Builds the settings bar overlay linked to the input surface.
-  Widget _buildSettingsBarOverlay(BuildContext context) {
-    return Positioned.fill(
-      child: CompositedTransformFollower(
-        link: _settingsBarLink,
-        showWhenUnlinked: false,
-        targetAnchor: Alignment.topRight,
-        followerAnchor: Alignment.bottomRight,
-        offset: const Offset(-20, -6),
-        child: UnconstrainedBox(
-          alignment: Alignment.topLeft,
-          child: ClassicChatSettingsBar(
-            settingsKey: _inputMenuPopupTargetKey,
-            onSettings: _toggleInputMenuPopup,
-          ),
-        ),
-      ),
-    );
-  }
-
   /// Refreshes action button state after text changes.
   void _handleInputChanged() {
     if (mounted) {
       setState(() {});
     }
+  }
+
+  /// Toggles the input height while preserving the active draft and focus.
+  void _toggleInputExpansion() {
+    setState(() {
+      _inputExpanded = !_inputExpanded;
+    });
+    widget.focusNode.requestFocus();
   }
 
   /// Toggles the model selector popup from the classic menu.
@@ -245,7 +209,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection> {
         final placement = _popupPlacement(
           context,
           targetKey: _inputMenuPopupTargetKey,
-          alignEnd: true,
+          alignEnd: false,
           maxWidth: 300,
         );
         return _ClassicPopupShell(
@@ -456,18 +420,11 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection> {
     _attachmentPopupEntry = null;
   }
 
-  /// Removes the floating settings bar overlay.
-  void _dismissSettingsBarOverlay() {
-    _settingsBarEntry?.remove();
-    _settingsBarEntry = null;
-  }
-
   /// Releases listeners and removes open popups.
   @override
   void dispose() {
     widget.controller.removeListener(_handleInputChanged);
     _modelBindingSubscription?.cancel();
-    _dismissSettingsBarOverlay();
     _dismissModelSettingsPopup();
     _dismissInputMenuPopup();
     _dismissAttachmentPopup();
@@ -508,84 +465,83 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection> {
                 ? chatWideContentMaxWidth
                 : chatContentMaxWidth,
           ),
-          child: CompositedTransformTarget(
-            link: _settingsBarLink,
-            child: _ClassicInputSurface(
-              color: colorScheme.surface,
-              shape: surfaceShape,
-              borderRadius: borderRadius,
-              transparentSurface: snapshot.transparentSurfaceEnabled,
-              width: double.infinity,
-              margin: snapshot.chatInputFloating
-                  ? const EdgeInsets.fromLTRB(8, 0, 8, 6)
-                  : EdgeInsets.zero,
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: snapshot.chatInputFloating ? 14 : 22,
-                  vertical: snapshot.chatInputFloating ? 6 : 8,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    if (widget.pendingQueueMessages.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: _ClassicPendingMessageQueuePanel(
-                          queuedMessages: widget.pendingQueueMessages,
-                          expanded: widget.isPendingQueueExpanded,
-                          onExpandedChange: widget.onPendingQueueExpandedChange,
-                          onDeleteMessage: widget.onDeletePendingQueueMessage,
-                          onEditMessage: widget.onEditPendingQueueMessage,
-                          onSendMessage: widget.onSendPendingQueueMessage,
-                        ),
+          child: _ClassicInputSurface(
+            color: colorScheme.surface,
+            shape: surfaceShape,
+            borderRadius: borderRadius,
+            transparentSurface: snapshot.transparentSurfaceEnabled,
+            width: double.infinity,
+            margin: snapshot.chatInputFloating
+                ? const EdgeInsets.fromLTRB(8, 0, 8, 6)
+                : EdgeInsets.zero,
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: snapshot.chatInputFloating ? 14 : 22,
+                vertical: snapshot.chatInputFloating ? 6 : 8,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  if (widget.pendingQueueMessages.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _ClassicPendingMessageQueuePanel(
+                        queuedMessages: widget.pendingQueueMessages,
+                        expanded: widget.isPendingQueueExpanded,
+                        onExpandedChange: widget.onPendingQueueExpandedChange,
+                        onDeleteMessage: widget.onDeletePendingQueueMessage,
+                        onEditMessage: widget.onEditPendingQueueMessage,
+                        onSendMessage: widget.onSendPendingQueueMessage,
                       ),
-                    if (showProcessingStatus)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            processingStatus,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurface.withValues(
-                                alpha: 0.8,
-                              ),
-                            ),
+                    ),
+                  if (showProcessingStatus)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          processingStatus,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurface.withValues(alpha: 0.8),
                           ),
                         ),
                       ),
-                    if (widget.attachments.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: _ClassicAttachmentStrip(
-                          attachments: widget.attachments,
-                          onRemoveAttachment: widget.onRemoveAttachment,
-                          onInsertAttachment: widget.onInsertAttachment,
-                        ),
-                      ),
-                    _ClassicInputBody(
-                      controller: widget.controller,
-                      focusNode: widget.focusNode,
-                      inputState: widget.inputState,
-                      attachmentKey: _attachmentPopupTargetKey,
-                      processing: processing,
-                      hasDraftText: hasDraftText,
-                      canSendMessage: canSendMessage,
-                      showCancelAction: showCancelAction,
-                      showQueueAction: showQueueAction,
-                      onSendMessage: widget.onSendMessage,
-                      onQueueMessage: widget.onQueueMessage,
-                      onCancelMessage: widget.onCancelMessage,
-                      isSpeechRecording: widget.isSpeechRecording,
-                      isSpeechTranscribing: widget.isSpeechTranscribing,
-                      onSpeechInput: widget.onSpeechInput,
-                      onAttachFiles: widget.onAttachFiles,
-                      draggingFiles: _draggingFiles,
-                      onDraggingFilesChanged: _setDraggingFiles,
-                      onAttach: _toggleAttachmentPopup,
                     ),
-                  ],
-                ),
+                  if (widget.attachments.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: _ClassicAttachmentStrip(
+                        attachments: widget.attachments,
+                        onRemoveAttachment: widget.onRemoveAttachment,
+                        onInsertAttachment: widget.onInsertAttachment,
+                      ),
+                    ),
+                  _ClassicInputBody(
+                    controller: widget.controller,
+                    focusNode: widget.focusNode,
+                    inputState: widget.inputState,
+                    settingsKey: _inputMenuPopupTargetKey,
+                    attachmentKey: _attachmentPopupTargetKey,
+                    processing: processing,
+                    hasDraftText: hasDraftText,
+                    canSendMessage: canSendMessage,
+                    showCancelAction: showCancelAction,
+                    showQueueAction: showQueueAction,
+                    onSendMessage: widget.onSendMessage,
+                    onQueueMessage: widget.onQueueMessage,
+                    onCancelMessage: widget.onCancelMessage,
+                    isSpeechRecording: widget.isSpeechRecording,
+                    isSpeechTranscribing: widget.isSpeechTranscribing,
+                    onSpeechInput: widget.onSpeechInput,
+                    inputExpanded: _inputExpanded,
+                    onToggleInputExpansion: _toggleInputExpansion,
+                    onAttachFiles: widget.onAttachFiles,
+                    draggingFiles: _draggingFiles,
+                    onDraggingFilesChanged: _setDraggingFiles,
+                    onSettings: _toggleInputMenuPopup,
+                    onAttach: _toggleAttachmentPopup,
+                  ),
+                ],
               ),
             ),
           ),
@@ -600,6 +556,7 @@ class _ClassicInputBody extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.inputState,
+    required this.settingsKey,
     required this.attachmentKey,
     required this.processing,
     required this.hasDraftText,
@@ -612,15 +569,19 @@ class _ClassicInputBody extends StatelessWidget {
     required this.isSpeechRecording,
     required this.isSpeechTranscribing,
     required this.onSpeechInput,
+    required this.inputExpanded,
+    required this.onToggleInputExpansion,
     required this.onAttachFiles,
     required this.draggingFiles,
     required this.onDraggingFilesChanged,
+    required this.onSettings,
     required this.onAttach,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
   final ChatInputProcessingState inputState;
+  final GlobalKey settingsKey;
   final GlobalKey attachmentKey;
   final bool processing;
   final bool hasDraftText;
@@ -633,9 +594,12 @@ class _ClassicInputBody extends StatelessWidget {
   final bool isSpeechRecording;
   final bool isSpeechTranscribing;
   final VoidCallback onSpeechInput;
+  final bool inputExpanded;
+  final VoidCallback onToggleInputExpansion;
   final ValueChanged<List<String>>? onAttachFiles;
   final bool draggingFiles;
   final ValueChanged<bool> onDraggingFilesChanged;
+  final VoidCallback onSettings;
   final VoidCallback? onAttach;
 
   /// Builds the traditional text field and action buttons.
@@ -651,130 +615,157 @@ class _ClassicInputBody extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       borderSide: BorderSide(color: outline, width: 1),
     );
-    final inputContent = Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: <Widget>[
-        Expanded(
-          child: _ClassicDesktopEnterSendShortcuts(
-            controller: controller,
-            canSendMessage: canSendMessage,
-            onSendMessage: onSendMessage,
-            child: TextField(
+    final inputContent = AnimatedSize(
+      duration: const Duration(milliseconds: 220),
+      reverseDuration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.bottomCenter,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: <Widget>[
+          Expanded(
+            child: _ClassicDesktopEnterSendShortcuts(
               controller: controller,
-              focusNode: focusNode,
-              minLines: 1,
-              maxLines: 5,
-              readOnly: isSpeechRecording || isSpeechTranscribing,
-              textInputAction: TextInputAction.newline,
-              style: theme.textTheme.bodyMedium?.copyWith(height: 20 / 14),
-              decoration: InputDecoration(
-                hintText: l10n.askOperitHint,
-                hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-                filled: true,
-                fillColor: colorScheme.surface.withValues(alpha: 0.84),
-                border: inputBorder,
-                enabledBorder: inputBorder,
-                focusedBorder: inputBorder.copyWith(
-                  borderSide: BorderSide(
-                    color: colorScheme.primary,
-                    width: 1.2,
+              canSendMessage: canSendMessage,
+              onSendMessage: onSendMessage,
+              enabled: !inputExpanded,
+              child: TextField(
+                controller: controller,
+                focusNode: focusNode,
+                minLines: inputExpanded ? 10 : 1,
+                maxLines: inputExpanded ? 16 : 5,
+                readOnly: isSpeechRecording || isSpeechTranscribing,
+                textInputAction: TextInputAction.newline,
+                style: theme.textTheme.bodyMedium?.copyWith(height: 20 / 14),
+                decoration: InputDecoration(
+                  hintText: l10n.askOperitHint,
+                  hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                  filled: true,
+                  fillColor: colorScheme.surface.withValues(alpha: 0.84),
+                  border: inputBorder,
+                  enabledBorder: inputBorder,
+                  focusedBorder: inputBorder.copyWith(
+                    borderSide: BorderSide(
+                      color: colorScheme.primary,
+                      width: 1.2,
+                    ),
+                  ),
+                  contentPadding: const EdgeInsets.fromLTRB(14, 9, 4, 9),
+                  prefixIconConstraints: const BoxConstraints(
+                    minWidth: 34,
+                    minHeight: 34,
+                  ),
+                  prefixIcon: KeyedSubtree(
+                    key: settingsKey,
+                    child: _ClassicIconTapTarget(
+                      icon: Icons.tune_outlined,
+                      color: colorScheme.onSurfaceVariant,
+                      onTap: onSettings,
+                      size: 18,
+                      targetSize: 34,
+                      tooltip: l10n.settings,
+                    ),
+                  ),
+                  suffixIconConstraints: const BoxConstraints(
+                    minWidth: 34,
+                    minHeight: 34,
+                  ),
+                  suffixIcon: _ClassicIconTapTarget(
+                    icon: inputExpanded
+                        ? Icons.fullscreen_exit
+                        : Icons.fullscreen,
+                    color: colorScheme.onSurfaceVariant,
+                    onTap: onToggleInputExpansion,
+                    size: 18,
+                    targetSize: 34,
+                    tooltip: inputExpanded
+                        ? l10n.collapseInput
+                        : l10n.expandInput,
                   ),
                 ),
-                contentPadding: const EdgeInsets.fromLTRB(14, 9, 4, 9),
-                suffixIconConstraints: const BoxConstraints(
-                  minWidth: 34,
-                  minHeight: 34,
-                ),
-                suffixIcon: IconButton(
-                  onPressed: () {},
-                  icon: const Icon(Icons.fullscreen),
-                  iconSize: 18,
-                  color: colorScheme.onSurfaceVariant,
-                  tooltip: l10n.fullscreenInput,
-                ),
-              ),
-              onSubmitted: (_) {
-                if (canSendMessage) {
-                  onSendMessage();
-                }
-              },
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        KeyedSubtree(
-          key: attachmentKey,
-          child: Material(
-            color: colorScheme.surfaceContainerHighest,
-            shape: const CircleBorder(),
-            clipBehavior: Clip.antiAlias,
-            child: _ClassicIconTapTarget(
-              icon: Icons.add,
-              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.9),
-              onTap: onAttach,
-              size: 22,
-              targetSize: 38,
-              tooltip: l10n.addAttachment,
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        _ClassicActionButton(
-          processing: processing || isSpeechTranscribing,
-          progress: isSpeechTranscribing
-              ? null
-              : _classicProgressFor(inputState),
-          background: isSpeechRecording
-              ? colorScheme.error
-              : _classicActionBackground(
-                  colorScheme,
-                  showCancelAction: showCancelAction,
-                  showQueueAction: showQueueAction,
-                  canSend: canSendMessage,
-                ),
-          foreground: isSpeechRecording
-              ? colorScheme.onError
-              : _classicActionForeground(
-                  colorScheme,
-                  showCancelAction: showCancelAction,
-                  showQueueAction: showQueueAction,
-                  canSend: canSendMessage,
-                ),
-          icon: isSpeechRecording
-              ? Icons.stop
-              : isSpeechTranscribing
-              ? Icons.graphic_eq
-              : _classicActionIcon(
-                  showCancelAction: showCancelAction,
-                  showQueueAction: showQueueAction,
-                  canSend: canSendMessage,
-                ),
-          tooltip: isSpeechRecording
-              ? '停止录音'
-              : isSpeechTranscribing
-              ? '正在识别'
-              : showCancelAction
-              ? l10n.cancel
-              : showQueueAction
-              ? l10n.chatQueueAddMessage
-              : (canSendMessage ? l10n.send : ''),
-          onPressed: isSpeechTranscribing
-              ? null
-              : () {
-                  if (showCancelAction) {
-                    onCancelMessage();
-                  } else if (showQueueAction) {
-                    onQueueMessage();
-                  } else if (canSendMessage) {
+                onSubmitted: (_) {
+                  if (!inputExpanded && canSendMessage) {
                     onSendMessage();
-                  } else {
-                    onSpeechInput();
                   }
                 },
-        ),
-      ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          KeyedSubtree(
+            key: attachmentKey,
+            child: Material(
+              color: colorScheme.surfaceContainerHighest,
+              shape: const CircleBorder(),
+              clipBehavior: Clip.antiAlias,
+              child: _ClassicIconTapTarget(
+                icon: Icons.add,
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.9),
+                onTap: onAttach,
+                size: 20,
+                targetSize: 34,
+                tooltip: l10n.addAttachment,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          _ClassicActionButton(
+            processing: processing || isSpeechTranscribing,
+            progress: isSpeechTranscribing
+                ? null
+                : _classicProgressFor(inputState),
+            background: isSpeechRecording
+                ? colorScheme.error
+                : _classicActionBackground(
+                    colorScheme,
+                    showCancelAction: showCancelAction,
+                    showQueueAction: showQueueAction,
+                    canSend: canSendMessage,
+                  ),
+            foreground: isSpeechRecording
+                ? colorScheme.onError
+                : _classicActionForeground(
+                    colorScheme,
+                    showCancelAction: showCancelAction,
+                    showQueueAction: showQueueAction,
+                    canSend: canSendMessage,
+                  ),
+            icon: isSpeechRecording
+                ? Icons.stop
+                : isSpeechTranscribing
+                ? Icons.graphic_eq
+                : _classicActionIcon(
+                    showCancelAction: showCancelAction,
+                    showQueueAction: showQueueAction,
+                    canSend: canSendMessage,
+                  ),
+            tooltip: isSpeechRecording
+                ? '停止录音'
+                : isSpeechTranscribing
+                ? '正在识别'
+                : showCancelAction
+                ? l10n.cancel
+                : showQueueAction
+                ? l10n.chatQueueAddMessage
+                : (canSendMessage ? l10n.send : ''),
+            onPressed: isSpeechTranscribing
+                ? null
+                : () {
+                    if (showCancelAction) {
+                      onCancelMessage();
+                    } else if (showQueueAction) {
+                      onQueueMessage();
+                    } else if (canSendMessage) {
+                      onSendMessage();
+                    } else {
+                      onSpeechInput();
+                    }
+                  },
+          ),
+        ],
+      ),
     );
     return DropTarget(
       enable: onAttachFiles != null,
@@ -1700,8 +1691,8 @@ class _ClassicActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final button = SizedBox(
-      width: 40,
-      height: 40,
+      width: 36,
+      height: 36,
       child: Stack(
         alignment: Alignment.center,
         children: <Widget>[
@@ -1712,9 +1703,9 @@ class _ClassicActionButton extends StatelessWidget {
               customBorder: const CircleBorder(),
               onTap: onPressed,
               child: SizedBox(
-                width: 36,
-                height: 36,
-                child: Icon(icon, size: 18, color: foreground),
+                width: 32,
+                height: 32,
+                child: Icon(icon, size: 17, color: foreground),
               ),
             ),
           ),
@@ -1744,29 +1735,33 @@ class _ClassicDesktopEnterSendShortcuts extends StatelessWidget {
     required this.controller,
     required this.canSendMessage,
     required this.onSendMessage,
+    required this.enabled,
     required this.child,
   });
 
   final TextEditingController controller;
   final bool canSendMessage;
   final VoidCallback onSendMessage;
+  final bool enabled;
   final Widget child;
 
   /// Builds desktop enter-to-send shortcuts around the text field.
   @override
   Widget build(BuildContext context) {
-    if (!_usesDesktopEnterSend) {
-      return child;
-    }
     return CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.enter): _sendIfReady,
-        const SingleActivator(LogicalKeyboardKey.numpadEnter): _sendIfReady,
-        const SingleActivator(LogicalKeyboardKey.enter, control: true):
-            _insertNewline,
-        const SingleActivator(LogicalKeyboardKey.numpadEnter, control: true):
-            _insertNewline,
-      },
+      bindings: enabled && _usesDesktopEnterSend
+          ? <ShortcutActivator, VoidCallback>{
+              const SingleActivator(LogicalKeyboardKey.enter): _sendIfReady,
+              const SingleActivator(LogicalKeyboardKey.numpadEnter):
+                  _sendIfReady,
+              const SingleActivator(LogicalKeyboardKey.enter, control: true):
+                  _insertNewline,
+              const SingleActivator(
+                LogicalKeyboardKey.numpadEnter,
+                control: true,
+              ): _insertNewline,
+            }
+          : const <ShortcutActivator, VoidCallback>{},
       child: child,
     );
   }

@@ -1,0 +1,40 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Operit2: Web isolation proxy",
+      "type": "shell",
+      "command": "node",
+      "args": [
+        "${workspaceFolder}/tools/dev_web_access_proxy.mjs",
+        "--upstream-port",
+        "4835",
+        "--listen-port",
+        "4836"
+      ],
+      "isBackground": true,
+      "runOptions": {
+        "instanceLimit": 1
+      },
+      "problemMatcher": {
+        "owner": "operit2-web-access",
+        "pattern": [
+          {
+            "regexp": "^(never-match)$",
+            "file": 1,
+            "message": 1
+          }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^Web Access development proxy:",
+          "endsPattern": "^Flutter development server:"
+        }
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated"
+      }
+    }
+  ]
+}

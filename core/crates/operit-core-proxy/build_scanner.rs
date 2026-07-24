@@ -1,18 +1,30 @@
 use super::*;
 
 pub(crate) fn object_specs(
+    core_proxy_root: &SourceRoot,
     runtime_root: &SourceRoot,
     store_root: &SourceRoot,
     tools_root: &SourceRoot,
     providers_root: &SourceRoot,
+    link_access_root: &SourceRoot,
 ) -> Vec<ObjectSpec> {
     let mut specs = Vec::new();
+    specs.extend(discover_core_proxy_objects(core_proxy_root));
     specs.push(required_object_spec(
         runtime_root,
         "application",
         "core/application/OperitApplication.rs",
         "OperitApplication",
         ObjectAccess::Application,
+        ObjectRouteScope::RuntimeSelected,
+    ));
+    specs.push(required_object_spec(
+        link_access_root,
+        "linkAccessStore",
+        "lib.rs",
+        "LinkAccessStore",
+        ObjectAccess::ContextRefGetInstanceConstruct,
+        ObjectRouteScope::LocalControl,
     ));
     specs.push(required_object_spec(
         runtime_root,
@@ -20,6 +32,7 @@ pub(crate) fn object_specs(
         "services/ChatServiceCore.rs",
         "ChatServiceCore",
         ObjectAccess::ChatRuntimeMain,
+        ObjectRouteScope::RuntimeSelected,
     ));
     specs.extend(discover_constructible_objects(
         runtime_root,
@@ -194,6 +207,7 @@ pub(crate) fn discover_factory_object_specs(
                     returns_result,
                     returns_arc_mutex,
                 },
+                route_scope: parent_spec.route_scope.clone(),
             });
         }
     }
@@ -246,6 +260,7 @@ fn required_object_spec(
     relative_path: &str,
     type_name: &str,
     access: ObjectAccess,
+    route_scope: ObjectRouteScope,
 ) -> ObjectSpec {
     let source_path = source_root.as_path().join(relative_path);
     ObjectSpec {
@@ -260,6 +275,64 @@ fn required_object_spec(
         ),
         source_path,
         access,
+        route_scope,
+    }
+}
+
+/// Discovers generated service objects constructed from the active local Core proxy.
+fn discover_core_proxy_objects(source_root: &SourceRoot) -> Vec<ObjectSpec> {
+    let mut specs = Vec::new();
+    discover_core_proxy_objects_inner(source_root, source_root.as_path(), &mut specs);
+    specs
+}
+
+/// Recursively scans Core proxy sources for generated service objects.
+fn discover_core_proxy_objects_inner(
+    source_root: &SourceRoot,
+    dir: &Path,
+    specs: &mut Vec<ObjectSpec>,
+) {
+    let entries = fs::read_dir(dir).unwrap_or_else(|error| {
+        panic!(
+            "read Core proxy source directory {}: {error}",
+            dir.display()
+        )
+    });
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|error| {
+            panic!("read Core proxy source entry {}: {error}", dir.display())
+        });
+        let path = entry.path();
+        if path.is_dir() {
+            discover_core_proxy_objects_inner(source_root, &path, specs);
+            continue;
+        }
+        if path.extension().and_then(|value| value.to_str()) != Some("rs") {
+            continue;
+        }
+        let content = fs::read_to_string(&path).expect("read Core proxy source");
+        let file = syn::parse_file(&content).expect("parse Core proxy source");
+        let Some((type_name, access)) = discover_constructible_type(&file) else {
+            continue;
+        };
+        if access != ObjectAccess::CoreProxyConstruct {
+            continue;
+        }
+        let schema_key = lower_first(&type_name);
+        specs.push(ObjectSpec {
+            dispatch_name: dispatch_name_from_schema_key(&schema_key),
+            schema_key,
+            full_type: full_type_for_source_with_crate(
+                source_root.as_path(),
+                &path,
+                &type_name,
+                &source_root.crate_name,
+            ),
+            type_name,
+            source_path: path,
+            access,
+            route_scope: ObjectRouteScope::LocalControl,
+        });
     }
 }
 
@@ -296,6 +369,7 @@ fn discover_constructible_objects(
             type_name,
             source_path: path,
             access,
+            route_scope: ObjectRouteScope::RuntimeSelected,
         });
     }
     specs
@@ -372,6 +446,7 @@ fn discover_constructible_objects_recursive_inner(
             type_name,
             source_path: path,
             access,
+            route_scope: ObjectRouteScope::RuntimeSelected,
         });
     }
 }
@@ -404,6 +479,7 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
         let mut has_context_ref_get_instance_arc_mutex = false;
         let mut has_store_paths_new = false;
         let mut has_result_store_paths_new = false;
+        let mut has_core_proxy_new = false;
         let mut has_public_instance_method = false;
 
         for item in &file.items {
@@ -475,6 +551,8 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
                             has_store_paths_new = true;
                         }
                     }
+                    has_core_proxy_new |= name == "new"
+                        && function_has_single_named_argument(function, "LocalCoreProxy");
                     has_string_new |= name == "new"
                         && (arg_type.contains("impl Into < String >")
                             || arg_type.contains("impl Into<String>")
@@ -522,6 +600,9 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
         if has_result_store_paths_new {
             return Some((type_name, ObjectAccess::ResultStorePathsConstruct));
         }
+        if has_core_proxy_new {
+            return Some((type_name, ObjectAccess::CoreProxyConstruct));
+        }
         if has_string_new {
             return Some((type_name, ObjectAccess::StringNewConstruct));
         }
@@ -533,6 +614,25 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
         }
     }
     None
+}
+
+/// Returns whether the function accepts exactly one argument with the requested terminal type name.
+fn function_has_single_named_argument(function: &ImplItemFn, expected_name: &str) -> bool {
+    if function.sig.inputs.len() != 1 {
+        return false;
+    }
+    let Some(FnArg::Typed(argument)) = function.sig.inputs.first() else {
+        return false;
+    };
+    let Type::Path(path) = argument.ty.as_ref() else {
+        return false;
+    };
+    path.qself.is_none()
+        && path
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == expected_name)
 }
 
 fn returns_arc_mutex_self(return_type: &str) -> bool {
@@ -570,6 +670,7 @@ pub(crate) fn scan_object(
         dispatch_name: spec.dispatch_name.clone(),
         full_type: spec.full_type.clone(),
         access: spec.access.clone(),
+        route_scope: spec.route_scope.clone(),
         methods: scan_methods(
             &spec.source_path,
             &spec.type_name,

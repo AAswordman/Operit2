@@ -6,6 +6,7 @@ use futures_util::FutureExt;
 use operit_util::AppLogger::AppLogger;
 
 mod bootstrap;
+mod browser_callback;
 mod chat_runtime;
 mod cli;
 mod client_paths;

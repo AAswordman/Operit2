@@ -1,10 +1,9 @@
 // ignore_for_file: file_names
 
 import '../link/CoreLinkProtocol.dart';
-import '../runtime/RuntimeConnectionManager.dart';
 import 'CoreProxy.dart';
 import 'OperitRuntimeBridge.dart';
-export '../link/RemoteRuntimeLinkClient.dart';
+import 'PlatformCoreProxy.dart';
 
 class ProxyCoreRuntimeBridge extends OperitRuntimeBridge {
   const ProxyCoreRuntimeBridge({CoreProxy? coreProxy})
@@ -12,8 +11,8 @@ class ProxyCoreRuntimeBridge extends OperitRuntimeBridge {
 
   final CoreProxy? _coreProxyOverride;
 
-  CoreProxy get _coreProxy =>
-      _coreProxyOverride ?? RuntimeConnectionManager.instance.coreProxy;
+  /// Returns the local platform proxy unless a caller explicitly supplies one.
+  CoreProxy get _coreProxy => _coreProxyOverride ?? platformCoreProxy;
 
   @override
   Future<Object?> call(CoreCallRequest request) {

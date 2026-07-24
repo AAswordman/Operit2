@@ -1,6 +1,8 @@
 import 'package:flutter/cupertino.dart';
+import 'package:provider/provider.dart';
 
 import '../../render/layout/reset_dimension.dart';
+import '../../widgets/mode.dart';
 import '../options.dart';
 import '../syntax_tree.dart';
 import '../types.dart';
@@ -12,7 +14,6 @@ class PhantomNode extends LeafNode {
   Mode get mode => Mode.math;
 
   /// The phantomed child.
-  // TODO: suppress editbox in edit mode
   // If we use arbitrary GreenNode here, then we will face the danger of
   // transparent node
   final EquationRowNode phantomChild;
@@ -41,7 +42,10 @@ class PhantomNode extends LeafNode {
     final phantomResult = phantomRedNode.buildWidget(options);
     Widget widget = Opacity(
       opacity: 0.0,
-      child: phantomResult.widget,
+      child: Provider<FlutterMathMode>.value(
+        value: FlutterMathMode.view,
+        child: phantomResult.widget,
+      ),
     );
     widget = ResetDimension(
       width: zeroWidth ? 0 : null,

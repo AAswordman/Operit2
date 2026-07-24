@@ -1,10 +1,12 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 
+import '../../../../core/bridge/PlatformCoreProxy.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as generated;
 import '../../../../core/runtime/RemotePairingBridge.dart';
 import '../../../../core/runtime/RuntimeAutoSyncManager.dart';
 import '../../../../core/runtime/RuntimeConnectionManager.dart';
@@ -29,14 +31,21 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   bool _discoverable = false;
   String? _connectionMessage;
   bool _connectionFailed = false;
-  List<RuntimeDiscoveredDevice> _discoveredDevices =
-      <RuntimeDiscoveredDevice>[];
+  List<generated.RuntimeRemoteDiscoveredDevice> _discoveredDevices =
+      <generated.RuntimeRemoteDiscoveredDevice>[];
   bool _scanning = false;
   String? _scanError;
   Map<String, _PairedRemoteProbeState> _pairedRemoteStates =
       <String, _PairedRemoteProbeState>{};
+  Map<String, generated.PairedRemoteSessionRecord> _pairedRemoteSessions =
+      <String, generated.PairedRemoteSessionRecord>{};
+  generated.LinkAccessRoutingConfig? _currentRoute;
   int _pairedRemoteProbeGeneration = 0;
   final Set<String> _autoSyncTogglingRemoteNames = <String>{};
+
+  static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
+    ProxyCoreRuntimeBridge(coreProxy: platformCoreProxy),
+  );
 
   RuntimeConnectionManager get _manager => RuntimeConnectionManager.instance;
   RuntimeAutoSyncManager get _autoSync => RuntimeAutoSyncManager.instance;
@@ -84,12 +93,16 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   }
 
   Future<void> _refreshPairedRemoteStates() async {
-    final sessions = Map<String, PairedRemoteSessionRecord>.of(
-      _manager.config.remoteSessions,
-    );
     final generation = ++_pairedRemoteProbeGeneration;
+    final sessions = await _loadPairedRemoteSessions();
+    final route = await _clients.runtimeRemoteLinkService.currentRoute();
+    if (!mounted || generation != _pairedRemoteProbeGeneration) {
+      return;
+    }
     if (mounted) {
       setState(() {
+        _pairedRemoteSessions = sessions;
+        _currentRoute = route;
         _pairedRemoteStates = <String, _PairedRemoteProbeState>{
           for (final name in sessions.keys)
             name: _PairedRemoteProbeState.checking,
@@ -98,7 +111,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
     final results = await Future.wait(
       sessions.entries.map((entry) async {
-        final state = await _probePairedRemote(entry.value);
+        final state = await _probePairedRemote(entry.key);
         return MapEntry(entry.key, state);
       }),
     );
@@ -112,78 +125,32 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     });
   }
 
-  Future<_PairedRemoteProbeState> _probePairedRemote(
-    PairedRemoteSessionRecord session,
-  ) async {
-    final client = RemoteRuntimeLinkClient(session: session);
+  /// Reads paired remote sessions from the runtime-owned Link Access store.
+  Future<Map<String, generated.PairedRemoteSessionRecord>>
+  _loadPairedRemoteSessions() {
+    return _clients.runtimeRemoteLinkService.pairedRemoteSessions();
+  }
+
+  /// Returns whether the local runtime is the persisted request destination.
+  bool get _isLocalRoute => _currentRoute?.route.tag != 'remote';
+
+  Future<_PairedRemoteProbeState> _probePairedRemote(String name) async {
     try {
-      final info = await client.sessionInfo().timeout(
-        const Duration(seconds: 2),
-      );
-      return info.coreDeviceId == session.coreDeviceId
-          ? _PairedRemoteProbeState.online
-          : _PairedRemoteProbeState.offline;
+      await _clients.runtimeRemoteLinkService
+          .probePairedRemote(name: name)
+          .timeout(const Duration(seconds: 2));
+      return _PairedRemoteProbeState.online;
     } catch (_) {
       return _PairedRemoteProbeState.offline;
-    } finally {
-      client.dispose();
-    }
-  }
-
-  Future<void> _useLocal() async {
-    final l10n = AppLocalizations.of(context)!;
-    setState(() => _busy = true);
-    try {
-      await _manager.setLocal();
-      if (mounted) {
-        setState(() {
-          _connectionMessage = l10n.settingsRuntimeSwitchedLocal;
-          _connectionFailed = false;
-        });
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _connectionMessage = l10n.settingsRuntimeTestFailed(error.toString());
-          _connectionFailed = true;
-        });
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
-  Future<void> _usePairedRemote(String name) async {
-    final l10n = AppLocalizations.of(context)!;
-    setState(() => _busy = true);
-    try {
-      final connected = await _manager.usePairedRemote(name);
-      if (connected && mounted) {
-        setState(() {
-          _connectionMessage = l10n.settingsRuntimeSwitchedRemote;
-          _connectionFailed = false;
-        });
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _connectionMessage = l10n.settingsRuntimeTestFailed(error.toString());
-          _connectionFailed = true;
-        });
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
     }
   }
 
   Future<void> _deletePairedRemote(String name) async {
     setState(() => _busy = true);
     try {
-      await _manager.removePairedRemote(name);
+      await _clients.runtimeRemoteLinkService.removePairedRemote(name: name);
+      await _autoSync.refresh();
+      await _refreshPairedRemoteStates();
     } finally {
       if (mounted) {
         setState(() => _busy = false);
@@ -259,6 +226,62 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
   }
 
+  /// Selects the local runtime as the destination for application requests.
+  Future<void> _selectLocalRoute() async {
+    final l10n = AppLocalizations.of(context)!;
+    setState(() => _busy = true);
+    try {
+      await _clients.runtimeRemoteLinkService.selectLocalRoute();
+      if (mounted) {
+        setState(() {
+          _connectionMessage = l10n.settingsRuntimeSwitchedLocal;
+          _connectionFailed = false;
+        });
+      }
+      await _refreshPairedRemoteStates();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _connectionMessage = l10n.settingsRuntimeTestFailed(error.toString());
+          _connectionFailed = true;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  /// Selects one paired remote runtime as the destination for application requests.
+  Future<void> _selectPairedRemoteRoute(String name) async {
+    final l10n = AppLocalizations.of(context)!;
+    setState(() => _busy = true);
+    try {
+      await _clients.runtimeRemoteLinkService.selectPairedRemoteRoute(
+        name: name,
+      );
+      if (mounted) {
+        setState(() {
+          _connectionMessage = l10n.settingsRuntimeSwitchedRemote;
+          _connectionFailed = false;
+        });
+      }
+      await _refreshPairedRemoteStates();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _connectionMessage = l10n.settingsRuntimeTestFailed(error.toString());
+          _connectionFailed = true;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
   Future<void> _setDiscoverable(bool value) async {
     final l10n = AppLocalizations.of(context)!;
     setState(() => _busy = true);
@@ -317,17 +340,11 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     setState(() {
       _scanning = true;
       _scanError = null;
-      _discoveredDevices = <RuntimeDiscoveredDevice>[];
+      _discoveredDevices = <generated.RuntimeRemoteDiscoveredDevice>[];
     });
     try {
-      final json = await LinkAccessHost.instance.discoverDevices(2000);
-      final list = (jsonDecode(json) as List<dynamic>)
-          .cast<Map<String, Object?>>();
-      final devices = list
-          .map(RuntimeDiscoveredDevice.fromJson)
-          .toList(growable: false);
-      await _refreshPairedRemoteBaseUrls(devices);
-      unawaited(_autoSync.syncDiscoveredDevices(devices));
+      final devices = await _clients.runtimeRemoteLinkService
+          .discoverPairedRemotes(timeoutMs: 2000);
       final visibleDevices = await _visibleDiscoveredDevices(devices);
       if (mounted) {
         setState(() {
@@ -345,38 +362,19 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
   }
 
-  /// Updates paired remote records with verified LAN addresses from discovery.
-  Future<void> _refreshPairedRemoteBaseUrls(
-    List<RuntimeDiscoveredDevice> devices,
+  /// Filters local and already usable paired runtimes from one discovery result.
+  Future<List<generated.RuntimeRemoteDiscoveredDevice>>
+  _visibleDiscoveredDevices(
+    List<generated.RuntimeRemoteDiscoveredDevice> devices,
   ) async {
     final localDeviceId = LinkAccessHost.instance.deviceId;
-    for (final device in devices) {
-      if (device.deviceId == localDeviceId) {
-        continue;
-      }
-      final pairedEntries = _manager.config.remoteSessions.entries
-          .where((entry) => device.deviceId == entry.value.coreDeviceId)
-          .toList(growable: false);
-      for (final entry in pairedEntries) {
-        await _manager.storeVerifiedRemoteBaseUrl(
-          name: entry.key,
-          baseUrl: device.baseUrl,
-        );
-      }
-    }
-  }
-
-  Future<List<RuntimeDiscoveredDevice>> _visibleDiscoveredDevices(
-    List<RuntimeDiscoveredDevice> devices,
-  ) async {
-    final localDeviceId = LinkAccessHost.instance.deviceId;
-    final visibleDevices = <RuntimeDiscoveredDevice>[];
+    final visibleDevices = <generated.RuntimeRemoteDiscoveredDevice>[];
     final checkedStates = <String, _PairedRemoteProbeState>{};
     for (final device in devices) {
       if (device.deviceId == localDeviceId) {
         continue;
       }
-      final pairedEntries = _manager.config.remoteSessions.entries
+      final pairedEntries = _pairedRemoteSessions.entries
           .where((entry) => device.deviceId == entry.value.coreDeviceId)
           .toList(growable: false);
       if (pairedEntries.isEmpty) {
@@ -385,7 +383,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       }
       var anyOnline = false;
       for (final entry in pairedEntries) {
-        final state = await _probePairedRemote(entry.value);
+        final state = await _probePairedRemote(entry.key);
         checkedStates[entry.key] = state;
         if (state == _PairedRemoteProbeState.online) {
           anyOnline = true;
@@ -414,7 +412,10 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     await _saveRemotePairResult(result);
   }
 
-  Future<void> _pairDiscoveredRemote(RuntimeDiscoveredDevice device) async {
+  /// Starts pairing with one runtime selected from the runtime-owned discovery result.
+  Future<void> _pairDiscoveredRemote(
+    generated.RuntimeRemoteDiscoveredDevice device,
+  ) async {
     setState(() => _busy = true);
     try {
       final pairing = await const RemotePairingBridge().startWithTokenHash(
@@ -446,17 +447,14 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
   }
 
-  Future<void> _saveRemotePairResult(_RemotePairResult result) async {
+  /// Refreshes settings after the runtime service persisted a completed pairing.
+  Future<void> _saveRemotePairResult(_RemotePairResult _) async {
     if (!mounted) {
       return;
     }
     setState(() => _busy = true);
     try {
-      final connected = await _manager.setRemote(
-        name: result.name,
-        session: result.session,
-      );
-      if (connected && mounted) {
+      if (mounted) {
         setState(() {
           _connectionMessage = AppLocalizations.of(
             context,
@@ -484,25 +482,20 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final config = _manager.config;
     final children = <Widget>[
       _SectionCard(
         title: l10n.settingsRuntimeConnection,
         children: <Widget>[
-          _CurrentDeviceLine(config: config),
+          _CurrentDeviceLine(
+            active: _isLocalRoute,
+            busy: _busy,
+            onSelect: _selectLocalRoute,
+          ),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: <Widget>[
-              FilledButton.tonalIcon(
-                style: SettingsControlStyles.sectionFilledButton(),
-                onPressed: config.mode == RuntimeConnectionMode.local || _busy
-                    ? null
-                    : _useLocal,
-                icon: const Icon(Icons.devices_outlined, size: 18),
-                label: Text(l10n.settingsRuntimeUseLocal),
-              ),
               TextButton.icon(
                 style: SettingsControlStyles.sectionTextButton(),
                 onPressed: _busy ? null : _testCurrent,
@@ -531,14 +524,16 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
           ),
           const SizedBox(height: 8),
           _RemoteSessionList(
-            config: config,
+            sessions: _pairedRemoteSessions,
             busy: _busy,
             autoSyncEnabledNames: _autoSync.enabledRemoteNames,
-            autoSyncingNames: _autoSync.syncingRemoteNames,
             autoSyncTogglingNames: _autoSyncTogglingRemoteNames,
             states: _pairedRemoteStates,
-            onUse: _usePairedRemote,
+            selectedRouteName: _currentRoute?.route.tag == 'remote'
+                ? _currentRoute?.route.sessionName
+                : null,
             onAutoSyncChanged: _setRemoteAutoSync,
+            onSelectRoute: _selectPairedRemoteRoute,
             onDelete: _deletePairedRemote,
           ),
         ],
@@ -645,7 +640,9 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
 
 LinkAccessHostConfig _linkHostConfigForWrite(LinkAccessHostConfig config) {
   if (config.portMode == LinkAccessHostPortMode.automatic) {
-    return config.copyWith(bindAddress: LinkAccessHostConfig.automaticBindAddress);
+    return config.copyWith(
+      bindAddress: LinkAccessHostConfig.automaticBindAddress,
+    );
   }
   return config;
 }
@@ -690,50 +687,55 @@ class _SectionCard extends StatelessWidget {
 }
 
 class _CurrentDeviceLine extends StatelessWidget {
-  const _CurrentDeviceLine({required this.config});
+  const _CurrentDeviceLine({
+    required this.active,
+    required this.busy,
+    required this.onSelect,
+  });
 
-  final RuntimeConnectionConfig config;
+  final bool active;
+  final bool busy;
+  final VoidCallback onSelect;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final l10n = AppLocalizations.of(context)!;
-    final selectedLocal = config.mode == RuntimeConnectionMode.local;
-    final title = selectedLocal
-        ? l10n.settingsRuntimeUsingLocal
-        : l10n.settingsRuntimeUsingRemote(
-            config.activeRemoteSession!.remoteDeviceInfo.displayName,
-          );
-    final subtitle = selectedLocal
-        ? l10n.settingsRuntimeLocalDescription
-        : l10n.settingsRuntimeRemoteInUseDescription;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Icon(
-          selectedLocal ? Icons.devices_outlined : Icons.cloud_done_outlined,
-          color: colorScheme.primary,
-        ),
+        Icon(Icons.devices_outlined, color: colorScheme.primary),
         const SizedBox(width: 10),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Text(
-                title,
+                active
+                    ? l10n.settingsRuntimeUsingLocal
+                    : l10n.settingsRuntimeLocalTitle,
                 style: Theme.of(
                   context,
                 ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 4),
               Text(
-                subtitle,
+                l10n.settingsRuntimeLocalDescription,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: colorScheme.onSurfaceVariant,
                 ),
               ),
             ],
           ),
+        ),
+        IconButton(
+          tooltip: l10n.settingsRuntimeUseLocal,
+          icon: Icon(
+            active
+                ? Icons.radio_button_checked_outlined
+                : Icons.radio_button_unchecked_outlined,
+          ),
+          onPressed: active || busy ? null : onSelect,
         ),
       ],
     );
@@ -742,31 +744,31 @@ class _CurrentDeviceLine extends StatelessWidget {
 
 class _RemoteSessionList extends StatelessWidget {
   const _RemoteSessionList({
-    required this.config,
+    required this.sessions,
     required this.busy,
     required this.autoSyncEnabledNames,
-    required this.autoSyncingNames,
     required this.autoSyncTogglingNames,
     required this.states,
-    required this.onUse,
+    required this.selectedRouteName,
     required this.onAutoSyncChanged,
+    required this.onSelectRoute,
     required this.onDelete,
   });
 
-  final RuntimeConnectionConfig config;
+  final Map<String, generated.PairedRemoteSessionRecord> sessions;
   final bool busy;
   final Set<String> autoSyncEnabledNames;
-  final Set<String> autoSyncingNames;
   final Set<String> autoSyncTogglingNames;
   final Map<String, _PairedRemoteProbeState> states;
-  final ValueChanged<String> onUse;
+  final String? selectedRouteName;
   final void Function(String name, bool enabled) onAutoSyncChanged;
+  final ValueChanged<String> onSelectRoute;
   final ValueChanged<String> onDelete;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final entries = config.remoteSessions.entries.toList(growable: false);
+    final entries = sessions.entries.toList(growable: false);
     if (entries.isEmpty) {
       return Text(
         l10n.settingsRuntimeNoPairedRemote,
@@ -781,19 +783,16 @@ class _RemoteSessionList extends StatelessWidget {
           _RemoteSessionTile(
             name: entries[index].key,
             session: entries[index].value,
-            active:
-                config.mode == RuntimeConnectionMode.remote &&
-                config.activeRemoteName == entries[index].key,
             busy: busy,
             autoSyncEnabled: autoSyncEnabledNames.contains(entries[index].key),
-            autoSyncing: autoSyncingNames.contains(entries[index].key),
             autoSyncToggling: autoSyncTogglingNames.contains(
               entries[index].key,
             ),
             state: states[entries[index].key],
-            onUse: () => onUse(entries[index].key),
+            selected: selectedRouteName == entries[index].key,
             onAutoSyncChanged: (enabled) =>
                 onAutoSyncChanged(entries[index].key, enabled),
+            onSelect: () => onSelectRoute(entries[index].key),
             onDelete: () => onDelete(entries[index].key),
           ),
           if (index < entries.length - 1) const Divider(height: 12),
@@ -807,34 +806,32 @@ class _RemoteSessionTile extends StatelessWidget {
   const _RemoteSessionTile({
     required this.name,
     required this.session,
-    required this.active,
     required this.busy,
     required this.autoSyncEnabled,
-    required this.autoSyncing,
     required this.autoSyncToggling,
     required this.state,
-    required this.onUse,
+    required this.selected,
     required this.onAutoSyncChanged,
+    required this.onSelect,
     required this.onDelete,
   });
 
   final String name;
-  final PairedRemoteSessionRecord session;
-  final bool active;
+  final generated.PairedRemoteSessionRecord session;
   final bool busy;
   final bool autoSyncEnabled;
-  final bool autoSyncing;
   final bool autoSyncToggling;
   final _PairedRemoteProbeState? state;
-  final VoidCallback onUse;
+  final bool selected;
   final ValueChanged<bool> onAutoSyncChanged;
+  final VoidCallback onSelect;
   final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final probeState = state ?? _PairedRemoteProbeState.checking;
-    final syncBusy = autoSyncing || autoSyncToggling;
+    final syncBusy = autoSyncToggling;
     final syncIcon = syncBusy
         ? const SizedBox(
             width: 18,
@@ -859,7 +856,7 @@ class _RemoteSessionTile extends StatelessWidget {
       contentPadding: EdgeInsets.zero,
       leading: _RemoteProbeIcon(state: probeState),
       title: Text(
-        session.remoteDeviceInfo.displayName,
+        '${session.remoteDeviceInfo.platform}-${session.remoteDeviceInfo.model}',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
@@ -875,13 +872,15 @@ class _RemoteSessionTile extends StatelessWidget {
         spacing: 2,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: <Widget>[
-          if (active)
-            SettingsActivePill(label: l10n.settingsActive)
-          else
-            SettingsSetActiveButton(
-              label: l10n.settingsActivate,
-              onPressed: busy ? null : onUse,
+          IconButton(
+            tooltip: l10n.settingsRuntimeRemoteTitle,
+            icon: Icon(
+              selected
+                  ? Icons.radio_button_checked_outlined
+                  : Icons.radio_button_unchecked_outlined,
             ),
+            onPressed: busy || selected ? null : onSelect,
+          ),
           autoSyncEnabled
               ? IconButton.filledTonal(
                   tooltip: syncTooltip,
@@ -1065,11 +1064,12 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
       final session = await const RemotePairingBridge().finish(
         pairingId: pairing.pairingId,
         pairingCode: pairingCode,
+        name: _pairedRuntimeSessionName(pairing),
       );
       if (mounted) {
         Navigator.of(context).pop(
           _RemotePairResult(
-            name: pairing.coreDeviceInfo.displayName,
+            name: _pairedRuntimeSessionName(pairing),
             session: session,
           ),
         );
@@ -1204,11 +1204,12 @@ class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
       final session = await const RemotePairingBridge().finish(
         pairingId: widget.pairing.pairingId,
         pairingCode: pairingCode,
+        name: _pairedRuntimeSessionName(widget.pairing),
       );
       if (mounted) {
         Navigator.of(context).pop(
           _RemotePairResult(
-            name: widget.pairing.coreDeviceInfo.displayName,
+            name: _pairedRuntimeSessionName(widget.pairing),
             session: session,
           ),
         );
@@ -1270,9 +1271,14 @@ class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
   }
 }
 
+/// Builds one stable local session key for a completed remote pairing.
+String _pairedRuntimeSessionName(RemotePairStartResult pairing) {
+  return '${pairing.coreDeviceInfo.platform}-${pairing.coreDeviceInfo.model}-${pairing.coreDeviceId}';
+}
+
 class _RemotePairResult {
   const _RemotePairResult({required this.name, required this.session});
 
   final String name;
-  final PairedRemoteSessionRecord session;
+  final generated.PairedRemoteSessionRecord session;
 }

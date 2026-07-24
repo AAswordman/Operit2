@@ -3,19 +3,22 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
-import 'package:flutter/services.dart';
 
-import '../link/CoreLinkProtocol.dart';
-import '../link/RemoteRuntimeLinkClient.dart';
+import '../bridge/PlatformCoreProxy.dart';
+import '../bridge/ProxyCoreRuntimeBridge.dart';
+import '../proxy/generated/CoreProxyClients.g.dart';
+import '../proxy/generated/CoreProxyModels.g.dart' as generated;
 import 'RuntimeDeviceInfoProvider.dart';
 
 class RemotePairingBridge {
-  const RemotePairingBridge({
-    MethodChannel channel = const MethodChannel('operit/runtime'),
-  }) : _channel = channel;
+  /// Creates a bridge that forwards pairing actions to the local runtime.
+  const RemotePairingBridge();
 
-  final MethodChannel _channel;
+  static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
+    ProxyCoreRuntimeBridge(coreProxy: platformCoreProxy),
+  );
 
+  /// Starts one runtime-owned pairing after hashing the user-supplied Link token.
   Future<RemotePairStartResult> startWithToken({
     required String baseUrl,
     required String token,
@@ -26,50 +29,46 @@ class RemotePairingBridge {
     );
   }
 
+  /// Starts one runtime-owned pairing using an already-derived Link token hash.
   Future<RemotePairStartResult> startWithTokenHash({
     required String baseUrl,
     required String tokenHash,
   }) async {
     final clientDeviceInfo = await RuntimeDeviceInfoProvider.current();
-    final response = await _channel.invokeMethod<String>('remotePairStart', {
-      'baseUrl': baseUrl,
-      'tokenHash': tokenHash,
-      'clientDeviceInfo': jsonEncode(clientDeviceInfo.toJson()),
-    });
-    if (response == null) {
-      throw StateError('remote pair start returned empty response');
-    }
-    final decoded = jsonDecode(response) as Map<String, Object?>;
-    if (decoded.containsKey('code') && decoded.containsKey('message')) {
-      throw CoreLinkError.fromJson(decoded);
-    }
-    return RemotePairStartResult.fromJson(decoded);
+    final result = await _clients.runtimeRemoteLinkService.startPairedRemote(
+      baseUrl: baseUrl,
+      tokenHash: tokenHash,
+      clientDeviceInfo: clientDeviceInfo,
+    );
+    return RemotePairStartResult(
+      pairingId: result.pairingId,
+      pairingServiceVersion: result.pairingServiceVersion,
+      coreDeviceId: result.coreDeviceId,
+      coreDeviceInfo: result.coreDeviceInfo,
+    );
   }
 
-  Future<PairedRemoteSessionRecord> finish({
+  /// Completes one runtime-owned pairing and selects the resulting named remote runtime.
+  Future<generated.PairedRemoteSessionRecord> finish({
     required String pairingId,
     required String pairingCode,
-  }) async {
-    final response = await _channel.invokeMethod<String>('remotePairFinish', {
-      'pairingId': pairingId,
-      'pairingCode': pairingCode,
-    });
-    if (response == null) {
-      throw StateError('remote pair finish returned empty response');
-    }
-    final decoded = jsonDecode(response) as Map<String, Object?>;
-    if (decoded.containsKey('code') && decoded.containsKey('message')) {
-      throw CoreLinkError.fromJson(decoded);
-    }
-    return PairedRemoteSessionRecord.fromJson(decoded);
+    required String name,
+  }) {
+    return _clients.runtimeRemoteLinkService.finishPairedRemote(
+      pairingId: pairingId,
+      pairingCode: pairingCode,
+      name: name,
+    );
   }
 }
 
+/// Derives the Link protocol token hash from the user-provided secret.
 String _linkTokenHash(String token) {
   return base64Encode(sha256.convert(utf8.encode(token)).bytes);
 }
 
 class RemotePairStartResult {
+  /// Creates the UI representation of a runtime-owned pairing start result.
   const RemotePairStartResult({
     required this.pairingId,
     required this.pairingServiceVersion,
@@ -77,12 +76,13 @@ class RemotePairStartResult {
     required this.coreDeviceInfo,
   });
 
+  /// Decodes a pairing start result received through a Core Link response.
   factory RemotePairStartResult.fromJson(Map<String, Object?> json) {
     return RemotePairStartResult(
       pairingId: json['pairingId'] as String,
       pairingServiceVersion: json['pairingServiceVersion'] as int,
       coreDeviceId: json['coreDeviceId'] as String,
-      coreDeviceInfo: RemoteDeviceInfo.fromJson(
+      coreDeviceInfo: generated.RemoteDeviceInfo.fromJson(
         json['coreDeviceInfo'] as Map<String, Object?>,
       ),
     );
@@ -91,5 +91,5 @@ class RemotePairStartResult {
   final String pairingId;
   final int pairingServiceVersion;
   final String coreDeviceId;
-  final RemoteDeviceInfo coreDeviceInfo;
+  final generated.RemoteDeviceInfo coreDeviceInfo;
 }

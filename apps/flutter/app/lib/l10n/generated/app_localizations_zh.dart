@@ -18,6 +18,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get fullscreenInput => '全屏输入';
 
   @override
+  String get expandInput => '展开输入框';
+
+  @override
+  String get collapseInput => '收起输入框';
+
+  @override
   String get settings => '设置';
 
   @override
@@ -552,6 +558,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get browserPermissionRequestTitle => '网页权限请求';
 
   @override
+  String get chatSpeechInputFailed => '语音输入失败，请重试';
+
+  @override
+  String get chatSpeechNoTextRecognized => '未识别到文本';
+
+  @override
   String get history => '历史记录';
 
   @override
@@ -942,6 +954,25 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsModelDeleteProviderConfirmAction => '删除供应商';
+
+  @override
+  String get settingsTtsDeleteProvider => '删除 TTS 供应商';
+
+  @override
+  String settingsTtsDeleteProviderConfirm(String name, int count) {
+    return '删除 TTS 供应商“$name”及其 $count 个音色配置？';
+  }
+
+  @override
+  String settingsTtsDeleteProviderFailed(String error) {
+    return '删除 TTS 供应商失败：$error';
+  }
+
+  @override
+  String get settingsTtsCurrentConfigCannotDelete => '当前正在使用的 TTS 配置不能删除';
+
+  @override
+  String get settingsTtsConfigUsedByCharacter => '该 TTS 配置正在被角色卡使用，不能删除';
 
   @override
   String get settingsModelChatAutoGlmWarning =>

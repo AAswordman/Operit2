@@ -79,7 +79,7 @@ fn print_core_usage(output: &mut CoreCommandOutput) {
     output
         .push_stdout_line("operit2 mcp <dir|list|show|import|export|remove|enable|disable|start|kill|tools|config|config-set|local-set|install-github|install-zip|meta|meta-set|describe>");
     output.push_stdout_line(
-        "operit2 market <auth|rank|list|search|show|comments|comment|like|notifications|my|publish|install|download>",
+        "operit2 market <rank|list|search|show|comments|comment|like|notifications|my|publish|install|download>",
     );
     output.push_stdout_line("operit2 host <show|capabilities|paths>");
     output.push_stdout_line("operit2 log <show|package|path|clear>");

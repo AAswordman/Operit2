@@ -1,12 +1,35 @@
 use operit_host_api::{
     HostResult, HttpDownloadControl, HttpDownloadProgressCallback, HttpDownloadRequest,
-    HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData,
+    HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData, HttpStreamChunkCallback,
+    HttpStreamClosedCallback, HttpStreamHost, HttpStreamOpenedCallback,
 };
 use operit_host_native_common::NativeHttpHost;
 
 #[derive(Clone, Debug, Default)]
 pub struct WindowsHttpHost {
     inner: NativeHttpHost,
+}
+
+impl HttpStreamHost for WindowsHttpHost {
+    /// Opens one Windows HTTP byte stream through the shared native Host implementation.
+    #[allow(non_snake_case)]
+    fn openHttpByteStream(
+        &self,
+        streamId: String,
+        request: HttpRequestData,
+        onOpened: HttpStreamOpenedCallback,
+        onChunk: HttpStreamChunkCallback,
+        onClosed: HttpStreamClosedCallback,
+    ) -> HostResult<()> {
+        self.inner
+            .openHttpByteStream(streamId, request, onOpened, onChunk, onClosed)
+    }
+
+    /// Closes one Windows HTTP byte stream.
+    #[allow(non_snake_case)]
+    fn closeHttpByteStream(&self, streamId: &str) -> HostResult<()> {
+        self.inner.closeHttpByteStream(streamId)
+    }
 }
 
 impl WindowsHttpHost {

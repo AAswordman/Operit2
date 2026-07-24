@@ -459,7 +459,7 @@ class ChatScreenContent extends StatelessWidget {
 
     try {
       final selectedMessages = selectedMessageIndices.toList()..sort();
-      final file = await ChatShareImageGenerator.generate(
+      final image = await ChatShareImageGenerator.generate(
         context: context,
         messages: selectedMessages.map((index) => messages[index]).toList(),
       );
@@ -471,7 +471,7 @@ class ChatScreenContent extends StatelessWidget {
         context: context,
         builder: (context) {
           return ChatShareImagePreviewDialog(
-            imageFile: file,
+            image: image,
             onDismiss: () => Navigator.of(context).pop(),
           );
         },

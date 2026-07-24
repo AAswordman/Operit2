@@ -314,10 +314,9 @@ Widget sqrtSvg({
         minDelimiterHeight,
   );
 
-  final extraViniculum = 0.0; //math.max(0.0, options)
-  // final ruleWidth =
-  //     options.fontMetrics.sqrtRuleThickness.cssEm.toLpUnder(options);
-  // TODO: support Settings.minRuleThickness.
+  final sqrtRuleThickness = options.fontMetrics.sqrtRuleThickness;
+  final ruleThickness = math.max(sqrtRuleThickness, options.minRuleThickness);
+  final extraViniculum = ruleThickness - sqrtRuleThickness;
 
   // These are the known height + depth for \u221A
   if (delimConf != null) {
@@ -341,9 +340,7 @@ Widget sqrtSvg({
       final viewBoxWidth = viewPortWidth.lp.toCssEmUnder(delimOptions) * 1000;
       final svgPath = sqrtPath('sqrtMain', extraViniculum, viewBoxHeight);
       return ResetBaseline(
-        height: (options.fontMetrics.sqrtRuleThickness + extraViniculum)
-            .cssEm
-            .toLpUnder(delimOptions),
+        height: ruleThickness.cssEm.toLpUnder(delimOptions),
         child: MinDimension(
           topPadding: -emPad.cssEm.toLpUnder(delimOptions),
           child: svgWidgetFromPath(
@@ -369,9 +366,7 @@ Widget sqrtSvg({
       final svgPath = sqrtPath('sqrt${delimConf.font.fontName.substring(0, 5)}',
           extraViniculum, viewBoxHeight);
       return ResetBaseline(
-        height: (options.fontMetrics.sqrtRuleThickness + extraViniculum)
-            .cssEm
-            .toLpUnder(delimOptions),
+        height: ruleThickness.cssEm.toLpUnder(delimOptions),
         child: MinDimension(
           topPadding: -emPad.cssEm.toLpUnder(delimOptions),
           child: svgWidgetFromPath(
@@ -398,9 +393,7 @@ Widget sqrtSvg({
     final viewBoxWidth = viewPortWidth.lp.toCssEmUnder(options) * 1000;
     final svgPath = sqrtPath('sqrtTall', extraViniculum, viewBoxHeight);
     return ResetBaseline(
-      height: (options.fontMetrics.sqrtRuleThickness + extraViniculum)
-          .cssEm
-          .toLpUnder(options),
+      height: ruleThickness.cssEm.toLpUnder(options),
       child: MinDimension(
         topPadding: -emPad.cssEm.toLpUnder(options),
         child: svgWidgetFromPath(

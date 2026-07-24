@@ -7,3 +7,4 @@ publish = false
 
 [dependencies]
 operit-host-apple-native = { path = "../apple" }
+operit-host-api = { path = "../../core/crates/operit-host-api" }

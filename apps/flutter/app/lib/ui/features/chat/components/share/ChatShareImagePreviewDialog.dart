@@ -1,22 +1,22 @@
 // ignore_for_file: file_names
 
-import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../common/components/OperitDialog.dart';
-import '../../../../../core/path/OperitClientPaths.dart';
+import '../../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import 'ChatShareImageGenerator.dart';
 
 class ChatShareImagePreviewDialog extends StatelessWidget {
   const ChatShareImagePreviewDialog({
     super.key,
-    required this.imageFile,
+    required this.image,
     required this.onDismiss,
   });
 
-  final File imageFile;
+  final ChatShareImage image;
   final VoidCallback onDismiss;
 
   @override
@@ -31,23 +31,9 @@ class ChatShareImagePreviewDialog extends StatelessWidget {
       onClose: onDismiss,
       actions: <Widget>[
         IconButton(
-          onPressed: () {
-            Clipboard.setData(ClipboardData(text: imageFile.path));
-          },
-          icon: const Icon(Icons.content_copy),
-          tooltip: '复制路径',
-        ),
-        IconButton(
           onPressed: () => _saveImage(context),
           icon: const Icon(Icons.save_alt),
           tooltip: '保存',
-        ),
-        FilledButton.icon(
-          onPressed: () {
-            launchUrl(Uri.file(imageFile.path));
-          },
-          icon: const Icon(Icons.open_in_new, size: 18),
-          label: const Text('打开'),
         ),
       ],
       child: Column(
@@ -65,14 +51,14 @@ class ChatShareImagePreviewDialog extends StatelessWidget {
                 child: InteractiveViewer(
                   minScale: 0.4,
                   maxScale: 5,
-                  child: Center(child: Image.file(imageFile)),
+                  child: Center(child: Image.memory(image.bytes)),
                 ),
               ),
             ),
           ),
           const SizedBox(height: 12),
           Text(
-            imageFile.path,
+            image.storagePath,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodySmall?.copyWith(
@@ -85,16 +71,20 @@ class ChatShareImagePreviewDialog extends StatelessWidget {
   }
 
   Future<void> _saveImage(BuildContext context) async {
-    final outputDirectory = await OperitClientPaths.shareImageExportsDir();
-    final outputFile = File(
-      '${outputDirectory.path}${Platform.pathSeparator}operit_share_${DateTime.now().millisecondsSinceEpoch}.png',
+    const clients = GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
+    final directory = await clients.repositoryRuntimeStorageRepository
+        .shareImageExportsDirPath();
+    final storagePath =
+        '$directory/operit_share_${DateTime.now().millisecondsSinceEpoch}.png';
+    await clients.repositoryRuntimeStorageRepository.writeBase64(
+      path: storagePath,
+      base64Content: base64Encode(image.bytes),
     );
-    await imageFile.copy(outputFile.path);
     if (!context.mounted) {
       return;
     }
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('已保存：${outputFile.path}')));
+    ).showSnackBar(SnackBar(content: Text('已保存：$storagePath')));
   }
 }

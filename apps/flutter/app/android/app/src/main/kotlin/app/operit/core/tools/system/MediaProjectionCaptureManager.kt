@@ -11,8 +11,8 @@ import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.WindowManager
-import app.operit.AndroidClientLogger
 import java.io.File
 import java.io.FileOutputStream
 
@@ -60,22 +60,14 @@ class MediaProjectionCaptureManager(
                     null,
                 )
 
-            AndroidClientLogger.d(
-                context.applicationContext,
-                TAG,
-                "Created MediaProjection virtual display: ${width}x$height",
-            )
+            Log.d(TAG, "Created MediaProjection virtual display: ${width}x$height")
         } catch (error: Exception) {
             try {
                 imageReader?.close()
             } catch (_: Exception) {
             }
             imageReader = null
-            AndroidClientLogger.e(
-                context.applicationContext,
-                TAG,
-                "Failed to create MediaProjection virtual display: ${error.message.orEmpty()}",
-            )
+            Log.e(TAG, "Failed to create MediaProjection virtual display", error)
         }
     }
 
@@ -85,7 +77,7 @@ class MediaProjectionCaptureManager(
         val callback =
             object : MediaProjection.Callback() {
                 override fun onStop() {
-                    AndroidClientLogger.w(context.applicationContext, TAG, "MediaProjection stopped")
+                    Log.w(TAG, "MediaProjection stopped")
                     try {
                         MediaProjectionHolder.clear(context)
                     } catch (_: Exception) {
@@ -99,11 +91,7 @@ class MediaProjectionCaptureManager(
             mediaProjection.registerCallback(callback, callbackHandler)
         } catch (error: Exception) {
             projectionCallback = null
-            AndroidClientLogger.e(
-                context.applicationContext,
-                TAG,
-                "Failed to register MediaProjection callback: ${error.message.orEmpty()}",
-            )
+            Log.e(TAG, "Failed to register MediaProjection callback", error)
         }
     }
 
@@ -138,11 +126,7 @@ class MediaProjectionCaptureManager(
 
             cropped
         } catch (error: Exception) {
-            AndroidClientLogger.e(
-                context.applicationContext,
-                TAG,
-                "Error capturing frame from MediaProjection: ${error.message.orEmpty()}",
-            )
+            Log.e(TAG, "Error capturing frame from MediaProjection", error)
             null
         } finally {
             image?.close()
@@ -159,11 +143,7 @@ class MediaProjectionCaptureManager(
             }
             true
         } catch (error: Exception) {
-            AndroidClientLogger.e(
-                context.applicationContext,
-                TAG,
-                "Error writing MediaProjection capture to file: ${error.message.orEmpty()}",
-            )
+            Log.e(TAG, "Error writing MediaProjection capture to file", error)
             false
         } finally {
             bitmap.recycle()
@@ -175,11 +155,7 @@ class MediaProjectionCaptureManager(
             virtualDisplay?.release()
             imageReader?.close()
         } catch (error: Exception) {
-            AndroidClientLogger.e(
-                context.applicationContext,
-                TAG,
-                "Error releasing resources: ${error.message.orEmpty()}",
-            )
+            Log.e(TAG, "Error releasing resources", error)
         }
         virtualDisplay = null
         imageReader = null

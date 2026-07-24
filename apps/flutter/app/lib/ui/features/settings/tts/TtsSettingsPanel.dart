@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../../chat/tts/TtsPlaybackController.dart';
@@ -259,10 +260,12 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
     String currentConfigId,
     Set<String> characterBoundConfigIds,
   ) async {
+    final l10n = AppLocalizations.of(context)!;
     if (_ttsConfigDeleteBlockedReason(
           config,
           currentConfigId,
           characterBoundConfigIds,
+          l10n,
         )
         case final reason?) {
       if (!mounted) {
@@ -306,6 +309,7 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
     String currentConfigId,
     Set<String> characterBoundConfigIds,
   ) async {
+    final l10n = AppLocalizations.of(context)!;
     final result = await _TtsVoiceConfigDialog.show(
       context: context,
       config: config,
@@ -313,6 +317,7 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
         config,
         currentConfigId,
         characterBoundConfigIds,
+        l10n,
       ),
       onTest: () => _testTtsConfig(config),
     );
@@ -399,45 +404,140 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
     _reload();
   }
 
+  /// Edits or deletes all voice configurations owned by one TTS provider.
   Future<void> _editProvider(
     _TtsProviderGroup group,
     List<core_proxy.TtsProviderCatalogEntry> providerCatalogEntries,
+    String currentConfigId,
+    Set<String> characterBoundConfigIds,
   ) async {
-    final edited = await _TtsProviderDialog.show(
+    final l10n = AppLocalizations.of(context)!;
+    final result = await _TtsProviderDialog.show(
       context: context,
       config: group.configs.first,
       providerCatalogEntries: providerCatalogEntries,
+      deleteBlockedReason: _ttsProviderGroupDeleteBlockedReason(
+        group,
+        currentConfigId,
+        characterBoundConfigIds,
+        l10n,
+      ),
     );
-    if (edited == null) {
+    if (result == null) {
       return;
     }
-    final manager = widget.clients.preferencesTtsConfigManager;
-    final now = DateTime.now().millisecondsSinceEpoch;
-    for (final config in group.configs) {
-      await manager.updateTtsConfig(
-        config: core_proxy.TtsConfig(
-          id: config.id,
-          name: edited.name,
-          providerType: edited.providerType,
-          endpoint: edited.endpoint,
-          apiKey: edited.apiKey,
-          model: config.model,
-          voice: config.voice,
-          responseFormat: config.responseFormat,
-          speed: config.speed,
-          httpMethod: edited.httpMethod,
-          requestBody: edited.requestBody,
-          contentType: edited.contentType,
-          headers: edited.headers,
-          responsePipeline: edited.responsePipeline,
-          createdAt: config.createdAt,
-          updatedAt: now,
+    switch (result) {
+      case _TtsProviderEditSaved(:final values):
+        final manager = widget.clients.preferencesTtsConfigManager;
+        final now = DateTime.now().millisecondsSinceEpoch;
+        for (final config in group.configs) {
+          await manager.updateTtsConfig(
+            config: core_proxy.TtsConfig(
+              id: config.id,
+              name: values.name,
+              providerType: values.providerType,
+              endpoint: values.endpoint,
+              apiKey: values.apiKey,
+              model: config.model,
+              voice: config.voice,
+              responseFormat: config.responseFormat,
+              speed: config.speed,
+              httpMethod: values.httpMethod,
+              requestBody: values.requestBody,
+              contentType: values.contentType,
+              headers: values.headers,
+              responsePipeline: values.responsePipeline,
+              createdAt: config.createdAt,
+              updatedAt: now,
+            ),
+          );
+        }
+        _providerExpansionInitialized = false;
+        _expandedProviderKeys.clear();
+        _reload();
+      case _TtsProviderEditDeleted():
+        await _confirmDeleteTtsProvider(
+          group,
+          currentConfigId,
+          characterBoundConfigIds,
+        );
+    }
+  }
+
+  /// Confirms deletion of every voice configuration that belongs to one provider.
+  Future<void> _confirmDeleteTtsProvider(
+    _TtsProviderGroup group,
+    String currentConfigId,
+    Set<String> characterBoundConfigIds,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.settingsTtsDeleteProvider),
+        content: Text(
+          l10n.settingsTtsDeleteProviderConfirm(
+            group.title,
+            group.configs.length,
+          ),
         ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton.tonalIcon(
+            onPressed: () => Navigator.of(context).pop(true),
+            icon: const Icon(Icons.delete_outline),
+            label: Text(l10n.delete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    await _deleteTtsProvider(group, currentConfigId, characterBoundConfigIds);
+  }
+
+  /// Deletes every voice configuration that belongs to one unreferenced provider.
+  Future<void> _deleteTtsProvider(
+    _TtsProviderGroup group,
+    String currentConfigId,
+    Set<String> characterBoundConfigIds,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    final blockedReason = _ttsProviderGroupDeleteBlockedReason(
+      group,
+      currentConfigId,
+      characterBoundConfigIds,
+      l10n,
+    );
+    if (blockedReason != null) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(blockedReason)));
+      return;
+    }
+    try {
+      final manager = widget.clients.preferencesTtsConfigManager;
+      for (final config in group.configs) {
+        await manager.deleteTtsConfig(id: config.id);
+      }
+      _providerExpansionInitialized = false;
+      _expandedProviderKeys.clear();
+      _reload();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.settingsTtsDeleteProviderFailed('$error'))),
       );
     }
-    _providerExpansionInitialized = false;
-    _expandedProviderKeys.clear();
-    _reload();
   }
 
   void _initializeProviderExpansion(
@@ -501,8 +601,12 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
                   expandedProviderKeys: _expandedProviderKeys,
                   onToggleProviderExpanded: _toggleProviderExpanded,
                   onAddVoice: _addProviderVoice,
-                  onEditProvider: (group) =>
-                      _editProvider(group, data.providerCatalogEntries),
+                  onEditProvider: (group) => _editProvider(
+                    group,
+                    data.providerCatalogEntries,
+                    data.currentConfigId,
+                    data.characterBoundConfigIds,
+                  ),
                   onEditConfig: (config) => _openVoiceEditor(
                     config,
                     data.currentConfigId,

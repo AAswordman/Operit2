@@ -39,6 +39,14 @@ class ThemeAssetStore {
   Future<ThemeAssetImport> importFile(XFile file) async {
     final bytes = await file.readAsBytes();
     final fileName = _themeAssetFileName(file);
+    return importBytes(bytes: bytes, fileName: fileName);
+  }
+
+  /// Imports prepared bytes into the runtime theme asset pool.
+  Future<ThemeAssetImport> importBytes({
+    required Uint8List bytes,
+    required String fileName,
+  }) async {
     final extension = _themeAssetExtension(fileName);
     final directory = await _runtimeStorage.themeAssetsDirPath();
     final digest = sha256.convert(bytes).toString().substring(0, 16);
@@ -115,7 +123,14 @@ class _ThemeAssetImageState extends State<ThemeAssetImage> {
         if (bytes == null) {
           return const SizedBox.expand();
         }
-        return Image.memory(bytes, fit: widget.fit);
+        return SizedBox.expand(
+          child: Image.memory(
+            bytes,
+            fit: widget.fit,
+            width: double.infinity,
+            height: double.infinity,
+          ),
+        );
       },
     );
   }

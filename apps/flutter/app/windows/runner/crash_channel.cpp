@@ -5,13 +5,15 @@
 #include <flutter/standard_method_codec.h>
 #include <windows.h>
 
+#include "engine_channel_lifetime.h"
+
 #include <memory>
 #include <string>
 #include <variant>
 
 namespace {
 
-std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+std::shared_ptr<flutter::MethodChannel<flutter::EncodableValue>>
     g_operit_crash_channel;
 
 /// Converts UTF-8 crash details into a Windows wide string.
@@ -39,6 +41,16 @@ const std::string* CrashDetails(
   return std::get_if<std::string>(&found->second);
 }
 
+/// Unregisters one crash channel while its Flutter messenger is valid.
+void ShutdownOperitCrashChannelInstance(
+    const std::shared_ptr<flutter::MethodChannel<flutter::EncodableValue>>&
+        channel) {
+  channel->SetMethodCallHandler(nullptr);
+  if (g_operit_crash_channel == channel) {
+    g_operit_crash_channel.reset();
+  }
+}
+
 }  // namespace
 
 /// Presents a native Windows crash dialog with the supplied details.
@@ -50,10 +62,10 @@ void ShowOperitWindowsCrashScreen(const std::string& details) {
 
 /// Registers the Flutter crash presentation channel for this engine.
 void RegisterOperitCrashChannel(flutter::FlutterEngine* engine) {
-  g_operit_crash_channel = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+  auto channel = std::make_shared<flutter::MethodChannel<flutter::EncodableValue>>(
       engine->messenger(), "operit/crash",
       &flutter::StandardMethodCodec::GetInstance());
-  g_operit_crash_channel->SetMethodCallHandler(
+  channel->SetMethodCallHandler(
       [](const flutter::MethodCall<flutter::EncodableValue>& method_call,
          std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
         if (method_call.method_name() != "present") {
@@ -68,9 +80,14 @@ void RegisterOperitCrashChannel(flutter::FlutterEngine* engine) {
         ShowOperitWindowsCrashScreen(*details);
         result->Success();
       });
+  g_operit_crash_channel = channel;
+  RegisterOperitEngineChannelShutdown(
+      engine, [channel]() { ShutdownOperitCrashChannelInstance(channel); });
 }
 
 /// Releases the crash channel while the Flutter engine messenger is valid.
 void ShutdownOperitCrashChannel() {
-  g_operit_crash_channel.reset();
+  if (g_operit_crash_channel) {
+    ShutdownOperitCrashChannelInstance(g_operit_crash_channel);
+  }
 }

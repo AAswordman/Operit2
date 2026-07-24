@@ -3,6 +3,8 @@
   "askOperitHint": "向 Operit 提问",
   "aiChat": "AI聊天",
   "fullscreenInput": "全屏输入",
+  "expandInput": "展开输入框",
+  "collapseInput": "收起输入框",
   "settings": "设置",
   "packageManager": "包管理",
   "market": "市场",
@@ -314,6 +316,8 @@
   "protectedMedia": "受保护媒体",
   "midiDevice": "MIDI 设备",
   "browserPermissionRequestTitle": "网页权限请求",
+  "chatSpeechInputFailed": "语音输入失败，请重试",
+  "chatSpeechNoTextRecognized": "未识别到文本",
   "history": "历史记录",
   "bookmarks": "收藏夹",
   "downloads": "下载",
@@ -494,6 +498,28 @@
     }
   },
   "settingsModelDeleteProviderConfirmAction": "删除供应商",
+  "settingsTtsDeleteProvider": "删除 TTS 供应商",
+  "settingsTtsDeleteProviderConfirm": "删除 TTS 供应商“{name}”及其 {count} 个音色配置？",
+  "@settingsTtsDeleteProviderConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsTtsDeleteProviderFailed": "删除 TTS 供应商失败：{error}",
+  "@settingsTtsDeleteProviderFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsTtsCurrentConfigCannotDelete": "当前正在使用的 TTS 配置不能删除",
+  "settingsTtsConfigUsedByCharacter": "该 TTS 配置正在被角色卡使用，不能删除",
   "settingsModelChatAutoGlmWarning": "禁止使用 AutoGLM 作为对话主模型。对话模型和 UI 控制模型是分离的，请选择其他大模型。",
   "settingsModelFunctionChat": "聊天",
   "settingsModelFunctionChatDescription": "主对话回复使用的模型。",

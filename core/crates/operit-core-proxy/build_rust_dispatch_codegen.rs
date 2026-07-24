@@ -498,6 +498,12 @@ fn render_object_constructor(object: &SourceObject, mode: DispatchMode) -> Strin
                 object.full_type
             )
         }
+        ObjectAccess::CoreProxyConstruct => {
+            format!(
+                "            let mut object = {}::new(proxy.clone());\n",
+                object.full_type
+            )
+        }
         ObjectAccess::StorePathsConstruct => {
             format!(
                 "            let mut object = {}::new(operit_store::RuntimeStorePaths::RuntimeStorePaths::default());\n",
@@ -644,6 +650,9 @@ fn render_object_constructor_for_access(
             format!(
                 "            let {variable_name} = {full_type}::getInstance(&proxy.hostManager);\n"
             )
+        }
+        ObjectAccess::CoreProxyConstruct => {
+            format!("            let mut {variable_name} = {full_type}::new(proxy.clone());\n")
         }
         ObjectAccess::StorePathsConstruct => {
             format!(

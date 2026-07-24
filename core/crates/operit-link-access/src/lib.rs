@@ -1,44 +1,73 @@
 use std::collections::BTreeMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::net::SocketAddr;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex as StdMutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Mutex as StdMutex;
+use std::sync::Arc;
 
 use async_trait::async_trait;
+#[cfg(not(target_arch = "wasm32"))]
 use axum::body::Body;
+#[cfg(not(target_arch = "wasm32"))]
 use axum::body::Bytes;
+#[cfg(not(target_arch = "wasm32"))]
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+#[cfg(not(target_arch = "wasm32"))]
 use axum::extract::{Json, Path as AxumPath, State};
+#[cfg(not(target_arch = "wasm32"))]
 use axum::http::{HeaderMap, StatusCode};
+#[cfg(not(target_arch = "wasm32"))]
 use axum::response::{IntoResponse, Response};
+#[cfg(not(target_arch = "wasm32"))]
 use axum::routing::{get, post};
+#[cfg(not(target_arch = "wasm32"))]
 use axum::Router;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+#[cfg(not(target_arch = "wasm32"))]
 use futures_util::StreamExt;
 use hmac::{Hmac, Mac};
-use rand_core::OsRng;
+use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, oneshot, Mutex};
-use tokio::task::JoinHandle;
+use tokio::sync::Mutex;
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::sync::oneshot;
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 
+#[cfg(not(target_arch = "wasm32"))]
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
-use operit_host_api::{HostRuntimeTaskSchedulerHost, RuntimeStorageHost};
+use operit_host_api::HostManager::defaultHttpHost;
+#[cfg(not(target_arch = "wasm32"))]
+use operit_host_api::HostRuntimeTaskSchedulerHost;
+use operit_host_api::{HttpRequestData, RuntimeStorageHost, TimeUtils::currentTimeMillis};
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError, CorePushItem,
     CorePushRequest, CoreWatchRequest,
 };
-use operit_link::{CoreLinkClient, CoreLinkTransportClient};
+use operit_link::CoreLinkClient;
+#[cfg(not(target_arch = "wasm32"))]
+use operit_link::CoreLinkTransportClient;
+use operit_store::PreferencesDataStore::{
+    emptyPreferences, stringPreferencesKey, Preferences, PreferencesDataStore,
+};
+#[cfg(not(target_arch = "wasm32"))]
 use operit_runtime::services::RuntimeHostInteractionService::{
     withRuntimeHostInteractionOrigin, RuntimeHostInteractionRequestOrigin,
 };
+
+#[cfg(test)]
+mod tests;
+
 type HmacSha256 = Hmac<Sha256>;
 pub const REMOTE_PAIRING_SERVICE_VERSION: i32 = 1;
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct RemoteLinkServerConfig {
     pub bindAddress: String,
@@ -51,6 +80,7 @@ pub struct RemoteLinkServerConfig {
     pub accessStore: LinkAccessStore,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct RemoteLinkServer;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -71,11 +101,29 @@ pub struct AcceptedRemoteSessionRecord {
     pub sessionSecret: String,
 }
 
-pub const LINK_ACCESS_IDENTITY_PATH: &str = "runtime/link_access/identity.json";
-pub const LINK_ACCESS_INBOUND_SESSIONS_PATH: &str = "runtime/link_access/inbound_sessions.json";
-pub const LINK_ACCESS_OUTBOUND_SESSIONS_PATH: &str = "runtime/link_access/outbound_sessions.json";
-pub const LINK_ACCESS_PENDING_PAIRINGS_PATH: &str = "runtime/link_access/pending_pairings.json";
-pub const LINK_ACCESS_HOST_CONFIG_PATH: &str = "runtime/link_access/host_config.json";
+pub const LINK_ACCESS_IDENTITY_PATH: &str = "runtime/link_access/identity.preferences.json";
+pub const LINK_ACCESS_INBOUND_SESSIONS_PATH: &str =
+    "runtime/link_access/inbound_sessions.preferences.json";
+pub const LINK_ACCESS_OUTBOUND_SESSIONS_PATH: &str =
+    "runtime/link_access/outbound_sessions.preferences.json";
+pub const LINK_ACCESS_PENDING_PAIRINGS_PATH: &str =
+    "runtime/link_access/pending_pairings.preferences.json";
+pub const LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH: &str =
+    "runtime/link_access/pending_outbound_pairings.preferences.json";
+pub const LINK_ACCESS_HOST_CONFIG_PATH: &str = "runtime/link_access/host_config.preferences.json";
+pub const LINK_ACCESS_AUTO_SYNC_PATH: &str = "runtime/link_access/auto_sync.preferences.json";
+pub const LINK_ACCESS_ROUTING_PATH: &str = "runtime/link_access/routing.preferences.json";
+
+const LINK_ACCESS_RECORD_KEY: &str = "record";
+const LINK_ACCESS_BIND_ADDRESS_KEY: &str = "bindAddress";
+const LINK_ACCESS_TOKEN_KEY: &str = "token";
+const LINK_ACCESS_WEB_ACCESS_ENABLED_KEY: &str = "webAccessEnabled";
+const LINK_ACCESS_DISCOVERY_ENABLED_KEY: &str = "discoveryEnabled";
+const LINK_ACCESS_PORT_MODE_KEY: &str = "portMode";
+const LINK_ACCESS_AUTO_SYNC_REMOTE_NAMES_KEY: &str = "autoSyncRemoteNames";
+const LINK_ACCESS_ROUTE_TYPE_KEY: &str = "routeType";
+const LINK_ACCESS_REMOTE_SESSION_NAME_KEY: &str = "remoteSessionName";
+const LINK_ACCESS_UPDATED_AT_KEY: &str = "updatedAt";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LinkAccessIdentity {
@@ -89,6 +137,36 @@ pub struct LinkAccessHostConfig {
     pub token: String,
     pub webAccessEnabled: bool,
     pub discoveryEnabled: bool,
+    pub portMode: LinkAccessHostPortMode,
+    pub updatedAt: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum LinkAccessHostPortMode {
+    #[serde(rename = "automatic")]
+    Automatic,
+    #[serde(rename = "fixed")]
+    Fixed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LinkAccessAutoSyncConfig {
+    pub autoSyncRemoteNames: Vec<String>,
+    pub updatedAt: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum LinkAccessRoute {
+    #[serde(rename = "local")]
+    Local,
+    #[serde(rename = "remote")]
+    Remote { sessionName: String },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LinkAccessRoutingConfig {
+    pub route: LinkAccessRoute,
+    pub updatedAt: i64,
 }
 
 #[derive(Clone)]
@@ -97,6 +175,16 @@ pub struct LinkAccessStore {
 }
 
 impl LinkAccessStore {
+    /// Creates the Link Access datastore for the current runtime host.
+    #[allow(non_snake_case)]
+    pub fn getInstance(context: &operit_host_api::HostManager::HostManager) -> Self {
+        let storage = context
+            .runtimeStorageHost
+            .clone()
+            .expect("LinkAccessStore requires a RuntimeStorageHost");
+        Self::new(storage)
+    }
+
     /// Creates the repository that owns Link Access records for one runtime.
     pub fn new(storage: Arc<dyn RuntimeStorageHost>) -> Self {
         Self { storage }
@@ -107,26 +195,22 @@ impl LinkAccessStore {
         &self,
         deviceInfo: RemoteDeviceInfo,
     ) -> Result<LinkAccessIdentity, String> {
-        match self
-            .storage
-            .exists(LINK_ACCESS_IDENTITY_PATH)
-            .map_err(|error| error.message)?
-        {
-            true => self.readJson(LINK_ACCESS_IDENTITY_PATH),
-            false => {
-                let identity = LinkAccessIdentity {
-                    deviceId: format!("core-{}", Uuid::new_v4()),
-                    deviceInfo,
-                };
-                self.writeJson(LINK_ACCESS_IDENTITY_PATH, &identity)?;
-                Ok(identity)
-            }
+        let store = self.dataStore(LINK_ACCESS_IDENTITY_PATH);
+        let preferences = self.readPreferences(&store)?;
+        if !preferences.entries().is_empty() {
+            return readPreferenceRecord(&preferences, LINK_ACCESS_RECORD_KEY, LINK_ACCESS_IDENTITY_PATH);
         }
+        let identity = LinkAccessIdentity {
+            deviceId: format!("core-{}", Uuid::new_v4()),
+            deviceInfo,
+        };
+        writeSingleRecord(&store, &identity)?;
+        Ok(identity)
     }
 
     /// Returns every accepted inbound session owned by this runtime.
     pub fn inboundSessions(&self) -> Result<BTreeMap<String, AcceptedRemoteSessionRecord>, String> {
-        self.readMap(LINK_ACCESS_INBOUND_SESSIONS_PATH)
+        self.readRecordMap(LINK_ACCESS_INBOUND_SESSIONS_PATH)
     }
 
     /// Persists one accepted inbound session owned by this runtime.
@@ -135,21 +219,17 @@ impl LinkAccessStore {
         sessionId: String,
         record: AcceptedRemoteSessionRecord,
     ) -> Result<(), String> {
-        let mut sessions = self.inboundSessions()?;
-        sessions.insert(sessionId, record);
-        self.writeJson(LINK_ACCESS_INBOUND_SESSIONS_PATH, &sessions)
+        self.writeMapRecord(LINK_ACCESS_INBOUND_SESSIONS_PATH, &sessionId, &record)
     }
 
     /// Removes one accepted inbound session owned by this runtime.
     pub fn removeInboundSession(&self, sessionId: &str) -> Result<(), String> {
-        let mut sessions = self.inboundSessions()?;
-        sessions.remove(sessionId);
-        self.writeJson(LINK_ACCESS_INBOUND_SESSIONS_PATH, &sessions)
+        self.removeMapRecord(LINK_ACCESS_INBOUND_SESSIONS_PATH, sessionId)
     }
 
     /// Returns every named outbound session owned by this runtime.
     pub fn outboundSessions(&self) -> Result<BTreeMap<String, PairedRemoteSessionRecord>, String> {
-        self.readMap(LINK_ACCESS_OUTBOUND_SESSIONS_PATH)
+        self.readRecordMap(LINK_ACCESS_OUTBOUND_SESSIONS_PATH)
     }
 
     /// Persists one named outbound session owned by this runtime.
@@ -158,80 +238,438 @@ impl LinkAccessStore {
         name: String,
         record: PairedRemoteSessionRecord,
     ) -> Result<(), String> {
-        let mut sessions = self.outboundSessions()?;
-        sessions.insert(name, record);
-        self.writeJson(LINK_ACCESS_OUTBOUND_SESSIONS_PATH, &sessions)
+        self.writeMapRecord(LINK_ACCESS_OUTBOUND_SESSIONS_PATH, &name, &record)
     }
 
     /// Removes one named outbound session owned by this runtime.
     pub fn removeOutboundSession(&self, name: &str) -> Result<(), String> {
-        let mut sessions = self.outboundSessions()?;
-        sessions.remove(name);
-        self.writeJson(LINK_ACCESS_OUTBOUND_SESSIONS_PATH, &sessions)
+        self.removeMapRecord(LINK_ACCESS_OUTBOUND_SESSIONS_PATH, name)
     }
 
     /// Returns every pending pairing owned by this runtime.
     pub fn pendingPairings(&self) -> Result<BTreeMap<String, RemotePairingCodeRecord>, String> {
-        self.readMap(LINK_ACCESS_PENDING_PAIRINGS_PATH)
+        self.readRecordMap(LINK_ACCESS_PENDING_PAIRINGS_PATH)
     }
 
     /// Persists one pending pairing owned by this runtime.
     pub fn savePendingPairing(&self, record: RemotePairingCodeRecord) -> Result<(), String> {
-        let mut pairings = self.pendingPairings()?;
-        pairings.insert(record.pairingId.clone(), record);
-        self.writeJson(LINK_ACCESS_PENDING_PAIRINGS_PATH, &pairings)
+        self.writeMapRecord(
+            LINK_ACCESS_PENDING_PAIRINGS_PATH,
+            &record.pairingId.clone(),
+            &record,
+        )
     }
 
     /// Removes one pending pairing owned by this runtime.
     pub fn removePendingPairing(&self, pairingId: &str) -> Result<(), String> {
-        let mut pairings = self.pendingPairings()?;
-        pairings.remove(pairingId);
-        self.writeJson(LINK_ACCESS_PENDING_PAIRINGS_PATH, &pairings)
+        self.removeMapRecord(LINK_ACCESS_PENDING_PAIRINGS_PATH, pairingId)
+    }
+
+    /// Returns every pending outbound pairing initiated by this runtime.
+    #[allow(non_snake_case)]
+    pub fn pendingOutboundPairings(
+        &self,
+    ) -> Result<BTreeMap<String, PendingOutboundPairingRecord>, String> {
+        self.readRecordMap(LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH)
+    }
+
+    /// Persists one pending outbound pairing initiated by this runtime.
+    #[allow(non_snake_case)]
+    pub fn savePendingOutboundPairing(
+        &self,
+        pairingId: String,
+        record: PendingOutboundPairingRecord,
+    ) -> Result<(), String> {
+        self.writeMapRecord(LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH, &pairingId, &record)
+    }
+
+    /// Removes one pending outbound pairing after it has completed or been cancelled.
+    #[allow(non_snake_case)]
+    pub fn removePendingOutboundPairing(&self, pairingId: &str) -> Result<(), String> {
+        self.removeMapRecord(LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH, pairingId)
     }
 
     /// Persists the active Link Access host configuration for this runtime.
-    pub fn saveHostConfig(&self, config: &LinkAccessHostConfig) -> Result<(), String> {
-        self.writeJson(LINK_ACCESS_HOST_CONFIG_PATH, config)
+    pub fn saveHostConfig(&self, config: LinkAccessHostConfig) -> Result<(), String> {
+        writeHostConfigPreferences(&self.dataStore(LINK_ACCESS_HOST_CONFIG_PATH), &config)
+    }
+
+    /// Initializes and returns the active Link Access host configuration.
+    pub fn initializeHostConfig(&self) -> Result<LinkAccessHostConfig, String> {
+        let store = self.dataStore(LINK_ACCESS_HOST_CONFIG_PATH);
+        let preferences = self.readPreferences(&store)?;
+        if !preferences.entries().is_empty() {
+            return hostConfigFromPreferences(&preferences);
+        }
+        let config = LinkAccessHostConfig {
+            bindAddress: "0.0.0.0:37194".to_string(),
+            token: link_access_token(),
+            webAccessEnabled: false,
+            discoveryEnabled: false,
+            portMode: LinkAccessHostPortMode::Automatic,
+            updatedAt: currentTimeMillis(),
+        };
+        writeHostConfigPreferences(&store, &config)?;
+        Ok(config)
     }
 
     /// Reads the active Link Access host configuration for this runtime.
     pub fn hostConfig(&self) -> Result<LinkAccessHostConfig, String> {
-        self.readJson(LINK_ACCESS_HOST_CONFIG_PATH)
+        hostConfigFromPreferences(&self.readPreferences(&self.dataStore(LINK_ACCESS_HOST_CONFIG_PATH))?)
     }
 
-    /// Reads an initialized JSON record from runtime storage.
-    fn readJson<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, String> {
-        let bytes = self
-            .storage
-            .readBytes(path)
-            .map_err(|error| error.message)?;
-        serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+    /// Initializes and returns this runtime's Link auto-sync configuration.
+    #[allow(non_snake_case)]
+    pub fn initializeAutoSyncConfig(&self) -> Result<LinkAccessAutoSyncConfig, String> {
+        let store = self.dataStore(LINK_ACCESS_AUTO_SYNC_PATH);
+        let preferences = self.readPreferences(&store)?;
+        if !preferences.entries().is_empty() {
+            return autoSyncConfigFromPreferences(&preferences);
+        }
+        let config = LinkAccessAutoSyncConfig {
+            autoSyncRemoteNames: Vec::new(),
+            updatedAt: currentTimeMillis(),
+        };
+        writeAutoSyncConfigPreferences(&store, &config)?;
+        Ok(config)
     }
 
-    /// Reads a JSON map and creates its explicit empty runtime record on first use.
-    fn readMap<T: serde::de::DeserializeOwned + Serialize>(
+    /// Reads this runtime's Link auto-sync configuration.
+    #[allow(non_snake_case)]
+    pub fn autoSyncConfig(&self) -> Result<LinkAccessAutoSyncConfig, String> {
+        autoSyncConfigFromPreferences(&self.readPreferences(&self.dataStore(LINK_ACCESS_AUTO_SYNC_PATH))?)
+    }
+
+    /// Persists this runtime's Link auto-sync configuration.
+    #[allow(non_snake_case)]
+    pub fn saveAutoSyncConfig(
+        &self,
+        config: LinkAccessAutoSyncConfig,
+    ) -> Result<(), String> {
+        writeAutoSyncConfigPreferences(&self.dataStore(LINK_ACCESS_AUTO_SYNC_PATH), &config)
+    }
+
+    /// Initializes and returns this runtime's Link request routing configuration.
+    #[allow(non_snake_case)]
+    pub fn initializeRoutingConfig(&self) -> Result<LinkAccessRoutingConfig, String> {
+        let store = self.dataStore(LINK_ACCESS_ROUTING_PATH);
+        let preferences = self.readPreferences(&store)?;
+        if !preferences.entries().is_empty() {
+            return routingConfigFromPreferences(&preferences);
+        }
+        let config = LinkAccessRoutingConfig {
+            route: LinkAccessRoute::Local,
+            updatedAt: currentTimeMillis(),
+        };
+        writeRoutingConfigPreferences(&store, &config)?;
+        Ok(config)
+    }
+
+    /// Reads this runtime's Link request routing configuration.
+    #[allow(non_snake_case)]
+    pub fn routingConfig(&self) -> Result<LinkAccessRoutingConfig, String> {
+        routingConfigFromPreferences(&self.readPreferences(&self.dataStore(LINK_ACCESS_ROUTING_PATH))?)
+    }
+
+    /// Persists this runtime's Link request routing configuration.
+    #[allow(non_snake_case)]
+    pub fn saveRoutingConfig(&self, config: LinkAccessRoutingConfig) -> Result<(), String> {
+        validateRoutingConfig(&config)?;
+        writeRoutingConfigPreferences(&self.dataStore(LINK_ACCESS_ROUTING_PATH), &config)
+    }
+
+    /// Creates one local datastore for a Link Access preferences path.
+    fn dataStore(&self, path: &str) -> PreferencesDataStore {
+        PreferencesDataStore::newWithStorage(self.storage.clone(), path)
+    }
+
+    /// Reads one Link Access preferences snapshot.
+    fn readPreferences(&self, store: &PreferencesDataStore) -> Result<Preferences, String> {
+        store.data().map_err(|error| error.to_string())
+    }
+
+    /// Reads every keyed record from a Link Access datastore.
+    fn readRecordMap<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
     ) -> Result<BTreeMap<String, T>, String> {
-        match self.storage.exists(path).map_err(|error| error.message)? {
-            true => self.readJson(path),
-            false => {
-                let values = BTreeMap::<String, T>::new();
-                self.writeJson(path, &values)?;
-                Ok(values)
-            }
+        let preferences = self.readPreferences(&self.dataStore(path))?;
+        let mut records = BTreeMap::new();
+        for (name, encoded) in preferences.entries() {
+            records.insert(
+                name,
+                serde_json::from_str(&encoded).map_err(|error| error.to_string())?,
+            );
         }
+        Ok(records)
     }
 
-    /// Writes a JSON record into runtime storage.
-    fn writeJson<T: Serialize>(&self, path: &str, value: &T) -> Result<(), String> {
-        let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
-        self.storage
-            .writeBytes(path, &bytes)
-            .map_err(|error| error.message)
+    /// Writes one keyed record into a Link Access datastore.
+    fn writeMapRecord<T: Serialize>(&self, path: &str, name: &str, value: &T) -> Result<(), String> {
+        let encoded = serde_json::to_string(value).map_err(|error| error.to_string())?;
+        self.dataStore(path)
+            .edit(|preferences| {
+                preferences.set(&stringPreferencesKey(name), encoded.clone());
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    /// Removes one keyed record from a Link Access datastore.
+    fn removeMapRecord(&self, path: &str, name: &str) -> Result<(), String> {
+        self.dataStore(path)
+            .edit(|preferences| {
+                preferences.remove(&stringPreferencesKey(name));
+            })
+            .map_err(|error| error.to_string())
     }
 }
 
+/// Writes one single-record datastore snapshot.
+fn writeSingleRecord<T: Serialize>(store: &PreferencesDataStore, value: &T) -> Result<(), String> {
+    let mut preferences = emptyPreferences();
+    preferences.set(
+        &stringPreferencesKey(LINK_ACCESS_RECORD_KEY),
+        serde_json::to_string(value).map_err(|error| error.to_string())?,
+    );
+    store
+        .replace(preferences)
+        .map_err(|error| error.to_string())
+}
+
+/// Reads one JSON-encoded preference value by key.
+fn readPreferenceRecord<T: serde::de::DeserializeOwned>(
+    preferences: &Preferences,
+    key: &str,
+    path: &str,
+) -> Result<T, String> {
+    let encoded = requiredPreference(preferences, key, path)?;
+    serde_json::from_str(&encoded).map_err(|error| error.to_string())
+}
+
+/// Reads one required preference string.
+fn requiredPreference(preferences: &Preferences, key: &str, path: &str) -> Result<String, String> {
+    preferences
+        .get(&stringPreferencesKey(key))
+        .cloned()
+        .ok_or_else(|| format!("Link Access store {path} is missing key {key}"))
+}
+
+/// Reads one required boolean preference string.
+fn requiredBoolPreference(
+    preferences: &Preferences,
+    key: &str,
+    path: &str,
+) -> Result<bool, String> {
+    requiredPreference(preferences, key, path)?
+        .parse::<bool>()
+        .map_err(|error| error.to_string())
+}
+
+/// Reads one required integer preference string.
+fn requiredI64Preference(
+    preferences: &Preferences,
+    key: &str,
+    path: &str,
+) -> Result<i64, String> {
+    requiredPreference(preferences, key, path)?
+        .parse::<i64>()
+        .map_err(|error| error.to_string())
+}
+
+/// Converts persisted host config preferences into the typed model.
+fn hostConfigFromPreferences(preferences: &Preferences) -> Result<LinkAccessHostConfig, String> {
+    Ok(LinkAccessHostConfig {
+        bindAddress: requiredPreference(
+            preferences,
+            LINK_ACCESS_BIND_ADDRESS_KEY,
+            LINK_ACCESS_HOST_CONFIG_PATH,
+        )?,
+        token: requiredPreference(preferences, LINK_ACCESS_TOKEN_KEY, LINK_ACCESS_HOST_CONFIG_PATH)?,
+        webAccessEnabled: requiredBoolPreference(
+            preferences,
+            LINK_ACCESS_WEB_ACCESS_ENABLED_KEY,
+            LINK_ACCESS_HOST_CONFIG_PATH,
+        )?,
+        discoveryEnabled: requiredBoolPreference(
+            preferences,
+            LINK_ACCESS_DISCOVERY_ENABLED_KEY,
+            LINK_ACCESS_HOST_CONFIG_PATH,
+        )?,
+        portMode: hostPortModeFromPreference(&requiredPreference(
+            preferences,
+            LINK_ACCESS_PORT_MODE_KEY,
+            LINK_ACCESS_HOST_CONFIG_PATH,
+        )?)?,
+        updatedAt: requiredI64Preference(
+            preferences,
+            LINK_ACCESS_UPDATED_AT_KEY,
+            LINK_ACCESS_HOST_CONFIG_PATH,
+        )?,
+    })
+}
+
+/// Converts persisted auto-sync preferences into the typed model.
+fn autoSyncConfigFromPreferences(
+    preferences: &Preferences,
+) -> Result<LinkAccessAutoSyncConfig, String> {
+    Ok(LinkAccessAutoSyncConfig {
+        autoSyncRemoteNames: serde_json::from_str(&requiredPreference(
+            preferences,
+            LINK_ACCESS_AUTO_SYNC_REMOTE_NAMES_KEY,
+            LINK_ACCESS_AUTO_SYNC_PATH,
+        )?)
+        .map_err(|error| error.to_string())?,
+        updatedAt: requiredI64Preference(
+            preferences,
+            LINK_ACCESS_UPDATED_AT_KEY,
+            LINK_ACCESS_AUTO_SYNC_PATH,
+        )?,
+    })
+}
+
+/// Converts persisted Link routing preferences into the typed model.
+fn routingConfigFromPreferences(
+    preferences: &Preferences,
+) -> Result<LinkAccessRoutingConfig, String> {
+    let route = match requiredPreference(
+        preferences,
+        LINK_ACCESS_ROUTE_TYPE_KEY,
+        LINK_ACCESS_ROUTING_PATH,
+    )?
+    .as_str()
+    {
+        "local" => LinkAccessRoute::Local,
+        "remote" => LinkAccessRoute::Remote {
+            sessionName: requiredPreference(
+                preferences,
+                LINK_ACCESS_REMOTE_SESSION_NAME_KEY,
+                LINK_ACCESS_ROUTING_PATH,
+            )?,
+        },
+        value => return Err(format!("invalid Link Access route type: {value}")),
+    };
+    let config = LinkAccessRoutingConfig {
+        route,
+        updatedAt: requiredI64Preference(
+            preferences,
+            LINK_ACCESS_UPDATED_AT_KEY,
+            LINK_ACCESS_ROUTING_PATH,
+        )?,
+    };
+    validateRoutingConfig(&config)?;
+    Ok(config)
+}
+
+/// Persists one host config through the local datastore API.
+fn writeHostConfigPreferences(
+    store: &PreferencesDataStore,
+    config: &LinkAccessHostConfig,
+) -> Result<(), String> {
+    let mut preferences = emptyPreferences();
+    preferences.set(
+        &stringPreferencesKey(LINK_ACCESS_BIND_ADDRESS_KEY),
+        config.bindAddress.clone(),
+    );
+    preferences.set(
+        &stringPreferencesKey(LINK_ACCESS_TOKEN_KEY),
+        config.token.clone(),
+    );
+    preferences.set(
+        &stringPreferencesKey(LINK_ACCESS_WEB_ACCESS_ENABLED_KEY),
+        config.webAccessEnabled.to_string(),
+    );
+    preferences.set(
+        &stringPreferencesKey(LINK_ACCESS_DISCOVERY_ENABLED_KEY),
+        config.discoveryEnabled.to_string(),
+    );
+    preferences.set(
+        &stringPreferencesKey(LINK_ACCESS_PORT_MODE_KEY),
+        hostPortModePreference(&config.portMode).to_string(),
+    );
+    preferences.set(
+        &stringPreferencesKey(LINK_ACCESS_UPDATED_AT_KEY),
+        config.updatedAt.to_string(),
+    );
+    store
+        .replace(preferences)
+        .map_err(|error| error.to_string())
+}
+
+/// Persists one auto-sync config through the local datastore API.
+fn writeAutoSyncConfigPreferences(
+    store: &PreferencesDataStore,
+    config: &LinkAccessAutoSyncConfig,
+) -> Result<(), String> {
+    let mut preferences = emptyPreferences();
+    preferences.set(
+        &stringPreferencesKey(LINK_ACCESS_AUTO_SYNC_REMOTE_NAMES_KEY),
+        serde_json::to_string(&config.autoSyncRemoteNames).map_err(|error| error.to_string())?,
+    );
+    preferences.set(
+        &stringPreferencesKey(LINK_ACCESS_UPDATED_AT_KEY),
+        config.updatedAt.to_string(),
+    );
+    store
+        .replace(preferences)
+        .map_err(|error| error.to_string())
+}
+
+/// Persists one Link routing configuration through the local datastore API.
+fn writeRoutingConfigPreferences(
+    store: &PreferencesDataStore,
+    config: &LinkAccessRoutingConfig,
+) -> Result<(), String> {
+    let mut preferences = emptyPreferences();
+    let (routeType, remoteSessionName) = match &config.route {
+        LinkAccessRoute::Local => ("local", String::new()),
+        LinkAccessRoute::Remote { sessionName } => ("remote", sessionName.clone()),
+    };
+    preferences.set(
+        &stringPreferencesKey(LINK_ACCESS_ROUTE_TYPE_KEY),
+        routeType.to_string(),
+    );
+    preferences.set(
+        &stringPreferencesKey(LINK_ACCESS_REMOTE_SESSION_NAME_KEY),
+        remoteSessionName,
+    );
+    preferences.set(
+        &stringPreferencesKey(LINK_ACCESS_UPDATED_AT_KEY),
+        config.updatedAt.to_string(),
+    );
+    store
+        .replace(preferences)
+        .map_err(|error| error.to_string())
+}
+
+/// Validates that a persisted Link route identifies a concrete remote session.
+#[allow(non_snake_case)]
+fn validateRoutingConfig(config: &LinkAccessRoutingConfig) -> Result<(), String> {
+    if let LinkAccessRoute::Remote { sessionName } = &config.route {
+        if sessionName.trim().is_empty() {
+            return Err("remote Link route requires a paired session name".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Returns the persisted literal for one host port mode.
+fn hostPortModePreference(value: &LinkAccessHostPortMode) -> &'static str {
+    match value {
+        LinkAccessHostPortMode::Automatic => "automatic",
+        LinkAccessHostPortMode::Fixed => "fixed",
+    }
+}
+
+/// Parses one host port mode preference literal.
+fn hostPortModeFromPreference(value: &str) -> Result<LinkAccessHostPortMode, String> {
+    match value {
+        "automatic" => Ok(LinkAccessHostPortMode::Automatic),
+        "fixed" => Ok(LinkAccessHostPortMode::Fixed),
+        other => Err(format!("invalid Link Access host port mode: {other}")),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct RemoteWebAccessConfig {
     pub token: String,
@@ -240,6 +678,7 @@ pub struct RemoteWebAccessConfig {
     pub readAsset: Arc<dyn Fn(&Path) -> Result<Vec<u8>, String> + Send + Sync>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 struct RemoteLinkState {
     core: Arc<Mutex<SharedAccessCoreClient>>,
@@ -256,11 +695,13 @@ struct RemoteLinkState {
     webAccess: Option<RemoteWebAccessState>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 struct SharedAccessCoreClient {
     core: Arc<Mutex<Box<dyn CoreLinkClient + Send>>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl CoreLinkTransportClient for SharedAccessCoreClient {
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
@@ -326,6 +767,7 @@ impl CoreLinkTransportClient for SharedAccessCoreClient {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 struct RemoteWebAccessState {
     shutdownToken: String,
@@ -334,6 +776,7 @@ struct RemoteWebAccessState {
     readAsset: Arc<dyn Fn(&Path) -> Result<Vec<u8>, String> + Send + Sync>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug)]
 struct PendingPairing {
     pairingServiceVersion: i32,
@@ -346,6 +789,7 @@ struct PendingPairing {
     sharedSecret: Vec<u8>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug)]
 struct RemoteSession {
     deviceId: String,
@@ -354,6 +798,7 @@ struct RemoteSession {
     sessionSecret: Vec<u8>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug)]
 struct VerifiedRemoteSession {
     sessionId: String,
@@ -495,6 +940,7 @@ pub struct RemoteSessionInfoResponse {
     pub nonce: String,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemoteWsEnvelope {
     pub protocolVersion: i32,
@@ -505,17 +951,20 @@ pub struct RemoteWsEnvelope {
     pub payloadBytes: Vec<u8>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemotePushAccepted {
     pub pushId: String,
     pub sequence: u64,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct RemotePushState {
     request: CorePushRequest,
     nextSequence: u64,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "body")]
 pub enum RemoteWsPayload {
@@ -527,6 +976,7 @@ pub enum RemoteWsPayload {
     PushClose(String),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "body")]
 pub enum RemoteWsResponse {
@@ -566,7 +1016,7 @@ impl PairedRemoteSessionRecord {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PairStartState {
     pub pairingId: String,
     pub pairingServiceVersion: i32,
@@ -580,12 +1030,19 @@ pub struct PairStartState {
     pub sharedSecret: Vec<u8>,
 }
 
+/// Stores the client-side state needed to finish one outbound pairing after user confirmation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PendingOutboundPairingRecord {
+    pub baseUrl: String,
+    pub state: PairStartState,
+}
+
 #[derive(Clone, Debug)]
 pub struct RemoteLinkClient {
     baseUrl: String,
-    http: reqwest::Client,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl RemoteLinkServer {
     pub async fn serve(
         core: impl CoreLinkClient + Send + 'static,
@@ -693,22 +1150,19 @@ impl RemoteLinkClient {
     pub fn new(baseUrl: impl Into<String>) -> Self {
         Self {
             baseUrl: baseUrl.into().trim_end_matches('/').to_string(),
-            http: reqwest::Client::new(),
         }
     }
 
     pub async fn hello(&self, tokenHash: &str) -> Result<HelloResponse, String> {
-        self.http
-            .get(format!("{}/link/hello", self.baseUrl))
-            .header("x-operit-link-token-hash", tokenHash)
-            .send()
-            .await
-            .map_err(|error| error.to_string())?
-            .error_for_status()
-            .map_err(|error| error.to_string())?
-            .json::<HelloResponse>()
-            .await
-            .map_err(|error| error.to_string())
+        decodeRemoteHttpJson(remoteHttpRequest(
+            "GET",
+            format!("{}/link/hello", self.baseUrl),
+            vec![(
+                "x-operit-link-token-hash".to_string(),
+                tokenHash.to_string(),
+            )],
+            Vec::new(),
+        )?)
     }
 
     pub async fn pairStart(
@@ -728,18 +1182,10 @@ impl RemoteLinkClient {
             clientPublicKey: public_key_to_string(&clientPublic),
             clientNonce: clientNonce.clone(),
         };
-        let response = self
-            .http
-            .post(format!("{}/link/pair/start", self.baseUrl))
-            .json(&request)
-            .send()
-            .await
-            .map_err(|error| error.to_string())?
-            .error_for_status()
-            .map_err(|error| error.to_string())?
-            .json::<PairStartResponse>()
-            .await
-            .map_err(|error| error.to_string())?;
+        let response: PairStartResponse = decodeRemoteHttpJson(remoteHttpJsonRequest(
+            format!("{}/link/pair/start", self.baseUrl),
+            &request,
+        )?)?;
         let corePublic = parse_public_key(&response.corePublicKey)?;
         let sharedSecret = clientSecret.diffie_hellman(&corePublic).as_bytes().to_vec();
         Ok(PairStartState {
@@ -772,18 +1218,10 @@ impl RemoteLinkClient {
             pairingCode: pairingCode.trim().to_string(),
             clientProof,
         };
-        let response = self
-            .http
-            .post(format!("{}/link/pair/finish", self.baseUrl))
-            .json(&request)
-            .send()
-            .await
-            .map_err(|error| error.to_string())?
-            .error_for_status()
-            .map_err(|error| error.to_string())?
-            .json::<PairFinishResponse>()
-            .await
-            .map_err(|error| error.to_string())?;
+        let response: PairFinishResponse = decodeRemoteHttpJson(remoteHttpJsonRequest(
+            format!("{}/link/pair/finish", self.baseUrl),
+            &request,
+        )?)?;
         let expectedCoreProof = proof(
             &state.sharedSecret,
             &state.clientNonce,
@@ -795,7 +1233,6 @@ impl RemoteLinkClient {
         }
         Ok(PairedRemoteSession {
             baseUrl: self.baseUrl.clone(),
-            http: self.http.clone(),
             sessionId: response.sessionId,
             deviceId: state.clientDeviceId.clone(),
             coreDeviceId: state.coreDeviceId.clone(),
@@ -806,28 +1243,76 @@ impl RemoteLinkClient {
                 &state.clientNonce,
                 &state.serverNonce,
             ),
-            watchChannel: Arc::new(Mutex::new(None)),
+            watchChannel: Arc::new(StdMutex::new(None)),
         })
     }
+}
+
+/// Executes one authenticated Link HTTP request through the configured runtime host.
+fn remoteHttpRequest(
+    method: &str,
+    url: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    let response = defaultHttpHost()
+        .executeHttpRequest(HttpRequestData {
+            url: url.clone(),
+            method: method.to_string(),
+            headers,
+            body,
+            formFields: Vec::new(),
+            fileParts: Vec::new(),
+            connectTimeoutSeconds: 10,
+            readTimeoutSeconds: 120,
+            followRedirects: false,
+            ignoreSsl: false,
+            proxyHost: String::new(),
+            proxyPort: 0,
+        })
+        .map_err(|error| error.to_string())?;
+    if !(200..300).contains(&response.statusCode) {
+        return Err(format!(
+            "Link HTTP {method} {url} failed with status {}: {}",
+            response.statusCode,
+            String::from_utf8_lossy(&response.body)
+        ));
+    }
+    Ok(response.body)
+}
+
+/// Encodes one JSON Link control request and executes it through the runtime HTTP host.
+fn remoteHttpJsonRequest<T: Serialize>(url: String, request: &T) -> Result<Vec<u8>, String> {
+    remoteHttpRequest(
+        "POST",
+        url,
+        vec![("content-type".to_string(), "application/json".to_string())],
+        serde_json::to_vec(request).map_err(|error| error.to_string())?,
+    )
+}
+
+/// Decodes a JSON Link control response from host HTTP response bytes.
+fn decodeRemoteHttpJson<T: serde::de::DeserializeOwned>(bytes: Vec<u8>) -> Result<T, String> {
+    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
 }
 
 #[derive(Clone)]
 pub struct PairedRemoteSession {
     baseUrl: String,
-    http: reqwest::Client,
     pub sessionId: String,
     pub deviceId: String,
     pub coreDeviceId: String,
     pub remoteDeviceInfo: RemoteDeviceInfo,
     pub pairingServiceVersion: i32,
     sessionSecret: Vec<u8>,
-    watchChannel: Arc<Mutex<Option<PairedRemoteWatchChannel>>>,
+    watchChannel: Arc<StdMutex<Option<PairedRemoteWatchChannel>>>,
 }
 
 struct PairedRemoteWatchChannel {
     channelId: String,
-    subscriptions: BTreeMap<String, mpsc::UnboundedSender<CoreEvent>>,
-    task: JoinHandle<()>,
+    streamId: String,
+    subscriptions: BTreeMap<String, tokio::sync::mpsc::UnboundedSender<CoreEvent>>,
+    buffer: Vec<u8>,
 }
 
 impl PairedRemoteSession {
@@ -848,7 +1333,6 @@ impl PairedRemoteSession {
     pub fn fromRecord(record: PairedRemoteSessionRecord) -> Result<Self, String> {
         Ok(Self {
             baseUrl: record.baseUrl.trim_end_matches('/').to_string(),
-            http: reqwest::Client::new(),
             sessionId: record.sessionId,
             deviceId: record.deviceId,
             coreDeviceId: record.coreDeviceId,
@@ -857,7 +1341,7 @@ impl PairedRemoteSession {
             sessionSecret: BASE64
                 .decode(record.sessionSecret)
                 .map_err(|error| error.to_string())?,
-            watchChannel: Arc::new(Mutex::new(None)),
+            watchChannel: Arc::new(StdMutex::new(None)),
         })
     }
 
@@ -867,45 +1351,15 @@ impl PairedRemoteSession {
             nonce: Uuid::new_v4().to_string(),
         })
         .map_err(|error| error.to_string())?;
-        let signature = sign(&self.sessionSecret, &body);
-        self.http
-            .post(format!("{}/link/session", self.baseUrl))
-            .header("x-operit-link-version", "3")
-            .header("x-operit-session", &self.sessionId)
-            .header("x-operit-device", &self.deviceId)
-            .header("x-operit-signature", signature)
-            .body(body)
-            .send()
-            .await
-            .map_err(|error| error.to_string())?
-            .error_for_status()
-            .map_err(|error| error.to_string())?
-            .bytes()
-            .await
+        operit_link::decodeLink(&self.signedRemotePost("session", body)?)
             .map_err(|error| error.to_string())
-            .and_then(|bytes| operit_link::decodeLink(&bytes).map_err(|error| error.to_string()))
     }
 
     pub async fn call(&self, request: CoreCallRequest) -> Result<CoreCallResponse, String> {
         let body = operit_link::encodeLink(&RemoteCallEnvelope { request })
             .map_err(|error| error.to_string())?;
-        let signature = sign(&self.sessionSecret, &body);
-        self.http
-            .post(format!("{}/link/call", self.baseUrl))
-            .header("x-operit-link-version", "3")
-            .header("x-operit-session", &self.sessionId)
-            .header("x-operit-device", &self.deviceId)
-            .header("x-operit-signature", signature)
-            .body(body)
-            .send()
-            .await
-            .map_err(|error| error.to_string())?
-            .error_for_status()
-            .map_err(|error| error.to_string())?
-            .bytes()
-            .await
+        operit_link::decodeLink(&self.signedRemotePost("call", body)?)
             .map_err(|error| error.to_string())
-            .and_then(|bytes| operit_link::decodeLink(&bytes).map_err(|error| error.to_string()))
     }
 
     /// Opens one HTTP-carried Link push stream.
@@ -938,60 +1392,54 @@ impl PairedRemoteSession {
     }
 
     /// Posts one signed push lifecycle message and returns its bytes.
-    async fn signedPushPost(&self, operation: &str, body: Vec<u8>) -> Result<Bytes, String> {
-        let signature = sign(&self.sessionSecret, &body);
-        self.http
-            .post(format!("{}/link/push/{operation}", self.baseUrl))
-            .header("x-operit-link-version", "3")
-            .header("x-operit-session", &self.sessionId)
-            .header("x-operit-device", &self.deviceId)
-            .header("x-operit-signature", signature)
-            .body(body)
-            .send()
-            .await
-            .map_err(|error| error.to_string())?
-            .error_for_status()
-            .map_err(|error| error.to_string())?
-            .bytes()
-            .await
-            .map_err(|error| error.to_string())
+    async fn signedPushPost(&self, operation: &str, body: Vec<u8>) -> Result<Vec<u8>, String> {
+        self.signedRemotePost(&format!("push/{operation}"), body)
     }
 
     pub async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, String> {
         let body = operit_link::encodeLink(&RemoteWatchEnvelope { request })
             .map_err(|error| error.to_string())?;
-        let signature = sign(&self.sessionSecret, &body);
-        self.http
-            .post(format!("{}/link/watch/snapshot", self.baseUrl))
-            .header("x-operit-link-version", "3")
-            .header("x-operit-session", &self.sessionId)
-            .header("x-operit-device", &self.deviceId)
-            .header("x-operit-signature", signature)
-            .body(body)
-            .send()
-            .await
-            .map_err(|error| error.to_string())?
-            .error_for_status()
-            .map_err(|error| error.to_string())?
-            .bytes()
-            .await
+        operit_link::decodeLink(&self.signedRemotePost("watch/snapshot", body)?)
             .map_err(|error| error.to_string())
-            .and_then(|bytes| operit_link::decodeLink(&bytes).map_err(|error| error.to_string()))
     }
 
+    /// Posts one authenticated Link protocol frame through the runtime HTTP host.
+    fn signedRemotePost(&self, path: &str, body: Vec<u8>) -> Result<Vec<u8>, String> {
+        remoteHttpRequest(
+            "POST",
+            format!("{}/link/{path}", self.baseUrl),
+            vec![
+                ("x-operit-link-version".to_string(), "3".to_string()),
+                ("x-operit-session".to_string(), self.sessionId.clone()),
+                ("x-operit-device".to_string(), self.deviceId.clone()),
+                (
+                    "x-operit-signature".to_string(),
+                    sign(&self.sessionSecret, &body),
+                ),
+            ],
+            body,
+        )
+    }
+
+    /// Opens one authenticated remote watch through the configured streaming HTTP Host.
     pub async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, String> {
         let channelId = self.ensureWatchChannel().await?;
         let subscriptionId = format!("watch-{}", Uuid::new_v4().simple());
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         {
-            let mut guard = self.watchChannel.lock().await;
-            let Some(channel) = guard.as_mut() else {
-                return Err("watch channel is not open".to_string());
-            };
+            let mut guard = self
+                .watchChannel
+                .lock()
+                .map_err(|error| format!("paired watch channel lock poisoned: {error}"))?;
+            let channel = guard
+                .as_mut()
+                .ok_or_else(|| "paired watch channel is not open".to_string())?;
             if channel.channelId != channelId {
-                return Err("watch channel changed while opening subscription".to_string());
+                return Err("paired watch channel changed while opening subscription".to_string());
             }
-            channel.subscriptions.insert(subscriptionId.clone(), sender);
+            channel
+                .subscriptions
+                .insert(subscriptionId.clone(), sender);
         }
         let body = operit_link::encodeLink(&RemoteWatchChannelOpenEnvelope {
             channelId: channelId.clone(),
@@ -999,162 +1447,210 @@ impl PairedRemoteSession {
             request,
         })
         .map_err(|error| error.to_string())?;
-        let signature = sign(&self.sessionSecret, &body);
-        let openResult = self
-            .http
-            .post(format!("{}/link/watch/channel/open", self.baseUrl))
-            .header("x-operit-link-version", "3")
-            .header("x-operit-session", &self.sessionId)
-            .header("x-operit-device", &self.deviceId)
-            .header("x-operit-signature", signature)
-            .body(body)
-            .send()
-            .await
-            .map_err(|error| error.to_string())?
-            .error_for_status()
-            .map_err(|error| error.to_string())?
-            .bytes()
-            .await
-            .map_err(|error| error.to_string())
-            .and_then(|bytes| {
-                operit_link::decodeLink::<RemoteWatchChannelOpenResponse>(&bytes)
-                    .map_err(|error| error.to_string())
-            });
+        let openResult = self.signedRemotePost("watch/channel/open", body).and_then(|bytes| {
+            operit_link::decodeLink::<RemoteWatchChannelOpenResponse>(&bytes)
+                .map_err(|error| error.to_string())
+        });
         if let Err(error) = openResult {
-            self.removeLocalWatchSubscription(&channelId, &subscriptionId)
-                .await;
-            return Err(error.to_string());
+            close_paired_watch_subscription(
+                &self.watchChannel,
+                &channelId,
+                &subscriptionId,
+            )?;
+            return Err(error);
         }
-        let http = self.http.clone();
-        let baseUrl = self.baseUrl.clone();
-        let sessionId = self.sessionId.clone();
-        let deviceId = self.deviceId.clone();
-        let sessionSecret = self.sessionSecret.clone();
+        let closeSession = self.clone();
         let watchChannel = self.watchChannel.clone();
         Ok(CoreEventStream::new(receiver).withOnClose(move || {
-            tokio::spawn(async move {
-                remove_paired_watch_subscription(&watchChannel, &channelId, &subscriptionId).await;
-                let body = operit_link::encodeLink(&RemoteWatchChannelCloseEnvelope {
-                    channelId,
-                    subscriptionId,
-                })
-                .expect("watch close envelope must encode");
-                let signature = sign(&sessionSecret, &body);
-                let _ = http
-                    .post(format!("{}/link/watch/channel/close", baseUrl))
-                    .header("x-operit-link-version", "3")
-                    .header("x-operit-session", sessionId)
-                    .header("x-operit-device", deviceId)
-                    .header("x-operit-signature", signature)
-                    .body(body)
-                    .send()
-                    .await;
-            });
+            let body = operit_link::encodeLink(&RemoteWatchChannelCloseEnvelope {
+                channelId: channelId.clone(),
+                subscriptionId: subscriptionId.clone(),
+            })
+            .expect("watch close envelope must encode");
+            let _ = closeSession.signedRemotePost("watch/channel/close", body);
+            close_paired_watch_subscription(
+                &watchChannel,
+                &channelId,
+                &subscriptionId,
+            )
+            .expect("paired watch subscription must close");
         }))
     }
 
+    /// Opens and authenticates the Host-owned HTTP byte stream for remote watch events.
     #[allow(non_snake_case)]
     async fn ensureWatchChannel(&self) -> Result<String, String> {
         if let Some(channelId) = self
             .watchChannel
             .lock()
-            .await
+            .map_err(|error| format!("paired watch channel lock poisoned: {error}"))?
             .as_ref()
             .map(|channel| channel.channelId.clone())
         {
             return Ok(channelId);
         }
         let channelId = format!("watch-channel-{}", Uuid::new_v4().simple());
+        let streamId = format!("link-watch-http-{}", Uuid::new_v4().simple());
         let body = operit_link::encodeLink(&RemoteWatchChannelEnvelope {
             channelId: channelId.clone(),
         })
         .map_err(|error| error.to_string())?;
         let signature = sign(&self.sessionSecret, &body);
-        let response = self
-            .http
-            .post(format!("{}/link/watch/channel/events", self.baseUrl))
-            .header("x-operit-link-version", "3")
-            .header("x-operit-session", &self.sessionId)
-            .header("x-operit-device", &self.deviceId)
-            .header("x-operit-signature", signature)
-            .body(body)
-            .send()
-            .await
-            .map_err(|error| error.to_string())?
-            .error_for_status()
-            .map_err(|error| error.to_string())?;
-        let watchChannel = self.watchChannel.clone();
-        let taskChannelId = channelId.clone();
-        let task = tokio::spawn(async move {
-            let mut bytes = response.bytes_stream();
-            let mut buffer = Vec::<u8>::new();
-            while let Some(item) = bytes.next().await {
-                let Ok(chunk) = item else {
-                    break;
-                };
-                buffer.extend_from_slice(&chunk);
-                while buffer.len() >= 4 {
-                    let frameLength = u32::from_be_bytes(
-                        buffer[..4]
-                            .try_into()
-                            .expect("frame length prefix must be four bytes"),
-                    ) as usize;
-                    if buffer.len() < 4 + frameLength {
-                        break;
-                    }
-                    let frame = buffer.drain(..4 + frameLength).collect::<Vec<_>>();
-                    let event = operit_link::decodeLink::<RemoteWatchChannelEvent>(&frame[4..])
-                        .expect("authenticated watch event frame must decode");
-                    let sender = {
-                        let guard = watchChannel.lock().await;
-                        guard.as_ref().and_then(|channel| {
-                            if channel.channelId == taskChannelId {
-                                channel.subscriptions.get(&event.subscriptionId).cloned()
-                            } else {
-                                None
-                            }
-                        })
-                    };
-                    if let Some(sender) = sender {
-                        let _ = sender.send(event.event);
-                    }
+        let (openedSender, openedReceiver) = tokio::sync::oneshot::channel();
+        let openedSender = Arc::new(StdMutex::new(Some(openedSender)));
+        {
+            let mut guard = self
+                .watchChannel
+                .lock()
+                .map_err(|error| format!("paired watch channel lock poisoned: {error}"))?;
+            *guard = Some(PairedRemoteWatchChannel {
+                channelId: channelId.clone(),
+                streamId: streamId.clone(),
+                subscriptions: BTreeMap::new(),
+                buffer: Vec::new(),
+            });
+        }
+        let openedSignal = openedSender.clone();
+        let chunkChannel = self.watchChannel.clone();
+        let chunkChannelId = channelId.clone();
+        let closedSignal = openedSender.clone();
+        let closedChannel = self.watchChannel.clone();
+        let closedChannelId = channelId.clone();
+        let openResult = defaultHttpHost().openHttpByteStream(
+            streamId.clone(),
+            HttpRequestData {
+                url: format!("{}/link/watch/channel/events", self.baseUrl),
+                method: "POST".to_string(),
+                headers: vec![
+                    ("x-operit-link-version".to_string(), "3".to_string()),
+                    ("x-operit-session".to_string(), self.sessionId.clone()),
+                    ("x-operit-device".to_string(), self.deviceId.clone()),
+                    ("x-operit-signature".to_string(), signature),
+                ],
+                body,
+                formFields: Vec::new(),
+                fileParts: Vec::new(),
+                connectTimeoutSeconds: 10,
+                readTimeoutSeconds: 0,
+                followRedirects: false,
+                ignoreSsl: false,
+                proxyHost: String::new(),
+                proxyPort: 0,
+            },
+            Arc::new(move || {
+                if let Some(sender) = openedSignal
+                    .lock()
+                    .expect("paired watch open signal lock poisoned")
+                    .take()
+                {
+                    let _ = sender.send(Ok(()));
                 }
-            }
-            let mut guard = watchChannel.lock().await;
+            }),
+            Arc::new(move |chunk| {
+                dispatch_paired_watch_chunk(&chunkChannel, &chunkChannelId, chunk)
+                    .expect("paired watch chunk must decode");
+            }),
+            Arc::new(move |result| {
+                if let Some(sender) = closedSignal
+                    .lock()
+                    .expect("paired watch close signal lock poisoned")
+                    .take()
+                {
+                    let _ = sender.send(result.clone());
+                }
+                let mut guard = closedChannel
+                    .lock()
+                    .expect("paired watch channel lock poisoned");
+                if guard.as_ref().map(|channel| channel.channelId.as_str())
+                    == Some(closedChannelId.as_str())
+                {
+                    let _ = guard.take();
+                }
+            }),
+        );
+        if let Err(error) = openResult {
+            let mut guard = self
+                .watchChannel
+                .lock()
+                .map_err(|lockError| format!("paired watch channel lock poisoned: {lockError}"))?;
             if guard.as_ref().map(|channel| channel.channelId.as_str())
-                == Some(taskChannelId.as_str())
+                == Some(channelId.as_str())
             {
                 let _ = guard.take();
             }
-        });
-        let mut guard = self.watchChannel.lock().await;
-        if let Some(previous) = guard.replace(PairedRemoteWatchChannel {
-            channelId: channelId.clone(),
-            subscriptions: BTreeMap::new(),
-            task,
-        }) {
-            previous.task.abort();
+            return Err(error.to_string());
         }
+        openedReceiver
+            .await
+            .map_err(|error| format!("paired watch open signal closed: {error}"))??;
         Ok(channelId)
-    }
-
-    #[allow(non_snake_case)]
-    async fn removeLocalWatchSubscription(&self, channelId: &str, subscriptionId: &str) {
-        remove_paired_watch_subscription(&self.watchChannel, channelId, subscriptionId).await;
     }
 }
 
-async fn remove_paired_watch_subscription(
-    watchChannel: &Arc<Mutex<Option<PairedRemoteWatchChannel>>>,
+/// Decodes complete length-prefixed remote watch frames from one Host HTTP chunk.
+fn dispatch_paired_watch_chunk(
+    watchChannel: &Arc<StdMutex<Option<PairedRemoteWatchChannel>>>,
     channelId: &str,
-    subscriptionId: &str,
-) {
-    let mut guard = watchChannel.lock().await;
-    if let Some(channel) = guard.as_mut() {
-        if channel.channelId == channelId {
-            channel.subscriptions.remove(subscriptionId);
+    chunk: Vec<u8>,
+) -> Result<(), String> {
+    let mut guard = watchChannel
+        .lock()
+        .map_err(|error| format!("paired watch channel lock poisoned: {error}"))?;
+    let channel = guard
+        .as_mut()
+        .ok_or_else(|| "paired watch channel is not open".to_string())?;
+    if channel.channelId != channelId {
+        return Err("paired watch chunk targets a stale channel".to_string());
+    }
+    channel.buffer.extend_from_slice(&chunk);
+    while channel.buffer.len() >= 4 {
+        let frameLength = u32::from_be_bytes(
+            channel.buffer[..4]
+                .try_into()
+                .expect("watch frame length prefix must be four bytes"),
+        ) as usize;
+        if channel.buffer.len() < 4 + frameLength {
+            break;
+        }
+        let frame = channel.buffer.drain(..4 + frameLength).collect::<Vec<_>>();
+        let event = operit_link::decodeLink::<RemoteWatchChannelEvent>(&frame[4..])
+            .map_err(|error| error.to_string())?;
+        if let Some(sender) = channel.subscriptions.get(&event.subscriptionId) {
+            let _ = sender.send(event.event);
         }
     }
+    Ok(())
+}
+
+/// Removes one watch subscription and closes its Host byte stream when it becomes empty.
+fn close_paired_watch_subscription(
+    watchChannel: &Arc<StdMutex<Option<PairedRemoteWatchChannel>>>,
+    channelId: &str,
+    subscriptionId: &str,
+) -> Result<(), String> {
+    let streamId = {
+        let mut guard = watchChannel
+            .lock()
+            .map_err(|error| format!("paired watch channel lock poisoned: {error}"))?;
+        let Some(channel) = guard.as_mut() else {
+            return Ok(());
+        };
+        if channel.channelId != channelId {
+            return Err("paired watch subscription targets a stale channel".to_string());
+        }
+        channel.subscriptions.remove(subscriptionId);
+        if channel.subscriptions.is_empty() {
+            guard.take().map(|channel| channel.streamId)
+        } else {
+            None
+        }
+    };
+    if let Some(streamId) = streamId {
+        defaultHttpHost()
+            .closeHttpByteStream(&streamId)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 #[async_trait(?Send)]
@@ -1184,6 +1680,7 @@ impl CoreLinkClient for PairedRemoteSession {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn hello(State(state): State<RemoteLinkState>, headers: HeaderMap) -> Response {
     if !token_matches(&state, &headers) {
         return unauthorized("invalid token");
@@ -1200,6 +1697,7 @@ async fn hello(State(state): State<RemoteLinkState>, headers: HeaderMap) -> Resp
     .into_response()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn pair_start(
     State(state): State<RemoteLinkState>,
     Json(request): Json<PairStartRequest>,
@@ -1258,6 +1756,7 @@ async fn pair_start(
     .into_response()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn pair_finish(
     State(state): State<RemoteLinkState>,
     Json(request): Json<PairFinishRequest>,
@@ -1320,6 +1819,7 @@ async fn pair_finish(
     .into_response()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn session_info(
     State(state): State<RemoteLinkState>,
     headers: HeaderMap,
@@ -1360,6 +1860,7 @@ async fn session_info(
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn call(State(state): State<RemoteLinkState>, headers: HeaderMap, body: Bytes) -> Response {
     let verified = match verify_session(&state, &headers, &body).await {
         Ok(value) => value,
@@ -1368,6 +1869,7 @@ async fn call(State(state): State<RemoteLinkState>, headers: HeaderMap, body: By
     withRuntimeHostInteractionOrigin(verified.origin(), state.linkDispatcher.call(body)).await
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn watch_snapshot(
     State(state): State<RemoteLinkState>,
     headers: HeaderMap,
@@ -1381,6 +1883,7 @@ async fn watch_snapshot(
         .await
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn watch_channel_events(
     State(state): State<RemoteLinkState>,
     headers: HeaderMap,
@@ -1392,6 +1895,7 @@ async fn watch_channel_events(
     state.linkDispatcher.watchChannelEvents(body).await
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn watch_channel_open(
     State(state): State<RemoteLinkState>,
     headers: HeaderMap,
@@ -1408,6 +1912,7 @@ async fn watch_channel_open(
     .await
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn watch_channel_close(
     State(state): State<RemoteLinkState>,
     headers: HeaderMap,
@@ -1420,6 +1925,7 @@ async fn watch_channel_close(
 }
 
 /// Opens an authenticated client-owned Link input stream.
+#[cfg(not(target_arch = "wasm32"))]
 async fn push_open(
     State(state): State<RemoteLinkState>,
     headers: HeaderMap,
@@ -1433,6 +1939,7 @@ async fn push_open(
 }
 
 /// Accepts one authenticated item for a Link input stream.
+#[cfg(not(target_arch = "wasm32"))]
 async fn push_item(
     State(state): State<RemoteLinkState>,
     headers: HeaderMap,
@@ -1446,6 +1953,7 @@ async fn push_item(
 }
 
 /// Closes an authenticated client-owned Link input stream.
+#[cfg(not(target_arch = "wasm32"))]
 async fn push_close(
     State(state): State<RemoteLinkState>,
     headers: HeaderMap,
@@ -1457,6 +1965,7 @@ async fn push_close(
     state.linkDispatcher.pushClose(body).await
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn web_access_index(State(state): State<RemoteLinkState>) -> Response {
     let Some(webAccess) = state.webAccess.as_ref() else {
         return bad_request("web access is not enabled");
@@ -1464,6 +1973,7 @@ async fn web_access_index(State(state): State<RemoteLinkState>) -> Response {
     serve_web_access_file(webAccess, "index.html")
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn web_access_asset(
     State(state): State<RemoteLinkState>,
     AxumPath(path): AxumPath<String>,
@@ -1474,6 +1984,7 @@ async fn web_access_asset(
     serve_web_access_file(webAccess, &path)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn web_access_close(State(state): State<RemoteLinkState>, headers: HeaderMap) -> Response {
     let Some(webAccess) = state.webAccess.as_ref() else {
         return bad_request("web access is not enabled");
@@ -1496,12 +2007,14 @@ async fn web_access_close(State(state): State<RemoteLinkState>, headers: HeaderM
     Json(serde_json::json!({"ok": true})).into_response()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn ws(State(state): State<RemoteLinkState>, upgrade: WebSocketUpgrade) -> Response {
     upgrade
         .on_upgrade(move |socket| handle_ws(socket, state))
         .into_response()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn handle_ws(mut socket: WebSocket, state: RemoteLinkState) {
     let mut pushes = BTreeMap::<String, RemotePushState>::new();
     while let Some(Ok(message)) = socket.recv().await {
@@ -1520,6 +2033,7 @@ async fn handle_ws(mut socket: WebSocket, state: RemoteLinkState) {
 }
 
 /// Decodes one signed websocket envelope and encodes its response.
+#[cfg(not(target_arch = "wasm32"))]
 async fn handle_ws_binary(
     state: &RemoteLinkState,
     pushes: &mut BTreeMap<String, RemotePushState>,
@@ -1533,6 +2047,7 @@ async fn handle_ws_binary(
 }
 
 /// Verifies the raw websocket payload bytes and dispatches the decoded payload.
+#[cfg(not(target_arch = "wasm32"))]
 async fn handle_ws_envelope(
     state: &RemoteLinkState,
     pushes: &mut BTreeMap<String, RemotePushState>,
@@ -1660,6 +2175,7 @@ async fn handle_ws_envelope(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn verify_session(
     state: &RemoteLinkState,
     headers: &HeaderMap,
@@ -1697,6 +2213,7 @@ async fn verify_session(
         .map_err(|error| encode_link_response(StatusCode::UNAUTHORIZED, error))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn verify_session_parts(
     state: &RemoteLinkState,
     sessionId: &str,
@@ -1733,6 +2250,7 @@ async fn verify_session_parts(
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl VerifiedRemoteSession {
     fn origin(&self) -> RuntimeHostInteractionRequestOrigin {
         RuntimeHostInteractionRequestOrigin::RemoteSession {
@@ -1743,6 +2261,7 @@ impl VerifiedRemoteSession {
 }
 
 /// Creates a structured unauthorized error for a remote session auth failure.
+#[cfg(not(target_arch = "wasm32"))]
 fn remote_session_auth_error(message: &'static str, auth_reason: &'static str) -> CoreLinkError {
     CoreLinkError::withDetails(
         "UNAUTHORIZED",
@@ -1764,6 +2283,7 @@ fn remote_session_auth_error(message: &'static str, auth_reason: &'static str) -
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn accepted_session_from_record(
     record: &AcceptedRemoteSessionRecord,
 ) -> Result<RemoteSession, CoreLinkError> {
@@ -1777,12 +2297,14 @@ fn accepted_session_from_record(
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn token_matches(state: &RemoteLinkState, headers: &HeaderMap) -> bool {
     header_string(headers, "x-operit-link-token-hash")
         .map(|value| token_hash_matches(state, &value))
         .unwrap_or(false)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn verify_client_control(state: &RemoteLinkState, headers: &HeaderMap) -> Result<(), Response> {
     let Some(expected) = state.localControlToken.as_deref() else {
         return Err(unauthorized("client control token is not configured"));
@@ -1802,10 +2324,12 @@ pub fn link_token_hash(token: &str) -> String {
     BASE64.encode(hasher.finalize())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn token_hash_matches(state: &RemoteLinkState, tokenHash: &str) -> bool {
     tokenHash == link_token_hash(&state.token)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn header_string(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get(name)
@@ -1825,16 +2349,21 @@ fn public_key_to_string(value: &PublicKey) -> String {
     BASE64.encode(value.as_bytes())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn pairing_code() -> String {
     let bytes = Uuid::new_v4().as_u128();
     format!("{:06}", (bytes % 1_000_000) as u32)
 }
 
+fn link_access_token() -> String {
+    let mut bytes = [0u8; 18];
+    OsRng.fill_bytes(&mut bytes);
+    format!("ow-{}", URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// Returns the host-owned Unix clock used by Link Access records.
 fn unix_millis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time must be after UNIX_EPOCH")
-        .as_millis() as i64
+    currentTimeMillis()
 }
 
 fn proof(sharedSecret: &[u8], clientNonce: &str, serverNonce: &str, role: &str) -> String {
@@ -1862,6 +2391,7 @@ fn sign(sessionSecret: &[u8], body: &[u8]) -> String {
     BASE64.encode(mac.finalize().into_bytes())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn unauthorized(message: impl Into<String>) -> Response {
     (
         StatusCode::UNAUTHORIZED,
@@ -1870,6 +2400,7 @@ fn unauthorized(message: impl Into<String>) -> Response {
         .into_response()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bad_request(message: impl Into<String>) -> Response {
     (
         StatusCode::BAD_REQUEST,
@@ -1878,6 +2409,7 @@ fn bad_request(message: impl Into<String>) -> Response {
         .into_response()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn internal_server_error(message: impl Into<String>) -> Response {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -1887,6 +2419,7 @@ fn internal_server_error(message: impl Into<String>) -> Response {
 }
 
 /// Encodes a typed Link response as MessagePack bytes.
+#[cfg(not(target_arch = "wasm32"))]
 fn encode_link_response(status: StatusCode, value: impl Serialize) -> Response {
     match operit_link::encodeLink(value) {
         Ok(bytes) => Response::builder()
@@ -1898,6 +2431,7 @@ fn encode_link_response(status: StatusCode, value: impl Serialize) -> Response {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn serve_web_access_file(webAccess: &RemoteWebAccessState, path: &str) -> Response {
     let relativePath = match sanitize_web_asset_path(path) {
         Ok(value) => value,
@@ -1934,6 +2468,7 @@ fn serve_web_access_file(webAccess: &RemoteWebAccessState, path: &str) -> Respon
         .expect("web asset response must build")
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn sanitize_web_asset_path(path: &str) -> Result<PathBuf, Response> {
     let normalized = path.trim_start_matches('/');
     if normalized.is_empty() {
@@ -1949,6 +2484,7 @@ fn sanitize_web_asset_path(path: &str) -> Result<PathBuf, Response> {
     Ok(relative)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn inject_web_access_runtime_config(html: &str) -> String {
     let config = serde_json::json!({
         "mode": "pair",
@@ -1965,6 +2501,7 @@ fn inject_web_access_runtime_config(html: &str) -> String {
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn content_type_for_path(path: &Path) -> &'static str {
     match path.extension().and_then(|value| value.to_str()) {
         Some("html") => "text/html; charset=utf-8",

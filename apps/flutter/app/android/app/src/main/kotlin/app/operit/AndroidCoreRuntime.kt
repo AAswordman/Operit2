@@ -17,13 +17,6 @@ object AndroidCoreRuntime {
                 current
             } else {
                 val created = AndroidRuntimeHost(context.applicationContext)
-                val storedRoots = AndroidRuntimeStorageConfigStore.read(context)
-                if (storedRoots != null) {
-                    created.setStorageRoots(
-                        storedRoots.runtimeRoot,
-                        storedRoots.workspaceRoot,
-                    )
-                }
                 runtimeHost = created
                 created
             }

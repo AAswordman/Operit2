@@ -37,10 +37,6 @@ mod transcript;
 #[path = "transcript/typewriter.rs"]
 mod typewriter;
 
-use operit_link_access::{
-    PairedRemoteSession, PairedRemoteSessionRecord, RemoteLinkClient, RemoteLinkServer,
-    RemoteLinkServerConfig,
-};
 use app::{
     FullUpdateDownloadState, OperitTui, StartupInstallPrompt, StartupInstallState,
     StartupUpdatePrompt,
@@ -50,6 +46,10 @@ use i18n::TuiLanguage;
 use link_proxy_rs::tui_core;
 use operit_core_proxy::GeneratedCoreProxy;
 use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest};
+use operit_link_access::{
+    PairedRemoteSession, PairedRemoteSessionRecord, RemoteLinkClient, RemoteLinkServer,
+    RemoteLinkServerConfig,
+};
 use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;

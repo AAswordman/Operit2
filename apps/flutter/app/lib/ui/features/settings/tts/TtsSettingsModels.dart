@@ -173,13 +173,35 @@ String? _ttsConfigDeleteBlockedReason(
   core_proxy.TtsConfig config,
   String currentConfigId,
   Set<String> characterBoundConfigIds,
+  AppLocalizations l10n,
 ) {
   final id = config.id.trim();
   if (id == currentConfigId.trim()) {
-    return '当前正在使用的 TTS 配置不能删除';
+    return l10n.settingsTtsCurrentConfigCannotDelete;
   }
   if (characterBoundConfigIds.contains(id)) {
-    return '该 TTS 配置正在被角色卡使用，不能删除';
+    return l10n.settingsTtsConfigUsedByCharacter;
+  }
+  return null;
+}
+
+/// Returns why an entire TTS provider group cannot be deleted.
+String? _ttsProviderGroupDeleteBlockedReason(
+  _TtsProviderGroup group,
+  String currentConfigId,
+  Set<String> characterBoundConfigIds,
+  AppLocalizations l10n,
+) {
+  for (final config in group.configs) {
+    final reason = _ttsConfigDeleteBlockedReason(
+      config,
+      currentConfigId,
+      characterBoundConfigIds,
+      l10n,
+    );
+    if (reason != null) {
+      return reason;
+    }
   }
   return null;
 }

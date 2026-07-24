@@ -9,7 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import app.operit.AndroidClientLogger
+import android.util.Log
 import app.operit.R
 
 class ScreenCaptureService : Service() {
@@ -49,12 +49,12 @@ class ScreenCaptureService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        AndroidClientLogger.d(applicationContext, TAG, "ScreenCaptureService created")
+        Log.d(TAG, "ScreenCaptureService created")
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        AndroidClientLogger.d(applicationContext, TAG, "ScreenCaptureService started")
+        Log.d(TAG, "ScreenCaptureService started")
         if (intent?.action == ACTION_START) {
             startForegroundService()
             return START_NOT_STICKY
@@ -67,7 +67,7 @@ class ScreenCaptureService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isMediaProjectionForegroundReady = false
-        AndroidClientLogger.d(applicationContext, TAG, "ScreenCaptureService destroyed")
+        Log.d(TAG, "ScreenCaptureService destroyed")
     }
 
     private fun startForegroundService() {
@@ -84,11 +84,7 @@ class ScreenCaptureService : Service() {
             }
             isMediaProjectionForegroundReady = true
         } catch (error: Exception) {
-            AndroidClientLogger.e(
-                applicationContext,
-                TAG,
-                "Error starting foreground service: ${error.message.orEmpty()}",
-            )
+            Log.e(TAG, "Error starting foreground service", error)
         }
     }
 

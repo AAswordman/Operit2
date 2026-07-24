@@ -9,6 +9,7 @@ publish.workspace = true
 async-trait.workspace = true
 operit-host-api = { path = "../operit-host-api" }
 operit-link = { path = "../operit-link" }
+operit-link-access = { path = "../operit-link-access" }
 operit-local-models = { path = "../operit-local-models" }
 operit-model = { path = "../operit-model" }
 operit-plugin-sdk = { path = "../operit-plugin-sdk" }
@@ -34,4 +35,5 @@ wasm-bindgen-futures = "0.4"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 operit-command-core = { path = "../operit-command-core" }
+mdns-sd = "0.12"
 tokio = { workspace = true, features = ["rt-multi-thread"] }

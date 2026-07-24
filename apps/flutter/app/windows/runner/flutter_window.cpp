@@ -5,8 +5,10 @@
 #include <desktop_multi_window/desktop_multi_window_plugin.h>
 
 #include "crash_channel.h"
+#include "engine_channel_lifetime.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "operit_runtime_channel.h"
+#include "system_audio_input_channel.h"
 
 /// Creates a window that owns one Flutter view controller.
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -34,6 +36,7 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   RegisterOperitCrashChannel(flutter_controller_->engine());
   RegisterOperitRuntimeChannel(flutter_controller_->engine(), GetHandle());
+  RegisterSystemAudioInputChannel(flutter_controller_->engine());
   DesktopMultiWindowSetWindowCreatedCallback([](void* controller) {
     auto* flutter_view_controller =
         reinterpret_cast<flutter::FlutterViewController*>(controller);
@@ -41,6 +44,7 @@ bool FlutterWindow::OnCreate() {
     RegisterOperitRuntimeChannel(
         flutter_view_controller->engine(),
         flutter_view_controller->view()->GetNativeWindow());
+    RegisterSystemAudioInputChannel(flutter_view_controller->engine());
   });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
@@ -60,6 +64,8 @@ bool FlutterWindow::OnCreate() {
 void FlutterWindow::OnDestroy() {
   if (flutter_controller_) {
     ShutdownOperitRuntimeChannel();
+    ShutdownAllOperitEngineChannels();
+    ShutdownSystemAudioInputChannel();
     ShutdownOperitCrashChannel();
     flutter_controller_ = nullptr;
   }

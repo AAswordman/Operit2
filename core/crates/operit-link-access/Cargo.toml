@@ -8,20 +8,21 @@ publish.workspace = true
 [dependencies]
 async-trait.workspace = true
 base64.workspace = true
+hmac = "0.12"
 operit-host-api = { path = "../operit-host-api" }
 operit-link = { path = "../operit-link" }
 operit-runtime = { path = "../operit-runtime", default-features = false, features = ["javascript"] }
+operit-store = { path = "../operit-store" }
+rand_core = { version = "0.6", features = ["getrandom"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 uuid.workspace = true
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 axum = { version = "0.7", features = ["ws"] }
 futures-util.workspace = true
-hmac = "0.12"
-rand_core = { version = "0.6", features = ["getrandom"] }
-reqwest = { workspace = true }
 serde_bytes = "0.11"
-sha2.workspace = true
-tokio = { workspace = true, features = ["net", "rt", "sync"] }
-x25519-dalek = { version = "2", features = ["static_secrets"] }
+tokio = { workspace = true, features = ["net", "rt"] }

@@ -350,6 +350,7 @@ interface HttpRequest {
   formFields?: HttpHeader[];
   fileParts?: HttpFilePart[];
   body?: Uint8Array;
+  followRedirects: boolean;
 }
 
 interface DownloadRequest {
@@ -551,6 +552,7 @@ interface ModelInstallWorkerError {
   let httpDownloadStatusCachePromise: Promise<void> | null = null;
   const httpDownloadStatusCache = new Map<string, HttpDownloadStatus>();
   const activeHttpDownloadControllers = new Map<string, AbortController>();
+  const activeHttpByteStreamControllers = new Map<string, AbortController>();
   const activeHttpDownloadPromises = new Map<string, Promise<ModelInstallWorkerDownload>>();
   const activeModelInstallAborters = new Map<string, () => void>();
   const activeModelInstallPromises = new Map<string, Promise<Uint8Array>>();
@@ -2972,7 +2974,7 @@ self.onmessage = (event) => {
     if (!bundle) {
       throw new Error(`Web ASR bundle is not initialized: ${root}`);
     }
-    const wav = decodeMonoPcmWav(storageRead(runtimePrefix, request.audioPath));
+    const wav = decodeMonoPcmWav(storageRead(filePrefix, request.audioPath));
     const stream = bundle.recognizer.createStream();
     try {
       stream.acceptWaveform(wav.sampleRate, wav.samples);
@@ -4003,6 +4005,84 @@ self.onmessage = (event) => {
             }),
           body: responseBytes,
         };
+      },
+      /** Opens one Fetch response body and reports its bytes through stable host callbacks. */
+      openHttpByteStream(
+        streamId: string,
+        request: HttpRequest,
+        onOpened: () => void,
+        onChunk: (chunk: Uint8Array) => void,
+        onClosed: (error: string | null) => void,
+      ): void {
+        if (activeHttpByteStreamControllers.has(streamId)) {
+          throw new Error(`HTTP byte stream is already open: ${streamId}`);
+        }
+        const controller = new AbortController();
+        activeHttpByteStreamControllers.set(streamId, controller);
+        void (async () => {
+          try {
+            const headers = new Headers();
+            for (const pair of request.headers || []) {
+              const name = Array.isArray(pair) ? pair[0] : pair.key;
+              const value = Array.isArray(pair) ? pair[1] : pair.value;
+              headers.set(name, value);
+            }
+            let body: BodyInit | undefined;
+            if ((request.fileParts && request.fileParts.length) || (request.formFields && request.formFields.length)) {
+              const form = new FormData();
+              for (const pair of request.formFields || []) {
+                const name = Array.isArray(pair) ? pair[0] : pair.key;
+                const value = Array.isArray(pair) ? pair[1] : pair.value;
+                form.append(name, value);
+              }
+              for (const part of request.fileParts || []) {
+                form.append(
+                  part.fieldName,
+                  new Blob([new Uint8Array(part.content)], { type: part.contentType }),
+                  part.fileName,
+                );
+              }
+              body = form;
+            } else if (request.body && request.body.length) {
+              body = ownedBytes(request.body);
+            }
+            const response = await fetch(request.url, {
+              method: request.method,
+              headers,
+              body,
+              signal: controller.signal,
+              redirect: request.followRedirects ? "follow" : "manual",
+            });
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status} ${await response.text()}`);
+            }
+            if (response.body === null) {
+              throw new Error("HTTP byte stream response has no body");
+            }
+            onOpened();
+            const reader = response.body.getReader();
+            while (true) {
+              const result = await reader.read();
+              if (result.done) {
+                break;
+              }
+              onChunk(Uint8Array.from(result.value));
+            }
+            onClosed(null);
+          } catch (error) {
+            onClosed(controller.signal.aborted ? null : String(error));
+          } finally {
+            activeHttpByteStreamControllers.delete(streamId);
+          }
+        })();
+      },
+      /** Cancels one browser-owned Fetch response body. */
+      closeHttpByteStream(streamId: string): void {
+        const controller = activeHttpByteStreamControllers.get(streamId);
+        if (controller === undefined) {
+          throw new Error(`HTTP byte stream is not open: ${streamId}`);
+        }
+        controller.abort();
       },
       downloadFile(request: DownloadRequest) {
         const bytes = workerDownloads.get(request.url);

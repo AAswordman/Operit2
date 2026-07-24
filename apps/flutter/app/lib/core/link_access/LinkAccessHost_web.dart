@@ -29,9 +29,5 @@ class LinkAccessHost extends ChangeNotifier {
     );
   }
 
-  Future<String> discoverDevices(int timeoutMs) async {
-    return '[]';
-  }
-
   Future<void> stop({bool updateConfig = true}) async {}
 }

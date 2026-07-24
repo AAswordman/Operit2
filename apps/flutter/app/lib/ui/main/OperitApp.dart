@@ -106,12 +106,6 @@ class _AppDialogHost extends StatefulWidget {
 class _AppDialogHostState extends State<_AppDialogHost> {
   bool _shownStartupWebAccessError = false;
 
-  @override
-  void initState() {
-    super.initState();
-    RuntimeConnectionManager.instance.addListener(_onManagerChanged);
-  }
-
   /// Handles newly reported LinkHost startup errors.
   @override
   void didUpdateWidget(covariant _AppDialogHost oldWidget) {
@@ -123,16 +117,9 @@ class _AppDialogHostState extends State<_AppDialogHost> {
   }
 
   @override
-  void dispose() {
-    RuntimeConnectionManager.instance.removeListener(_onManagerChanged);
-    super.dispose();
-  }
-
-  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _showStartupWebAccessError();
-    _showPendingRemoteError();
   }
 
   void _showStartupWebAccessError() {
@@ -153,38 +140,6 @@ class _AppDialogHostState extends State<_AppDialogHost> {
             title: Text(l10n.settingsWebAccessService),
             content: SingleChildScrollView(
               child: SelectableText(l10n.settingsWebAccessStartFailed(error)),
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text(l10n.ok),
-              ),
-            ],
-          );
-        },
-      );
-    });
-  }
-
-  void _onManagerChanged() {
-    _showPendingRemoteError();
-  }
-
-  void _showPendingRemoteError() {
-    final error = RuntimeConnectionManager.instance.consumePendingRemoteError();
-    if (error == null || !mounted) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final l10n = AppLocalizations.of(context)!;
-      showDialog<void>(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: Text(l10n.settingsRuntimeRemoteDisconnected),
-            content: SingleChildScrollView(
-              child: SelectableText(
-                l10n.settingsRuntimeRemoteDisconnectedMessage(error.toString()),
-              ),
             ),
             actions: <Widget>[
               TextButton(

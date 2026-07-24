@@ -828,6 +828,30 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     return _commandResult(success: true, command: command, session: session);
   }
 
+  /// Waits for the browser owner to register a tab opened after the supplied snapshot.
+  Future<WorkspaceBrowserSessionInfo> _waitForNewSession(
+    Set<String> before, {
+    required Duration timeout,
+  }) {
+    final existing = _latestOpenedSession(before);
+    if (existing != null) {
+      return Future<WorkspaceBrowserSessionInfo>.value(existing);
+    }
+    final completer = Completer<WorkspaceBrowserSessionInfo>();
+    void onChanged() {
+      final session = _latestOpenedSession(before);
+      if (session != null && !completer.isCompleted) {
+        completer.complete(session);
+      }
+    }
+
+    addListener(onChanged);
+    onChanged();
+    return completer.future
+        .timeout(timeout)
+        .whenComplete(() => removeListener(onChanged));
+  }
+
   /// Captures the current host-side browser compositor descriptor.
   Future<RuntimeBrowserCommandResult> _snapshotRuntimeSession(
     RuntimeBrowserCommand command,

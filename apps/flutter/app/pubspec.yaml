@@ -41,6 +41,7 @@ dependencies:
     path: ../thirdparty/flutter_math_fork
   http: ^1.2.2
   web_socket_channel: ^3.0.3
+  web: ^1.1.1
   dynamic_color: ^1.8.1
   hooks: ^2.0.0
   printing: ^5.14.3

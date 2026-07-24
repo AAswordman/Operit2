@@ -3,7 +3,10 @@
 import 'dart:convert';
 import 'dart:math';
 
-import '../path/OperitClientPaths.dart';
+import '../bridge/PlatformCoreProxy.dart';
+import '../bridge/ProxyCoreRuntimeBridge.dart';
+import '../proxy/generated/CoreProxyClients.g.dart';
+import '../proxy/generated/CoreProxyModels.g.dart' as generated;
 
 enum LinkAccessHostPortMode { automatic, fixed }
 
@@ -105,22 +108,43 @@ LinkAccessHostPortMode _linkAccessHostPortModeFromJson(Object? value) {
 class LinkAccessHostConfigStore {
   const LinkAccessHostConfigStore._();
 
-  /// Reads host listener settings without loading Link Access session state.
+  static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
+    ProxyCoreRuntimeBridge(coreProxy: platformCoreProxy),
+  );
+
+  /// Reads host listener settings from the runtime-owned Link Access datastore.
   static Future<LinkAccessHostConfig> read() async {
-    final file = await OperitClientPaths.linkAccessHostConfigFile();
-    if (!await file.exists()) {
-      return LinkAccessHostConfig.initial();
-    }
-    final content = await file.readAsString();
-    return LinkAccessHostConfig.fromJson(jsonDecode(content) as Map<String, Object?>);
+    final config = await _clients.linkAccessStore.initializeHostConfig();
+    return LinkAccessHostConfig(
+      webAccessEnabled: config.webAccessEnabled,
+      discoveryEnabled: config.discoveryEnabled,
+      portMode: switch (config.portMode) {
+        generated.LinkAccessHostPortMode.automatic =>
+          LinkAccessHostPortMode.automatic,
+        generated.LinkAccessHostPortMode.fixed => LinkAccessHostPortMode.fixed,
+      },
+      bindAddress: config.bindAddress,
+      token: config.token,
+      updatedAt: config.updatedAt,
+    );
   }
 
-  /// Writes host listener settings without persisting Link Access session state.
+  /// Writes host listener settings to the runtime-owned Link Access datastore.
   static Future<void> write(LinkAccessHostConfig config) async {
-    final file = await OperitClientPaths.linkAccessHostConfigFile();
-    await file.parent.create(recursive: true);
-    await file.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(config),
+    await _clients.linkAccessStore.saveHostConfig(
+      config: generated.LinkAccessHostConfig(
+        bindAddress: config.bindAddress,
+        token: config.token,
+        webAccessEnabled: config.webAccessEnabled,
+        discoveryEnabled: config.discoveryEnabled,
+        portMode: switch (config.portMode) {
+          LinkAccessHostPortMode.automatic =>
+            generated.LinkAccessHostPortMode.automatic,
+          LinkAccessHostPortMode.fixed =>
+            generated.LinkAccessHostPortMode.fixed,
+        },
+        updatedAt: config.updatedAt,
+      ),
     );
   }
 }

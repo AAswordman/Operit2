@@ -4,7 +4,7 @@ if(OPERIT_BUILD_CONFIG STREQUAL "Debug")
     COMMAND "${CMAKE_COMMAND}" -E env
       "RUSTFLAGS=-Awarnings"
       "CARGO_TERM_COLOR=never"
-      "${OPERIT_CARGO_EXECUTABLE}" build --quiet --features process-stdio --manifest-path "${OPERIT_FLUTTER_BRIDGE_CRATE}/Cargo.toml"
+      "${OPERIT_CARGO_EXECUTABLE}" build --quiet --manifest-path "${OPERIT_FLUTTER_BRIDGE_CRATE}/Cargo.toml"
     WORKING_DIRECTORY "${OPERIT_FLUTTER_BRIDGE_CRATE}"
     RESULT_VARIABLE OPERIT_CARGO_RESULT
   )
@@ -14,11 +14,6 @@ if(OPERIT_BUILD_CONFIG STREQUAL "Debug")
   file(COPY_FILE
     "${OPERIT_FLUTTER_BRIDGE_CRATE}/target/debug/operit_flutter_bridge.dll"
     "${OPERIT_OUTPUT_DIRECTORY}/operit_flutter_bridge.dll"
-    ONLY_IF_DIFFERENT
-  )
-  file(COPY_FILE
-    "${OPERIT_FLUTTER_BRIDGE_CRATE}/target/debug/operit_flutter_bridge_process.exe"
-    "${OPERIT_OUTPUT_DIRECTORY}/operit_flutter_bridge_process.exe"
     ONLY_IF_DIFFERENT
   )
 else()

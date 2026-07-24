@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 
+import '../../../../core/logging/ClientLogger.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../main/MainLayoutController.dart';
 import '../../../main/TopBarController.dart';
@@ -22,6 +23,7 @@ import '../viewmodel/ChatSwitchRenderCoordinator.dart';
 import '../viewmodel/ChatViewModel.dart';
 
 bool _chatWorkspaceOpen = false;
+const String _localSttLogTag = 'LocalSTT';
 
 class AIChatScreen extends StatelessWidget {
   /// Creates the full host-owned AI chat screen.
@@ -780,7 +782,13 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
       } else {
         await _startSpeechInput();
       }
-    } catch (error) {
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'speech input failed',
+        tag: _localSttLogTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (!mounted) {
         return;
       }
@@ -788,7 +796,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
         _isSpeechRecording = false;
         _isSpeechTranscribing = false;
       });
-      _showLocalToast('语音输入失败：$error');
+      _showLocalToast(AppLocalizations.of(context)!.chatSpeechInputFailed);
     }
   }
 
@@ -821,7 +829,12 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
           );
       final text = response.text.trim();
       if (text.isEmpty) {
-        throw StateError('STT 未识别到文本');
+        if (mounted) {
+          _showLocalToast(
+            AppLocalizations.of(context)!.chatSpeechNoTextRecognized,
+          );
+        }
+        return;
       }
       _messageController.value = TextEditingValue(
         text: text,

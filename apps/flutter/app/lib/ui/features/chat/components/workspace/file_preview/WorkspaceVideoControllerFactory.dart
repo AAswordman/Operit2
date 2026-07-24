@@ -4,9 +4,6 @@ import 'dart:typed_data';
 
 import 'package:video_player/video_player.dart';
 
-import 'WorkspaceVideoControllerFactory_io.dart'
-    if (dart.library.html) 'WorkspaceVideoControllerFactory_web.dart';
-
 class WorkspaceVideoControllerHandle {
   const WorkspaceVideoControllerHandle({
     required this.controller,
@@ -17,9 +14,27 @@ class WorkspaceVideoControllerHandle {
   final Future<void> Function() disposeSource;
 }
 
+/// Creates a video controller from an in-memory media URI.
 Future<WorkspaceVideoControllerHandle> createWorkspaceVideoController(
   Uint8List bytes,
   String fileName,
-) {
-  return createWorkspaceVideoControllerImpl(bytes, fileName);
+) async {
+  final uri = Uri.dataFromBytes(bytes, mimeType: _videoMimeType(fileName));
+  final controller = VideoPlayerController.networkUrl(uri);
+  await controller.initialize();
+  return WorkspaceVideoControllerHandle(
+    controller: controller,
+    disposeSource: () async {},
+  );
+}
+
+/// Returns the MIME type used for one in-memory video source.
+String _videoMimeType(String fileName) {
+  final extension = fileName.split('.').last.toLowerCase();
+  return switch (extension) {
+    'webm' => 'video/webm',
+    'mov' => 'video/quicktime',
+    'm4v' => 'video/x-m4v',
+    _ => 'video/mp4',
+  };
 }

@@ -117,7 +117,7 @@ class AppearanceSettingsPanel extends StatelessWidget {
               children: <Widget>[
                 FilledButton.tonalIcon(
                   onPressed: () {
-                    unawaited(_pickBackgroundImage(themeController));
+                    unawaited(_pickBackgroundImage(context, themeController));
                   },
                   icon: const Icon(Icons.image_outlined),
                   label: Text(l10n.settingsAppearanceBackgroundChooseImage),
@@ -332,7 +332,7 @@ class AppearanceSettingsPanel extends StatelessWidget {
                   snapshot.customUserAvatarUri != null &&
                   snapshot.customUserAvatarUri!.isNotEmpty,
               onChoose: () {
-                unawaited(_pickUserAvatarImage(themeController));
+                unawaited(_pickUserAvatarImage(context, themeController));
               },
               onClear: () {
                 unawaited(
@@ -599,17 +599,20 @@ class AppearanceSettingsPanel extends StatelessWidget {
   }
 }
 
-/// Imports and saves a selected image as the active background asset.
-Future<void> _pickBackgroundImage(OperitThemeController themeController) async {
-  const imageGroup = XTypeGroup(
-    label: 'image',
-    extensions: <String>['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'],
+/// Crops, imports, and saves a selected image as the active background asset.
+Future<void> _pickBackgroundImage(
+  BuildContext context,
+  OperitThemeController themeController,
+) async {
+  final screenSize = MediaQuery.sizeOf(context);
+  final imported = await _pickCroppedThemeImage(
+    context,
+    aspectRatio: screenSize.width / screenSize.height,
+    outputRole: 'background',
   );
-  final file = await openFile(acceptedTypeGroups: <XTypeGroup>[imageGroup]);
-  if (file == null) {
+  if (imported == null) {
     return;
   }
-  final imported = await ThemeAssetStore().importFile(file);
   await themeController.saveThemeSettings(
     useBackgroundImage: true,
     backgroundImageUri: imported.storagePath,
@@ -637,20 +640,315 @@ Future<void> _pickBackgroundVideo(OperitThemeController themeController) async {
   );
 }
 
-/// Imports and saves a selected image as the active user avatar asset.
-Future<void> _pickUserAvatarImage(OperitThemeController themeController) async {
+/// Crops, imports, and saves a selected image as the active user avatar asset.
+Future<void> _pickUserAvatarImage(
+  BuildContext context,
+  OperitThemeController themeController,
+) async {
+  final imported = await _pickCroppedThemeImage(
+    context,
+    aspectRatio: 1,
+    outputRole: 'avatar',
+  );
+  if (imported == null) {
+    return;
+  }
+  await themeController.saveActiveThemeUserAvatarSettings(
+    customUserAvatarUri: imported.storagePath,
+  );
+}
+
+/// Lets the user select and crop one image before importing it.
+Future<ThemeAssetImport?> _pickCroppedThemeImage(
+  BuildContext context, {
+  required double aspectRatio,
+  required String outputRole,
+}) async {
   const imageGroup = XTypeGroup(
     label: 'image',
     extensions: <String>['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'],
   );
   final file = await openFile(acceptedTypeGroups: <XTypeGroup>[imageGroup]);
   if (file == null) {
-    return;
+    return null;
   }
-  final imported = await ThemeAssetStore().importFile(file);
-  await themeController.saveActiveThemeUserAvatarSettings(
-    customUserAvatarUri: imported.storagePath,
+  final bytes = await file.readAsBytes();
+  final croppedBytes = await _showThemeImageCropDialog(
+    // ignore: use_build_context_synchronously
+    context,
+    bytes: bytes,
+    aspectRatio: aspectRatio,
   );
+  if (croppedBytes == null) {
+    return null;
+  }
+  return ThemeAssetStore().importBytes(
+    bytes: croppedBytes,
+    fileName: _croppedThemeImageFileName(file.name, outputRole),
+  );
+}
+
+/// Builds a PNG file name for a cropped theme image.
+String _croppedThemeImageFileName(String fileName, String outputRole) {
+  final normalized = fileName.replaceAll('\\', '/');
+  final slashIndex = normalized.lastIndexOf('/');
+  final baseName = normalized.substring(slashIndex + 1).trim();
+  if (baseName.isEmpty) {
+    throw StateError('theme image file name is empty');
+  }
+  final dotIndex = baseName.lastIndexOf('.');
+  final stem = dotIndex <= 0 ? baseName : baseName.substring(0, dotIndex);
+  return '${stem}_$outputRole.png';
+}
+
+/// Shows an equal-aspect crop dialog and returns encoded PNG bytes.
+Future<Uint8List?> _showThemeImageCropDialog(
+  BuildContext context, {
+  required Uint8List bytes,
+  required double aspectRatio,
+}) async {
+  final sourceImage = await _decodeThemeImage(bytes);
+  try {
+    final result = await showDialog<Uint8List>(
+      // ignore: use_build_context_synchronously
+      context: context,
+      builder: (dialogContext) {
+        return _ThemeImageCropDialog(
+          sourceImage: sourceImage,
+          aspectRatio: aspectRatio,
+        );
+      },
+    );
+    return result;
+  } finally {
+    sourceImage.dispose();
+  }
+}
+
+/// Decodes selected image bytes for the crop editor.
+Future<ui.Image> _decodeThemeImage(Uint8List bytes) async {
+  final codec = await ui.instantiateImageCodec(bytes);
+  final frame = await codec.getNextFrame();
+  return frame.image;
+}
+
+class _ThemeImageCropSettings {
+  /// Creates cover crop settings for one source image.
+  const _ThemeImageCropSettings({
+    required this.zoom,
+    required this.offsetX,
+    required this.offsetY,
+  });
+
+  final double zoom;
+  final double offsetX;
+  final double offsetY;
+}
+
+class _ThemeImageCropDialog extends StatefulWidget {
+  /// Creates a crop dialog that preserves the requested aspect ratio.
+  const _ThemeImageCropDialog({
+    required this.sourceImage,
+    required this.aspectRatio,
+  });
+
+  final ui.Image sourceImage;
+  final double aspectRatio;
+
+  /// Creates the crop dialog state.
+  @override
+  State<_ThemeImageCropDialog> createState() => _ThemeImageCropDialogState();
+}
+
+class _ThemeImageCropDialogState extends State<_ThemeImageCropDialog> {
+  double _zoom = 1;
+  double _offsetX = 0;
+  double _offsetY = 0;
+
+  /// Builds the crop editor with cover preview controls.
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final settings = _ThemeImageCropSettings(
+      zoom: _zoom,
+      offsetX: _offsetX,
+      offsetY: _offsetY,
+    );
+    return AlertDialog(
+      title: Text(l10n.settingsAppearanceBubbleImageCrop),
+      content: SingleChildScrollView(
+        child: SizedBox(
+          width: 440,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              AspectRatio(
+                aspectRatio: widget.aspectRatio,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: CustomPaint(
+                    painter: _ThemeImageCropPreviewPainter(
+                      image: widget.sourceImage,
+                      aspectRatio: widget.aspectRatio,
+                      settings: settings,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              _ValueSlider(
+                label: l10n.zoom,
+                value: _zoom,
+                min: 1,
+                max: 4,
+                divisions: 30,
+                onChanged: (value) => setState(() => _zoom = value),
+              ),
+              _ValueSlider(
+                label: 'X',
+                value: _offsetX,
+                min: -1,
+                max: 1,
+                divisions: 40,
+                onChanged: (value) => setState(() => _offsetX = value),
+              ),
+              _ValueSlider(
+                label: 'Y',
+                value: _offsetY,
+                min: -1,
+                max: 1,
+                divisions: 40,
+                onChanged: (value) => setState(() => _offsetY = value),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: () {
+            unawaited(_saveCroppedImage(context, settings));
+          },
+          child: Text(l10n.save),
+        ),
+      ],
+    );
+  }
+
+  /// Encodes the current crop and closes the dialog.
+  Future<void> _saveCroppedImage(
+    BuildContext context,
+    _ThemeImageCropSettings settings,
+  ) async {
+    final bytes = await _encodeCroppedThemeImage(
+      widget.sourceImage,
+      aspectRatio: widget.aspectRatio,
+      settings: settings,
+    );
+    if (!context.mounted) {
+      return;
+    }
+    Navigator.of(context).pop(bytes);
+  }
+}
+
+class _ThemeImageCropPreviewPainter extends CustomPainter {
+  /// Creates a painter for the exact crop area that will be encoded.
+  const _ThemeImageCropPreviewPainter({
+    required this.image,
+    required this.aspectRatio,
+    required this.settings,
+  });
+
+  final ui.Image image;
+  final double aspectRatio;
+  final _ThemeImageCropSettings settings;
+
+  /// Paints the cropped image without stretching its pixels.
+  @override
+  void paint(Canvas canvas, Size size) {
+    final src = _themeImageCropRect(
+      image,
+      aspectRatio: aspectRatio,
+      settings: settings,
+    );
+    canvas.drawImageRect(image, src, Offset.zero & size, Paint());
+  }
+
+  /// Reports whether the crop preview needs repainting.
+  @override
+  bool shouldRepaint(covariant _ThemeImageCropPreviewPainter oldDelegate) {
+    return oldDelegate.image != image ||
+        oldDelegate.aspectRatio != aspectRatio ||
+        oldDelegate.settings != settings;
+  }
+}
+
+/// Encodes one cover crop as PNG bytes.
+Future<Uint8List> _encodeCroppedThemeImage(
+  ui.Image image, {
+  required double aspectRatio,
+  required _ThemeImageCropSettings settings,
+}) async {
+  final src = _themeImageCropRect(
+    image,
+    aspectRatio: aspectRatio,
+    settings: settings,
+  );
+  final outputWidth = src.width.round().clamp(1, image.width).toInt();
+  final outputHeight = src.height.round().clamp(1, image.height).toInt();
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.drawImageRect(
+    image,
+    src,
+    Rect.fromLTWH(0, 0, outputWidth.toDouble(), outputHeight.toDouble()),
+    Paint(),
+  );
+  final picture = recorder.endRecording();
+  final croppedImage = await picture.toImage(outputWidth, outputHeight);
+  final byteData = await croppedImage.toByteData(
+    format: ui.ImageByteFormat.png,
+  );
+  picture.dispose();
+  croppedImage.dispose();
+  if (byteData == null) {
+    throw StateError('cropped theme image bytes are unavailable');
+  }
+  return byteData.buffer.asUint8List();
+}
+
+/// Calculates a non-stretched source crop rectangle for cover display.
+Rect _themeImageCropRect(
+  ui.Image image, {
+  required double aspectRatio,
+  required _ThemeImageCropSettings settings,
+}) {
+  if (aspectRatio <= 0) {
+    throw StateError('theme image crop aspect ratio must be positive');
+  }
+  final imageWidth = image.width.toDouble();
+  final imageHeight = image.height.toDouble();
+  final imageAspectRatio = imageWidth / imageHeight;
+  final baseWidth = imageAspectRatio > aspectRatio
+      ? imageHeight * aspectRatio
+      : imageWidth;
+  final baseHeight = imageAspectRatio > aspectRatio
+      ? imageHeight
+      : imageWidth / aspectRatio;
+  final zoom = settings.zoom.clamp(1.0, 4.0);
+  final cropWidth = baseWidth / zoom;
+  final cropHeight = baseHeight / zoom;
+  final xRange = (imageWidth - cropWidth) / 2;
+  final yRange = (imageHeight - cropHeight) / 2;
+  final left = xRange + xRange * settings.offsetX.clamp(-1.0, 1.0);
+  final top = yRange + yRange * settings.offsetY.clamp(-1.0, 1.0);
+  return Rect.fromLTWH(left, top, cropWidth, cropHeight);
 }
 
 /// Imports and saves a selected font as the active custom font asset.

@@ -3,6 +3,7 @@ package app.operit
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.Display
 import android.view.View
 import io.flutter.embedding.android.FlutterActivity
@@ -10,6 +11,7 @@ import io.flutter.embedding.engine.FlutterEngine
 
 class MainActivity : FlutterActivity() {
     companion object {
+        private const val TAG = "OperitMainActivity"
         @Volatile private var activeActivity: MainActivity? = null
 
         fun currentActivity(): MainActivity? = activeActivity
@@ -123,9 +125,8 @@ class MainActivity : FlutterActivity() {
         }
         attributes.preferredDisplayModeId = preferredMode.modeId
         window.attributes = attributes
-        AndroidClientLogger.i(
-            applicationContext,
-            "OperitMainActivity",
+        Log.i(
+            TAG,
             "Requested display mode ${preferredMode.physicalWidth}x${preferredMode.physicalHeight}@${preferredMode.refreshRate}Hz",
         )
     }

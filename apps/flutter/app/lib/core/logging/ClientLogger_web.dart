@@ -12,6 +12,9 @@ Future<void> initialize() async {
   _initialized = true;
 }
 
+/// Keeps browser logging on the existing localStorage sink.
+void attachPersistentStorage() {}
+
 /// Returns whether the browser logger has been initialized.
 bool isInitialized() => _initialized;
 

@@ -1940,9 +1940,11 @@ name = "operit-core-proxy"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "mdns-sd",
  "operit-command-core",
  "operit-host-api",
  "operit-link",
+ "operit-link-access",
  "operit-local-models",
  "operit-model",
  "operit-plugin-sdk",
@@ -2083,6 +2085,7 @@ dependencies = [
 name = "operit-host-macos-native"
 version = "0.1.0"
 dependencies = [
+ "operit-host-api",
  "operit-host-apple-native",
 ]
 
@@ -2161,7 +2164,9 @@ name = "operit-host-web"
 version = "0.1.0"
 dependencies = [
  "js-sys",
+ "operit-core-proxy",
  "operit-host-api",
+ "operit-runtime",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -2243,8 +2248,8 @@ dependencies = [
  "operit-host-api",
  "operit-link",
  "operit-runtime",
+ "operit-store",
  "rand_core 0.6.4",
- "reqwest",
  "serde",
  "serde_bytes",
  "serde_json",

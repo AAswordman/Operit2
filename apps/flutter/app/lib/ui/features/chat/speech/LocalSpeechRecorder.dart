@@ -1,9 +1,14 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:record/record.dart';
+
+import '../../../../core/logging/ClientLogger.dart';
 
 class RecordedAudio {
   final Uint8List bytes;
@@ -18,7 +23,49 @@ class RecordedAudio {
   });
 }
 
+class _PcmCaptureDiagnostics {
+  int _chunkCount = 0;
+  int _totalBytes = 0;
+  int _sampleCount = 0;
+  int _peak = 0;
+  double _sumSquares = 0;
+
+  /// Records actual PCM16 values from one microphone stream chunk.
+  void add(Uint8List chunk) {
+    final bytes = ByteData.sublistView(chunk);
+    for (var offset = 0; offset + 1 < chunk.length; offset += 2) {
+      final sample = bytes.getInt16(offset, Endian.little);
+      final magnitude = sample == -32768 ? 32768 : sample.abs();
+      _peak = math.max(_peak, magnitude);
+      _sumSquares += sample * sample;
+    }
+
+    _chunkCount += 1;
+    _totalBytes += chunk.length;
+    _sampleCount += chunk.length ~/ 2;
+  }
+
+  /// Formats PCM16 root-mean-square energy as dBFS.
+  static String _formatDbFs(double sumSquares, int sampleCount) {
+    if (sampleCount == 0 || sumSquares == 0) {
+      return '-inf dBFS';
+    }
+    final rms = math.sqrt(sumSquares / sampleCount);
+    return '${(20 * math.log(rms / 32768) / math.ln10).toStringAsFixed(1)} dBFS';
+  }
+
+  /// Describes all PCM16 values observed during the active recording.
+  String summary() {
+    return 'chunks=$_chunkCount bytes=$_totalBytes samples=$_sampleCount '
+        'peak=$_peak rms=${_formatDbFs(_sumSquares, _sampleCount)}';
+  }
+}
+
 class LocalSpeechRecorder {
+  static const String _logTag = 'LocalSTT';
+  static const MethodChannel _windowsAudioInputChannel = MethodChannel(
+    'operit/audio-input',
+  );
   static const int _sampleRate = 16000;
   static const int _channelCount = 1;
   static const int _bitsPerSample = 16;
@@ -35,6 +82,7 @@ class LocalSpeechRecorder {
   BytesBuilder? _pcmBuilder;
   StreamSubscription<Uint8List>? _streamSubscription;
   Completer<void>? _streamDone;
+  _PcmCaptureDiagnostics? _pcmDiagnostics;
   Object? _streamError;
   StackTrace? _streamErrorStackTrace;
 
@@ -50,20 +98,34 @@ class LocalSpeechRecorder {
 
     final pcmBuilder = BytesBuilder();
     final streamDone = Completer<void>();
+    final diagnostics = _PcmCaptureDiagnostics();
+    final inputDevice = await _resolveInputDevice();
+    if (inputDevice != null) {
+      ClientLogger.i(
+        'recording start sampleRate=$_sampleRate channels=$_channelCount '
+        'inputRole=default inputId=${inputDevice.id} inputLabel=${inputDevice.label}',
+        tag: _logTag,
+      );
+    }
     final stream = await _recorder.startStream(
-      const RecordConfig(
+      RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: _sampleRate,
         numChannels: _channelCount,
         streamBufferSize: _streamBufferSize,
+        device: inputDevice,
       ),
     );
     _pcmBuilder = pcmBuilder;
     _streamDone = streamDone;
+    _pcmDiagnostics = diagnostics;
     _streamError = null;
     _streamErrorStackTrace = null;
     final subscription = stream.listen(
-      pcmBuilder.add,
+      (Uint8List chunk) {
+        pcmBuilder.add(chunk);
+        diagnostics.add(chunk);
+      },
       onError: (Object error, StackTrace stackTrace) {
         _streamError = error;
         _streamErrorStackTrace = stackTrace;
@@ -73,16 +135,41 @@ class LocalSpeechRecorder {
     _streamSubscription = subscription;
   }
 
+  /// Resolves the Windows default capture endpoint for local recording.
+  Future<InputDevice?> _resolveInputDevice() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) {
+      return null;
+    }
+    final device = await _windowsAudioInputChannel
+        .invokeMapMethod<String, String>('resolveDefaultCaptureDevice');
+    if (device == null) {
+      throw StateError('Windows did not return a default capture device');
+    }
+    final id = device['id'];
+    final label = device['label'];
+    if (id == null || id.isEmpty || label == null || label.isEmpty) {
+      throw StateError('Windows returned an invalid default capture device');
+    }
+    return InputDevice(id: id, label: label);
+  }
+
   /// Stops the microphone stream and returns a complete WAV payload.
   Future<RecordedAudio> stop() async {
     final pcmBuilder = _pcmBuilder;
     final streamDone = _streamDone;
+    final diagnostics = _pcmDiagnostics;
     if (pcmBuilder == null || streamDone == null) {
       throw StateError('No speech recording is active');
     }
 
     await _recorder.stop();
     await streamDone.future;
+    if (diagnostics != null) {
+      ClientLogger.d(
+        'recording complete ${diagnostics.summary()}',
+        tag: _logTag,
+      );
+    }
     final streamError = _streamError;
     final streamErrorStackTrace = _streamErrorStackTrace;
     _clearActiveRecording();
@@ -116,6 +203,7 @@ class LocalSpeechRecorder {
     _pcmBuilder = null;
     _streamSubscription = null;
     _streamDone = null;
+    _pcmDiagnostics = null;
     _streamError = null;
     _streamErrorStackTrace = null;
   }

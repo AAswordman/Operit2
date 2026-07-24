@@ -26,25 +26,44 @@ class _TtsProviderEditValues {
   final List<core_proxy.TtsHttpResponsePipelineStep> responsePipeline;
 }
 
+sealed class _TtsProviderEditResult {
+  const _TtsProviderEditResult();
+}
+
+class _TtsProviderEditSaved extends _TtsProviderEditResult {
+  const _TtsProviderEditSaved(this.values);
+
+  final _TtsProviderEditValues values;
+}
+
+class _TtsProviderEditDeleted extends _TtsProviderEditResult {
+  const _TtsProviderEditDeleted();
+}
+
 class _TtsProviderDialog extends StatefulWidget {
   const _TtsProviderDialog({
     required this.config,
     required this.providerCatalogEntries,
+    required this.deleteBlockedReason,
   });
 
   final core_proxy.TtsConfig config;
   final List<core_proxy.TtsProviderCatalogEntry> providerCatalogEntries;
+  final String? deleteBlockedReason;
 
-  static Future<_TtsProviderEditValues?> show({
+  /// Opens the TTS provider editor and returns the selected provider action.
+  static Future<_TtsProviderEditResult?> show({
     required BuildContext context,
     required core_proxy.TtsConfig config,
     required List<core_proxy.TtsProviderCatalogEntry> providerCatalogEntries,
+    required String? deleteBlockedReason,
   }) {
-    return showDialog<_TtsProviderEditValues>(
+    return showDialog<_TtsProviderEditResult>(
       context: context,
       builder: (context) => _TtsProviderDialog(
         config: config,
         providerCatalogEntries: providerCatalogEntries,
+        deleteBlockedReason: deleteBlockedReason,
       ),
     );
   }
@@ -99,6 +118,7 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final isHttpTts = _isHttpProviderType(_providerType);
     final isSystemTts = _isSystemProviderType(_providerType);
     final isLocalModelTts = _isLocalModelProviderType(_providerType);
@@ -161,12 +181,32 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
                   _field(_headersController, 'Headers JSON', minLines: 3),
                   _field(_responsePipelineController, '响应管道 JSON', minLines: 4),
                 ],
+                if (widget.deleteBlockedReason case final reason?) ...<Widget>[
+                  const SizedBox(height: 2),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      reason,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
         ),
       ),
       actions: <Widget>[
+        Tooltip(
+          message: widget.deleteBlockedReason ?? l10n.settingsTtsDeleteProvider,
+          child: TextButton.icon(
+            onPressed: widget.deleteBlockedReason == null ? _delete : null,
+            icon: const Icon(Icons.delete_outline),
+            label: Text(l10n.delete),
+          ),
+        ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
@@ -202,6 +242,12 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
     );
   }
 
+  /// Returns the explicit request to delete this TTS provider.
+  void _delete() {
+    Navigator.of(context).pop(const _TtsProviderEditDeleted());
+  }
+
+  /// Validates provider fields and returns the saved provider values.
   void _submit() {
     if (!(_formKey.currentState?.validate() ?? false)) {
       return;
@@ -225,16 +271,18 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
       return;
     }
     Navigator.of(context).pop(
-      _TtsProviderEditValues(
-        providerType: _providerType,
-        name: _nameController.text.trim(),
-        endpoint: _endpointController.text.trim(),
-        apiKey: _apiKeyController.text.trim(),
-        httpMethod: _httpMethodController.text.trim(),
-        contentType: _contentTypeController.text.trim(),
-        requestBody: _requestBodyController.text.trim(),
-        headers: headers,
-        responsePipeline: responsePipeline,
+      _TtsProviderEditSaved(
+        _TtsProviderEditValues(
+          providerType: _providerType,
+          name: _nameController.text.trim(),
+          endpoint: _endpointController.text.trim(),
+          apiKey: _apiKeyController.text.trim(),
+          httpMethod: _httpMethodController.text.trim(),
+          contentType: _contentTypeController.text.trim(),
+          requestBody: _requestBodyController.text.trim(),
+          headers: headers,
+          responsePipeline: responsePipeline,
+        ),
       ),
     );
   }

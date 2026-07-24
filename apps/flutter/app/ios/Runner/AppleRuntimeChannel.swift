@@ -111,12 +111,6 @@ final class AppleRuntimeChannel: NSObject {
       runRuntime(result: result) { handle in
         self.takeString(operit_flutter_bridge_stop_web_access_server(handle))
       }
-    case "discoverDevices":
-      discoverDevices(call: call, result: result)
-    case "remotePairStart":
-      remotePairStart(call: call, result: result)
-    case "remotePairFinish":
-      remotePairFinish(call: call, result: result)
     case "ownerSystemCaptureScreenshot":
       ownerSystemCaptureScreenshot(result: result)
     case "ownerSystemRecognizeText":
@@ -585,45 +579,6 @@ final class AppleRuntimeChannel: NSObject {
         enableWebAccess,
         enableDiscovery
       ))
-    }
-  }
-
-  private func discoverDevices(call: FlutterMethodCall, result: @escaping FlutterResult) {
-    guard let args = call.arguments as? [String: Any],
-      let timeoutMs = args["timeoutMs"] as? NSNumber
-    else {
-      result(FlutterError(code: "INVALID_ARGS", message: "discoverDevices expects timeoutMs", details: nil))
-      return
-    }
-    runRuntime(result: result) { handle in
-      self.takeString(operit_flutter_bridge_discover_devices(handle, timeoutMs.stringValue))
-    }
-  }
-
-  private func remotePairStart(call: FlutterMethodCall, result: @escaping FlutterResult) {
-    guard let args = call.arguments as? [String: Any],
-      let baseUrl = args["baseUrl"] as? String,
-      let tokenHash = args["tokenHash"] as? String,
-      let clientDeviceInfo = args["clientDeviceInfo"] as? String
-    else {
-      result(FlutterError(code: "INVALID_ARGS", message: "remotePairStart expects baseUrl, tokenHash and clientDeviceInfo", details: nil))
-      return
-    }
-    runRuntime(result: result) { handle in
-      self.takeString(operit_flutter_bridge_remote_pair_start(handle, baseUrl, tokenHash, clientDeviceInfo))
-    }
-  }
-
-  private func remotePairFinish(call: FlutterMethodCall, result: @escaping FlutterResult) {
-    guard let args = call.arguments as? [String: Any],
-      let pairingId = args["pairingId"] as? String,
-      let pairingCode = args["pairingCode"] as? String
-    else {
-      result(FlutterError(code: "INVALID_ARGS", message: "remotePairFinish expects pairingId and pairingCode", details: nil))
-      return
-    }
-    runRuntime(result: result) { handle in
-      self.takeString(operit_flutter_bridge_remote_pair_finish(handle, pairingId, pairingCode))
     }
   }
 

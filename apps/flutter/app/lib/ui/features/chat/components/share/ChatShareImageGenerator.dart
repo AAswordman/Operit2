@@ -1,12 +1,14 @@
 // ignore_for_file: file_names
 
-import 'dart:io';
+import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
-import '../../../../../core/path/OperitClientPaths.dart';
+import '../../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../common/OperitLogoMark.dart';
 import '../../viewmodel/ChatViewModel.dart';
 import '../style/cursor/CursorStyleChatMessage.dart';
@@ -14,7 +16,12 @@ import '../style/cursor/CursorStyleChatMessage.dart';
 class ChatShareImageGenerator {
   ChatShareImageGenerator._();
 
-  static Future<File> generate({
+  static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
+    ProxyCoreRuntimeBridge(),
+  );
+
+  /// Generates and persists one share image through runtime storage.
+  static Future<ChatShareImage> generate({
     required BuildContext context,
     required List<ChatUiMessage> messages,
   }) async {
@@ -51,14 +58,25 @@ class ChatShareImageGenerator {
     image.dispose();
     entry.remove();
 
-    final directory = await OperitClientPaths.shareImageTempDir();
-    final file = File(
-      '${directory.path}${Platform.pathSeparator}operit_share_${DateTime.now().millisecondsSinceEpoch}.png',
-    );
     final pngBytes = bytes!.buffer.asUint8List();
-    await file.writeAsBytes(pngBytes, flush: true);
-    return file;
+    final directory = await _clients.repositoryRuntimeStorageRepository
+        .shareImageDirPath();
+    final storagePath =
+        '$directory/operit_share_${DateTime.now().millisecondsSinceEpoch}.png';
+    await _clients.repositoryRuntimeStorageRepository.writeBase64(
+      path: storagePath,
+      base64Content: base64Encode(pngBytes),
+    );
+    return ChatShareImage(storagePath: storagePath, bytes: pngBytes);
   }
+}
+
+class ChatShareImage {
+  /// Creates one generated share image held in runtime storage.
+  const ChatShareImage({required this.storagePath, required this.bytes});
+
+  final String storagePath;
+  final Uint8List bytes;
 }
 
 class ChatShareImageSurface extends StatelessWidget {

@@ -30,6 +30,14 @@ pub(crate) struct ObjectSpec {
     pub(crate) full_type: String,
     pub(crate) source_path: PathBuf,
     pub(crate) access: ObjectAccess,
+    pub(crate) route_scope: ObjectRouteScope,
+}
+
+/// Defines whether requests for one generated object remain on the local runtime.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ObjectRouteScope {
+    LocalControl,
+    RuntimeSelected,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +55,7 @@ pub(crate) enum ObjectAccess {
     ResultContextRefGetInstanceConstruct,
     ContextGetInstanceArcMutexConstruct,
     ContextRefGetInstanceArcMutexConstruct,
+    CoreProxyConstruct,
     StorePathsConstruct,
     ResultStorePathsConstruct,
     FactoryMethodConstruct {
@@ -75,6 +84,7 @@ impl ObjectAccess {
                 | ObjectAccess::ResultContextRefGetInstanceConstruct
                 | ObjectAccess::ContextGetInstanceArcMutexConstruct
                 | ObjectAccess::ContextRefGetInstanceArcMutexConstruct
+                | ObjectAccess::CoreProxyConstruct
                 | ObjectAccess::StorePathsConstruct
                 | ObjectAccess::ResultStorePathsConstruct
                 | ObjectAccess::FactoryMethodConstruct { .. }
@@ -134,6 +144,7 @@ pub(crate) struct SourceObject {
     pub(crate) dispatch_name: String,
     pub(crate) full_type: String,
     pub(crate) access: ObjectAccess,
+    pub(crate) route_scope: ObjectRouteScope,
     pub(crate) methods: Vec<SourceMethod>,
 }
 

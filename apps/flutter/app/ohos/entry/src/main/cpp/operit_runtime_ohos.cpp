@@ -32,10 +32,7 @@ using BridgeFreeString = void (*)(char*);
 using BridgeStartWebAccessServer = char* (*)(
     BridgeHandle, const char*, const char*, const char*, const char*, const char*, const char*,
     const char*);
-using BridgeDiscoverDevices = char* (*)(BridgeHandle, const char*);
 using BridgeStopWebAccessServer = char* (*)(BridgeHandle);
-using BridgeRemotePairStart = char* (*)(BridgeHandle, const char*, const char*, const char*);
-using BridgeRemotePairFinish = char* (*)(BridgeHandle, const char*, const char*);
 using BridgeEmitRuntimeEvent = char* (*)(BridgeHandle, const char*);
 
 class OperitBridgeLibrary {
@@ -75,11 +72,8 @@ class OperitBridgeLibrary {
     close_watch_stream_ = Load<BridgeCloseWatchStream>("operit_flutter_bridge_close_watch_stream");
     start_web_access_server_ =
         Load<BridgeStartWebAccessServer>("operit_flutter_bridge_start_web_access_server");
-    discover_devices_ = Load<BridgeDiscoverDevices>("operit_flutter_bridge_discover_devices");
     stop_web_access_server_ =
         Load<BridgeStopWebAccessServer>("operit_flutter_bridge_stop_web_access_server");
-    remote_pair_start_ = Load<BridgeRemotePairStart>("operit_flutter_bridge_remote_pair_start");
-    remote_pair_finish_ = Load<BridgeRemotePairFinish>("operit_flutter_bridge_remote_pair_finish");
     emit_runtime_event_ = Load<BridgeEmitRuntimeEvent>("operit_flutter_bridge_emit_runtime_event");
     free_bytes_ = Load<BridgeFreeBytes>("operit_flutter_bridge_free_bytes");
     free_string_ = Load<BridgeFreeString>("operit_flutter_bridge_free_string");
@@ -87,9 +81,8 @@ class OperitBridgeLibrary {
         native_call_ == nullptr || push_open_ == nullptr || push_item_ == nullptr ||
         push_close_ == nullptr || watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
         next_watch_channel_event_ == nullptr || close_watch_stream_ == nullptr ||
-        start_web_access_server_ == nullptr || discover_devices_ == nullptr ||
-        stop_web_access_server_ == nullptr || remote_pair_start_ == nullptr ||
-        remote_pair_finish_ == nullptr || emit_runtime_event_ == nullptr ||
+        start_web_access_server_ == nullptr || stop_web_access_server_ == nullptr ||
+        emit_runtime_event_ == nullptr ||
         free_bytes_ == nullptr || free_string_ == nullptr) {
       AssignError(error, "operit flutter bridge exports are incomplete");
       return false;
@@ -169,30 +162,9 @@ class OperitBridgeLibrary {
                                                enable_discovery.c_str()));
   }
 
-  /// Discovers nearby Operit devices through the Rust bridge.
-  std::string DiscoverDevices(BridgeHandle handle, const std::string& timeout_ms) {
-    return TakeString(discover_devices_(handle, timeout_ms.c_str()));
-  }
-
   /// Stops the Rust Web Access server.
   std::string StopWebAccessServer(BridgeHandle handle) {
     return TakeString(stop_web_access_server_(handle));
-  }
-
-  /// Starts one remote pairing request through the Rust bridge.
-  std::string RemotePairStart(BridgeHandle handle,
-                              const std::string& base_url,
-                              const std::string& token_hash,
-                              const std::string& client_device_info) {
-    return TakeString(
-        remote_pair_start_(handle, base_url.c_str(), token_hash.c_str(), client_device_info.c_str()));
-  }
-
-  /// Finishes one remote pairing request through the Rust bridge.
-  std::string RemotePairFinish(BridgeHandle handle,
-                               const std::string& pairing_id,
-                               const std::string& pairing_code) {
-    return TakeString(remote_pair_finish_(handle, pairing_id.c_str(), pairing_code.c_str()));
   }
 
   /// Delivers one normalized OpenHarmony event through the Rust bridge.
@@ -241,10 +213,7 @@ class OperitBridgeLibrary {
   BridgeNextWatchChannelEvent next_watch_channel_event_ = nullptr;
   BridgeCloseWatchStream close_watch_stream_ = nullptr;
   BridgeStartWebAccessServer start_web_access_server_ = nullptr;
-  BridgeDiscoverDevices discover_devices_ = nullptr;
   BridgeStopWebAccessServer stop_web_access_server_ = nullptr;
-  BridgeRemotePairStart remote_pair_start_ = nullptr;
-  BridgeRemotePairFinish remote_pair_finish_ = nullptr;
   BridgeEmitRuntimeEvent emit_runtime_event_ = nullptr;
   BridgeFreeBytes free_bytes_ = nullptr;
   BridgeFreeString free_string_ = nullptr;
@@ -495,22 +464,6 @@ napi_value StartWebAccessServer(napi_env env, napi_callback_info info) {
                                                                 ReadString(env, args[7])));
 }
 
-/// Discovers nearby Operit devices through Rust.
-napi_value DiscoverDevices(napi_env env, napi_callback_info info) {
-  if (!EnsureBridgeReady(env)) {
-    return nullptr;
-  }
-  auto args = CallbackArgs(env, info, 2);
-  if (args.empty()) {
-    return nullptr;
-  }
-  BridgeHandle handle = ReadHandle(env, args[0]);
-  if (handle == nullptr) {
-    return nullptr;
-  }
-  return StringValue(env, g_bridge_library.DiscoverDevices(handle, ReadString(env, args[1])));
-}
-
 /// Stops the Rust Web Access server.
 napi_value StopWebAccessServer(napi_env env, napi_callback_info info) {
   if (!EnsureBridgeReady(env)) {
@@ -525,43 +478,6 @@ napi_value StopWebAccessServer(napi_env env, napi_callback_info info) {
     return nullptr;
   }
   return StringValue(env, g_bridge_library.StopWebAccessServer(handle));
-}
-
-/// Starts one remote pairing request through Rust.
-napi_value RemotePairStart(napi_env env, napi_callback_info info) {
-  if (!EnsureBridgeReady(env)) {
-    return nullptr;
-  }
-  auto args = CallbackArgs(env, info, 4);
-  if (args.empty()) {
-    return nullptr;
-  }
-  BridgeHandle handle = ReadHandle(env, args[0]);
-  if (handle == nullptr) {
-    return nullptr;
-  }
-  return StringValue(env, g_bridge_library.RemotePairStart(handle,
-                                                           ReadString(env, args[1]),
-                                                           ReadString(env, args[2]),
-                                                           ReadString(env, args[3])));
-}
-
-/// Finishes one remote pairing request through Rust.
-napi_value RemotePairFinish(napi_env env, napi_callback_info info) {
-  if (!EnsureBridgeReady(env)) {
-    return nullptr;
-  }
-  auto args = CallbackArgs(env, info, 3);
-  if (args.empty()) {
-    return nullptr;
-  }
-  BridgeHandle handle = ReadHandle(env, args[0]);
-  if (handle == nullptr) {
-    return nullptr;
-  }
-  return StringValue(env, g_bridge_library.RemotePairFinish(handle,
-                                                            ReadString(env, args[1]),
-                                                            ReadString(env, args[2])));
 }
 
 /// Delivers one normalized OpenHarmony event through Rust.
@@ -591,7 +507,7 @@ void DefineFunction(napi_env env,
 
 /// Initializes the OpenHarmony native runtime module.
 napi_value Init(napi_env env, napi_value exports) {
-  napi_property_descriptor descriptors[16];
+  napi_property_descriptor descriptors[13];
   DefineFunction(env, exports, "create", Create, &descriptors[0]);
   DefineFunction(env, exports, "destroy", Destroy, &descriptors[1]);
   DefineFunction(env, exports, "call", Call, &descriptors[2]);
@@ -603,12 +519,9 @@ napi_value Init(napi_env env, napi_value exports) {
   DefineFunction(env, exports, "nextWatchChannelEvent", NextWatchChannelEvent, &descriptors[8]);
   DefineFunction(env, exports, "closeWatchStream", CloseWatchStream, &descriptors[9]);
   DefineFunction(env, exports, "startWebAccessServer", StartWebAccessServer, &descriptors[10]);
-  DefineFunction(env, exports, "discoverDevices", DiscoverDevices, &descriptors[11]);
-  DefineFunction(env, exports, "stopWebAccessServer", StopWebAccessServer, &descriptors[12]);
-  DefineFunction(env, exports, "remotePairStart", RemotePairStart, &descriptors[13]);
-  DefineFunction(env, exports, "remotePairFinish", RemotePairFinish, &descriptors[14]);
-  DefineFunction(env, exports, "emitRuntimeEvent", EmitRuntimeEvent, &descriptors[15]);
-  napi_define_properties(env, exports, 16, descriptors);
+  DefineFunction(env, exports, "stopWebAccessServer", StopWebAccessServer, &descriptors[11]);
+  DefineFunction(env, exports, "emitRuntimeEvent", EmitRuntimeEvent, &descriptors[12]);
+  napi_define_properties(env, exports, 13, descriptors);
   return exports;
 }
 

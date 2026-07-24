@@ -1,14 +1,31 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use operit_host_api::{
-    HostResult, HttpDownloadControl, HttpDownloadFileRequest, HttpDownloadFileResult,
+    HostError, HostResult, HttpDownloadControl, HttpDownloadFileRequest, HttpDownloadFileResult,
     HttpDownloadProgress, HttpDownloadProgressCallback, HttpDownloadProgressState,
     HttpDownloadRequest, HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData,
+    HttpStreamChunkCallback, HttpStreamClosedCallback, HttpStreamHost, HttpStreamOpenedCallback,
 };
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
 
 use crate::common::{
     call_http, http_request_to_js, js_http_response, read_i64_property, read_string_property,
     set_property, string_pairs_to_js,
 };
+
+/// Retains browser callback closures until the associated HTTP byte stream closes.
+struct WebHttpByteStreamCallbacks {
+    _opened: Closure<dyn FnMut()>,
+    _chunk: Closure<dyn FnMut(JsValue)>,
+    _closed: Closure<dyn FnMut(JsValue)>,
+}
+
+thread_local! {
+    static HTTP_BYTE_STREAM_CALLBACKS: RefCell<HashMap<String, WebHttpByteStreamCallbacks>> =
+        RefCell::new(HashMap::new());
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct WebHttpHost;
@@ -79,6 +96,71 @@ impl HttpHost for WebHttpHost {
             files: results,
             downloadedBytes,
         })
+    }
+}
+
+impl HttpStreamHost for WebHttpHost {
+    /// Opens one browser Fetch response body and forwards its ordered byte chunks to Rust.
+    #[allow(non_snake_case)]
+    fn openHttpByteStream(
+        &self,
+        streamId: String,
+        request: HttpRequestData,
+        onOpened: HttpStreamOpenedCallback,
+        onChunk: HttpStreamChunkCallback,
+        onClosed: HttpStreamClosedCallback,
+    ) -> HostResult<()> {
+        let opened = Closure::wrap(Box::new(move || onOpened()) as Box<dyn FnMut()>);
+        let chunk = Closure::wrap(Box::new(move |value: JsValue| {
+            onChunk(js_sys::Uint8Array::new(&value).to_vec());
+        }) as Box<dyn FnMut(JsValue)>);
+        let closedStreamId = streamId.clone();
+        let closed = Closure::wrap(Box::new(move |value: JsValue| {
+            let result = if value.is_null() || value.is_undefined() {
+                Ok(())
+            } else {
+                Err(value.as_string().unwrap_or_else(|| format!("{value:?}")))
+            };
+            onClosed(result);
+            HTTP_BYTE_STREAM_CALLBACKS.with(|streams| {
+                streams.borrow_mut().remove(&closedStreamId);
+            });
+        }) as Box<dyn FnMut(JsValue)>);
+        let args = [
+            JsValue::from_str(&streamId),
+            http_request_to_js(request),
+            opened.as_ref().clone(),
+            chunk.as_ref().clone(),
+            closed.as_ref().clone(),
+        ];
+        HTTP_BYTE_STREAM_CALLBACKS.with(|streams| {
+            let mut streams = streams.borrow_mut();
+            if streams.contains_key(&streamId) {
+                return Err(HostError::new(format!(
+                    "HTTP byte stream is already open: {streamId}"
+                )));
+            }
+            streams.insert(
+                streamId.clone(),
+                WebHttpByteStreamCallbacks {
+                    _opened: opened,
+                    _chunk: chunk,
+                    _closed: closed,
+                },
+            );
+            if let Err(error) = call_http("openHttpByteStream", &args) {
+                streams.remove(&streamId);
+                return Err(error);
+            }
+            Ok(())
+        })
+    }
+
+    /// Requests cancellation for one browser-owned HTTP byte stream.
+    #[allow(non_snake_case)]
+    fn closeHttpByteStream(&self, streamId: &str) -> HostResult<()> {
+        call_http("closeHttpByteStream", &[JsValue::from_str(streamId)])?;
+        Ok(())
     }
 }
 

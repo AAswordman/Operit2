@@ -8,7 +8,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import app.operit.AndroidClientLogger
+import android.util.Log
 
 class ScreenCaptureActivity : Activity() {
     companion object {
@@ -36,7 +36,7 @@ class ScreenCaptureActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_CODE_CAPTURE) {
             if (resultCode == Activity.RESULT_OK && data != null) {
-                AndroidClientLogger.d(applicationContext, TAG, "Screen capture permission granted")
+                Log.d(TAG, "Screen capture permission granted")
                 MediaProjectionHolder.permissionResultCode = resultCode
                 MediaProjectionHolder.permissionResultData = data
 
@@ -57,18 +57,14 @@ class ScreenCaptureActivity : Activity() {
                                 MediaProjectionHolder.mediaProjection =
                                     mediaProjectionManager.getMediaProjection(resultCode, data)
                             } catch (error: SecurityException) {
-                                AndroidClientLogger.e(
-                                    applicationContext,
+                                Log.e(
                                     TAG,
-                                    "Failed to obtain MediaProjection (FGS mediaProjection not ready): ${error.message.orEmpty()}",
+                                    "Failed to obtain MediaProjection (FGS mediaProjection not ready)",
+                                    error,
                                 )
                                 MediaProjectionHolder.clear(this@ScreenCaptureActivity)
                             } catch (error: Exception) {
-                                AndroidClientLogger.e(
-                                    applicationContext,
-                                    TAG,
-                                    "Failed to obtain MediaProjection: ${error.message.orEmpty()}",
-                                )
+                                Log.e(TAG, "Failed to obtain MediaProjection", error)
                                 MediaProjectionHolder.clear(this@ScreenCaptureActivity)
                             } finally {
                                 finish()
@@ -83,7 +79,7 @@ class ScreenCaptureActivity : Activity() {
                 handler.post(runnable)
                 return
             } else {
-                AndroidClientLogger.d(applicationContext, TAG, "Screen capture permission denied or cancelled")
+                Log.d(TAG, "Screen capture permission denied or cancelled")
                 MediaProjectionHolder.clear(this)
             }
         }

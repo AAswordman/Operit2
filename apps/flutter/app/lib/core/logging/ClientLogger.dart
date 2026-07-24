@@ -11,8 +11,13 @@ class ClientLogger {
   /// Initializes the client logger backend and records the active sink path.
   static Future<void> initialize() {
     return platform.initialize().then((_) async {
-      i('initialized path=${await logFilePath()}', tag: 'ClientLogger');
+      i('initialized sink=${await logFilePath()}', tag: 'ClientLogger');
     });
+  }
+
+  /// Requests runtime-storage persistence after the local Core is ready.
+  static void attachPersistentStorage() {
+    platform.attachPersistentStorage();
   }
 
   /// Returns whether the logger backend is ready to accept writes.

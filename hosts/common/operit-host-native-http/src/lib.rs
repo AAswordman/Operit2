@@ -10,20 +10,163 @@ use operit_host_api::{
     httpDownloadPartialTargetPath, HostError, HostResult, HttpDownloadControl,
     HttpDownloadFileRequest, HttpDownloadFileResult, HttpDownloadProgress,
     HttpDownloadProgressCallback, HttpDownloadProgressState, HttpDownloadRequest,
-    HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData,
+    HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData, HttpStreamChunkCallback,
+    HttpStreamClosedCallback, HttpStreamHost, HttpStreamOpenedCallback,
 };
 use reqwest::blocking::{multipart, Client as BlockingClient};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_RANGE, RANGE};
 use reqwest::{Client as AsyncClient, Method, Proxy, StatusCode};
 
 #[derive(Clone, Debug, Default)]
-pub struct NativeHttpHost;
+pub struct NativeHttpHost {
+    byteStreams: Arc<Mutex<BTreeMap<String, tokio::sync::watch::Sender<bool>>>>,
+}
 
 impl NativeHttpHost {
     /// Creates a native HTTP host.
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
+}
+
+impl HttpStreamHost for NativeHttpHost {
+    /// Opens one native asynchronous HTTP response stream on a Host-owned network thread.
+    #[allow(non_snake_case)]
+    fn openHttpByteStream(
+        &self,
+        streamId: String,
+        request: HttpRequestData,
+        onOpened: HttpStreamOpenedCallback,
+        onChunk: HttpStreamChunkCallback,
+        onClosed: HttpStreamClosedCallback,
+    ) -> HostResult<()> {
+        let (cancelSender, cancelReceiver) = tokio::sync::watch::channel(false);
+        {
+            let mut streams = self
+                .byteStreams
+                .lock()
+                .map_err(|error| HostError::new(format!("HTTP byte stream lock poisoned: {error}")))?;
+            if streams.contains_key(&streamId) {
+                return Err(HostError::new(format!(
+                    "HTTP byte stream is already open: {streamId}"
+                )));
+            }
+            streams.insert(streamId.clone(), cancelSender);
+        }
+        let streams = self.byteStreams.clone();
+        let taskStreamId = streamId.clone();
+        let spawnResult = std::thread::Builder::new()
+            .name(format!("operit-http-stream-{streamId}"))
+            .spawn(move || {
+                let result = executeHttpByteStream(
+                    request,
+                    cancelReceiver,
+                    onOpened,
+                    onChunk,
+                )
+                .map_err(|error| error.to_string());
+                onClosed(result);
+                streams
+                    .lock()
+                    .expect("HTTP byte stream lock poisoned")
+                    .remove(&taskStreamId);
+            });
+        if let Err(error) = spawnResult {
+            self.byteStreams
+                .lock()
+                .map_err(|lockError| {
+                    HostError::new(format!("HTTP byte stream lock poisoned: {lockError}"))
+                })?
+                .remove(&streamId);
+            return Err(HostError::new(error.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Cancels one native asynchronous HTTP response stream.
+    #[allow(non_snake_case)]
+    fn closeHttpByteStream(&self, streamId: &str) -> HostResult<()> {
+        let sender = self
+            .byteStreams
+            .lock()
+            .map_err(|error| HostError::new(format!("HTTP byte stream lock poisoned: {error}")))?
+            .remove(streamId)
+            .ok_or_else(|| HostError::new(format!("HTTP byte stream is not open: {streamId}")))?;
+        sender
+            .send(true)
+            .map_err(|error| HostError::new(error.to_string()))
+    }
+}
+
+/// Runs one HTTP response stream until the server ends it or the Host receives cancellation.
+#[allow(non_snake_case)]
+fn executeHttpByteStream(
+    request: HttpRequestData,
+    mut cancelReceiver: tokio::sync::watch::Receiver<bool>,
+    onOpened: HttpStreamOpenedCallback,
+    onChunk: HttpStreamChunkCallback,
+) -> HostResult<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| HostError::new(error.to_string()))?;
+    runtime.block_on(async move {
+        let method = Method::from_bytes(request.method.as_bytes())
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let client = buildHttpStreamClient(
+            request.connectTimeoutSeconds,
+            request.readTimeoutSeconds,
+            request.followRedirects,
+            request.ignoreSsl,
+            &request.proxyHost,
+            request.proxyPort,
+        )?;
+        let mut httpRequest = client.request(method, request.url);
+        httpRequest = httpRequest.headers(headersToReqwest(&request.headers)?);
+        if !request.fileParts.is_empty() || !request.formFields.is_empty() {
+            let mut form = reqwest::multipart::Form::new();
+            for (name, value) in request.formFields {
+                form = form.text(name, value);
+            }
+            for file in request.fileParts {
+                let part = reqwest::multipart::Part::bytes(file.content)
+                    .file_name(file.fileName)
+                    .mime_str(&file.contentType)
+                    .map_err(|error| HostError::new(error.to_string()))?;
+                form = form.part(file.fieldName, part);
+            }
+            httpRequest = httpRequest.multipart(form);
+        } else if !request.body.is_empty() {
+            httpRequest = httpRequest.body(request.body);
+        }
+        let mut response = httpRequest
+            .send()
+            .await
+            .map_err(|error| HostError::new(error.to_string()))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response
+                .text()
+                .await
+                .map_err(|error| HostError::new(error.to_string()))?;
+            return Err(HostError::new(format!("HTTP {status}: {body}")));
+        }
+        onOpened();
+        loop {
+            tokio::select! {
+                changed = cancelReceiver.changed() => {
+                    changed.map_err(|error| HostError::new(error.to_string()))?;
+                    return Ok(());
+                }
+                chunk = response.chunk() => {
+                    match chunk.map_err(|error| HostError::new(error.to_string()))? {
+                        Some(bytes) => onChunk(bytes.to_vec()),
+                        None => return Ok(()),
+                    }
+                }
+            }
+        }
+    })
 }
 
 impl HttpHost for NativeHttpHost {
@@ -304,6 +447,36 @@ fn buildHttpClient(
         let proxyUrl = format!("http://{}:{}", proxyHost.trim(), proxyPort);
         builder = builder
             .proxy(Proxy::http(&proxyUrl).map_err(|error| HostError::new(error.to_string()))?);
+    }
+    builder
+        .build()
+        .map_err(|error| HostError::new(error.to_string()))
+}
+
+/// Builds one asynchronous client for a Host-owned streaming HTTP response.
+#[allow(non_snake_case)]
+fn buildHttpStreamClient(
+    connectTimeoutSeconds: u64,
+    readTimeoutSeconds: u64,
+    followRedirects: bool,
+    ignoreSsl: bool,
+    proxyHost: &str,
+    proxyPort: u16,
+) -> HostResult<AsyncClient> {
+    let mut builder = AsyncClient::builder()
+        .connect_timeout(Duration::from_secs(connectTimeoutSeconds))
+        .danger_accept_invalid_certs(ignoreSsl);
+    if readTimeoutSeconds > 0 {
+        builder = builder.timeout(Duration::from_secs(readTimeoutSeconds));
+    }
+    if !followRedirects {
+        builder = builder.redirect(reqwest::redirect::Policy::none());
+    }
+    if !proxyHost.trim().is_empty() {
+        builder = builder.proxy(
+            Proxy::all(format!("http://{}:{}", proxyHost.trim(), proxyPort))
+                .map_err(|error| HostError::new(error.to_string()))?,
+        );
     }
     builder
         .build()

@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use operit_host_api::RuntimeStorageHost;
+use operit_util::AppLogger::AppLogger;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -19,6 +20,7 @@ use crate::LocalModelRegistry::{InstalledLocalEngine, InstalledLocalModel};
 use crate::LocalModelRegistryStore::LocalModelRegistryStore;
 
 static LOCAL_TTS_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+const LOCAL_STT_LOG_TAG: &str = "LocalSTT";
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum LocalModelProviderError {
@@ -449,6 +451,16 @@ fn parseSherpaSttOutput(output: &Output) -> Result<LocalSttResponse, LocalModelP
         .and_then(|object| object.get("text"))
         .and_then(Value::as_str)
         .ok_or_else(|| LocalModelProviderError::InvalidOutput(record.to_string()))?;
+    if text.trim().is_empty() {
+        AppLogger::w(
+            LOCAL_STT_LOG_TAG,
+            &format!(
+                "Sherpa STT completed without recognized text\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        );
+    }
     Ok(LocalSttResponse {
         text: text.to_string(),
         segments: Vec::new(),

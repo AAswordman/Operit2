@@ -21,6 +21,9 @@ pub(crate) fn module_path_for_source_with_crate(
         .strip_prefix(source_root)
         .expect("source path must be inside source root");
     let mut module_path = Vec::from([crate_name.to_string()]);
+    if relative == Path::new("lib.rs") {
+        return module_path.join("::");
+    }
     for component in relative.with_extension("").components() {
         module_path.push(component.as_os_str().to_string_lossy().to_string());
     }

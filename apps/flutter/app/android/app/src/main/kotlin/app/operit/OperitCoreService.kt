@@ -11,29 +11,21 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
 
 class OperitCoreService : Service() {
     companion object {
+        private const val TAG = "OperitCoreService"
         private const val notificationChannelId = "operit_core_runtime"
         private const val notificationId = 2401
         private const val actionStart = "app.operit.action.START_CORE_RUNTIME"
-        private const val actionBootCompleted = "app.operit.action.START_CORE_RUNTIME_AFTER_BOOT"
 
         /** Starts the process-level Core foreground service. */
         fun start(context: Context) {
             val applicationContext = context.applicationContext
             val intent = Intent(applicationContext, OperitCoreService::class.java).apply {
                 action = actionStart
-            }
-            startService(applicationContext, intent)
-        }
-
-        /** Starts Core and requests one boot-completed event after Runtime initialization. */
-        fun startAfterBoot(context: Context) {
-            val applicationContext = context.applicationContext
-            val intent = Intent(applicationContext, OperitCoreService::class.java).apply {
-                action = actionBootCompleted
             }
             startService(applicationContext, intent)
         }
@@ -50,8 +42,6 @@ class OperitCoreService : Service() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val runtimeStartRequested = AtomicBoolean(false)
-    private val runtimeReady = AtomicBoolean(false)
-    private val pendingBootCompleted = AtomicBoolean(false)
     private val destroyed = AtomicBoolean(false)
     private lateinit var runtimeHost: AndroidRuntimeHost
 
@@ -65,11 +55,7 @@ class OperitCoreService : Service() {
 
     /** Keeps the Core service active across task removal and process recreation. */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == actionBootCompleted) {
-            pendingBootCompleted.set(true)
-        }
         ensureRuntimeStarted()
-        dispatchPendingBootCompleted()
         return START_STICKY
     }
 
@@ -97,35 +83,15 @@ class OperitCoreService : Service() {
                             applicationContext,
                             runtimeHost::ensureRuntimeHandle,
                         )
-                        runtimeReady.set(true)
-                        dispatchPendingBootCompleted()
                     }
                 }
             } catch (error: Throwable) {
-                AndroidClientLogger.e(
-                    applicationContext,
-                    "OperitCoreService",
-                    "Core Runtime startup failed: ${error.stackTraceToString()}",
-                )
+                Log.e(TAG, "Core Runtime startup failed", error)
                 NativeCrashActivity.start(
                     applicationContext,
                     "Core Runtime startup failed\n\n${error.stackTraceToString()}",
                 )
             }
-        }
-    }
-
-    /** Emits the manifest boot event exactly once after the native Runtime becomes ready. */
-    private fun dispatchPendingBootCompleted() {
-        if (!runtimeReady.get() || !pendingBootCompleted.compareAndSet(true, false)) {
-            return
-        }
-        runtimeHost.runBackground {
-            val event = RuntimeEvents.androidBroadcast(
-                RuntimeEvents.Topic.SYSTEM_BOOT_COMPLETED,
-                org.json.JSONObject().put("bootCompleted", true),
-            )
-            RuntimeEvents.emit(runtimeHost.ensureRuntimeHandle(), event)
         }
     }
 

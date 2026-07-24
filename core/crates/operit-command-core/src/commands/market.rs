@@ -1,10 +1,8 @@
 use std::cell::Cell;
-use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use crate::commands::util::read_content_arg;
 use crate::output::CoreCommandOutput;
@@ -20,12 +18,7 @@ use operit_tools::tools::mcp_runtime::MCPRepository::MCPRepository;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
-
-const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
-const GITHUB_ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
-const GITHUB_CLI_SCOPE: &str = "notifications,public_repo,user:email,read:user";
 
 macro_rules! println {
     () => { market_stdout_line("") };
@@ -118,7 +111,6 @@ pub fn run_market_command(
     }
 
     match args[0].as_str() {
-        "auth" => run_auth(core, &args[1..]),
         "rank" => {
             let sort = normalize_sort(args.get(1).map(String::as_str).unwrap_or("updated"))?;
             let page = parse_i32_opt(args.get(2), 1)?;
@@ -193,7 +185,7 @@ pub fn run_market_command(
 }
 
 fn print_usage() {
-    println!("usage: operit2 market <auth|rank|list|search|show|comments|comment|like|notifications|my|publish|install|download>");
+    println!("usage: operit2 market <rank|list|search|show|comments|comment|like|notifications|my|publish|install|download>");
     println!("sort: updated|likes|downloads");
     println!("list: operit2 market list [sort] [type|-] [category|-] [page]");
     println!("search: operit2 market search <query> [sort] [type|-] [category|-]");
@@ -206,164 +198,6 @@ fn print_usage() {
     println!("publish version repo: operit2 market publish version repo <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]");
     println!("publish update-entry: operit2 market publish update-entry <entryId> <title-or-> <description-or-@file-or-> <detail-or-@file-or-> <categoryId-or-> <allowPublicUpdates-or->");
     println!("download: operit2 market download <assetId>");
-}
-
-// ── Auth ────────────────────────────────────────────────────
-
-fn run_auth(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
-    match args.first().map(String::as_str) {
-        Some("token") => {
-            let token = args.get(1).ok_or_else(|| "usage: operit2 market auth token <token>".to_string())?;
-            core.github_auth().updateAccessToken(token, "bearer", None).map_err(|e| e.to_string())?;
-            println!("token saved");
-            Ok(())
-        }
-        Some("login") => {
-            run_github_device_login(core)
-        }
-        _ => Err("usage: operit2 market auth <token|login>  # login uses browser/device flow and requires OPERIT_GITHUB_CLIENT_ID or GITHUB_CLIENT_ID".to_string()),
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct GitHubDeviceCodeResponse {
-    device_code: String,
-    user_code: String,
-    verification_uri: String,
-    #[serde(default)]
-    expires_in: i64,
-    #[serde(default)]
-    interval: i64,
-}
-
-#[derive(Debug, Deserialize)]
-struct GitHubDeviceTokenResponse {
-    access_token: Option<String>,
-    token_type: Option<String>,
-    scope: Option<String>,
-    error: Option<String>,
-    error_description: Option<String>,
-}
-
-fn run_github_device_login(core: &mut MarketCommand) -> Result<(), String> {
-    let client_id = github_oauth_client_id()?;
-    let client = reqwest::blocking::Client::new();
-    let device = client
-        .post(GITHUB_DEVICE_CODE_URL)
-        .header("Accept", "application/json")
-        .form(&[
-            ("client_id", client_id.as_str()),
-            ("scope", GITHUB_CLI_SCOPE),
-        ])
-        .send()
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
-        .json::<GitHubDeviceCodeResponse>()
-        .map_err(|e| e.to_string())?;
-
-    println!("Open this URL in your browser: {}", device.verification_uri);
-    println!("Enter code: {}", device.user_code);
-    let _ = open_browser(&device.verification_uri);
-
-    let timeout_seconds = if device.expires_in <= 0 {
-        900
-    } else {
-        device.expires_in
-    };
-    let mut interval_seconds = if device.interval <= 0 {
-        5
-    } else {
-        device.interval
-    };
-    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_seconds as u64);
-    loop {
-        if std::time::Instant::now() >= deadline {
-            return Err("GitHub device login expired".to_string());
-        }
-        std::thread::sleep(Duration::from_secs(interval_seconds as u64));
-        let resp = client
-            .post(GITHUB_ACCESS_TOKEN_URL)
-            .header("Accept", "application/json")
-            .form(&[
-                ("client_id", client_id.as_str()),
-                ("device_code", device.device_code.as_str()),
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-            ])
-            .send()
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?
-            .json::<GitHubDeviceTokenResponse>()
-            .map_err(|e| e.to_string())?;
-
-        if let Some(token) = resp.access_token.filter(|t| !t.trim().is_empty()) {
-            let token_type = resp.token_type.as_deref().unwrap_or("bearer");
-            let scope = resp.scope.as_deref().unwrap_or(GITHUB_CLI_SCOPE);
-            core.github_auth()
-                .updateAccessToken(&token, token_type, Some(scope))
-                .map_err(|e| e.to_string())?;
-            let user = MarketStatsApiService::new_with_github_token(Some(token))
-                .get_current_github_user()?;
-            println!("logged in as {} (github_id={})", user.login, user.id);
-            return Ok(());
-        }
-
-        match resp.error.as_deref() {
-            Some("authorization_pending") => continue,
-            Some("slow_down") => {
-                interval_seconds += 5;
-                continue;
-            }
-            Some("expired_token") => return Err("GitHub device login expired".to_string()),
-            Some(error) => {
-                let description = resp.error_description.unwrap_or_default();
-                return Err(format!("GitHub device login failed: {error} {description}"));
-            }
-            None => return Err("GitHub device login returned no access token".to_string()),
-        }
-    }
-}
-
-fn github_oauth_client_id() -> Result<String, String> {
-    env::var("OPERIT_GITHUB_CLIENT_ID")
-        .or_else(|_| env::var("GITHUB_CLIENT_ID"))
-        .map(|id| id.trim().to_string())
-        .ok()
-        .filter(|id| !id.is_empty())
-        .ok_or_else(|| {
-            "GitHub OAuth client id required. Set OPERIT_GITHUB_CLIENT_ID or GITHUB_CLIENT_ID."
-                .to_string()
-        })
-}
-
-fn open_browser(url: &str) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", url])
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(url)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(url)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-    #[allow(unreachable_code)]
-    Err("opening browser is not supported on this platform".to_string())
 }
 
 // ── List ────────────────────────────────────────────────────
@@ -665,8 +499,7 @@ fn run_publish(core: &mut MarketCommand, args: &[String]) -> Result<(), String> 
         Some("version") => publish_version_cli(core, &args[1..]),
         Some("update-entry") => update_entry_cli(core, &args[1..]),
         _ => Err(
-            "usage: operit2 market publish <artifact|repo|version|update-entry> ..."
-                .to_string(),
+            "usage: operit2 market publish <artifact|repo|version|update-entry> ...".to_string(),
         ),
     }
 }
@@ -1023,31 +856,13 @@ fn sanitize_id(title: &str) -> String {
 
 // ── Util ────────────────────────────────────────────────────
 
+/// Requires the GitHub OAuth broker session needed by market write operations.
 fn require_login(core: &mut MarketCommand) -> Result<(), String> {
-    ensure_env_token(core)?;
     if core.github_auth().getCurrentAccessToken().is_some() {
         Ok(())
     } else {
-        Err(
-            "GitHub token required. Use `operit2 market auth token <token>` or set GITHUB_TOKEN."
-                .to_string(),
-        )
+        Err("GitHub login required.".to_string())
     }
-}
-
-fn ensure_env_token(core: &mut MarketCommand) -> Result<(), String> {
-    let token = env::var("OPERIT_GITHUB_TOKEN")
-        .ok()
-        .or_else(|| env::var("GITHUB_TOKEN").ok())
-        .filter(|t| !t.trim().is_empty());
-    if let Some(token) = token {
-        if core.github_auth().getCurrentAccessToken() != Some(token.clone()) {
-            core.github_auth()
-                .updateAccessToken(&token, "bearer", None)
-                .map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
 }
 
 fn parse_i32_opt(raw: Option<&String>, default: i32) -> Result<i32, String> {
@@ -1352,18 +1167,6 @@ mod tests {
     #[test]
     fn comments_missing_id_prints_usage() {
         run_market_cli(&["comments"]);
-    }
-
-    #[test]
-    fn auth_token_missing_value_prints_usage() {
-        run_market_cli(&["auth", "token"]);
-    }
-
-    #[test]
-    fn auth_login_without_client_id_returns_error() {
-        std::env::remove_var("OPERIT_GITHUB_CLIENT_ID");
-        std::env::remove_var("GITHUB_CLIENT_ID");
-        run_market_cli(&["auth", "login"]);
     }
 
     #[test]

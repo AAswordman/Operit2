@@ -5,8 +5,10 @@
 #include <exception>
 
 #include "crash_channel.h"
+#include "engine_channel_lifetime.h"
 #include "flutter_window.h"
 #include "operit_runtime_channel.h"
+#include "system_audio_input_channel.h"
 #include "utils.h"
 
 /// Presents the native crash dialog for unhandled Windows exceptions.
@@ -51,16 +53,26 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       ::DispatchMessage(&msg);
     }
 
-    ShutdownOperitCrashChannel();
     ShutdownOperitRuntimeChannel();
+    ShutdownAllOperitEngineChannels();
+    ShutdownSystemAudioInputChannel();
+    ShutdownOperitCrashChannel();
     ::CoUninitialize();
     return EXIT_SUCCESS;
   } catch (const std::exception& error) {
     ShowOperitWindowsCrashScreen(error.what());
+    ShutdownOperitRuntimeChannel();
+    ShutdownAllOperitEngineChannels();
+    ShutdownSystemAudioInputChannel();
+    ShutdownOperitCrashChannel();
     ::CoUninitialize();
     return EXIT_FAILURE;
   } catch (...) {
     ShowOperitWindowsCrashScreen("Unhandled C++ exception outside Flutter.");
+    ShutdownOperitRuntimeChannel();
+    ShutdownAllOperitEngineChannels();
+    ShutdownSystemAudioInputChannel();
+    ShutdownOperitCrashChannel();
     ::CoUninitialize();
     return EXIT_FAILURE;
   }

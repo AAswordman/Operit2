@@ -13,6 +13,31 @@ Cross-Origin-Resource-Policy: same-origin
 
 The Operit CLI Web Access server emits these headers directly.
 
+## Flutter Web development
+
+`fvm flutter run -d edge` uses Flutter's built-in development server, which
+does not provide the required response headers. Run Flutter as a Web Server and
+open the isolated proxy origin instead:
+
+```powershell
+cd apps/flutter/app
+fvm flutter run -d web-server --web-hostname 127.0.0.1 --web-port 4835
+```
+
+In a second terminal at the repository root:
+
+```powershell
+node tools/dev_web_access_proxy.mjs --upstream-port 4835 --listen-port 4836
+```
+
+Open `http://127.0.0.1:4836`. The proxy forwards Flutter's HTTP and debug
+WebSocket traffic, and sends the cross-origin isolation headers for every
+response. Flutter hot reload remains available through the Web Server session.
+
+For VS Code, select `Operit2: Web (isolated)` from Run and Debug and press F5.
+That launch configuration starts the proxy task, runs Edge through the FVM
+Flutter SDK, and opens the isolated origin automatically.
+
 - `web/` contains the tracked Flutter Web shell files for Web Access.
 - `build/bundle/` contains the generated bundle consumed by the Flutter app and CLI packages.
 - `tools/build_scripts/build_flutter_web_access.py` ensures the Flutter web entry link exists and writes the shared bundle.

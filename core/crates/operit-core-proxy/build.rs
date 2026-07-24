@@ -32,6 +32,7 @@ fn main() {
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let runtime_root =
         SourceRoot::new(manifest_dir.join("../operit-runtime/src"), "operit_runtime");
+    let core_proxy_root = SourceRoot::new(manifest_dir.join("src"), "operit_core_proxy");
     let model_root = SourceRoot::new(manifest_dir.join("../operit-model/src"), "operit_model");
     let local_models_root = SourceRoot::new(
         manifest_dir.join("../operit-local-models/src"),
@@ -42,6 +43,10 @@ fn main() {
         "operit_plugin_sdk",
     );
     let store_root = SourceRoot::new(manifest_dir.join("../operit-store/src"), "operit_store");
+    let link_access_root = SourceRoot::new(
+        manifest_dir.join("../operit-link-access/src"),
+        "operit_link_access",
+    );
     let util_root = SourceRoot::new(manifest_dir.join("../operit-util/src"), "operit_util");
     let tools_root = SourceRoot::new(manifest_dir.join("../operit-tools/src"), "operit_tools");
     let provider_root = SourceRoot::new(
@@ -58,6 +63,7 @@ fn main() {
         local_models_root.clone(),
         plugin_sdk_root.clone(),
         store_root.clone(),
+        link_access_root.clone(),
         util_root.clone(),
         tools_root.clone(),
         provider_root.clone(),
@@ -66,16 +72,21 @@ fn main() {
         .expect("Cargo must provide CARGO_CFG_TARGET_ARCH to the proxy generator");
     enforce_host_platform_boundaries(&restricted_source_roots, &target_arch);
     let source_roots = vec![
+        core_proxy_root.clone(),
         runtime_root.clone(),
         model_root,
         local_models_root,
         plugin_sdk_root,
         store_root.clone(),
+        link_access_root.clone(),
         util_root,
         tools_root.clone(),
         provider_root.clone(),
         host_api_root,
     ];
+    for source_root in &source_roots {
+        emit_source_tree_rerun_if_changed(source_root.as_path());
+    }
     let serializable_type_definitions = collect_serializable_type_definitions(&source_roots);
     let mut error_type_definitions = HashMap::new();
     for source_root in &source_roots {
@@ -95,7 +106,14 @@ fn main() {
         .map(|(name, _)| name.clone())
         .collect::<HashSet<_>>();
     let type_registry = collect_type_registry(&source_roots);
-    let object_specs = object_specs(&runtime_root, &store_root, &tools_root, &provider_root);
+    let object_specs = object_specs(
+        &core_proxy_root,
+        &runtime_root,
+        &store_root,
+        &tools_root,
+        &provider_root,
+        &link_access_root,
+    );
     let public_object_types = collect_public_object_types(&source_roots);
     for spec in &object_specs {
         println!("cargo:rerun-if-changed={}", spec.source_path.display());
@@ -152,4 +170,21 @@ fn main() {
         &objects,
         &serializable_type_definitions,
     );
+}
+
+/// Registers every source directory and file so newly added proxy objects regenerate clients.
+fn emit_source_tree_rerun_if_changed(path: &Path) {
+    println!("cargo:rerun-if-changed={}", path.display());
+    let entries = fs::read_dir(path)
+        .unwrap_or_else(|error| panic!("read source tree {}: {error}", path.display()));
+    for entry in entries {
+        let entry = entry
+            .unwrap_or_else(|error| panic!("read source tree entry {}: {error}", path.display()));
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            emit_source_tree_rerun_if_changed(&entry_path);
+        } else {
+            println!("cargo:rerun-if-changed={}", entry_path.display());
+        }
+    }
 }

@@ -49,7 +49,9 @@ class MathOptions {
   late final double sizeMultiplier = this.size.sizeMultiplier;
 
   // final double maxSize;
-  // final num minRuleThickness; //???
+
+  /// Minimum rule thickness in em units.
+  final double minRuleThickness;
   // final bool isBlank;
 
   /// Font metrics under current size.
@@ -79,7 +81,7 @@ class MathOptions {
     this.textFontOptions,
     this.mathFontOptions,
     // required this.maxSize,
-    // required this.minRuleThickness,
+    this.minRuleThickness = 0.0,
   });
 
   /// Factory constructor for [MathOptions].
@@ -98,7 +100,7 @@ class MathOptions {
     double? fontSize,
     double? logicalPpi,
     // required this.maxSize,
-    // required this.minRuleThickness,
+    double minRuleThickness = 0.0,
   }) {
     final effectiveFontSize = fontSize ??
         (logicalPpi == null
@@ -114,6 +116,7 @@ class MathOptions {
       sizeUnderTextStyle: sizeUnderTextStyle,
       mathFontOptions: mathFontOptions,
       textFontOptions: textFontOptions,
+      minRuleThickness: minRuleThickness,
     );
   }
 
@@ -234,7 +237,7 @@ class MathOptions {
     FontOptions? textFontOptions,
     FontOptions? mathFontOptions,
     // double maxSize,
-    // num minRuleThickness,
+    double? minRuleThickness,
   }) =>
       MathOptions._(
         fontSize: this.fontSize,
@@ -245,7 +248,7 @@ class MathOptions {
         textFontOptions: textFontOptions ?? this.textFontOptions,
         mathFontOptions: mathFontOptions ?? this.mathFontOptions,
         // maxSize: maxSize ?? this.maxSize,
-        // minRuleThickness: minRuleThickness ?? this.minRuleThickness,
+        minRuleThickness: minRuleThickness ?? this.minRuleThickness,
       );
 
   /// Merge an [OptionsDiff] into current [MathOptions]

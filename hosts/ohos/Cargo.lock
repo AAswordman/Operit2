@@ -980,17 +980,58 @@ dependencies = [
 name = "operit-host-native-common"
 version = "0.1.0"
 dependencies = [
- "base64",
+ "operit-host-native-filesystem",
+ "operit-host-native-http",
+ "operit-host-native-scheduler",
+ "operit-host-native-storage",
+ "operit-host-native-terminal",
+]
+
+[[package]]
+name = "operit-host-native-filesystem"
+version = "0.1.0"
+dependencies = [
  "globset",
  "grep-regex",
  "grep-searcher",
  "ignore",
  "operit-host-api",
- "portable-pty",
- "reqwest",
- "rusqlite",
- "uuid",
  "zip",
+]
+
+[[package]]
+name = "operit-host-native-http"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+ "reqwest",
+ "tokio",
+]
+
+[[package]]
+name = "operit-host-native-scheduler"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+ "tokio",
+]
+
+[[package]]
+name = "operit-host-native-storage"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+ "rusqlite",
+]
+
+[[package]]
+name = "operit-host-native-terminal"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "operit-host-api",
+ "portable-pty",
+ "uuid",
 ]
 
 [[package]]

@@ -19,3 +19,35 @@ pub use tools::storage::WindowsRuntimeStorageHost;
 pub use tools::system::WindowsSystemOperationHost;
 pub use tools::terminal::WindowsTerminalHost;
 pub use tools::tts::{WindowsTtsPlaybackHost, WindowsTtsSynthesisHost};
+
+/// Creates the Windows-owned runtime host manager for explicit storage roots.
+pub fn createRuntimeHostManager(
+    runtimeRoot: PathBuf,
+    workspaceRoot: PathBuf,
+    webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
+) -> HostManager {
+    let runtimeStorageHost = Arc::new(WindowsRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
+    let runtimeSqliteHost = runtimeStorageHost.clone();
+    let hostSecretStore = runtimeStorageHost.clone();
+    HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
+        Arc::new(WindowsFileSystemHost::new()),
+        webVisitHost,
+        Arc::new(WindowsHttpHost::new()),
+        Arc::new(WindowsSystemOperationHost::new()),
+        Arc::new(WindowsManagedRuntimeHost::new()),
+        runtimeStorageHost,
+        runtimeSqliteHost,
+    )
+    .withHostSecretStore(hostSecretStore)
+    .withAudioPlaybackHost(Arc::new(WindowsAudioPlaybackHost::new()))
+    .withBluetoothHost(Arc::new(WindowsBluetoothHost::new()))
+    .withTtsSynthesisHost(Arc::new(WindowsTtsSynthesisHost::new()))
+    .withTtsPlaybackHost(Arc::new(WindowsTtsPlaybackHost::new()))
+    .withHostRuntimeEventHost(Arc::new(WindowsHostRuntimeEventHost::new()))
+    .withHostRuntimeEventSchedulerHost(Arc::new(WindowsHostRuntimeEventSchedulerHost::new()))
+    .withHostRuntimeTaskSchedulerHost(Arc::new(WindowsHostRuntimeTaskSchedulerHost::new()))
+}
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use operit_host_api::HostManager::HostManager;

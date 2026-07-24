@@ -85,28 +85,18 @@ apps/cli/src
 
 ## 4. Request Flow
 
-Flutter local：
-
 ```text
 Flutter UI
   -> CoreProxy
   -> MethodChannel / wasm bridge
-  -> LocalCoreProxy
-  -> core
+  -> RuntimeCoreRouter
+     -> LocalCoreProxy
+     -> PairedRemoteSession
 ```
 
-Flutter remote：
-
-```text
-Flutter UI
-  -> CoreProxy
-  -> RemoteRuntimeLinkClient
-  -> app access signed HTTP
-  -> host app access
-  -> operit-link HTTP dispatcher
-  -> LocalCoreProxy
-  -> core
-```
+`RuntimeCoreRouter` reads the local runtime's persisted Link route before every
+application request. Link control objects remain local; a paired remote route
+uses the runtime-owned authenticated session transport.
 
 CLI remote：
 

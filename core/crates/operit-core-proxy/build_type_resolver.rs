@@ -552,7 +552,6 @@ impl TypeResolver {
             type_registry,
         }
     }
-
 }
 
 fn collect_use_tree(

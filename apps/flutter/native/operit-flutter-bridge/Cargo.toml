@@ -8,14 +8,6 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[features]
-process-stdio = []
-
-[[bin]]
-name = "operit_flutter_bridge_process"
-path = "src/bin/operit_flutter_bridge_process.rs"
-required-features = ["process-stdio"]
-
 [dependencies]
 operit-core-proxy = { path = "../../../../core/crates/operit-core-proxy" }
 operit-host-api = { path = "../../../../core/crates/operit-host-api" }
@@ -68,6 +60,7 @@ js-sys = "0.3"
 operit-host-web = { path = "../../../../hosts/web" }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
+tokio = { version = "1", default-features = false, features = ["macros", "sync"] }
 
 [patch.crates-io]
 quickjs-wasm-rs = { path = "../../../../core/vendor/quickjs-wasm-rs" }

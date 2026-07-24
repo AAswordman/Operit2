@@ -11,6 +11,22 @@
             "type": "dart"
         },
         {
+            "name": "Operit2: Web (isolated)",
+            "cwd": "apps\\flutter\\app",
+            "request": "launch",
+            "type": "dart",
+            "deviceId": "edge",
+            "preLaunchTask": "Operit2: Web isolation proxy",
+            "toolArgs": [
+                "--web-hostname",
+                "127.0.0.1",
+                "--web-port",
+                "4835",
+                "--web-launch-url",
+                "http://127.0.0.1:4836"
+            ]
+        },
+        {
             "name": "app (profile mode)",
             "cwd": "apps\\flutter\\app",
             "request": "launch",

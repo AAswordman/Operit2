@@ -116,6 +116,18 @@ abstract class AppLocalizations {
   /// **'Fullscreen input'**
   String get fullscreenInput;
 
+  /// No description provided for @expandInput.
+  ///
+  /// In en, this message translates to:
+  /// **'Expand input'**
+  String get expandInput;
+
+  /// No description provided for @collapseInput.
+  ///
+  /// In en, this message translates to:
+  /// **'Collapse input'**
+  String get collapseInput;
+
   /// No description provided for @settings.
   ///
   /// In en, this message translates to:
@@ -1094,6 +1106,18 @@ abstract class AppLocalizations {
   /// **'Website permission request'**
   String get browserPermissionRequestTitle;
 
+  /// No description provided for @chatSpeechInputFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Speech input failed. Please try again.'**
+  String get chatSpeechInputFailed;
+
+  /// No description provided for @chatSpeechNoTextRecognized.
+  ///
+  /// In en, this message translates to:
+  /// **'No speech recognized.'**
+  String get chatSpeechNoTextRecognized;
+
   /// No description provided for @history.
   ///
   /// In en, this message translates to:
@@ -1831,6 +1855,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Delete provider'**
   String get settingsModelDeleteProviderConfirmAction;
+
+  /// No description provided for @settingsTtsDeleteProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete TTS provider'**
+  String get settingsTtsDeleteProvider;
+
+  /// No description provided for @settingsTtsDeleteProviderConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete TTS provider “{name}” and its {count} voice configurations?'**
+  String settingsTtsDeleteProviderConfirm(String name, int count);
+
+  /// No description provided for @settingsTtsDeleteProviderFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to delete TTS provider: {error}'**
+  String settingsTtsDeleteProviderFailed(String error);
+
+  /// No description provided for @settingsTtsCurrentConfigCannotDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'The TTS configuration currently in use cannot be deleted.'**
+  String get settingsTtsCurrentConfigCannotDelete;
+
+  /// No description provided for @settingsTtsConfigUsedByCharacter.
+  ///
+  /// In en, this message translates to:
+  /// **'This TTS configuration is used by a character card and cannot be deleted.'**
+  String get settingsTtsConfigUsedByCharacter;
 
   /// No description provided for @settingsModelChatAutoGlmWarning.
   ///

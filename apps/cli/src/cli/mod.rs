@@ -39,6 +39,7 @@ use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::data::preferences::PromptTagManager::PromptTagManager;
 use operit_runtime::data::preferences::TtsConfigManager::TtsConfigManager;
 use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
+use operit_runtime::services::GitHubOAuthBrokerService::GitHubOAuthBrokerLoginCompletion;
 use operit_runtime::services::TtsSynthesisService::TtsSynthesisService;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, PermissionRequestResult};
@@ -60,6 +61,7 @@ mod transfer;
 mod web_access;
 
 use crate::bootstrap::persist_cli_storage_config;
+use crate::browser_callback::CliOAuthCallback;
 use crate::chat_runtime::{run_chat_shell_command_with_core, run_shell_command};
 use crate::core_proxy::{cli_core, local_cli_core};
 use host_ops::{schedule_cli_uninstall, schedule_cli_update};
@@ -126,7 +128,7 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
         "active-prompt" => run_core_command_and_print(&mut core, &args).await,
         "approval" => run_core_command_and_print(&mut core, &args).await,
         "tool" => run_core_command_and_print(&mut core, &args).await,
-        "market" => run_core_command_and_print(&mut core, &args).await,
+        "market" => run_market_cli_command(&mut core, &args).await,
         "update" => run_update_cli_command(&mut core, &args[1..]).await,
         "skill" => run_core_command_and_print(&mut core, &args).await,
         "package" => run_core_command_and_print(&mut core, &args).await,
@@ -176,7 +178,7 @@ pub(crate) async fn run_cli_link_root(session_name: &str, args: &[String]) -> Re
         "active-prompt" => run_core_command_and_print(&mut core, &args).await,
         "approval" => run_core_command_and_print(&mut core, &args).await,
         "tool" => run_core_command_and_print(&mut core, &args).await,
-        "market" => run_core_command_and_print(&mut core, &args).await,
+        "market" => run_market_cli_command(&mut core, &args).await,
         "update" => run_core_command_and_print(&mut core, &args).await,
         "skill" => run_core_command_and_print(&mut core, &args).await,
         "package" => run_core_command_and_print(&mut core, &args).await,
@@ -1246,6 +1248,49 @@ async fn run_core_command_and_print(
     Ok(())
 }
 
+/// Runs market commands and lets the CLI own its GitHub login callback process.
+async fn run_market_cli_command(
+    core: &mut crate::core_proxy::CliCore,
+    args: &[String],
+) -> Result<(), String> {
+    if args
+        .iter()
+        .map(String::as_str)
+        .eq(["market", "auth", "login"])
+    {
+        return run_market_auth_login(core).await;
+    }
+    run_core_command_and_print(core, args).await
+}
+
+/// Coordinates the generated Core broker service around the CLI's loopback callback.
+async fn run_market_auth_login(core: &mut crate::core_proxy::CliCore) -> Result<(), String> {
+    let callback = CliOAuthCallback::prepare("https://api.operit.app/oauth/github/complete")
+        .map_err(|error| format!("GitHub OAuth callback registration failed: {error}"))?;
+    let start = core
+        .services_git_hub_o_auth_broker_service()
+        .startLogin(callback.completionRedirectUri())
+        .await
+        .map_err(core_command_error_message)?;
+    println!(
+        "Open this GitHub authorization URL in your browser:\n{}",
+        start.authorizationUrl
+    );
+    let completionUrl = callback
+        .waitForCompletion(start.expiresAt)
+        .map_err(|error| format!("GitHub OAuth callback flow failed: {error}"))?;
+    let result = core
+        .services_git_hub_o_auth_broker_service()
+        .completeLogin(GitHubOAuthBrokerLoginCompletion {
+            attemptId: start.attemptId,
+            completionUrl,
+        })
+        .await
+        .map_err(core_command_error_message)?;
+    println!("GitHub login successful: {}", result.login);
+    Ok(())
+}
+
 /// Runs a local core command and applies local CLI side effects.
 async fn run_local_core_command_and_print(
     core: &mut crate::core_proxy::CliCore,
@@ -1335,7 +1380,9 @@ fn print_cli_usage() {
     println!("operit2 cli storage <paths|migrate>");
     println!("operit2 cli log <show|package|path|clear>");
     println!("operit2 cli local-models <paths|catalog|show|installed|installed-show|install|install-statuses|install-status|install-cancel|verify|delete|engine-delete>");
-    println!("operit2 cli stt <provider-list|provider-model-list|config|transcribe|transcribe-config>");
+    println!(
+        "operit2 cli stt <provider-list|provider-model-list|config|transcribe|transcribe-config>"
+    );
     println!("operit2 cli memory <character|shared|mount|unmount>");
     println!("operit2 cli tts config <list|show|current|use|create|update|delete>");
     println!("operit2 cli tts synthesize --character <id> --text <text>");
@@ -1539,7 +1586,7 @@ fn print_tool_usage() {
 }
 
 fn print_market_usage() {
-    println!("operit2 cli market auth <token|login>");
+    println!("operit2 cli market auth login");
     println!("operit2 cli market rank [updated|likes|downloads] [page]");
     println!("operit2 cli market list [updated|likes|downloads] [type|-] [category|-] [page]");
     println!("operit2 cli market search <query> [updated|likes|downloads] [type|-] [category|-]");

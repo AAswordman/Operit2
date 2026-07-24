@@ -6,8 +6,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../link/CoreLinkProtocol.dart';
-import '../path/OperitClientPaths.dart';
+import '../proxy/generated/CoreProxyClients.g.dart';
 import '../runtime/RuntimeDeviceInfoProvider.dart';
 import 'LinkAccessHostConfig.dart';
 
@@ -21,6 +22,9 @@ class LinkAccessHost extends ChangeNotifier {
 
   static final LinkAccessHost instance = LinkAccessHost._();
   static const MethodChannel _runtimeChannel = MethodChannel('operit/runtime');
+  static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
+    ProxyCoreRuntimeBridge(),
+  );
 
   bool _running = false;
   LinkAccessHostConfig? _config;
@@ -36,14 +40,6 @@ class LinkAccessHost extends ChangeNotifier {
       return null;
     }
     return _baseUrlForBindAddress(config.bindAddress);
-  }
-
-  Future<String> discoverDevices(int timeoutMs) async {
-    final responseText = await _runtimeChannel.invokeMethod<String>(
-      'discoverDevices',
-      <String, Object?>{'timeoutMs': timeoutMs},
-    );
-    return responseText ?? '[]';
   }
 
   Future<List<String>> pairingBaseUrls(LinkAccessHostConfig config) async {
@@ -116,16 +112,10 @@ class LinkAccessHost extends ChangeNotifier {
     }
   }
 
-  Future<Directory> _materializeWebAccessBundle() async {
-    final directory = await OperitClientPaths.linkAccessWebAccessBundleDir();
-    final bundledVersion = await _readBundledWebAccessVersion();
-    if (await _isMaterializedWebAccessCurrent(directory, bundledVersion)) {
-      return directory;
-    }
-    if (await directory.exists()) {
-      await directory.delete(recursive: true);
-    }
-    await directory.create(recursive: true);
+  /// Materializes bundled Web Access assets through runtime storage VFS.
+  Future<String> _materializeWebAccessBundle() async {
+    final directory = await _clients.repositoryRuntimeStorageRepository
+        .linkAccessWebAssetsDirPath();
     final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
     final assetKeys =
         manifest
@@ -139,12 +129,11 @@ class LinkAccessHost extends ChangeNotifier {
     for (final assetKey in assetKeys) {
       final relativePath = assetKey.substring(_webAccessAssetPrefix.length);
       final bytes = await rootBundle.load(assetKey);
-      final file = File(
-        _joinPath(<String>[directory.path, ...relativePath.split('/')]),
-      );
-      await file.parent.create(recursive: true);
-      await file.writeAsBytes(
-        bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
+      await _clients.repositoryRuntimeStorageRepository.writeBase64(
+        path: '$directory/$relativePath',
+        base64Content: base64Encode(
+          bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
+        ),
       );
     }
     return directory;
@@ -154,7 +143,7 @@ class LinkAccessHost extends ChangeNotifier {
   Future<String> _startNativeWebAccessServer(
     LinkAccessHostConfig config,
     String shutdownToken,
-    Directory webRoot,
+    String webRoot,
   ) async {
     final deviceInfo = await RuntimeDeviceInfoProvider.current();
     final responseText = await _runtimeChannel
@@ -162,7 +151,7 @@ class LinkAccessHost extends ChangeNotifier {
           'bindAddress': config.bindAddress,
           'token': config.token,
           'shutdownToken': shutdownToken,
-          'webRoot': webRoot.path,
+          'webRoot': webRoot,
           'deviceInfo': jsonEncode(deviceInfo.toJson()),
           'enableWebAccess': config.webAccessEnabled.toString(),
           'enableDiscovery': config.discoveryEnabled.toString(),
@@ -183,7 +172,7 @@ class LinkAccessHost extends ChangeNotifier {
   _startNativeWebAccessServerWithPortMode(
     LinkAccessHostConfig config,
     String shutdownToken,
-    Directory webRoot,
+    String webRoot,
   ) async {
     if (config.portMode == LinkAccessHostPortMode.fixed) {
       final deviceId = await _startNativeWebAccessServer(
@@ -311,39 +300,6 @@ class _WebAccessBundleVersion {
   }
 }
 
-/// Reads the bundled Web Access version manifest from Flutter assets.
-Future<_WebAccessBundleVersion> _readBundledWebAccessVersion() async {
-  return _WebAccessBundleVersion.fromJsonString(
-    await rootBundle.loadString(_webAccessVersionAsset),
-    _webAccessVersionAsset,
-  );
-}
-
-/// Reads the materialized Web Access version manifest from the client data dir.
-Future<_WebAccessBundleVersion?> _readMaterializedWebAccessVersion(
-  Directory directory,
-) async {
-  final file = File(_joinPath(<String>[directory.path, _webAccessVersionFile]));
-  if (!await file.exists()) {
-    return null;
-  }
-  return _WebAccessBundleVersion.fromJsonString(
-    await file.readAsString(),
-    file.path,
-  );
-}
-
-/// Returns whether the client data Web Access bundle matches bundled assets.
-Future<bool> _isMaterializedWebAccessCurrent(
-  Directory directory,
-  _WebAccessBundleVersion bundledVersion,
-) async {
-  final materializedVersion = await _readMaterializedWebAccessVersion(
-    directory,
-  );
-  return materializedVersion?.matches(bundledVersion) ?? false;
-}
-
 class _BindEndpoint {
   const _BindEndpoint({required this.host, required this.port});
 
@@ -401,8 +357,4 @@ List<String> _automaticBindAddresses(String host) {
   return LinkAccessHostConfig.automaticPortSequence
       .map((port) => '$host:$port')
       .toList(growable: false);
-}
-
-String _joinPath(List<String> segments) {
-  return segments.join(Platform.pathSeparator);
 }

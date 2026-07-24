@@ -251,10 +251,7 @@ interface RuntimeNativeModule {
     enableWebAccess: string,
     enableDiscovery: string
   ): string;
-  discoverDevices(handle: bigint, timeoutMs: string): string;
   stopWebAccessServer(handle: bigint): string;
-  remotePairStart(handle: bigint, baseUrl: string, tokenHash: string, clientDeviceInfo: string): string;
-  remotePairFinish(handle: bigint, pairingId: string, pairingCode: string): string;
   emitRuntimeEvent(handle: bigint, eventJson: string): string;
 }
 
@@ -424,17 +421,8 @@ export class OperitRuntimeChannel {
         case 'startWebAccessServer':
           result.success(this.startWebAccessServer(call));
           return;
-        case 'discoverDevices':
-          result.success(nativeBridge.discoverDevices(this.ensureRuntimeHandle(), `${this.requiredNumberArg(call, 'discoverDevices')}`));
-          return;
         case 'stopWebAccessServer':
           result.success(nativeBridge.stopWebAccessServer(this.ensureRuntimeHandle()));
-          return;
-        case 'remotePairStart':
-          result.success(this.remotePairStart(call));
-          return;
-        case 'remotePairFinish':
-          result.success(this.remotePairFinish(call));
           return;
         case 'ownerSystemLanguageCode':
           result.success(this.ownerSystemLanguageCode());
@@ -953,25 +941,6 @@ export class OperitRuntimeChannel {
       this.mapString(call, 'deviceInfo'),
       this.mapString(call, 'enableWebAccess'),
       this.mapString(call, 'enableDiscovery')
-    );
-  }
-
-  /// Starts one remote pairing request through the Rust bridge.
-  private remotePairStart(call: MethodCall): string {
-    return nativeBridge.remotePairStart(
-      this.ensureRuntimeHandle(),
-      this.mapString(call, 'baseUrl'),
-      this.mapString(call, 'tokenHash'),
-      this.mapString(call, 'clientDeviceInfo')
-    );
-  }
-
-  /// Finishes one remote pairing request through the Rust bridge.
-  private remotePairFinish(call: MethodCall): string {
-    return nativeBridge.remotePairFinish(
-      this.ensureRuntimeHandle(),
-      this.mapString(call, 'pairingId'),
-      this.mapString(call, 'pairingCode')
     );
   }
 

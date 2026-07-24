@@ -18,6 +18,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get fullscreenInput => 'Fullscreen input';
 
   @override
+  String get expandInput => 'Expand input';
+
+  @override
+  String get collapseInput => 'Collapse input';
+
+  @override
   String get settings => 'Settings';
 
   @override
@@ -564,6 +570,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get browserPermissionRequestTitle => 'Website permission request';
 
   @override
+  String get chatSpeechInputFailed => 'Speech input failed. Please try again.';
+
+  @override
+  String get chatSpeechNoTextRecognized => 'No speech recognized.';
+
+  @override
   String get history => 'History';
 
   @override
@@ -966,6 +978,27 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsModelDeleteProviderConfirmAction => 'Delete provider';
+
+  @override
+  String get settingsTtsDeleteProvider => 'Delete TTS provider';
+
+  @override
+  String settingsTtsDeleteProviderConfirm(String name, int count) {
+    return 'Delete TTS provider “$name” and its $count voice configurations?';
+  }
+
+  @override
+  String settingsTtsDeleteProviderFailed(String error) {
+    return 'Failed to delete TTS provider: $error';
+  }
+
+  @override
+  String get settingsTtsCurrentConfigCannotDelete =>
+      'The TTS configuration currently in use cannot be deleted.';
+
+  @override
+  String get settingsTtsConfigUsedByCharacter =>
+      'This TTS configuration is used by a character card and cannot be deleted.';
 
   @override
   String get settingsModelChatAutoGlmWarning =>

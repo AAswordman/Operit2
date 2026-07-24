@@ -1,20 +1,12 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-import '../bridge/CoreProxy.dart';
-import '../bridge/PlatformCoreProxy.dart';
-import '../link/CoreLinkProtocol.dart';
-import '../link/RemoteRuntimeLinkClient.dart';
-import '../link_access/LinkAccessHost.dart';
 import '../logging/ClientLogger.dart';
 import 'RuntimeConnectionConfigStore.dart';
-
-enum RuntimeConnectionMode { local, remote }
 
 class LocalRuntimeStorageConfig {
   const LocalRuntimeStorageConfig({
@@ -34,7 +26,7 @@ class LocalRuntimeStorageConfig {
     );
   }
 
-  /// Creates a config from persisted JSON.
+  /// Creates a storage configuration from its persisted representation.
   factory LocalRuntimeStorageConfig.fromJson(Map<String, Object?> json) {
     return LocalRuntimeStorageConfig(
       confirmed: json['confirmed'] as bool,
@@ -64,9 +56,9 @@ class LocalRuntimeStorageConfig {
     );
   }
 
-  /// Converts the config into persisted JSON.
+  /// Converts this configuration into its persisted representation.
   Map<String, Object?> toJson() {
-    return {
+    return <String, Object?>{
       'confirmed': confirmed,
       'runtimeRoot': runtimeRoot,
       'workspaceRoot': workspaceRoot,
@@ -160,98 +152,34 @@ class LocalRuntimeStorageBridge {
       },
     );
   }
-
-  /// Rebuilds and restarts the Windows Debug Rust runtime process.
-  static Future<void> rebuildAndRestartForDebug() async {
-    if (!kDebugMode ||
-        kIsWeb ||
-        defaultTargetPlatform != TargetPlatform.windows) {
-      throw UnsupportedError(
-        'Debug Rust runtime rebuild is only available on Windows Debug builds',
-      );
-    }
-    await _channel.invokeMethod<void>('debugRebuildAndRestartLocalRuntime');
-  }
 }
 
 class RuntimeConnectionConfig {
   const RuntimeConnectionConfig({
-    required this.mode,
-    required this.activeRemoteName,
-    required this.remoteSessions,
-    required this.autoSyncRemoteNames,
     required this.localStorage,
     required this.updatedAt,
   });
 
+  /// Creates the default local runtime configuration state.
   factory RuntimeConnectionConfig.local() {
     return RuntimeConnectionConfig(
-      mode: RuntimeConnectionMode.local,
-      activeRemoteName: '',
-      remoteSessions: const <String, PairedRemoteSessionRecord>{},
-      autoSyncRemoteNames: const <String>{},
       localStorage: LocalRuntimeStorageConfig.platformDefault(),
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
   }
 
-  factory RuntimeConnectionConfig.fromJson(
-    Map<String, Object?> json, {
-    Map<String, PairedRemoteSessionRecord> remoteSessions =
-        const <String, PairedRemoteSessionRecord>{},
-  }) {
-    final modeName = json['mode'] as String;
-    return RuntimeConnectionConfig(
-      mode: RuntimeConnectionMode.values.byName(modeName),
-      activeRemoteName: json['activeRemoteName'] as String,
-      remoteSessions: Map<String, PairedRemoteSessionRecord>.unmodifiable(
-        remoteSessions,
-      ),
-      autoSyncRemoteNames: Set<String>.unmodifiable(
-        ((json['autoSyncRemoteNames'] as List<Object?>?) ?? const <Object?>[])
-            .cast<String>(),
-      ),
-      localStorage: LocalRuntimeStorageConfig.platformDefault(),
-      updatedAt: json['updatedAt'] as int,
-    );
-  }
-
-  final RuntimeConnectionMode mode;
-  final String activeRemoteName;
-  final Map<String, PairedRemoteSessionRecord> remoteSessions;
-  final Set<String> autoSyncRemoteNames;
   final LocalRuntimeStorageConfig localStorage;
   final int updatedAt;
 
-  PairedRemoteSessionRecord? get activeRemoteSession {
-    return remoteSessions[activeRemoteName];
-  }
-
+  /// Creates a copy with updated fields.
   RuntimeConnectionConfig copyWith({
-    RuntimeConnectionMode? mode,
-    String? activeRemoteName,
-    Map<String, PairedRemoteSessionRecord>? remoteSessions,
-    Set<String>? autoSyncRemoteNames,
     LocalRuntimeStorageConfig? localStorage,
     int? updatedAt,
   }) {
     return RuntimeConnectionConfig(
-      mode: mode ?? this.mode,
-      activeRemoteName: activeRemoteName ?? this.activeRemoteName,
-      remoteSessions: remoteSessions ?? this.remoteSessions,
-      autoSyncRemoteNames: autoSyncRemoteNames ?? this.autoSyncRemoteNames,
       localStorage: localStorage ?? this.localStorage,
       updatedAt: updatedAt ?? this.updatedAt,
     );
-  }
-
-  Map<String, Object?> toJson() {
-    return {
-      'mode': mode.name,
-      'activeRemoteName': activeRemoteName,
-      'autoSyncRemoteNames': autoSyncRemoteNames.toList(growable: false),
-      'updatedAt': updatedAt,
-    };
   }
 }
 
@@ -260,146 +188,16 @@ class RuntimeConnectionManager extends ChangeNotifier {
 
   static final RuntimeConnectionManager instance = RuntimeConnectionManager._();
   static const String _logTag = 'RuntimeConnection';
-  static const int _remoteStartupDiscoveryTimeoutMs = 2000;
-  static const Duration _remoteStartupProbeTimeout = Duration(seconds: 4);
-  static const Duration _remoteIssueProbeDelay = Duration(milliseconds: 700);
-  static const Duration _remoteIssueProbeTimeout = Duration(seconds: 2);
-  static const int _remoteIssueProbeAttempts = 3;
 
   RuntimeConnectionConfig _config = RuntimeConnectionConfig.local();
-  RemoteRuntimeLinkClient? _remoteLinkClient;
-  CoreLinkError? _pendingRemoteError;
-  bool _remoteIssueProbeRunning = false;
 
+  /// Returns the current local runtime storage configuration.
   RuntimeConnectionConfig get config => _config;
 
-  /// Returns whether the selected runtime can accept core calls.
-  bool get runtimeConfigured {
-    return _config.mode == RuntimeConnectionMode.remote ||
-        _config.localStorage.confirmed;
-  }
+  /// Returns whether local runtime roots have been confirmed.
+  bool get runtimeConfigured => _config.localStorage.confirmed;
 
-  CoreProxy get coreProxy {
-    return switch (_config.mode) {
-      RuntimeConnectionMode.local => platformCoreProxy,
-      RuntimeConnectionMode.remote => _remoteLinkClient!,
-    };
-  }
-
-  CoreLinkError? consumePendingRemoteError() {
-    final error = _pendingRemoteError;
-    _pendingRemoteError = null;
-    return error;
-  }
-
-  void _onRemoteLinkConnectionIssue(CoreLinkError error) {
-    ClientLogger.w(
-      'remote link issue received code=${error.code} message=${error.message}',
-      tag: _logTag,
-    );
-    final linkClient = _remoteLinkClient;
-    if (_config.mode != RuntimeConnectionMode.remote || linkClient == null) {
-      return;
-    }
-    if (_remoteIssueProbeRunning) {
-      return;
-    }
-    _remoteIssueProbeRunning = true;
-    unawaited(_confirmRemoteConnection(error, linkClient));
-  }
-
-  Future<void> _confirmRemoteConnection(
-    CoreLinkError firstError,
-    RemoteRuntimeLinkClient linkClient,
-  ) async {
-    final stopwatch = Stopwatch()..start();
-    var latestError = firstError;
-    try {
-      for (var attempt = 0; attempt < _remoteIssueProbeAttempts; attempt++) {
-        ClientLogger.d(
-          'remote issue probe start attempt=${attempt + 1} code=${latestError.code}',
-          tag: _logTag,
-        );
-        await Future<void>.delayed(_remoteIssueProbeDelay);
-        if (_config.mode != RuntimeConnectionMode.remote ||
-            !identical(_remoteLinkClient, linkClient)) {
-          ClientLogger.i(
-            'remote issue probe stopped mode=${_config.mode.name} elapsedMs=${stopwatch.elapsedMilliseconds}',
-            tag: _logTag,
-          );
-          return;
-        }
-        try {
-          await _verifyRemoteSession(
-            linkClient,
-            linkClient.session,
-            _remoteIssueProbeTimeout,
-          );
-          ClientLogger.i(
-            'remote issue probe recovered attempt=${attempt + 1} elapsedMs=${stopwatch.elapsedMilliseconds}',
-            tag: _logTag,
-          );
-          return;
-        } catch (error) {
-          latestError = _asCoreLinkError(error, 'REMOTE_CONNECT_FAILED');
-          ClientLogger.w(
-            'remote issue probe failed attempt=${attempt + 1} code=${latestError.code} message=${latestError.message}',
-            tag: _logTag,
-          );
-        }
-      }
-      if (_config.mode != RuntimeConnectionMode.remote ||
-          !identical(_remoteLinkClient, linkClient)) {
-        return;
-      }
-      _pendingRemoteError = latestError;
-      ClientLogger.e(
-        'remote issue confirmed code=${latestError.code} message=${latestError.message} elapsedMs=${stopwatch.elapsedMilliseconds}',
-        tag: _logTag,
-      );
-      await _apply(
-        _config.copyWith(
-          mode: RuntimeConnectionMode.local,
-          activeRemoteName: '',
-          updatedAt: DateTime.now().millisecondsSinceEpoch,
-        ),
-        persist: true,
-      );
-    } finally {
-      _remoteIssueProbeRunning = false;
-    }
-  }
-
-  CoreLinkError _asCoreLinkError(Object error, String code) {
-    return error is CoreLinkError
-        ? error
-        : CoreLinkError(code: code, message: error.toString());
-  }
-
-  Future<void> _verifyRemoteSession(
-    RemoteRuntimeLinkClient linkClient,
-    PairedRemoteSessionRecord session,
-    Duration timeout,
-  ) async {
-    final stopwatch = Stopwatch()..start();
-    ClientLogger.d(
-      'verify remote session start session=${session.sessionId} coreDevice=${session.coreDeviceId} timeoutMs=${timeout.inMilliseconds}',
-      tag: _logTag,
-    );
-    final info = await linkClient.sessionInfo().timeout(timeout);
-    if (info.coreDeviceId != session.coreDeviceId) {
-      throw CoreLinkError(
-        code: 'REMOTE_DEVICE_CHANGED',
-        message: 'remote runtime identity changed',
-      );
-    }
-    ClientLogger.i(
-      'verify remote session done session=${session.sessionId} coreDevice=${session.coreDeviceId} elapsedMs=${stopwatch.elapsedMilliseconds}',
-      tag: _logTag,
-    );
-  }
-
-  /// Loads persisted runtime configuration and applies the selected runtime.
+  /// Loads persisted runtime storage configuration and applies local roots.
   Future<void> initialize() async {
     final stopwatch = Stopwatch()..start();
     ClientLogger.i('initialize start', tag: _logTag);
@@ -407,7 +205,7 @@ class RuntimeConnectionManager extends ChangeNotifier {
       final readStopwatch = Stopwatch()..start();
       final storedConfig = await RuntimeConnectionConfigStore.read();
       ClientLogger.i(
-        'config read done mode=${storedConfig.mode.name} localConfirmed=${storedConfig.localStorage.confirmed} remoteCount=${storedConfig.remoteSessions.length} elapsedMs=${readStopwatch.elapsedMilliseconds}',
+        'config read done localConfirmed=${storedConfig.localStorage.confirmed} elapsedMs=${readStopwatch.elapsedMilliseconds}',
         tag: _logTag,
       );
       if (storedConfig.localStorage.confirmed) {
@@ -422,21 +220,9 @@ class RuntimeConnectionManager extends ChangeNotifier {
           tag: _logTag,
         );
       }
-      if (storedConfig.mode == RuntimeConnectionMode.remote) {
-        final applied = await _applyRemote(
-          storedConfig,
-          persist: false,
-          verify: true,
-        );
-        ClientLogger.i(
-          'initialize done mode=${_config.mode.name} remoteApplied=$applied elapsedMs=${stopwatch.elapsedMilliseconds}',
-          tag: _logTag,
-        );
-        return;
-      }
       await _apply(storedConfig, persist: false);
       ClientLogger.i(
-        'initialize done mode=${_config.mode.name} elapsedMs=${stopwatch.elapsedMilliseconds}',
+        'initialize done elapsedMs=${stopwatch.elapsedMilliseconds}',
         tag: _logTag,
       );
     } catch (error, stackTrace) {
@@ -494,8 +280,6 @@ class RuntimeConnectionManager extends ChangeNotifier {
     await LocalRuntimeStorageBridge.apply(localStorage);
     await _apply(
       _config.copyWith(
-        mode: RuntimeConnectionMode.local,
-        activeRemoteName: '',
         localStorage: localStorage,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       ),
@@ -523,321 +307,34 @@ class RuntimeConnectionManager extends ChangeNotifier {
       workspaceRoot: workspaceRoot.trim(),
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
-    final config = _config.copyWith(
-      localStorage: localStorage,
-      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    await _apply(
+      _config.copyWith(
+        localStorage: localStorage,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+      persist: true,
     );
-    _config = config;
-    await OutboundLinkSessionStore.write(config.remoteSessions);
-    await RuntimeConnectionConfigStore.write(config);
-    notifyListeners();
     ClientLogger.i(
       'persist migrated local runtime storage done elapsedMs=${stopwatch.elapsedMilliseconds}',
       tag: _logTag,
     );
   }
 
-  /// Selects the local runtime connection.
-  Future<void> setLocal() async {
-    ClientLogger.i('set local start', tag: _logTag);
-    await _apply(
-      _config.copyWith(
-        mode: RuntimeConnectionMode.local,
-        updatedAt: DateTime.now().millisecondsSinceEpoch,
-      ),
-      persist: true,
-    );
-    ClientLogger.i('set local done mode=${_config.mode.name}', tag: _logTag);
-  }
-
-  /// Stores and selects a paired remote runtime.
-  Future<bool> setRemote({
-    required String name,
-    required PairedRemoteSessionRecord session,
-  }) async {
-    ClientLogger.i('set remote start name=$name', tag: _logTag);
-    final remoteSessions = Map<String, PairedRemoteSessionRecord>.of(
-      _config.remoteSessions,
-    )..[name] = session;
-    final remoteConfig = RuntimeConnectionConfig(
-      mode: RuntimeConnectionMode.remote,
-      activeRemoteName: name,
-      remoteSessions: Map<String, PairedRemoteSessionRecord>.unmodifiable(
-        remoteSessions,
-      ),
-      autoSyncRemoteNames: _config.autoSyncRemoteNames,
-      localStorage: _config.localStorage,
-      updatedAt: DateTime.now().millisecondsSinceEpoch,
-    );
-    final result = await _applyRemote(
-      remoteConfig,
-      persist: true,
-      verify: true,
-    );
-    ClientLogger.i(
-      'set remote done name=$name applied=$result mode=${_config.mode.name}',
-      tag: _logTag,
-    );
-    return result;
-  }
-
-  /// Selects one existing paired remote runtime.
-  Future<bool> usePairedRemote(String name) async {
-    ClientLogger.i('use paired remote start name=$name', tag: _logTag);
-    if (!_config.remoteSessions.containsKey(name)) {
-      throw StateError('paired remote runtime does not exist: $name');
-    }
-    final remoteConfig = _config.copyWith(
-      mode: RuntimeConnectionMode.remote,
-      activeRemoteName: name,
-      updatedAt: DateTime.now().millisecondsSinceEpoch,
-    );
-    final result = await _applyRemote(
-      remoteConfig,
-      persist: true,
-      verify: true,
-    );
-    ClientLogger.i(
-      'use paired remote done name=$name applied=$result mode=${_config.mode.name}',
-      tag: _logTag,
-    );
-    return result;
-  }
-
-  /// Verifies and stores a changed LAN endpoint for one paired remote runtime.
-  Future<bool> storeVerifiedRemoteBaseUrl({
-    required String name,
-    required String baseUrl,
-  }) async {
-    final existing = _config.remoteSessions[name];
-    if (existing == null) {
-      throw StateError('paired remote runtime does not exist: $name');
-    }
-    final updated = existing.withBaseUrl(baseUrl);
-    if (updated.baseUrl == existing.baseUrl) {
-      return false;
-    }
-    final linkClient = RemoteRuntimeLinkClient(session: updated);
-    try {
-      await _verifyRemoteSession(
-        linkClient,
-        updated,
-        _remoteStartupProbeTimeout,
-      );
-    } finally {
-      linkClient.dispose();
-    }
-    final remoteSessions = Map<String, PairedRemoteSessionRecord>.of(
-      _config.remoteSessions,
-    )..[name] = updated;
-    await _apply(
-      _config.copyWith(
-        remoteSessions: Map<String, PairedRemoteSessionRecord>.unmodifiable(
-          remoteSessions,
-        ),
-        updatedAt: DateTime.now().millisecondsSinceEpoch,
-      ),
-      persist: true,
-    );
-    ClientLogger.i(
-      'paired remote baseUrl updated name=$name baseUrl=${updated.baseUrl}',
-      tag: _logTag,
-    );
-    return true;
-  }
-
-  /// Stores the remote names that should participate in automatic sync.
-  Future<void> storeAutoSyncRemoteNames(Set<String> names) async {
-    final existingNames = _config.remoteSessions.keys.toSet();
-    final retainedNames = names.where(existingNames.contains).toSet();
-    final config = _config.copyWith(
-      autoSyncRemoteNames: Set<String>.unmodifiable(retainedNames),
-      updatedAt: DateTime.now().millisecondsSinceEpoch,
-    );
-    _config = config;
-    await RuntimeConnectionConfigStore.write(config);
-    notifyListeners();
-  }
-
-  /// Removes one paired remote runtime record.
-  Future<void> removePairedRemote(String name) async {
-    ClientLogger.i('remove paired remote start name=$name', tag: _logTag);
-    if (!_config.remoteSessions.containsKey(name)) {
-      throw StateError('paired remote runtime does not exist: $name');
-    }
-    final remoteSessions = Map<String, PairedRemoteSessionRecord>.of(
-      _config.remoteSessions,
-    )..remove(name);
-    final activeRemoved =
-        _config.mode == RuntimeConnectionMode.remote &&
-        _config.activeRemoteName == name;
-    final next = RuntimeConnectionConfig(
-      mode: activeRemoved ? RuntimeConnectionMode.local : _config.mode,
-      activeRemoteName: activeRemoved ? '' : _config.activeRemoteName,
-      remoteSessions: Map<String, PairedRemoteSessionRecord>.unmodifiable(
-        remoteSessions,
-      ),
-      autoSyncRemoteNames: Set<String>.unmodifiable(
-        _config.autoSyncRemoteNames.where((value) => value != name),
-      ),
-      localStorage: _config.localStorage,
-      updatedAt: DateTime.now().millisecondsSinceEpoch,
-    );
-    await _apply(next, persist: true);
-    ClientLogger.i(
-      'remove paired remote done name=$name mode=${_config.mode.name}',
-      tag: _logTag,
-    );
-  }
-
-  /// Applies one runtime connection configuration.
+  /// Applies one local runtime storage configuration.
   Future<void> _apply(
     RuntimeConnectionConfig config, {
     required bool persist,
   }) async {
     final stopwatch = Stopwatch()..start();
-    ClientLogger.d(
-      'apply start mode=${config.mode.name} persist=$persist remoteName=${config.activeRemoteName}',
-      tag: _logTag,
-    );
-    _remoteLinkClient?.dispose();
-    _remoteLinkClient = null;
-    if (config.mode == RuntimeConnectionMode.remote) {
-      final session = config.activeRemoteSession;
-      if (session == null) {
-        throw StateError('remote runtime session is required');
-      }
-      _remoteLinkClient = RemoteRuntimeLinkClient(
-        session: session,
-        onConnectionIssue: _onRemoteLinkConnectionIssue,
-      );
-    }
+    ClientLogger.d('apply start persist=$persist', tag: _logTag);
     _config = config;
     if (persist) {
-      await OutboundLinkSessionStore.write(config.remoteSessions);
       await RuntimeConnectionConfigStore.write(config);
     }
     notifyListeners();
     ClientLogger.i(
-      'apply done mode=${_config.mode.name} persist=$persist elapsedMs=${stopwatch.elapsedMilliseconds}',
+      'apply done persist=$persist elapsedMs=${stopwatch.elapsedMilliseconds}',
       tag: _logTag,
     );
-  }
-
-  /// Applies and verifies one remote runtime connection configuration.
-  Future<bool> _applyRemote(
-    RuntimeConnectionConfig config, {
-    required bool persist,
-    required bool verify,
-  }) async {
-    final stopwatch = Stopwatch()..start();
-    ClientLogger.i(
-      'apply remote start name=${config.activeRemoteName} persist=$persist verify=$verify',
-      tag: _logTag,
-    );
-    _remoteLinkClient?.dispose();
-    _remoteLinkClient = null;
-    final session = config.activeRemoteSession;
-    if (session == null) {
-      throw StateError('remote runtime session is required');
-    }
-    final resolution = await _remoteConfigWithDiscoveredBaseUrl(config);
-    final resolvedConfig = resolution.config;
-    final resolvedSession = resolvedConfig.activeRemoteSession;
-    if (resolvedSession == null) {
-      throw StateError('remote runtime session is required');
-    }
-    final linkClient = RemoteRuntimeLinkClient(session: resolvedSession);
-    try {
-      if (verify) {
-        await _verifyRemoteSession(
-          linkClient,
-          resolvedSession,
-          _remoteStartupProbeTimeout,
-        );
-      }
-      linkClient.setConnectionIssueHandler(_onRemoteLinkConnectionIssue);
-      _remoteLinkClient = linkClient;
-      _config = resolvedConfig;
-      if (persist || resolution.baseUrlChanged) {
-        await OutboundLinkSessionStore.write(resolvedConfig.remoteSessions);
-        await RuntimeConnectionConfigStore.write(resolvedConfig);
-      }
-      notifyListeners();
-      ClientLogger.i(
-        'apply remote done name=${resolvedConfig.activeRemoteName} elapsedMs=${stopwatch.elapsedMilliseconds}',
-        tag: _logTag,
-      );
-      return true;
-    } catch (error) {
-      linkClient.dispose();
-      _pendingRemoteError = _asCoreLinkError(error, 'REMOTE_CONNECT_FAILED');
-      ClientLogger.e(
-        'apply remote failed name=${config.activeRemoteName} elapsedMs=${stopwatch.elapsedMilliseconds}',
-        tag: _logTag,
-        error: error,
-      );
-      await _apply(
-        RuntimeConnectionConfig(
-          mode: RuntimeConnectionMode.local,
-          activeRemoteName: '',
-          remoteSessions: config.remoteSessions,
-          autoSyncRemoteNames: config.autoSyncRemoteNames,
-          localStorage: config.localStorage,
-          updatedAt: DateTime.now().millisecondsSinceEpoch,
-        ),
-        persist: persist,
-      );
-      return false;
-    }
-  }
-
-  /// Builds a remote config with the currently announced LAN endpoint.
-  Future<({RuntimeConnectionConfig config, bool baseUrlChanged})>
-  _remoteConfigWithDiscoveredBaseUrl(RuntimeConnectionConfig config) async {
-    final session = config.activeRemoteSession;
-    if (session == null) {
-      throw StateError('remote runtime session is required');
-    }
-    final discoveredBaseUrl = await _discoveredBaseUrlForCoreDevice(
-      session.coreDeviceId,
-    );
-    if (discoveredBaseUrl == null) {
-      return (config: config, baseUrlChanged: false);
-    }
-    final updatedSession = session.withBaseUrl(discoveredBaseUrl);
-    if (updatedSession.baseUrl == session.baseUrl) {
-      return (config: config, baseUrlChanged: false);
-    }
-    final remoteSessions = Map<String, PairedRemoteSessionRecord>.of(
-      config.remoteSessions,
-    )..[config.activeRemoteName] = updatedSession;
-    final resolvedConfig = config.copyWith(
-      remoteSessions: Map<String, PairedRemoteSessionRecord>.unmodifiable(
-        remoteSessions,
-      ),
-      updatedAt: DateTime.now().millisecondsSinceEpoch,
-    );
-    ClientLogger.i(
-      'remote baseUrl resolved name=${config.activeRemoteName} baseUrl=${updatedSession.baseUrl}',
-      tag: _logTag,
-    );
-    return (config: resolvedConfig, baseUrlChanged: true);
-  }
-
-  /// Finds the LAN endpoint announced by a specific core device identity.
-  Future<String?> _discoveredBaseUrlForCoreDevice(String coreDeviceId) async {
-    final json = await LinkAccessHost.instance.discoverDevices(
-      _remoteStartupDiscoveryTimeoutMs,
-    );
-    final devices = (jsonDecode(json) as List<dynamic>)
-        .cast<Map<String, Object?>>();
-    for (final device in devices) {
-      final deviceId = device['device_id'] as String;
-      if (deviceId == coreDeviceId) {
-        return device['base_url'] as String;
-      }
-    }
-    return null;
   }
 }

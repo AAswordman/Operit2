@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+extern crate self as operit_core_proxy;
+
 use async_trait::async_trait;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostManager::HostManager;
@@ -22,10 +24,16 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+pub mod RuntimeCoreRouter;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod RuntimeRemoteLinkDiscovery;
+pub mod RuntimeRemoteLinkService;
+
 include!(concat!(env!("OUT_DIR"), "/generated_core_dispatch.rs"));
 
+#[derive(Clone)]
 pub struct LocalCoreProxy {
-    application: Mutex<OperitApplication>,
+    application: Arc<Mutex<OperitApplication>>,
     hostManager: HostManager,
     chatRuntimeHolder: Arc<Mutex<ChatRuntimeHolder>>,
 }
@@ -36,14 +44,16 @@ impl LocalCoreProxy {
         Self {
             hostManager: application.hostManager.clone(),
             chatRuntimeHolder: application.chatRuntimeHolder.clone(),
-            application: Mutex::new(application),
+            application: Arc::new(Mutex::new(application)),
         }
     }
 
     /// Returns mutable access to the hosted local application.
     #[allow(non_snake_case)]
     pub fn localApplicationMut(&mut self) -> &mut OperitApplication {
-        self.application.get_mut()
+        Arc::get_mut(&mut self.application)
+            .expect("LocalCoreProxy application must not be shared while mutating setup")
+            .get_mut()
     }
 
     /// Returns the runtime storage capability owned by this local core.

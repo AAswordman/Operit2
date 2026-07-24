@@ -8,9 +8,11 @@ project(runner LANGUAGES CXX)
 # Any new source files that you add to the application should be added here.
 add_executable(${BINARY_NAME} WIN32
   "crash_channel.cpp"
+  "engine_channel_lifetime.cpp"
   "flutter_window.cpp"
   "main.cpp"
   "operit_runtime_channel.cpp"
+  "system_audio_input_channel.cpp"
   "utils.cpp"
   "win32_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
@@ -35,6 +37,7 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # Add dependency libraries and include directories. Add any application-specific
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
+target_link_libraries(${BINARY_NAME} PRIVATE "ole32.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "wtsapi32.lib" "iphlpapi.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -52,10 +55,6 @@ find_program(OPERIT_CARGO_EXECUTABLE
   NAMES cargo cargo.exe
   HINTS "$ENV{USERPROFILE}/.cargo/bin" "$ENV{CARGO_HOME}/bin"
   REQUIRED
-)
-target_compile_definitions(${BINARY_NAME} PRIVATE
-  "$<$<CONFIG:Debug>:OPERIT_CARGO_EXECUTABLE_PATH=L\"${OPERIT_CARGO_EXECUTABLE}\">"
-  "$<$<CONFIG:Debug>:OPERIT_FLUTTER_BRIDGE_CRATE_PATH=L\"${OPERIT_FLUTTER_BRIDGE_CRATE}\">"
 )
 add_custom_target(operit_flutter_bridge ALL
   COMMAND ${CMAKE_COMMAND}

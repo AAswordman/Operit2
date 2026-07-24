@@ -12,7 +12,6 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -1043,7 +1042,13 @@ impl HttpDownloadControl {
 
 pub type HttpDownloadProgressCallback = Arc<dyn Fn(HttpDownloadProgress) + Send + Sync + 'static>;
 
-pub trait HttpHost: Send + Sync {
+pub type HttpStreamOpenedCallback = Arc<dyn Fn() + Send + Sync + 'static>;
+
+pub type HttpStreamChunkCallback = Arc<dyn Fn(Vec<u8>) + Send + Sync + 'static>;
+
+pub type HttpStreamClosedCallback = Arc<dyn Fn(Result<(), String>) + Send + Sync + 'static>;
+
+pub trait HttpHost: HttpStreamHost + Send + Sync {
     /// Executes one buffered HTTP request.
     fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData>;
 
@@ -1054,6 +1059,24 @@ pub trait HttpHost: Send + Sync {
         control: HttpDownloadControl,
         onProgress: HttpDownloadProgressCallback,
     ) -> HostResult<HttpDownloadResult>;
+}
+
+/// Opens a host-owned HTTP byte stream and forwards its lifecycle through callbacks.
+pub trait HttpStreamHost: Send + Sync {
+    /// Opens one HTTP response body as an ordered byte stream.
+    #[allow(non_snake_case)]
+    fn openHttpByteStream(
+        &self,
+        streamId: String,
+        request: HttpRequestData,
+        onOpened: HttpStreamOpenedCallback,
+        onChunk: HttpStreamChunkCallback,
+        onClosed: HttpStreamClosedCallback,
+    ) -> HostResult<()>;
+
+    /// Closes one previously opened HTTP byte stream.
+    #[allow(non_snake_case)]
+    fn closeHttpByteStream(&self, streamId: &str) -> HostResult<()>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

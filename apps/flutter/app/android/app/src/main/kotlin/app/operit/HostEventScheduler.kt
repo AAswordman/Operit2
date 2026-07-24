@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -75,6 +76,7 @@ internal data class AndroidHostEventSchedule(
 }
 
 object AndroidHostEventScheduler {
+    private const val logTag = "AndroidHostEventScheduler"
     private const val preferencesName = "operit_host_event_schedules"
     private const val schedulesKey = "schedules"
     private const val scheduleScheme = "operit-host-event"
@@ -261,11 +263,7 @@ class HostEventScheduleReceiver : BroadcastReceiver() {
                     response.optString("error", "Core rejected Android host event schedule")
                 }
             } catch (error: Throwable) {
-                AndroidClientLogger.e(
-                    context,
-                    "HostEventScheduleReceiver",
-                    "Host event schedule delivery failed: ${error.stackTraceToString()}",
-                )
+                Log.e(logTag, "Host event schedule delivery failed", error)
             } finally {
                 pendingResult.finish()
             }

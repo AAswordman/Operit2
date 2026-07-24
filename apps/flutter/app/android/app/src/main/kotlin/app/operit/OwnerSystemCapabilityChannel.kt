@@ -24,6 +24,7 @@ import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Base64
+import android.util.Log
 import app.operit.core.tools.system.MediaProjectionCaptureManager
 import app.operit.core.tools.system.MediaProjectionHolder
 import app.operit.core.tools.system.ScreenCaptureActivity
@@ -48,6 +49,7 @@ class OwnerSystemCapabilityChannel(
     private val runtimeHost: AndroidRuntimeHost,
 ) {
     private companion object {
+        private const val TAG = "OwnerSystemCapabilityChannel"
         private const val DEFAULT_CLASSIC_UUID = "00001101-0000-1000-8000-00805f9b34fb"
         private const val TTS_ENGINE_INIT_TIMEOUT_MS = 15_000L
         private const val TTS_SYNTHESIS_TIMEOUT_MS = 120_000L
@@ -1855,11 +1857,7 @@ class OwnerSystemCapabilityChannel(
 
     private fun ensureMediaProjectionCaptureManager(): MediaProjectionCaptureManager? {
         if (MediaProjectionHolder.mediaProjection == null) {
-            AndroidClientLogger.d(
-                activity.applicationContext,
-                "OwnerSystemCapabilityChannel",
-                "captureScreenshot: Requesting MediaProjection permission...",
-            )
+            Log.d(TAG, "captureScreenshot: Requesting MediaProjection permission...")
             val launchLatch = CountDownLatch(1)
             activity.runOnUiThread {
                 try {
@@ -1877,11 +1875,7 @@ class OwnerSystemCapabilityChannel(
             }
 
             if (MediaProjectionHolder.mediaProjection == null) {
-                AndroidClientLogger.w(
-                    activity.applicationContext,
-                    "OwnerSystemCapabilityChannel",
-                    "captureScreenshot: MediaProjection permission not granted or timed out",
-                )
+                Log.w(TAG, "captureScreenshot: MediaProjection permission not granted or timed out")
                 return null
             }
         }
@@ -1906,11 +1900,7 @@ class OwnerSystemCapabilityChannel(
             Thread.sleep(200)
             manager
         } catch (error: Exception) {
-            AndroidClientLogger.e(
-                activity.applicationContext,
-                "OwnerSystemCapabilityChannel",
-                "captureScreenshot: Error preparing MediaProjectionCaptureManager: ${error.message.orEmpty()}",
-            )
+            Log.e(TAG, "captureScreenshot: Error preparing MediaProjectionCaptureManager", error)
             try {
                 cachedMediaProjectionCaptureManager?.release()
             } catch (_: Exception) {

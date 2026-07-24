@@ -20,6 +20,7 @@ import '../market/MarketBrowseControls.dart';
 import '../market/MarketBrowseList.dart';
 import '../market/MarketStatsSupport.dart';
 import 'ArtifactPublishScreen.dart';
+import 'GitHubOAuthLoginDialog.dart';
 import 'MarketEntryDetailScreen.dart';
 import 'RepoMarketPublishScreen.dart';
 
@@ -1572,7 +1573,7 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
           _MineAccountCard(
             loggedIn: _loggedIn,
             user: _user,
-            onLogin: () => _showGitHubTokenDialog(context),
+            onLogin: () => _showGitHubLoginDialog(context),
             onLogout: _logout,
           ),
         const SizedBox(height: 16),
@@ -1611,7 +1612,7 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
 
   void _openArtifactManage(BuildContext context) {
     if (!_loggedIn) {
-      _showGitHubTokenDialog(context);
+      _showGitHubLoginDialog(context);
       return;
     }
     Navigator.of(context).push(
@@ -1623,7 +1624,7 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
 
   void _openArtifactPublish(BuildContext context) {
     if (!_loggedIn) {
-      _showGitHubTokenDialog(context);
+      _showGitHubLoginDialog(context);
       return;
     }
     Navigator.of(context).push(
@@ -1635,7 +1636,7 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
 
   void _openRepoPublish(BuildContext context, String type) {
     if (!_loggedIn) {
-      _showGitHubTokenDialog(context);
+      _showGitHubLoginDialog(context);
       return;
     }
     Navigator.of(context).push(
@@ -1646,106 +1647,18 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
     );
   }
 
-  void _showGitHubTokenDialog(BuildContext context) {
-    final parentContext = context;
-    final tokenController = TextEditingController();
-    var saving = false;
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          Future<void> saveToken() async {
-            final token = tokenController.text.trim();
-            if (token.isEmpty || saving) {
-              return;
-            }
-            setDialogState(() {
-              saving = true;
-            });
-            try {
-              await _githubAuth.updateAccessToken(
-                accessToken: token,
-                tokenType: 'bearer',
-                grantedScope: null,
-              );
-              final apiUser = await widget
-                  .clients
-                  .providersMarketStatsApiService
-                  .getCurrentGithubUser();
-              await _githubAuth.saveAuthInfo(
-                accessToken: token,
-                tokenType: 'bearer',
-                userInfo: <String, Object?>{
-                  'id': apiUser.id.toString(),
-                  'login': apiUser.login,
-                  'name': apiUser.name,
-                  'email': apiUser.email,
-                  'avatar_url': apiUser.avatarUrl,
-                  'bio': apiUser.bio,
-                  'public_repos': apiUser.publicRepos,
-                  'followers': apiUser.followers,
-                  'following': apiUser.following,
-                },
-                grantedScope: null,
-              );
-              await _loadAuthState();
-              if (!mounted ||
-                  !dialogContext.mounted ||
-                  !parentContext.mounted) {
-                return;
-              }
-              Navigator.of(dialogContext).pop();
-            } catch (error, stackTrace) {
-              debugPrint('Failed to save GitHub token: $error\n$stackTrace');
-              await _githubAuth.logout();
-              if (!mounted || !parentContext.mounted) {
-                return;
-              }
-              setDialogState(() {
-                saving = false;
-              });
-              ScaffoldMessenger.of(parentContext).showSnackBar(
-                SnackBar(
-                  content: Text(error.toString()),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-            }
-          }
-
-          return AlertDialog(
-            icon: const Icon(Icons.login),
-            title: const Text('GitHub 登录'),
-            content: TextField(
-              controller: tokenController,
-              enabled: !saving,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'GitHub Token',
-                border: OutlineInputBorder(),
-              ),
-              onSubmitted: (_) => saveToken(),
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: saving ? null : () => Navigator.of(context).pop(),
-                child: const Text('取消'),
-              ),
-              FilledButton.icon(
-                onPressed: saving ? null : saveToken,
-                icon: saving
-                    ? M3LoadingIndicator(
-                        size: 18,
-                        color: Theme.of(context).colorScheme.onPrimary,
-                      )
-                    : const Icon(Icons.login),
-                label: const Text('登录'),
-              ),
-            ],
-          );
-        },
+  /// Opens the GitHub OAuth broker login dialog for this market session.
+  void _showGitHubLoginDialog(BuildContext context) {
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => GitHubOAuthLoginDialog(
+          clients: widget.clients,
+          onLoginCompleted: _loadAuthState,
+        ),
       ),
-    ).whenComplete(tokenController.dispose);
+    );
   }
 }
 

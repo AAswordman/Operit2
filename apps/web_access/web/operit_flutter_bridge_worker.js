@@ -162,15 +162,13 @@ export class OperitFlutterBridgeWasm {
     /**
      * Closes one wasm Link push stream.
      * @param {string} pushId
-     * @returns {Uint8Array}
+     * @returns {Promise<Uint8Array>}
      */
     pushClose(pushId) {
         const ptr0 = passStringToWasm0(pushId, wasm.__wbindgen_malloc_command_export, wasm.__wbindgen_realloc_command_export);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.operitflutterbridgewasm_pushClose(this.__wbg_ptr, ptr0, len0);
-        var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free_command_export(ret[0], ret[1] * 1, 1);
-        return v2;
+        return ret;
     }
     /**
      * Dispatches one wasm Link push item.
@@ -186,40 +184,36 @@ export class OperitFlutterBridgeWasm {
     /**
      * Opens one wasm Link push stream.
      * @param {Uint8Array} request
-     * @returns {Uint8Array}
+     * @returns {Promise<Uint8Array>}
      */
     pushOpen(request) {
         const ptr0 = passArray8ToWasm0(request, wasm.__wbindgen_malloc_command_export);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.operitflutterbridgewasm_pushOpen(this.__wbg_ptr, ptr0, len0);
-        var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free_command_export(ret[0], ret[1] * 1, 1);
-        return v2;
+        return ret;
     }
     /**
+     * Reads one wasm Link watch snapshot.
      * @param {Uint8Array} request
-     * @returns {Uint8Array}
+     * @returns {Promise<Uint8Array>}
      */
     watchSnapshot(request) {
         const ptr0 = passArray8ToWasm0(request, wasm.__wbindgen_malloc_command_export);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.operitflutterbridgewasm_watchSnapshot(this.__wbg_ptr, ptr0, len0);
-        var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free_command_export(ret[0], ret[1] * 1, 1);
-        return v2;
+        return ret;
     }
     /**
+     * Opens one wasm Link watch stream.
      * @param {Uint8Array} request
      * @param {Function} onEvent
-     * @returns {Uint8Array}
+     * @returns {Promise<Uint8Array>}
      */
     watchStream(request, onEvent) {
         const ptr0 = passArray8ToWasm0(request, wasm.__wbindgen_malloc_command_export);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.operitflutterbridgewasm_watchStream(this.__wbg_ptr, ptr0, len0, onEvent);
-        var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free_command_export(ret[0], ret[1] * 1, 1);
-        return v2;
+        return ret;
     }
 }
 if (Symbol.dispose) OperitFlutterBridgeWasm.prototype[Symbol.dispose] = OperitFlutterBridgeWasm.prototype.free;
@@ -732,46 +726,41 @@ function __wbg_get_imports() {
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 2364, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 2558, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h8e4ade3e3e6e06c7);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 5008, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 5191, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h1770086b1b182bd4);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("Event")], shim_idx: 229, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__hfcfc0de15764f0b4);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("Event")], shim_idx: 288, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h03bddbd36ef2f8fd);
             return ret;
         },
         __wbindgen_cast_0000000000000004: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 2296, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 2490, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h61a3a6be1a8eed24);
             return ret;
         },
-        __wbindgen_cast_0000000000000005: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 231, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__hd3476f0eebd77c99);
-            return ret;
-        },
-        __wbindgen_cast_0000000000000006: function(arg0) {
+        __wbindgen_cast_0000000000000005: function(arg0) {
             // Cast intrinsic for `F64 -> Externref`.
             const ret = arg0;
             return ret;
         },
-        __wbindgen_cast_0000000000000007: function(arg0, arg1) {
+        __wbindgen_cast_0000000000000006: function(arg0, arg1) {
             // Cast intrinsic for `Ref(Slice(U8)) -> NamedExternref("Uint8Array")`.
             const ret = getArrayU8FromWasm0(arg0, arg1);
             return ret;
         },
-        __wbindgen_cast_0000000000000008: function(arg0, arg1) {
+        __wbindgen_cast_0000000000000007: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
             return ret;
         },
-        __wbindgen_cast_0000000000000009: function(arg0, arg1) {
+        __wbindgen_cast_0000000000000008: function(arg0, arg1) {
             var v0 = getArrayU8FromWasm0(arg0, arg1).slice();
             wasm.__wbindgen_free_command_export(arg0, arg1 * 1, 1);
             // Cast intrinsic for `Vector(U8) -> Externref`.
@@ -803,16 +792,12 @@ function wasm_bindgen__convert__closures_____invoke__h61a3a6be1a8eed24(arg0, arg
     wasm.wasm_bindgen__convert__closures_____invoke__h61a3a6be1a8eed24(arg0, arg1);
 }
 
-function wasm_bindgen__convert__closures_____invoke__hd3476f0eebd77c99(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hd3476f0eebd77c99(arg0, arg1);
-}
-
 function wasm_bindgen__convert__closures_____invoke__h8e4ade3e3e6e06c7(arg0, arg1, arg2) {
     wasm.wasm_bindgen__convert__closures_____invoke__h8e4ade3e3e6e06c7(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__hfcfc0de15764f0b4(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hfcfc0de15764f0b4(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h03bddbd36ef2f8fd(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h03bddbd36ef2f8fd(arg0, arg1, arg2);
 }
 
 function wasm_bindgen__convert__closures_____invoke__h1770086b1b182bd4(arg0, arg1, arg2) {

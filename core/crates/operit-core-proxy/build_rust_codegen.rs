@@ -20,6 +20,7 @@ pub(crate) fn render_generated(
     output.push_str(&schema_json);
     output.push_str("\"#).expect(\"generated core proxy schema must be valid JSON\")).expect(\"generated core proxy schema must convert to CoreValue\")\n");
     output.push_str("}\n\n");
+    output.push_str(&render_local_control_path_matcher(objects));
     output.push_str(&render_generated_error_details(objects, error_types));
     for object in objects {
         if object_uses_arc_mutex_instance(&object.access)
@@ -49,6 +50,30 @@ pub(crate) fn render_generated(
     output.push_str(&render_core_proxy_dispatch(objects));
     output.push('\n');
     output.push_str(&render_generated_proxy(objects));
+    output
+}
+
+/// Renders the generated routing classification for locally handled control objects.
+fn render_local_control_path_matcher(objects: &[SourceObject]) -> String {
+    let paths = objects
+        .iter()
+        .filter(|object| object.route_scope == ObjectRouteScope::LocalControl)
+        .map(|object| format!("{:?}", object.schema_key))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let mut output = String::new();
+    output.push_str("/// Returns whether a generated object is handled by the local runtime control plane.\n");
+    output.push_str(
+        "pub(crate) fn generated_is_local_runtime_control_path(target_path: &operit_link::CoreObjectPath) -> bool {\n",
+    );
+    if paths.is_empty() {
+        output.push_str("    false\n");
+    } else {
+        output.push_str("    matches!(target_path.key().as_str(), ");
+        output.push_str(&paths);
+        output.push_str(")\n");
+    }
+    output.push_str("}\n\n");
     output
 }
 

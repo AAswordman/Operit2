@@ -5,19 +5,6 @@ use std::sync::Arc;
 
 use operit_core_proxy::LocalCoreProxy;
 use operit_host_api::HostManager::HostManager;
-use operit_link_access::LinkAccessStore;
-#[cfg(target_os = "macos")]
-use operit_host_macos_native::{
-    MacosBrowserAutomationHost as NativeBrowserAutomationHost,
-    MacosFileSystemHost as NativeFileSystemHost,
-    MacosHostRuntimeEventHost as NativeHostRuntimeEventHost,
-    MacosHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
-    MacosHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
-    MacosHttpHost as NativeHttpHost, MacosManagedRuntimeHost as NativeManagedRuntimeHost,
-    MacosRuntimeStorageHost as NativeRuntimeStorageHost,
-    MacosSystemOperationHost as NativeSystemOperationHost,
-    MacosTerminalHost as NativeTerminalHost, MacosWebVisitHost as NativeWebVisitHost,
-};
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
     LinuxAudioPlaybackHost as NativeAudioPlaybackHost, LinuxBluetoothHost as NativeBluetoothHost,
@@ -30,6 +17,18 @@ use operit_host_linux_native::{
     LinuxRuntimeStorageHost as NativeRuntimeStorageHost,
     LinuxSystemOperationHost as NativeSystemOperationHost, LinuxTerminalHost as NativeTerminalHost,
     LinuxWebVisitHost as NativeWebVisitHost,
+};
+#[cfg(target_os = "macos")]
+use operit_host_macos_native::{
+    MacosBrowserAutomationHost as NativeBrowserAutomationHost,
+    MacosFileSystemHost as NativeFileSystemHost,
+    MacosHostRuntimeEventHost as NativeHostRuntimeEventHost,
+    MacosHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
+    MacosHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
+    MacosHttpHost as NativeHttpHost, MacosManagedRuntimeHost as NativeManagedRuntimeHost,
+    MacosRuntimeStorageHost as NativeRuntimeStorageHost,
+    MacosSystemOperationHost as NativeSystemOperationHost, MacosTerminalHost as NativeTerminalHost,
+    MacosWebVisitHost as NativeWebVisitHost,
 };
 #[cfg(windows)]
 use operit_host_windows_native::{
@@ -45,6 +44,7 @@ use operit_host_windows_native::{
     WindowsSystemOperationHost as NativeSystemOperationHost,
     WindowsTerminalHost as NativeTerminalHost, WindowsWebVisitHost as NativeWebVisitHost,
 };
+use operit_link_access::LinkAccessStore;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use serde::{Deserialize, Serialize};
 
