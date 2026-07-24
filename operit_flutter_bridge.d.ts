@@ -45,7 +45,7 @@ export class OperitFlutterBridgeWasm {
     /**
      * Closes one wasm Link push stream.
      */
-    pushClose(pushId: string): Uint8Array;
+    pushClose(pushId: string): Promise<Uint8Array>;
     /**
      * Dispatches one wasm Link push item.
      */
@@ -53,9 +53,15 @@ export class OperitFlutterBridgeWasm {
     /**
      * Opens one wasm Link push stream.
      */
-    pushOpen(request: Uint8Array): Uint8Array;
-    watchSnapshot(request: Uint8Array): Uint8Array;
-    watchStream(request: Uint8Array, onEvent: Function): Uint8Array;
+    pushOpen(request: Uint8Array): Promise<Uint8Array>;
+    /**
+     * Reads one wasm Link watch snapshot.
+     */
+    watchSnapshot(request: Uint8Array): Promise<Uint8Array>;
+    /**
+     * Opens one wasm Link watch stream.
+     */
+    watchStream(request: Uint8Array, onEvent: Function): Promise<Uint8Array>;
 }
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
@@ -70,17 +76,14 @@ export interface InitOutput {
     readonly operit_flutter_bridge_destroy: (a: number) => void;
     readonly operit_flutter_bridge_free_bytes: (a: number) => void;
     readonly operit_flutter_bridge_free_string: (a: number) => void;
-    readonly operit_flutter_bridge_push_close: (a: number, b: number, c: number) => void;
-    readonly operit_flutter_bridge_push_open: (a: number, b: number, c: number, d: number) => void;
-    readonly operit_flutter_bridge_watch_snapshot: (a: number, b: number, c: number, d: number) => void;
     readonly operitflutterbridgewasm_call: (a: number, b: number, c: number) => any;
     readonly operitflutterbridgewasm_closeWatchStream: (a: number, b: number, c: number) => [number, number];
     readonly operitflutterbridgewasm_new: () => [number, number, number];
-    readonly operitflutterbridgewasm_pushClose: (a: number, b: number, c: number) => [number, number];
+    readonly operitflutterbridgewasm_pushClose: (a: number, b: number, c: number) => any;
     readonly operitflutterbridgewasm_pushItem: (a: number, b: number, c: number) => any;
-    readonly operitflutterbridgewasm_pushOpen: (a: number, b: number, c: number) => [number, number];
-    readonly operitflutterbridgewasm_watchSnapshot: (a: number, b: number, c: number) => [number, number];
-    readonly operitflutterbridgewasm_watchStream: (a: number, b: number, c: number, d: any) => [number, number];
+    readonly operitflutterbridgewasm_pushOpen: (a: number, b: number, c: number) => any;
+    readonly operitflutterbridgewasm_watchSnapshot: (a: number, b: number, c: number) => any;
+    readonly operitflutterbridgewasm_watchStream: (a: number, b: number, c: number, d: any) => any;
     readonly __wbg_intounderlyingsource_free: (a: number, b: number) => void;
     readonly intounderlyingsource_cancel: (a: number) => void;
     readonly intounderlyingsource_pull: (a: number, b: any) => any;
@@ -97,9 +100,8 @@ export interface InitOutput {
     readonly wasm_bindgen__convert__closures_____invoke__h021146d1cbd71021: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen__convert__closures_____invoke__h1b68b2cd68b124c7: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h2a138a157a1dd3a8: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h5d4589f8f5769897: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h9e39107ba8ae0e5f: (a: number, b: number, c: any) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h36e795dff3be6c80: (a: number, b: number) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__haad50a097c3b642f: (a: number, b: number) => void;
     readonly __wbindgen_malloc_command_export: (a: number, b: number) => number;
     readonly __wbindgen_realloc_command_export: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store_command_export: (a: number) => void;
