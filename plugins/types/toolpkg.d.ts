@@ -1139,19 +1139,25 @@ export namespace ToolPkg {
    * Enumerates immediate and asynchronous results accepted from a tool lifecycle hook.
    */
   export interface ToolLifecycleHookObjectResult {
-    /** Selects whether the intercepted tool call may continue. */
-    action?: "allow" | "block";
-    /** Explains why the intercepted tool call was blocked. */
+    /**
+     * Selects whether the intercepted tool call may continue.
+     */
+    action?: string;
+    /**
+     * Explains why the intercepted tool call was blocked.
+     */
     reason?: string;
   }
-
-  /** Enumerates asynchronous results accepted from a tool lifecycle hook. */
-  export type ToolLifecycleHookReturnVariant3Output = ToolLifecycleHookObjectResult | void;
 
   /**
    * Enumerates immediate and asynchronous results accepted from a tool lifecycle hook.
    */
   export type ToolLifecycleHookReturn = ToolLifecycleHookObjectResult | void | Promise<ToolLifecycleHookReturnVariant3Output>;
+
+  /**
+   * Enumerates asynchronous results accepted from a tool lifecycle hook.
+   */
+  export type ToolLifecycleHookReturnVariant3Output = ToolLifecycleHookObjectResult | void;
 
   /**
    * Enumerates immediate and asynchronous results accepted from a prompt input hook.
@@ -3021,7 +3027,7 @@ export namespace ToolPkg {
     /**
      * Stores the scalar argument value.
      */
-    value: number | string;
+    value: WasmScalarValue;
   }
 
   /**
@@ -3229,13 +3235,13 @@ declare global {
    */
   function registerToolPkgChatInputHook(definition: ToolPkg.ChatInputHookRegistration): void;
   /**
-   * Registers a callback for chat view lifecycle changes. The global binding delegates to the active ToolPkg registry.
-   */
-  function registerToolPkgChatViewHook(definition: ToolPkg.ChatViewHookRegistration): void;
-  /**
    * Registers a callback for persisted chat message notifications. The global binding delegates to the active ToolPkg registry.
    */
   function registerToolPkgChatMessageHook(definition: ToolPkg.ChatMessageHookRegistration): void;
+  /**
+   * Registers a callback for chat view lifecycle changes. The global binding delegates to the active ToolPkg registry.
+   */
+  function registerToolPkgChatViewHook(definition: ToolPkg.ChatViewHookRegistration): void;
   /**
    * Registers a plugin widget on the desktop surface. The global binding delegates to the active ToolPkg registry.
    */

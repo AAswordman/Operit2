@@ -3,13 +3,16 @@
 use core::time::Duration;
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
-use std::sync::{Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use operit_host_api::HostManager::{defaultHostRuntimeTaskSchedulerHost, HostManager};
 use operit_host_api::TimeUtils::tryCurrentTimeMillisU128;
+use operit_host_api::{
+    SystemNotificationActivation, SystemNotificationRequest, SystemOperationHost,
+};
 use operit_util::stream::Stream::{CollectFuture, Stream};
 use tokio::sync::{oneshot, Notify};
 
@@ -54,6 +57,10 @@ pub enum RuntimeHostInteractionKind {
     LocalInference,
     #[serde(rename = "tool_permission")]
     ToolPermission,
+    #[serde(rename = "web_access_pairing")]
+    WebAccessPairing,
+    #[serde(rename = "app_notification")]
+    AppNotification,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -78,6 +85,8 @@ pub struct RuntimeHostInteractionRequest {
     pub ttsPlayback: Option<RuntimeHostInteractionTtsPlaybackPayload>,
     pub localInference: Option<RuntimeHostInteractionLocalInferencePayload>,
     pub toolPermission: Option<RuntimeHostInteractionToolPermissionPayload>,
+    pub webAccessPairing: Option<RuntimeHostInteractionWebAccessPairingPayload>,
+    pub appNotification: Option<RuntimeHostInteractionAppNotificationPayload>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -98,6 +107,7 @@ struct RuntimeHostInteractionPending {
     target: RuntimeHostInteractionTarget,
     request: RuntimeHostInteractionRequest,
     sequence: u64,
+    awaitsResponse: bool,
 }
 
 impl RuntimeHostInteractionRequest {
@@ -209,6 +219,20 @@ impl RuntimeHostInteractionRequest {
         request
     }
 
+    /// Builds a non-blocking notification for one browser Web Access pairing request.
+    fn webAccessPairing(payload: RuntimeHostInteractionWebAccessPairingPayload) -> Self {
+        let mut request = Self::empty(RuntimeHostInteractionKind::WebAccessPairing);
+        request.webAccessPairing = Some(payload);
+        request
+    }
+
+    /// Builds a non-blocking notification for one application-level event.
+    fn appNotification(payload: RuntimeHostInteractionAppNotificationPayload) -> Self {
+        let mut request = Self::empty(RuntimeHostInteractionKind::AppNotification);
+        request.appNotification = Some(payload);
+        request
+    }
+
     fn empty(kind: RuntimeHostInteractionKind) -> Self {
         Self {
             requestId: Uuid::new_v4().to_string(),
@@ -230,6 +254,8 @@ impl RuntimeHostInteractionRequest {
             ttsPlayback: None,
             localInference: None,
             toolPermission: None,
+            webAccessPairing: None,
+            appNotification: None,
         }
     }
 }
@@ -705,6 +731,27 @@ pub struct RuntimeHostInteractionToolPermissionResponse {
     pub result: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Browser identity and code for one Web Access pairing request.
+pub struct RuntimeHostInteractionWebAccessPairingPayload {
+    pub pairingId: String,
+    pub clientDeviceId: String,
+    pub clientPlatform: String,
+    pub clientModel: String,
+    pub pairingCode: String,
+    pub createdAt: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Application event that the owning Flutter process may surface as a system notification.
+pub struct RuntimeHostInteractionAppNotificationPayload {
+    pub notificationType: String,
+    pub title: String,
+    pub message: String,
+    pub chatId: Option<String>,
+    pub messageTimestamp: Option<i64>,
+}
+
 #[derive(Debug, Default)]
 struct RuntimeHostInteractionState {
     pending: BTreeMap<String, RuntimeHostInteractionPending>,
@@ -732,7 +779,9 @@ impl Default for RuntimeHostInteractionBroker {
 static RUNTIME_HOST_INTERACTIONS: OnceLock<RuntimeHostInteractionBroker> = OnceLock::new();
 
 /// Service facade for publishing and responding to host interaction requests.
-pub struct RuntimeHostInteractionService;
+pub struct RuntimeHostInteractionService {
+    systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
+}
 
 #[derive(Clone, Debug)]
 /// Blocking stream of pending host interaction requests for selected kinds.
@@ -777,8 +826,33 @@ impl Stream for RuntimeHostInteractionEventStream {
 
 impl RuntimeHostInteractionService {
     /// Creates the host interaction service facade.
-    pub fn getInstance(_context: &HostManager) -> Self {
-        Self
+    pub fn getInstance(context: &HostManager) -> Self {
+        Self {
+            systemOperationHost: context.systemOperationHost.clone(),
+        }
+    }
+
+    /// Sends one application notification through the active system-operation host.
+    pub fn sendSystemNotification(
+        &self,
+        title: String,
+        message: String,
+        chatId: Option<String>,
+    ) -> Result<(), String> {
+        let host = self
+            .systemOperationHost
+            .as_deref()
+            .ok_or_else(|| "SystemOperationHost is not registered for this runtime".to_string())?;
+        let activation = match chatId {
+            Some(chatId) => SystemNotificationActivation::OpenChat { chatId },
+            None => SystemNotificationActivation::OpenApplication,
+        };
+        host.sendNotification(&SystemNotificationRequest {
+            title,
+            message,
+            activation,
+        })
+            .map_err(|error| error.message)
     }
 
     /// Responds to a pending owner-host interaction request.
@@ -788,6 +862,11 @@ impl RuntimeHostInteractionService {
         response: RuntimeHostInteractionResponse,
     ) -> Result<(), String> {
         runtimeHostInteractionBroker().respond(&requestId, response)
+    }
+
+    /// Acknowledges a non-blocking owner-host notification after it is consumed.
+    pub fn acknowledgeOwnerHostInteraction(&self, requestId: String) -> Result<(), String> {
+        runtimeHostInteractionBroker().acknowledge(&requestId)
     }
 
     /// Creates an event stream for owner-host interaction requests of selected kinds.
@@ -1057,6 +1136,22 @@ pub async fn requestOwnerToolPermissionAsync(
         .ok_or_else(|| "tool permission response payload is missing".to_string())
 }
 
+/// Publishes one browser Web Access pairing request to the owner host.
+pub fn publishOwnerWebAccessPairing(payload: RuntimeHostInteractionWebAccessPairingPayload) {
+    runtimeHostInteractionBroker().publish(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::webAccessPairing(payload),
+    );
+}
+
+/// Publishes one application notification event to the owner host.
+pub fn publishOwnerAppNotification(payload: RuntimeHostInteractionAppNotificationPayload) {
+    runtimeHostInteractionBroker().publish(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::appNotification(payload),
+    );
+}
+
 /// Runs a future with a task-local host interaction origin.
 pub async fn withRuntimeHostInteractionOrigin<F, T>(
     origin: RuntimeHostInteractionRequestOrigin,
@@ -1122,6 +1217,7 @@ impl RuntimeHostInteractionBroker {
                 target,
                 request,
                 sequence,
+                awaitsResponse: true,
             },
         );
         self.notifyChanged();
@@ -1174,6 +1270,7 @@ impl RuntimeHostInteractionBroker {
                     target,
                     request,
                     sequence,
+                    awaitsResponse: true,
                 },
             );
         }
@@ -1242,10 +1339,54 @@ impl RuntimeHostInteractionBroker {
             .state
             .lock()
             .map_err(|error| format!("host interaction mutex poisoned: {error}"))?;
-        if !state.pending.contains_key(requestId) {
+        let Some(pending) = state.pending.get(requestId) else {
             return Err(format!("host interaction request not found: {requestId}"));
+        };
+        if !pending.awaitsResponse {
+            return Err(format!(
+                "host interaction notification must be acknowledged: {requestId}"
+            ));
         }
         state.responses.insert(requestId.to_string(), response);
+        self.notifyChanged();
+        Ok(())
+    }
+
+    /// Enqueues one non-blocking notification until the owner host acknowledges it.
+    fn publish(
+        &self,
+        target: RuntimeHostInteractionTarget,
+        request: RuntimeHostInteractionRequest,
+    ) {
+        let requestId = request.requestId.clone();
+        let mut state = self.state.lock().expect("host interaction mutex poisoned");
+        let sequence = state.nextSequence;
+        state.nextSequence = state.nextSequence.wrapping_add(1);
+        state.pending.insert(
+            requestId,
+            RuntimeHostInteractionPending {
+                target,
+                request,
+                sequence,
+                awaitsResponse: false,
+            },
+        );
+        self.notifyChanged();
+    }
+
+    /// Removes one non-blocking notification after the owner host consumes it.
+    fn acknowledge(&self, requestId: &str) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|error| format!("host interaction mutex poisoned: {error}"))?;
+        let Some(pending) = state.pending.get(requestId) else {
+            return Err(format!("host interaction request not found: {requestId}"));
+        };
+        if pending.awaitsResponse {
+            return Err(format!("host interaction requires a response: {requestId}"));
+        }
+        state.pending.remove(requestId);
         self.notifyChanged();
         Ok(())
     }
@@ -1254,6 +1395,43 @@ impl RuntimeHostInteractionBroker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Verifies non-blocking owner notifications remain pending until acknowledged.
+    #[test]
+    fn brokerRemovesPublishedNotificationAfterAcknowledgement() {
+        let broker = RuntimeHostInteractionBroker::default();
+        let request = RuntimeHostInteractionRequest::webAccessPairing(
+            RuntimeHostInteractionWebAccessPairingPayload {
+                pairingId: "pairing-1".to_string(),
+                clientDeviceId: "browser-1".to_string(),
+                clientPlatform: "web".to_string(),
+                clientModel: "browser".to_string(),
+                pairingCode: "123456".to_string(),
+                createdAt: 1,
+            },
+        );
+        let requestId = request.requestId.clone();
+
+        broker.publish(RuntimeHostInteractionTarget::OwnerHost, request);
+
+        assert!(broker
+            .state
+            .lock()
+            .expect("host interaction mutex poisoned")
+            .pending
+            .contains_key(&requestId));
+
+        broker
+            .acknowledge(&requestId)
+            .expect("notification acknowledgement must succeed");
+
+        assert!(!broker
+            .state
+            .lock()
+            .expect("host interaction mutex poisoned")
+            .pending
+            .contains_key(&requestId));
+    }
 
     /// Verifies that a structured owner error returns without waiting for timeout.
     #[test]

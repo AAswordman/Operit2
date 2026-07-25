@@ -63,8 +63,8 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--base-href",
-        required=True,
-        help="Absolute deployment path ending with a slash, such as /Operit2/.",
+        default="/",
+        help="Absolute deployment path ending with a slash, such as /Operit2/. Defaults to /.",
     )
     arguments = parser.parse_args()
     if not arguments.base_href.startswith("/") or not arguments.base_href.endswith("/"):

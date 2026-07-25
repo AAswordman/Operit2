@@ -1064,12 +1064,12 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
       final session = await const RemotePairingBridge().finish(
         pairingId: pairing.pairingId,
         pairingCode: pairingCode,
-        name: _pairedRuntimeSessionName(pairing),
+        name: remotePairingSessionName(pairing),
       );
       if (mounted) {
         Navigator.of(context).pop(
           _RemotePairResult(
-            name: _pairedRuntimeSessionName(pairing),
+            name: remotePairingSessionName(pairing),
             session: session,
           ),
         );
@@ -1204,12 +1204,12 @@ class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
       final session = await const RemotePairingBridge().finish(
         pairingId: widget.pairing.pairingId,
         pairingCode: pairingCode,
-        name: _pairedRuntimeSessionName(widget.pairing),
+        name: remotePairingSessionName(widget.pairing),
       );
       if (mounted) {
         Navigator.of(context).pop(
           _RemotePairResult(
-            name: _pairedRuntimeSessionName(widget.pairing),
+            name: remotePairingSessionName(widget.pairing),
             session: session,
           ),
         );
@@ -1269,11 +1269,6 @@ class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
       ],
     );
   }
-}
-
-/// Builds one stable local session key for a completed remote pairing.
-String _pairedRuntimeSessionName(RemotePairStartResult pairing) {
-  return '${pairing.coreDeviceInfo.platform}-${pairing.coreDeviceInfo.model}-${pairing.coreDeviceId}';
 }
 
 class _RemotePairResult {

@@ -20,6 +20,15 @@ pub enum ToolPkgSourceType {
     EXTERNAL,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolPkgMarketOrigin {
+    pub market: String,
+    #[serde(rename = "toolpkgId")]
+    pub toolpkgId: String,
+    pub version: String,
+    pub author: Vec<String>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgResourceRuntime {
     pub key: String,
@@ -311,6 +320,8 @@ pub struct ToolPkgRegisteredTagFunctionHook {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgMainRegistration {
+    #[serde(rename = "marketOrigin", default)]
+    pub marketOrigin: Option<ToolPkgMarketOrigin>,
     #[serde(rename = "toolboxUiModules", default)]
     pub toolboxUiModules: Vec<ToolPkgRegisteredUiModule>,
     #[serde(rename = "uiRoutes", default)]
@@ -446,6 +457,8 @@ pub struct ToolPkgLoadResult {
     pub subpackagePackages: Vec<ToolPackage>,
     #[serde(rename = "containerRuntime")]
     pub containerRuntime: ToolPkgContainerRuntime,
+    #[serde(rename = "marketOrigin", default)]
+    pub marketOrigin: Option<ToolPkgMarketOrigin>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1149,6 +1162,7 @@ impl ToolPkgArchiveParser {
             containerPackage,
             subpackagePackages,
             containerRuntime: runtime,
+            marketOrigin: mainRegistration.marketOrigin,
         })
     }
 

@@ -1,6 +1,7 @@
 import common from '@ohos.app.ability.common';
 import commonEventManager from '@ohos.commonEventManager';
 import Want from '@ohos.app.ability.Want';
+import wantAgent from '@ohos.app.ability.wantAgent';
 import abilityAccessCtrl, { Permissions } from '@ohos.abilityAccessCtrl';
 import wantConstant from '@ohos.ability.wantConstant';
 import bundle from '@ohos.bundle';
@@ -148,6 +149,8 @@ interface JsonPayload {
   state?: string;
   devices?: Array<JsonPayload>;
   type?: string;
+  chatId?: string;
+  activation?: JsonPayload;
   bondState?: string;
   source?: string | null;
   rssi?: number | null;
@@ -277,6 +280,9 @@ function dispatchRuntimeCoreCall(handle: bigint, request: ArrayBuffer): ArrayBuf
 }
 
 export class OperitRuntimeChannel {
+  private static activeRuntimeChannel: OperitRuntimeChannel | null = null;
+  private static pendingNotificationActivations: Array<JsonPayload> = [];
+  private static notificationActivationReceiverReady: boolean = false;
   private channel: MethodChannel;
   private context: common.UIAbilityContext;
   private runtimeHandle: bigint = BigInt(0);
@@ -356,12 +362,19 @@ export class OperitRuntimeChannel {
     windowStage: window.WindowStage | null
   ): OperitRuntimeChannel {
     const runtimeChannel = new OperitRuntimeChannel(channel, context, windowStage);
+    OperitRuntimeChannel.activeRuntimeChannel = runtimeChannel;
     channel.setMethodCallHandler({
       onMethodCall: (call: MethodCall, result: MethodResult): void => {
         runtimeChannel.onMethodCall(call, result);
       }
     });
     return runtimeChannel;
+  }
+
+  /// Records one notification activation received by EntryAbility.
+  static receiveNotificationActivation(activation: JsonPayload): void {
+    OperitRuntimeChannel.pendingNotificationActivations.push(activation);
+    OperitRuntimeChannel.activeRuntimeChannel?.dispatchPendingNotificationActivations();
   }
 
   /// Updates the active WindowStage used by window-bound owner operations.
@@ -373,6 +386,14 @@ export class OperitRuntimeChannel {
   onMethodCall(call: MethodCall, result: MethodResult): void {
     try {
       switch (call.method) {
+        case 'notificationActivationInitial':
+          result.success(OperitRuntimeChannel.takePendingNotificationActivation());
+          return;
+        case 'notificationActivationReady':
+          OperitRuntimeChannel.notificationActivationReceiverReady = true;
+          this.dispatchPendingNotificationActivations();
+          result.success(null);
+          return;
         case 'localRuntimeStorageDefaults':
           result.success(this.defaultStoragePaths());
           return;
@@ -520,6 +541,26 @@ export class OperitRuntimeChannel {
       }
     } catch (error) {
       result.error('RUNTIME_BRIDGE_ERROR', `${error}`, null);
+    }
+  }
+
+  /// Returns and consumes the oldest activation received before Dart startup.
+  private static takePendingNotificationActivation(): JsonPayload | null {
+    if (OperitRuntimeChannel.pendingNotificationActivations.length === 0) {
+      return null;
+    }
+    return OperitRuntimeChannel.pendingNotificationActivations.shift() ?? null;
+  }
+
+  /// Emits queued activations after the Dart Runtime-channel receiver is installed.
+  private dispatchPendingNotificationActivations(): void {
+    if (!OperitRuntimeChannel.notificationActivationReceiverReady) {
+      return;
+    }
+    let activation = OperitRuntimeChannel.takePendingNotificationActivation();
+    while (activation !== null) {
+      this.channel.invokeMethod('notificationActivation', activation);
+      activation = OperitRuntimeChannel.takePendingNotificationActivation();
     }
   }
 
@@ -1042,6 +1083,19 @@ export class OperitRuntimeChannel {
   private async systemSendNotification(params: JsonPayload): Promise<JsonPayload> {
     const title = this.objectString(params, 'title');
     const message = this.objectString(params, 'message');
+    const activation = this.notificationActivation(params);
+    const notificationWantAgent = await wantAgent.getWantAgent({
+      wants: [{
+        bundleName: this.context.abilityInfo.bundleName,
+        abilityName: this.context.abilityInfo.name,
+        parameters: {
+          operitNotificationActivation: JSON.stringify(activation)
+        }
+      }],
+      operationType: wantAgent.OperationType.START_ABILITY,
+      requestCode: Date.now() % 2147483647,
+      wantAgentFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+    });
     await notificationManager.requestEnableNotification();
     await notificationManager.publish({
       id: Date.now() % 2147483647,
@@ -1052,11 +1106,33 @@ export class OperitRuntimeChannel {
           title: title,
           text: message
         }
-      }
+      },
+      wantAgent: notificationWantAgent
     } as notificationManager.NotificationRequest);
     return {
       success: true
     };
+  }
+
+  /// Validates the application destination embedded in one system notification request.
+  private notificationActivation(params: JsonPayload): JsonPayload {
+    const activation = params.activation;
+    if (activation === undefined || activation.type === undefined) {
+      throw new Error('OpenHarmony notification activation is required');
+    }
+    if (activation.type === 'open_application') {
+      return {
+        type: activation.type
+      };
+    }
+    if (activation.type === 'open_chat' &&
+      typeof activation.chatId === 'string' && activation.chatId.length > 0) {
+      return {
+        type: activation.type,
+        chatId: activation.chatId
+      };
+    }
+    throw new Error(`Unsupported OpenHarmony notification activation: ${activation.type}`);
   }
 
   /// Writes one OpenHarmony settings value.

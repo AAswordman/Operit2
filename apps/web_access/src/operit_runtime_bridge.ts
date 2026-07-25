@@ -98,11 +98,6 @@ interface WasiModule {
   setWasiMemory(memory: WebAssembly.Memory): void;
 }
 
-interface WebAccessConfig {
-  mode?: string;
-  baseUrl?: string;
-}
-
 interface WebAccessSession {
   baseUrl: string;
   sessionId: string;
@@ -142,6 +137,54 @@ interface PairFinishResponse {
 interface WebDeviceInfo {
   platform: string;
   model: string;
+}
+
+interface BrowserNotificationActivation {
+  type: "open_application" | "open_chat";
+  chatId?: string;
+}
+
+/** Parses the notification destination supplied by the Web system-operation host. */
+function parseBrowserNotificationActivation(activationJson: string): BrowserNotificationActivation {
+  const activation = JSON.parse(activationJson) as { type?: unknown; chatId?: unknown };
+  if (activation.type === "open_application") {
+    return { type: activation.type };
+  }
+  if (activation.type === "open_chat" && typeof activation.chatId === "string" && activation.chatId.length > 0) {
+    return { type: activation.type, chatId: activation.chatId };
+  }
+  throw new Error("Browser notification activation is invalid");
+}
+
+/** Builds the browser URL that restarts Flutter with a selected notification destination. */
+function browserNotificationActivationUrl(
+  activation: BrowserNotificationActivation,
+  activationJson: string,
+): string | null {
+  if (activation.type === "open_application") {
+    return null;
+  }
+  const target = new URL(window.location.href);
+  target.searchParams.set("operitNotificationActivation", activationJson);
+  return target.toString();
+}
+
+/** Displays a browser notification and forwards clicks to the selected application destination. */
+function showBrowserNotification(
+  title: string,
+  message: string,
+  activation: BrowserNotificationActivation,
+  activationJson: string,
+): void {
+  const notification = new Notification(title, { body: message, tag: "operit" });
+  notification.onclick = (): void => {
+    notification.close();
+    window.focus();
+    const target = browserNotificationActivationUrl(activation, activationJson);
+    if (target !== null) {
+      window.location.assign(target);
+    }
+  };
 }
 
 interface WebTtsBundle {
@@ -422,7 +465,6 @@ interface ManagedRuntimeProcess {
 }
 
 interface RuntimeGlobals {
-  __OPERIT_WEB_ACCESS__?: WebAccessConfig;
   __OPERIT_MODEL_INSTALL_WORKER__?: boolean;
   __operitRuntime?: RuntimeBridge;
   __operitModelInstallWorkerStorageChanges?: () => Promise<ModelInstallWorkerStorageChange[]>;
@@ -581,15 +623,19 @@ interface ModelInstallWorkerError {
   const webAccessSessionStorageKey = "operit2.webAccess.session";
   const pairingServiceVersion = 1;
   let webAccessSessionReloading = false;
-  const webAccessConfig = runtimeGlobal.__OPERIT_WEB_ACCESS__;
-  if (webAccessConfig && webAccessConfig.mode === "pair") {
-    installPairingWebRuntime(webAccessConfig);
+  const webAccessUrl = new URL(globalThis.location.href);
+  const webAccessToken = webAccessUrl.searchParams.get("token");
+  if (webAccessToken !== null) {
+    installPairingWebRuntime(webAccessUrl.origin, webAccessToken.trim());
     return;
   }
 
-  function installPairingWebRuntime(config: WebAccessConfig): void {
-    const baseUrl = String(config.baseUrl || "").replace(/\/+$/, "");
-    const runtimePromise = webAccessSession(baseUrl).then(createLinkedWebRuntime);
+  /** Installs the remote runtime used by a token-bearing Web Access URL. */
+  function installPairingWebRuntime(baseUrl: string, token: string): void {
+    if (token.length === 0) {
+      throw new Error("web access URL requires a token query parameter");
+    }
+    const runtimePromise = webAccessSession(baseUrl, token).then(createLinkedWebRuntime);
     runtimeGlobal.__operitRuntime = {
       async call(request: Uint8Array): Promise<Uint8Array> {
         return (await runtimePromise).call(request);
@@ -618,16 +664,44 @@ interface ModelInstallWorkerError {
     };
   }
 
-  async function webAccessSession(baseUrl: string): Promise<WebAccessSession> {
-    const savedSession = localStorage.getItem(webAccessSessionStorageKey);
-    if (savedSession !== null) {
-      return JSON.parse(savedSession) as WebAccessSession;
+  /** Restores or creates the browser session for a token-bearing Web Access link. */
+  async function webAccessSession(baseUrl: string, token: string): Promise<WebAccessSession> {
+    const persistedSession = readPersistedWebAccessSession(baseUrl);
+    if (persistedSession !== null) {
+      return persistedSession;
     }
-    const session = await pairWebAccessSession(baseUrl);
+    const session = await pairWebAccessSession(baseUrl, token);
     localStorage.setItem(webAccessSessionStorageKey, JSON.stringify(session));
     return session;
   }
 
+  /** Reads and validates the persisted Web Access session for one server origin. */
+  function readPersistedWebAccessSession(baseUrl: string): WebAccessSession | null {
+    const serialized = localStorage.getItem(webAccessSessionStorageKey);
+    if (serialized === null) {
+      return null;
+    }
+    const session = JSON.parse(serialized) as WebAccessSession;
+    if (session.baseUrl !== baseUrl) {
+      return null;
+    }
+    if (
+      typeof session.sessionId !== "string" ||
+      session.sessionId.length === 0 ||
+      typeof session.deviceId !== "string" ||
+      session.deviceId.length === 0 ||
+      typeof session.sessionSecret !== "string" ||
+      session.sessionSecret.length === 0 ||
+      typeof session.coreDeviceId !== "string" ||
+      session.coreDeviceId.length === 0 ||
+      typeof session.pairingServiceVersion !== "number"
+    ) {
+      throw new Error("persisted Web Access session is invalid");
+    }
+    return session;
+  }
+
+  /** Clears the active browser session and reloads the Web application. */
   function resetWebAccessSession() {
     localStorage.removeItem(webAccessSessionStorageKey);
     if (!webAccessSessionReloading) {
@@ -636,7 +710,7 @@ interface ModelInstallWorkerError {
     }
   }
 
-  async function pairWebAccessSession(baseUrl: string): Promise<WebAccessSession> {
+  async function pairWebAccessSession(baseUrl: string, token: string): Promise<WebAccessSession> {
     const keyPair = await crypto.subtle.generateKey(
       { name: "X25519" },
       true,
@@ -647,26 +721,14 @@ interface ModelInstallWorkerError {
     );
     const clientDeviceId = `web-client-${crypto.randomUUID()}`;
     const clientNonce = crypto.randomUUID();
-    let start: PairStartResponse;
-    while (true) {
-      const token = globalThis.prompt("Operit Web Access token");
-      if (token === null || token.trim().length === 0) {
-        throw new Error("web access token is required");
-      }
-      try {
-        start = await postJson<PairStartResponse>(`${baseUrl}/link/pair/start`, {
-          pairingServiceVersion,
-          tokenHash: await linkTokenHash(token.trim()),
-          clientDeviceId,
-          clientDeviceInfo: webDeviceInfo(),
-          clientPublicKey,
-          clientNonce,
-        });
-        break;
-      } catch (error) {
-        globalThis.alert(`Operit Web Access token rejected: ${error.message}`);
-      }
-    }
+    const start = await postJson<PairStartResponse>(`${baseUrl}/link/pair/start`, {
+      pairingServiceVersion,
+      tokenHash: await linkTokenHash(token),
+      clientDeviceId,
+      clientDeviceInfo: webDeviceInfo(),
+      clientPublicKey,
+      clientNonce,
+    });
     const corePublicKey = await crypto.subtle.importKey(
       "raw",
       ownedBytes(base64ToBytes(start.corePublicKey)),
@@ -4148,8 +4210,24 @@ self.onmessage = (event) => {
       toast(message: string): void {
         console.info("[Operit toast]", message);
       },
-      sendNotification(title: string, message: string): void {
-        console.info("[Operit notification]", title, message);
+      /** Sends a browser system notification and requests the required permission. */
+      sendNotification(title: string, message: string, activationJson: string): void {
+        if (!("Notification" in globalThis)) {
+          throw new Error("Browser Notification API is unavailable");
+        }
+        const activation = parseBrowserNotificationActivation(activationJson);
+        if (Notification.permission === "granted") {
+          showBrowserNotification(title, message, activation, activationJson);
+          return;
+        }
+        if (Notification.permission === "denied") {
+          throw new Error("Browser notification permission is denied");
+        }
+        void Notification.requestPermission().then((permission) => {
+          if (permission === "granted") {
+            showBrowserNotification(title, message, activation, activationJson);
+          }
+        });
       },
       modifySystemSetting(namespace: string, setting: string, value: string) {
         return { namespace, setting, value };

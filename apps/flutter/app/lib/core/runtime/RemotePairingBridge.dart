@@ -48,7 +48,7 @@ class RemotePairingBridge {
     );
   }
 
-  /// Completes one runtime-owned pairing and selects the resulting named remote runtime.
+  /// Completes one runtime-owned pairing and stores the named remote runtime.
   Future<generated.PairedRemoteSessionRecord> finish({
     required String pairingId,
     required String pairingCode,
@@ -65,6 +65,11 @@ class RemotePairingBridge {
 /// Derives the Link protocol token hash from the user-provided secret.
 String _linkTokenHash(String token) {
   return base64Encode(sha256.convert(utf8.encode(token)).bytes);
+}
+
+/// Builds one stable local session key for a completed remote pairing.
+String remotePairingSessionName(RemotePairStartResult pairing) {
+  return '${pairing.coreDeviceInfo.platform}-${pairing.coreDeviceInfo.model}-${pairing.coreDeviceId}';
 }
 
 class RemotePairStartResult {

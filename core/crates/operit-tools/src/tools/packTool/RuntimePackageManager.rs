@@ -2539,6 +2539,7 @@ impl RuntimePackageManager {
                 Err(error) => return format!("Error importing package: {error}"),
             };
             let packageName = loadResult.containerPackage.name.clone();
+            let marketOrigin = loadResult.marketOrigin.clone();
             if !self
                 .toolPkgManager()
                 .canRegisterToolPkg(&loadResult, self.availablePackages())
@@ -2574,10 +2575,21 @@ impl RuntimePackageManager {
                     packageName
                 );
             }
+            let marketOriginNotice = match marketOrigin {
+                Some(origin) => format!(
+                    "\nSource notice: this is the {} marketplace ToolPkg '{}' (version: {}, author: {}). Please support the original author and beware of resales.",
+                    origin.market,
+                    packageName,
+                    origin.version,
+                    origin.author.join(", ")
+                ),
+                None => String::new(),
+            };
             return format!(
-                "Successfully imported package: {}\nStored at: {}",
+                "Successfully imported package: {}\nStored at: {}{}",
                 packageName,
-                destinationFile.to_string_lossy()
+                destinationFile.to_string_lossy(),
+                marketOriginNotice
             );
         }
 

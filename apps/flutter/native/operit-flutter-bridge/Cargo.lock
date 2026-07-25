@@ -2193,6 +2193,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tungstenite",
+ "url",
  "uuid",
  "windows",
  "windows-collections",

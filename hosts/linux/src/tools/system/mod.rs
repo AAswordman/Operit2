@@ -8,7 +8,7 @@ use std::{env, path::PathBuf};
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoData,
     HostError, HostResult, LocationData, NotificationData, NotificationEntry, OCRLanguage,
-    OCRQuality, SystemOperationHost, SystemSettingData,
+    OCRQuality, SystemNotificationRequest, SystemOperationHost, SystemSettingData,
 };
 use regex::Regex;
 use serde_json::Value;
@@ -44,15 +44,15 @@ impl SystemOperationHost for LinuxSystemOperationHost {
         }
     }
 
-    fn sendNotification(&self, title: &str, message: &str) -> HostResult<()> {
-        let title = if title.trim().is_empty() {
+    fn sendNotification(&self, request: &SystemNotificationRequest) -> HostResult<()> {
+        let title = if request.title.trim().is_empty() {
             "Notification"
         } else {
-            title
+            &request.title
         };
         let status = Command::new("notify-send")
             .arg(title)
-            .arg(message)
+            .arg(&request.message)
             .status()
             .map_err(|error| HostError::new(format!("Failed to send notification: {error}")))?;
         if status.success() {

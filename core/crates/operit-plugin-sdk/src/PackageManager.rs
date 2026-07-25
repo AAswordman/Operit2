@@ -638,6 +638,7 @@ mod tests {
                 sourcePath: root.to_string_lossy().to_string(),
                 ..ToolPkgContainerRuntime::default()
             },
+            marketOrigin: None,
         });
         assert!(registered);
         manager.setEnabledPackageNames(&["container".to_string()]);

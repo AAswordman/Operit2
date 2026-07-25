@@ -54,6 +54,7 @@ using OperitRuntimeMethodChannel =
 
 struct OperitRuntimeChannelOwner {
   std::shared_ptr<OperitRuntimeMethodChannel> channel;
+  HWND window = nullptr;
   std::atomic_bool accepting_responses{true};
 };
 
@@ -66,8 +67,136 @@ std::atomic_uint64_t g_watch_channel_pump_generation{0};
 std::atomic_bool g_operit_runtime_shutting_down{false};
 std::mutex g_watch_channel_pump_mutex;
 std::thread g_watch_channel_pump_thread;
+std::deque<flutter::EncodableMap> g_pending_notification_activations;
+bool g_notification_activation_receiver_ready = false;
 
 constexpr UINT kOperitRuntimePlatformTaskMessage = WM_APP + 0x520;
+
+/// Decodes one URL query component with application/x-www-form-urlencoded rules.
+bool DecodeNotificationQueryComponent(const std::string& encoded,
+                                      std::string* decoded) {
+  if (decoded == nullptr) {
+    return false;
+  }
+  std::string value;
+  value.reserve(encoded.size());
+  for (size_t index = 0; index < encoded.size(); ++index) {
+    const char character = encoded[index];
+    if (character == '+') {
+      value.push_back(' ');
+      continue;
+    }
+    if (character != '%') {
+      value.push_back(character);
+      continue;
+    }
+    if (index + 2 >= encoded.size()) {
+      return false;
+    }
+    const auto hex_value = [](char input) -> int {
+      if (input >= '0' && input <= '9') {
+        return input - '0';
+      }
+      if (input >= 'A' && input <= 'F') {
+        return input - 'A' + 10;
+      }
+      if (input >= 'a' && input <= 'f') {
+        return input - 'a' + 10;
+      }
+      return -1;
+    };
+    const int high = hex_value(encoded[index + 1]);
+    const int low = hex_value(encoded[index + 2]);
+    if (high < 0 || low < 0) {
+      return false;
+    }
+    value.push_back(static_cast<char>((high << 4) | low));
+    index += 2;
+  }
+  *decoded = std::move(value);
+  return true;
+}
+
+/// Parses one Operit notification protocol URI into the Flutter activation schema.
+bool ParseNotificationActivationUri(const std::string& uri,
+                                    flutter::EncodableMap* activation) {
+  if (activation == nullptr) {
+    return false;
+  }
+  constexpr char kOpenApplicationUri[] = "operit2://notification/open-app";
+  constexpr char kOpenChatPrefix[] = "operit2://notification/open-chat?";
+  if (uri == kOpenApplicationUri) {
+    (*activation)[flutter::EncodableValue("type")] =
+        flutter::EncodableValue("open_application");
+    return true;
+  }
+  const std::string open_chat_prefix(kOpenChatPrefix);
+  if (uri.compare(0, open_chat_prefix.size(), open_chat_prefix) != 0) {
+    return false;
+  }
+  const std::string query = uri.substr(open_chat_prefix.size());
+  std::string chat_id;
+  bool found_chat_id = false;
+  size_t query_start = 0;
+  while (query_start <= query.size()) {
+    const size_t separator = query.find('&', query_start);
+    const std::string parameter = query.substr(
+        query_start, separator == std::string::npos
+                         ? std::string::npos
+                         : separator - query_start);
+    const size_t equals = parameter.find('=');
+    if (equals == std::string::npos) {
+      return false;
+    }
+    std::string key;
+    std::string value;
+    if (!DecodeNotificationQueryComponent(parameter.substr(0, equals), &key) ||
+        !DecodeNotificationQueryComponent(parameter.substr(equals + 1), &value)) {
+      return false;
+    }
+    if (key == "chatId") {
+      if (found_chat_id || value.empty()) {
+        return false;
+      }
+      chat_id = std::move(value);
+      found_chat_id = true;
+    }
+    if (separator == std::string::npos) {
+      break;
+    }
+    query_start = separator + 1;
+  }
+  if (!found_chat_id) {
+    return false;
+  }
+  (*activation)[flutter::EncodableValue("type")] =
+      flutter::EncodableValue("open_chat");
+  (*activation)[flutter::EncodableValue("chatId")] =
+      flutter::EncodableValue(chat_id);
+  return true;
+}
+
+/// Sends one notification activation to each running Flutter engine.
+void EmitNotificationActivation(const flutter::EncodableMap& activation) {
+  for (const auto& owner : g_operit_runtime_channels) {
+    if (!owner->accepting_responses.load() ||
+        owner->window != g_operit_runtime_window) {
+      continue;
+    }
+    owner->channel->InvokeMethod(
+        "notificationActivation",
+        std::make_unique<flutter::EncodableValue>(activation));
+  }
+}
+
+/// Queues or emits one notification activation on the Windows platform thread.
+void DispatchNotificationActivation(flutter::EncodableMap activation) {
+  if (!g_notification_activation_receiver_ready) {
+    g_pending_notification_activations.push_back(std::move(activation));
+    return;
+  }
+  EmitNotificationActivation(activation);
+}
 
 /// Builds a filesystem path from UTF-8 bytes under C++20 char8_t rules.
 std::filesystem::path PathFromUtf8(const std::string& value) {
@@ -991,6 +1120,40 @@ bool HandleOperitRuntimeChannelWindowMessage(UINT message,
   return true;
 }
 
+/// Receives one protocol activation from a secondary Windows process.
+bool HandleOperitNotificationActivationWindowMessage(UINT message,
+                                                      WPARAM wparam,
+                                                      LPARAM lparam,
+                                                      LRESULT* result) {
+  (void)wparam;
+  if (message != WM_COPYDATA) {
+    return false;
+  }
+  const auto* copy_data = reinterpret_cast<const COPYDATASTRUCT*>(lparam);
+  if (copy_data == nullptr ||
+      copy_data->dwData != kOperitNotificationActivationCopyData ||
+      copy_data->lpData == nullptr || copy_data->cbData == 0) {
+    return false;
+  }
+  const auto* bytes = static_cast<const char*>(copy_data->lpData);
+  std::string uri(bytes, bytes + copy_data->cbData);
+  if (!uri.empty() && uri.back() == '\0') {
+    uri.pop_back();
+  }
+  flutter::EncodableMap activation;
+  if (!ParseNotificationActivationUri(uri, &activation)) {
+    if (result != nullptr) {
+      *result = FALSE;
+    }
+    return true;
+  }
+  DispatchNotificationActivation(std::move(activation));
+  if (result != nullptr) {
+    *result = TRUE;
+  }
+  return true;
+}
+
 /// Registers one runtime channel whose lifetime follows its Flutter engine.
 void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
   g_operit_runtime_shutting_down.store(false);
@@ -1005,6 +1168,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
     g_operit_runtime_workers = std::make_unique<OperitRuntimeWorkerQueue>(4);
   }
   auto channel_owner = std::make_shared<OperitRuntimeChannelOwner>();
+  channel_owner->window = window;
   channel_owner->channel = std::make_shared<OperitRuntimeMethodChannel>(
           engine->messenger(), "operit/runtime",
           &flutter::StandardMethodCodec::GetInstance());
@@ -1015,6 +1179,30 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
          std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
              result) {
         std::string error;
+        if (method_call.method_name().compare(
+                "notificationActivationInitial") == 0) {
+          if (g_pending_notification_activations.empty()) {
+            result->Success();
+            return;
+          }
+          flutter::EncodableMap activation =
+              std::move(g_pending_notification_activations.front());
+          g_pending_notification_activations.pop_front();
+          result->Success(flutter::EncodableValue(activation));
+          return;
+        }
+        if (method_call.method_name().compare(
+                "notificationActivationReady") == 0) {
+          g_notification_activation_receiver_ready = true;
+          while (!g_pending_notification_activations.empty()) {
+            flutter::EncodableMap activation =
+                std::move(g_pending_notification_activations.front());
+            g_pending_notification_activations.pop_front();
+            EmitNotificationActivation(activation);
+          }
+          result->Success();
+          return;
+        }
         if (method_call.method_name().compare(
                 "localRuntimeStorageDefaults") == 0) {
           std::string runtime_root;
@@ -1272,6 +1460,8 @@ void ShutdownOperitRuntimeChannel() {
   StopWatchChannelPump();
   ClearOperitRuntimePlatformTasks();
   g_operit_runtime_library.reset();
+  g_pending_notification_activations.clear();
+  g_notification_activation_receiver_ready = false;
   g_operit_runtime_window = nullptr;
   g_operit_runtime_platform_thread_id = 0;
 }

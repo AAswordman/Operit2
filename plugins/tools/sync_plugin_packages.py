@@ -94,6 +94,26 @@ def _platform_command(executable: str) -> str:
     return executable
 
 
+def _generate_plugin_sdk_types(repo_root: Path, *, dry_run: bool) -> None:
+    core_root = repo_root / "core"
+    sdk_source_root = core_root / "crates" / "operit-plugin-sdk" / "src"
+    declaration_root = repo_root / "plugins" / "types"
+    _run_checked_command(
+        [
+            "cargo",
+            "run",
+            "-p",
+            "operit-plugin-sdk-codegen",
+            "--",
+            "generate",
+            str(sdk_source_root),
+            str(declaration_root),
+        ],
+        core_root,
+        dry_run=dry_run,
+    )
+
+
 def _iter_signature_files(paths: list[Path]) -> list[Path]:
     seen: set[Path] = set()
     files: list[Path] = []
@@ -370,6 +390,8 @@ def main() -> int:
     parser.add_argument("--no-hot-reload", action="store_true")
     parser.add_argument("--hot-reload-timeout", type=float, default=5.0)
     args = parser.parse_args()
+
+    _generate_plugin_sdk_types(repo_root, dry_run=bool(args.dry_run))
 
     total_copied = 0
     total_packed = 0

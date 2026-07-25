@@ -1,12 +1,12 @@
 use super::*;
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
 #[derive(Clone)]
 struct FlutterSystemOperationBridge {
     native: NativeSystemOperationHost,
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
 impl FlutterSystemOperationBridge {
     fn new() -> Self {
         Self {
@@ -15,7 +15,7 @@ impl FlutterSystemOperationBridge {
     }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
 impl operit_host_api::SystemOperationHost for FlutterSystemOperationBridge {
     fn getSystemLanguageCode(&self) -> operit_host_api::HostResult<String> {
         self.native.getSystemLanguageCode()
@@ -25,8 +25,36 @@ impl operit_host_api::SystemOperationHost for FlutterSystemOperationBridge {
         self.native.toast(message)
     }
 
-    fn sendNotification(&self, title: &str, message: &str) -> operit_host_api::HostResult<()> {
-        self.native.sendNotification(title, message)
+    fn sendNotification(
+        &self,
+        request: &operit_host_api::SystemNotificationRequest,
+    ) -> operit_host_api::HostResult<()> {
+        let response = requestOwnerSystemOperation(
+            RuntimeHostInteractionSystemOperationPayload {
+                operation: "send_notification".to_string(),
+                paramsJson: serialize_owner_params_json(
+                    &serde_json::json!({
+                        "title": request.title,
+                        "message": request.message,
+                        "activation": request.activation,
+                    }),
+                    "system notification",
+                )?,
+            },
+            Duration::from_secs(60),
+        )
+        .map_err(operit_host_api::HostError::new)?;
+        let result: serde_json::Value = serde_json::from_str(&response.resultJson).map_err(|error| {
+            operit_host_api::HostError::new(format!(
+                "system notification response JSON decode failed: {error}"
+            ))
+        })?;
+        if result.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
+            return Ok(());
+        }
+        Err(operit_host_api::HostError::new(
+            "system notification response did not confirm delivery",
+        ))
     }
 
     fn modifySystemSetting(
@@ -184,7 +212,7 @@ pub(crate) fn create_local_core(
 ) -> Result<LocalCoreProxy, String> {
     let mut context =
         create_platform_runtime_host_manager(runtime_root, workspace_root, webVisitHost);
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
     {
         context.systemOperationHost = Some(Arc::new(FlutterSystemOperationBridge::new()));
     }
@@ -379,6 +407,7 @@ pub(crate) fn create_local_core(
 pub(crate) fn create_local_core(
     runtime_root: PathBuf,
     workspace_root: PathBuf,
+    systemLanguageCode: String,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     browserAutomationHost: Option<Arc<dyn operit_host_api::BrowserAutomationHost>>,
     browserSessionHost: Option<Arc<dyn operit_host_api::BrowserSessionHost>>,
@@ -620,6 +649,7 @@ pub(crate) fn create_local_core(
 ) -> Result<LocalCoreProxy, String> {
     let mut context =
         create_platform_runtime_host_manager(runtime_root, workspace_root, webVisitHost);
+    context.systemOperationHost = Some(Arc::new(FlutterSystemOperationBridge::new()));
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
     }

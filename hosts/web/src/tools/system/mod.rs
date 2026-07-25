@@ -2,7 +2,7 @@ use js_sys::{Array, Reflect};
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoData,
     HostResult, LocationData, NotificationData, NotificationEntry, OCRLanguage, OCRQuality,
-    SystemOperationHost, SystemSettingData,
+    SystemNotificationRequest, SystemOperationHost, SystemSettingData,
 };
 use wasm_bindgen::prelude::*;
 
@@ -34,10 +34,16 @@ impl SystemOperationHost for WebSystemOperationHost {
         Ok(())
     }
 
-    fn sendNotification(&self, title: &str, message: &str) -> HostResult<()> {
+    fn sendNotification(&self, request: &SystemNotificationRequest) -> HostResult<()> {
+        let activation = serde_json::to_string(&request.activation)
+            .map_err(|error| js_error(format!("notification activation serialization failed: {error}")))?;
         call_system(
             "sendNotification",
-            &[JsValue::from_str(title), JsValue::from_str(message)],
+            &[
+                JsValue::from_str(&request.title),
+                JsValue::from_str(&request.message),
+                JsValue::from_str(&activation),
+            ],
         )?;
         Ok(())
     }

@@ -10,6 +10,7 @@ import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../host/RuntimeHostInteractionSubscriber.dart';
 import '../link_access/LinkAccessHost.dart';
 import '../logging/ClientLogger.dart';
+import '../notifications/AppNotificationService.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart';
 import '../runtime/RuntimeAutoSyncManager.dart';
@@ -180,6 +181,7 @@ class CoreApplicationService with WidgetsBindingObserver {
       );
       await _startLocalBackgroundService();
       await _syncHostSubscriber();
+      AppNotificationService.instance.initialize();
       if (!_runtimeManager.config.localStorage.confirmed) {
         ClientLogger.i(
           'runtime services start done localStorageConfirmed=false elapsedMs=${stopwatch.elapsedMilliseconds}',

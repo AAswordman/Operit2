@@ -94,6 +94,7 @@ impl HostEnvironmentDescriptor {
                 "tts.playback".to_string(),
                 "system.location".to_string(),
                 "system.notifications.read".to_string(),
+                "system.notifications.send".to_string(),
                 "system.app_usage".to_string(),
                 "system.app.install".to_string(),
                 "system.app.uninstall".to_string(),
@@ -141,6 +142,7 @@ impl HostEnvironmentDescriptor {
                 "bluetooth.ble".to_string(),
                 "system.location".to_string(),
                 "system.notifications.read".to_string(),
+                "system.notifications.send".to_string(),
                 "system.app_usage".to_string(),
                 "system.app.install".to_string(),
                 "system.app.uninstall".to_string(),
@@ -167,6 +169,7 @@ impl HostEnvironmentDescriptor {
                 "bluetooth.ble",
                 "system.location",
                 "system.notifications.read",
+                "system.notifications.send",
                 "system.app_usage",
                 "system.app.install",
                 "system.app.uninstall",
@@ -216,6 +219,7 @@ impl HostEnvironmentDescriptor {
                 "tts.playback".to_string(),
                 "system.location".to_string(),
                 "system.notifications.read".to_string(),
+                "system.notifications.send".to_string(),
                 "system.app_usage".to_string(),
                 "system.app.install".to_string(),
                 "system.app.uninstall".to_string(),
@@ -266,6 +270,7 @@ impl HostEnvironmentDescriptor {
                 "tts.playback".to_string(),
                 "system.location".to_string(),
                 "system.notifications.read".to_string(),
+                "system.notifications.send".to_string(),
                 "system.app_usage".to_string(),
                 "system.app.install".to_string(),
                 "system.app.uninstall".to_string(),
@@ -321,6 +326,7 @@ impl HostEnvironmentDescriptor {
                 "os.share".to_string(),
                 "system.location".to_string(),
                 "system.notifications.read".to_string(),
+                "system.notifications.send".to_string(),
                 "system.app_usage".to_string(),
                 "system.app.install".to_string(),
                 "system.app.uninstall".to_string(),
@@ -541,6 +547,12 @@ fn defaultHostCapabilities() -> Vec<HostCapability> {
             displayName: "通知读取".to_string(),
             scope: CapabilityScope::System,
             operations: vec![CapabilityOperation::Read],
+        },
+        HostCapability {
+            id: "system.notifications.send".to_string(),
+            displayName: "发送系统通知".to_string(),
+            scope: CapabilityScope::System,
+            operations: vec![CapabilityOperation::Execute],
         },
         HostCapability {
             id: "system.app_usage".to_string(),
@@ -1960,10 +1972,26 @@ pub trait LocalInferenceHost: Send + Sync {
     ) -> HostResult<LocalTtsInferenceHostResponse>;
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Selects the application destination activated by a system notification.
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SystemNotificationActivation {
+    OpenApplication,
+    OpenChat { chatId: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Describes one system notification together with its activation destination.
+pub struct SystemNotificationRequest {
+    pub title: String,
+    pub message: String,
+    pub activation: SystemNotificationActivation,
+}
+
 pub trait SystemOperationHost: Send + Sync {
     fn getSystemLanguageCode(&self) -> HostResult<String>;
     fn toast(&self, message: &str) -> HostResult<()>;
-    fn sendNotification(&self, title: &str, message: &str) -> HostResult<()>;
+    fn sendNotification(&self, request: &SystemNotificationRequest) -> HostResult<()>;
     fn modifySystemSetting(
         &self,
         namespace: &str,

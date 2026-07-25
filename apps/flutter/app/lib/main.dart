@@ -7,6 +7,7 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'core/application/CoreApplicationService.dart';
 import 'core/errors/UnhandledErrorReporter.dart';
 import 'core/logging/ClientLogger.dart';
+import 'core/notifications/NotificationActivationService.dart';
 import 'core/runtime/RuntimeConnectionManager.dart';
 import 'ui/main/OperitApp.dart';
 import 'ui/window/DetachedChatWindowApp.dart';
@@ -16,7 +17,7 @@ import 'ui/window/OperitWindowPlatform.dart';
 const String _appStartupLogTag = 'AppStartup';
 
 /// Runs the application startup sequence with structured diagnostics.
-void main(List<String> _) async {
+void main(List<String> arguments) async {
   late Zone startupZone;
   await runZonedGuarded(
     () async {
@@ -41,6 +42,7 @@ void main(List<String> _) async {
         'client log hooks installed elapsedMs=${hooksStopwatch.elapsedMilliseconds}',
         tag: _appStartupLogTag,
       );
+      NotificationActivationService.instance.initialize(arguments);
       final runtimeStopwatch = Stopwatch()..start();
       await RuntimeConnectionManager.instance.initialize();
       ClientLogger.attachPersistentStorage();

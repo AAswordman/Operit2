@@ -15,6 +15,7 @@ use zip::write::SimpleFileOptions;
 pub const PROTECTION_ID: &str = "operit-protected";
 pub const MARKET_ONLY_PROTECTION_ID: &str = "operit-market-only";
 pub const MARKET_INSTALL_SEAL_ENTRY_NAME: &str = ".operit/market-install.seal";
+pub const MARKET_ORIGIN_CAPTURE_METHOD: &str = "_m";
 
 const MAGIC: &[u8; 8] = b"OPTPROTA";
 const MARKET_ONLY_MAGIC: &[u8; 8] = b"OPMKTPKG";
@@ -382,8 +383,46 @@ pub fn protectArtifactNamedBytes(
     if isToolPkg {
         minifyToolPkgArchive(sourceBytes, &mut minifier)
     } else {
-        astMinifyBytes(sourceBytes, sourceEntryName, &mut minifier)
+        astMinifyBytes(sourceBytes, sourceEntryName, &mut minifier, None)
     }
+}
+
+/// Builds the encoded marketplace origin call injected into the ToolPkg main entry.
+fn buildMarketOriginInvocation(
+    toolpkgId: &str,
+    version: &str,
+    author: &[String],
+) -> Result<String, String> {
+    let payload = serde_json::json!({
+        "market": "Operit",
+        "toolpkgId": toolpkgId,
+        "version": version,
+        "author": author,
+    });
+    let payloadJson = serde_json::to_string(&payload).map_err(|error| error.to_string())?;
+    let asciiPayload = payloadJson
+        .chars()
+        .fold(String::new(), |mut output, character| {
+            if character.is_ascii() {
+                output.push(character);
+            } else {
+                let mut utf16Units = [0u16; 2];
+                for unit in character.encode_utf16(&mut utf16Units) {
+                    output.push_str("\\u");
+                    output.push_str(&format!("{:04x}", *unit));
+                }
+            }
+            output
+        });
+    let payloadBytes = asciiPayload.into_bytes();
+    let encoded = payloadBytes
+        .into_iter()
+        .map(|value| value ^ 0x5a)
+        .collect::<Vec<_>>();
+    let encodedJson = serde_json::to_string(&encoded).map_err(|error| error.to_string())?;
+    Ok(format!(
+        "ToolPkg.{MARKET_ORIGIN_CAPTURE_METHOD}({encodedJson},90);"
+    ))
 }
 
 /// Decrypts one protected Operit 1 artifact payload.
@@ -445,11 +484,17 @@ fn minifyToolPkgArchive(
         .ok_or_else(|| "Invalid toolpkg manifest entry name".to_string())?;
     let mut astMinifiedEntryNames = BTreeSet::new();
     let mut resourceEntryRoots = BTreeSet::new();
-    if let Some(mainEntry) = ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(
+    let mainEntry = ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(
         &manifestBasePath,
         &mPreview.manifest.main,
-    ) {
-        astMinifiedEntryNames.insert(mainEntry);
+    );
+    let marketOriginInvocation = buildMarketOriginInvocation(
+        &mPreview.manifest.toolpkgId,
+        &mPreview.manifest.version,
+        &mPreview.manifest.author,
+    )?;
+    if let Some(mainEntryPath) = &mainEntry {
+        astMinifiedEntryNames.insert(mainEntryPath.clone());
     }
     for subpackage in &mPreview.manifest.subpackages {
         if let Some(entry) = ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(
@@ -495,7 +540,13 @@ fn minifyToolPkgArchive(
                         &resourceEntryRoots,
                     ) =>
                 {
-                    astMinifyBytes(&orig, norm, minifier)?
+                    astMinifyBytes(
+                        &orig,
+                        norm,
+                        minifier,
+                        (mainEntry.as_deref() == Some(norm))
+                            .then_some(marketOriginInvocation.as_str()),
+                    )?
                 }
                 Some(_) => orig,
             };
@@ -633,8 +684,12 @@ fn astMinifyBytes(
     bytes: &[u8],
     entryName: &str,
     minifier: &mut ToolPkgJsAstMinifier,
+    marketOriginInvocation: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     let source = String::from_utf8(bytes.to_vec()).map_err(|error| error.to_string())?;
+    let source = marketOriginInvocation
+        .map(|invocation| format!("{source}\n{invocation}\n"))
+        .unwrap_or(source);
     let minified = astMinifySourcePreservingMetadata(&source, entryName, minifier)?;
     Ok(minified.into_bytes())
 }
@@ -1067,7 +1122,7 @@ exports.inspect = function(params) {
         assert!(minified.starts_with(b"PK"));
         assert!(!isMarketArchive(&minified));
 
-        let mut output = zip::ZipArchive::new(Cursor::new(minified))
+        let mut output = zip::ZipArchive::new(Cursor::new(&minified))
             .expect("minified ToolPkg should be a standard ZIP");
         let mut manifest_bytes = Vec::new();
         output
@@ -1095,7 +1150,9 @@ exports.inspect = function(params) {
             .expect("wasm entry should read");
 
         assert_eq!(manifest_bytes, manifest);
-        assert_eq!(main_bytes, b"globalThis.main=true;");
+        let main_text = String::from_utf8_lossy(&main_bytes);
+        assert!(main_text.contains("ToolPkg._m("));
+        assert!(!main_text.contains("\"market\":\"Operit\""));
         assert_eq!(resource_bytes, b"window.asset = true;");
         assert_eq!(wasm_bytes, b"\0asm\x01\0\0\0");
     }

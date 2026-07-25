@@ -79,6 +79,10 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
   LRESULT operit_runtime_result = 0;
+  if (HandleOperitNotificationActivationWindowMessage(
+          message, wparam, lparam, &operit_runtime_result)) {
+    return operit_runtime_result;
+  }
   if (HandleOperitRuntimeChannelWindowMessage(message, wparam, lparam,
                                               &operit_runtime_result)) {
     return operit_runtime_result;

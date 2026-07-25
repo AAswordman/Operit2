@@ -2,10 +2,15 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/application/CoreApplicationService.dart';
+import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../core/host/ComposeWebViewControllerBridge.dart';
+import '../../core/logging/ClientLogger.dart';
+import '../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../core/runtime/RuntimeConnectionManager.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../features/packages/screens/ToolPkgComposeDslWebView.dart';
@@ -104,7 +109,48 @@ class _AppDialogHost extends StatefulWidget {
 }
 
 class _AppDialogHostState extends State<_AppDialogHost> {
+  static const String _logTag = 'AppDialogHost';
+  static const GeneratedCoreProxyClients _coreClients =
+      GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
+
   bool _shownStartupWebAccessError = false;
+  StreamSubscription<core_proxy.RuntimeHostInteractionRequest>?
+  _webAccessPairingSubscription;
+  Future<void> _webAccessPairingDialogQueue = Future<void>.value();
+
+  /// Subscribes to native Web Access pairing request events.
+  @override
+  void initState() {
+    super.initState();
+    if (kIsWeb) {
+      return;
+    }
+    _webAccessPairingSubscription = _coreClients
+        .servicesRuntimeHostInteractionService
+        .ownerHostInteractionEventsChanges(
+          kinds: <core_proxy.RuntimeHostInteractionKind>[
+            core_proxy.RuntimeHostInteractionKind.webAccessPairing,
+          ],
+        )
+        .listen(
+          (event) => unawaited(_handleWebAccessPairingRequest(event)),
+          onError: (Object error, StackTrace stackTrace) {
+            ClientLogger.e(
+              'web access pairing event stream failed',
+              tag: _logTag,
+              error: error,
+              stackTrace: stackTrace,
+            );
+          },
+        );
+  }
+
+  /// Cancels native Web Access pairing request event monitoring.
+  @override
+  void dispose() {
+    unawaited(_webAccessPairingSubscription?.cancel());
+    super.dispose();
+  }
 
   /// Handles newly reported LinkHost startup errors.
   @override
@@ -151,6 +197,62 @@ class _AppDialogHostState extends State<_AppDialogHost> {
         },
       );
     });
+  }
+
+  /// Queues one Web Access pairing dialog and acknowledges it after dismissal.
+  Future<void> _handleWebAccessPairingRequest(
+    core_proxy.RuntimeHostInteractionRequest event,
+  ) async {
+    final pairing = event.webAccessPairing;
+    if (pairing == null) {
+      throw StateError('web access pairing event payload is missing');
+    }
+    _webAccessPairingDialogQueue = _webAccessPairingDialogQueue
+        .then((_) => _showWebAccessPairingRequest(pairing))
+        .then(
+          (_) => _coreClients.servicesRuntimeHostInteractionService
+              .acknowledgeOwnerHostInteraction(requestId: event.requestId),
+        )
+        .catchError((Object error, StackTrace stackTrace) {
+          ClientLogger.e(
+            'web access pairing event handling failed',
+            tag: _logTag,
+            error: error,
+            stackTrace: stackTrace,
+          );
+        });
+  }
+
+  /// Presents one browser pairing request with its one-time pairing code.
+  Future<void> _showWebAccessPairingRequest(
+    core_proxy.RuntimeHostInteractionWebAccessPairingPayload pairing,
+  ) {
+    if (!mounted) {
+      return Future<void>.value();
+    }
+    final l10n = AppLocalizations.of(context)!;
+    final client = '${pairing.clientPlatform} / ${pairing.clientModel}';
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(l10n.settingsWebAccessPairingRequest),
+          content: SelectableText(
+            l10n.settingsWebAccessPairingRequestMessage(
+              pairing.pairingCode,
+              client,
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(l10n.ok),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override

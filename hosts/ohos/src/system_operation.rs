@@ -4,7 +4,7 @@ use std::sync::Arc;
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoData,
     HostError, HostResult, LocationData, NotificationData, NotificationEntry, OCRLanguage,
-    OCRQuality, SystemOperationHost, SystemSettingData,
+    OCRQuality, SystemNotificationRequest, SystemOperationHost, SystemSettingData,
 };
 use serde_json::{json, Value};
 
@@ -252,10 +252,14 @@ impl SystemOperationHost for OhosSystemOperationHost {
     }
 
     /// Sends a notification through the OpenHarmony owner app.
-    fn sendNotification(&self, title: &str, message: &str) -> HostResult<()> {
+    fn sendNotification(&self, request: &SystemNotificationRequest) -> HostResult<()> {
         self.execute(
             "send_notification",
-            json!({ "title": title, "message": message }),
+            json!({
+                "title": request.title,
+                "message": request.message,
+                "activation": request.activation,
+            }),
         )?;
         Ok(())
     }

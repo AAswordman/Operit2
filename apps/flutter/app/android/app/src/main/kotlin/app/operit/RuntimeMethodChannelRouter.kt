@@ -19,6 +19,12 @@ class RuntimeMethodChannelRouter(
             coreLinkChannel.attach(channel)
             channel.setMethodCallHandler { call, result ->
                 when {
+                    call.method == "notificationActivationInitial" ->
+                        result.success(activity.takeNotificationActivation())
+                    call.method == "notificationActivationReady" -> {
+                        activity.markNotificationActivationReceiverReady()
+                        result.success(null)
+                    }
                     coreLinkChannel.handle(call, result) -> Unit
                     linkHostChannel.handle(call, result) -> Unit
                     ownerSystemChannel.handle(call, result) -> Unit
@@ -33,6 +39,11 @@ class RuntimeMethodChannelRouter(
         coreLinkChannel.clear()
         runtimeChannel?.setMethodCallHandler(null)
         runtimeChannel = null
+    }
+
+    /** Emits one notification activation after Dart has installed its receiver. */
+    fun emitNotificationActivation(activation: Map<String, String>) {
+        runtimeChannel?.invokeMethod("notificationActivation", activation)
     }
 
     fun onRequestPermissionsResult(

@@ -8,8 +8,8 @@ use crate::javascript::{JsExecutionEngine, ToolPkgMainRegistrationCapture};
 use crate::package::LocalizedText;
 use crate::toolpkg::ToolPkgCommonPluginConstants::*;
 use crate::toolpkg::ToolPkgParser::{
-    ToolPkgMainRegistration, ToolPkgMainRegistrationParseResult, ToolPkgRegisteredAiProvider,
-    ToolPkgRegisteredAppLifecycleHook, ToolPkgRegisteredDesktopWidget,
+    ToolPkgMainRegistration, ToolPkgMainRegistrationParseResult, ToolPkgMarketOrigin,
+    ToolPkgRegisteredAiProvider, ToolPkgRegisteredAppLifecycleHook, ToolPkgRegisteredDesktopWidget,
     ToolPkgRegisteredFunctionHook, ToolPkgRegisteredHostEventHook,
     ToolPkgRegisteredNavigationEntry, ToolPkgRegisteredTagFunctionHook, ToolPkgRegisteredUiModule,
     ToolPkgRegisteredUiRoute,
@@ -103,6 +103,7 @@ fn parseCapturedRegistration(
     toolPkgId: &str,
 ) -> Result<ToolPkgMainRegistration, String> {
     Ok(ToolPkgMainRegistration {
+        marketOrigin: parseMarketOrigin(captured.marketOrigin, toolPkgId)?,
         toolboxUiModules: parseRegisteredItems(
             &captured.toolboxUiModules,
             TOOLPKG_REGISTRATION_TOOLBOX_UI_MODULE,
@@ -214,6 +215,29 @@ fn parseCapturedRegistration(
             toolPkgId,
         )?,
     })
+}
+
+/// Normalizes the marketplace origin captured during main-script initialization.
+fn parseMarketOrigin(
+    origin: Option<ToolPkgMarketOrigin>,
+    toolPkgId: &str,
+) -> Result<Option<ToolPkgMarketOrigin>, String> {
+    let Some(mut origin) = origin else {
+        return Ok(None);
+    };
+    if origin.market.trim() != "Operit" || origin.toolpkgId.trim() != toolPkgId.trim() {
+        return Ok(None);
+    }
+    origin.market = "Operit".to_string();
+    origin.toolpkgId = toolPkgId.trim().to_string();
+    origin.version = origin.version.trim().to_string();
+    origin.author = origin
+        .author
+        .into_iter()
+        .map(|author| author.trim().to_string())
+        .filter(|author| !author.is_empty())
+        .collect();
+    Ok(Some(origin))
 }
 
 /// Deserializes, normalizes, and validates one registration collection.

@@ -9,6 +9,9 @@ use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use crate::services::RuntimeHostInteractionService::{
+    publishOwnerAppNotification, RuntimeHostInteractionAppNotificationPayload,
+};
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
@@ -1507,10 +1510,11 @@ impl MessageProcessingDelegate {
     pub fn finalizeMessageAndNotify(
         &mut self,
         chatId: String,
-        _aiMessage: ChatMessage,
+        aiMessage: ChatMessage,
         nextWindowSize: Option<i32>,
         turnOptions: ChatTurnOptions,
     ) {
+        let shouldNotifyReply = turnOptions.persistTurn && turnOptions.notifyReply != Some(false);
         self.cleanupRuntimeAfterSend(chatId.clone(), turnOptions);
         self.setInputProcessingStateForChat(chatId.clone(), InputProcessingState::Completed);
         let mut counters = self.turnCompleteCounterByChatIdFlow.value();
@@ -1518,6 +1522,15 @@ impl MessageProcessingDelegate {
         counters.insert(chatId.clone(), next);
         self.turnCompleteCounterByChatId = counters.clone();
         self.turnCompleteCounterByChatIdFlow.set_value(counters);
+        if shouldNotifyReply {
+            publishOwnerAppNotification(RuntimeHostInteractionAppNotificationPayload {
+                notificationType: "ai_message_completed".to_string(),
+                title: "Operit".to_string(),
+                message: aiMessageNotificationPreview(&aiMessage.content),
+                chatId: Some(chatId),
+                messageTimestamp: Some(aiMessage.timestamp),
+            });
+        }
         let _ = nextWindowSize;
     }
 
@@ -1533,6 +1546,18 @@ impl MessageProcessingDelegate {
         self.clearCurrentTurnToolInvocationCount(chatId);
         self.updateGlobalLoadingState();
     }
+}
+
+/// Builds a compact single-line preview for an AI reply notification.
+fn aiMessageNotificationPreview(content: &str) -> String {
+    const MAX_NOTIFICATION_PREVIEW_CHARACTERS: usize = 240;
+    content
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(MAX_NOTIFICATION_PREVIEW_CHARACTERS)
+        .collect()
 }
 
 impl Default for MessageProcessingDelegate {

@@ -1,6 +1,7 @@
 package app.operit
 
 import android.graphics.Color
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -8,10 +9,12 @@ import android.view.Display
 import android.view.View
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
     companion object {
         private const val TAG = "OperitMainActivity"
+        const val NOTIFICATION_ACTIVATION_EXTRA = "app.operit.notificationActivation"
         @Volatile private var activeActivity: MainActivity? = null
 
         fun currentActivity(): MainActivity? = activeActivity
@@ -21,10 +24,13 @@ class MainActivity : FlutterActivity() {
     private lateinit var ownerSystem: OwnerSystemCapabilityChannel
     private lateinit var runtimeRouter: RuntimeMethodChannelRouter
     private lateinit var nativeCrashChannel: NativeCrashChannel
+    private var pendingNotificationActivation: Map<String, String>? = null
+    private var notificationActivationReceiverReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         activeActivity = this
+        recordNotificationActivation(intent)
         configureSystemBars()
         requestHighestRefreshRate()
     }
@@ -79,10 +85,30 @@ class MainActivity : FlutterActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        recordNotificationActivation(intent)
+    }
+
     fun ensureHostEventRuntimeHandle(): Long = ensureRuntimeHost().ensureRuntimeHandle()
 
     fun handleRuntimeHostRequest(methodName: String, payloadJson: String): String {
         return ensureOwnerSystem(ensureRuntimeHost()).handleRuntimeHostRequest(methodName, payloadJson)
+    }
+
+    /** Returns and clears the notification activation recorded during application startup. */
+    fun takeNotificationActivation(): Map<String, String>? {
+        val activation = pendingNotificationActivation
+        pendingNotificationActivation = null
+        return activation
+    }
+
+    /** Marks the Dart notification receiver ready and dispatches the queued activation. */
+    fun markNotificationActivationReceiverReady() {
+        notificationActivationReceiverReady = true
+        val activation = takeNotificationActivation() ?: return
+        runtimeRouter.emitNotificationActivation(activation)
     }
 
     /** Returns the process-level Runtime host shared with the Core service. */
@@ -98,6 +124,24 @@ class MainActivity : FlutterActivity() {
             ownerSystem = OwnerSystemCapabilityChannel(this, runtimeHost)
         }
         return ownerSystem
+    }
+
+    /** Parses and records the notification activation embedded in one launch intent. */
+    private fun recordNotificationActivation(intent: Intent?) {
+        val encodedActivation = intent?.getStringExtra(NOTIFICATION_ACTIVATION_EXTRA) ?: return
+        val json = JSONObject(encodedActivation)
+        val type = json.getString("type")
+        val activation =
+            when (type) {
+                "open_application" -> mapOf("type" to type)
+                "open_chat" -> mapOf("type" to type, "chatId" to json.getString("chatId"))
+                else -> throw IllegalArgumentException("unsupported notification activation type: $type")
+            }
+        if (notificationActivationReceiverReady && ::runtimeRouter.isInitialized) {
+            runtimeRouter.emitNotificationActivation(activation)
+            return
+        }
+        pendingNotificationActivation = activation
     }
 
     private fun requestHighestRefreshRate() {

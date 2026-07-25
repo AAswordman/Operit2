@@ -420,7 +420,8 @@ mod tests {
         ToolPkgAssetSource, ToolPkgExecutionEngineFactory,
     };
     use operit_plugin_sdk::toolpkg::ToolPkgParser::{
-        ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSourceType, ToolPkgSubpackageRuntime,
+        ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgMarketOrigin, ToolPkgSourceType,
+        ToolPkgSubpackageRuntime,
     };
     use operit_plugin_sdk::toolpkg::ToolPkgProtection;
     use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
@@ -1225,6 +1226,7 @@ mod tests {
                 }],
                 ..ToolPkgContainerRuntime::default()
             },
+            marketOrigin: None,
         };
         let package_runtime = TestPackageRuntime::new(load_result);
         let manager = JsToolManager::new(
@@ -1278,6 +1280,15 @@ mod tests {
         assert_eq!(
             load_result.containerRuntime.sourcePath,
             "/marketplace/downloaded/market_flow_toolpkg.toolpkg"
+        );
+        assert_eq!(
+            load_result.marketOrigin,
+            Some(ToolPkgMarketOrigin {
+                market: "Operit".to_string(),
+                toolpkgId: "market_flow_toolpkg".to_string(),
+                version: "1.0.0".to_string(),
+                author: vec!["Operit".to_string()],
+            })
         );
         assert_eq!(load_result.subpackagePackages.len(), 1);
         assert_eq!(load_result.subpackagePackages[0].name, "market_flow_sub");

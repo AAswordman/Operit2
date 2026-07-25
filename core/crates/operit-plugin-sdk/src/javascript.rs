@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::execution_result::JsExecutionResult;
 use crate::package::ToolPackage;
-use crate::toolpkg::ToolPkgParser::ToolPkgSubpackageRuntime;
+use crate::toolpkg::ToolPkgParser::{ToolPkgMarketOrigin, ToolPkgSubpackageRuntime};
 
 /// Describes one tool call issued by JavaScript package code.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -232,6 +232,8 @@ pub trait JsPackageRuntime: Send + Sync {
 /// Captured metadata emitted by a package's main registration script.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgMainRegistrationCapture {
+    #[serde(rename = "marketOrigin", default)]
+    pub marketOrigin: Option<ToolPkgMarketOrigin>,
     #[serde(rename = "toolboxUiModules", default)]
     pub toolboxUiModules: Vec<String>,
     #[serde(rename = "uiRoutes", default)]

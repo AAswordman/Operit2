@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../link/CoreLinkProtocol.dart';
 import '../link/CoreLinkCodec.dart';
+import '../runtime/RuntimeChannelInboundGateway.dart';
 import 'CoreProxy.dart';
 
 class MethodChannelCoreProxy extends CoreProxy {
@@ -171,6 +172,11 @@ class _MethodChannelCorePushSink implements CorePushSink {
 final Map<MethodChannel, _MethodChannelWatchChannel>
 _methodChannelWatchChannels = <MethodChannel, _MethodChannelWatchChannel>{};
 
+/// Installs Runtime-channel inbound dispatch before native events are accepted.
+void installRuntimeChannelInboundDispatch() {
+  _methodChannelWatchChannel(const MethodChannel('operit/runtime'));
+}
+
 _MethodChannelWatchChannel _methodChannelWatchChannel(MethodChannel channel) {
   return _methodChannelWatchChannels.putIfAbsent(
     channel,
@@ -222,6 +228,11 @@ class _MethodChannelWatchChannel {
         final frameBytes = call.arguments as Uint8List;
         _dispatchTail = _dispatchTail.then((_) => _dispatch(frameBytes));
         unawaited(_dispatchTail);
+        return null;
+      case 'notificationActivation':
+        await RuntimeChannelInboundGateway.dispatchNotificationActivation(
+          call.arguments,
+        );
         return null;
       default:
         throw MissingPluginException(

@@ -7,8 +7,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../core/notifications/NotificationActivationService.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../features/chat/viewmodel/ChatSwitchRenderCoordinator.dart';
 import '../components/AppContent.dart';
 import '../components/DrawerConversationState.dart';
 import '../layout/NavigationLayoutMetrics.dart';
@@ -64,6 +66,9 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     );
     _drawerOpenState = ValueNotifier<bool>(false);
     AppRouterGateway.install(handler: _navigateToRoute, reset: _resetToRoute);
+    NotificationActivationService.instance.installChatHandler(
+      _activateNotificationChat,
+    );
     unawaited(_loadDrawerConversations());
     _watchDrawerConversations();
     _watchDrawerCharacterGroups();
@@ -88,6 +93,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   void dispose() {
     AppRouterGateway.clear();
     AppRouteDiscoveryGateway.clear();
+    NotificationActivationService.instance.clearChatHandler();
     _drawerHistoriesSubscription?.cancel();
     _drawerCurrentChatSubscription?.cancel();
     _drawerCharacterGroupsSubscription?.cancel();
@@ -415,6 +421,17 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     _resetToRoute(entry.routeId, <String, Object?>{
       'conversationActivatedAt': DateTime.now().microsecondsSinceEpoch,
     }, RouteEntrySource.drawer);
+  }
+
+  /// Opens the target chat selected by a system notification activation.
+  Future<void> _activateNotificationChat(String chatId) async {
+    ChatSwitchRenderCoordinator.prepareForChat(chatId);
+    _activateConversationRoute();
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) {
+      return;
+    }
+    await _clients.chatRuntimeHolderMain.switchChat(chatId: chatId);
   }
 
   void _goBack() {

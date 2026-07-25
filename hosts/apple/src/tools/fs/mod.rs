@@ -12,7 +12,8 @@ use operit_host_api::{
     CapabilityOperation, CapabilityScope, FileEntry, FileExistence, FileInfo, FileSystemHost,
     FindFilesRequest, GrepCodeRequest, GrepCodeResult, GrepFileMatch, GrepLineMatch,
     HostCapability, HostEnvironmentDescriptor, HostError, HostIsolation, HostPlatform,
-    HostPrivilege, HostResult,
+    HostOnboardingRequirement, HostPrivilege, HostRequirementAction, HostRequirementStatus,
+    HostResult,
 };
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -506,6 +507,7 @@ fn appleEnvironmentDescriptor() -> HostEnvironmentDescriptor {
             "bluetooth.ble".to_string(),
             "tts.synthesis".to_string(),
             "tts.playback".to_string(),
+            "system.notifications.send".to_string(),
             "runtime.process".to_string(),
             "runtime.storage".to_string(),
             "runtime.sqlite".to_string(),
@@ -529,10 +531,35 @@ fn appleEnvironmentDescriptor() -> HostEnvironmentDescriptor {
                 scope: CapabilityScope::Runtime,
                 operations: vec![CapabilityOperation::Execute],
             },
+            HostCapability {
+                id: "system.notifications.send".to_string(),
+                displayName: "发送系统通知".to_string(),
+                scope: CapabilityScope::System,
+                operations: vec![CapabilityOperation::Execute],
+            },
         ],
-        onboardingRequirements: Vec::new(),
+        onboardingRequirements: appleOnboardingRequirements(),
         workspaceRoots: Vec::new(),
     }
+}
+
+#[cfg(target_os = "ios")]
+/// Returns the iOS notification permission required for background application alerts.
+fn appleOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
+    vec![HostOnboardingRequirement {
+        id: "ios.notifications".to_string(),
+        title: "通知".to_string(),
+        description: "允许 Operit 在 AI 回复完成或工具等待批准时发送系统通知。".to_string(),
+        capabilityIds: vec!["system.notifications.send".to_string()],
+        status: HostRequirementStatus::Missing,
+        action: HostRequirementAction::RuntimePermission,
+    }]
+}
+
+#[cfg(not(target_os = "ios"))]
+/// Returns no notification onboarding requirements for the current Apple host.
+fn appleOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
+    Vec::new()
 }
 
 fn appleHostPlatform() -> HostPlatform {

@@ -12,6 +12,7 @@ import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/logging/ClientLogger.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../core/runtime/RemotePairingBridge.dart';
 import '../../../core/runtime/RuntimeConnectionManager.dart';
 import '../../common/OperitLogoMark.dart';
 import '../../common/RuntimeBootstrapScreen.dart';
@@ -23,7 +24,16 @@ const XTypeGroup _operit1SnapshotFileTypeGroup = XTypeGroup(
   extensions: <String>['opsnapshot', 'zip'],
 );
 
-enum _AiSetupPage { intro, agreement, storage, permission, mode, model, import }
+enum _AiSetupPage {
+  intro,
+  agreement,
+  storage,
+  mode,
+  permission,
+  model,
+  import,
+  remote,
+}
 
 void registerOnboardingStartupRoute(StartupRouteRegistry registry) {
   registry.register(const OnboardingStartupRouteStrategy());
@@ -190,6 +200,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   final TextEditingController _runtimeRootController = TextEditingController();
   final TextEditingController _workspaceRootController =
       TextEditingController();
+  final TextEditingController _remoteBaseUrlController =
+      TextEditingController();
+  final TextEditingController _remoteTokenController = TextEditingController();
+  final TextEditingController _remoteCodeController = TextEditingController();
   late final List<_AiSetupPage> _pages;
   Timer? _agreementCountdownTimer;
   int _currentPage = 0;
@@ -204,6 +218,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   bool _readingOperit1Snapshot = false;
   bool _importingOperit1Snapshot = false;
   bool _requestingPermission = false;
+  bool _preparingLocalSetup = false;
+  bool _startingRemotePairing = false;
+  bool _finishingRemotePairing = false;
   StreamSubscription<core_proxy.Operit1SnapshotImportProgress>?
   _operit1ImportProgressSubscription;
   String? _selectedProviderTypeId;
@@ -212,6 +229,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   _AiSetupStartMode? _selectedStartMode;
   core_proxy.Operit1SnapshotPreview? _operit1Snapshot;
   core_proxy.Operit1SnapshotImportProgress? _operit1ImportProgress;
+  RemotePairStartResult? _remotePairing;
   Uint8List? _operit1SnapshotBytes;
   String? _operit1SnapshotFileName;
   List<core_proxy.ProviderCatalogEntry> _catalogEntries =
@@ -249,6 +267,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   /// Returns the import page index.
   int get _importPageIndex => _pages.indexOf(_AiSetupPage.import);
 
+  /// Returns the remote Runtime connection page index.
+  int get _remotePageIndex => _pages.indexOf(_AiSetupPage.remote);
+
   /// Returns the number of pages in the active onboarding flow.
   int get _pageCount => _pages.length;
 
@@ -258,6 +279,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   bool get _isModePage => _currentPage == _modePageIndex;
   bool get _isModelPage => _currentPage == _modelPageIndex;
   bool get _isImportPage => _currentPage == _importPageIndex;
+
+  /// Reports whether the remote Runtime connection page is currently visible.
+  bool get _isRemotePage => _currentPage == _remotePageIndex;
+
   bool get _isPermissionPage => _currentPage == _permissionPageIndex;
 
   core_proxy.ProviderCatalogEntry get _selectedCatalog {
@@ -289,10 +314,11 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _AiSetupPage.intro,
       if (widget.agreementRequired) _AiSetupPage.agreement,
       _AiSetupPage.storage,
-      _AiSetupPage.permission,
       _AiSetupPage.mode,
+      _AiSetupPage.permission,
       _AiSetupPage.model,
       _AiSetupPage.import,
+      _AiSetupPage.remote,
     ];
     WidgetsBinding.instance.addObserver(this);
     _introAnimationController = AnimationController(
@@ -331,6 +357,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     _apiKeyController.dispose();
     _runtimeRootController.dispose();
     _workspaceRootController.dispose();
+    _remoteBaseUrlController.dispose();
+    _remoteTokenController.dispose();
+    _remoteCodeController.dispose();
     super.dispose();
   }
 
@@ -567,10 +596,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       await _returnToIntro();
       return;
     }
-    if (_currentPage == _permissionPageIndex) {
-      await _animateToPage(_storagePageIndex);
-      return;
-    }
     if (_currentPage == _storagePageIndex) {
       if (widget.agreementRequired) {
         await _animateToPage(_agreementPageIndex);
@@ -580,10 +605,22 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       return;
     }
     if (_currentPage == _modePageIndex) {
+      await _animateToPage(_storagePageIndex);
+      return;
+    }
+    if (_currentPage == _permissionPageIndex) {
+      await _animateToPage(_modePageIndex);
+      return;
+    }
+    if (_currentPage == _modelPageIndex) {
       await _animateToPage(_permissionPageIndex);
       return;
     }
     if (_currentPage == _importPageIndex) {
+      await _animateToPage(_permissionPageIndex);
+      return;
+    }
+    if (_currentPage == _remotePageIndex) {
       await _animateToPage(_modePageIndex);
       return;
     }
@@ -603,7 +640,11 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       return;
     }
     if (_isPermissionPage) {
-      await _animateToPage(_modePageIndex);
+      if (_selectedStartMode == _AiSetupStartMode.quickStart) {
+        await _animateToPage(_modelPageIndex);
+      } else if (_selectedStartMode == _AiSetupStartMode.operit1Import) {
+        await _animateToPage(_importPageIndex);
+      }
       return;
     }
     if (_isStoragePage) {
@@ -611,10 +652,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       return;
     }
     if (_isModePage) {
-      if (_selectedStartMode == _AiSetupStartMode.quickStart) {
-        await _animateToPage(_modelPageIndex);
-      } else if (_selectedStartMode == _AiSetupStartMode.operit1Import) {
-        await _animateToPage(_importPageIndex);
+      if (_selectedStartMode == _AiSetupStartMode.remoteConnection) {
+        await _animateToPage(_remotePageIndex);
+      } else if (_selectedStartMode != null) {
+        await _openPermissionSetup();
       }
       return;
     }
@@ -624,6 +665,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     }
     if (_isImportPage) {
       await _saveOperit1Import();
+      return;
+    }
+    if (_isRemotePage) {
+      await _continueRemoteConnection();
       return;
     }
     _pageController.nextPage(
@@ -704,8 +749,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         await widget.onComplete();
         return;
       }
-      await _startCoreSetup();
-      await _animateToPage(_permissionPageIndex);
+      await _animateToPage(_modePageIndex);
     } catch (error) {
       if (!mounted) {
         return;
@@ -728,6 +772,34 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       duration: const Duration(milliseconds: 460),
       curve: Curves.easeOutQuart,
     );
+  }
+
+  /// Loads local setup data before entering native permission configuration.
+  Future<void> _openPermissionSetup() async {
+    setState(() {
+      _preparingLocalSetup = true;
+      _setupError = null;
+    });
+    try {
+      await _startCoreSetup();
+      if (!mounted) {
+        return;
+      }
+      await _animateToPage(_permissionPageIndex);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _setupError = '$error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _preparingLocalSetup = false;
+        });
+      }
+    }
   }
 
   Future<void> _advanceFromIntro() async {
@@ -986,6 +1058,108 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     }
   }
 
+  /// Refreshes remote connection validation after editable fields change.
+  void _handleRemoteConnectionChanged(String _) {
+    setState(() {
+      _setupError = null;
+    });
+  }
+
+  /// Runs the active remote Runtime connection step.
+  Future<void> _continueRemoteConnection() async {
+    final pairing = _remotePairing;
+    if (pairing == null) {
+      await _startRemotePairing();
+      return;
+    }
+    await _finishRemoteConnection(pairing);
+  }
+
+  /// Starts pairing with a remote Runtime using the external access token.
+  Future<void> _startRemotePairing() async {
+    final baseUrl = _remoteBaseUrlController.text.trim();
+    final token = _remoteTokenController.text.trim();
+    if (baseUrl.isEmpty || token.isEmpty) {
+      setState(() {
+        _setupError = '远程地址和外部访问令牌都不能为空';
+      });
+      return;
+    }
+    setState(() {
+      _startingRemotePairing = true;
+      _setupError = null;
+    });
+    try {
+      final pairing = await const RemotePairingBridge().startWithToken(
+        baseUrl: baseUrl,
+        token: token,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _remotePairing = pairing;
+        _remoteCodeController.clear();
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _setupError = '$error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _startingRemotePairing = false;
+        });
+      }
+    }
+  }
+
+  /// Completes remote pairing and selects the paired Runtime route.
+  Future<void> _finishRemoteConnection(RemotePairStartResult pairing) async {
+    final pairingCode = _remoteCodeController.text.trim();
+    if (pairingCode.isEmpty) {
+      setState(() {
+        _setupError = '一次性配对码不能为空';
+      });
+      return;
+    }
+    final name = remotePairingSessionName(pairing);
+    setState(() {
+      _finishingRemotePairing = true;
+      _setupError = null;
+    });
+    try {
+      await const RemotePairingBridge().finish(
+        pairingId: pairing.pairingId,
+        pairingCode: pairingCode,
+        name: name,
+      );
+      await widget.clients.runtimeRemoteLinkService.selectPairedRemoteRoute(
+        name: name,
+      );
+      if (!mounted) {
+        return;
+      }
+      await widget.onComplete();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _setupError = '$error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _finishingRemotePairing = false;
+        });
+      }
+    }
+  }
+
   Future<void> _refreshPermissionSnapshot() async {
     final requirements = await _OnboardingPermissionBridge.requirements(
       widget.clients,
@@ -1038,6 +1212,14 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
             _selectedModelId != null &&
             _selectedModelId!.isNotEmpty);
     final importReady = !_isImportPage || _operit1Snapshot != null;
+    final remoteBusy = _startingRemotePairing || _finishingRemotePairing;
+    final remoteReady =
+        !_isRemotePage ||
+        (!remoteBusy &&
+            (_remotePairing == null
+                ? _remoteBaseUrlController.text.trim().isNotEmpty &&
+                      _remoteTokenController.text.trim().isNotEmpty
+                : _remoteCodeController.text.trim().isNotEmpty));
     final canGoForward =
         !_savingModel &&
         !_loadingModels &&
@@ -1045,11 +1227,14 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         !_importingOperit1Snapshot &&
         !_requestingPermission &&
         !_savingStorage &&
+        !_preparingLocalSetup &&
+        !remoteBusy &&
         agreementReady &&
         storageReady &&
         modeReady &&
         modelReady &&
-        importReady;
+        importReady &&
+        remoteReady;
     final introActive = _currentPage == _introPageIndex;
     final showChrome = !introActive;
 
@@ -1166,6 +1351,16 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
                                     onPickSnapshot: _pickOperit1Snapshot,
                                     errorText: _setupError,
                                   );
+                                case _AiSetupPage.remote:
+                                  return _AiSetupRemotePage(
+                                    baseUrlController: _remoteBaseUrlController,
+                                    tokenController: _remoteTokenController,
+                                    codeController: _remoteCodeController,
+                                    pairing: _remotePairing,
+                                    busy: remoteBusy,
+                                    onChanged: _handleRemoteConnectionChanged,
+                                    errorText: _setupError,
+                                  );
                               }
                             },
                           ),
@@ -1216,6 +1411,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       return '确认';
     }
     if (_isModePage) {
+      if (_preparingLocalSetup) {
+        return '准备中';
+      }
       return '继续';
     }
     if (_isModelPage) {
@@ -1229,6 +1427,15 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         return '读取中';
       }
       return _importingOperit1Snapshot ? '导入中' : '继续';
+    }
+    if (_isRemotePage) {
+      if (_startingRemotePairing) {
+        return '连接中';
+      }
+      if (_finishingRemotePairing) {
+        return '配对中';
+      }
+      return _remotePairing == null ? '开始配对' : '完成连接';
     }
     if (_isPermissionPage) {
       return '继续';
@@ -1251,6 +1458,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     }
     if (_isImportPage) {
       return '导入配置';
+    }
+    if (_isRemotePage) {
+      return '远程连接';
     }
     if (_isPermissionPage) {
       return '系统授权';
@@ -1860,7 +2070,7 @@ class _AiSetupModePage extends StatelessWidget {
                 icon: Icons.route_rounded,
                 eyebrow: '启动方式',
                 title: '选择上手方式',
-                description: '快速开始适合首次使用；已有 Operit1 数据时，可以从导入入口继续。',
+                description: '快速开始适合首次使用；已有 Operit1 数据时可以导入，也可以直接连接远程 Runtime。',
               ),
               const SizedBox(height: 22),
               _SetupModeTile(
@@ -1878,6 +2088,145 @@ class _AiSetupModePage extends StatelessWidget {
                 selected: selectedMode == _AiSetupStartMode.operit1Import,
                 onTap: () => onModeChanged(_AiSetupStartMode.operit1Import),
               ),
+              const SizedBox(height: 10),
+              _SetupModeTile(
+                icon: Icons.cloud_sync_rounded,
+                title: '连接远程 Runtime',
+                subtitle: '输入远程地址、外部访问令牌和一次性配对码',
+                selected: selectedMode == _AiSetupStartMode.remoteConnection,
+                onTap: () => onModeChanged(_AiSetupStartMode.remoteConnection),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AiSetupRemotePage extends StatelessWidget {
+  const _AiSetupRemotePage({
+    required this.baseUrlController,
+    required this.tokenController,
+    required this.codeController,
+    required this.pairing,
+    required this.busy,
+    required this.onChanged,
+    required this.errorText,
+  });
+
+  final TextEditingController baseUrlController;
+  final TextEditingController tokenController;
+  final TextEditingController codeController;
+  final RemotePairStartResult? pairing;
+  final bool busy;
+  final ValueChanged<String> onChanged;
+  final String? errorText;
+
+  /// Builds the remote Runtime pairing page.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final activePairing = pairing;
+    return Align(
+      alignment: Alignment.topCenter,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const _SetupSectionHeader(
+                icon: Icons.cloud_sync_rounded,
+                eyebrow: '远程连接',
+                title: '连接远程 Runtime',
+                description: '浏览器端作为独立客户端使用；完成配对后，会直接切换到远端 Runtime。',
+              ),
+              const SizedBox(height: 22),
+              TextField(
+                controller: baseUrlController,
+                enabled: !busy && activePairing == null,
+                onChanged: onChanged,
+                decoration: const InputDecoration(
+                  labelText: '远程地址',
+                  hintText: 'https://your-runtime.example.com',
+                  prefixIcon: Icon(Icons.link_rounded),
+                  border: OutlineInputBorder(),
+                ),
+                autocorrect: false,
+                enableSuggestions: false,
+                keyboardType: TextInputType.url,
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: tokenController,
+                enabled: !busy && activePairing == null,
+                onChanged: onChanged,
+                decoration: const InputDecoration(
+                  labelText: '外部访问令牌',
+                  prefixIcon: Icon(Icons.vpn_key_rounded),
+                  border: OutlineInputBorder(),
+                ),
+                autocorrect: false,
+                enableSuggestions: false,
+                obscureText: true,
+                textInputAction: TextInputAction.next,
+              ),
+              if (activePairing != null) ...<Widget>[
+                const SizedBox(height: 14),
+                Card(
+                  elevation: 0,
+                  color: colorScheme.surfaceContainerHighest,
+                  child: ListTile(
+                    leading: Icon(
+                      Icons.devices_other_rounded,
+                      color: colorScheme.primary,
+                    ),
+                    title: Text(
+                      '已开始配对',
+                      style: textTheme.titleSmall?.copyWith(
+                        color: colorScheme.onSurface,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    subtitle: Text(
+                      '远端：${activePairing.coreDeviceInfo.platform} / ${activePairing.coreDeviceInfo.model}\n设备：${activePairing.coreDeviceId}\n请输入软件端显示的一次性配对码。',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: codeController,
+                  enabled: !busy,
+                  onChanged: onChanged,
+                  decoration: const InputDecoration(
+                    labelText: '一次性配对码',
+                    prefixIcon: Icon(Icons.pin_rounded),
+                    border: OutlineInputBorder(),
+                  ),
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  keyboardType: TextInputType.text,
+                  textInputAction: TextInputAction.done,
+                ),
+              ],
+              const SizedBox(height: 18),
+              Text(
+                activePairing == null
+                    ? '先用远程地址和外部访问令牌建立配对会话。'
+                    : '配对码只用于本次确认，完成后会保存为一个可选择的远程 Runtime。',
+                style: textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  height: 1.4,
+                ),
+              ),
+              if (errorText != null) ...<Widget>[
+                const SizedBox(height: 12),
+                CommonNetworkErrorView(errorText: errorText!),
+              ],
             ],
           ),
         ),
@@ -2818,7 +3167,7 @@ String? _requiredField(String? value) {
   return null;
 }
 
-enum _AiSetupStartMode { quickStart, operit1Import }
+enum _AiSetupStartMode { quickStart, operit1Import, remoteConnection }
 
 class _OnboardingRequirement {
   const _OnboardingRequirement({

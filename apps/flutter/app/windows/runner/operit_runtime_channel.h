@@ -16,4 +16,12 @@ bool HandleOperitRuntimeChannelWindowMessage(UINT message,
                                              LPARAM lparam,
                                              LRESULT* result);
 
+constexpr ULONG_PTR kOperitNotificationActivationCopyData = 0x4F504E41;
+
+/// Processes a cross-process notification activation delivered to the main window.
+bool HandleOperitNotificationActivationWindowMessage(UINT message,
+                                                      WPARAM wparam,
+                                                      LPARAM lparam,
+                                                      LRESULT* result);
+
 #endif  // RUNNER_OPERIT_RUNTIME_CHANNEL_H_

@@ -797,11 +797,14 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
 
   Future<void> _runAddAction(Future<String> Function() action) async {
     try {
-      await action();
+      final result = await action();
       if (!mounted) {
         return;
       }
       await _loadSnapshot();
+      if (mounted && result.trim().isNotEmpty) {
+        _showSnackBar(result);
+      }
     } catch (error, stackTrace) {
       debugPrint('Failed to run package add action: $error\n$stackTrace');
       if (!mounted) {

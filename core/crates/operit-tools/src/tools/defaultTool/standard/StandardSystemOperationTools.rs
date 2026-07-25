@@ -4,7 +4,8 @@ use operit_host_api::{
     AppListData as HostAppListData, AppOperationData as HostAppOperationData,
     AppUsageTimeResultData as HostAppUsageTimeResultData, DeviceInfoData as HostDeviceInfoData,
     LocationData as HostLocationData, NotificationData as HostNotificationData,
-    SystemOperationHost, SystemSettingData as HostSystemSettingData,
+    SystemNotificationActivation, SystemNotificationRequest, SystemOperationHost,
+    SystemSettingData as HostSystemSettingData,
 };
 
 use operit_tools::tools::ToolResultDataClasses::{
@@ -82,7 +83,13 @@ impl StandardSystemOperationTools {
         }
         match self
             .host()
-            .and_then(|host| host.sendNotification(&title, &message))
+            .and_then(|host| {
+                host.sendNotification(&SystemNotificationRequest {
+                    title,
+                    message,
+                    activation: SystemNotificationActivation::OpenApplication,
+                })
+            })
         {
             Ok(()) => toolSuccess(tool, "OK".to_string()),
             Err(error) => toolError(

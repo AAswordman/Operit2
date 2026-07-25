@@ -8,7 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoData,
     HostError, HostResult, LocationData, NotificationData, OCRLanguage, OCRQuality,
-    SystemOperationHost, SystemSettingData,
+    SystemNotificationActivation, SystemNotificationRequest, SystemOperationHost,
+    SystemSettingData,
 };
 use uuid::Uuid;
 
@@ -35,19 +36,23 @@ impl SystemOperationHost for AppleSystemOperationHost {
         if message.trim().is_empty() {
             return Err(HostError::new("message parameter is required"));
         }
-        self.sendNotification("Operit", message)
+        self.sendNotification(&SystemNotificationRequest {
+            title: "Operit".to_string(),
+            message: message.to_string(),
+            activation: SystemNotificationActivation::OpenApplication,
+        })
     }
 
-    fn sendNotification(&self, title: &str, message: &str) -> HostResult<()> {
+    fn sendNotification(&self, request: &SystemNotificationRequest) -> HostResult<()> {
         #[cfg(target_os = "macos")]
         {
             let script = format!(
                 "display notification {} with title {}",
-                apple_script_string(message),
-                apple_script_string(if title.trim().is_empty() {
+                apple_script_string(&request.message),
+                apple_script_string(if request.title.trim().is_empty() {
                     "Notification"
                 } else {
-                    title
+                    &request.title
                 })
             );
             let status = Command::new("osascript")
@@ -66,16 +71,14 @@ impl SystemOperationHost for AppleSystemOperationHost {
         }
         #[cfg(target_os = "ios")]
         {
-            let _ = title;
-            let _ = message;
+            let _ = request;
             Err(HostError::new(
                 "iOS notifications must be requested through the app notification layer",
             ))
         }
         #[cfg(not(any(target_os = "ios", target_os = "macos")))]
         {
-            let _ = title;
-            let _ = message;
+            let _ = request;
             Err(HostError::new(
                 "Apple notification host is available only on iOS or macOS",
             ))

@@ -231,6 +231,12 @@ class RuntimeHostInteractionSubscriber {
       RuntimeHostInteractionKind.toolPermission => throw StateError(
         'tool permission is handled by the approval bridge',
       ),
+      RuntimeHostInteractionKind.webAccessPairing => throw StateError(
+        'web access pairing is handled by the app dialog host',
+      ),
+      RuntimeHostInteractionKind.appNotification => throw StateError(
+        'application notification is handled by the app notification service',
+      ),
     };
   }
 

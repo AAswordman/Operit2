@@ -8,6 +8,7 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
             : (typeof window !== 'undefined' ? window : this);
         var moduleRefFunctionCounter = 0;
         var capture = {
+            marketOrigin: null,
             toolboxUiModules: [],
             uiRoutes: [],
             navigationEntries: [],
@@ -244,6 +245,29 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
             return JSON.stringify(spec);
         }
 
+        function captureMarketOrigin(encoded, key) {
+            if (!Array.isArray(encoded)) {
+                throw new Error('ToolPkg marketplace origin payload must be an array');
+            }
+            var xorKey = Number(key);
+            if (!Number.isInteger(xorKey) || xorKey < 0 || xorKey > 255) {
+                throw new Error('ToolPkg marketplace origin key is invalid');
+            }
+            var json = '';
+            for (var index = 0; index < encoded.length; index += 1) {
+                var value = Number(encoded[index]);
+                if (!Number.isInteger(value) || value < 0 || value > 255) {
+                    throw new Error('ToolPkg marketplace origin payload byte is invalid');
+                }
+                json += String.fromCharCode(value ^ xorKey);
+            }
+            var parsed = JSON.parse(json);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                throw new Error('ToolPkg marketplace origin payload must decode to an object');
+            }
+            capture.marketOrigin = parsed;
+        }
+
         function append(bucket) {
             return function(spec) {
                 capture[bucket].push(normalizeSpec(spec));
@@ -448,6 +472,7 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
         }
 
         var api = {
+            _m: captureMarketOrigin,
             registerToolboxUiModule: registerScreen('toolboxUiModules', 'registerToolPkgToolboxUiModule'),
             registerUiRoute: registerScreen('uiRoutes', 'registerToolPkgUiRoute'),
             registerNavigationEntry: function(definition) {

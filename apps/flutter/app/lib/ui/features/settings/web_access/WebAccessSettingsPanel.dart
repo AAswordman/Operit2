@@ -251,10 +251,16 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
               ? _baseUrlForBindAddress(bindAddress)
               : l10n.settingsWebAccessInvalidBindAddress);
     final bindAddressIsValid = _bindAddressLooksValid(bindAddress);
+    final accessUrl = bindAddressIsValid
+        ? _webAccessPairingUrl(url, displayConfig.token)
+        : url;
+    final pairingUrls = _pairingBaseUrls
+        .map((baseUrl) => _webAccessPairingUrl(baseUrl, displayConfig.token))
+        .toList(growable: false);
     final pairingAddressText = bindAddressIsValid
         ? (_bindAddressIsLoopback(bindAddress)
               ? l10n.settingsWebAccessPairingUrlLocalOnly
-              : (_pairingBaseUrls.isEmpty
+              : (pairingUrls.isEmpty
                     ? l10n.settingsWebAccessPairingUrlUnavailable
                     : null))
         : l10n.settingsWebAccessInvalidBindAddress;
@@ -372,9 +378,9 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
         children: <Widget>[
           _AddressRow(
             label: l10n.settingsWebAccessLocalUrl,
-            value: url,
-            onCopy: () => _copyUrl(url),
-            onOpen: running ? () => _openUrl(url) : null,
+            value: accessUrl,
+            onCopy: () => _copyUrl(accessUrl),
+            onOpen: running ? () => _openUrl(accessUrl) : null,
           ),
           const SizedBox(height: 8),
           if (pairingAddressText != null)
@@ -383,13 +389,13 @@ class _WebAccessSettingsPanelState extends State<WebAccessSettingsPanel> {
               value: pairingAddressText,
             )
           else
-            for (var index = 0; index < _pairingBaseUrls.length; index++)
+            for (var index = 0; index < pairingUrls.length; index++)
               Padding(
                 padding: EdgeInsets.only(top: index == 0 ? 0 : 8),
                 child: _AddressRow(
                   label: index == 0 ? l10n.settingsWebAccessPairingUrl : '',
-                  value: _pairingBaseUrls[index],
-                  onCopy: () => _copyUrl(_pairingBaseUrls[index]),
+                  value: pairingUrls[index],
+                  onCopy: () => _copyUrl(pairingUrls[index]),
                 ),
               ),
         ],
@@ -523,4 +529,17 @@ String _baseUrlForBindAddress(String bindAddress) {
     _ => host,
   };
   return 'http://$displayHost:$port';
+}
+
+/// Adds the Link Access token to one browser pairing URL.
+String _webAccessPairingUrl(String baseUrl, String token) {
+  final uri = Uri.parse(baseUrl);
+  return uri
+      .replace(
+        queryParameters: <String, String>{
+          ...uri.queryParameters,
+          'token': token,
+        },
+      )
+      .toString();
 }

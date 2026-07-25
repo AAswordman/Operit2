@@ -6,10 +6,14 @@ use std::process::Command;
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoData,
     HostError, HostResult, LocationData, NotificationData, NotificationEntry, OCRLanguage,
-    OCRQuality, SystemOperationHost, SystemSettingData,
+    OCRQuality, SystemNotificationActivation, SystemNotificationRequest, SystemOperationHost,
+    SystemSettingData,
 };
 use serde_json::Value;
 use uuid::Uuid;
+use windows::core::HSTRING;
+use windows::Data::Xml::Dom::XmlDocument;
+use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
 
 #[derive(Clone, Debug, Default)]
 pub struct WindowsSystemOperationHost;
@@ -42,13 +46,8 @@ impl SystemOperationHost for WindowsSystemOperationHost {
         }
     }
 
-    fn sendNotification(&self, title: &str, message: &str) -> HostResult<()> {
-        let text = if title.trim().is_empty() {
-            message.to_string()
-        } else {
-            format!("{title}: {message}")
-        };
-        self.toast(&text)
+    fn sendNotification(&self, request: &SystemNotificationRequest) -> HostResult<()> {
+        show_windows_notification(request)
     }
 
     fn modifySystemSetting(
@@ -168,6 +167,61 @@ impl SystemOperationHost for WindowsSystemOperationHost {
     ) -> HostResult<String> {
         recognize_windows_text(imagePath, language, quality)
     }
+}
+
+/// Displays one native Windows toast notification through the WinRT notification manager.
+fn show_windows_notification(request: &SystemNotificationRequest) -> HostResult<()> {
+    let launch_uri = windows_notification_launch_uri(&request.activation);
+    let xml = format!(
+        "<toast activationType=\"protocol\" launch=\"{}\"><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>",
+        escape_windows_toast_xml_attribute(&launch_uri),
+        escape_windows_toast_xml(&request.title),
+        escape_windows_toast_xml(&request.message),
+    );
+    let document = XmlDocument::new()
+        .map_err(|error| HostError::new(format!("Failed to create Windows toast XML: {error}")))?;
+    document
+        .LoadXml(&HSTRING::from(xml))
+        .map_err(|error| HostError::new(format!("Failed to load Windows toast XML: {error}")))?;
+    let notification = ToastNotification::CreateToastNotification(&document).map_err(|error| {
+        HostError::new(format!("Failed to create Windows toast notification: {error}"))
+    })?;
+    let notifier = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(
+        "app.operit.operit2",
+    ))
+        .map_err(|error| HostError::new(format!("Failed to create Windows toast notifier: {error}")))?;
+    notifier
+        .Show(&notification)
+        .map_err(|error| HostError::new(format!("Failed to show Windows toast notification: {error}")))
+}
+
+/// Builds the app protocol URI selected when a Windows notification is activated.
+fn windows_notification_launch_uri(activation: &SystemNotificationActivation) -> String {
+    match activation {
+        SystemNotificationActivation::OpenApplication => {
+            "operit2://notification/open-app".to_string()
+        }
+        SystemNotificationActivation::OpenChat { chatId } => {
+            let encoded_chat_id: String = url::form_urlencoded::byte_serialize(chatId.as_bytes())
+                .collect();
+            format!("operit2://notification/open-chat?chatId={encoded_chat_id}")
+        }
+    }
+}
+
+/// Escapes notification text for use inside a Windows toast XML text node.
+fn escape_windows_toast_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Escapes notification activation data for a Windows toast XML attribute.
+fn escape_windows_toast_xml_attribute(value: &str) -> String {
+    escape_windows_toast_xml(value)
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 struct WindowsOcrImage {

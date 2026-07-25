@@ -58,7 +58,8 @@ use operit_store::PreferencesDataStore::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use operit_runtime::services::RuntimeHostInteractionService::{
-    withRuntimeHostInteractionOrigin, RuntimeHostInteractionRequestOrigin,
+    publishOwnerWebAccessPairing, withRuntimeHostInteractionOrigin,
+    RuntimeHostInteractionRequestOrigin, RuntimeHostInteractionWebAccessPairingPayload,
 };
 
 #[cfg(test)]
@@ -1729,7 +1730,7 @@ async fn pair_start(
         pairingCode: pairingCode.clone(),
         createdAt: unix_millis(),
     };
-    if let Err(error) = state.accessStore.savePendingPairing(pairingRecord) {
+    if let Err(error) = state.accessStore.savePendingPairing(pairingRecord.clone()) {
         return internal_server_error(error);
     }
     state.pairings.lock().await.insert(
@@ -1745,6 +1746,14 @@ async fn pair_start(
             sharedSecret,
         },
     );
+    publishOwnerWebAccessPairing(RuntimeHostInteractionWebAccessPairingPayload {
+        pairingId: pairingRecord.pairingId,
+        clientDeviceId: pairingRecord.clientDeviceId,
+        clientPlatform: pairingRecord.clientDeviceInfo.platform,
+        clientModel: pairingRecord.clientDeviceInfo.model,
+        pairingCode: pairingRecord.pairingCode,
+        createdAt: pairingRecord.createdAt,
+    });
     Json(PairStartResponse {
         pairingId,
         pairingServiceVersion: REMOTE_PAIRING_SERVICE_VERSION,
@@ -2441,7 +2450,7 @@ fn serve_web_access_file(webAccess: &RemoteWebAccessState, path: &str) -> Respon
     if !fullPath.starts_with(&webAccess.webRoot) {
         return bad_request("web asset path escapes web root");
     }
-    let mut bytes = match (webAccess.readAsset)(&fullPath) {
+    let bytes = match (webAccess.readAsset)(&fullPath) {
         Ok(value) => value,
         Err(error) => {
             return (
@@ -2452,13 +2461,6 @@ fn serve_web_access_file(webAccess: &RemoteWebAccessState, path: &str) -> Respon
         }
     };
     let contentType = content_type_for_path(&fullPath);
-    if relativePath == Path::new("index.html") {
-        let html = match String::from_utf8(bytes) {
-            Ok(value) => value,
-            Err(error) => return bad_request(error.to_string()),
-        };
-        bytes = inject_web_access_runtime_config(&html).into_bytes();
-    }
     Response::builder()
         .header("content-type", contentType)
         .header("cross-origin-opener-policy", "same-origin")
@@ -2482,23 +2484,6 @@ fn sanitize_web_asset_path(path: &str) -> Result<PathBuf, Response> {
         return Err(bad_request("invalid web asset path"));
     }
     Ok(relative)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn inject_web_access_runtime_config(html: &str) -> String {
-    let config = serde_json::json!({
-        "mode": "pair",
-        "baseUrl": "",
-        "pairingServiceVersion": REMOTE_PAIRING_SERVICE_VERSION,
-    });
-    let script = format!(
-        "<script>window.__OPERIT_WEB_ACCESS__ = {};</script>",
-        serde_json::to_string(&config).expect("web access config must serialize")
-    );
-    html.replace(
-        "<script src=\"operit_runtime_bridge.js\"></script>",
-        &format!("{script}\n  <script src=\"operit_runtime_bridge.js\"></script>"),
-    )
 }
 
 #[cfg(not(target_arch = "wasm32"))]

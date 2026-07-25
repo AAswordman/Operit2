@@ -1,6 +1,10 @@
 package app.operit
 
 import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
@@ -39,6 +43,7 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
@@ -53,6 +58,9 @@ class OwnerSystemCapabilityChannel(
         private const val DEFAULT_CLASSIC_UUID = "00001101-0000-1000-8000-00805f9b34fb"
         private const val TTS_ENGINE_INIT_TIMEOUT_MS = 15_000L
         private const val TTS_SYNTHESIS_TIMEOUT_MS = 120_000L
+        private const val APPLICATION_NOTIFICATION_CHANNEL_ID = "operit_app_notifications"
+        private const val APPLICATION_NOTIFICATION_CHANNEL_NAME = "Operit"
+        private val nextApplicationNotificationId = AtomicInteger(4000)
     }
 
     private var cachedMediaProjectionCaptureManager: MediaProjectionCaptureManager? = null
@@ -105,11 +113,13 @@ class OwnerSystemCapabilityChannel(
         var operationBytes: ByteArray? = null,
     )
 
+    /** Routes one owner-host channel request to its native implementation. */
     fun handle(call: MethodCall, result: MethodChannel.Result): Boolean {
         when (call.method) {
             "ownerSystemCaptureScreenshot" -> ownerSystemCaptureScreenshot(result)
             "ownerSystemLanguageCode" -> ownerSystemLanguageCode(result)
             "ownerSystemRecognizeText" -> ownerSystemRecognizeText(call, result)
+            "ownerSystemOperation" -> ownerSystemOperation(call, result)
             "ownerAudioPlay" -> ownerAudioPlay(call, result)
             "ownerMusicPlayback" -> ownerMusicPlayback(call, result)
             "ownerBluetooth" -> ownerBluetooth(call, result)
@@ -204,6 +214,89 @@ class OwnerSystemCapabilityChannel(
                 }
             }
         }
+    }
+
+    /** Executes one generic Core-owned system operation. */
+    private fun ownerSystemOperation(call: MethodCall, result: MethodChannel.Result) {
+        val payload = call.arguments as? Map<*, *>
+        if (payload == null) {
+            result.error("INVALID_ARGS", "ownerSystemOperation expects a map", null)
+            return
+        }
+        runtimeHost.runBackground {
+            try {
+                val operation =
+                    payload["operation"] as? String
+                        ?: throw IllegalArgumentException("system operation is required")
+                val paramsJson =
+                    payload["paramsJson"] as? String
+                        ?: throw IllegalArgumentException("system operation paramsJson is required")
+                val response =
+                    when (operation) {
+                        "send_notification" -> systemSendNotification(JSONObject(paramsJson))
+                        else -> throw IllegalArgumentException("unsupported system operation: $operation")
+                    }
+                activity.runOnUiThread { result.success(response) }
+            } catch (error: Throwable) {
+                activity.runOnUiThread {
+                    result.error("OWNER_SYSTEM_OPERATION_ERROR", error.message, null)
+                }
+            }
+        }
+    }
+
+    /** Posts one native Android notification requested by the Runtime. */
+    private fun systemSendNotification(params: JSONObject): Map<String, String> {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                    PackageManager.PERMISSION_GRANTED
+        ) {
+            throw IllegalStateException("Android notification permission is not granted")
+        }
+        val title = params.getString("title")
+        val message = params.getString("message")
+        val activation = params.getJSONObject("activation")
+        val notificationId = nextApplicationNotificationId.getAndIncrement()
+        val notificationManager =
+            activity.applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            notificationManager.createNotificationChannel(
+                NotificationChannel(
+                    APPLICATION_NOTIFICATION_CHANNEL_ID,
+                    APPLICATION_NOTIFICATION_CHANNEL_NAME,
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ),
+            )
+        }
+        val launchIntent = Intent(activity, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(MainActivity.NOTIFICATION_ACTIVATION_EXTRA, activation.toString())
+        }
+        val contentIntent =
+            PendingIntent.getActivity(
+                activity,
+                notificationId,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        val builder =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(activity, APPLICATION_NOTIFICATION_CHANNEL_ID)
+            } else {
+                Notification.Builder(activity)
+            }
+        notificationManager.notify(
+            notificationId,
+            builder
+                .setContentTitle(title)
+                .setContentText(message)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentIntent(contentIntent)
+                .setAutoCancel(true)
+                .build(),
+        )
+        return mapOf("resultJson" to JSONObject().put("success", true).toString())
     }
 
     private fun ownerAudioPlay(call: MethodCall, result: MethodChannel.Result) {

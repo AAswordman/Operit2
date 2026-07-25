@@ -97,7 +97,7 @@ use operit_host_android_native::{
     AndroidTerminalHost as NativeTerminalHost, AndroidTtsPlaybackHost as NativeTtsPlaybackHost,
     AndroidTtsSynthesisHost as NativeTtsSynthesisHost,
 };
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
 use operit_host_api::SystemOperationHost;
 #[cfg(target_os = "ios")]
 use operit_host_ios_native::{
