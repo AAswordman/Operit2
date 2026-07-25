@@ -6,6 +6,7 @@ import android.os.Looper
 import android.util.Log
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.util.ArrayDeque
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -25,6 +26,7 @@ class AndroidRuntimeHost(context: Context) {
             Thread(runnable, "operit-runtime-${runtimeThreadIndex.incrementAndGet()}")
         }
     private var runtimeHandle: Long = 0
+    private val pendingRuntimeEvents = ArrayDeque<String>()
     private var configuredRuntimeRoot: File? = null
     private var configuredWorkspaceRoot: File? = null
     @Volatile
@@ -75,6 +77,7 @@ class AndroidRuntimeHost(context: Context) {
                     updateRuntimeStartupStatus("failed", "本地运行时启动失败")
                     throw IllegalStateException(OperitRuntimeNative.createError())
                 }
+                flushPendingRuntimeEventsLocked()
             } catch (error: Throwable) {
                 updateRuntimeStartupStatus("failed", "本地运行时启动失败")
                 throw error
@@ -114,6 +117,39 @@ class AndroidRuntimeHost(context: Context) {
     /** Executes host work on the runtime executor. */
     fun runBackground(block: () -> Unit) {
         runtimeExecutor.execute(block)
+    }
+
+    /** Delivers an Android lifecycle event after the native Core runtime is available. */
+    fun emitRuntimeEvent(event: org.json.JSONObject) {
+        val eventJson = event.toString()
+        synchronized(runtimeLock) {
+            val handle = runtimeHandle
+            if (handle == 0L) {
+                pendingRuntimeEvents.addLast(eventJson)
+                return
+            }
+            scheduleRuntimeEventLocked(handle, eventJson)
+        }
+    }
+
+    private fun flushPendingRuntimeEventsLocked() {
+        while (pendingRuntimeEvents.isNotEmpty()) {
+            scheduleRuntimeEventLocked(runtimeHandle, pendingRuntimeEvents.removeFirst())
+        }
+    }
+
+    private fun scheduleRuntimeEventLocked(handle: Long, eventJson: String) {
+        runtimeExecutor.execute {
+            try {
+                val response = OperitRuntimeNative.emitRuntimeEvent(handle, eventJson)
+                val result = org.json.JSONObject(response)
+                check(result.getBoolean("ok")) {
+                    result.optString("error", "Core rejected Android runtime event")
+                }
+            } catch (error: Throwable) {
+                Log.e(TAG, "failed to deliver Android runtime event", error)
+            }
+        }
     }
 
     /** Prepares Android runtime assets for the configured storage roots. */

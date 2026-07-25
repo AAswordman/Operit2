@@ -314,6 +314,11 @@ export namespace NativeInterface {
    */
   function registerToolPkgChatInputHook(specJson: string): void;
   /**
+   * Register a chat message hook for current toolpkg main registration session.
+   * @param specJson - JSON object string describing a chat message hook
+   */
+  function registerToolPkgChatMessageHook(specJson: string): void;
+  /**
    * Register an input menu toggle plugin for current toolpkg main registration session.
    * @param specJson - JSON object string describing an input menu toggle plugin
    */

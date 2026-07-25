@@ -16,6 +16,7 @@ object RuntimeEvents {
 
     object Source {
         const val ANDROID_BROADCAST = "android.broadcast"
+        const val ANDROID_LIFECYCLE = "android.lifecycle"
     }
 
     object Platform {
@@ -23,6 +24,14 @@ object RuntimeEvents {
     }
 
     object Topic {
+        const val APP_LIFECYCLE_LOW_MEMORY = "app.lifecycle.low_memory"
+        const val APP_LIFECYCLE_TRIM_MEMORY = "app.lifecycle.trim_memory"
+        const val ACTIVITY_LIFECYCLE_CREATE = "activity.lifecycle.create"
+        const val ACTIVITY_LIFECYCLE_START = "activity.lifecycle.start"
+        const val ACTIVITY_LIFECYCLE_RESUME = "activity.lifecycle.resume"
+        const val ACTIVITY_LIFECYCLE_PAUSE = "activity.lifecycle.pause"
+        const val ACTIVITY_LIFECYCLE_STOP = "activity.lifecycle.stop"
+        const val ACTIVITY_LIFECYCLE_DESTROY = "activity.lifecycle.destroy"
         const val SYSTEM_BOOT_COMPLETED = "system.boot.completed"
         const val SYSTEM_POWER_CONNECTED = "system.power.connected"
         const val SYSTEM_POWER_DISCONNECTED = "system.power.disconnected"
@@ -53,6 +62,14 @@ object RuntimeEvents {
     fun androidBroadcast(topic: String, data: JSONObject): JSONObject = JSONObject()
         .put("domain", Domain.HOST)
         .put("source", Source.ANDROID_BROADCAST)
+        .put("topic", topic)
+        .put("platform", Platform.ANDROID)
+        .put("payload", data)
+        .put("occurredAtMillis", System.currentTimeMillis())
+
+    fun androidLifecycle(topic: String, data: JSONObject): JSONObject = JSONObject()
+        .put("domain", Domain.HOST)
+        .put("source", Source.ANDROID_LIFECYCLE)
         .put("topic", topic)
         .put("platform", Platform.ANDROID)
         .put("payload", data)

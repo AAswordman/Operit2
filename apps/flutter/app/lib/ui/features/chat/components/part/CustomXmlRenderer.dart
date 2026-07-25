@@ -4,11 +4,16 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../../core/proxy/generated/CoreProxyModels.g.dart'
+    as core_proxy;
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../common/interactions/MessagePressShield.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../common/markdown/XmlRenderPluginRegistry.dart';
 import '../../../../../util/ChatMarkupRegex.dart';
+import '../../../packages/screens/ToolPkgUiLauncherScreen.dart';
 import 'DetailsTagRenderer.dart';
 import 'DialogComponents.dart';
 import 'FileDiffDisplay.dart';
@@ -59,6 +64,17 @@ class CustomXmlRenderer extends StatelessWidget {
     if (pluginRender != null) {
       return pluginRender;
     }
+    return _ToolPkgXmlRenderBridge(
+      tagName: parsed.tagName,
+      xmlContent: xmlContent,
+      isStreaming: isStreaming,
+      textColor: textColor,
+      defaultBuilder: (context) => _buildDefaultXml(context, parsed),
+    );
+  }
+
+  /// Builds the built-in XML renderer when no ToolPkg hook handles the tag.
+  Widget _buildDefaultXml(BuildContext context, _ParsedXml parsed) {
     if (!_isXmlFullyClosed(xmlContent) &&
         _builtInTags.contains(parsed.tagName) &&
         !const {
@@ -153,6 +169,189 @@ class CustomXmlRenderer extends StatelessWidget {
       ).textTheme.bodyMedium?.copyWith(color: textColor, height: 1.45),
     );
   }
+}
+
+class _ToolPkgXmlRenderBridge extends StatefulWidget {
+  const _ToolPkgXmlRenderBridge({
+    required this.tagName,
+    required this.xmlContent,
+    required this.isStreaming,
+    required this.textColor,
+    required this.defaultBuilder,
+  });
+
+  final String tagName;
+  final String xmlContent;
+  final bool isStreaming;
+  final Color textColor;
+  final WidgetBuilder defaultBuilder;
+
+  @override
+  State<_ToolPkgXmlRenderBridge> createState() =>
+      _ToolPkgXmlRenderBridgeState();
+}
+
+class _ToolPkgXmlRenderBridgeState extends State<_ToolPkgXmlRenderBridge> {
+  static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
+    ProxyCoreRuntimeBridge(),
+  );
+
+  late Future<Object?> _renderFuture = _loadRender();
+
+  @override
+  void didUpdateWidget(covariant _ToolPkgXmlRenderBridge oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.tagName != widget.tagName ||
+        oldWidget.xmlContent != widget.xmlContent) {
+      _renderFuture = _loadRender();
+    }
+  }
+
+  /// Requests ToolPkg XML render output from the active Core runtime.
+  Future<Object?> _loadRender() {
+    return _clients.chatRuntimeHolderMain.renderToolPkgXml(
+      tagName: widget.tagName,
+      xmlContent: widget.xmlContent,
+    );
+  }
+
+  /// Builds ToolPkg XML output when a hook handled the current tag.
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Object?>(
+      future: _renderFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done ||
+            snapshot.hasError ||
+            snapshot.data == null) {
+          return widget.defaultBuilder(context);
+        }
+        final data = snapshot.data;
+        if (data is! Map<String, Object?>) {
+          return widget.defaultBuilder(context);
+        }
+        final kind = data['kind'];
+        if (kind == 'text') {
+          final text = data['text'];
+          if (text is String && text.trim().isNotEmpty) {
+            return StreamMarkdownRenderer(
+              content: text,
+              isStreaming: widget.isStreaming,
+              textColor: widget.textColor,
+              backgroundColor: Theme.of(context).colorScheme.surface,
+              selectionRoot: false,
+            );
+          }
+        }
+        if (kind == 'composeDsl') {
+          final containerPackageName = data['containerPackageName'];
+          final screen = data['screen'];
+          if (containerPackageName is String && screen is String) {
+            return _ToolPkgXmlComposeDslRender(
+              clients: _clients,
+              containerPackageName: containerPackageName,
+              screen: screen,
+              initialState: _requiredJsonObject(data['state'], 'state'),
+              initialMemo: _requiredJsonObject(data['memo'], 'memo'),
+              initialModuleSpec: data['moduleSpec'] == null
+                  ? null
+                  : _requiredJsonObject(data['moduleSpec'], 'moduleSpec'),
+              defaultBuilder: widget.defaultBuilder,
+            );
+          }
+        }
+        return widget.defaultBuilder(context);
+      },
+    );
+  }
+}
+
+class _ToolPkgXmlComposeDslRender extends StatefulWidget {
+  const _ToolPkgXmlComposeDslRender({
+    required this.clients,
+    required this.containerPackageName,
+    required this.screen,
+    required this.initialState,
+    required this.initialMemo,
+    required this.initialModuleSpec,
+    required this.defaultBuilder,
+  });
+
+  final GeneratedCoreProxyClients clients;
+  final String containerPackageName;
+  final String screen;
+  final Map<String, Object?> initialState;
+  final Map<String, Object?> initialMemo;
+  final Map<String, Object?>? initialModuleSpec;
+  final WidgetBuilder defaultBuilder;
+
+  @override
+  State<_ToolPkgXmlComposeDslRender> createState() =>
+      _ToolPkgXmlComposeDslRenderState();
+}
+
+class _ToolPkgXmlComposeDslRenderState
+    extends State<_ToolPkgXmlComposeDslRender> {
+  late Future<core_proxy.ToolPkgContainerRuntime?> _pluginFuture =
+      _loadPlugin();
+
+  @override
+  void didUpdateWidget(covariant _ToolPkgXmlComposeDslRender oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.containerPackageName != widget.containerPackageName) {
+      _pluginFuture = _loadPlugin();
+    }
+  }
+
+  /// Loads the ToolPkg container needed by the embedded Compose DSL renderer.
+  Future<core_proxy.ToolPkgContainerRuntime?> _loadPlugin() {
+    return widget.clients.application
+        .packageManager()
+        .getToolPkgContainerRuntime(
+          containerPackageName: widget.containerPackageName,
+        );
+  }
+
+  /// Builds an embedded Compose DSL surface for XML-render hook output.
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<core_proxy.ToolPkgContainerRuntime?>(
+      future: _pluginFuture,
+      builder: (context, snapshot) {
+        final plugin = snapshot.data;
+        if (snapshot.connectionState != ConnectionState.done ||
+            snapshot.hasError ||
+            plugin == null) {
+          return widget.defaultBuilder(context);
+        }
+        return ToolPkgUiLauncherScreen(
+          clients: widget.clients,
+          plugin: plugin,
+          initialRouteId: widget.screen,
+          showLauncherChrome: false,
+          initialState: widget.initialState,
+          initialMemo: widget.initialMemo,
+          initialModuleSpec: widget.initialModuleSpec,
+        );
+      },
+    );
+  }
+}
+
+Map<String, Object?> _requiredJsonObject(Object? value, String fieldName) {
+  if (value is! Map<Object?, Object?>) {
+    throw StateError('ToolPkg XML composeDsl $fieldName must be an object');
+  }
+  final result = <String, Object?>{};
+  for (final entry in value.entries) {
+    if (entry.key is! String) {
+      throw StateError(
+        'ToolPkg XML composeDsl $fieldName has a non-string key',
+      );
+    }
+    result[entry.key as String] = entry.value;
+  }
+  return result;
 }
 
 const _toolParamTokenThreshold = 50;

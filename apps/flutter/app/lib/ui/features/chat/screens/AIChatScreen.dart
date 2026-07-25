@@ -290,6 +290,25 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
       return;
     }
     _saveCurrentInputDraft();
+    final value = _messageController.value;
+    unawaited(
+      _viewModel
+          .dispatchChatInputChanged(
+            chatId: _currentChatId,
+            text: value.text,
+            selectionStart: value.selection.start,
+            selectionEnd: value.selection.end,
+            attachmentCount: _attachments.length,
+          )
+          .catchError((Object error, StackTrace stackTrace) {
+            ClientLogger.e(
+              'chat input change hook failed',
+              tag: 'AIChatScreen',
+              error: error,
+              stackTrace: stackTrace,
+            );
+          }),
+    );
   }
 
   void _saveCurrentInputDraft() {
@@ -400,6 +419,40 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
     PendingQueueMessageItem item,
     bool cancelCurrentConversation,
   ) async {
+    var queuedText = item.text;
+    final decision = await _viewModel.dispatchChatInputSubmitRequested(
+      chatId: _currentChatId,
+      text: queuedText,
+      selectionStart: queuedText.length,
+      selectionEnd: queuedText.length,
+      attachmentCount: 0,
+    );
+    if (!mounted) {
+      return;
+    }
+    if (decision != null) {
+      if (decision.action == 'block') {
+        _restorePendingQueueItem(item);
+        final message = decision.message;
+        if (message != null && message.trim().isNotEmpty) {
+          _showLocalToast(message);
+        }
+        return;
+      }
+      if (decision.action == 'consume') {
+        final message = decision.message;
+        if (message != null && message.trim().isNotEmpty) {
+          _showLocalToast(message);
+        }
+        return;
+      }
+      if (decision.action == 'replace') {
+        final updatedText = decision.text;
+        if (updatedText != null) {
+          queuedText = updatedText;
+        }
+      }
+    }
     final shouldWaitForCancel = cancelCurrentConversation && _isQueueBlocked;
     if (shouldWaitForCancel) {
       _suppressNextAutoDequeue = true;
@@ -417,8 +470,20 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
       _showLocalToast(AppLocalizations.of(context)!.chatPleaseCreateNewChat);
       return;
     }
+    if (queuedText.trim().isEmpty) {
+      return;
+    }
     _inputFocusNode.unfocus();
-    _startSendMessageText(item.text);
+    _startSendMessageText(queuedText.trim());
+  }
+
+  void _restorePendingQueueItem(PendingQueueMessageItem item) {
+    if (_pendingQueueMessages.any((queued) => queued.id == item.id)) {
+      return;
+    }
+    _mutateChatContentData(() {
+      _pendingQueueMessages.insert(0, item);
+    });
   }
 
   Future<void> _waitUntilQueueUnblocked() async {
@@ -749,6 +814,11 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
   }
 
   void _sendMessage() {
+    unawaited(_sendMessageWithHooks());
+  }
+
+  /// Dispatches submit_requested before mutating the visible input field.
+  Future<void> _sendMessageWithHooks() async {
     final text = _messageController.text.trim();
     final hasAttachments = _attachments.isNotEmpty;
     if (text.isEmpty && !hasAttachments) {
@@ -766,9 +836,44 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
       return;
     }
 
+    final inputValue = _messageController.value;
+    final decision = await _viewModel.dispatchChatInputSubmitRequested(
+      chatId: _currentChatId,
+      text: text,
+      selectionStart: inputValue.selection.start,
+      selectionEnd: inputValue.selection.end,
+      attachmentCount: _attachments.length,
+    );
+    if (!mounted) {
+      return;
+    }
+    if (decision != null) {
+      if (decision.action == 'block' || decision.action == 'consume') {
+        if (decision.action == 'consume' && decision.clearInput) {
+          _messageController.clear();
+          await _viewModel.clearAttachments();
+        }
+        final message = decision.message;
+        if (message != null && message.trim().isNotEmpty) {
+          _showLocalToast(message);
+        }
+        return;
+      }
+      if (decision.action == 'replace') {
+        final updatedText = decision.text;
+        if (updatedText != null) {
+          _messageController.value = TextEditingValue(
+            text: updatedText,
+            selection: TextSelection.collapsed(offset: updatedText.length),
+          );
+        }
+      }
+    }
+
+    final submittedText = _messageController.text.trim();
     _messageController.clear();
     _inputFocusNode.unfocus();
-    _startSendMessageText(text);
+    _startSendMessageText(submittedText);
   }
 
   /// Starts or stops local speech input from the chat action button.

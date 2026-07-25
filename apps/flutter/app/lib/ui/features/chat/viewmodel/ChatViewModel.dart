@@ -17,6 +17,32 @@ typedef WorkspaceFileChange = core_proxy.WorkspaceFileChange;
 typedef ChatResponseStreamEvent = core_proxy.MarkdownStreamEvent;
 typedef AttachmentInfo = core_proxy.AttachmentInfo;
 
+class ChatInputSubmitDecision {
+  const ChatInputSubmitDecision({
+    required this.action,
+    required this.text,
+    required this.message,
+    required this.clearInput,
+  });
+
+  /// Parses the JSON decision returned by the Core ToolPkg chat input bridge.
+  factory ChatInputSubmitDecision.fromJson(Map<String, Object?> json) {
+    return ChatInputSubmitDecision(
+      action: json['action'] as String,
+      text: json['text'] == null ? null : json['text'] as String,
+      message: json['message'] == null ? null : json['message'] as String,
+      clearInput: json['clearInput'] == null
+          ? false
+          : json['clearInput'] as bool,
+    );
+  }
+
+  final String action;
+  final String? text;
+  final String? message;
+  final bool clearInput;
+}
+
 sealed class ChatRuntimeSurface {
   const ChatRuntimeSurface();
 
@@ -155,11 +181,48 @@ class ChatViewModel {
         notifyReply: null,
         hideUserMessage: false,
         disableWarning: false,
+        chatInputSubmitRequestedHandled: true,
       ),
     );
     if (attachments.isNotEmpty) {
       await _chat.clearAttachments();
     }
+  }
+
+  Future<void> dispatchChatInputChanged({
+    required String? chatId,
+    required String text,
+    required int selectionStart,
+    required int selectionEnd,
+    required int attachmentCount,
+  }) {
+    return _chat.dispatchChatInputChanged(
+      chatIdOverride: chatId,
+      messageText: text,
+      selectionStart: selectionStart,
+      selectionEnd: selectionEnd,
+      attachmentCount: attachmentCount,
+    );
+  }
+
+  Future<ChatInputSubmitDecision?> dispatchChatInputSubmitRequested({
+    required String? chatId,
+    required String text,
+    required int selectionStart,
+    required int selectionEnd,
+    required int attachmentCount,
+  }) async {
+    final result = await _chat.dispatchChatInputSubmitRequested(
+      chatIdOverride: chatId,
+      messageText: text,
+      selectionStart: selectionStart,
+      selectionEnd: selectionEnd,
+      attachmentCount: attachmentCount,
+    );
+    if (result == null) {
+      return null;
+    }
+    return ChatInputSubmitDecision.fromJson(result as Map<String, Object?>);
   }
 
   Future<void> cancelCurrentMessage() {
@@ -338,8 +401,10 @@ class ChatViewModel {
 
   Future<Uint8List> readWorkspaceFileBytes(String relativePath) async {
     final chatId = await _requiredCurrentChatId();
-    final bytes = await clients.servicesWorkspaceService
-        .readWorkspaceFileBytes(chatId: chatId, relativePath: relativePath);
+    final bytes = await clients.servicesWorkspaceService.readWorkspaceFileBytes(
+      chatId: chatId,
+      relativePath: relativePath,
+    );
     return base64Decode(bytes.base64Content);
   }
 

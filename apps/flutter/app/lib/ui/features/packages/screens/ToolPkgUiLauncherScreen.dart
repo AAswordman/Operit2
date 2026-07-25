@@ -25,12 +25,18 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
     required this.plugin,
     this.initialRouteId,
     this.showLauncherChrome = true,
+    this.initialState = const <String, Object?>{},
+    this.initialMemo = const <String, Object?>{},
+    this.initialModuleSpec,
   });
 
   final GeneratedCoreProxyClients clients;
   final core_proxy.ToolPkgContainerRuntime plugin;
   final String? initialRouteId;
   final bool showLauncherChrome;
+  final Map<String, Object?> initialState;
+  final Map<String, Object?> initialMemo;
+  final Map<String, Object?>? initialModuleSpec;
 
   @override
   State<ToolPkgUiLauncherScreen> createState() =>
@@ -326,8 +332,8 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       'uiModuleId': uiModuleId,
       '__operit_ui_module_id': uiModuleId,
       '__operit_toolpkg_runtime_kind': 'ui',
-      'state': _renderResult?.state ?? const <String, Object?>{},
-      'memo': _renderResult?.memo ?? const <String, Object?>{},
+      'state': _renderResult?.state ?? widget.initialState,
+      'memo': _renderResult?.memo ?? widget.initialMemo,
       'routeInstanceId': routeInstanceId,
       '__operit_route_instance_id': routeInstanceId,
       'executionContextKey': executionContextKey,
@@ -396,6 +402,10 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   }
 
   Map<String, Object?> _moduleSpec(String routeId) {
+    final initialModuleSpec = widget.initialModuleSpec;
+    if (initialModuleSpec != null) {
+      return initialModuleSpec;
+    }
     for (final route in widget.plugin.uiRoutes) {
       if (route.routeId == routeId || route.id == routeId) {
         return <String, Object?>{
