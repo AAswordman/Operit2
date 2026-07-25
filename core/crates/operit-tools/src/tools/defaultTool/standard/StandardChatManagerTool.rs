@@ -648,6 +648,7 @@ fn parseTurnOptions(tool: &AITool) -> Result<ChatTurnOptions, String> {
         notifyReply: parseOptionalBoolean(tool, "notify_reply")?,
         hideUserMessage: parseOptionalBoolean(tool, "hide_user_message")?.unwrap_or(false),
         disableWarning: parseOptionalBoolean(tool, "disable_warning")?.unwrap_or(false),
+        chatInputSubmitRequestedHandled: false,
     })
 }
 

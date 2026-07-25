@@ -153,6 +153,11 @@ fn parseCapturedRegistration(
             TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK,
             toolPkgId,
         )?,
+        chatMessageHooks: parseRegisteredItems(
+            &captured.chatMessageHooks,
+            TOOLPKG_REGISTRATION_CHAT_MESSAGE_HOOK,
+            toolPkgId,
+        )?,
         hostEventHooks: parseRegisteredItems(
             &captured.hostEventHooks,
             TOOLPKG_REGISTRATION_HOST_EVENT_HOOK,

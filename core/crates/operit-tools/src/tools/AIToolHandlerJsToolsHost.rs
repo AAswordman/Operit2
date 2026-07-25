@@ -268,6 +268,17 @@ fn invoke_terminal_streaming(
     };
     let mut host = host.clone();
     Box::pin(async move {
+        host.notifyToolCallRequested(&tool);
+        let interception = host.checkToolInterception(&tool);
+        if let operit_tools::tools::AIToolHook::AIToolHookDecision::Block(_) = interception {
+            let result = AIToolHandler::toolInterceptionResult(&tool, interception);
+            host.notifyToolExecutionResult(&tool, &result);
+            host.notifyToolExecutionFinished(&tool);
+            let message = result
+                .error
+                .expect("intercepted terminal streaming result must include an error");
+            return Err(JsHostError::new(message));
+        }
         let results = host
             .executeToolSafelyWithResolvedExecutor(&tool)
             .await

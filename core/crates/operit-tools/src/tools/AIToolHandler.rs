@@ -15,7 +15,7 @@ use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
 use operit_tools::tools::mcp::MCPToolExecutor::MCPToolExecutor;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
-use operit_tools::tools::AIToolHook::AIToolHook;
+use operit_tools::tools::AIToolHook::{AIToolHook, AIToolHookDecision};
 use operit_tools::tools::PackageToolExecutor::PackageToolExecutor;
 use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, ToolPermissionSystem};
 use operit_tools::tools::ToolRegistration::registerAllTools;
@@ -212,6 +212,39 @@ impl AIToolHandler {
     #[allow(non_snake_case)]
     pub fn notifyToolCallRequested(&self, tool: &AITool) {
         self.notifyHooks(|hook| hook.onToolCallRequested(tool));
+    }
+
+    /// Returns the first hook decision for a tool call before execution begins.
+    #[allow(non_snake_case)]
+    pub fn checkToolInterception(&self, tool: &AITool) -> AIToolHookDecision {
+        let hooks = self
+            .inner
+            .lock()
+            .expect("AIToolHandler mutex poisoned")
+            .hooks
+            .clone();
+        for hook in hooks {
+            match hook.onToolCallIntercept(tool) {
+                AIToolHookDecision::Allow => {}
+                decision @ AIToolHookDecision::Block(_) => return decision,
+            }
+        }
+        AIToolHookDecision::Allow
+    }
+
+    /// Builds the standard failed result emitted when a hook blocks a tool call.
+    #[allow(non_snake_case)]
+    pub fn toolInterceptionResult(tool: &AITool, decision: AIToolHookDecision) -> ToolResult {
+        let reason = match decision {
+            AIToolHookDecision::Allow => "Tool call was not blocked.".to_string(),
+            AIToolHookDecision::Block(reason) => reason,
+        };
+        ToolResult {
+            toolName: tool.name.clone(),
+            success: false,
+            result: stringResultData(""),
+            error: Some(reason),
+        }
     }
 
     /// Notifies hooks that permission was checked for a tool call.
@@ -980,6 +1013,13 @@ impl AIToolHandler {
             ],
         );
         self.notifyToolCallRequested(&tool);
+        let interception = self.checkToolInterception(&tool);
+        if let AIToolHookDecision::Block(_) = interception {
+            let result = Self::toolInterceptionResult(&tool, interception);
+            self.notifyToolExecutionResult(&tool, &result);
+            self.notifyToolExecutionFinished(&tool);
+            return result;
+        }
         self.getToolExecutorOrActivate(&tool.name);
         let Some(mut executor) = ({
             self.inner

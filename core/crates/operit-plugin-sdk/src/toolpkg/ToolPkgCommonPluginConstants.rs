@@ -17,6 +17,7 @@ pub const TOOLPKG_EVENT_XML_RENDER: &str = "toolpkg_xml_render";
 pub const TOOLPKG_EVENT_INPUT_MENU_TOGGLE: &str = "toolpkg_input_menu_toggle";
 pub const TOOLPKG_EVENT_CHAT_INPUT: &str = "toolpkg_chat_input";
 pub const TOOLPKG_EVENT_CHAT_VIEW: &str = "toolpkg_chat_view";
+pub const TOOLPKG_EVENT_CHAT_MESSAGE: &str = "toolpkg_chat_message";
 pub const TOOLPKG_EVENT_NAVIGATION_ENTRY_ACTION: &str = "toolpkg_navigation_entry_action";
 pub const TOOLPKG_EVENT_HOST_EVENT: &str = "toolpkg_host_event";
 pub const TOOLPKG_EVENT_TOOL_LIFECYCLE: &str = "toolpkg_tool_lifecycle";
@@ -46,6 +47,7 @@ pub const TOOLPKG_REGISTRATION_INPUT_MENU_TOGGLE_PLUGIN: &str =
     "registerToolPkgInputMenuTogglePlugin";
 pub const TOOLPKG_REGISTRATION_CHAT_INPUT_HOOK: &str = "registerToolPkgChatInputHook";
 pub const TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK: &str = "registerToolPkgChatViewHook";
+pub const TOOLPKG_REGISTRATION_CHAT_MESSAGE_HOOK: &str = "registerToolPkgChatMessageHook";
 pub const TOOLPKG_REGISTRATION_HOST_EVENT_HOOK: &str = "registerToolPkgHostEventHook";
 pub const TOOLPKG_REGISTRATION_TOOL_LIFECYCLE_HOOK: &str = "registerToolPkgToolLifecycleHook";
 pub const TOOLPKG_REGISTRATION_PROMPT_INPUT_HOOK: &str = "registerToolPkgPromptInputHook";

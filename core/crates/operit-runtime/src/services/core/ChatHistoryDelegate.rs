@@ -1,6 +1,10 @@
 use crate::data::preferences::ActivePromptManager::ActivePromptManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
+use crate::plugins::toolpkg::ToolPkgChatMessageHookBridge::ToolPkgChatMessageHookBridge;
+use crate::plugins::toolpkg::ToolPkgChatViewHookBridge::{
+    ChatViewEvent, ChatViewHookParams, ToolPkgChatViewHookBridge,
+};
 use operit_model::ActivePrompt::ActivePrompt;
 use operit_model::ChatDisplayWindowState::ChatDisplayWindowState;
 use operit_model::ChatHistory::ChatHistory;
@@ -203,6 +207,9 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     fn emitChatHistoryState(&mut self) {
         self.chatHistoryFlow.set_value(self.chatHistory.clone());
+        if let Some(chatId) = self.currentChatId.clone() {
+            self.dispatchChatViewEvent(ChatViewEvent::ViewUpdated, &chatId);
+        }
     }
 
     #[allow(non_snake_case)]
@@ -219,6 +226,31 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     fn emitCurrentChatIdState(&mut self) {
         self.currentChatIdFlow.set_value(self.currentChatId.clone());
+    }
+
+    #[allow(non_snake_case)]
+    fn dispatchChatViewEvent(&self, event: ChatViewEvent, chatId: &str) {
+        ToolPkgChatViewHookBridge::dispatchRegisteredChatViewEvent(
+            event,
+            self.buildChatViewHookParams(chatId),
+        );
+    }
+
+    #[allow(non_snake_case)]
+    fn buildChatViewHookParams(&self, chatId: &str) -> ChatViewHookParams {
+        let (workspacePath, title) = match self.chatHistories.iter().find(|chat| chat.id == chatId)
+        {
+            Some(chat) => (chat.workspace.clone(), Some(chat.title.clone())),
+            None => (None, None),
+        };
+        ChatViewHookParams {
+            viewId: format!("chat:{chatId}"),
+            chatId: chatId.to_string(),
+            workspacePath,
+            workspaceEnv: serde_json::json!({}),
+            runtime: "rust".to_string(),
+            title,
+        }
     }
 
     #[allow(non_snake_case)]
@@ -589,6 +621,7 @@ impl ChatHistoryDelegate {
         self.currentChatId = Some(chatId.clone());
         self.activatePromptForChat(chatId.clone());
         self.emitCurrentChatIdState();
+        self.dispatchChatViewEvent(ChatViewEvent::ViewOpened, &chatId);
         self.applyCurrentChatDisplayWindow(chatId, messages);
         self.allowAddMessage = true;
     }
@@ -792,9 +825,14 @@ impl ChatHistoryDelegate {
                 let mut openingMessage =
                     ChatMessage::new_with_content("ai".to_string(), card.openingStatement);
                 openingMessage.roleName = card.name;
+                let persistedOpeningMessage = openingMessage.clone();
                 self.chatHistoryManager
                     .addMessage(newChat.id.clone(), openingMessage)
                     .expect("ChatHistoryManager.addMessage must succeed");
+                ToolPkgChatMessageHookBridge::dispatchMessagePersisted(
+                    &newChat.id,
+                    &persistedOpeningMessage,
+                );
             }
         }
         self.chatHistories = self.chatHistoryManager.chatHistoriesFlow.value();
@@ -814,6 +852,9 @@ impl ChatHistoryDelegate {
             .chatExists(chatId.clone())
             .expect("ChatHistoryManager.chatExists must succeed");
         if !exists {
+            if let Some(previousChatId) = self.currentChatId.clone() {
+                self.dispatchChatViewEvent(ChatViewEvent::ViewClosed, &previousChatId);
+            }
             if self.selectionMode == ChatSelectionMode::FOLLOW_GLOBAL {
                 self.chatHistoryManager
                     .clearCurrentChatId()
@@ -1174,6 +1215,9 @@ impl ChatHistoryDelegate {
             chat.workspace = Some(workspace);
         }
         self.emitChatHistoriesState();
+        if self.currentChatId.as_ref() == Some(&chatId) {
+            self.dispatchChatViewEvent(ChatViewEvent::ViewUpdated, &chatId);
+        }
     }
 
     #[allow(non_snake_case)]
@@ -1209,7 +1253,8 @@ impl ChatHistoryDelegate {
             chat.updatedAt = operit_host_api::TimeUtils::currentTimeMillis().to_string();
         }
         if self.currentChatId.as_ref() == Some(&chatId) {
-            self.activatePromptForChat(chatId);
+            self.activatePromptForChat(chatId.clone());
+            self.dispatchChatViewEvent(ChatViewEvent::ViewUpdated, &chatId);
         }
         self.emitChatHistoriesState();
     }
@@ -1224,6 +1269,9 @@ impl ChatHistoryDelegate {
             chat.workspace = None;
         }
         self.emitChatHistoriesState();
+        if self.currentChatId.as_ref() == Some(&chatId) {
+            self.dispatchChatViewEvent(ChatViewEvent::ViewUpdated, &chatId);
+        }
     }
 
     #[allow(non_snake_case)]
@@ -1235,6 +1283,9 @@ impl ChatHistoryDelegate {
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
             chat.title = title;
             self.emitChatHistoriesState();
+        }
+        if self.currentChatId.as_ref() == Some(&chatId) {
+            self.dispatchChatViewEvent(ChatViewEvent::ViewUpdated, &chatId);
         }
     }
 
@@ -1300,14 +1351,19 @@ impl ChatHistoryDelegate {
         }
 
         if isCurrentChat && !self.allowAddMessage {
+            let persistedMessage = message.clone();
             self.chatHistoryManager
                 .updateMessage(targetChatId.clone(), message)
                 .expect("ChatHistoryManager.updateMessage must succeed");
+            ToolPkgChatMessageHookBridge::dispatchMessagePersisted(
+                &targetChatId,
+                &persistedMessage,
+            );
             ChainLogger::info(
                 MESSAGE_STORE_CHAIN,
                 "message.store.hidden.update",
                 &[
-                    ("chatId", targetChatId),
+                    ("chatId", targetChatId.clone()),
                     ("sender", messageSender),
                     ("timestamp", messageTimestamp.to_string()),
                     ("messageChars", messageChars),
@@ -1317,14 +1373,19 @@ impl ChatHistoryDelegate {
         }
 
         if !isCurrentChat {
+            let persistedMessage = message.clone();
             self.chatHistoryManager
                 .updateMessage(targetChatId.clone(), message)
                 .expect("ChatHistoryManager.updateMessage must succeed");
+            ToolPkgChatMessageHookBridge::dispatchMessagePersisted(
+                &targetChatId,
+                &persistedMessage,
+            );
             ChainLogger::info(
                 MESSAGE_STORE_CHAIN,
                 "message.store.background.update",
                 &[
-                    ("chatId", targetChatId),
+                    ("chatId", targetChatId.clone()),
                     ("sender", messageSender),
                     ("timestamp", messageTimestamp.to_string()),
                     ("messageChars", messageChars),
@@ -1341,9 +1402,14 @@ impl ChatHistoryDelegate {
                 .any(|existing| existing.timestamp == message.timestamp);
 
         if didUpdateVisibleMessage {
+            let persistedMessage = message.clone();
             self.chatHistoryManager
                 .updateMessage(targetChatId.clone(), message)
                 .expect("ChatHistoryManager.updateMessage must succeed");
+            ToolPkgChatMessageHookBridge::dispatchMessagePersisted(
+                &targetChatId,
+                &persistedMessage,
+            );
             ChainLogger::info(
                 MESSAGE_STORE_CHAIN,
                 "message.store.visible.update",
@@ -1355,9 +1421,14 @@ impl ChatHistoryDelegate {
                 ],
             );
         } else if isVisibleNewMessage {
+            let persistedMessage = message.clone();
             self.chatHistoryManager
                 .addMessage(targetChatId.clone(), message)
                 .expect("ChatHistoryManager.addMessage must succeed");
+            ToolPkgChatMessageHookBridge::dispatchMessagePersisted(
+                &targetChatId,
+                &persistedMessage,
+            );
             ChainLogger::info(
                 MESSAGE_STORE_CHAIN,
                 "message.store.visible.insert",
@@ -1370,9 +1441,14 @@ impl ChatHistoryDelegate {
             );
             self.refreshCurrentChatDisplayFlags(targetChatId.clone(), self.chatHistory.clone());
         } else {
+            let persistedMessage = message.clone();
             self.chatHistoryManager
                 .updateMessage(targetChatId.clone(), message)
                 .expect("ChatHistoryManager.updateMessage must succeed");
+            ToolPkgChatMessageHookBridge::dispatchMessagePersisted(
+                &targetChatId,
+                &persistedMessage,
+            );
             ChainLogger::info(
                 MESSAGE_STORE_CHAIN,
                 "message.store.window.update",

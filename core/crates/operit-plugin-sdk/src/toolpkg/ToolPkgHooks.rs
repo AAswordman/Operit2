@@ -65,6 +65,16 @@ pub struct ToolPkgChatViewHookRegistration {
     pub functionSource: Option<String>,
 }
 
+/// Registration for one chat-message persistence hook.
+#[derive(Clone, Debug)]
+#[allow(non_snake_case)]
+pub struct ToolPkgChatMessageHookRegistration {
+    pub containerPackageName: String,
+    pub hookId: String,
+    pub functionName: String,
+    pub functionSource: Option<String>,
+}
+
 /// Registration for one tool lifecycle hook.
 #[derive(Clone, Debug)]
 #[allow(non_snake_case)]

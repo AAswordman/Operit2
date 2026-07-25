@@ -27,6 +27,8 @@ pub enum RuntimeEventDomain {
 pub enum RuntimeEventSource {
     #[serde(rename = "android.broadcast")]
     AndroidBroadcast,
+    #[serde(rename = "android.lifecycle")]
+    AndroidLifecycle,
     #[serde(rename = "linux.dbus")]
     LinuxDbus,
     #[serde(rename = "windows.system")]
@@ -77,6 +79,22 @@ pub enum RuntimeEventTopic {
     AppLifecycleDetached,
     #[serde(rename = "app.lifecycle.hidden")]
     AppLifecycleHidden,
+    #[serde(rename = "app.lifecycle.low_memory")]
+    AppLifecycleLowMemory,
+    #[serde(rename = "app.lifecycle.trim_memory")]
+    AppLifecycleTrimMemory,
+    #[serde(rename = "activity.lifecycle.create")]
+    ActivityLifecycleCreate,
+    #[serde(rename = "activity.lifecycle.start")]
+    ActivityLifecycleStart,
+    #[serde(rename = "activity.lifecycle.resume")]
+    ActivityLifecycleResume,
+    #[serde(rename = "activity.lifecycle.pause")]
+    ActivityLifecyclePause,
+    #[serde(rename = "activity.lifecycle.stop")]
+    ActivityLifecycleStop,
+    #[serde(rename = "activity.lifecycle.destroy")]
+    ActivityLifecycleDestroy,
     #[serde(rename = "system.boot.completed")]
     SystemBootCompleted,
     #[serde(rename = "system.power.connected")]
@@ -164,6 +182,14 @@ impl RuntimeEvent {
             | RuntimeEventTopic::AppLifecycleHidden => {
                 canonicalData::<ToolPkgBroadcastLifecycleData>(&self.topic, &self.payload)
             }
+            RuntimeEventTopic::AppLifecycleLowMemory
+            | RuntimeEventTopic::AppLifecycleTrimMemory
+            | RuntimeEventTopic::ActivityLifecycleCreate
+            | RuntimeEventTopic::ActivityLifecycleStart
+            | RuntimeEventTopic::ActivityLifecycleResume
+            | RuntimeEventTopic::ActivityLifecyclePause
+            | RuntimeEventTopic::ActivityLifecycleStop
+            | RuntimeEventTopic::ActivityLifecycleDestroy => Ok(self.payload.clone()),
             RuntimeEventTopic::SystemBootCompleted => {
                 canonicalData::<ToolPkgBroadcastBootData>(&self.topic, &self.payload)
             }

@@ -6,6 +6,8 @@ pub struct ChatTurnOptions {
     pub notifyReply: Option<bool>,
     pub hideUserMessage: bool,
     pub disableWarning: bool,
+    #[serde(default)]
+    pub chatInputSubmitRequestedHandled: bool,
 }
 
 impl Default for ChatTurnOptions {
@@ -15,6 +17,7 @@ impl Default for ChatTurnOptions {
             notifyReply: None,
             hideUserMessage: false,
             disableWarning: false,
+            chatInputSubmitRequestedHandled: false,
         }
     }
 }

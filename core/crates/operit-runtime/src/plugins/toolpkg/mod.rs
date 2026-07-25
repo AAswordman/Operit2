@@ -1,11 +1,17 @@
 #[path = "ToolPkgCommonBridgePlugin.rs"]
 pub mod ToolPkgCommonBridgePlugin;
 
+#[path = "ToolPkgAppLifecycleHookBridge.rs"]
+pub mod ToolPkgAppLifecycleHookBridge;
+
 #[path = "ToolPkgHookBridgeSupport.rs"]
 pub mod ToolPkgHookBridgeSupport;
 
 #[path = "ToolPkgMessageProcessingBridge.rs"]
 pub mod ToolPkgMessageProcessingBridge;
+
+#[path = "ToolPkgXmlRenderBridge.rs"]
+pub mod ToolPkgXmlRenderBridge;
 
 #[path = "ToolPkgAiProviderRegistry.rs"]
 pub mod ToolPkgAiProviderRegistry;
@@ -27,6 +33,9 @@ pub mod ToolPkgChatInputHookBridge;
 
 #[path = "ToolPkgChatViewHookBridge.rs"]
 pub mod ToolPkgChatViewHookBridge;
+
+#[path = "ToolPkgChatMessageHookBridge.rs"]
+pub mod ToolPkgChatMessageHookBridge;
 
 #[path = "ToolPkgInputMenuToggleBridge.rs"]
 pub mod ToolPkgInputMenuToggleBridge;

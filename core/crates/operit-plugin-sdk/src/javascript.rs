@@ -252,6 +252,8 @@ pub struct ToolPkgMainRegistrationCapture {
     pub chatInputHooks: Vec<String>,
     #[serde(rename = "chatViewHooks", default)]
     pub chatViewHooks: Vec<String>,
+    #[serde(rename = "chatMessageHooks", default)]
+    pub chatMessageHooks: Vec<String>,
     #[serde(rename = "hostEventHooks", default)]
     pub hostEventHooks: Vec<String>,
     #[serde(rename = "toolLifecycleHooks", default)]

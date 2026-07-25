@@ -2,6 +2,13 @@ use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use crate::plugins::toolpkg::ToolPkgChatInputHookBridge::{
+    CHAT_INPUT_EVENT_INPUT_CHANGED, CHAT_INPUT_EVENT_SUBMIT_REQUESTED, CHAT_INPUT_EVENT_SUBMITTED,
+    CHAT_INPUT_SUBMIT_ACTION_ALLOW, CHAT_INPUT_SUBMIT_ACTION_BLOCK,
+    CHAT_INPUT_SUBMIT_ACTION_CONSUME, CHAT_INPUT_SUBMIT_ACTION_REPLACE, ChatInputHookContext,
+    ChatInputHookResult, ToolPkgChatInputHookBridge,
+};
+use crate::plugins::toolpkg::ToolPkgXmlRenderBridge::ToolPkgXmlRenderBridge;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use crate::services::core::MessageProcessingDelegate::MessageProcessingDelegate;
@@ -24,15 +31,15 @@ use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::PromptFunctionType::PromptFunctionType;
-use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
+use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
+use operit_store::PreferencesDataStore::{StateFlow, combine3, combine5};
 use operit_store::repository::ChatHistoryManager::ChatImportResult;
-use operit_store::PreferencesDataStore::{combine3, combine5, StateFlow};
-use operit_tools::files::PathMapper::PathMapper;
-use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
-use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_util::AppLogger::AppLogger;
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};
@@ -50,6 +57,21 @@ pub trait ChatServiceUiBridge {}
 pub struct EmptyChatServiceUiBridge;
 
 impl ChatServiceUiBridge for EmptyChatServiceUiBridge {}
+
+/// Serializes a ToolPkg chat input result into the proxy-facing JSON shape.
+#[allow(non_snake_case)]
+fn serializeChatInputHookResult(result: Option<ChatInputHookResult>) -> serde_json::Value {
+    match result {
+        Some(result) => serde_json::json!({
+            "action": result.action,
+            "text": result.text,
+            "message": result.message,
+            "clearInput": result.clearInput,
+            "metadata": result.metadata,
+        }),
+        None => serde_json::Value::Null,
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 struct ChatMainFlowInputs {
@@ -239,13 +261,112 @@ impl ChatServiceCore {
         }
     }
 
+    /// Builds a ToolPkg chat input context for the current runtime send surface.
+    #[allow(non_snake_case)]
+    fn buildChatInputHookContext(
+        &self,
+        chatId: &str,
+        text: &str,
+        selectionStart: i32,
+        selectionEnd: i32,
+        attachmentCount: usize,
+        eventName: &str,
+    ) -> ChatInputHookContext {
+        ChatInputHookContext {
+            chatId: chatId.to_string(),
+            text: text.to_string(),
+            selectionStart,
+            selectionEnd,
+            hasAttachments: attachmentCount > 0,
+            attachmentCount: attachmentCount as i32,
+            isProcessing: self
+                .messageProcessingDelegate
+                .isChatLoading(chatId.to_string()),
+            inputStyle: "Runtime".to_string(),
+            source: "Runtime".to_string(),
+            submitSource: "Send".to_string(),
+            eventName: eventName.to_string(),
+        }
+    }
+
+    /// Builds a chat input hook context using the caret at the end of the text.
+    #[allow(non_snake_case)]
+    fn buildChatInputHookContextAtEnd(
+        &self,
+        chatId: &str,
+        text: &str,
+        attachmentCount: usize,
+        eventName: &str,
+    ) -> ChatInputHookContext {
+        let textCharCount = text.chars().count() as i32;
+        self.buildChatInputHookContext(
+            chatId,
+            text,
+            textCharCount,
+            textCharCount,
+            attachmentCount,
+            eventName,
+        )
+    }
+
+    /// Dispatches chat input change notifications from host-owned input widgets.
+    #[allow(non_snake_case)]
+    pub fn dispatchChatInputChanged(
+        &self,
+        chatIdOverride: Option<String>,
+        messageText: String,
+        selectionStart: i32,
+        selectionEnd: i32,
+        attachmentCount: usize,
+    ) {
+        let hookChatId = chatIdOverride
+            .or_else(|| self.chatHistoryDelegate.currentChatId.clone())
+            .unwrap_or_default();
+        ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(
+            self.buildChatInputHookContext(
+                &hookChatId,
+                &messageText,
+                selectionStart,
+                selectionEnd,
+                attachmentCount,
+                CHAT_INPUT_EVENT_INPUT_CHANGED,
+            ),
+        );
+    }
+
+    /// Dispatches submit_requested and returns the ToolPkg decision for the host input widget.
+    #[allow(non_snake_case)]
+    pub fn dispatchChatInputSubmitRequested(
+        &self,
+        chatIdOverride: Option<String>,
+        messageText: String,
+        selectionStart: i32,
+        selectionEnd: i32,
+        attachmentCount: usize,
+    ) -> serde_json::Value {
+        let hookChatId = chatIdOverride
+            .or_else(|| self.chatHistoryDelegate.currentChatId.clone())
+            .unwrap_or_default();
+        let decision = ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(
+            self.buildChatInputHookContext(
+                &hookChatId,
+                &messageText,
+                selectionStart,
+                selectionEnd,
+                attachmentCount,
+                CHAT_INPUT_EVENT_SUBMIT_REQUESTED,
+            ),
+        );
+        serializeChatInputHookResult(decision)
+    }
+
     /// Sends a user-authored message through the active chat runtime.
     pub async fn sendUserMessage(
         &mut self,
         promptFunctionType: PromptFunctionType,
         roleCardIdOverride: Option<String>,
         chatIdOverride: Option<String>,
-        messageText: String,
+        mut messageText: String,
         proxySenderNameOverride: Option<String>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
@@ -253,6 +374,49 @@ impl ChatServiceCore {
         replyToMessage: Option<ChatMessage>,
         turnOptions: ChatTurnOptions,
     ) {
+        let hookChatId = match chatIdOverride.as_ref() {
+            Some(chatId) => chatId.clone(),
+            None => self
+                .chatHistoryDelegate
+                .currentChatId
+                .clone()
+                .unwrap_or_default(),
+        };
+        let attachmentCount = attachments.len();
+        if !turnOptions.chatInputSubmitRequestedHandled {
+            let submitDecision = ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(
+                self.buildChatInputHookContextAtEnd(
+                    &hookChatId,
+                    &messageText,
+                    attachmentCount,
+                    CHAT_INPUT_EVENT_SUBMIT_REQUESTED,
+                ),
+            );
+            if let Some(decision) = submitDecision {
+                match decision.action.as_str() {
+                    CHAT_INPUT_SUBMIT_ACTION_BLOCK | CHAT_INPUT_SUBMIT_ACTION_CONSUME => {
+                        if let Some(message) = decision.message {
+                            self.messageProcessingDelegate.showToast(message);
+                        }
+                        return;
+                    }
+                    CHAT_INPUT_SUBMIT_ACTION_REPLACE | CHAT_INPUT_SUBMIT_ACTION_ALLOW => {
+                        if let Some(updatedText) = decision.text {
+                            messageText = updatedText;
+                        }
+                    }
+                    _ => {}
+                };
+            }
+        }
+        ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(
+            self.buildChatInputHookContextAtEnd(
+                &hookChatId,
+                &messageText,
+                attachmentCount,
+                CHAT_INPUT_EVENT_SUBMITTED,
+            ),
+        );
         if let (Some(service), Some(delegate)) = (
             self.enhancedAiService.as_mut(),
             self.messageCoordinationDelegate.as_mut(),
@@ -299,6 +463,12 @@ impl ChatServiceCore {
     /// Splits markdown content into stable render events for the client.
     pub fn splitMarkdownContent(&self, content: String) -> Vec<MarkdownStreamEvent> {
         MarkdownRenderEventStream::fromContent(content)
+    }
+
+    /// Renders one XML block through registered ToolPkg XML render hooks.
+    #[allow(non_snake_case)]
+    pub fn renderToolPkgXml(&self, tagName: String, xmlContent: String) -> serde_json::Value {
+        ToolPkgXmlRenderBridge::renderRegisteredXml(tagName, xmlContent)
     }
 
     /// Creates a new chat and makes it available through chat history state.

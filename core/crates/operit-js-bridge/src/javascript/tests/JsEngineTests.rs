@@ -776,6 +776,7 @@ fn execute_minified_package_script_with_metadata() {
 
 #[test]
 fn register_thinking_guidance_toolpkg_main() {
+    ensure_test_runtime_root();
     let engine = super::JsEngine::new_toolpkg_registration_engine();
     let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()

@@ -6,7 +6,7 @@ use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_TOOL_LIFECYCLE;
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::ToolPkgToolLifecycleHookRegistration;
 use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
-use operit_tools::tools::AIToolHook::AIToolHook;
+use operit_tools::tools::AIToolHook::{AIToolHook, AIToolHookDecision};
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::AITool;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
@@ -60,6 +60,63 @@ impl AIToolHook for ToolLifecycleBridge {
             "tool_call_requested",
             build_base_payload(tool),
         );
+    }
+
+    fn onToolCallIntercept(&self, tool: &AITool) -> AIToolHookDecision {
+        let payload = build_base_payload(tool);
+        let manager = self.runtime.package_manager();
+        let hooks = TOOL_LIFECYCLE_HOOKS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .expect("toolpkg tool lifecycle hook mutex poisoned")
+            .clone();
+        for hook in hooks {
+            let result = manager.runToolPkgMainHook(
+                &hook.containerPackageName,
+                &hook.functionName,
+                TOOLPKG_EVENT_TOOL_LIFECYCLE,
+                Some("tool_call_intercept"),
+                Some(&hook.hookId),
+                hook.functionSource.as_deref(),
+                payload.clone(),
+                None,
+                None,
+                None,
+            );
+            let decoded = match result {
+                Ok(raw) => operit_plugin_sdk::toolpkg::ToolPkgHooks::decodeToolPkgHookResult(raw),
+                Err(error) => {
+                    ChainLogger::error(
+                        PLUGIN_CHAIN,
+                        "plugin.toolpkg.tool_lifecycle.intercept.error",
+                        &[("error", error)],
+                    );
+                    return AIToolHookDecision::Block(
+                        "ToolPkg tool lifecycle intercept failed.".to_string(),
+                    );
+                }
+            };
+            if let Some(Value::Object(object)) = decoded {
+                match object
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .map(|value| value.trim().to_ascii_lowercase())
+                    .as_deref()
+                {
+                    Some("block") => {
+                        let reason = object
+                            .get("reason")
+                            .and_then(Value::as_str)
+                            .filter(|value| !value.trim().is_empty())
+                            .unwrap_or("ToolPkg tool lifecycle hook blocked the tool call.");
+                        return AIToolHookDecision::Block(reason.to_string());
+                    }
+                    Some("allow") | None => {}
+                    Some(_) => {}
+                }
+            }
+        }
+        AIToolHookDecision::Allow
     }
 
     fn onToolPermissionChecked(&self, tool: &AITool, granted: bool, reason: Option<&str>) {

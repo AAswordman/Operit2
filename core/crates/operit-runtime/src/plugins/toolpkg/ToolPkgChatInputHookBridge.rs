@@ -11,8 +11,11 @@ use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static CHAT_INPUT_HOOKS: OnceLock<Mutex<Vec<ToolPkgChatInputHookRegistration>>> = OnceLock::new();
+static CHAT_INPUT_RUNTIME: OnceLock<ToolPkgBridgeRuntime> = OnceLock::new();
 
+pub const CHAT_INPUT_EVENT_INPUT_CHANGED: &str = "input_changed";
 pub const CHAT_INPUT_EVENT_SUBMIT_REQUESTED: &str = "submit_requested";
+pub const CHAT_INPUT_EVENT_SUBMITTED: &str = "submitted";
 pub const CHAT_INPUT_SUBMIT_ACTION_ALLOW: &str = "allow";
 pub const CHAT_INPUT_SUBMIT_ACTION_BLOCK: &str = "block";
 pub const CHAT_INPUT_SUBMIT_ACTION_CONSUME: &str = "consume";
@@ -47,6 +50,7 @@ pub struct ToolPkgChatInputHookBridge;
 impl ToolPkgChatInputHookBridge {
     /// Registers chat input hooks for one application runtime.
     pub fn register(runtime: ToolPkgBridgeRuntime) {
+        CHAT_INPUT_RUNTIME.get_or_init(|| runtime.clone());
         let manager = runtime.package_manager();
         manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(|activeContainers| {
             ToolPkgChatInputHookBridge::syncToolPkgRegistrations(activeContainers);
@@ -211,6 +215,15 @@ impl ToolPkgChatInputHookBridge {
         } else {
             None
         }
+    }
+
+    /// Dispatches chat input hooks through the runtime registered by the common bridge.
+    #[allow(non_snake_case)]
+    pub fn dispatchRegisteredChatInputHooks(
+        context: ChatInputHookContext,
+    ) -> Option<ChatInputHookResult> {
+        let runtime = CHAT_INPUT_RUNTIME.get()?;
+        Self::dispatchChatInputHooks(runtime, context)
     }
 }
 

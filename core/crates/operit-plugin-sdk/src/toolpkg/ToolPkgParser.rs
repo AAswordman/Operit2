@@ -331,6 +331,8 @@ pub struct ToolPkgMainRegistration {
     pub chatInputHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "chatViewHooks", default)]
     pub chatViewHooks: Vec<ToolPkgRegisteredFunctionHook>,
+    #[serde(rename = "chatMessageHooks", default)]
+    pub chatMessageHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "hostEventHooks", default)]
     pub hostEventHooks: Vec<ToolPkgRegisteredHostEventHook>,
     #[serde(rename = "toolLifecycleHooks", default)]
@@ -410,6 +412,8 @@ pub struct ToolPkgContainerRuntime {
     pub chatInputHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "chatViewHooks")]
     pub chatViewHooks: Vec<ToolPkgFunctionHookRuntime>,
+    #[serde(rename = "chatMessageHooks")]
+    pub chatMessageHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "hostEventHooks")]
     pub hostEventHooks: Vec<ToolPkgHostEventHookRuntime>,
     #[serde(rename = "toolLifecycleHooks")]
@@ -1040,6 +1044,10 @@ impl ToolPkgArchiveParser {
             &mainRegistration.chatViewHooks,
             TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK,
         )?;
+        let chatMessageHooks = validateFunctionHooks(
+            &mainRegistration.chatMessageHooks,
+            TOOLPKG_REGISTRATION_CHAT_MESSAGE_HOOK,
+        )?;
         let hostEventHooks = validateHostEventHooks(
             &mainRegistration.hostEventHooks,
             TOOLPKG_REGISTRATION_HOST_EVENT_HOOK,
@@ -1124,6 +1132,7 @@ impl ToolPkgArchiveParser {
             inputMenuTogglePlugins,
             chatInputHooks,
             chatViewHooks,
+            chatMessageHooks,
             hostEventHooks,
             toolLifecycleHooks,
             promptInputHooks,

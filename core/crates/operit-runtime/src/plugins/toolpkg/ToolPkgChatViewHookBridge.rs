@@ -10,13 +10,13 @@ use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
 static CHAT_VIEW_HOOKS: OnceLock<Mutex<Vec<ToolPkgChatViewHookRegistration>>> = OnceLock::new();
 static REPLAYABLE_OPEN_VIEW_PARAMS: OnceLock<Mutex<Vec<ChatViewHookParams>>> = OnceLock::new();
+static CHAT_VIEW_RUNTIME: OnceLock<ToolPkgBridgeRuntime> = OnceLock::new();
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChatViewEvent {
     ViewOpened,
+    ViewUpdated,
     ViewClosed,
-    ViewFocused,
-    ViewBlurred,
 }
 
 impl ChatViewEvent {
@@ -24,9 +24,8 @@ impl ChatViewEvent {
     pub fn wireName(&self) -> &'static str {
         match self {
             ChatViewEvent::ViewOpened => "view_opened",
+            ChatViewEvent::ViewUpdated => "view_updated",
             ChatViewEvent::ViewClosed => "view_closed",
-            ChatViewEvent::ViewFocused => "view_focused",
-            ChatViewEvent::ViewBlurred => "view_blurred",
         }
     }
 }
@@ -46,6 +45,7 @@ pub struct ToolPkgChatViewHookBridge;
 impl ToolPkgChatViewHookBridge {
     /// Registers chat view hooks for one application runtime.
     pub fn register(runtime: ToolPkgBridgeRuntime) {
+        CHAT_VIEW_RUNTIME.get_or_init(|| runtime.clone());
         let manager = runtime.package_manager();
         manager.addToolPkgRuntimeChangeListener(std::sync::Arc::new(move |activeContainers| {
             ToolPkgChatViewHookBridge::syncAndReplayToolPkgRegistrations(
@@ -85,6 +85,15 @@ impl ToolPkgChatViewHookBridge {
         for hook in activeHooks {
             runChatViewHook(runtime, &hook, event.wireName(), eventPayload.clone());
         }
+    }
+
+    /// Dispatches chat view hooks through the runtime registered by the common bridge.
+    #[allow(non_snake_case)]
+    pub fn dispatchRegisteredChatViewEvent(event: ChatViewEvent, params: ChatViewHookParams) {
+        let Some(runtime) = CHAT_VIEW_RUNTIME.get() else {
+            return;
+        };
+        Self::onEvent(runtime, event, params);
     }
 
     #[allow(non_snake_case)]
@@ -151,14 +160,19 @@ fn updateReplayableOpenViewParams(event: &ChatViewEvent, params: &ChatViewHookPa
         .lock()
         .expect("toolpkg chat view replay mutex poisoned");
     match event {
-        ChatViewEvent::ViewOpened | ChatViewEvent::ViewFocused => {
+        ChatViewEvent::ViewOpened => {
             replayParams.retain(|item| item.viewId != params.viewId);
             replayParams.push(params.clone());
+        }
+        ChatViewEvent::ViewUpdated => {
+            if replayParams.iter().any(|item| item.viewId == params.viewId) {
+                replayParams.retain(|item| item.viewId != params.viewId);
+                replayParams.push(params.clone());
+            }
         }
         ChatViewEvent::ViewClosed => {
             replayParams.retain(|item| item.viewId != params.viewId);
         }
-        ChatViewEvent::ViewBlurred => {}
     }
 }
 

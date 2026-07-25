@@ -18,6 +18,7 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
             inputMenuTogglePlugins: [],
             chatInputHooks: [],
             chatViewHooks: [],
+            chatMessageHooks: [],
             hostEventHooks: [],
             toolLifecycleHooks: [],
             promptInputHooks: [],
@@ -462,6 +463,7 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
             registerInputMenuTogglePlugin: registerFunction('inputMenuTogglePlugins', 'registerInputMenuTogglePlugin'),
             registerChatInputHook: registerFunction('chatInputHooks', 'registerChatInputHook'),
             registerChatViewHook: registerFunction('chatViewHooks', 'registerChatViewHook'),
+            registerChatMessageHook: registerFunction('chatMessageHooks', 'registerChatMessageHook'),
             registerHostEventHook: registerFunction('hostEventHooks', 'registerHostEventHook'),
             registerToolLifecycleHook: registerFunction('toolLifecycleHooks', 'registerToolLifecycleHook'),
             registerPromptInputHook: registerFunction('promptInputHooks', 'registerPromptInputHook'),
@@ -492,6 +494,7 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
         root.registerToolPkgInputMenuTogglePlugin = api.registerInputMenuTogglePlugin;
         root.registerToolPkgChatInputHook = api.registerChatInputHook;
         root.registerToolPkgChatViewHook = api.registerChatViewHook;
+        root.registerToolPkgChatMessageHook = api.registerChatMessageHook;
         root.registerToolPkgHostEventHook = api.registerHostEventHook;
         root.registerToolPkgToolLifecycleHook = api.registerToolLifecycleHook;
         root.registerToolPkgPromptInputHook = api.registerPromptInputHook;
@@ -510,6 +513,7 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
         root.registerInputMenuTogglePlugin = api.registerInputMenuTogglePlugin;
         root.registerChatInputHook = api.registerChatInputHook;
         root.registerChatViewHook = api.registerChatViewHook;
+        root.registerChatMessageHook = api.registerChatMessageHook;
         root.registerHostEventHook = api.registerHostEventHook;
         root.registerToolLifecycleHook = api.registerToolLifecycleHook;
         root.registerPromptInputHook = api.registerPromptInputHook;

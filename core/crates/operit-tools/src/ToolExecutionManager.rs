@@ -310,6 +310,19 @@ impl ToolExecutionManager {
             }
 
             toolHandler.notifyToolCallRequested(&invocation.tool);
+            let interception = toolHandler.checkToolInterception(&invocation.tool);
+            if let operit_tools::tools::AIToolHook::AIToolHookDecision::Block(_) = interception {
+                let blockedResult = AIToolHandler::toolInterceptionResult(
+                    &invocation.tool,
+                    interception,
+                );
+                toolHandler.notifyToolExecutionResult(&invocation.tool, &blockedResult);
+                emitted.push(ensureEndsWithNewline(
+                    &ConversationMarkupManager::formatToolResultForMessage(&blockedResult),
+                ));
+                results.push(blockedResult);
+                continue;
+            }
             let (hasPermission, errorResult) = Self::checkRoleCardToolAccess(
                 toolHandler,
                 &invocation,

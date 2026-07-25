@@ -11,12 +11,12 @@ use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_MESSAGE_PROCESSING;
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::{
-    decodeToolPkgHookResult, ToolPkgMessageProcessingHookRegistration,
+    ToolPkgMessageProcessingHookRegistration, decodeToolPkgHookResult,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
-use operit_util::stream::HotStream::MutableSharedStreamImpl;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
+use operit_util::stream::HotStream::MutableSharedStreamImpl;
 
 static MESSAGE_PROCESSING_HOOKS: OnceLock<Mutex<Vec<ToolPkgMessageProcessingHookRegistration>>> =
     OnceLock::new();
@@ -107,7 +107,7 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
                 ],
             );
             let probeDecoded =
-                runMessageProcessingHook(&manager, &hook, probeEventPayload.clone(), None);
+                runMessageProcessingHook(&manager, &hook, probeEventPayload.clone(), None, None);
             let probeResult = parseMessageProcessingResult(probeDecoded.as_ref());
             let Some(probeResult) = probeResult else {
                 continue;
@@ -143,6 +143,8 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
             let hook_for_worker = hook.clone();
             let manager_for_worker = manager.clone();
             let executionIdForWorker = executionId.clone();
+            let released = Arc::new(AtomicBool::new(false));
+            let released_for_worker = released.clone();
             self.runtime
                 .host_manager()
                 .hostRuntimeTaskSchedulerHost
@@ -166,6 +168,7 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
                             &manager_for_worker,
                             &hook_for_worker,
                             eventPayload,
+                            Some(&executionIdForWorker),
                             Some(Arc::new(move |raw| {
                                 let decoded = decodeToolPkgHookResult(Some(raw));
                                 for chunk in extractMessageChunks(decoded.as_ref()) {
@@ -199,11 +202,22 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
                             ],
                         );
                         stream_for_final.close();
+                        releaseMessageProcessingEngine(
+                            &manager_for_worker,
+                            &executionIdForWorker,
+                            &hook_for_worker.containerPackageName,
+                            &released_for_worker,
+                        );
                     }),
                 )
                 .expect("host runtime task scheduler must schedule ToolPkg message processing");
             return Some(MessageProcessingExecution {
-                controller: Box::new(RegisteredMessageProcessingController { executionId, hook }),
+                controller: Box::new(RegisteredMessageProcessingController {
+                    executionId,
+                    hook,
+                    manager,
+                    released,
+                }),
                 stream,
             });
         }
@@ -241,13 +255,14 @@ fn runMessageProcessingHook(
     manager: &RuntimePackageManager,
     hook: &ToolPkgMessageProcessingHookRegistration,
     eventPayload: Value,
+    executionContextKey: Option<&str>,
     onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
 ) -> Option<Value> {
     match manager.runToolPkgMainHook(
         &hook.containerPackageName,
         &hook.functionName,
         TOOLPKG_EVENT_MESSAGE_PROCESSING,
-        None,
+        executionContextKey,
         Some(&hook.pluginId),
         hook.functionSource.as_deref(),
         eventPayload,
@@ -364,10 +379,30 @@ fn extractMessageChunks(decoded: Option<&Value>) -> Vec<String> {
 struct RegisteredMessageProcessingController {
     executionId: String,
     hook: ToolPkgMessageProcessingHookRegistration,
+    manager: RuntimePackageManager,
+    released: Arc<AtomicBool>,
 }
 
 impl MessageProcessingController for RegisteredMessageProcessingController {
     fn cancel(&self) {
-        let _ = (&self.executionId, &self.hook);
+        releaseMessageProcessingEngine(
+            &self.manager,
+            &self.executionId,
+            &self.hook.containerPackageName,
+            &self.released,
+        );
     }
+}
+
+/// Releases a message-processing execution context at most once.
+fn releaseMessageProcessingEngine(
+    manager: &RuntimePackageManager,
+    executionId: &str,
+    containerPackageName: &str,
+    released: &AtomicBool,
+) {
+    if released.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    manager.releaseToolPkgExecutionEngine(executionId, containerPackageName);
 }

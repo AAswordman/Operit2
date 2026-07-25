@@ -16,6 +16,7 @@ use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::data::preferences::UserPreferencesManager::UserPreferencesManager;
+use crate::plugins::toolpkg::ToolPkgAppLifecycleHookBridge::ToolPkgAppLifecycleHookBridge;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 use crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge;
 use crate::plugins::PluginRegistry::PluginRegistry;
@@ -262,6 +263,16 @@ impl OperitApplication {
                 "built-in plugin initialization done elapsedMs={}",
                 currentTimeMillis() - pluginInitializationStartedAt
             ),
+        );
+        ToolPkgAppLifecycleHookBridge::dispatchEvent(
+            &self.toolPkgBridgeRuntime,
+            operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_APPLICATION_ON_CREATE,
+            serde_json::json!({
+                "extras": {
+                    "startupTimeMs": self.appStartupTimeMs,
+                    "elapsedMs": currentTimeMillis() - self.appStartupTimeMs,
+                }
+            }),
         );
         let runtimeEventRegistrationStartedAt = currentTimeMillis();
         AppLogger::i("OperitApplication", "host runtime event registration start");
