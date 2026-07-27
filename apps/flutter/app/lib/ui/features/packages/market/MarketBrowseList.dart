@@ -429,9 +429,11 @@ class _MarketCardMetaCount extends StatelessWidget {
   }
 }
 
+/// Truncates descriptions by complete characters without splitting UTF-16.
 String _truncateMarketBrowseDescription(String description) {
-  if (description.length > 100) {
-    return '${description.substring(0, 100)}...';
+  final characters = description.characters;
+  if (characters.length > 100) {
+    return '${characters.take(100)}...';
   }
   return description;
 }

@@ -66,6 +66,12 @@ Marketplace publishing can AST-minify executable JavaScript with `compress: fals
 `/* METADATA ... */` block is preserved. ToolPkg archives remain standard ZIP files: manifests and
 resources are unchanged, while executable JavaScript entries are minified.
 
+`toolpkg::ToolPkgProtection::compareToolPkgJavaScriptSimilarity` provides reproducible source
+comparison evidence for ToolPkg complaint review. It AST-canonicalizes each package's declared
+executable entries, then compares fixed-size canonical-code fragment fingerprints and reports directional
+coverage plus an aggregate score. The result identifies code overlap; it is not an authorship
+verdict or an automatic moderation decision.
+
 ## JavaScript Execution Contract
 
 JavaScript packages call the fixed `toolCall` interface. The JavaScript bridge converts that call

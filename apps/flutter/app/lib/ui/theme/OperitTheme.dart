@@ -308,14 +308,14 @@ class OperitThemeController {
   final UserPreferencesManager _preferencesManager;
   final GeneratedCoreProxyClients _clients;
   StreamSubscription<Object?>? _activePromptSubscription;
-  ThemeMode _themeMode = ThemeMode.system;
   ThemePreferenceSnapshot _themePreferenceSnapshot =
       UserPreferencesManager.defaultThemePreferenceSnapshot;
   String? _activeCharacterCardId;
   String? _activeCharacterGroupId;
   String? _activeThemeTargetName;
+  int _activePromptRevision = 0;
 
-  ThemeMode get themeMode => _themeMode;
+  ThemeMode get themeMode => _themePreferenceSnapshot.themeMode;
   ThemePreferenceSnapshot get themePreferenceSnapshot =>
       _themePreferenceSnapshot;
   String get activeThemeTargetName {
@@ -337,49 +337,46 @@ class OperitThemeController {
     final activePrompt = await _clients.preferencesActivePromptManager
         .getActivePrompt();
     _applyActivePrompt(activePrompt);
-    await _loadActiveThemeTargetName();
+    final revision = ++_activePromptRevision;
     _activePromptSubscription = _clients.preferencesActivePromptManager
         .activePromptFlowChanges()
         .listen((activePrompt) {
           unawaited(_handleActivePromptChange(activePrompt));
         });
-    await loadThemeMode();
+    await _loadActiveThemeTarget(revision);
   }
 
   /// Cancels the active prompt subscription.
   void dispose() {
+    _activePromptRevision++;
     unawaited(_activePromptSubscription?.cancel());
     _activePromptSubscription = null;
   }
 
-  Future<void> loadThemeMode() async {
-    final snapshot = await _resolveThemePreferenceSnapshot();
-    await _loadCustomFontIfNeeded(snapshot);
-    final themeMode = snapshot.flutterThemeMode;
-    if (_themeMode == themeMode && _themePreferenceSnapshot == snapshot) {
-      return;
-    }
-    _themePreferenceSnapshot = snapshot;
-    _themeMode = themeMode;
-    _onChanged();
-  }
-
+  /// Reports whether the effective Material theme is dark.
   bool isDark(BuildContext context) {
     return Theme.of(context).brightness == Brightness.dark;
   }
 
+  /// Toggles directly between explicit light and dark modes.
   void toggle(BuildContext context) {
     unawaited(setThemeMode(isDark(context) ? ThemeMode.light : ThemeMode.dark));
   }
 
+  /// Persists and applies one theme mode for the active target.
   Future<void> setThemeMode(ThemeMode themeMode) async {
-    if (_themeMode == themeMode) {
+    if (_themePreferenceSnapshot.themeMode == themeMode) {
       return;
     }
-    await _saveThemeModeToCurrentTarget(themeMode);
+    await _preferencesManager.saveThemeSettings(
+      characterCardId: _activeCharacterCardId,
+      characterGroupId: _activeCharacterGroupId,
+      themeMode: themeMode,
+    );
     await _reloadThemePreferenceSnapshot();
   }
 
+  /// Applies transient slider values without persisting them.
   void previewThemeSettings({
     double? backgroundImageOpacity,
     double? backgroundBlurRadius,
@@ -392,10 +389,10 @@ class OperitThemeController {
       fontScale: fontScale,
     );
     _themePreferenceSnapshot = snapshot;
-    _themeMode = snapshot.flutterThemeMode;
     _onChanged();
   }
 
+  /// Persists a partial theme update for the active target.
   Future<void> saveThemeSettings({
     String? inputStyle,
     String? chatStyle,
@@ -555,6 +552,7 @@ class OperitThemeController {
     await _reloadThemePreferenceSnapshot();
   }
 
+  /// Persists the global user avatar shown by the active theme.
   Future<void> saveActiveThemeUserAvatarSettings({
     required String customUserAvatarUri,
   }) async {
@@ -564,60 +562,36 @@ class OperitThemeController {
     await _reloadThemePreferenceSnapshot();
   }
 
+  /// Clears message color overrides for the active target.
   Future<void> resetMessageColorSettings() async {
     await _resetCurrentTargetMessageColorSettings();
     await _reloadThemePreferenceSnapshot();
   }
 
+  /// Clears every target-scoped theme preference for the active target.
   Future<void> resetThemeSettings() async {
     await _resetCurrentTargetThemeSettings();
     await _reloadThemePreferenceSnapshot();
   }
 
+  /// Reloads and commits the latest snapshot for the active target.
   Future<void> _reloadThemePreferenceSnapshot() async {
-    final snapshot = await _resolveThemePreferenceSnapshot();
-    await _loadCustomFontIfNeeded(snapshot);
-    _themePreferenceSnapshot = snapshot;
-    _themeMode = _themePreferenceSnapshot.flutterThemeMode;
-    _onChanged();
-  }
-
-  Future<ThemePreferenceSnapshot> _resolveThemePreferenceSnapshot() {
-    return _preferencesManager.resolveThemePreferenceSnapshot(
+    final snapshot = await _preferencesManager.resolveThemePreferenceSnapshot(
       characterCardId: _activeCharacterCardId,
       characterGroupId: _activeCharacterGroupId,
     );
+    await _loadCustomFontIfNeeded(snapshot);
+    _themePreferenceSnapshot = snapshot;
+    _onChanged();
   }
 
+  /// Starts a revision-guarded load when the active prompt target changes.
   Future<void> _handleActivePromptChange(
     core_proxy.ActivePrompt? activePrompt,
   ) async {
     if (_applyActivePrompt(activePrompt)) {
-      await _loadActiveThemeTargetName();
-      await _reloadThemePreferenceSnapshot();
+      await _loadActiveThemeTarget(++_activePromptRevision);
     }
-  }
-
-  Future<void> _saveThemeModeToCurrentTarget(ThemeMode themeMode) {
-    return switch (themeMode) {
-      ThemeMode.system => _preferencesManager.saveThemeSettings(
-        characterCardId: _activeCharacterCardId,
-        characterGroupId: _activeCharacterGroupId,
-        useSystemTheme: true,
-      ),
-      ThemeMode.light => _preferencesManager.saveThemeSettings(
-        characterCardId: _activeCharacterCardId,
-        characterGroupId: _activeCharacterGroupId,
-        themeMode: UserPreferencesManager.THEME_MODE_LIGHT,
-        useSystemTheme: false,
-      ),
-      ThemeMode.dark => _preferencesManager.saveThemeSettings(
-        characterCardId: _activeCharacterCardId,
-        characterGroupId: _activeCharacterGroupId,
-        themeMode: UserPreferencesManager.THEME_MODE_DARK,
-        useSystemTheme: false,
-      ),
-    };
   }
 
   Future<void> _resetCurrentTargetThemeSettings() async {
@@ -648,22 +622,46 @@ class OperitThemeController {
     }
   }
 
-  Future<void> _loadActiveThemeTargetName() async {
+  /// Loads one target snapshot and commits it only while still current.
+  Future<void> _loadActiveThemeTarget(int revision) async {
     final groupId = _activeCharacterGroupId;
     final cardId = _activeCharacterCardId;
-    if (groupId != null) {
-      final group = await _clients.preferencesCharacterGroupCardManager
-          .getCharacterGroupCard(groupId: groupId);
-      _activeThemeTargetName = group?.name;
-    } else if (cardId != null) {
-      final card = await _clients.preferencesCharacterCardManager
-          .getCharacterCard(id: cardId);
-      _activeThemeTargetName = card.name;
-    } else {
-      _activeThemeTargetName = null;
+    final targetName = await _resolveActiveThemeTargetName(
+      characterCardId: cardId,
+      characterGroupId: groupId,
+    );
+    final snapshot = await _preferencesManager.resolveThemePreferenceSnapshot(
+      characterCardId: cardId,
+      characterGroupId: groupId,
+    );
+    await _loadCustomFontIfNeeded(snapshot);
+    if (revision != _activePromptRevision) {
+      return;
     }
+    _activeThemeTargetName = targetName;
+    _themePreferenceSnapshot = snapshot;
+    _onChanged();
   }
 
+  /// Resolves the display name for one explicit theme target.
+  Future<String?> _resolveActiveThemeTargetName({
+    required String? characterCardId,
+    required String? characterGroupId,
+  }) async {
+    if (characterGroupId != null) {
+      final group = await _clients.preferencesCharacterGroupCardManager
+          .getCharacterGroupCard(groupId: characterGroupId);
+      return group?.name;
+    }
+    if (characterCardId != null) {
+      final card = await _clients.preferencesCharacterCardManager
+          .getCharacterCard(id: characterCardId);
+      return card.name;
+    }
+    throw StateError('No active theme target');
+  }
+
+  /// Applies a generated active prompt to the current theme target ids.
   bool _applyActivePrompt(core_proxy.ActivePrompt? activePrompt) {
     String? nextCardId;
     String? nextGroupId;
@@ -705,7 +703,6 @@ ThemePreferenceSnapshot _themePreferenceSnapshotWith(
 }) {
   return ThemePreferenceSnapshot(
     themeMode: snapshot.themeMode,
-    useSystemTheme: snapshot.useSystemTheme,
     useCustomColors: snapshot.useCustomColors,
     customPrimaryColor: snapshot.customPrimaryColor,
     customSecondaryColor: snapshot.customSecondaryColor,
@@ -1307,6 +1304,7 @@ const List<String> _monospaceFontFamilyFallback = <String>[
 
 const Color _brandSeedColor = Color(0xFFBBDEFB);
 
+/// Builds one Material color scheme and applies the secondary accent color.
 ColorScheme _seedColorScheme(
   Brightness brightness,
   ThemePreferenceSnapshot themePreferenceSnapshot,

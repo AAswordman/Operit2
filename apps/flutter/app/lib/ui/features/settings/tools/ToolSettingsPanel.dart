@@ -331,13 +331,16 @@ class _HostRequirement {
     required this.action,
   });
 
-  factory _HostRequirement.fromJson(Map<Object?, Object?> json) {
+  /// Creates a display requirement from the generated runtime host descriptor.
+  factory _HostRequirement.fromHostRequirement(
+    core_proxy.HostOnboardingRequirement requirement,
+  ) {
     return _HostRequirement(
-      id: json['id'] as String,
-      title: json['title'] as String,
-      description: json['description'] as String,
-      status: json['status'] as String,
-      action: json['action'] as String,
+      id: requirement.id,
+      title: requirement.title,
+      description: requirement.description,
+      status: requirement.status.value,
+      action: requirement.action.value,
     );
   }
 
@@ -519,13 +522,13 @@ class _HostAuthorizationBridge {
       return const <_HostRequirement>[];
     }
     final statusById = await _requirementStatus(host.id);
-    return host.onboardingRequirements.map((item) {
-      final requirement = _HostRequirement.fromJson(
-        Map<Object?, Object?>.from(item as Map),
-      );
-      final status = statusById[requirement.id] as String;
-      return requirement.withStatus(status);
-    }).toList(growable: false);
+    return host.onboardingRequirements
+        .map((item) {
+          final requirement = _HostRequirement.fromHostRequirement(item);
+          final status = statusById[requirement.id] as String;
+          return requirement.withStatus(status);
+        })
+        .toList(growable: false);
   }
 
   static Future<void> request(String hostId, String requirementId) {

@@ -309,6 +309,8 @@ class _MarketListPaneState extends State<_MarketListPane> {
   List<core_proxy.MarketEntrySummary>? _searchCorpus;
   bool _searchLoading = false;
   int _searchGeneration = 0;
+  int _featuredPrefetchGeneration = 0;
+  bool _featuredPrefetching = false;
 
   GeneratedProvidersMarketStatsApiServiceCoreProxy get _market =>
       widget.clients.providersMarketStatsApiService;
@@ -319,10 +321,13 @@ class _MarketListPaneState extends State<_MarketListPane> {
     _loadFirstPage();
   }
 
+  /// Synchronizes search, filter, and featured prefetch state with new inputs.
   @override
   void didUpdateWidget(covariant _MarketListPane oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.searchQuery != widget.searchQuery) {
+      _featuredPrefetchGeneration += 1;
+      _featuredPrefetching = false;
       _loadSearchResults();
     }
     if (oldWidget.sortOption != widget.sortOption ||
@@ -331,9 +336,19 @@ class _MarketListPaneState extends State<_MarketListPane> {
       _searchCorpus = null;
       _loadFirstPage(clearExisting: true);
     }
+    if (oldWidget.featuredOnly != widget.featuredOnly) {
+      _featuredPrefetchGeneration += 1;
+      _featuredPrefetching = false;
+      if (widget.featuredOnly && widget.searchQuery.trim().isEmpty) {
+        _startFeaturedPrefetch(notify: false);
+      }
+    }
   }
 
+  /// Loads the first market page and resets the active list state.
   Future<void> _loadFirstPage({bool clearExisting = false}) async {
+    _featuredPrefetchGeneration += 1;
+    _featuredPrefetching = false;
     setState(() {
       _loading = true;
       _errorMessage = null;
@@ -371,8 +386,9 @@ class _MarketListPaneState extends State<_MarketListPane> {
     }
   }
 
+  /// Loads the next ordinary market page when featured filtering is inactive.
   Future<void> _loadMore() async {
-    if (_loadingMore || !_hasMore) {
+    if (_loadingMore || !_hasMore || widget.featuredOnly) {
       return;
     }
     setState(() {
@@ -406,6 +422,74 @@ class _MarketListPaneState extends State<_MarketListPane> {
     }
   }
 
+  /// Prefetches all remaining pages without rebuilding during the scroll.
+  Future<void> _prefetchFeaturedPages(int generation) async {
+    var nextPage = _page + 1;
+    var totalPages = _totalPages;
+    var lastPage = _page;
+    final pendingItems = <core_proxy.MarketEntrySummary>[];
+    try {
+      while (nextPage <= totalPages) {
+        final page = await _loadPage(nextPage);
+        if (!mounted ||
+            generation != _featuredPrefetchGeneration ||
+            !widget.featuredOnly ||
+            widget.searchQuery.trim().isNotEmpty) {
+          return;
+        }
+        pendingItems.addAll(page.items);
+        totalPages = _pageCount(page.total, page.pageSize);
+        lastPage = page.page;
+        nextPage = page.page + 1;
+      }
+      if (!mounted ||
+          generation != _featuredPrefetchGeneration ||
+          !widget.featuredOnly ||
+          widget.searchQuery.trim().isNotEmpty) {
+        return;
+      }
+      setState(() {
+        _items = <core_proxy.MarketEntrySummary>[..._items, ...pendingItems];
+        _page = lastPage;
+        _totalPages = totalPages;
+        _featuredPrefetching = false;
+      });
+    } catch (error, stackTrace) {
+      debugPrint(
+        'Failed to prefetch featured market entries: $error\n$stackTrace',
+      );
+      if (!mounted || generation != _featuredPrefetchGeneration) {
+        return;
+      }
+      setState(() {
+        _featuredPrefetching = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  /// Starts the featured page scan and keeps it outside scroll notifications.
+  void _startFeaturedPrefetch({required bool notify}) {
+    if (_featuredPrefetching ||
+        !widget.featuredOnly ||
+        widget.searchQuery.trim().isNotEmpty ||
+        !_hasMore) {
+      return;
+    }
+    final generation = ++_featuredPrefetchGeneration;
+    _featuredPrefetching = true;
+    if (notify && mounted) {
+      setState(() {});
+    }
+    unawaited(_prefetchFeaturedPages(generation));
+  }
+
+  /// Loads local search results and starts featured prefetch when needed.
   Future<void> _loadSearchResults() async {
     final query = widget.searchQuery.trim();
     final generation = ++_searchGeneration;
@@ -417,13 +501,16 @@ class _MarketListPaneState extends State<_MarketListPane> {
         _searchItems = <core_proxy.MarketEntrySummary>[];
         _searchLoading = false;
       });
+      _startFeaturedPrefetch(notify: true);
       return;
     }
     setState(() {
       _searchLoading = true;
     });
     try {
-      final corpus = _searchCorpus ?? await _loadAllPagesForLocalSearch();
+      final corpus =
+          _searchCorpus ??
+          (_hasMore ? await _loadAllPagesForLocalSearch() : _items);
       if (!mounted || generation != _searchGeneration) {
         return;
       }
@@ -494,6 +581,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
     return _market.getListPage(sort: _metric, page: page);
   }
 
+  /// Builds the market list, filter controls, and loading states.
   @override
   Widget build(BuildContext context) {
     final error = _errorMessage;
@@ -533,8 +621,8 @@ class _MarketListPaneState extends State<_MarketListPane> {
           .toList(growable: false);
       content = MarketBrowseList(
         isLoading: _loading || _searchLoading,
-        isLoadingMore: _loadingMore,
-        hasMore: _hasMore && rawQuery.isEmpty,
+        isLoadingMore: _loadingMore || _featuredPrefetching,
+        hasMore: _hasMore && rawQuery.isEmpty && !widget.featuredOnly,
         isEmpty: displayed.isEmpty,
         emptyTitle: rawQuery.isEmpty ? '暂无项目' : '没有匹配结果',
         onRefresh: _loadFirstPage,

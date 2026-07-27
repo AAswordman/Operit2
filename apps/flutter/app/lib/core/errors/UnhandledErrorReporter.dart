@@ -74,6 +74,7 @@ class FatalErrorHost extends StatelessWidget {
 
   final Widget child;
 
+  /// Builds the active app or a complete Material root for fatal errors.
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<FatalErrorReport?>(
@@ -82,7 +83,11 @@ class FatalErrorHost extends StatelessWidget {
         if (report == null) {
           return child;
         }
-        return FatalErrorScreen(report: report);
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Operit2',
+          home: FatalErrorScreen(report: report),
+        );
       },
     );
   }

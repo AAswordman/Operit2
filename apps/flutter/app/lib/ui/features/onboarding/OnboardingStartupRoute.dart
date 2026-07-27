@@ -3178,13 +3178,16 @@ class _OnboardingRequirement {
     required this.action,
   });
 
-  factory _OnboardingRequirement.fromJson(Map<Object?, Object?> json) {
+  /// Creates an onboarding requirement from the generated runtime host descriptor.
+  factory _OnboardingRequirement.fromHostRequirement(
+    core_proxy.HostOnboardingRequirement requirement,
+  ) {
     return _OnboardingRequirement(
-      id: json['id'] as String,
-      title: json['title'] as String,
-      description: json['description'] as String,
-      status: json['status'] as String,
-      action: json['action'] as String,
+      id: requirement.id,
+      title: requirement.title,
+      description: requirement.description,
+      status: requirement.status.value,
+      action: requirement.action.value,
     );
   }
 
@@ -3219,9 +3222,7 @@ class _OnboardingPermissionBridge {
     final statusById = await _requirementStatus(host.id);
     return host.onboardingRequirements
         .map((item) {
-          final requirement = _OnboardingRequirement.fromJson(
-            Map<Object?, Object?>.from(item as Map),
-          );
+          final requirement = _OnboardingRequirement.fromHostRequirement(item);
           final status = statusById[requirement.id] as String;
           return requirement.withStatus(status);
         })

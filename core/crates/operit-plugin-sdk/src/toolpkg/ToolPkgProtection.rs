@@ -33,6 +33,7 @@ const MARKET_ARCHIVE_AUTH_PREFIX_SIZE: usize = MARKET_ARCHIVE_MAGIC.len() + 1 + 
 const MARKET_ARCHIVE_HEADER_SIZE: usize = MARKET_ARCHIVE_AUTH_PREFIX_SIZE + SHA256_SIZE;
 pub const MARKET_INSTALLATION_ID_SIZE: usize = 16;
 const DEFAULT_SCRIPT_ENTRY_NAME: &str = "artifact.js";
+const TOOLPKG_SIMILARITY_FRAGMENT_SIZE: usize = 24;
 const TERSER_BUNDLE: &str = include_str!("vendor/terser.bundle.min.js");
 const MINIFIER_BOOTSTRAP: &str = r#"
 (function(root) {
@@ -385,6 +386,204 @@ pub fn protectArtifactNamedBytes(
     } else {
         astMinifyBytes(sourceBytes, sourceEntryName, &mut minifier, None)
     }
+}
+
+/// Contains transparent code-overlap evidence between two ToolPkg archives.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolPkgJavaScriptSimilarity {
+    /// Counts unique canonical-code fingerprints in the reference archive.
+    pub referenceFingerprintCount: usize,
+    /// Counts unique canonical-code fingerprints in the candidate archive.
+    pub candidateFingerprintCount: usize,
+    /// Counts fingerprints present in both archives.
+    pub sharedFingerprintCount: usize,
+    /// Reports the fraction of reference fingerprints found in the candidate archive.
+    pub referenceCoverage: f64,
+    /// Reports the fraction of candidate fingerprints found in the reference archive.
+    pub candidateCoverage: f64,
+    /// Reports the harmonic mean of both directional coverage values.
+    pub score: f64,
+}
+
+/// Compares executable ToolPkg code after deterministic AST canonicalization.
+///
+/// The result is reproducible evidence for complaint review: it reports copied
+/// canonical code fragments but does not establish authorship or make a removal decision.
+#[allow(non_snake_case)]
+pub fn compareToolPkgJavaScriptSimilarity(
+    referenceArchiveBytes: &[u8],
+    candidateArchiveBytes: &[u8],
+) -> Result<ToolPkgJavaScriptSimilarity, String> {
+    let mut minifier = ToolPkgJsAstMinifier::new()?;
+    let referenceFingerprints = canonicalToolPkgFingerprints(referenceArchiveBytes, &mut minifier)?;
+    let candidateFingerprints = canonicalToolPkgFingerprints(candidateArchiveBytes, &mut minifier)?;
+    let sharedFingerprintCount = referenceFingerprints
+        .intersection(&candidateFingerprints)
+        .count();
+    let referenceCoverage = sharedFingerprintCount as f64 / referenceFingerprints.len() as f64;
+    let candidateCoverage = sharedFingerprintCount as f64 / candidateFingerprints.len() as f64;
+    let score = if sharedFingerprintCount == 0 {
+        0.0
+    } else {
+        2.0 * referenceCoverage * candidateCoverage / (referenceCoverage + candidateCoverage)
+    };
+
+    Ok(ToolPkgJavaScriptSimilarity {
+        referenceFingerprintCount: referenceFingerprints.len(),
+        candidateFingerprintCount: candidateFingerprints.len(),
+        sharedFingerprintCount,
+        referenceCoverage,
+        candidateCoverage,
+        score,
+    })
+}
+
+/// Produces canonical fragment fingerprints for every declared executable ToolPkg entry.
+fn canonicalToolPkgFingerprints(
+    archiveBytes: &[u8],
+    minifier: &mut ToolPkgJsAstMinifier,
+) -> Result<BTreeSet<[u8; SHA256_SIZE]>, String> {
+    let executableEntries = readToolPkgExecutableEntries(archiveBytes)?;
+    let mut fingerprints = BTreeSet::new();
+    for (entryName, source) in executableEntries {
+        let canonicalSource = astMinifySourcePreservingMetadata(&source, &entryName, minifier)?;
+        let canonicalSource = stripCanonicalMarketOriginInvocations(&canonicalSource)?;
+        fingerprints.extend(buildJavaScriptFragmentFingerprints(&canonicalSource));
+    }
+    if fingerprints.is_empty() {
+        return Err("ToolPkg executable entries contain no comparable JavaScript code".to_string());
+    }
+    Ok(fingerprints)
+}
+
+/// Reads the main and declared subpackage scripts from one ToolPkg archive.
+fn readToolPkgExecutableEntries(archiveBytes: &[u8]) -> Result<Vec<(String, String)>, String> {
+    let mut archive =
+        zip::ZipArchive::new(Cursor::new(archiveBytes)).map_err(|error| error.to_string())?;
+    let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
+    let manifestPreview =
+        ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &entryIndex)
+            .ok_or_else(|| "manifest.hjson or manifest.json not found".to_string())?;
+    let manifestBasePath = manifestPreview
+        .entryName
+        .rsplit_once('/')
+        .map(|(basePath, _)| basePath)
+        .unwrap_or("");
+    let mainEntry = ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(
+        manifestBasePath,
+        &manifestPreview.manifest.main,
+    )
+    .ok_or_else(|| "ToolPkg manifest.main is required for similarity comparison".to_string())?;
+    let mut entryNames = BTreeSet::from([mainEntry]);
+    for subpackage in &manifestPreview.manifest.subpackages {
+        let entryName = ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(
+            manifestBasePath,
+            &subpackage.entry,
+        )
+        .ok_or_else(|| {
+            format!(
+                "ToolPkg subpackage '{}' has an invalid entry path",
+                subpackage.id
+            )
+        })?;
+        entryNames.insert(entryName);
+    }
+    entryNames
+        .into_iter()
+        .map(|entryName| {
+            let source =
+                ToolPkgArchiveParser::readZipEntryText(&mut archive, &entryIndex, &entryName)
+                    .ok_or_else(|| {
+                        format!("Unable to read ToolPkg executable entry '{entryName}'")
+                    })?;
+            Ok((entryName, source))
+        })
+        .collect()
+}
+
+/// Builds order-independent hashes for fixed-size canonical JavaScript fragments.
+fn buildJavaScriptFragmentFingerprints(source: &str) -> BTreeSet<[u8; SHA256_SIZE]> {
+    let sourceBytes = source.as_bytes();
+    if sourceBytes.is_empty() {
+        return BTreeSet::new();
+    }
+    let fragmentSize = sourceBytes.len().min(TOOLPKG_SIMILARITY_FRAGMENT_SIZE);
+    let mut fingerprints = BTreeSet::new();
+    for fragment in sourceBytes.windows(fragmentSize) {
+        fingerprints.insert(sha256(fragment));
+    }
+    fingerprints
+}
+
+/// Removes the structured market-origin calls added to published ToolPkg main entries.
+fn stripCanonicalMarketOriginInvocations(source: &str) -> Result<String, String> {
+    let bytes = source.as_bytes();
+    let prefix = format!("ToolPkg.{MARKET_ORIGIN_CAPTURE_METHOD}(");
+    let prefixBytes = prefix.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+        if matches!(bytes[offset], b'\'' | b'\"' | b'`') {
+            let end = findJavaScriptQuotedEnd(bytes, offset, bytes[offset])?;
+            output.extend_from_slice(&bytes[offset..end]);
+            offset = end;
+            continue;
+        }
+        let hasBoundary = offset == 0 || !isJavaScriptNameByte(bytes[offset - 1]);
+        if hasBoundary && bytes[offset..].starts_with(prefixBytes) {
+            let openParen = offset + prefixBytes.len() - 1;
+            offset = findJavaScriptCallEnd(bytes, openParen)?;
+            if bytes.get(offset) == Some(&b';') {
+                offset += 1;
+            }
+            continue;
+        }
+        output.push(bytes[offset]);
+        offset += 1;
+    }
+    String::from_utf8(output).map_err(|error| error.to_string())
+}
+
+/// Returns whether one byte can continue a JavaScript identifier or property name.
+fn isJavaScriptNameByte(value: u8) -> bool {
+    value.is_ascii_alphanumeric() || matches!(value, b'_' | b'$')
+}
+
+/// Finds the exclusive end of one quoted JavaScript token.
+fn findJavaScriptQuotedEnd(bytes: &[u8], quoteStart: usize, quote: u8) -> Result<usize, String> {
+    let mut offset = quoteStart + 1;
+    while offset < bytes.len() {
+        match bytes[offset] {
+            b'\\' => offset += 2,
+            value if value == quote => return Ok(offset + 1),
+            _ => offset += 1,
+        }
+    }
+    Err("Canonical JavaScript contains an unterminated quoted token".to_string())
+}
+
+/// Finds the exclusive end of one balanced JavaScript call expression.
+fn findJavaScriptCallEnd(bytes: &[u8], openParen: usize) -> Result<usize, String> {
+    let mut depth = 0usize;
+    let mut offset = openParen;
+    while offset < bytes.len() {
+        match bytes[offset] {
+            b'\'' | b'\"' | b'`' => {
+                offset = findJavaScriptQuotedEnd(bytes, offset, bytes[offset])?;
+                continue;
+            }
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(offset + 1);
+                }
+            }
+            _ => {}
+        }
+        offset += 1;
+    }
+    Err("Canonical JavaScript contains an unterminated market-origin call".to_string())
 }
 
 /// Builds the encoded marketplace origin call injected into the ToolPkg main entry.
@@ -1029,6 +1228,33 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
 
+    /// Builds a minimal ToolPkg archive with one main JavaScript entry.
+    fn buildSimilarityTestToolPkg(mainScript: &str) -> Vec<u8> {
+        let manifest = br#"{
+            "toolpkg_id": "similarity-test",
+            "version": "1.0.0",
+            "main": "main.js"
+        }"#;
+        let mut archiveBytes = Vec::new();
+        let mut archive = zip::ZipWriter::new(Cursor::new(&mut archiveBytes));
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        archive
+            .start_file("manifest.json", options)
+            .expect("manifest entry should start");
+        archive
+            .write_all(manifest)
+            .expect("manifest should be written");
+        archive
+            .start_file("main.js", options)
+            .expect("main entry should start");
+        archive
+            .write_all(mainScript.as_bytes())
+            .expect("main script should be written");
+        archive.finish().expect("test archive should finish");
+        archiveBytes
+    }
+
     #[test]
     /// Verifies standalone scripts remain plain while their executable code is AST-minified.
     fn standalone_script_is_plain_and_ast_minified() {
@@ -1155,5 +1381,141 @@ exports.inspect = function(params) {
         assert!(!main_text.contains("\"market\":\"Operit\""));
         assert_eq!(resource_bytes, b"window.asset = true;");
         assert_eq!(wasm_bytes, b"\0asm\x01\0\0\0");
+    }
+
+    #[test]
+    /// Verifies comments and formatting do not change ToolPkg code similarity.
+    fn toolpkg_similarity_ignores_comments_and_formatting() {
+        let reference = buildSimilarityTestToolPkg(
+            r#"
+                // This comment is not code.
+                function formatLabel(value) {
+                    return "label:" + value;
+                }
+                globalThis.render = formatLabel;
+            "#,
+        );
+        let candidate = buildSimilarityTestToolPkg(
+            r#"function formatLabel(value){return"label:"+value}globalThis.render=formatLabel;"#,
+        );
+
+        let similarity = compareToolPkgJavaScriptSimilarity(&reference, &candidate)
+            .expect("formatted copies should be comparable");
+
+        assert_eq!(similarity.referenceCoverage, 1.0);
+        assert_eq!(similarity.candidateCoverage, 1.0);
+        assert_eq!(similarity.score, 1.0);
+    }
+
+    #[test]
+    /// Verifies publication-minified ToolPkg code remains strongly comparable to its source archive.
+    fn toolpkg_similarity_matches_published_minified_source() {
+        let source = buildSimilarityTestToolPkg(
+            r#"
+                function normalizeName(value) { return value.trim().toLowerCase(); }
+                function createGreeting(value) { return "Hello, " + normalizeName(value); }
+                function createSummary(value) { return { greeting: createGreeting(value), size: value.length }; }
+                globalThis.createSummary = createSummary;
+            "#,
+        );
+        let published = protectArtifactBytes(&source, true).expect("ToolPkg should be minified");
+
+        let similarity = compareToolPkgJavaScriptSimilarity(&source, &published)
+            .expect("source and published package should be comparable");
+
+        assert_eq!(similarity.referenceCoverage, 1.0);
+        assert!(similarity.candidateCoverage > 0.75, "{similarity:?}");
+        assert!(similarity.score > 0.85, "{similarity:?}");
+    }
+
+    #[test]
+    /// Verifies a local function change preserves evidence from the unchanged code.
+    fn toolpkg_similarity_survives_a_local_code_change() {
+        let reference = buildSimilarityTestToolPkg(
+            r#"
+                function normalizeName(value) { return value.trim().toLowerCase(); }
+                function createGreeting(value) { return "Hello, " + normalizeName(value); }
+                function createSummary(value) { return { greeting: createGreeting(value), size: value.length }; }
+                function createUrl(value) { return "https://example.test/" + normalizeName(value); }
+                globalThis.createSummary = createSummary;
+            "#,
+        );
+        let modified = buildSimilarityTestToolPkg(
+            r#"
+                function normalizeName(value) { return value.trim().toLowerCase(); }
+                function createGreeting(value) { return "Welcome, " + normalizeName(value).toUpperCase(); }
+                function createSummary(value) { return { greeting: createGreeting(value), size: value.length }; }
+                function createUrl(value) { return "https://example.test/" + normalizeName(value); }
+                globalThis.createSummary = createSummary;
+            "#,
+        );
+        let published = protectArtifactBytes(&modified, true).expect("ToolPkg should be minified");
+
+        let similarity = compareToolPkgJavaScriptSimilarity(&reference, &published)
+            .expect("modified package should be comparable");
+
+        assert!(similarity.referenceCoverage > 0.6, "{similarity:?}");
+        assert!(similarity.candidateCoverage > 0.5, "{similarity:?}");
+        assert!(similarity.score > 0.5, "{similarity:?}");
+    }
+
+    #[test]
+    /// Verifies broader edits lower the score while preserving overlap from unchanged structure.
+    fn toolpkg_similarity_reports_broader_code_changes() {
+        let reference = buildSimilarityTestToolPkg(
+            r#"
+                function normalizeName(value) { return value.trim().toLowerCase(); }
+                function createGreeting(value) { return "Hello, " + normalizeName(value); }
+                function createSummary(value) { return { greeting: createGreeting(value), size: value.length }; }
+                function createUrl(value) { return "https://example.test/" + normalizeName(value); }
+                globalThis.createSummary = createSummary;
+            "#,
+        );
+        let modified = buildSimilarityTestToolPkg(
+            r#"
+                function normalizeName(value) { return String(value).trim().replace(/\s+/g, "-"); }
+                function createGreeting(value) { return "Welcome back, " + normalizeName(value); }
+                function createSummary(value) { return { message: createGreeting(value), length: value.length, url: createUrl(value) }; }
+                function createUrl(value) { return "https://operit.test/items/" + normalizeName(value); }
+                globalThis.createSummary = createSummary;
+            "#,
+        );
+        let published = protectArtifactBytes(&modified, true).expect("ToolPkg should be minified");
+
+        let similarity = compareToolPkgJavaScriptSimilarity(&reference, &published)
+            .expect("broadly modified package should be comparable");
+
+        assert!(similarity.referenceCoverage > 0.2, "{similarity:?}");
+        assert!(similarity.score < 0.6, "{similarity:?}");
+    }
+
+    #[test]
+    /// Verifies unrelated ToolPkg scripts do not produce a material similarity score.
+    fn toolpkg_similarity_rejects_unrelated_code() {
+        let reference = buildSimilarityTestToolPkg(
+            r#"
+                function normalizeName(value) { return value.trim().toLowerCase(); }
+                function createGreeting(value) { return "Hello, " + normalizeName(value); }
+                function createSummary(value) { return { greeting: createGreeting(value), size: value.length }; }
+                globalThis.createSummary = createSummary;
+            "#,
+        );
+        let unrelated = buildSimilarityTestToolPkg(
+            r#"
+                class TemperatureWindow {
+                    constructor(minimum, maximum) { this.minimum = minimum; this.maximum = maximum; }
+                    contains(value) { return value >= this.minimum && value <= this.maximum; }
+                }
+                globalThis.TemperatureWindow = TemperatureWindow;
+            "#,
+        );
+        let published = protectArtifactBytes(&unrelated, true).expect("ToolPkg should be minified");
+
+        let similarity = compareToolPkgJavaScriptSimilarity(&reference, &published)
+            .expect("unrelated package should be comparable");
+
+        assert!(similarity.referenceCoverage < 0.1, "{similarity:?}");
+        assert!(similarity.candidateCoverage < 0.1, "{similarity:?}");
+        assert!(similarity.score < 0.1, "{similarity:?}");
     }
 }

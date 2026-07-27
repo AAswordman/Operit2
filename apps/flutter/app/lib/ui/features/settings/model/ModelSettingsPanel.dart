@@ -254,28 +254,58 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     });
   }
 
+  /// Adds a provider model from the remote catalog or a user-entered model ID.
   Future<void> _addProviderModel(core_proxy.ProviderProfile provider) async {
+    final List<core_proxy.AvailableProviderModel> availableModels;
     try {
-      final availableModels = await widget.clients.preferencesModelConfigManager
+      availableModels = await widget.clients.preferencesModelConfigManager
           .getAvailableProviderModels(providerId: provider.id);
-      final existingModelIds = provider.models
-          .map((model) => model.id.toLowerCase())
-          .toSet();
-      final selectableModels = availableModels
-          .where(
-            (model) => !existingModelIds.contains(model.modelId.toLowerCase()),
-          )
-          .toList(growable: false);
+    } on CoreLinkError catch (error) {
       if (!mounted) {
         return;
       }
-      final selection = await _AvailableModelDialog.show(
+      final action = await _AddProviderModelErrorDialog.show(
         context: context,
-        models: selectableModels,
+        errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(error),
+        showCustomAction: true,
       );
-      if (selection == null) {
-        return;
+      if (action == _AddProviderModelErrorAction.custom && mounted) {
+        try {
+          await _createCustomProviderModel(provider);
+        } on CoreLinkError catch (error) {
+          if (!mounted) {
+            return;
+          }
+          await _AddProviderModelErrorDialog.show(
+            context: context,
+            errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(
+              error,
+            ),
+          );
+        }
       }
+      return;
+    }
+
+    final existingModelIds = provider.models
+        .map((model) => model.id.toLowerCase())
+        .toSet();
+    final selectableModels = availableModels
+        .where(
+          (model) => !existingModelIds.contains(model.modelId.toLowerCase()),
+        )
+        .toList(growable: false);
+    if (!mounted) {
+      return;
+    }
+    final selection = await _AvailableModelDialog.show(
+      context: context,
+      models: selectableModels,
+    );
+    if (selection == null) {
+      return;
+    }
+    try {
       switch (selection) {
         case _AvailableModelPicked(:final model):
           await widget.clients.preferencesModelConfigManager
@@ -301,6 +331,7 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     }
   }
 
+  /// Prompts for and creates a provider model with a user-entered model ID.
   Future<void> _createCustomProviderModel(
     core_proxy.ProviderProfile provider,
   ) async {
@@ -2294,21 +2325,32 @@ class _ConnectionTestErrorDialog extends StatelessWidget {
   }
 }
 
+enum _AddProviderModelErrorAction { custom, dismiss }
+
 class _AddProviderModelErrorDialog extends StatelessWidget {
-  const _AddProviderModelErrorDialog({required this.errorDetails});
+  const _AddProviderModelErrorDialog({
+    required this.errorDetails,
+    required this.showCustomAction,
+  });
 
   final core_proxy.CoreProxyErrorDetails errorDetails;
 
-  static Future<void> show({
+  /// Shows the model import error dialog.
+  static Future<_AddProviderModelErrorAction?> show({
     required BuildContext context,
     required core_proxy.CoreProxyErrorDetails errorDetails,
+    bool showCustomAction = false,
   }) {
-    return showDialog<void>(
+    return showDialog<_AddProviderModelErrorAction>(
       context: context,
-      builder: (context) =>
-          _AddProviderModelErrorDialog(errorDetails: errorDetails),
+      builder: (context) => _AddProviderModelErrorDialog(
+        errorDetails: errorDetails,
+        showCustomAction: showCustomAction,
+      ),
     );
   }
+
+  final bool showCustomAction;
 
   @override
   Widget build(BuildContext context) {
@@ -2320,8 +2362,15 @@ class _AddProviderModelErrorDialog extends StatelessWidget {
         child: CommonNetworkErrorView(errorDetails: errorDetails),
       ),
       actions: <Widget>[
+        if (showCustomAction)
+          TextButton(
+            onPressed: () =>
+                Navigator.of(context).pop(_AddProviderModelErrorAction.custom),
+            child: Text(l10n.settingsModelCustomModel),
+          ),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () =>
+              Navigator.of(context).pop(_AddProviderModelErrorAction.dismiss),
           child: Text(l10n.ok),
         ),
       ],
