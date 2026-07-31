@@ -25,7 +25,7 @@ FRAMEWORK_NAME = "OperitPythonScientific"
 FRAMEWORK_OUTPUT = OUTPUT_DIR / f"{FRAMEWORK_NAME}.xcframework"
 PYTHON_VERSION = "3.13"
 MINIMUM_IOS_VERSION = "13.0"
-SCIPY_NUMPY_CONFIG_CROSS_FILE = TOOL_DIR / "scipy-numpy-config-cross-file.ini"
+SCIPY_NUMPY_CONFIG_TOOL = TOOL_DIR / "scipy_numpy_config.py"
 
 
 @dataclass(frozen=True)
@@ -270,6 +270,18 @@ def extract_source(package: SourcePackage) -> Path:
     return target
 
 
+def scipy_numpy_config_cross_file() -> Path:
+    """Writes the Meson cross file that invokes the target-safe NumPy configuration tool."""
+    cross_file = BUILD_DIR / "scipy-numpy-config-cross-file.ini"
+    cross_file.parent.mkdir(parents=True, exist_ok=True)
+    cross_file.write_text(
+        "[binaries]\n"
+        f"numpy-config = ['python', '{SCIPY_NUMPY_CONFIG_TOOL}']\n",
+        encoding="utf-8",
+    )
+    return cross_file
+
+
 def build_wheels(package: SourcePackage, source: Path, build_python: Path) -> None:
     """Builds all device and simulator wheels for one scientific source distribution."""
     env = os.environ.copy()
@@ -283,7 +295,7 @@ def build_wheels(package: SourcePackage, source: Path, build_python: Path) -> No
             f"python -m pip install --no-index --find-links={WHEEL_DIR} "
             f"numpy=={NUMPY.version}"
         )
-        env["CIBW_CONFIG_SETTINGS"] += f" setup-args=--cross-file={SCIPY_NUMPY_CONFIG_CROSS_FILE}"
+        env["CIBW_CONFIG_SETTINGS"] += f" setup-args=--cross-file={scipy_numpy_config_cross_file()}"
     env["CIBW_ENVIRONMENT"] = (
         "NPY_BLAS_ORDER=accelerate "
         "NPY_LAPACK_ORDER=accelerate "
