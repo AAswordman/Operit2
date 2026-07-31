@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import os
+import re
 import sys
 import sysconfig
 import subprocess
+import zipfile
 from pathlib import Path
 
 
@@ -27,6 +30,40 @@ def pythran_include_directory() -> Path:
     if not include_directory.is_dir():
         raise RuntimeError(f"Pythran headers are missing from the cross environment: {include_directory}")
     return include_directory
+
+
+def target_wheel_platform_tag() -> str:
+    """Returns the exact iOS wheel platform tag for the active cross environment."""
+    deployment_target = os.environ.get("IPHONEOS_DEPLOYMENT_TARGET")
+    if deployment_target is None:
+        raise RuntimeError("IPHONEOS_DEPLOYMENT_TARGET is required for the SciPy cross build")
+    platform_match = re.fullmatch(
+        r"ios-\d+\.\d+-(arm64|x86_64)-(iphoneos|iphonesimulator)",
+        sysconfig.get_platform(),
+    )
+    if platform_match is None:
+        raise RuntimeError(f"unsupported iOS cross platform: {sysconfig.get_platform()}")
+    architecture, environment = platform_match.groups()
+    normalized_target = deployment_target.replace(".", "_")
+    return f"ios_{normalized_target}_{architecture}_{environment}"
+
+
+def install_numpy_wheel(wheel_directory: Path) -> None:
+    """Installs the exact target NumPy wheel without host platform tag validation."""
+    python_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    wheel_name = f"numpy-{NUMPY_VERSION}-{python_tag}-{python_tag}-{target_wheel_platform_tag()}.whl"
+    wheel = wheel_directory / wheel_name
+    if not wheel.is_file():
+        raise RuntimeError(f"target NumPy wheel is missing: {wheel}")
+    destination = Path(sysconfig.get_path("platlib"))
+    destination.mkdir(parents=True, exist_ok=True)
+    resolved_destination = destination.resolve()
+    with zipfile.ZipFile(wheel) as archive:
+        for member in archive.infolist():
+            target = (destination / member.filename).resolve()
+            if target != resolved_destination and resolved_destination not in target.parents:
+                raise RuntimeError(f"target NumPy wheel entry escapes site-packages: {member.filename}")
+        archive.extractall(destination)
 
 
 def write_cross_file(cross_file: Path, host_f2py: Path, host_pythran: Path) -> None:
@@ -55,18 +92,7 @@ def prepare_cross_build(
     host_pythran: Path,
 ) -> None:
     """Installs target headers and records the host code generators for SciPy Meson."""
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--no-index",
-            f"--find-links={wheel_directory}",
-            f"numpy=={NUMPY_VERSION}",
-        ],
-        check=True,
-    )
+    install_numpy_wheel(wheel_directory)
     subprocess.run(
         [
             sys.executable,
