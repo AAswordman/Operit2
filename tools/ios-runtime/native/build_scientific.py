@@ -21,6 +21,7 @@ SOURCE_DIR = TOOL_DIR / "sources"
 BUILD_DIR = TOOL_DIR / "build"
 OUTPUT_DIR = TOOL_DIR / "output"
 WHEEL_DIR = BUILD_DIR / "wheels"
+HOST_F2PY_VIRTUAL_ENV = BUILD_DIR / "host-f2py-venv"
 FRAMEWORK_NAME = "OperitPythonScientific"
 FRAMEWORK_OUTPUT = OUTPUT_DIR / f"{FRAMEWORK_NAME}.xcframework"
 PYTHON_VERSION = "3.13"
@@ -283,7 +284,12 @@ def scipy_numpy_config_cross_file() -> Path:
     return cross_file
 
 
-def build_wheels(package: SourcePackage, source: Path, build_python: Path) -> None:
+def build_wheels(
+    package: SourcePackage,
+    source: Path,
+    build_python: Path,
+    host_f2py: Path,
+) -> None:
     """Builds all device and simulator wheels for one scientific source distribution."""
     env = os.environ.copy()
     env["CIBW_BUILD"] = " ".join(IOS_BUILD_TAGS)
@@ -294,7 +300,7 @@ def build_wheels(package: SourcePackage, source: Path, build_python: Path) -> No
     if package.name == SCIPY.name:
         env["CIBW_BEFORE_BUILD"] = (
             f"python {SCIPY_NUMPY_CONFIG_TOOL} --prepare-cross-build "
-            f"{WHEEL_DIR} {scipy_numpy_config_cross_file()}"
+            f"{WHEEL_DIR} {scipy_numpy_config_cross_file()} {host_f2py}"
         )
         env["CIBW_CONFIG_SETTINGS"] += f" setup-args=--cross-file={scipy_numpy_config_cross_file()}"
     env["CIBW_ENVIRONMENT"] = (
@@ -329,6 +335,23 @@ def prepare_cibuildwheel_python() -> Path:
         raise RuntimeError(f"cibuildwheel virtual environment is missing Python: {python}")
     run([str(python), "-m", "pip", "install", "cibuildwheel==4.1.1"])
     return python
+
+
+def prepare_host_f2py() -> Path:
+    """Creates the native NumPy F2Py generator required by the SciPy cross build."""
+    host_python = shutil.which(f"python{PYTHON_VERSION}")
+    if host_python is None:
+        raise RuntimeError(f"macOS host Python {PYTHON_VERSION} is required for F2Py generation")
+    shutil.rmtree(HOST_F2PY_VIRTUAL_ENV, ignore_errors=True)
+    run([host_python, "-m", "venv", str(HOST_F2PY_VIRTUAL_ENV)])
+    python = HOST_F2PY_VIRTUAL_ENV / "bin" / "python"
+    if not python.is_file():
+        raise RuntimeError(f"host F2Py virtual environment is missing Python: {python}")
+    run([str(python), "-m", "pip", "install", f"numpy=={NUMPY.version}"])
+    f2py = HOST_F2PY_VIRTUAL_ENV / "bin" / "f2py"
+    if not f2py.is_file():
+        raise RuntimeError(f"host NumPy F2Py executable is missing: {f2py}")
+    return f2py
 
 
 def wheel_path(package: SourcePackage, build_tag: str) -> Path:
@@ -491,11 +514,12 @@ def main() -> int:
     """Builds the complete signed-framework payload used by embedded iOS NumPy and SciPy."""
     require_macos_xcode()
     build_python = prepare_cibuildwheel_python()
+    host_f2py = prepare_host_f2py()
     shutil.rmtree(WHEEL_DIR, ignore_errors=True)
     WHEEL_DIR.mkdir(parents=True)
     packages = [NUMPY, SCIPY]
     for package in packages:
-        build_wheels(package, extract_source(package), build_python)
+        build_wheels(package, extract_source(package), build_python, host_f2py)
     create_xcframework(packages)
     verify_output()
     print(f"iOS scientific XCFramework: {FRAMEWORK_OUTPUT}", flush=True)
