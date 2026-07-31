@@ -131,6 +131,7 @@ CIBW_CONFIG_SETTINGS_BY_PACKAGE = {
         "build-dir=build"
     ),
     "scipy": (
+        "setup-args=-Duse-ilp64=false "
         "setup-args=-Dblas=accelerate "
         "setup-args=-Dlapack=accelerate "
         "build-dir=build"
