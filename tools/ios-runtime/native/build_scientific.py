@@ -60,6 +60,20 @@ IOS_BUILD_TAGS = (
     "cp313-ios_arm64_iphonesimulator",
     "cp313-ios_x86_64_iphonesimulator",
 )
+CIBW_CONFIG_SETTINGS_BY_PACKAGE = {
+    "numpy": (
+        "setup-args=-Duse-ilp64=false "
+        "setup-args=-Dallow-noblas=false "
+        "setup-args=-Dblas=accelerate "
+        "setup-args=-Dlapack=accelerate "
+        "build-dir=build"
+    ),
+    "scipy": (
+        "setup-args=-Dblas=accelerate "
+        "setup-args=-Dlapack=accelerate "
+        "build-dir=build"
+    ),
+}
 
 
 def file_sha256(path: Path) -> str:
@@ -138,13 +152,7 @@ def build_wheels(package: SourcePackage, source: Path, build_python: Path) -> No
     env["CIBW_ARCHS_IOS"] = "arm64_iphoneos arm64_iphonesimulator x86_64_iphonesimulator"
     env["CIBW_BEFORE_BUILD"] = ""
     env["CIBW_XBUILD_TOOLS"] = "cmake ninja"
-    env["CIBW_CONFIG_SETTINGS"] = (
-        "setup-args=-Duse-ilp64=false "
-        "setup-args=-Dallow-noblas=false "
-        "setup-args=-Dblas=accelerate "
-        "setup-args=-Dlapack=accelerate "
-        "build-dir=build"
-    )
+    env["CIBW_CONFIG_SETTINGS"] = CIBW_CONFIG_SETTINGS_BY_PACKAGE[package.name]
     env["CIBW_ENVIRONMENT"] = (
         "NPY_BLAS_ORDER=accelerate "
         "NPY_LAPACK_ORDER=accelerate "
