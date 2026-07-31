@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import plistlib
 import re
@@ -275,13 +276,16 @@ def create_framework_slice(source: Path, sdk: str, architectures: list[str], nam
     """Compiles one static framework slice containing Toybox and the in-process bridge."""
     flags = target_compile_flags(sdk, architectures)
     host_sdk = sdk_path("macosx")
-    environment = {
-        "CC": clang_path(sdk),
-        "CFLAGS": " ".join(flags),
-        "HOSTCC": f"{clang_path('macosx')} -isysroot {host_sdk}",
-        "NOSTRIP": "1",
-        "OPTIMIZE": "",
-    }
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "CC": clang_path(sdk),
+            "CFLAGS": " ".join(flags),
+            "HOSTCC": f"{clang_path('macosx')} -isysroot {host_sdk}",
+            "NOSTRIP": "1",
+            "OPTIMIZE": "",
+        }
+    )
     run(["make", "allnoconfig"], cwd=source, env=environment)
     set_toybox_config(source)
     run(["make", "silentoldconfig"], cwd=source, env=environment)

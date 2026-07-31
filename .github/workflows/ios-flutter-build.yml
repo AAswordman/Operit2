@@ -148,6 +148,9 @@ jobs:
         if: steps.web-build.outputs.needed == 'true'
         run: python3 tools/build_scripts/build_flutter_web_access.py --base-href /
 
+      - name: Install GNU sed
+        run: brew install gnu-sed
+
       - name: Build iOS Toybox runtime
         run: python3 tools/ios-runtime/toybox/build.py
 
