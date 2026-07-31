@@ -29,13 +29,13 @@ MINIMUM_IOS_VERSION = "13.0"
 SCIPY_NUMPY_CONFIG_TOOL = TOOL_DIR / "scipy_numpy_config.py"
 SCIPY_NUMPY_CONSTRAINTS = TOOL_DIR / "scipy-numpy-constraints.txt"
 SCIPY_IOS_ACCELERATE_MESON_PATH = Path("scipy/meson.build")
-SCIPY_F2PY_GENERATOR_PATH = Path("tools/building/generate_f2pymod.py")
+SCIPY_F2PY_GENERATOR_PATH = Path("tools/generate_f2pymod.py")
 SCIPY_PYTHRAN_PROGRAM_PATH = Path("meson.build")
-SCIPY_BLAS_WRAPPER_MESON_PATH = Path("scipy/_build_utils/meson.build")
 SCIPY_ACCELERATE_PLATFORM_CHECK = """macOS13_3_or_later = false
 if host_machine.system() == 'darwin'
   r = run_command('xcrun', '-sdk', 'macosx', '--show-sdk-version', check: true)
   sdkVersion = r.stdout().strip()
+
   macOS13_3_or_later = sdkVersion.version_compare('>=13.3')
 endif
 """
@@ -44,6 +44,7 @@ macOS13_3_or_later = false
 if host_machine.system() == 'darwin'
   r = run_command('xcrun', '-sdk', 'macosx', '--show-sdk-version', check: true)
   sdkVersion = r.stdout().strip()
+
   macOS13_3_or_later = sdkVersion.version_compare('>=13.3')
 endif
 """
@@ -51,56 +52,40 @@ SCIPY_ACCELERATE_VALIDATION = """if blas_name == 'accelerate'
   if not macOS13_3_or_later
     error('macOS Accelerate is only supported on macOS >=13.3')
   endif
+  if cc.get_id() != 'clang'
+    warning('accelerate may not be properly detected with non-native Apple compiler due to https://github.com/mesonbuild/meson/issues/13608')
+  endif
+  _args_blas_lapack += ['-DACCELERATE_NEW_LAPACK']
+  generate_blas_wrappers = true
+  accelerate_flag = '-a'
+endif
 """
 SCIPY_IOS_ACCELERATE_VALIDATION = """if blas_name == 'accelerate'
   if not ios_accelerate and not macOS13_3_or_later
     error('Accelerate is only supported on iOS or macOS >=13.3')
   endif
-"""
-SCIPY_ACCELERATE_NEW_LAPACK = """elif uses_accelerate
-  _args_blas_lp64 += ['-DACCELERATE_NEW_LAPACK']
-  _args_blas_ilp64 += ['-DACCELERATE_NEW_LAPACK']
+  if cc.get_id() != 'clang'
+    warning('accelerate may not be properly detected with non-native Apple compiler due to https://github.com/mesonbuild/meson/issues/13608')
+  endif
+  if not ios_accelerate
+    _args_blas_lapack += ['-DACCELERATE_NEW_LAPACK']
+    generate_blas_wrappers = true
+  endif
+  accelerate_flag = '-a'
 endif
 """
-SCIPY_IOS_ACCELERATE_NEW_LAPACK = """elif uses_accelerate and not ios_accelerate
-  _args_blas_lp64 += ['-DACCELERATE_NEW_LAPACK']
-  _args_blas_ilp64 += ['-DACCELERATE_NEW_LAPACK']
-endif
+SCIPY_F2PY_COMMAND = """            ['f2py', fname_pyf, '--build-dir', outdir_abs] + nogil_arg,
 """
-SCIPY_F2PY_COMMAND = """        cmd = ['f2py', fname_pyf, '--build-dir', outdir_abs] + nogil_arg
+SCIPY_HOST_F2PY_COMMAND = """            [os.environ['SCIPY_HOST_F2PY'], fname_pyf, '--build-dir', outdir_abs] + nogil_arg,
 """
-SCIPY_HOST_F2PY_COMMAND = """        cmd = [os.environ['SCIPY_HOST_F2PY'], fname_pyf, '--build-dir', outdir_abs] + nogil_arg
-"""
-SCIPY_PYTHRAN_PROGRAM = """  pythran = find_program('pythran', native: true, version: '>=0.18.1')
+SCIPY_PYTHRAN_PROGRAM = """  pythran = find_program('pythran', native: true, version: '>=0.14.0')
 """
 SCIPY_HOST_PYTHRAN_PROGRAM = """  pythran = find_program(
     meson.get_external_property('pythran-program', 'not-given'),
     native: true,
-    version: '>=0.18.1',
+    version: '>=0.14.0',
   )
 """
-SCIPY_ACCELERATE_LP64_WRAPPER_CONDITION = """if (uses_accelerate or blas_name == 'scipy-openblas') and needs_lp64_fblas
-"""
-SCIPY_IOS_ACCELERATE_LP64_WRAPPER_CONDITION = """if ((uses_accelerate and not ios_accelerate) or blas_name == 'scipy-openblas') and needs_lp64_fblas
-"""
-SCIPY_ACCELERATE_ILP64_WRAPPER_CONDITION = """if use_ilp64 or uses_accelerate or blas_name == 'scipy-openblas'
-"""
-SCIPY_IOS_ACCELERATE_ILP64_WRAPPER_CONDITION = """if use_ilp64 or (uses_accelerate and not ios_accelerate) or blas_name == 'scipy-openblas'
-"""
-
-
-@dataclass(frozen=True)
-class SourceSubmodule:
-    """Describes one pinned Git submodule required by a scientific source tree."""
-
-    name: str
-    version: str
-    url: str
-    sha256: str
-    archive_root: str
-    destination: str
-
-
 @dataclass(frozen=True)
 class SourcePackage:
     """Describes one source distribution compiled into the embedded scientific runtime."""
@@ -110,7 +95,6 @@ class SourcePackage:
     url: str
     sha256: str
     archive_root: str
-    submodules: tuple[SourceSubmodule, ...] = ()
 
 
 NUMPY = SourcePackage(
@@ -125,77 +109,13 @@ NUMPY = SourcePackage(
 )
 SCIPY = SourcePackage(
     name="scipy",
-    version="2.0.0.dev0",
-    url="https://codeload.github.com/scipy/scipy/tar.gz/bc48810bef70f93b67d107f5263f267affc0fbe2",
-    sha256="0ce3e85ff03bbbaac6a3f5597737f0b8dc2f0ffe79670a1d9c60d0fb3c122775",
-    archive_root="scipy-bc48810bef70f93b67d107f5263f267affc0fbe2",
-    submodules=(
-        SourceSubmodule(
-            name="array-api-compat",
-            version="e1d4eed1389f1d93318ec855730488db48475320",
-            url=(
-                "https://codeload.github.com/data-apis/array-api-compat/tar.gz/"
-                "e1d4eed1389f1d93318ec855730488db48475320"
-            ),
-            sha256="c1b86317a38b9b52759fdf8bb1ccf2d08e683e2e5374d13a048d03c3329d884e",
-            archive_root="array-api-compat-e1d4eed1389f1d93318ec855730488db48475320",
-            destination="subprojects/array_api_compat",
-        ),
-        SourceSubmodule(
-            name="array-api-extra",
-            version="842457a8e22f9bad8b11ef547073d1bed2a2a8a5",
-            url=(
-                "https://codeload.github.com/data-apis/array-api-extra/tar.gz/"
-                "842457a8e22f9bad8b11ef547073d1bed2a2a8a5"
-            ),
-            sha256="49b11aec2af72e7dacfbed8b53cbc9a1cd83fcf2cd4ccc1540a99059dcca5b06",
-            archive_root="array-api-extra-842457a8e22f9bad8b11ef547073d1bed2a2a8a5",
-            destination="subprojects/array_api_extra",
-        ),
-        SourceSubmodule(
-            name="boost-math",
-            version="c114cf4a6ae958ce87ed6db4d55c1db4ec0a9c74",
-            url=(
-                "https://codeload.github.com/boostorg/math/tar.gz/"
-                "c114cf4a6ae958ce87ed6db4d55c1db4ec0a9c74"
-            ),
-            sha256="807688f4197e00112fb8f3ba2223eb71de6a427f528b985f5ffe1f284b83f304",
-            archive_root="math-c114cf4a6ae958ce87ed6db4d55c1db4ec0a9c74",
-            destination="subprojects/boost_math/math",
-        ),
-        SourceSubmodule(
-            name="cobyqa",
-            version="69b7177b9febb9178a5f7a9d61200407f1f77d25",
-            url="https://codeload.github.com/cobyqa/cobyqa/tar.gz/69b7177b9febb9178a5f7a9d61200407f1f77d25",
-            sha256="d2e5bf006bbfe670387645dae3264b588ea3f30edfff6bee4d315aa12364a463",
-            archive_root="cobyqa-69b7177b9febb9178a5f7a9d61200407f1f77d25",
-            destination="subprojects/cobyqa",
-        ),
-        SourceSubmodule(
-            name="highs",
-            version="4f96ee8f40b2d3a46e00d6137d5eb31044680776",
-            url="https://codeload.github.com/scipy/HiGHs/tar.gz/4f96ee8f40b2d3a46e00d6137d5eb31044680776",
-            sha256="562e3bfc1932d3280e2334e44a818cecf5b1ef8c8d11ef80e75f260b60ad633e",
-            archive_root="HiGHS-4f96ee8f40b2d3a46e00d6137d5eb31044680776",
-            destination="subprojects/highs",
-        ),
-        SourceSubmodule(
-            name="unuran",
-            version="7e2344e93eb688acc430393c12228419fa130b9b",
-            url="https://codeload.github.com/scipy/unuran/tar.gz/7e2344e93eb688acc430393c12228419fa130b9b",
-            sha256="af5395b88018c8a29c0ec6e4b576129a6209e8581334052e8f1192949a477a38",
-            archive_root="unuran-7e2344e93eb688acc430393c12228419fa130b9b",
-            destination="subprojects/unuran",
-        ),
-        SourceSubmodule(
-            name="xsf",
-            version="69b66c3d76b5006ae9a26901b3a0d11cbbf4d664",
-            url="https://codeload.github.com/scipy/xsf/tar.gz/69b66c3d76b5006ae9a26901b3a0d11cbbf4d664",
-            sha256="036fee30e3d5123bf8d643338a6d73709274593905dc8bb92eb3156480c684c1",
-            archive_root="xsf-69b66c3d76b5006ae9a26901b3a0d11cbbf4d664",
-            destination="subprojects/xsf",
-        ),
+    version="1.15.2",
+    url=(
+        "https://files.pythonhosted.org/packages/b7/b9/31ba9cd990e626574baf93fbc1ac61cf"
+        "9ed54faafd04c479117517661637/scipy-1.15.2.tar.gz"
     ),
+    sha256="cd58a314d92838f7e6f755c8a2167ead4f27e1fd5c1251fd54289569ef3495ec",
+    archive_root="scipy-1.15.2",
 )
 IOS_BUILD_TAGS = (
     "cp313-ios_arm64_iphoneos",
@@ -243,13 +163,13 @@ def require_macos_xcode() -> None:
         raise RuntimeError("iOS NumPy/SciPy build tools are missing: " + ", ".join(missing))
 
 
-def source_archive_path(source: SourcePackage | SourceSubmodule) -> Path:
-    """Returns the cache path used by one pinned scientific source or source submodule archive."""
+def source_archive_path(source: SourcePackage) -> Path:
+    """Returns the cache path used by one pinned scientific source archive."""
     return CACHE_DIR / f"{source.name}-{source.version}.tar.gz"
 
 
-def download_source(source: SourcePackage | SourceSubmodule) -> Path:
-    """Downloads and verifies one pinned scientific source or source submodule archive."""
+def download_source(source: SourcePackage) -> Path:
+    """Downloads and verifies one pinned scientific source archive."""
     target = source_archive_path(source)
     if not target.is_file() or file_sha256(target) != source.sha256:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -268,7 +188,7 @@ def download_source(source: SourcePackage | SourceSubmodule) -> Path:
     return target
 
 
-def extract_archive(source: SourcePackage | SourceSubmodule, destination: Path) -> Path:
+def extract_archive(source: SourcePackage, destination: Path) -> Path:
     """Extracts a verified archive while requiring every entry to remain within its declared root."""
     target = destination / source.archive_root
     if target.exists():
@@ -306,24 +226,6 @@ def extract_archive(source: SourcePackage | SourceSubmodule, destination: Path) 
     return target
 
 
-def extract_submodule(submodule: SourceSubmodule, source: Path) -> None:
-    """Places one verified Git submodule archive at the exact path required by its parent source."""
-    resolved_source = source.resolve()
-    target = (source / submodule.destination).resolve()
-    if resolved_source not in target.parents:
-        raise RuntimeError(f"scientific source submodule path escapes source tree: {submodule.name}")
-    if target.exists():
-        if not target.is_dir():
-            raise RuntimeError(f"scientific source submodule path is not a directory: {submodule.destination}")
-        if any(target.iterdir()):
-            raise RuntimeError(f"scientific source submodule path is not empty: {submodule.destination}")
-        target.rmdir()
-    staging = BUILD_DIR / "submodule-sources"
-    extracted = extract_archive(submodule, staging)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(extracted), str(target))
-
-
 def replace_required_source_text(path: Path, expected: str, replacement: str, description: str) -> None:
     """Replaces one exact upstream source block and rejects any source revision drift."""
     contents = path.read_text(encoding="utf-8")
@@ -350,14 +252,6 @@ def configure_scipy_ios_accelerate(source: Path) -> None:
         SCIPY_IOS_ACCELERATE_VALIDATION,
         "Accelerate validation",
     )
-    replace_required_source_text(
-        meson_build,
-        SCIPY_ACCELERATE_NEW_LAPACK,
-        SCIPY_IOS_ACCELERATE_NEW_LAPACK,
-        "Accelerate LP64 configuration",
-    )
-
-
 def configure_scipy_host_f2py(source: Path) -> None:
     """Requires SciPy's F2Py generator subprocess to use the native host executable."""
     generator = source / SCIPY_F2PY_GENERATOR_PATH
@@ -384,50 +278,14 @@ def configure_scipy_host_pythran(source: Path) -> None:
     )
 
 
-def configure_scipy_ios_accelerate_wrappers(source: Path) -> None:
-    """Disables new-Accelerate wrapper targets for the legacy iOS ABI."""
-    meson_build = source / SCIPY_BLAS_WRAPPER_MESON_PATH
-    if not meson_build.is_file():
-        raise RuntimeError(f"SciPy BLAS wrapper Meson file is missing: {meson_build}")
-    replace_required_source_text(
-        meson_build,
-        SCIPY_ACCELERATE_LP64_WRAPPER_CONDITION,
-        SCIPY_IOS_ACCELERATE_LP64_WRAPPER_CONDITION,
-        "Accelerate LP64 wrapper condition",
-    )
-    replace_required_source_text(
-        meson_build,
-        SCIPY_ACCELERATE_ILP64_WRAPPER_CONDITION,
-        SCIPY_IOS_ACCELERATE_ILP64_WRAPPER_CONDITION,
-        "Accelerate ILP64 wrapper condition",
-    )
-
-
 def extract_source(package: SourcePackage) -> Path:
-    """Extracts one package source and all mandatory Git submodules into the scientific build tree."""
+    """Extracts one package source and applies required cross-build adjustments."""
     target = extract_archive(package, SOURCE_DIR)
-    for submodule in package.submodules:
-        extract_submodule(submodule, target)
     if package.name == SCIPY.name:
         configure_scipy_ios_accelerate(target)
         configure_scipy_host_f2py(target)
         configure_scipy_host_pythran(target)
-        configure_scipy_ios_accelerate_wrappers(target)
     return target
-
-
-def scipy_numpy_config_cross_file(host_pythran: Path) -> Path:
-    """Writes the Meson cross file that invokes the target-safe NumPy configuration tool."""
-    cross_file = BUILD_DIR / "scipy-numpy-config-cross-file.ini"
-    cross_file.parent.mkdir(parents=True, exist_ok=True)
-    cross_file.write_text(
-        "[binaries]\n"
-        f"numpy-config = ['python', '{SCIPY_NUMPY_CONFIG_TOOL}']\n"
-        "[properties]\n"
-        f"pythran-program = '{host_pythran}'\n",
-        encoding="utf-8",
-    )
-    return cross_file
 
 
 def build_wheels(
@@ -445,7 +303,7 @@ def build_wheels(
     env["CIBW_XBUILD_TOOLS"] = "cmake ninja"
     env["CIBW_CONFIG_SETTINGS"] = CIBW_CONFIG_SETTINGS_BY_PACKAGE[package.name]
     if package.name == SCIPY.name:
-        cross_file = scipy_numpy_config_cross_file(host_pythran)
+        cross_file = BUILD_DIR / "scipy-numpy-config-cross-file.ini"
         env["CIBW_BEFORE_BUILD"] = (
             f"python {SCIPY_NUMPY_CONFIG_TOOL} --prepare-cross-build "
             f"{WHEEL_DIR} {cross_file} {host_f2py} {host_pythran}"
@@ -504,7 +362,7 @@ def prepare_host_f2py() -> Path:
             "pip",
             "install",
             f"numpy=={NUMPY.version}",
-            "pythran==0.18.1",
+            "pythran==0.17.0",
         ]
     )
     f2py = HOST_F2PY_VIRTUAL_ENV / "bin" / "f2py"

@@ -36,7 +36,7 @@
     "python": "3.13",
     "packages": [
       {"name": "numpy", "version": "2.2.3"},
-      {"name": "scipy", "version": "2.0.0.dev0"}
+      {"name": "scipy", "version": "1.15.2"}
     ]
   }
 }
