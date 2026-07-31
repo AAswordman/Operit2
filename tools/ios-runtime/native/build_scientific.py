@@ -292,6 +292,11 @@ IOS_BUILD_TAGS = (
     "cp313-ios_arm64_iphonesimulator",
     "cp313-ios_x86_64_iphonesimulator",
 )
+IOS_WHEEL_PLATFORM_TAGS = {
+    IOS_BUILD_TAGS[0]: f"ios_{MINIMUM_IOS_VERSION.replace('.', '_')}_arm64_iphoneos",
+    IOS_BUILD_TAGS[1]: f"ios_{MINIMUM_IOS_VERSION.replace('.', '_')}_arm64_iphonesimulator",
+    IOS_BUILD_TAGS[2]: f"ios_{MINIMUM_IOS_VERSION.replace('.', '_')}_x86_64_iphonesimulator",
+}
 CIBW_CONFIG_SETTINGS_BY_PACKAGE = {
     "numpy": (
         "setup-args=-Duse-ilp64=false "
@@ -662,12 +667,14 @@ def host_python_path() -> Path:
 
 def wheel_path(package: SourcePackage, build_tag: str) -> Path:
     """Resolves one mandatory wheel selected by package and cibuildwheel iOS build tag."""
-    candidates = sorted(WHEEL_DIR.glob(f"{package.name}-{package.version}-*{build_tag}*.whl"))
-    if len(candidates) != 1:
-        raise RuntimeError(
-            f"expected one {package.name} wheel for {build_tag}, found {len(candidates)}"
-        )
-    return candidates[0]
+    platform_tag = IOS_WHEEL_PLATFORM_TAGS.get(build_tag)
+    if platform_tag is None:
+        raise RuntimeError(f"unsupported iOS wheel build tag: {build_tag}")
+    python_tag = f"cp{PYTHON_VERSION.replace('.', '')}"
+    wheel = WHEEL_DIR / f"{package.name}-{package.version}-{python_tag}-{python_tag}-{platform_tag}.whl"
+    if not wheel.is_file():
+        raise RuntimeError(f"required {package.name} wheel is missing: {wheel}")
+    return wheel
 
 
 def extract_wheels(packages: list[SourcePackage], build_tag: str, destination: Path) -> None:
