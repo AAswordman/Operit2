@@ -279,6 +279,10 @@ def build_wheels(package: SourcePackage, source: Path, build_python: Path) -> No
     env["CIBW_XBUILD_TOOLS"] = "cmake ninja"
     env["CIBW_CONFIG_SETTINGS"] = CIBW_CONFIG_SETTINGS_BY_PACKAGE[package.name]
     if package.name == SCIPY.name:
+        env["CIBW_BEFORE_BUILD"] = (
+            f"python -m pip install --no-index --find-links={WHEEL_DIR} "
+            f"numpy=={NUMPY.version}"
+        )
         env["CIBW_CONFIG_SETTINGS"] += f" setup-args=--cross-file={SCIPY_NUMPY_CONFIG_CROSS_FILE}"
     env["CIBW_ENVIRONMENT"] = (
         "NPY_BLAS_ORDER=accelerate "
