@@ -1295,15 +1295,17 @@ Future<_PublishResult> _publishArtifact({
         maxSupportedAppVersion: normalizedMaxVersion,
       ),
     );
-    if (publishAssetSource.minifyArtifact) {
-      onProgress('正在压缩插件脚本');
-    }
-    final Uint8List fileBytes = publishAssetSource.minifyArtifact
-        ? await clients.application.packageManager().protectArtifactFile(
-            sourcePath: source.sourcePath,
-            isToolPkg: source.isToolPkg,
-          )
-        : await XFile(source.sourcePath).readAsBytes();
+    onProgress(publishAssetSource.minifyArtifact ? '正在压缩并处理插件脚本' : '正在处理插件资源');
+    final Uint8List fileBytes = await clients.application
+        .packageManager()
+        .protectArtifactFile(
+          sourcePath: source.sourcePath,
+          isToolPkg: source.isToolPkg,
+          packageId: source.packageName,
+          version: cleanVersion,
+          author: <String>[currentUser.login],
+          minifyArtifact: publishAssetSource.minifyArtifact,
+        );
     onProgress('正在上传资源文件');
     final asset = await _uploadReleaseAsset(
       clients: clients,

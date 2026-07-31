@@ -1048,7 +1048,7 @@ dependencies = [
 
 [[package]]
 name = "operit-local-models"
-version = "2.0.0-preview.4"
+version = "2.0.0-preview.5"
 dependencies = [
  "bzip2-rs",
  "operit-host-api",
@@ -1062,7 +1062,7 @@ dependencies = [
 
 [[package]]
 name = "operit-util"
-version = "2.0.0-preview.4"
+version = "2.0.0-preview.5"
 dependencies = [
  "chrono",
  "operit-host-api",

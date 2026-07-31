@@ -4,7 +4,7 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 
 class RuntimeMethodChannelRouter(
-    activity: MainActivity,
+    private val activity: MainActivity,
     runtimeHost: AndroidRuntimeHost,
     ownerSystem: OwnerSystemCapabilityChannel,
 ) {

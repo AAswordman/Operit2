@@ -30,7 +30,7 @@ use operit_plugin_sdk::toolpkg::ToolPkgPackageService::{
 };
 use operit_plugin_sdk::toolpkg::ToolPkgParser::{
     ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgResourceRuntime,
-    ToolPkgSourceType, ToolPkgSubpackageRuntime,
+    ToolPkgMarketOrigin, ToolPkgSourceType, ToolPkgSubpackageRuntime,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgProtection;
 use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
@@ -1658,6 +1658,10 @@ impl RuntimePackageManager {
         &self,
         sourcePath: String,
         isToolPkg: bool,
+        packageId: String,
+        version: String,
+        author: Vec<String>,
+        minifyArtifact: bool,
     ) -> Result<Vec<u8>, String> {
         let fileSystemHost = self.context.fileSystemHost.as_ref().ok_or_else(|| {
             "FileSystemHost is required for ToolPkg artifact protection".to_string()
@@ -1665,10 +1669,18 @@ impl RuntimePackageManager {
         let sourceBytes = fileSystemHost
             .readFileBytes(&sourcePath)
             .map_err(|error| error.to_string())?;
-        operit_plugin_sdk::toolpkg::ToolPkgProtection::protectArtifactNamedBytes(
+        let marketOrigin = ToolPkgMarketOrigin {
+            market: "Operit".to_string(),
+            toolpkgId: packageId,
+            version,
+            author,
+        };
+        operit_plugin_sdk::toolpkg::ToolPkgProtection::processArtifactNamedBytesWithMarketOrigin(
             &sourceBytes,
             &sourcePath,
             isToolPkg,
+            &marketOrigin,
+            minifyArtifact,
         )
     }
 
@@ -2646,14 +2658,35 @@ impl RuntimePackageManager {
             }
         }
 
+        let scriptMarketOrigin = if isJsLike {
+            let script = match self.fileSystemHost.readFile(&hostPath(&file)) {
+                Ok(value) => value,
+                Err(error) => return format!("Error importing package: {error}"),
+            };
+            ToolPkgProtection::readScriptMarketOrigin(&script, &packageMetadata.name)
+        } else {
+            None
+        };
         self.pluginPackageManager.registerPackage(ToolPackage {
             is_built_in: false,
             ..packageMetadata.clone()
         });
+        let marketOriginNotice = scriptMarketOrigin
+            .map(|origin| {
+                format!(
+                    "\nSource notice: this is the {} marketplace script '{}' (version: {}, author: {}). Please support the original author and beware of resales.",
+                    origin.market,
+                    packageMetadata.name,
+                    origin.version,
+                    origin.author.join(", ")
+                )
+            })
+            .unwrap_or_default();
         format!(
-            "Successfully imported package: {}\nStored at: {}",
+            "Successfully imported package: {}\nStored at: {}{}",
             packageMetadata.name,
-            destinationFile.to_string_lossy()
+            destinationFile.to_string_lossy(),
+            marketOriginNotice
         )
     }
 

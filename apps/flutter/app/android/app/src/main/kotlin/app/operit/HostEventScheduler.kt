@@ -236,6 +236,10 @@ object AndroidHostEventScheduler {
 }
 
 class HostEventScheduleReceiver : BroadcastReceiver() {
+    companion object {
+        private const val LOG_TAG = "HostEventScheduleReceiver"
+    }
+
     /** Restores the persistent Core and forwards one system schedule firing. */
     override fun onReceive(context: Context, intent: Intent) {
         val pendingResult = goAsync()
@@ -263,7 +267,7 @@ class HostEventScheduleReceiver : BroadcastReceiver() {
                     response.optString("error", "Core rejected Android host event schedule")
                 }
             } catch (error: Throwable) {
-                Log.e(logTag, "Host event schedule delivery failed", error)
+                Log.e(LOG_TAG, "Host event schedule delivery failed", error)
             } finally {
                 pendingResult.finish()
             }

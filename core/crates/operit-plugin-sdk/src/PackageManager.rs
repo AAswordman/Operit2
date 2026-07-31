@@ -325,10 +325,8 @@ fn normalizePackageName(packageName: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::fs;
-    use std::path::PathBuf;
+    use std::io::Write;
     use std::sync::Arc;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use serde_json::Value;
 
@@ -536,14 +534,27 @@ mod tests {
         }
     }
 
-    /// Asset source used by tests that load ToolPkg resources from directories.
+    /// Asset source used by tests that load the ToolPkg hook main entry.
     struct TestAssetSource;
 
     impl ToolPkgAssetSource for TestAssetSource {
-        /// Returns no embedded assets because tests use external directories.
+        /// Returns a minimal embedded ToolPkg archive containing the hook main entry.
         #[allow(non_snake_case)]
         fn toolPkgAssetBytes(&self, _assetName: &str) -> Option<Vec<u8>> {
-            None
+            let mut bytes = Vec::new();
+            let mut archive = zip::ZipWriter::new(std::io::Cursor::new(&mut bytes));
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            archive
+                .start_file("main.js", options)
+                .expect("test ToolPkg main entry should start");
+            archive
+                .write_all(b"function onEvent() {}")
+                .expect("test ToolPkg main entry should be written");
+            archive
+                .finish()
+                .expect("test ToolPkg archive should finish");
+            Some(bytes)
         }
     }
 
@@ -566,18 +577,6 @@ mod tests {
             Arc::new(RejectingFileSystemHost),
             Arc::new(TestPackageStateResolver),
         )
-    }
-
-    /// Creates an isolated temporary directory for one test.
-    fn temporaryDirectory(label: &str) -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time must be after unix epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "operit-plugin-sdk-{label}-{}-{nonce}",
-            std::process::id()
-        ))
     }
 
     /// Verifies JavaScript package registration, activation, and state selection.
@@ -619,11 +618,6 @@ mod tests {
     /// Verifies that an embedding application can dispatch a ToolPkg hook through the SDK.
     #[test]
     fn dispatchesToolPkgHookThroughPublicInterface() {
-        let root = temporaryDirectory("hook");
-        fs::create_dir_all(&root).expect("temporary ToolPkg directory must be created");
-        fs::write(root.join("main.js"), "function onEvent() {}")
-            .expect("ToolPkg main script must be written");
-
         let mut manager = packageManager();
         let registered = manager.registerToolPkg(ToolPkgLoadResult {
             containerPackage: ToolPackage {
@@ -634,8 +628,8 @@ mod tests {
             containerRuntime: ToolPkgContainerRuntime {
                 packageName: "container".to_string(),
                 mainEntry: "main.js".to_string(),
-                sourceType: ToolPkgSourceType::EXTERNAL,
-                sourcePath: root.to_string_lossy().to_string(),
+                sourceType: ToolPkgSourceType::ASSET,
+                sourcePath: "test-hook.toolpkg".to_string(),
                 ..ToolPkgContainerRuntime::default()
             },
             marketOrigin: None,
@@ -667,6 +661,5 @@ mod tests {
             .expect("ToolPkg hook dispatch must succeed");
 
         assert_eq!(output.as_deref(), Some("host_event"));
-        fs::remove_dir_all(root).expect("temporary ToolPkg directory must be removed");
     }
 }
