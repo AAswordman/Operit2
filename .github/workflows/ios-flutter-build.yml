@@ -11,6 +11,14 @@ on:
         options:
           - "false"
           - "true"
+      scientific_runtime_only:
+        description: "Build only the iOS NumPy and SciPy runtime"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
   workflow_call:
     inputs:
       build_web_assets:
@@ -20,6 +28,7 @@ on:
         type: string
 jobs:
   build-ios:
+    if: github.event_name != 'workflow_dispatch' || inputs.scientific_runtime_only != 'true'
     runs-on: macos-15
     timeout-minutes: 90
     env:
@@ -195,5 +204,29 @@ jobs:
         with:
           name: operit2-ios-${{ github.sha }}
           path: tools/release/dist/operit2-app-ios-arm64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  build-scientific-runtime:
+    if: github.event_name == 'workflow_dispatch' && inputs.scientific_runtime_only == 'true'
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build iOS scientific runtime
+        run: python3 tools/ios-runtime/native/build_scientific.py
+
+      - name: Upload scientific runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-ios-scientific-runtime-${{ github.sha }}
+          path: tools/ios-runtime/native/output/OperitPythonScientific.xcframework
           if-no-files-found: error
           retention-days: 14
