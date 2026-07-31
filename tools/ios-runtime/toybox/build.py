@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import tarfile
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 TOOL_DIR = Path(__file__).resolve().parent
@@ -84,6 +84,35 @@ def download_source(source: dict[str, str]) -> Path:
     return target
 
 
+def resolve_safe_symlink_target(
+    member: tarfile.TarInfo,
+    expected_root: str,
+    members_by_name: dict[str, tarfile.TarInfo],
+) -> str:
+    """Resolves a relative archive symlink and requires a regular in-root target."""
+    link = PurePosixPath(member.linkname)
+    if link.is_absolute():
+        raise RuntimeError(f"Toybox source symlink is absolute: {member.name}")
+    candidate = PurePosixPath(member.name).parent / link
+    parts: list[str] = []
+    for part in candidate.parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not parts:
+                raise RuntimeError(f"Toybox source symlink escapes archive root: {member.name}")
+            parts.pop()
+            continue
+        parts.append(part)
+    if not parts or parts[0] != expected_root:
+        raise RuntimeError(f"Toybox source symlink escapes archive root: {member.name}")
+    target_name = "/".join(parts)
+    target = members_by_name.get(target_name)
+    if target is None or not target.isfile():
+        raise RuntimeError(f"Toybox source symlink target is not a regular file: {member.name}")
+    return target_name
+
+
 def extract_source(source: dict[str, str], destination: Path) -> Path:
     """Extracts the verified Toybox source into one clean architecture build directory."""
     shutil.rmtree(destination, ignore_errors=True)
@@ -94,14 +123,20 @@ def extract_source(source: dict[str, str], destination: Path) -> Path:
         roots = {member.name.split("/", 1)[0] for member in members if member.name}
         if roots != {expected_root}:
             raise RuntimeError("Toybox source archive root is invalid")
+        members_by_name = {member.name: member for member in members}
+        if len(members_by_name) != len(members):
+            raise RuntimeError("Toybox source archive contains duplicate members")
         root = destination.resolve()
         for member in members:
             extracted = (destination / member.name).resolve()
             if extracted != root and root not in extracted.parents:
                 raise RuntimeError(f"Toybox source entry escapes build directory: {member.name}")
-            if member.issym() or member.islnk() or (not member.isfile() and not member.isdir()):
+            if member.issym():
+                resolve_safe_symlink_target(member, expected_root, members_by_name)
+                continue
+            if member.islnk() or (not member.isfile() and not member.isdir()):
                 raise RuntimeError(f"Toybox source archive member is unsupported: {member.name}")
-        archive.extractall(destination, members=members)
+        archive.extractall(destination, members=members, filter="data")
     return destination / expected_root
 
 
