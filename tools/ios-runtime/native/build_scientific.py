@@ -32,6 +32,7 @@ SCIPY_IOS_ACCELERATE_MESON_PATH = Path("scipy/meson.build")
 SCIPY_ACCELERATE_HEADER_PATH = Path("scipy/_build_utils/src/scipy_blas_defines.h")
 SCIPY_CYTHON_BLAS_MESON_PATH = Path("scipy/linalg/meson.build")
 SCIPY_IOS_ACCELERATE_COMPAT_SOURCE_PATH = Path("scipy/linalg/ios_accelerate_compat.c")
+SCIPY_SPECIAL_MESON_PATH = Path("scipy/special/meson.build")
 SCIPY_F2PY_GENERATOR_PATH = Path("tools/building/generate_f2pymod.py")
 SCIPY_PYTHRAN_PROGRAM_PATH = Path("meson.build")
 SCIPY_ACCELERATE_PLATFORM_CHECK = """macOS13_3_or_later = false
@@ -105,6 +106,20 @@ SCIPY_IOS_ACCELERATE_COMPAT_SOURCE = """#include <numpy/npy_math.h>
 double dcabs1_(const npy_complex128 *z) {
     return npy_fabs(npy_creal(*z)) + npy_fabs(npy_cimag(*z));
 }
+"""
+SCIPY_SPECIAL_NPZ_COMMAND = """    command: [
+      py3, '@CURRENT_SOURCE_DIR@/utils/makenpz.py',
+      '--use-timestamp', npz_file[2], '-o', '@OUTDIR@'
+    ],
+"""
+SCIPY_HOST_SPECIAL_NPZ_COMMAND = """    command: [
+      find_program(
+        meson.get_external_property('host-python', 'not-given'),
+        native: true,
+      ),
+      '@CURRENT_SOURCE_DIR@/utils/makenpz.py',
+      '--use-timestamp', npz_file[2], '-o', '@OUTDIR@'
+    ],
 """
 SCIPY_F2PY_COMMAND = """        cmd = ['f2py', fname_pyf, '--build-dir', outdir_abs] + nogil_arg
 """
@@ -429,6 +444,19 @@ def configure_scipy_host_pythran(source: Path) -> None:
     )
 
 
+def configure_scipy_host_special_data(source: Path) -> None:
+    """Runs SciPy special-data generators with the native NumPy Python environment."""
+    meson_build = source / SCIPY_SPECIAL_MESON_PATH
+    if not meson_build.is_file():
+        raise RuntimeError(f"SciPy special-data Meson file is missing: {meson_build}")
+    replace_required_source_text(
+        meson_build,
+        SCIPY_SPECIAL_NPZ_COMMAND,
+        SCIPY_HOST_SPECIAL_NPZ_COMMAND,
+        "special-data generator command",
+    )
+
+
 def extract_source(package: SourcePackage) -> Path:
     """Extracts one package source and all mandatory Git submodules into the scientific build tree."""
     target = extract_archive(package, SOURCE_DIR)
@@ -438,10 +466,11 @@ def extract_source(package: SourcePackage) -> Path:
         configure_scipy_ios_accelerate(target)
         configure_scipy_host_f2py(target)
         configure_scipy_host_pythran(target)
+        configure_scipy_host_special_data(target)
     return target
 
 
-def scipy_numpy_config_cross_file(host_pythran: Path) -> Path:
+def scipy_numpy_config_cross_file(host_python: Path, host_pythran: Path) -> Path:
     """Writes the Meson cross file that invokes the target-safe NumPy configuration tool."""
     cross_file = BUILD_DIR / "scipy-numpy-config-cross-file.ini"
     cross_file.parent.mkdir(parents=True, exist_ok=True)
@@ -449,6 +478,7 @@ def scipy_numpy_config_cross_file(host_pythran: Path) -> Path:
         "[binaries]\n"
         f"numpy-config = ['python', '{SCIPY_NUMPY_CONFIG_TOOL}']\n"
         "[properties]\n"
+        f"host-python = '{host_python}'\n"
         f"pythran-program = '{host_pythran}'\n",
         encoding="utf-8",
     )
@@ -459,6 +489,7 @@ def build_wheels(
     package: SourcePackage,
     source: Path,
     build_python: Path,
+    host_python: Path,
     host_f2py: Path,
     host_pythran: Path,
 ) -> None:
@@ -470,10 +501,10 @@ def build_wheels(
     env["CIBW_XBUILD_TOOLS"] = "cmake ninja"
     env["CIBW_CONFIG_SETTINGS"] = CIBW_CONFIG_SETTINGS_BY_PACKAGE[package.name]
     if package.name == SCIPY.name:
-        cross_file = scipy_numpy_config_cross_file(host_pythran)
+        cross_file = scipy_numpy_config_cross_file(host_python, host_pythran)
         env["CIBW_BEFORE_BUILD"] = (
             f"python {SCIPY_NUMPY_CONFIG_TOOL} --prepare-cross-build "
-            f"{WHEEL_DIR} {cross_file} {host_f2py} {host_pythran}"
+            f"{WHEEL_DIR} {cross_file} {host_python} {host_f2py} {host_pythran}"
         )
         env["CIBW_CONFIG_SETTINGS"] += f" setup-args=--cross-file={cross_file}"
     env["CIBW_ENVIRONMENT"] = (
@@ -544,6 +575,14 @@ def host_pythran_path() -> Path:
     if not pythran.is_file():
         raise RuntimeError(f"host Pythran executable is missing: {pythran}")
     return pythran
+
+
+def host_python_path() -> Path:
+    """Resolves the native Python executable installed with the host build tools."""
+    python = HOST_F2PY_VIRTUAL_ENV / "bin" / "python"
+    if not python.is_file():
+        raise RuntimeError(f"host Python executable is missing: {python}")
+    return python
 
 
 def wheel_path(package: SourcePackage, build_tag: str) -> Path:
@@ -707,12 +746,13 @@ def main() -> int:
     require_macos_xcode()
     build_python = prepare_cibuildwheel_python()
     host_f2py = prepare_host_f2py()
+    host_python = host_python_path()
     host_pythran = host_pythran_path()
     shutil.rmtree(WHEEL_DIR, ignore_errors=True)
     WHEEL_DIR.mkdir(parents=True)
     packages = [NUMPY, SCIPY]
     for package in packages:
-        build_wheels(package, extract_source(package), build_python, host_f2py, host_pythran)
+        build_wheels(package, extract_source(package), build_python, host_python, host_f2py, host_pythran)
     create_xcframework(packages)
     verify_output()
     print(f"iOS scientific XCFramework: {FRAMEWORK_OUTPUT}", flush=True)

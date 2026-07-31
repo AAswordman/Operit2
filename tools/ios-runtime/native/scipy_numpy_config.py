@@ -66,8 +66,15 @@ def install_numpy_wheel(wheel_directory: Path) -> None:
         archive.extractall(destination)
 
 
-def write_cross_file(cross_file: Path, host_f2py: Path, host_pythran: Path) -> None:
-    """Writes Meson NumPy and Pythran settings for the active cross environment."""
+def write_cross_file(
+    cross_file: Path,
+    host_python: Path,
+    host_f2py: Path,
+    host_pythran: Path,
+) -> None:
+    """Writes Meson settings for target headers and native SciPy code generators."""
+    if not host_python.is_file():
+        raise RuntimeError(f"host Python executable is missing: {host_python}")
     if not host_f2py.is_file():
         raise RuntimeError(f"host F2Py executable is missing: {host_f2py}")
     if not host_pythran.is_file():
@@ -78,6 +85,7 @@ def write_cross_file(cross_file: Path, host_f2py: Path, host_pythran: Path) -> N
         f"numpy-config = ['python', '{Path(__file__).resolve()}']\n"
         f"f2py = '{host_f2py}'\n"
         "[properties]\n"
+        f"host-python = '{host_python}'\n"
         f"pythran-program = '{host_pythran}'\n"
         f"numpy-include-dir = '{numpy_include_directory()}'\n"
         f"pythran-include-dir = '{pythran_include_directory()}'\n",
@@ -88,6 +96,7 @@ def write_cross_file(cross_file: Path, host_f2py: Path, host_pythran: Path) -> N
 def prepare_cross_build(
     wheel_directory: Path,
     cross_file: Path,
+    host_python: Path,
     host_f2py: Path,
     host_pythran: Path,
 ) -> None:
@@ -104,18 +113,19 @@ def prepare_cross_build(
         ],
         check=True,
     )
-    write_cross_file(cross_file, host_f2py, host_pythran)
+    write_cross_file(cross_file, host_python, host_f2py, host_pythran)
 
 
 def main() -> int:
     """Reports NumPy build settings or prepares the SciPy cross-build configuration."""
     arguments = sys.argv[1:]
-    if len(arguments) == 5 and arguments[0] == "--prepare-cross-build":
+    if len(arguments) == 6 and arguments[0] == "--prepare-cross-build":
         prepare_cross_build(
             Path(arguments[1]),
             Path(arguments[2]),
             Path(arguments[3]),
             Path(arguments[4]),
+            Path(arguments[5]),
         )
         return 0
     if arguments == ["--version"]:
