@@ -29,6 +29,7 @@ MINIMUM_IOS_VERSION = "16.4"
 SCIPY_NUMPY_CONFIG_TOOL = TOOL_DIR / "scipy_numpy_config.py"
 SCIPY_NUMPY_CONSTRAINTS = TOOL_DIR / "scipy-numpy-constraints.txt"
 SCIPY_IOS_ACCELERATE_MESON_PATH = Path("scipy/meson.build")
+SCIPY_ACCELERATE_HEADER_PATH = Path("scipy/_build_utils/src/scipy_blas_defines.h")
 SCIPY_F2PY_GENERATOR_PATH = Path("tools/building/generate_f2pymod.py")
 SCIPY_PYTHRAN_PROGRAM_PATH = Path("meson.build")
 SCIPY_ACCELERATE_PLATFORM_CHECK = """macOS13_3_or_later = false
@@ -55,6 +56,35 @@ SCIPY_IOS_ACCELERATE_VALIDATION = """if blas_name == 'accelerate'
   if not ios_accelerate and not macOS13_3_or_later
     error('Accelerate is only supported on iOS or macOS >=13.3')
   endif
+"""
+SCIPY_ACCELERATE_SDK_CHECK = """#ifdef ACCELERATE_NEW_LAPACK
+    #if __MAC_OS_X_VERSION_MAX_ALLOWED < 130300
+        #error "Accelerate support is only available with macOS 13.3 SDK or later"
+    #else
+        /* New Accelerate suffix is always $NEWLAPACK or $NEWLAPACK$ILP64 (no underscore appended) */
+        #ifdef HAVE_BLAS_ILP64
+            #define BLAS_SYMBOL_SUFFIX $NEWLAPACK$ILP64
+        #else
+            #define BLAS_SYMBOL_SUFFIX $NEWLAPACK
+        #endif
+    #endif
+#endif
+"""
+SCIPY_IOS_ACCELERATE_SDK_CHECK = """#ifdef ACCELERATE_NEW_LAPACK
+    #if defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
+        #if __IPHONE_OS_VERSION_MAX_ALLOWED < 160400
+            #error "Accelerate support is only available with iOS 16.4 SDK or later"
+        #endif
+    #elif __MAC_OS_X_VERSION_MAX_ALLOWED < 130300
+        #error "Accelerate support is only available with macOS 13.3 SDK or later"
+    #endif
+    /* New Accelerate suffix is always $NEWLAPACK or $NEWLAPACK$ILP64 (no underscore appended) */
+    #ifdef HAVE_BLAS_ILP64
+        #define BLAS_SYMBOL_SUFFIX $NEWLAPACK$ILP64
+    #else
+        #define BLAS_SYMBOL_SUFFIX $NEWLAPACK
+    #endif
+#endif
 """
 SCIPY_F2PY_COMMAND = """        cmd = ['f2py', fname_pyf, '--build-dir', outdir_abs] + nogil_arg
 """
@@ -328,6 +358,15 @@ def configure_scipy_ios_accelerate(source: Path) -> None:
         SCIPY_ACCELERATE_VALIDATION,
         SCIPY_IOS_ACCELERATE_VALIDATION,
         "Accelerate validation",
+    )
+    header = source / SCIPY_ACCELERATE_HEADER_PATH
+    if not header.is_file():
+        raise RuntimeError(f"SciPy Accelerate header is missing: {header}")
+    replace_required_source_text(
+        header,
+        SCIPY_ACCELERATE_SDK_CHECK,
+        SCIPY_IOS_ACCELERATE_SDK_CHECK,
+        "Accelerate SDK check",
     )
 def configure_scipy_host_f2py(source: Path) -> None:
     """Requires SciPy's F2Py generator subprocess to use the native host executable."""
