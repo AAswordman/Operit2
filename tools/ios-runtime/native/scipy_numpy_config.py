@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 NUMPY_VERSION = "2.2.3"
-PYTHRAN_VERSION = "0.17.0"
+PYTHRAN_VERSION = "0.18.1"
 
 
 def numpy_include_directory() -> Path:
