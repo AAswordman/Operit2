@@ -28,6 +28,18 @@ MINIMUM_IOS_VERSION = "13.0"
 
 
 @dataclass(frozen=True)
+class SourceSubmodule:
+    """Describes one pinned Git submodule required by a scientific source tree."""
+
+    name: str
+    version: str
+    url: str
+    sha256: str
+    archive_root: str
+    destination: str
+
+
+@dataclass(frozen=True)
 class SourcePackage:
     """Describes one source distribution compiled into the embedded scientific runtime."""
 
@@ -36,6 +48,7 @@ class SourcePackage:
     url: str
     sha256: str
     archive_root: str
+    submodules: tuple[SourceSubmodule, ...] = ()
 
 
 NUMPY = SourcePackage(
@@ -54,6 +67,73 @@ SCIPY = SourcePackage(
     url="https://codeload.github.com/scipy/scipy/tar.gz/bc48810bef70f93b67d107f5263f267affc0fbe2",
     sha256="0ce3e85ff03bbbaac6a3f5597737f0b8dc2f0ffe79670a1d9c60d0fb3c122775",
     archive_root="scipy-bc48810bef70f93b67d107f5263f267affc0fbe2",
+    submodules=(
+        SourceSubmodule(
+            name="array-api-compat",
+            version="e1d4eed1389f1d93318ec855730488db48475320",
+            url=(
+                "https://codeload.github.com/data-apis/array-api-compat/tar.gz/"
+                "e1d4eed1389f1d93318ec855730488db48475320"
+            ),
+            sha256="c1b86317a38b9b52759fdf8bb1ccf2d08e683e2e5374d13a048d03c3329d884e",
+            archive_root="array-api-compat-e1d4eed1389f1d93318ec855730488db48475320",
+            destination="subprojects/array_api_compat",
+        ),
+        SourceSubmodule(
+            name="array-api-extra",
+            version="842457a8e22f9bad8b11ef547073d1bed2a2a8a5",
+            url=(
+                "https://codeload.github.com/data-apis/array-api-extra/tar.gz/"
+                "842457a8e22f9bad8b11ef547073d1bed2a2a8a5"
+            ),
+            sha256="49b11aec2af72e7dacfbed8b53cbc9a1cd83fcf2cd4ccc1540a99059dcca5b06",
+            archive_root="array-api-extra-842457a8e22f9bad8b11ef547073d1bed2a2a8a5",
+            destination="subprojects/array_api_extra",
+        ),
+        SourceSubmodule(
+            name="boost-math",
+            version="c114cf4a6ae958ce87ed6db4d55c1db4ec0a9c74",
+            url=(
+                "https://codeload.github.com/boostorg/math/tar.gz/"
+                "c114cf4a6ae958ce87ed6db4d55c1db4ec0a9c74"
+            ),
+            sha256="807688f4197e00112fb8f3ba2223eb71de6a427f528b985f5ffe1f284b83f304",
+            archive_root="math-c114cf4a6ae958ce87ed6db4d55c1db4ec0a9c74",
+            destination="subprojects/boost_math/math",
+        ),
+        SourceSubmodule(
+            name="cobyqa",
+            version="69b7177b9febb9178a5f7a9d61200407f1f77d25",
+            url="https://codeload.github.com/cobyqa/cobyqa/tar.gz/69b7177b9febb9178a5f7a9d61200407f1f77d25",
+            sha256="d2e5bf006bbfe670387645dae3264b588ea3f30edfff6bee4d315aa12364a463",
+            archive_root="cobyqa-69b7177b9febb9178a5f7a9d61200407f1f77d25",
+            destination="subprojects/cobyqa",
+        ),
+        SourceSubmodule(
+            name="highs",
+            version="4f96ee8f40b2d3a46e00d6137d5eb31044680776",
+            url="https://codeload.github.com/scipy/HiGHs/tar.gz/4f96ee8f40b2d3a46e00d6137d5eb31044680776",
+            sha256="562e3bfc1932d3280e2334e44a818cecf5b1ef8c8d11ef80e75f260b60ad633e",
+            archive_root="HiGHS-4f96ee8f40b2d3a46e00d6137d5eb31044680776",
+            destination="subprojects/highs",
+        ),
+        SourceSubmodule(
+            name="unuran",
+            version="7e2344e93eb688acc430393c12228419fa130b9b",
+            url="https://codeload.github.com/scipy/unuran/tar.gz/7e2344e93eb688acc430393c12228419fa130b9b",
+            sha256="af5395b88018c8a29c0ec6e4b576129a6209e8581334052e8f1192949a477a38",
+            archive_root="unuran-7e2344e93eb688acc430393c12228419fa130b9b",
+            destination="subprojects/unuran",
+        ),
+        SourceSubmodule(
+            name="xsf",
+            version="69b66c3d76b5006ae9a26901b3a0d11cbbf4d664",
+            url="https://codeload.github.com/scipy/xsf/tar.gz/69b66c3d76b5006ae9a26901b3a0d11cbbf4d664",
+            sha256="036fee30e3d5123bf8d643338a6d73709274593905dc8bb92eb3156480c684c1",
+            archive_root="xsf-69b66c3d76b5006ae9a26901b3a0d11cbbf4d664",
+            destination="subprojects/xsf",
+        ),
+    ),
 )
 IOS_BUILD_TAGS = (
     "cp313-ios_arm64_iphoneos",
@@ -100,48 +180,95 @@ def require_macos_xcode() -> None:
         raise RuntimeError("iOS NumPy/SciPy build tools are missing: " + ", ".join(missing))
 
 
-def source_archive_path(package: SourcePackage) -> Path:
-    """Returns the cache path used by one pinned scientific package source archive."""
-    return CACHE_DIR / f"{package.name}-{package.version}.tar.gz"
+def source_archive_path(source: SourcePackage | SourceSubmodule) -> Path:
+    """Returns the cache path used by one pinned scientific source or source submodule archive."""
+    return CACHE_DIR / f"{source.name}-{source.version}.tar.gz"
 
 
-def download_source(package: SourcePackage) -> Path:
-    """Downloads and verifies one pinned NumPy or SciPy source distribution."""
-    target = source_archive_path(package)
-    if not target.is_file() or file_sha256(target) != package.sha256:
+def download_source(source: SourcePackage | SourceSubmodule) -> Path:
+    """Downloads and verifies one pinned scientific source or source submodule archive."""
+    target = source_archive_path(source)
+    if not target.is_file() or file_sha256(target) != source.sha256:
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_suffix(".part")
         temporary.unlink(missing_ok=True)
-        with urllib.request.urlopen(package.url, timeout=120) as response:
+        with urllib.request.urlopen(source.url, timeout=120) as response:
             with temporary.open("wb") as output:
                 shutil.copyfileobj(response, output, length=1024 * 1024)
         actual_sha256 = file_sha256(temporary)
-        if actual_sha256 != package.sha256:
+        if actual_sha256 != source.sha256:
             raise RuntimeError(
-                f"scientific source checksum is invalid: {package.name} "
-                f"expected={package.sha256} actual={actual_sha256}"
+                f"scientific source checksum is invalid: {source.name} "
+                f"expected={source.sha256} actual={actual_sha256}"
             )
         temporary.replace(target)
     return target
 
 
-def extract_source(package: SourcePackage) -> Path:
-    """Extracts one verified scientific package source tree into a clean build directory."""
-    target = SOURCE_DIR / package.archive_root
+def extract_archive(source: SourcePackage | SourceSubmodule, destination: Path) -> Path:
+    """Extracts a verified archive while requiring every entry to remain within its declared root."""
+    target = destination / source.archive_root
     shutil.rmtree(target, ignore_errors=True)
     target.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(download_source(package), "r:gz") as archive:
+    with tarfile.open(download_source(source), "r:gz") as archive:
+        members = archive.getmembers()
         roots = {member.name.split("/", 1)[0] for member in archive.getmembers() if member.name}
-        expected_root = package.archive_root
+        expected_root = source.archive_root
         if roots != {expected_root}:
-            raise RuntimeError(f"scientific source root is invalid: {package.name}")
-        for member in archive.getmembers():
-            destination = (SOURCE_DIR / member.name).resolve()
-            if SOURCE_DIR.resolve() not in destination.parents and destination != SOURCE_DIR.resolve():
+            raise RuntimeError(f"scientific source root is invalid: {source.name}")
+        root_member = next(
+            (member for member in members if member.name.rstrip("/") == expected_root),
+            None,
+        )
+        if root_member is None or not root_member.isdir():
+            raise RuntimeError(f"scientific source root is not a directory: {source.name}")
+        resolved_destination = destination.resolve()
+        resolved_target = target.resolve()
+        for member in members:
+            member_destination = (destination / member.name).resolve()
+            if (
+                resolved_destination not in member_destination.parents
+                and member_destination != resolved_destination
+            ):
                 raise RuntimeError(f"scientific source entry escapes build directory: {member.name}")
-            if member.issym() or member.islnk() or (not member.isfile() and not member.isdir()):
+            if member.islnk() or (not member.isfile() and not member.isdir() and not member.issym()):
                 raise RuntimeError(f"scientific source contains unsupported member: {member.name}")
-        archive.extractall(SOURCE_DIR, members=archive.getmembers())
+            if member.issym():
+                link_destination = (member_destination.parent / member.linkname).resolve()
+                if (
+                    resolved_target not in link_destination.parents
+                    and link_destination != resolved_target
+                ):
+                    raise RuntimeError(
+                        f"scientific source symbolic link escapes source tree: {member.name}"
+                    )
+        archive.extractall(destination, members=members, filter="data")
+    return target
+
+
+def extract_submodule(submodule: SourceSubmodule, source: Path) -> None:
+    """Places one verified Git submodule archive at the exact path required by its parent source."""
+    resolved_source = source.resolve()
+    target = (source / submodule.destination).resolve()
+    if resolved_source not in target.parents:
+        raise RuntimeError(f"scientific source submodule path escapes source tree: {submodule.name}")
+    if target.exists():
+        if not target.is_dir():
+            raise RuntimeError(f"scientific source submodule path is not a directory: {submodule.destination}")
+        if any(target.iterdir()):
+            raise RuntimeError(f"scientific source submodule path is not empty: {submodule.destination}")
+        target.rmdir()
+    staging = BUILD_DIR / "submodule-sources"
+    extracted = extract_archive(submodule, staging)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(extracted), str(target))
+
+
+def extract_source(package: SourcePackage) -> Path:
+    """Extracts one package source and all mandatory Git submodules into the scientific build tree."""
+    target = extract_archive(package, SOURCE_DIR)
+    for submodule in package.submodules:
+        extract_submodule(submodule, target)
     return target
 
 
