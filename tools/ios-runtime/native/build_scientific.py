@@ -25,6 +25,7 @@ FRAMEWORK_NAME = "OperitPythonScientific"
 FRAMEWORK_OUTPUT = OUTPUT_DIR / f"{FRAMEWORK_NAME}.xcframework"
 PYTHON_VERSION = "3.13"
 MINIMUM_IOS_VERSION = "13.0"
+SCIPY_NUMPY_CONFIG_CROSS_FILE = TOOL_DIR / "scipy-numpy-config-cross-file.ini"
 
 
 @dataclass(frozen=True)
@@ -277,6 +278,8 @@ def build_wheels(package: SourcePackage, source: Path, build_python: Path) -> No
     env["CIBW_BEFORE_BUILD"] = ""
     env["CIBW_XBUILD_TOOLS"] = "cmake ninja"
     env["CIBW_CONFIG_SETTINGS"] = CIBW_CONFIG_SETTINGS_BY_PACKAGE[package.name]
+    if package.name == SCIPY.name:
+        env["CIBW_CONFIG_SETTINGS"] += f" setup-args=--cross-file={SCIPY_NUMPY_CONFIG_CROSS_FILE}"
     env["CIBW_ENVIRONMENT"] = (
         "NPY_BLAS_ORDER=accelerate "
         "NPY_LAPACK_ORDER=accelerate "
