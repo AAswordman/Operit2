@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 NUMPY_VERSION = "2.2.3"
+PYTHRAN_VERSION = "0.18.1"
 
 
 def numpy_include_directory() -> Path:
@@ -20,14 +21,23 @@ def numpy_include_directory() -> Path:
     return include_directory
 
 
+def pythran_include_directory() -> Path:
+    """Returns the installed Pythran headers without importing its NumPy-dependent config."""
+    include_directory = Path(sysconfig.get_path("platlib")) / "pythran"
+    if not include_directory.is_dir():
+        raise RuntimeError(f"Pythran headers are missing from the cross environment: {include_directory}")
+    return include_directory
+
+
 def write_cross_file(cross_file: Path) -> None:
-    """Writes the Meson NumPy lookup and include directory for the active cross environment."""
+    """Writes Meson NumPy and Pythran settings for the active cross environment."""
     cross_file.parent.mkdir(parents=True, exist_ok=True)
     cross_file.write_text(
         "[binaries]\n"
         f"numpy-config = ['python', '{Path(__file__).resolve()}']\n"
         "[properties]\n"
-        f"numpy-include-dir = '{numpy_include_directory()}'\n",
+        f"numpy-include-dir = '{numpy_include_directory()}'\n"
+        f"pythran-include-dir = '{pythran_include_directory()}'\n",
         encoding="utf-8",
     )
 
@@ -43,6 +53,17 @@ def prepare_cross_build(wheel_directory: Path, cross_file: Path) -> None:
             "--no-index",
             f"--find-links={wheel_directory}",
             f"numpy=={NUMPY_VERSION}",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            f"pythran=={PYTHRAN_VERSION}",
         ],
         check=True,
     )
