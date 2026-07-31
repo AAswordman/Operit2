@@ -131,7 +131,7 @@ def extract_source(package: SourcePackage) -> Path:
     return target
 
 
-def build_wheels(package: SourcePackage, source: Path) -> None:
+def build_wheels(package: SourcePackage, source: Path, build_python: Path) -> None:
     """Builds all device and simulator wheels for one scientific source distribution."""
     env = os.environ.copy()
     env["CIBW_BUILD"] = " ".join(IOS_BUILD_TAGS)
@@ -143,9 +143,29 @@ def build_wheels(package: SourcePackage, source: Path) -> None:
     )
     env["CIBW_TEST_SKIP"] = "*"
     run(
-        [sys.executable, "-m", "cibuildwheel", "--platform", "ios", "--output-dir", str(WHEEL_DIR), str(source)],
+        [
+            str(build_python),
+            "-m",
+            "cibuildwheel",
+            "--platform",
+            "ios",
+            "--output-dir",
+            str(WHEEL_DIR),
+            str(source),
+        ],
         env=env,
     )
+
+
+def prepare_cibuildwheel_python() -> Path:
+    """Creates the local virtual environment used exclusively for cibuildwheel tooling."""
+    virtual_environment = BUILD_DIR / "cibuildwheel-venv"
+    run([sys.executable, "-m", "venv", str(virtual_environment)])
+    python = virtual_environment / "bin" / "python"
+    if not python.is_file():
+        raise RuntimeError(f"cibuildwheel virtual environment is missing Python: {python}")
+    run([str(python), "-m", "pip", "install", "cibuildwheel==2.22.0"])
+    return python
 
 
 def wheel_path(package: SourcePackage, build_tag: str) -> Path:
@@ -307,12 +327,12 @@ def verify_output() -> None:
 def main() -> int:
     """Builds the complete signed-framework payload used by embedded iOS NumPy and SciPy."""
     require_macos_xcode()
-    run([sys.executable, "-m", "pip", "install", "cibuildwheel==2.22.0"])
+    build_python = prepare_cibuildwheel_python()
     shutil.rmtree(WHEEL_DIR, ignore_errors=True)
     WHEEL_DIR.mkdir(parents=True)
     packages = [NUMPY, SCIPY]
     for package in packages:
-        build_wheels(package, extract_source(package))
+        build_wheels(package, extract_source(package), build_python)
     create_xcframework(packages)
     verify_output()
     print(f"iOS scientific XCFramework: {FRAMEWORK_OUTPUT}", flush=True)
