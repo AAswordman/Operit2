@@ -303,8 +303,7 @@ CIBW_CONFIG_SETTINGS_BY_PACKAGE = {
     "scipy": (
         "setup-args=-Duse-ilp64=false "
         "setup-args=-Dblas=accelerate "
-        "setup-args=-Dlapack=accelerate "
-        "build-dir=build"
+        "setup-args=-Dlapack=accelerate"
     ),
 }
 
@@ -563,18 +562,16 @@ def build_wheels(
 ) -> None:
     """Builds all device and simulator wheels for one scientific source distribution."""
     env = os.environ.copy()
-    env["CIBW_BUILD"] = " ".join(IOS_BUILD_TAGS)
     env["CIBW_ARCHS_IOS"] = "arm64_iphoneos arm64_iphonesimulator x86_64_iphonesimulator"
     env["CIBW_BEFORE_BUILD"] = ""
     env["CIBW_XBUILD_TOOLS"] = "cmake ninja"
-    env["CIBW_CONFIG_SETTINGS"] = CIBW_CONFIG_SETTINGS_BY_PACKAGE[package.name]
+    config_settings = CIBW_CONFIG_SETTINGS_BY_PACKAGE[package.name]
     if package.name == SCIPY.name:
         cross_file = scipy_numpy_config_cross_file(host_python, host_pythran)
         env["CIBW_BEFORE_BUILD"] = (
             f"python {SCIPY_NUMPY_CONFIG_TOOL} --prepare-cross-build "
             f"{WHEEL_DIR} {cross_file} {host_python} {host_f2py} {host_pythran}"
         )
-        env["CIBW_CONFIG_SETTINGS"] += f" setup-args=--cross-file={cross_file}"
     env["CIBW_ENVIRONMENT"] = (
         "NPY_BLAS_ORDER=accelerate "
         "NPY_LAPACK_ORDER=accelerate "
@@ -585,19 +582,29 @@ def build_wheels(
             f" PIP_CONSTRAINT={SCIPY_NUMPY_CONSTRAINTS} SCIPY_HOST_F2PY={host_f2py}"
         )
     env["CIBW_TEST_SKIP"] = "*"
-    run(
-        [
-            str(build_python),
-            "-m",
-            "cibuildwheel",
-            "--platform",
-            "ios",
-            "--output-dir",
-            str(WHEEL_DIR),
-            str(source),
-        ],
-        env=env,
-    )
+    build_selections = IOS_BUILD_TAGS if package.name == SCIPY.name else [" ".join(IOS_BUILD_TAGS)]
+    for build_selection in build_selections:
+        env["CIBW_BUILD"] = build_selection
+        if package.name == SCIPY.name:
+            env["CIBW_CONFIG_SETTINGS"] = (
+                f"{config_settings} build-dir=build-{build_selection} "
+                f"setup-args=--cross-file={cross_file}"
+            )
+        else:
+            env["CIBW_CONFIG_SETTINGS"] = config_settings
+        run(
+            [
+                str(build_python),
+                "-m",
+                "cibuildwheel",
+                "--platform",
+                "ios",
+                "--output-dir",
+                str(WHEEL_DIR),
+                str(source),
+            ],
+            env=env,
+        )
 
 
 def prepare_cibuildwheel_python() -> Path:
