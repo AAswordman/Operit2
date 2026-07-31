@@ -29,6 +29,7 @@ MINIMUM_IOS_VERSION = "13.0"
 SCIPY_NUMPY_CONFIG_TOOL = TOOL_DIR / "scipy_numpy_config.py"
 SCIPY_NUMPY_CONSTRAINTS = TOOL_DIR / "scipy-numpy-constraints.txt"
 SCIPY_IOS_ACCELERATE_MESON_PATH = Path("scipy/meson.build")
+SCIPY_F2PY_GENERATOR_PATH = Path("tools/building/generate_f2pymod.py")
 SCIPY_ACCELERATE_PLATFORM_CHECK = """macOS13_3_or_later = false
 if host_machine.system() == 'darwin'
   r = run_command('xcrun', '-sdk', 'macosx', '--show-sdk-version', check: true)
@@ -63,6 +64,10 @@ SCIPY_IOS_ACCELERATE_NEW_LAPACK = """elif uses_accelerate and not ios_accelerate
   _args_blas_lp64 += ['-DACCELERATE_NEW_LAPACK']
   _args_blas_ilp64 += ['-DACCELERATE_NEW_LAPACK']
 endif
+"""
+SCIPY_F2PY_COMMAND = """        cmd = ['f2py', fname_pyf, '--build-dir', outdir_abs] + nogil_arg
+"""
+SCIPY_HOST_F2PY_COMMAND = """        cmd = [os.environ['SCIPY_HOST_F2PY'], fname_pyf, '--build-dir', outdir_abs] + nogil_arg
 """
 
 
@@ -335,6 +340,19 @@ def configure_scipy_ios_accelerate(source: Path) -> None:
     )
 
 
+def configure_scipy_host_f2py(source: Path) -> None:
+    """Requires SciPy's F2Py generator subprocess to use the native host executable."""
+    generator = source / SCIPY_F2PY_GENERATOR_PATH
+    if not generator.is_file():
+        raise RuntimeError(f"SciPy F2Py generator is missing: {generator}")
+    replace_required_source_text(
+        generator,
+        SCIPY_F2PY_COMMAND,
+        SCIPY_HOST_F2PY_COMMAND,
+        "F2Py generator command",
+    )
+
+
 def extract_source(package: SourcePackage) -> Path:
     """Extracts one package source and all mandatory Git submodules into the scientific build tree."""
     target = extract_archive(package, SOURCE_DIR)
@@ -342,6 +360,7 @@ def extract_source(package: SourcePackage) -> Path:
         extract_submodule(submodule, target)
     if package.name == SCIPY.name:
         configure_scipy_ios_accelerate(target)
+        configure_scipy_host_f2py(target)
     return target
 
 
@@ -382,7 +401,9 @@ def build_wheels(
         f"IPHONEOS_DEPLOYMENT_TARGET={MINIMUM_IOS_VERSION}"
     )
     if package.name == SCIPY.name:
-        env["CIBW_ENVIRONMENT"] += f" PIP_CONSTRAINT={SCIPY_NUMPY_CONSTRAINTS}"
+        env["CIBW_ENVIRONMENT"] += (
+            f" PIP_CONSTRAINT={SCIPY_NUMPY_CONSTRAINTS} SCIPY_HOST_F2PY={host_f2py}"
+        )
     env["CIBW_TEST_SKIP"] = "*"
     run(
         [
