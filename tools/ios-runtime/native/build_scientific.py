@@ -35,6 +35,7 @@ class SourcePackage:
     version: str
     url: str
     sha256: str
+    archive_root: str
 
 
 NUMPY = SourcePackage(
@@ -45,15 +46,14 @@ NUMPY = SourcePackage(
         "882832dcec7d5d0922c9e9acf2de/numpy-2.2.3.tar.gz"
     ),
     sha256="dbdc15f0c81611925f382dfa97b3bd0bc2c1ce19d4fe50482cb0ddc12ba30020",
+    archive_root="numpy-2.2.3",
 )
 SCIPY = SourcePackage(
     name="scipy",
-    version="1.15.2",
-    url=(
-        "https://files.pythonhosted.org/packages/b7/b9/31ba9cd990e626574baf93fbc1ac61cf"
-        "9ed54faafd04c479117517661637/scipy-1.15.2.tar.gz"
-    ),
-    sha256="cd58a314d92838f7e6f755c8a2167ead4f27e1fd5c1251fd54289569ef3495ec",
+    version="2.0.0.dev0",
+    url="https://codeload.github.com/scipy/scipy/tar.gz/bc48810bef70f93b67d107f5263f267affc0fbe2",
+    sha256="0ce3e85ff03bbbaac6a3f5597737f0b8dc2f0ffe79670a1d9c60d0fb3c122775",
+    archive_root="scipy-bc48810bef70f93b67d107f5263f267affc0fbe2",
 )
 IOS_BUILD_TAGS = (
     "cp313-ios_arm64_iphoneos",
@@ -127,12 +127,12 @@ def download_source(package: SourcePackage) -> Path:
 
 def extract_source(package: SourcePackage) -> Path:
     """Extracts one verified scientific package source tree into a clean build directory."""
-    target = SOURCE_DIR / f"{package.name}-{package.version}"
+    target = SOURCE_DIR / package.archive_root
     shutil.rmtree(target, ignore_errors=True)
     target.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(download_source(package), "r:gz") as archive:
         roots = {member.name.split("/", 1)[0] for member in archive.getmembers() if member.name}
-        expected_root = f"{package.name}-{package.version}"
+        expected_root = package.archive_root
         if roots != {expected_root}:
             raise RuntimeError(f"scientific source root is invalid: {package.name}")
         for member in archive.getmembers():
