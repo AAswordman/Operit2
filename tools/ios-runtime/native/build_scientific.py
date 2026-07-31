@@ -25,13 +25,12 @@ HOST_F2PY_VIRTUAL_ENV = BUILD_DIR / "host-f2py-venv"
 FRAMEWORK_NAME = "OperitPythonScientific"
 FRAMEWORK_OUTPUT = OUTPUT_DIR / f"{FRAMEWORK_NAME}.xcframework"
 PYTHON_VERSION = "3.13"
-MINIMUM_IOS_VERSION = "13.0"
+MINIMUM_IOS_VERSION = "16.4"
 SCIPY_NUMPY_CONFIG_TOOL = TOOL_DIR / "scipy_numpy_config.py"
 SCIPY_NUMPY_CONSTRAINTS = TOOL_DIR / "scipy-numpy-constraints.txt"
 SCIPY_IOS_ACCELERATE_MESON_PATH = Path("scipy/meson.build")
 SCIPY_F2PY_GENERATOR_PATH = Path("tools/building/generate_f2pymod.py")
 SCIPY_PYTHRAN_PROGRAM_PATH = Path("meson.build")
-SCIPY_BLAS_WRAPPER_MESON_PATH = Path("scipy/_build_utils/meson.build")
 SCIPY_ACCELERATE_PLATFORM_CHECK = """macOS13_3_or_later = false
 if host_machine.system() == 'darwin'
   r = run_command('xcrun', '-sdk', 'macosx', '--show-sdk-version', check: true)
@@ -57,16 +56,6 @@ SCIPY_IOS_ACCELERATE_VALIDATION = """if blas_name == 'accelerate'
     error('Accelerate is only supported on iOS or macOS >=13.3')
   endif
 """
-SCIPY_ACCELERATE_NEW_LAPACK = """elif uses_accelerate
-  _args_blas_lp64 += ['-DACCELERATE_NEW_LAPACK']
-  _args_blas_ilp64 += ['-DACCELERATE_NEW_LAPACK']
-endif
-"""
-SCIPY_IOS_ACCELERATE_NEW_LAPACK = """elif uses_accelerate and not ios_accelerate
-  _args_blas_lp64 += ['-DACCELERATE_NEW_LAPACK']
-  _args_blas_ilp64 += ['-DACCELERATE_NEW_LAPACK']
-endif
-"""
 SCIPY_F2PY_COMMAND = """        cmd = ['f2py', fname_pyf, '--build-dir', outdir_abs] + nogil_arg
 """
 SCIPY_HOST_F2PY_COMMAND = """        cmd = [os.environ['SCIPY_HOST_F2PY'], fname_pyf, '--build-dir', outdir_abs] + nogil_arg
@@ -79,16 +68,6 @@ SCIPY_HOST_PYTHRAN_PROGRAM = """  pythran = find_program(
     version: '>=0.18.1',
   )
 """
-SCIPY_ACCELERATE_LP64_WRAPPER_CONDITION = """if (uses_accelerate or blas_name == 'scipy-openblas') and needs_lp64_fblas
-"""
-SCIPY_IOS_ACCELERATE_LP64_WRAPPER_CONDITION = """if ((uses_accelerate and not ios_accelerate) or blas_name == 'scipy-openblas') and needs_lp64_fblas
-"""
-SCIPY_ACCELERATE_ILP64_WRAPPER_CONDITION = """if use_ilp64 or uses_accelerate or blas_name == 'scipy-openblas'
-"""
-SCIPY_IOS_ACCELERATE_ILP64_WRAPPER_CONDITION = """if use_ilp64 or (uses_accelerate and not ios_accelerate) or blas_name == 'scipy-openblas'
-"""
-
-
 @dataclass(frozen=True)
 class SourceSubmodule:
     """Describes one pinned Git submodule required by a scientific source tree."""
@@ -334,7 +313,7 @@ def replace_required_source_text(path: Path, expected: str, replacement: str, de
 
 
 def configure_scipy_ios_accelerate(source: Path) -> None:
-    """Configures SciPy to use the iOS 13-compatible LP64 Accelerate ABI."""
+    """Allows SciPy to use the iOS 16.4 Accelerate ABI."""
     meson_build = source / SCIPY_IOS_ACCELERATE_MESON_PATH
     if not meson_build.is_file():
         raise RuntimeError(f"SciPy Accelerate configuration file is missing: {meson_build}")
@@ -350,14 +329,6 @@ def configure_scipy_ios_accelerate(source: Path) -> None:
         SCIPY_IOS_ACCELERATE_VALIDATION,
         "Accelerate validation",
     )
-    replace_required_source_text(
-        meson_build,
-        SCIPY_ACCELERATE_NEW_LAPACK,
-        SCIPY_IOS_ACCELERATE_NEW_LAPACK,
-        "Accelerate LP64 configuration",
-    )
-
-
 def configure_scipy_host_f2py(source: Path) -> None:
     """Requires SciPy's F2Py generator subprocess to use the native host executable."""
     generator = source / SCIPY_F2PY_GENERATOR_PATH
@@ -384,25 +355,6 @@ def configure_scipy_host_pythran(source: Path) -> None:
     )
 
 
-def configure_scipy_ios_accelerate_wrappers(source: Path) -> None:
-    """Disables new-Accelerate wrapper targets for the legacy iOS ABI."""
-    meson_build = source / SCIPY_BLAS_WRAPPER_MESON_PATH
-    if not meson_build.is_file():
-        raise RuntimeError(f"SciPy BLAS wrapper Meson file is missing: {meson_build}")
-    replace_required_source_text(
-        meson_build,
-        SCIPY_ACCELERATE_LP64_WRAPPER_CONDITION,
-        SCIPY_IOS_ACCELERATE_LP64_WRAPPER_CONDITION,
-        "Accelerate LP64 wrapper condition",
-    )
-    replace_required_source_text(
-        meson_build,
-        SCIPY_ACCELERATE_ILP64_WRAPPER_CONDITION,
-        SCIPY_IOS_ACCELERATE_ILP64_WRAPPER_CONDITION,
-        "Accelerate ILP64 wrapper condition",
-    )
-
-
 def extract_source(package: SourcePackage) -> Path:
     """Extracts one package source and all mandatory Git submodules into the scientific build tree."""
     target = extract_archive(package, SOURCE_DIR)
@@ -412,7 +364,6 @@ def extract_source(package: SourcePackage) -> Path:
         configure_scipy_ios_accelerate(target)
         configure_scipy_host_f2py(target)
         configure_scipy_host_pythran(target)
-        configure_scipy_ios_accelerate_wrappers(target)
     return target
 
 
