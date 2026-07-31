@@ -164,7 +164,7 @@ def prepare_cibuildwheel_python() -> Path:
     python = virtual_environment / "bin" / "python"
     if not python.is_file():
         raise RuntimeError(f"cibuildwheel virtual environment is missing Python: {python}")
-    run([str(python), "-m", "pip", "install", "cibuildwheel==2.22.0"])
+    run([str(python), "-m", "pip", "install", "cibuildwheel==4.1.1"])
     return python
 
 
