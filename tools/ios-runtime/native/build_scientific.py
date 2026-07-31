@@ -28,6 +28,42 @@ PYTHON_VERSION = "3.13"
 MINIMUM_IOS_VERSION = "13.0"
 SCIPY_NUMPY_CONFIG_TOOL = TOOL_DIR / "scipy_numpy_config.py"
 SCIPY_NUMPY_CONSTRAINTS = TOOL_DIR / "scipy-numpy-constraints.txt"
+SCIPY_IOS_ACCELERATE_MESON_PATH = Path("scipy/meson.build")
+SCIPY_ACCELERATE_PLATFORM_CHECK = """macOS13_3_or_later = false
+if host_machine.system() == 'darwin'
+  r = run_command('xcrun', '-sdk', 'macosx', '--show-sdk-version', check: true)
+  sdkVersion = r.stdout().strip()
+  macOS13_3_or_later = sdkVersion.version_compare('>=13.3')
+endif
+"""
+SCIPY_IOS_ACCELERATE_PLATFORM_CHECK = """ios_accelerate = host_machine.system() == 'ios'
+macOS13_3_or_later = false
+if host_machine.system() == 'darwin'
+  r = run_command('xcrun', '-sdk', 'macosx', '--show-sdk-version', check: true)
+  sdkVersion = r.stdout().strip()
+  macOS13_3_or_later = sdkVersion.version_compare('>=13.3')
+endif
+"""
+SCIPY_ACCELERATE_VALIDATION = """if blas_name == 'accelerate'
+  if not macOS13_3_or_later
+    error('macOS Accelerate is only supported on macOS >=13.3')
+  endif
+"""
+SCIPY_IOS_ACCELERATE_VALIDATION = """if blas_name == 'accelerate'
+  if not ios_accelerate and not macOS13_3_or_later
+    error('Accelerate is only supported on iOS or macOS >=13.3')
+  endif
+"""
+SCIPY_ACCELERATE_NEW_LAPACK = """elif uses_accelerate
+  _args_blas_lp64 += ['-DACCELERATE_NEW_LAPACK']
+  _args_blas_ilp64 += ['-DACCELERATE_NEW_LAPACK']
+endif
+"""
+SCIPY_IOS_ACCELERATE_NEW_LAPACK = """elif uses_accelerate and not ios_accelerate
+  _args_blas_lp64 += ['-DACCELERATE_NEW_LAPACK']
+  _args_blas_ilp64 += ['-DACCELERATE_NEW_LAPACK']
+endif
+"""
 
 
 @dataclass(frozen=True)
@@ -152,6 +188,7 @@ CIBW_CONFIG_SETTINGS_BY_PACKAGE = {
         "build-dir=build"
     ),
     "scipy": (
+        "setup-args=-Duse-ilp64=false "
         "setup-args=-Dblas=accelerate "
         "setup-args=-Dlapack=accelerate "
         "build-dir=build"
@@ -264,11 +301,47 @@ def extract_submodule(submodule: SourceSubmodule, source: Path) -> None:
     shutil.move(str(extracted), str(target))
 
 
+def replace_required_source_text(path: Path, expected: str, replacement: str, description: str) -> None:
+    """Replaces one exact upstream source block and rejects any source revision drift."""
+    contents = path.read_text(encoding="utf-8")
+    matches = contents.count(expected)
+    if matches != 1:
+        raise RuntimeError(f"unexpected SciPy {description} block count: {matches}")
+    path.write_text(contents.replace(expected, replacement), encoding="utf-8")
+
+
+def configure_scipy_ios_accelerate(source: Path) -> None:
+    """Configures SciPy to use the iOS 13-compatible LP64 Accelerate ABI."""
+    meson_build = source / SCIPY_IOS_ACCELERATE_MESON_PATH
+    if not meson_build.is_file():
+        raise RuntimeError(f"SciPy Accelerate configuration file is missing: {meson_build}")
+    replace_required_source_text(
+        meson_build,
+        SCIPY_ACCELERATE_PLATFORM_CHECK,
+        SCIPY_IOS_ACCELERATE_PLATFORM_CHECK,
+        "Accelerate platform check",
+    )
+    replace_required_source_text(
+        meson_build,
+        SCIPY_ACCELERATE_VALIDATION,
+        SCIPY_IOS_ACCELERATE_VALIDATION,
+        "Accelerate validation",
+    )
+    replace_required_source_text(
+        meson_build,
+        SCIPY_ACCELERATE_NEW_LAPACK,
+        SCIPY_IOS_ACCELERATE_NEW_LAPACK,
+        "Accelerate LP64 configuration",
+    )
+
+
 def extract_source(package: SourcePackage) -> Path:
     """Extracts one package source and all mandatory Git submodules into the scientific build tree."""
     target = extract_archive(package, SOURCE_DIR)
     for submodule in package.submodules:
         extract_submodule(submodule, target)
+    if package.name == SCIPY.name:
+        configure_scipy_ios_accelerate(target)
     return target
 
 
