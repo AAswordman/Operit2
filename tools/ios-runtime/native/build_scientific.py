@@ -208,7 +208,10 @@ def download_source(source: SourcePackage | SourceSubmodule) -> Path:
 def extract_archive(source: SourcePackage | SourceSubmodule, destination: Path) -> Path:
     """Extracts a verified archive while requiring every entry to remain within its declared root."""
     target = destination / source.archive_root
-    shutil.rmtree(target, ignore_errors=True)
+    if target.exists():
+        if target.is_symlink() or not target.is_dir():
+            raise RuntimeError(f"scientific source target is not a directory: {target}")
+        shutil.rmtree(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(download_source(source), "r:gz") as archive:
         members = archive.getmembers()
@@ -216,12 +219,6 @@ def extract_archive(source: SourcePackage | SourceSubmodule, destination: Path) 
         expected_root = source.archive_root
         if roots != {expected_root}:
             raise RuntimeError(f"scientific source root is invalid: {source.name}")
-        root_member = next(
-            (member for member in members if member.name.rstrip("/") == expected_root),
-            None,
-        )
-        if root_member is None or not root_member.isdir():
-            raise RuntimeError(f"scientific source root is not a directory: {source.name}")
         resolved_destination = destination.resolve()
         resolved_target = target.resolve()
         for member in members:
