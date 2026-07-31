@@ -29,24 +29,32 @@ def pythran_include_directory() -> Path:
     return include_directory
 
 
-def write_cross_file(cross_file: Path, host_f2py: Path) -> None:
+def write_cross_file(cross_file: Path, host_f2py: Path, host_pythran: Path) -> None:
     """Writes Meson NumPy and Pythran settings for the active cross environment."""
     if not host_f2py.is_file():
         raise RuntimeError(f"host F2Py executable is missing: {host_f2py}")
+    if not host_pythran.is_file():
+        raise RuntimeError(f"host Pythran executable is missing: {host_pythran}")
     cross_file.parent.mkdir(parents=True, exist_ok=True)
     cross_file.write_text(
         "[binaries]\n"
         f"numpy-config = ['python', '{Path(__file__).resolve()}']\n"
         f"f2py = '{host_f2py}'\n"
         "[properties]\n"
+        f"pythran-program = '{host_pythran}'\n"
         f"numpy-include-dir = '{numpy_include_directory()}'\n"
         f"pythran-include-dir = '{pythran_include_directory()}'\n",
         encoding="utf-8",
     )
 
 
-def prepare_cross_build(wheel_directory: Path, cross_file: Path, host_f2py: Path) -> None:
-    """Installs build dependencies and records target headers plus host F2Py for SciPy Meson."""
+def prepare_cross_build(
+    wheel_directory: Path,
+    cross_file: Path,
+    host_f2py: Path,
+    host_pythran: Path,
+) -> None:
+    """Installs target headers and records the host code generators for SciPy Meson."""
     subprocess.run(
         [
             sys.executable,
@@ -70,14 +78,19 @@ def prepare_cross_build(wheel_directory: Path, cross_file: Path, host_f2py: Path
         ],
         check=True,
     )
-    write_cross_file(cross_file, host_f2py)
+    write_cross_file(cross_file, host_f2py, host_pythran)
 
 
 def main() -> int:
     """Reports NumPy build settings or prepares the SciPy cross-build configuration."""
     arguments = sys.argv[1:]
-    if len(arguments) == 4 and arguments[0] == "--prepare-cross-build":
-        prepare_cross_build(Path(arguments[1]), Path(arguments[2]), Path(arguments[3]))
+    if len(arguments) == 5 and arguments[0] == "--prepare-cross-build":
+        prepare_cross_build(
+            Path(arguments[1]),
+            Path(arguments[2]),
+            Path(arguments[3]),
+            Path(arguments[4]),
+        )
         return 0
     if arguments == ["--version"]:
         print(NUMPY_VERSION)
