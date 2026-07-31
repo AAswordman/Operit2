@@ -135,7 +135,7 @@ def build_wheels(package: SourcePackage, source: Path, build_python: Path) -> No
     """Builds all device and simulator wheels for one scientific source distribution."""
     env = os.environ.copy()
     env["CIBW_BUILD"] = " ".join(IOS_BUILD_TAGS)
-    env["CIBW_ARCHS_IOS"] = "arm64 x86_64"
+    env["CIBW_ARCHS_IOS"] = "arm64_iphoneos arm64_iphonesimulator x86_64_iphonesimulator"
     env["CIBW_ENVIRONMENT"] = (
         "NPY_BLAS_ORDER=accelerate "
         "NPY_LAPACK_ORDER=accelerate "
