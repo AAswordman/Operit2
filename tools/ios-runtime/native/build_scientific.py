@@ -139,7 +139,7 @@ def build_wheels(package: SourcePackage, source: Path, build_python: Path) -> No
     env["CIBW_BEFORE_BUILD"] = ""
     env["CIBW_XBUILD_TOOLS"] = "cmake ninja"
     env["CIBW_CONFIG_SETTINGS"] = (
-        "setup-args=-Duse-ilp64=true "
+        "setup-args=-Duse-ilp64=false "
         "setup-args=-Dallow-noblas=false "
         "setup-args=-Dblas=accelerate "
         "setup-args=-Dlapack=accelerate "
