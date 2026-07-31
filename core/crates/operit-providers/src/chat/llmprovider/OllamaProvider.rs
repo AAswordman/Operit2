@@ -48,13 +48,13 @@ impl OllamaProvider {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for OllamaProvider {
-    fn input_token_count(&self) -> i32 {
+    fn input_token_count(&self) -> i64 {
         self.inner.input_token_count()
     }
-    fn cached_input_token_count(&self) -> i32 {
+    fn cached_input_token_count(&self) -> i64 {
         self.inner.cached_input_token_count()
     }
-    fn output_token_count(&self) -> i32 {
+    fn output_token_count(&self) -> i64 {
         self.inner.output_token_count()
     }
     fn provider_model(&self) -> String {
@@ -76,7 +76,7 @@ impl AIService for OllamaProvider {
         &self,
         chat_history: &[operit_model::PromptTurn::PromptTurn],
         available_tools: &[operit_model::ToolPrompt::ToolPrompt],
-    ) -> Result<i32, AiServiceError> {
+    ) -> Result<i64, AiServiceError> {
         self.inner
             .calculate_input_tokens(chat_history, available_tools)
             .await

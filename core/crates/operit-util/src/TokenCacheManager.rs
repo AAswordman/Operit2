@@ -5,10 +5,10 @@ use crate::ChatUtils::ChatUtils;
 /// Tracks cached, current, total input, and output token counts.
 pub struct TokenCacheManager {
     previous_chat_history: Vec<(String, String)>,
-    previous_history_token_count: usize,
-    cached_input_token_count: usize,
-    current_input_token_count: usize,
-    output_token_count: usize,
+    previous_history_token_count: i64,
+    cached_input_token_count: i64,
+    current_input_token_count: i64,
+    output_token_count: i64,
 }
 
 impl TokenCacheManager {
@@ -18,22 +18,22 @@ impl TokenCacheManager {
     }
 
     /// Returns input tokens served from provider cache.
-    pub fn cached_input_token_count(&self) -> usize {
+    pub fn cached_input_token_count(&self) -> i64 {
         self.cached_input_token_count
     }
 
     /// Returns non-cached input tokens for the current request.
-    pub fn current_input_token_count(&self) -> usize {
+    pub fn current_input_token_count(&self) -> i64 {
         self.current_input_token_count
     }
 
     /// Returns total input tokens for the current request.
-    pub fn total_input_token_count(&self) -> usize {
+    pub fn total_input_token_count(&self) -> i64 {
         self.cached_input_token_count + self.current_input_token_count
     }
 
     /// Returns output tokens counted for the current response.
-    pub fn output_token_count(&self) -> usize {
+    pub fn output_token_count(&self) -> i64 {
         self.output_token_count
     }
 
@@ -47,17 +47,17 @@ impl TokenCacheManager {
     }
 
     /// Adds output tokens to the current response count.
-    pub fn add_output_tokens(&mut self, tokens: usize) {
+    pub fn add_output_tokens(&mut self, tokens: i64) {
         self.output_token_count += tokens;
     }
 
     /// Replaces the output token count.
-    pub fn set_output_tokens(&mut self, tokens: usize) {
+    pub fn set_output_tokens(&mut self, tokens: i64) {
         self.output_token_count = tokens;
     }
 
     /// Updates measured input token counts reported by a provider.
-    pub fn update_actual_tokens(&mut self, actual_input: usize, cached_input: usize) {
+    pub fn update_actual_tokens(&mut self, actual_input: i64, cached_input: i64) {
         self.current_input_token_count = actual_input;
         self.cached_input_token_count = cached_input;
     }
@@ -68,7 +68,7 @@ impl TokenCacheManager {
         chat_history: &[(String, String)],
         tools_json: Option<&str>,
         update_state: bool,
-    ) -> usize {
+    ) -> i64 {
         let history_with_tools = history_with_tools(chat_history, tools_json);
         let common_prefix_length =
             find_common_prefix_length(&history_with_tools, &self.previous_chat_history);
@@ -128,7 +128,7 @@ fn find_common_prefix_length(current: &[(String, String)], previous: &[(String, 
     common
 }
 
-fn calculate_tokens_for_history(history: &[(String, String)]) -> usize {
+fn calculate_tokens_for_history(history: &[(String, String)]) -> i64 {
     history
         .iter()
         .map(|(_, content)| ChatUtils::estimate_token_count(content))

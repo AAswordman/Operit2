@@ -64,7 +64,7 @@ pub struct EnhancedAIService {
     pub file_binding_service: FileBindingServiceMirror,
     pub tool_handler: AIToolHandler,
     pub input_processing_state: MutableStateFlow<InputProcessingState>,
-    pub request_window_estimate_flow: MutableStateFlow<Option<i32>>,
+    pub request_window_estimate_flow: MutableStateFlow<Option<i64>>,
     pub api_preferences: ApiPreferencesMirror,
     pub character_card_tool_access_resolver: CharacterCardToolAccessResolverMirror,
     pub tool_processing_scope: ToolProcessingScopeMirror,
@@ -76,17 +76,17 @@ pub struct EnhancedAIService {
 #[derive(Clone, Debug)]
 pub struct EnhancedAISharedState {
     pub is_service_manager_initialized: bool,
-    pub per_request_token_counts: Option<(i32, i32)>,
-    pub request_window_estimate: Option<i32>,
+    pub per_request_token_counts: Option<(i64, i64)>,
+    pub request_window_estimate: Option<i64>,
     pub active_execution_contexts: BTreeMap<i32, MessageExecutionContext>,
     pub next_execution_context_id: i32,
     pub tool_execution_jobs: BTreeMap<String, ToolExecutionJobMirror>,
-    pub accumulated_input_token_count: i32,
-    pub accumulated_output_token_count: i32,
-    pub accumulated_cached_input_token_count: i32,
-    pub current_request_input_token_count: i32,
-    pub current_request_output_token_count: i32,
-    pub current_request_cached_input_token_count: i32,
+    pub accumulated_input_token_count: i64,
+    pub accumulated_output_token_count: i64,
+    pub accumulated_cached_input_token_count: i64,
+    pub current_request_input_token_count: i64,
+    pub current_request_output_token_count: i64,
+    pub current_request_cached_input_token_count: i64,
     pub current_response_callback_registered: bool,
     pub current_complete_callback_registered: bool,
     pub last_reply_content: Option<String>,
@@ -96,9 +96,9 @@ pub struct EnhancedAISharedState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TurnTokenSnapshot {
-    pub inputTokens: i32,
-    pub outputTokens: i32,
-    pub cachedInputTokens: i32,
+    pub inputTokens: i64,
+    pub outputTokens: i64,
+    pub cachedInputTokens: i64,
 }
 
 pub trait SendMessageCallbacks: Send + Sync {
@@ -241,7 +241,7 @@ pub struct SendMessageExecution {
     pub requestHistory: Vec<PromptTurn>,
     pub responseChunks: Vec<String>,
     pub tokenSnapshot: TurnTokenSnapshot,
-    pub requestWindowSize: i32,
+    pub requestWindowSize: i64,
     pub providerModel: String,
     pub lifecycle: Vec<SendMessageLifecycleStage>,
 }
@@ -604,7 +604,7 @@ impl EnhancedAIService {
         runtime.modelParameters.clone()
     }
 
-    pub fn publishRequestWindowEstimate(&mut self, windowSize: i32) {
+    pub fn publishRequestWindowEstimate(&mut self, windowSize: i64) {
         self.shared_state().request_window_estimate = Some(windowSize);
         self.request_window_estimate_flow
             .set_value(Some(windowSize));
@@ -616,7 +616,7 @@ impl EnhancedAIService {
         preparedHistory: &[PromptTurn],
         availableTools: &[ToolPrompt],
         publishEstimate: bool,
-    ) -> Result<i32, AiServiceError> {
+    ) -> Result<i64, AiServiceError> {
         let windowSize = {
             let service = serviceForFunction.lock().await;
             service
@@ -836,7 +836,7 @@ impl EnhancedAIService {
         chatModelIdOverride: Option<String>,
         publishEstimate: bool,
         mut runtime: SendMessageRuntime,
-    ) -> Result<i32, AiServiceError> {
+    ) -> Result<i64, AiServiceError> {
         self.ensureInitialized();
         let preparedHistory = self.prepareConversationHistory(
             chatHistory,
@@ -961,7 +961,7 @@ impl EnhancedAIService {
     }
 
     #[allow(non_snake_case)]
-    pub fn requestWindowEstimateFlow(&self) -> MutableStateFlow<Option<i32>> {
+    pub fn requestWindowEstimateFlow(&self) -> MutableStateFlow<Option<i64>> {
         self.request_window_estimate_flow.clone()
     }
 
@@ -2832,27 +2832,27 @@ impl EnhancedAIService {
     }
 
     #[allow(non_snake_case)]
-    pub fn getCurrentInputTokenCount(&self) -> i32 {
+    pub fn getCurrentInputTokenCount(&self) -> i64 {
         self.shared_state().accumulated_input_token_count
     }
 
     #[allow(non_snake_case)]
-    pub fn getCurrentOutputTokenCount(&self) -> i32 {
+    pub fn getCurrentOutputTokenCount(&self) -> i64 {
         self.shared_state().accumulated_output_token_count
     }
 
     #[allow(non_snake_case)]
-    pub fn getCurrentCachedInputTokenCount(&self) -> i32 {
+    pub fn getCurrentCachedInputTokenCount(&self) -> i64 {
         self.shared_state().accumulated_cached_input_token_count
     }
 
     #[allow(non_snake_case)]
-    pub fn getPerRequestTokenCounts(&self) -> Option<(i32, i32)> {
+    pub fn getPerRequestTokenCounts(&self) -> Option<(i64, i64)> {
         self.shared_state().per_request_token_counts
     }
 
     #[allow(non_snake_case)]
-    pub fn getRequestWindowEstimate(&self) -> Option<i32> {
+    pub fn getRequestWindowEstimate(&self) -> Option<i64> {
         self.shared_state().request_window_estimate
     }
 
@@ -2885,9 +2885,9 @@ impl EnhancedAIService {
     #[allow(non_snake_case)]
     pub fn setCurrentTurnTokenCounts(
         &mut self,
-        inputTokens: i32,
-        outputTokens: i32,
-        cachedInputTokens: i32,
+        inputTokens: i64,
+        outputTokens: i64,
+        cachedInputTokens: i64,
     ) {
         let mut shared = self.shared_state();
         shared.accumulated_input_token_count = inputTokens.max(0);
@@ -2972,9 +2972,9 @@ fn persistProviderModelTokenUsage(
     functionType: FunctionType,
     source: UsageRequestSource,
     chatId: Option<String>,
-    inputTokens: i32,
-    outputTokens: i32,
-    cachedInputTokens: i32,
+    inputTokens: i64,
+    outputTokens: i64,
+    cachedInputTokens: i64,
 ) -> Result<(), AiServiceError> {
     runtimeSupport
         .updateTokensForProviderModel(providerModel, inputTokens, outputTokens, cachedInputTokens)

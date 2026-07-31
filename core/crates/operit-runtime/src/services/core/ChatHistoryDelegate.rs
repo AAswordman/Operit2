@@ -1162,9 +1162,9 @@ impl ChatHistoryDelegate {
     /// Persists token metrics for the current or supplied chat.
     pub fn saveCurrentChat(
         &mut self,
-        inputTokens: i32,
-        outputTokens: i32,
-        actualContextWindowSize: i32,
+        inputTokens: i64,
+        outputTokens: i64,
+        actualContextWindowSize: i64,
         chatIdOverride: Option<String>,
     ) {
         let chatId = chatIdOverride.or_else(|| self.currentChatId.clone());
@@ -1615,10 +1615,10 @@ impl ChatHistoryDelegate {
     pub fn shouldGenerateSummary(
         &self,
         messages: Vec<ChatMessage>,
-        currentTokens: i32,
+        currentTokens: i64,
         maxTokens: i32,
     ) -> bool {
-        !messages.is_empty() && currentTokens >= maxTokens
+        !messages.is_empty() && currentTokens >= i64::from(maxTokens)
     }
 
     #[allow(non_snake_case)]
@@ -1661,7 +1661,7 @@ impl ChatHistoryDelegate {
 
     #[allow(non_snake_case)]
     /// Returns the current chat's input and output token counts.
-    pub fn getCurrentTokenCounts(&self) -> (i32, i32) {
+    pub fn getCurrentTokenCounts(&self) -> (i64, i64) {
         let Some(chatId) = self.currentChatId.clone() else {
             return (0, 0);
         };

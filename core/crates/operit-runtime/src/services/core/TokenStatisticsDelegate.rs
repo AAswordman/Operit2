@@ -5,19 +5,19 @@ use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, Sta
 
 #[derive(Clone)]
 pub struct TokenStatisticsDelegate {
-    pub cumulativeInputTokens: i32,
-    pub cumulativeOutputTokens: i32,
-    pub currentWindowSize: i32,
-    pub perRequestTokenCount: Option<(i32, i32)>,
-    pub cumulativeInputTokensFlow: MutableStateFlow<i32>,
-    pub cumulativeOutputTokensFlow: MutableStateFlow<i32>,
-    pub currentWindowSizeFlow: MutableStateFlow<i32>,
-    pub perRequestTokenCountFlow: MutableStateFlow<Option<(i32, i32)>>,
-    pub lastCurrentWindowSize: i32,
-    pub cumulativeInputTokensByChatKey: HashMap<String, i32>,
-    pub cumulativeOutputTokensByChatKey: HashMap<String, i32>,
-    pub lastWindowSizeByChatKey: HashMap<String, i32>,
-    pub perRequestTokenCountByChatKey: HashMap<String, Option<(i32, i32)>>,
+    pub cumulativeInputTokens: i64,
+    pub cumulativeOutputTokens: i64,
+    pub currentWindowSize: i64,
+    pub perRequestTokenCount: Option<(i64, i64)>,
+    pub cumulativeInputTokensFlow: MutableStateFlow<i64>,
+    pub cumulativeOutputTokensFlow: MutableStateFlow<i64>,
+    pub currentWindowSizeFlow: MutableStateFlow<i64>,
+    pub perRequestTokenCountFlow: MutableStateFlow<Option<(i64, i64)>>,
+    pub lastCurrentWindowSize: i64,
+    pub cumulativeInputTokensByChatKey: HashMap<String, i64>,
+    pub cumulativeOutputTokensByChatKey: HashMap<String, i64>,
+    pub lastWindowSizeByChatKey: HashMap<String, i64>,
+    pub perRequestTokenCountByChatKey: HashMap<String, Option<(i64, i64)>>,
     pub activeChatId: Option<String>,
 }
 
@@ -102,7 +102,7 @@ impl TokenStatisticsDelegate {
     }
 
     #[allow(non_snake_case)]
-    fn handlePerRequestCounts(&mut self, key: String, counts: Option<(i32, i32)>) {
+    fn handlePerRequestCounts(&mut self, key: String, counts: Option<(i64, i64)>) {
         if counts.is_some() {
             self.perRequestTokenCountByChatKey
                 .insert(key.clone(), counts);
@@ -115,7 +115,7 @@ impl TokenStatisticsDelegate {
     }
 
     #[allow(non_snake_case)]
-    fn handleRequestWindowEstimate(&mut self, key: String, windowSize: Option<i32>) {
+    fn handleRequestWindowEstimate(&mut self, key: String, windowSize: Option<i64>) {
         if let Some(windowSize) = windowSize {
             self.lastWindowSizeByChatKey.insert(key.clone(), windowSize);
             if self.isActiveKey(&key) {
@@ -185,9 +185,9 @@ impl TokenStatisticsDelegate {
     pub fn setTokenCounts(
         &mut self,
         chatId: Option<String>,
-        inputTokens: i32,
-        outputTokens: i32,
-        windowSize: i32,
+        inputTokens: i64,
+        outputTokens: i64,
+        windowSize: i64,
     ) {
         let key = Self::chatKey(chatId.as_ref());
         self.cumulativeInputTokensByChatKey
@@ -207,7 +207,7 @@ impl TokenStatisticsDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn getCumulativeTokenCounts(&self, chatId: Option<String>) -> (i32, i32) {
+    pub fn getCumulativeTokenCounts(&self, chatId: Option<String>) -> (i64, i64) {
         let key = Self::chatKey(chatId.as_ref().or(self.activeChatId.as_ref()));
         (
             self.cumulativeInputTokensByChatKey
@@ -222,28 +222,28 @@ impl TokenStatisticsDelegate {
     }
 
     #[allow(non_snake_case)]
-    pub fn getLastCurrentWindowSize(&self, chatId: Option<String>) -> i32 {
+    pub fn getLastCurrentWindowSize(&self, chatId: Option<String>) -> i64 {
         let key = Self::chatKey(chatId.as_ref().or(self.activeChatId.as_ref()));
         self.lastWindowSizeByChatKey.get(&key).copied().unwrap_or(0)
     }
 
     #[allow(non_snake_case)]
-    pub fn currentWindowSizeFlow(&self) -> StateFlow<i32> {
+    pub fn currentWindowSizeFlow(&self) -> StateFlow<i64> {
         self.currentWindowSizeFlow.asStateFlow()
     }
 
     #[allow(non_snake_case)]
-    pub fn cumulativeInputTokensFlow(&self) -> StateFlow<i32> {
+    pub fn cumulativeInputTokensFlow(&self) -> StateFlow<i64> {
         self.cumulativeInputTokensFlow.asStateFlow()
     }
 
     #[allow(non_snake_case)]
-    pub fn cumulativeOutputTokensFlow(&self) -> StateFlow<i32> {
+    pub fn cumulativeOutputTokensFlow(&self) -> StateFlow<i64> {
         self.cumulativeOutputTokensFlow.asStateFlow()
     }
 
     #[allow(non_snake_case)]
-    pub fn perRequestTokenCountFlow(&self) -> StateFlow<Option<(i32, i32)>> {
+    pub fn perRequestTokenCountFlow(&self) -> StateFlow<Option<(i64, i64)>> {
         self.perRequestTokenCountFlow.asStateFlow()
     }
 }

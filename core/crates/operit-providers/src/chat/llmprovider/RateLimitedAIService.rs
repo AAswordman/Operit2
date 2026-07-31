@@ -33,15 +33,15 @@ impl RateLimitedAIService {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for RateLimitedAIService {
-    fn input_token_count(&self) -> i32 {
+    fn input_token_count(&self) -> i64 {
         self.delegate.input_token_count()
     }
 
-    fn cached_input_token_count(&self) -> i32 {
+    fn cached_input_token_count(&self) -> i64 {
         self.delegate.cached_input_token_count()
     }
 
-    fn output_token_count(&self) -> i32 {
+    fn output_token_count(&self) -> i64 {
         self.delegate.output_token_count()
     }
 
@@ -89,7 +89,7 @@ impl AIService for RateLimitedAIService {
         &self,
         chat_history: &[PromptTurn],
         available_tools: &[ToolPrompt],
-    ) -> Result<i32, AiServiceError> {
+    ) -> Result<i64, AiServiceError> {
         self.delegate
             .calculate_input_tokens(chat_history, available_tools)
             .await

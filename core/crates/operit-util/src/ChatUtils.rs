@@ -73,13 +73,13 @@ impl ChatUtils {
     }
 
     /// Estimates token count using a lightweight character-based heuristic.
-    pub fn estimate_token_count(text: &str) -> usize {
+    pub fn estimate_token_count(text: &str) -> i64 {
         let chinese_char_count = text
             .chars()
             .filter(|ch| ('\u{4E00}'..='\u{9FFF}').contains(ch))
             .count();
         let other_char_count = text.chars().count().saturating_sub(chinese_char_count);
-        ((chinese_char_count as f64 * 1.5) + (other_char_count as f64 * 0.25)) as usize
+        ((chinese_char_count as f64 * 1.5) + (other_char_count as f64 * 0.25)) as i64
     }
 
     /// Extracts a JSON object string from an assistant response.

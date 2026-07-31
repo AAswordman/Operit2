@@ -480,7 +480,7 @@ impl AIMessageManager {
     #[allow(non_snake_case)]
     pub async fn calculateStableContextWindow(
         request: StableContextWindowRequest<'_>,
-    ) -> Result<i32, operit_providers::chat::llmprovider::AIService::AiServiceError> {
+    ) -> Result<i64, operit_providers::chat::llmprovider::AIService::AiServiceError> {
         let memory = Self::getMemoryFromMessages(
             request.chatHistory,
             request.splitHistoryByRole,
@@ -510,7 +510,7 @@ impl AIMessageManager {
     #[allow(non_snake_case)]
     pub fn shouldGenerateSummary(
         messages: Vec<ChatMessage>,
-        currentTokens: i32,
+        currentTokens: i64,
         maxTokens: i32,
         tokenUsageThreshold: f64,
         enableSummary: bool,
@@ -521,7 +521,7 @@ impl AIMessageManager {
             return false;
         }
         if maxTokens > 0 {
-            let usageRatio = currentTokens as f64 / maxTokens as f64;
+            let usageRatio = currentTokens as f64 / f64::from(maxTokens);
             if usageRatio >= tokenUsageThreshold {
                 return true;
             }

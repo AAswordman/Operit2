@@ -26,9 +26,9 @@ pub struct UsageRequestRecord {
     pub functionType: FunctionType,
     pub source: UsageRequestSource,
     pub chatId: Option<String>,
-    pub inputTokens: i32,
-    pub outputTokens: i32,
-    pub cachedInputTokens: i32,
+    pub inputTokens: i64,
+    pub outputTokens: i64,
+    pub cachedInputTokens: i64,
 }
 
 pub struct UsageStatisticsStore;
@@ -80,9 +80,9 @@ impl UsageStatisticsStore {
         functionType: FunctionType,
         source: UsageRequestSource,
         chatId: Option<String>,
-        inputTokens: i32,
-        outputTokens: i32,
-        cachedInputTokens: i32,
+        inputTokens: i64,
+        outputTokens: i64,
+        cachedInputTokens: i64,
     ) -> Result<UsageRequestRecord, String> {
         let (provider, modelName) = splitProviderModel(&providerModel)?;
         let record = UsageRequestRecord {

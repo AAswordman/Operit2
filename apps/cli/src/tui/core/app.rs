@@ -63,7 +63,7 @@ pub(super) struct OperitTui {
     pub(super) current_chat_is_loading_cache: bool,
     pub(super) current_chat_input_processing_state_cache: InputProcessingState,
     pub(super) active_streaming_chat_ids_cache: HashSet<String>,
-    pub(super) current_window_size_cache: i32,
+    pub(super) current_window_size_cache: i64,
     pub(super) chats: Vec<ChatListItem>,
     pub(super) selected_chat_index: usize,
     pub(super) model_choices: Vec<ModelChoiceItem>,
@@ -2006,7 +2006,7 @@ impl OperitTui {
                     }
                 }
                 "currentWindowSizeFlow" => {
-                    if let Ok(value) = operit_link::fromCoreValue::<i32>(event.value) {
+                    if let Ok(value) = operit_link::fromCoreValue::<i64>(event.value) {
                         self.current_window_size_cache = value;
                     }
                 }
@@ -2290,7 +2290,7 @@ impl OperitTui {
         } else {
             config.context.maxContextLength * 0.4
         };
-        let max_tokens = (effective_context_length * 1024.0) as i32;
+        let max_tokens = (effective_context_length * 1024.0) as i64;
         let current_window_size = self.current_window_size_cache;
         if max_tokens <= 0 {
             return Ok(self

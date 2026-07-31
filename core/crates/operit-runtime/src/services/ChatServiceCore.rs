@@ -1519,7 +1519,7 @@ impl ChatServiceCore {
 
     /// Returns the current context window size state flow.
     #[allow(non_snake_case)]
-    pub fn currentWindowSizeFlow(&self) -> StateFlow<i32> {
+    pub fn currentWindowSizeFlow(&self) -> StateFlow<i64> {
         self.getTokenStatisticsDelegate()
             .expect("TokenStatisticsDelegate must be initialized")
             .currentWindowSizeFlow()
@@ -1527,7 +1527,7 @@ impl ChatServiceCore {
 
     /// Returns the cumulative input token count state flow.
     #[allow(non_snake_case)]
-    pub fn inputTokenCountFlow(&self) -> StateFlow<i32> {
+    pub fn inputTokenCountFlow(&self) -> StateFlow<i64> {
         self.getTokenStatisticsDelegate()
             .expect("TokenStatisticsDelegate must be initialized")
             .cumulativeInputTokensFlow()
@@ -1535,7 +1535,7 @@ impl ChatServiceCore {
 
     /// Returns the cumulative output token count state flow.
     #[allow(non_snake_case)]
-    pub fn outputTokenCountFlow(&self) -> StateFlow<i32> {
+    pub fn outputTokenCountFlow(&self) -> StateFlow<i64> {
         self.getTokenStatisticsDelegate()
             .expect("TokenStatisticsDelegate must be initialized")
             .cumulativeOutputTokensFlow()

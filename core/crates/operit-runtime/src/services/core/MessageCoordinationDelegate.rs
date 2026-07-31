@@ -135,7 +135,7 @@ impl MessageCoordinationDelegate {
         groupParticipantNamesText: Option<String>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-    ) -> i32 {
+    ) -> i64 {
         let currentChat = chatId.as_ref().and_then(|chatId| {
             self.chatHistoryDelegate
                 .chatHistoriesFlow()
@@ -194,7 +194,7 @@ impl MessageCoordinationDelegate {
         groupParticipantNamesText: Option<String>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
-    ) -> Option<i32> {
+    ) -> Option<i64> {
         let targetChatId = chatId.or_else(|| self.chatHistoryDelegate.currentChatId.clone())?;
         let effectivePromptFunctionType =
             promptFunctionType.unwrap_or_else(|| self.currentPromptFunctionType.clone());

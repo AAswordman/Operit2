@@ -1222,11 +1222,11 @@ pub struct ToolPkgChatMessageEventPayload {
     /// Identifies the model used for the message when available.
     pub modelName: Option<String>,
     /// Stores prompt token usage associated with the message.
-    pub inputTokens: Option<f64>,
+    pub inputTokens: Option<i64>,
     /// Stores completion token usage associated with the message.
-    pub outputTokens: Option<f64>,
+    pub outputTokens: Option<i64>,
     /// Stores cached prompt token usage associated with the message.
-    pub cachedInputTokens: Option<f64>,
+    pub cachedInputTokens: Option<i64>,
     /// Records when the model request was sent, in epoch milliseconds.
     pub sentAt: Option<f64>,
     /// Records model output duration in milliseconds.

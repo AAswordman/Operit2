@@ -84,9 +84,9 @@ impl ChatDao {
         chatId: &str,
         title: String,
         timestamp: i64,
-        inputTokens: i32,
-        outputTokens: i32,
-        currentWindowSize: i32,
+        inputTokens: i64,
+        outputTokens: i64,
+        currentWindowSize: i64,
     ) -> Result<(), SqliteStoreError> {
         self.execute(
             "UPDATE chats SET updatedAt = ?2, title = ?3, inputTokens = ?4, outputTokens = ?5, currentWindowSize = ?6 WHERE id = ?1",

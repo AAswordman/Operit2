@@ -9,10 +9,10 @@ use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::services::RuntimeHostInteractionService::{
     publishOwnerAppNotification, RuntimeHostInteractionAppNotificationPayload,
 };
-use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_model::AttachmentInfo::AttachmentInfo;
@@ -137,7 +137,7 @@ pub struct SendUserMessageProcessingRequest<'a> {
 #[derive(Clone, Debug)]
 pub struct SendUserMessageProcessingResult {
     pub aiMessage: ChatMessage,
-    pub nextWindowSize: Option<i32>,
+    pub nextWindowSize: Option<i64>,
 }
 
 /// Request data used to regenerate one AI message variant.
@@ -1493,7 +1493,7 @@ impl MessageProcessingDelegate {
         &mut self,
         chatId: Option<String>,
         _service: &EnhancedAIService,
-        _nextWindowSize: Option<i32>,
+        _nextWindowSize: Option<i64>,
         _turnOptions: ChatTurnOptions,
     ) {
         if let Some(chatId) = chatId {
@@ -1511,7 +1511,7 @@ impl MessageProcessingDelegate {
         &mut self,
         chatId: String,
         aiMessage: ChatMessage,
-        nextWindowSize: Option<i32>,
+        nextWindowSize: Option<i64>,
         turnOptions: ChatTurnOptions,
     ) {
         let shouldNotifyReply = turnOptions.persistTurn && turnOptions.notifyReply != Some(false);

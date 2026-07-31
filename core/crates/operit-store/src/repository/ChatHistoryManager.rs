@@ -989,9 +989,9 @@ impl ChatHistoryManager {
     pub fn updateChatTokenCounts(
         &self,
         chatId: String,
-        inputTokens: i32,
-        outputTokens: i32,
-        currentWindowSize: i32,
+        inputTokens: i64,
+        outputTokens: i64,
+        currentWindowSize: i64,
     ) -> ChatHistoryManagerResult<()> {
         if let Some(chat) = self.chatDao.getChatById(&chatId)? {
             self.chatDao.updateChatMetadata(

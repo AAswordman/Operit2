@@ -213,9 +213,9 @@ impl ApiPreferences {
     pub fn updateTokensForProviderModel(
         &self,
         providerModel: &str,
-        inputTokens: i32,
-        outputTokens: i32,
-        cachedInputTokens: i32,
+        inputTokens: i64,
+        outputTokens: i64,
+        cachedInputTokens: i64,
     ) -> Result<(), PreferencesDataStoreError> {
         let result = self.apiDataStore.edit_result(|preferences| {
             let inputKey = Self::tokenInputKey(providerModel);
@@ -234,15 +234,15 @@ impl ApiPreferences {
 
             preferences.set(
                 &stringPreferencesKey(&inputKey),
-                (currentInputTokens + inputTokens as i64).to_string(),
+                (currentInputTokens + inputTokens).to_string(),
             );
             preferences.set(
                 &stringPreferencesKey(&cachedInputKey),
-                (currentCachedInputTokens + cachedInputTokens as i64).to_string(),
+                (currentCachedInputTokens + cachedInputTokens).to_string(),
             );
             preferences.set(
                 &stringPreferencesKey(&outputKey),
-                (currentOutputTokens + outputTokens as i64).to_string(),
+                (currentOutputTokens + outputTokens).to_string(),
             );
             Ok(())
         })?;

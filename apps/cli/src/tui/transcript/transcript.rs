@@ -37,7 +37,7 @@ pub(super) struct TranscriptMessageRenderKey {
     role_name: String,
     provider: String,
     model_name: String,
-    output_tokens: i32,
+    output_tokens: i64,
     content_hash: u64,
     language: TuiLanguage,
 }

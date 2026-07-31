@@ -44,9 +44,9 @@ pub struct OpenAIProvider {
 }
 
 struct OpenAIProviderState {
-    inputTokenCount: i32,
-    cachedInputTokenCount: i32,
-    outputTokenCount: i32,
+    inputTokenCount: i64,
+    cachedInputTokenCount: i64,
+    outputTokenCount: i64,
     cancelled: bool,
     cancelGeneration: u64,
     cancelSignal: watch::Sender<u64>,
@@ -471,17 +471,17 @@ impl OpenAIProvider {
         if let Ok(mut state) = self.state.lock() {
             if token_counts.input > 0 || token_counts.cached_input > 0 {
                 state.tokenCacheManager.update_actual_tokens(
-                    token_counts.input.max(0) as usize,
-                    token_counts.cached_input.max(0) as usize,
+                    token_counts.input.max(0),
+                    token_counts.cached_input.max(0),
                 );
             }
             if token_counts.output > 0 {
                 state
                     .tokenCacheManager
-                    .set_output_tokens(token_counts.output.max(0) as usize);
+                    .set_output_tokens(token_counts.output.max(0));
             }
-            state.inputTokenCount = state.tokenCacheManager.total_input_token_count() as i32;
-            state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count() as i32;
+            state.inputTokenCount = state.tokenCacheManager.total_input_token_count();
+            state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count();
             state.outputTokenCount = token_counts.output;
         }
     }
@@ -735,7 +735,7 @@ impl OpenAIProvider {
         provider_ready_history: &[PromptTurn],
         tools_json: Option<&str>,
         preserve_think_in_history: bool,
-    ) -> i32 {
+    ) -> i64 {
         let comparable_history =
             self.build_comparable_history(provider_ready_history, preserve_think_in_history);
         if let Ok(mut state) = self.state.lock() {
@@ -744,9 +744,9 @@ impl OpenAIProvider {
                 tools_json,
                 true,
             );
-            state.inputTokenCount = state.tokenCacheManager.total_input_token_count() as i32;
-            state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count() as i32;
-            token_count as i32
+            state.inputTokenCount = state.tokenCacheManager.total_input_token_count();
+            state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count();
+            token_count
         } else {
             0
         }
@@ -758,7 +758,7 @@ impl OpenAIProvider {
         use_tool_call: bool,
         tools_json: Option<&str>,
         preserve_think_in_history: bool,
-    ) -> Result<(Value, i32), AiServiceError> {
+    ) -> Result<(Value, i64), AiServiceError> {
         let provider_ready_history = self.prepare_history_for_provider(chat_history, use_tool_call);
         let token_count = self.calculate_and_store_input_tokens(
             &provider_ready_history,
@@ -1593,24 +1593,24 @@ impl OpenAIProvider {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for OpenAIProvider {
-    fn input_token_count(&self) -> i32 {
+    fn input_token_count(&self) -> i64 {
         self.state
             .lock()
-            .map(|state| state.tokenCacheManager.total_input_token_count() as i32)
+            .map(|state| state.tokenCacheManager.total_input_token_count())
             .unwrap_or(0)
     }
 
-    fn cached_input_token_count(&self) -> i32 {
+    fn cached_input_token_count(&self) -> i64 {
         self.state
             .lock()
-            .map(|state| state.tokenCacheManager.cached_input_token_count() as i32)
+            .map(|state| state.tokenCacheManager.cached_input_token_count())
             .unwrap_or(0)
     }
 
-    fn output_token_count(&self) -> i32 {
+    fn output_token_count(&self) -> i64 {
         self.state
             .lock()
-            .map(|state| state.tokenCacheManager.output_token_count() as i32)
+            .map(|state| state.tokenCacheManager.output_token_count())
             .unwrap_or(0)
     }
 
@@ -1673,7 +1673,7 @@ impl AIService for OpenAIProvider {
         &self,
         chat_history: &[PromptTurn],
         available_tools: &[ToolPrompt],
-    ) -> Result<i32, AiServiceError> {
+    ) -> Result<i64, AiServiceError> {
         let history_chars: usize = chat_history.iter().map(|turn| turn.content.len()).sum();
         let tool_chars: usize = available_tools
             .iter()
@@ -1954,17 +1954,17 @@ fn parse_usage_counts(usage: &Value) -> TokenCounts {
         .get("prompt_tokens")
         .or_else(|| usage.get("input_tokens"))
         .and_then(Value::as_i64)
-        .unwrap_or(0) as i32;
+        .unwrap_or(0) as i64;
     let cached_tokens = usage
         .pointer("/prompt_tokens_details/cached_tokens")
         .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
         .and_then(Value::as_i64)
-        .unwrap_or(0) as i32;
+        .unwrap_or(0) as i64;
     let completion_tokens = usage
         .get("completion_tokens")
         .or_else(|| usage.get("output_tokens"))
         .and_then(Value::as_i64)
-        .unwrap_or(0) as i32;
+        .unwrap_or(0) as i64;
     let actual_input_tokens = (prompt_tokens - cached_tokens).max(0);
 
     TokenCounts {
