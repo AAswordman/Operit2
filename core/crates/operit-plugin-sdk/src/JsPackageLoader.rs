@@ -56,14 +56,9 @@ impl JsPackageLoader {
 
     /// Parses package metadata represented as JSON, JSON5, or the supported HJSON-like form.
     pub fn parse_metadata(metadata_string: &str, script: &str) -> Result<ToolPackage, String> {
-        let normalized = normalize_hjson_like_metadata(metadata_string);
-        let value: serde_json::Value =
-            json5::from_str(&normalized).map_err(|error| error.to_string())?;
-        let object = value
-            .as_object()
-            .ok_or_else(|| "Package metadata must be an object".to_string())?;
+        let object = Self::parse_metadata_object(metadata_string)?;
 
-        let name = string_field(object, "name");
+        let name = string_field(&object, "name");
         if name.is_empty() {
             return Err("Package metadata must have a name".to_string());
         }
@@ -98,17 +93,30 @@ impl JsPackageLoader {
             tools,
             states,
             env,
-            is_built_in: bool_field(object, "isBuiltIn") || bool_field(object, "is_built_in"),
-            enabled_by_default: bool_field(object, "enabledByDefault")
-                || bool_field(object, "enabled_by_default"),
+            is_built_in: bool_field(&object, "isBuiltIn") || bool_field(&object, "is_built_in"),
+            enabled_by_default: bool_field(&object, "enabledByDefault")
+                || bool_field(&object, "enabled_by_default"),
             display_name: localized_text_field(
                 object
                     .get("display_name")
                     .or_else(|| object.get("displayName")),
             ),
-            category: non_empty_or(string_field(object, "category"), "Other"),
+            category: non_empty_or(string_field(&object, "category"), "Other"),
             author: string_list_field(object.get("author")),
         })
+    }
+
+    /// Parses standalone package metadata into its structured JSON object representation.
+    pub fn parse_metadata_object(
+        metadata_string: &str,
+    ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+        let normalized = normalize_hjson_like_metadata(metadata_string);
+        let value: serde_json::Value =
+            json5::from_str(&normalized).map_err(|error| error.to_string())?;
+        value
+            .as_object()
+            .cloned()
+            .ok_or_else(|| "Package metadata must be an object".to_string())
     }
 
     /// Extracts the `METADATA` block embedded in a JavaScript package.

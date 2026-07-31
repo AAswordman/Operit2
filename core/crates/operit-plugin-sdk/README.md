@@ -61,10 +61,13 @@ implementation. Applications implement the SDK traits and inject their own host 
 
 ## Compressed Artifacts
 
-Marketplace publishing can AST-minify executable JavaScript with `compress: false` and
-`mangle: false`, so export names and externally called symbols stay stable. A leading standalone
-`/* METADATA ... */` block is preserved. ToolPkg archives remain standard ZIP files: manifests and
-resources are unchanged, while executable JavaScript entries are minified.
+Marketplace publishing performs deterministic release optimization with three Terser compression
+passes and top-level/local identifier mangling. This removes comments, unused code, private
+identifier names, and source formatting while retaining externally observable export/property
+keys. A leading standalone `/* METADATA ... */` block is preserved. ToolPkg archives remain
+standard ZIP files: manifests and resources are unchanged, while executable JavaScript entries
+are optimized. The transformation adds no decoder or runtime wrapper, so it reduces package size
+and avoids a per-call obfuscation cost.
 
 `toolpkg::ToolPkgProtection::compareToolPkgJavaScriptSimilarity` provides reproducible source
 comparison evidence for ToolPkg complaint review. It AST-canonicalizes each package's declared

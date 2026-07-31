@@ -5,7 +5,8 @@ import UserNotifications
 @main
 class AppDelegate: FlutterAppDelegate, UNUserNotificationCenterDelegate {
   /// Installs the macOS notification delegate before Flutter creates its first window.
-  func applicationDidFinishLaunching(_ notification: Notification) {
+  override func applicationDidFinishLaunching(_ notification: Notification) {
+    super.applicationDidFinishLaunching(notification)
     UNUserNotificationCenter.current().delegate = self
   }
 

@@ -121,19 +121,23 @@ pub(crate) async fn run_link_tui_command(args: &[String]) -> Result<(), String> 
     let mut core = tui_core(session);
     let initial_chat_id = initialize_remote_chat(&mut core, &shell_args).await?;
     let approval_bridge = TuiApprovalBridge::new();
-    start_remote_host_interaction_loop(host_interaction_session, approval_bridge.clone());
-    let mut tui = OperitTui::new(
-        core,
-        shell_args,
-        initial_chat_id,
-        approval_bridge,
-        language,
-        None,
-        None,
-        None,
-    )
-    .await?;
-    tui.run().await
+    tokio::task::LocalSet::new()
+        .run_until(async move {
+            start_remote_host_interaction_loop(host_interaction_session, approval_bridge.clone());
+            let mut tui = OperitTui::new(
+                core,
+                shell_args,
+                initial_chat_id,
+                approval_bridge,
+                language,
+                None,
+                None,
+                None,
+            )
+            .await?;
+            tui.run().await
+        })
+        .await
 }
 
 fn build_startup_install_prompt() -> Result<Option<StartupInstallPrompt>, String> {
@@ -198,8 +202,13 @@ fn install_local_permission_requester(
     let handler = core.localApplicationMut().toolHandler.clone();
     handler
         .getToolPermissionSystem()
-        .setPermissionRequester(move |tool, description| {
-            approval_bridge.request(tool, description)
+        .setAsyncPermissionRequester(move |tool, description| {
+            let approval_bridge = approval_bridge.clone();
+            async move {
+                tokio::task::spawn_blocking(move || approval_bridge.request(&tool, &description))
+                    .await
+                    .expect("tool approval task failed")
+            }
         });
 }
 
@@ -207,7 +216,7 @@ fn start_remote_host_interaction_loop(
     session: PairedRemoteSession,
     approval_bridge: TuiApprovalBridge,
 ) {
-    tokio::spawn(async move {
+    tokio::task::spawn_local(async move {
         let mut proxy =
             GeneratedCoreProxy::new(Box::new(session) as Box<dyn CoreLinkClient + Send>);
         let mut stream = proxy

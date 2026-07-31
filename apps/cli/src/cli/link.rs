@@ -11,7 +11,7 @@ use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::services::RuntimeHostInteractionService::{
-    requestOwnerToolPermission, RuntimeHostInteractionToolPermissionPayload,
+    requestOwnerToolPermissionAsync, RuntimeHostInteractionToolPermissionPayload,
     RuntimeHostInteractionToolPermissionTool, RuntimeHostInteractionToolPermissionToolParameter,
 };
 use operit_tools::tools::AIToolHandler::AIToolHandler;
@@ -150,14 +150,15 @@ pub(crate) fn install_link_permission_requester(core: &mut operit_core_proxy::Lo
     let handler = core.localApplicationMut().toolHandler.clone();
     handler
         .getToolPermissionSystem()
-        .setPermissionRequester(move |tool, description| {
-            let response = requestOwnerToolPermission(
+        .setAsyncPermissionRequester(move |tool, description| async move {
+            let response = requestOwnerToolPermissionAsync(
                 RuntimeHostInteractionToolPermissionPayload {
-                    tool: tool_to_permission_payload(tool),
-                    description: description.to_string(),
+                    tool: tool_to_permission_payload(&tool),
+                    description,
                 },
                 Duration::from_secs(60),
             )
+            .await
             .expect("permission request failed");
             match response.result.as_str() {
                 "allow" => PermissionRequestResult::ALLOW,

@@ -2150,7 +2150,7 @@ dependencies = [
 
 [[package]]
 name = "operit-cli"
-version = "2.0.0-preview.4"
+version = "2.0.0-preview.5"
 dependencies = [
  "arboard",
  "async-trait",
@@ -2217,6 +2217,7 @@ name = "operit-core-proxy"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "mdns-sd",
  "operit-command-core",
  "operit-host-api",
  "operit-link",
@@ -2356,6 +2357,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tungstenite",
+ "url",
  "uuid",
  "windows",
  "windows-collections",
@@ -2365,7 +2367,7 @@ dependencies = [
 
 [[package]]
 name = "operit-js-bridge"
-version = "2.0.0-preview.4"
+version = "2.0.0-preview.5"
 dependencies = [
  "aes",
  "base64",
@@ -2413,7 +2415,6 @@ dependencies = [
  "operit-runtime",
  "operit-store",
  "rand_core 0.6.4",
- "reqwest",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -2425,7 +2426,7 @@ dependencies = [
 
 [[package]]
 name = "operit-local-models"
-version = "2.0.0-preview.4"
+version = "2.0.0-preview.5"
 dependencies = [
  "bzip2-rs",
  "operit-host-api",
@@ -2439,7 +2440,7 @@ dependencies = [
 
 [[package]]
 name = "operit-model"
-version = "2.0.0-preview.4"
+version = "2.0.0-preview.5"
 dependencies = [
  "chrono",
  "operit-host-api",
@@ -2451,7 +2452,7 @@ dependencies = [
 
 [[package]]
 name = "operit-plugin-sdk"
-version = "2.0.0-preview.4"
+version = "2.0.0-preview.5"
 dependencies = [
  "chacha20poly1305",
  "chrono",
@@ -2471,7 +2472,7 @@ dependencies = [
 
 [[package]]
 name = "operit-plugin-sdk-codegen"
-version = "2.0.0-preview.4"
+version = "2.0.0-preview.5"
 dependencies = [
  "quote",
  "syn",
@@ -2481,7 +2482,7 @@ dependencies = [
 
 [[package]]
 name = "operit-providers"
-version = "2.0.0-preview.4"
+version = "2.0.0-preview.5"
 dependencies = [
  "async-trait",
  "base64",
@@ -2508,7 +2509,7 @@ dependencies = [
 
 [[package]]
 name = "operit-runtime"
-version = "2.0.0-preview.4"
+version = "2.0.0-preview.5"
 dependencies = [
  "aes",
  "async-trait",
@@ -2568,7 +2569,7 @@ dependencies = [
 
 [[package]]
 name = "operit-tools"
-version = "2.0.0-preview.4"
+version = "2.0.0-preview.5"
 dependencies = [
  "aes",
  "async-trait",
@@ -2603,7 +2604,7 @@ dependencies = [
 
 [[package]]
 name = "operit-util"
-version = "2.0.0-preview.4"
+version = "2.0.0-preview.5"
 dependencies = [
  "chrono",
  "operit-host-api",

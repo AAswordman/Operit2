@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
-use crate::toolpkg::ToolPkgParser::ToolPkgArchiveParser;
+use crate::JsPackageLoader::JsPackageLoader;
+use crate::toolpkg::ToolPkgParser::{ToolPkgArchiveParser, ToolPkgMarketOrigin};
 use chacha20poly1305::{
     aead::{AeadInPlace, KeyInit},
     ChaCha20Poly1305, Key, Nonce, Tag,
@@ -8,6 +9,7 @@ use chacha20poly1305::{
 #[cfg(not(target_arch = "wasm32"))]
 use rquickjs::{CatchResultExt, Context as QuickJsContext, Runtime as QuickJsRuntime};
 use sha2::{Digest, Sha256};
+use regex::Regex;
 use std::collections::BTreeSet;
 use std::io::{Cursor, Read, Write};
 use zip::write::SimpleFileOptions;
@@ -16,6 +18,7 @@ pub const PROTECTION_ID: &str = "operit-protected";
 pub const MARKET_ONLY_PROTECTION_ID: &str = "operit-market-only";
 pub const MARKET_INSTALL_SEAL_ENTRY_NAME: &str = ".operit/market-install.seal";
 pub const MARKET_ORIGIN_CAPTURE_METHOD: &str = "_m";
+pub const SCRIPT_MARKET_ORIGIN_METADATA_KEY: &str = "__operit_market_origin";
 
 const MAGIC: &[u8; 8] = b"OPTPROTA";
 const MARKET_ONLY_MAGIC: &[u8; 8] = b"OPMKTPKG";
@@ -33,7 +36,10 @@ const MARKET_ARCHIVE_AUTH_PREFIX_SIZE: usize = MARKET_ARCHIVE_MAGIC.len() + 1 + 
 const MARKET_ARCHIVE_HEADER_SIZE: usize = MARKET_ARCHIVE_AUTH_PREFIX_SIZE + SHA256_SIZE;
 pub const MARKET_INSTALLATION_ID_SIZE: usize = 16;
 const DEFAULT_SCRIPT_ENTRY_NAME: &str = "artifact.js";
+const MARKET_ORIGIN_XOR_KEY: u8 = 0x5a;
+const MARKET_ORIGIN_METADATA_PREFIX: &str = "xor-v1:";
 const TOOLPKG_SIMILARITY_FRAGMENT_SIZE: usize = 24;
+const MINIFIER_MAX_STACK_SIZE: usize = 8 * 1024 * 1024;
 const TERSER_BUNDLE: &str = include_str!("vendor/terser.bundle.min.js");
 const MINIFIER_BOOTSTRAP: &str = r#"
 (function(root) {
@@ -46,10 +52,19 @@ const MINIFIER_BOOTSTRAP: &str = r#"
         var result = root.Terser.minify_sync(String(source), {
             ecma: 2020,
             module: /\.mjs$/i.test(normalizedEntryName),
-            compress: false,
-            mangle: false,
+            compress: {
+                defaults: true,
+                passes: 3,
+                toplevel: true
+            },
+            mangle: {
+                toplevel: true,
+                keep_classnames: false,
+                keep_fnames: false
+            },
             format: {
-                comments: false
+                comments: false,
+                ascii_only: true
             },
             sourceMap: false
         });
@@ -380,11 +395,54 @@ pub fn protectArtifactNamedBytes(
     sourceEntryName: &str,
     isToolPkg: bool,
 ) -> Result<Vec<u8>, String> {
-    let mut minifier = ToolPkgJsAstMinifier::new()?;
+    protectArtifactNamedBytesWithMarketOrigin(sourceBytes, sourceEntryName, isToolPkg, None)
+}
+
+#[allow(non_snake_case)]
+/// Protects one named artifact and embeds its verified marketplace origin when provided.
+pub fn protectArtifactNamedBytesWithMarketOrigin(
+    sourceBytes: &[u8],
+    sourceEntryName: &str,
+    isToolPkg: bool,
+    scriptMarketOrigin: Option<&ToolPkgMarketOrigin>,
+) -> Result<Vec<u8>, String> {
     if isToolPkg {
+        let mut minifier = ToolPkgJsAstMinifier::new()?;
         minifyToolPkgArchive(sourceBytes, &mut minifier)
     } else {
-        astMinifyBytes(sourceBytes, sourceEntryName, &mut minifier, None)
+        let source = String::from_utf8(sourceBytes.to_vec()).map_err(|error| error.to_string())?;
+        let source = match scriptMarketOrigin {
+            Some(origin) => injectScriptMarketOriginIntoMetadata(&source, origin)?,
+            None => source,
+        };
+        let mut minifier = ToolPkgJsAstMinifier::new()?;
+        astMinifyBytes(source.as_bytes(), sourceEntryName, &mut minifier, None)
+    }
+}
+
+/// Processes one publish artifact with mandatory marketplace provenance and an explicit minification mode.
+pub fn processArtifactNamedBytesWithMarketOrigin(
+    sourceBytes: &[u8],
+    sourceEntryName: &str,
+    isToolPkg: bool,
+    marketOrigin: &ToolPkgMarketOrigin,
+    minify: bool,
+) -> Result<Vec<u8>, String> {
+    if isToolPkg {
+        if minify {
+            let mut minifier = ToolPkgJsAstMinifier::new()?;
+            minifyToolPkgArchiveWithMarketOrigin(sourceBytes, &mut minifier, marketOrigin)
+        } else {
+            injectToolPkgMarketOrigin(sourceBytes, marketOrigin)
+        }
+    } else {
+        let source = String::from_utf8(sourceBytes.to_vec()).map_err(|error| error.to_string())?;
+        let source = injectScriptMarketOriginIntoMetadata(&source, marketOrigin)?;
+        if !minify {
+            return Ok(source.into_bytes());
+        }
+        let mut minifier = ToolPkgJsAstMinifier::new()?;
+        astMinifyBytes(source.as_bytes(), sourceEntryName, &mut minifier, None)
     }
 }
 
@@ -592,36 +650,121 @@ fn buildMarketOriginInvocation(
     version: &str,
     author: &[String],
 ) -> Result<String, String> {
-    let payload = serde_json::json!({
-        "market": "Operit",
-        "toolpkgId": toolpkgId,
-        "version": version,
-        "author": author,
-    });
-    let payloadJson = serde_json::to_string(&payload).map_err(|error| error.to_string())?;
-    let asciiPayload = payloadJson
-        .chars()
-        .fold(String::new(), |mut output, character| {
-            if character.is_ascii() {
-                output.push(character);
-            } else {
-                let mut utf16Units = [0u16; 2];
-                for unit in character.encode_utf16(&mut utf16Units) {
-                    output.push_str("\\u");
-                    output.push_str(&format!("{:04x}", *unit));
-                }
-            }
-            output
-        });
-    let payloadBytes = asciiPayload.into_bytes();
-    let encoded = payloadBytes
-        .into_iter()
-        .map(|value| value ^ 0x5a)
-        .collect::<Vec<_>>();
+    let origin = ToolPkgMarketOrigin {
+        market: "Operit".to_string(),
+        toolpkgId: toolpkgId.to_string(),
+        version: version.to_string(),
+        author: author.to_vec(),
+    };
+    let encoded = encodeMarketOriginBytes(&origin)?;
     let encodedJson = serde_json::to_string(&encoded).map_err(|error| error.to_string())?;
     Ok(format!(
-        "ToolPkg.{MARKET_ORIGIN_CAPTURE_METHOD}({encodedJson},90);"
+        "ToolPkg.{MARKET_ORIGIN_CAPTURE_METHOD}({encodedJson},{MARKET_ORIGIN_XOR_KEY});"
     ))
+}
+
+/// Encodes marketplace provenance for a standalone script metadata field.
+pub fn encodeMarketOriginForMetadata(origin: &ToolPkgMarketOrigin) -> Result<String, String> {
+    let encoded = encodeMarketOriginBytes(origin)?;
+    Ok(format!(
+        "{MARKET_ORIGIN_METADATA_PREFIX}{}",
+        encoded
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    ))
+}
+
+/// Decodes and validates marketplace provenance stored in standalone script metadata.
+pub fn decodeMarketOriginFromMetadata(
+    value: &str,
+    packageId: &str,
+) -> Option<ToolPkgMarketOrigin> {
+    let encoded = value.trim().strip_prefix(MARKET_ORIGIN_METADATA_PREFIX)?;
+    if encoded.trim().is_empty() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    for item in encoded.split(',') {
+        bytes.push(item.trim().parse::<u8>().ok()? ^ MARKET_ORIGIN_XOR_KEY);
+    }
+    let payload = String::from_utf8(bytes).ok()?;
+    let origin = serde_json::from_str::<ToolPkgMarketOrigin>(&payload).ok()?;
+    validateMarketOrigin(origin, packageId)
+}
+
+/// Reads a validated marketplace provenance record from standalone script metadata.
+pub fn readScriptMarketOrigin(script: &str, packageId: &str) -> Option<ToolPkgMarketOrigin> {
+    let metadata = JsPackageLoader::extract_metadata(script);
+    let metadata = JsPackageLoader::parse_metadata_object(&metadata).ok()?;
+    let encoded = metadata
+        .get(SCRIPT_MARKET_ORIGIN_METADATA_KEY)
+        .and_then(serde_json::Value::as_str)?;
+    decodeMarketOriginFromMetadata(encoded, packageId)
+}
+
+/// Adds encoded marketplace provenance to a script's required leading metadata block.
+fn injectScriptMarketOriginIntoMetadata(
+    source: &str,
+    marketOrigin: &ToolPkgMarketOrigin,
+) -> Result<String, String> {
+    let Some((_, body)) = splitLeadingMetadataBlock(source) else {
+        return Err("JavaScript package METADATA block is required for marketplace origin".to_string());
+    };
+    let metadata = JsPackageLoader::extract_metadata(source);
+    let mut metadata = JsPackageLoader::parse_metadata_object(&metadata)?;
+    metadata.insert(
+        SCRIPT_MARKET_ORIGIN_METADATA_KEY.to_string(),
+        serde_json::Value::String(encodeMarketOriginForMetadata(marketOrigin)?),
+    );
+    let serialized = serde_json::to_string(&metadata).map_err(|error| error.to_string())?;
+    Ok(format!("/* METADATA\n{serialized}\n*/{body}"))
+}
+
+/// Serializes a market-origin record as the shared ASCII XOR byte payload.
+fn encodeMarketOriginBytes(origin: &ToolPkgMarketOrigin) -> Result<Vec<u8>, String> {
+    let payloadJson = serde_json::to_string(origin).map_err(|error| error.to_string())?;
+    let asciiPayload = payloadJson.chars().fold(String::new(), |mut output, character| {
+        if character.is_ascii() {
+            output.push(character);
+        } else {
+            let mut utf16Units = [0u16; 2];
+            for unit in character.encode_utf16(&mut utf16Units) {
+                output.push_str("\\u");
+                output.push_str(&format!("{:04x}", *unit));
+            }
+        }
+        output
+    });
+    Ok(asciiPayload
+        .into_bytes()
+        .into_iter()
+        .map(|value| value ^ MARKET_ORIGIN_XOR_KEY)
+        .collect())
+}
+
+/// Accepts only complete Operit provenance records that match the installed package ID.
+fn validateMarketOrigin(
+    origin: ToolPkgMarketOrigin,
+    packageId: &str,
+) -> Option<ToolPkgMarketOrigin> {
+    let toolpkgId = origin.toolpkgId.trim();
+    let version = origin.version.trim();
+    if origin.market != "Operit" || toolpkgId != packageId.trim() || version.is_empty() {
+        return None;
+    }
+    Some(ToolPkgMarketOrigin {
+        market: origin.market,
+        toolpkgId: toolpkgId.to_string(),
+        version: version.to_string(),
+        author: origin
+            .author
+            .into_iter()
+            .map(|author| author.trim().to_string())
+            .filter(|author| !author.is_empty())
+            .collect(),
+    })
 }
 
 /// Decrypts one protected Operit 1 artifact payload.
@@ -664,10 +807,29 @@ fn decryptMarket(bytes: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 #[allow(non_snake_case)]
-/// AST-minifies executable ToolPkg entries while preserving the standard ZIP structure.
+/// Preserves the legacy ToolPkg minifier entry point using manifest-declared author metadata.
 fn minifyToolPkgArchive(
     sourceBytes: &[u8],
     minifier: &mut ToolPkgJsAstMinifier,
+) -> Result<Vec<u8>, String> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(sourceBytes)).map_err(|e| e.to_string())?;
+    let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
+    let manifestPreview = ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &entryIndex)
+        .ok_or_else(|| "manifest.hjson or manifest.json not found".to_string())?;
+    let marketOrigin = ToolPkgMarketOrigin {
+        market: "Operit".to_string(),
+        toolpkgId: manifestPreview.manifest.toolpkgId.clone(),
+        version: manifestPreview.manifest.version.clone(),
+        author: manifestPreview.manifest.author.clone(),
+    };
+    minifyToolPkgArchiveWithMarketOrigin(sourceBytes, minifier, &marketOrigin)
+}
+
+/// AST-minifies executable ToolPkg entries while preserving the standard ZIP structure.
+fn minifyToolPkgArchiveWithMarketOrigin(
+    sourceBytes: &[u8],
+    minifier: &mut ToolPkgJsAstMinifier,
+    marketOrigin: &ToolPkgMarketOrigin,
 ) -> Result<Vec<u8>, String> {
     let mut archive = zip::ZipArchive::new(Cursor::new(sourceBytes)).map_err(|e| e.to_string())?;
     let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
@@ -688,9 +850,9 @@ fn minifyToolPkgArchive(
         &mPreview.manifest.main,
     );
     let marketOriginInvocation = buildMarketOriginInvocation(
-        &mPreview.manifest.toolpkgId,
-        &mPreview.manifest.version,
-        &mPreview.manifest.author,
+        &marketOrigin.toolpkgId,
+        &marketOrigin.version,
+        &marketOrigin.author,
     )?;
     if let Some(mainEntryPath) = &mainEntry {
         astMinifiedEntryNames.insert(mainEntryPath.clone());
@@ -711,6 +873,20 @@ fn minifyToolPkgArchive(
             resourceEntryRoots.insert(root);
         }
     }
+    for module in &mPreview.manifest.wasmModules {
+        if let Some(path) = ToolPkgArchiveParser::resolveManifestRelativeResourcePath(
+            &manifestBasePath,
+            &module.path,
+        ) {
+            resourceEntryRoots.insert(path);
+        }
+    }
+    let reachableEntryNames = collectReachableToolPkgEntries(
+        sourceBytes,
+        &manifestEntryName,
+        &astMinifiedEntryNames,
+        &resourceEntryRoots,
+    )?;
     let mut out = Vec::new();
     {
         let mut w = zip::ZipWriter::new(Cursor::new(&mut out));
@@ -722,13 +898,21 @@ fn minifyToolPkgArchive(
             if let Some(lastModified) = entry.last_modified() {
                 options = options.last_modified_time(lastModified);
             }
+            let normalizedName = ToolPkgArchiveParser::normalizeZipEntryPath(&name);
+            if normalizedName
+                .as_ref()
+                .map(|value| !reachableEntryNames.contains(value))
+                .unwrap_or(true)
+            {
+                continue;
+            }
             if entry.is_dir() {
                 w.add_directory(name, options).map_err(|e| e.to_string())?;
                 continue;
             }
             let mut orig = Vec::new();
             entry.read_to_end(&mut orig).map_err(|e| e.to_string())?;
-            let norm = ToolPkgArchiveParser::normalizeZipEntryPath(&name);
+            let norm = normalizedName;
             let data = match norm.as_deref() {
                 None => orig,
                 Some(norm) if norm == manifestEntryName => orig,
@@ -757,13 +941,183 @@ fn minifyToolPkgArchive(
     Ok(out)
 }
 
+/// Injects marketplace provenance into the ToolPkg main entry without changing executable source formatting.
+fn injectToolPkgMarketOrigin(
+    sourceBytes: &[u8],
+    marketOrigin: &ToolPkgMarketOrigin,
+) -> Result<Vec<u8>, String> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(sourceBytes)).map_err(|e| e.to_string())?;
+    let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
+    let manifestPreview = ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &entryIndex)
+        .ok_or_else(|| "manifest.hjson or manifest.json not found".to_string())?;
+    let manifestBasePath = manifestPreview
+        .entryName
+        .rsplit_once('/')
+        .map(|(basePath, _)| basePath)
+        .unwrap_or("");
+    let mainEntry = ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(
+        manifestBasePath,
+        &manifestPreview.manifest.main,
+    )
+    .ok_or_else(|| "ToolPkg manifest.main is required".to_string())?;
+    let marketOriginInvocation = buildMarketOriginInvocation(
+        &marketOrigin.toolpkgId,
+        &marketOrigin.version,
+        &marketOrigin.author,
+    )?;
+    let mut out = Vec::new();
+    {
+        let mut writer = zip::ZipWriter::new(Cursor::new(&mut out));
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).map_err(|e| e.to_string())?;
+            let name = entry.name().to_string();
+            let mut options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            if let Some(lastModified) = entry.last_modified() {
+                options = options.last_modified_time(lastModified);
+            }
+            if entry.is_dir() {
+                writer
+                    .add_directory(name, options)
+                    .map_err(|error| error.to_string())?;
+                continue;
+            }
+            let mut original = Vec::new();
+            entry
+                .read_to_end(&mut original)
+                .map_err(|error| error.to_string())?;
+            let data = match ToolPkgArchiveParser::normalizeZipEntryPath(&name).as_deref() {
+                Some(normalizedName) if normalizedName == mainEntry => {
+                    format!(
+                        "{}\n{}\n",
+                        String::from_utf8(original).map_err(|error| error.to_string())?,
+                        marketOriginInvocation
+                    )
+                    .into_bytes()
+                }
+                _ => original,
+            };
+            writer
+                .start_file(name, options)
+                .map_err(|error| error.to_string())?;
+            writer.write_all(&data).map_err(|error| error.to_string())?;
+        }
+        writer.finish().map_err(|error| error.to_string())?;
+    }
+    Ok(out)
+}
+
+/// Collects manifest, entry, resource, and static relative-module dependencies for one ToolPkg archive.
+fn collectReachableToolPkgEntries(
+    sourceBytes: &[u8],
+    manifestEntryName: &str,
+    executableEntryNames: &BTreeSet<String>,
+    resourceEntryRoots: &BTreeSet<String>,
+) -> Result<BTreeSet<String>, String> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(sourceBytes)).map_err(|e| e.to_string())?;
+    let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
+    let entryNames = entryIndex.entryNames.clone();
+    let mut reachable = BTreeSet::from([manifestEntryName.to_string()]);
+    reachable.extend(executableEntryNames.iter().cloned());
+    for root in resourceEntryRoots {
+        reachable.extend(
+            entryNames
+                .iter()
+                .filter(|name| *name == root || name.starts_with(&format!("{}/", root)))
+                .cloned(),
+        );
+    }
+
+    let modulePattern = Regex::new(
+        r#"(?:require\s*\(\s*["']([^"']+)["']\s*\)|(?:from|import)\s*["']([^"']+)["'])"#,
+    )
+    .map_err(|error| error.to_string())?;
+    let mut pending = executableEntryNames.iter().cloned().collect::<Vec<_>>();
+    while let Some(currentName) = pending.pop() {
+        if !isJavaScriptEntry(&currentName) {
+            continue;
+        }
+        let Some(source) = ToolPkgArchiveParser::readZipEntryText(
+            &mut archive,
+            &entryIndex,
+            &currentName,
+        ) else {
+            continue;
+        };
+        for captures in modulePattern.captures_iter(&source) {
+            let specifier = captures
+                .get(1)
+                .or_else(|| captures.get(2))
+                .map(|value| value.as_str())
+                .unwrap_or("");
+            let Some(resolved) = resolveToolPkgModuleEntry(&currentName, specifier, &entryNames)
+            else {
+                continue;
+            };
+            if reachable.insert(resolved.clone()) {
+                pending.push(resolved);
+            }
+        }
+    }
+    Ok(reachable)
+}
+
+/// Resolves a static relative JavaScript module reference against archive entries.
+fn resolveToolPkgModuleEntry(
+    currentName: &str,
+    specifier: &str,
+    entryNames: &BTreeSet<String>,
+) -> Option<String> {
+    if !specifier.starts_with('.') {
+        return None;
+    }
+    let mut segments = currentName
+        .rsplit_once('/')
+        .map(|(base, _)| base)
+        .unwrap_or("")
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    for segment in specifier.replace('\\', "/").split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop()?;
+            }
+            value => segments.push(value.to_string()),
+        }
+    }
+    let modulePath = segments.join("/");
+    [
+        modulePath.clone(),
+        format!("{}.js", modulePath),
+        format!("{}.mjs", modulePath),
+        format!("{}.cjs", modulePath),
+        format!("{}.json", modulePath),
+        format!("{}/index.js", modulePath),
+    ]
+    .into_iter()
+    .find(|candidate| entryNames.contains(candidate))
+}
+
+/// Returns whether an archive entry contains JavaScript executable source.
+fn isJavaScriptEntry(name: &str) -> bool {
+    matches!(
+        name.rsplit_once('.')
+            .map(|(_, extension)| extension.to_ascii_lowercase())
+            .as_deref(),
+        Some("js" | "mjs" | "cjs" | "ts" | "jsx" | "tsx")
+    )
+}
+
 /// Returns whether a normalized ToolPkg archive entry should be AST-minified.
 fn shouldAstMinifyToolPkgEntry(
     norm: &str,
     astMinifiedEntryNames: &BTreeSet<String>,
     resourceEntryRoots: &BTreeSet<String>,
 ) -> bool {
-    astMinifiedEntryNames.contains(norm)
+    (astMinifiedEntryNames.contains(norm) || isJavaScriptEntry(norm))
         && !resourceEntryRoots
             .iter()
             .any(|root| norm == root || norm.starts_with(&format!("{root}/")))
@@ -957,6 +1311,8 @@ impl ToolPkgJsAstMinifier {
             return Err("Terser bundle is empty".to_string());
         }
         let runtime = QuickJsRuntime::new().map_err(|error| error.to_string())?;
+        // Terser's scope analysis needs more stack than QuickJS's default for published packages.
+        runtime.set_max_stack_size(MINIFIER_MAX_STACK_SIZE);
         let context = QuickJsContext::full(&runtime).map_err(|error| error.to_string())?;
         let minifier = Self {
             _runtime: runtime,
@@ -1256,7 +1612,7 @@ mod tests {
     }
 
     #[test]
-    /// Verifies standalone scripts remain plain while their executable code is AST-minified.
+    /// Verifies standalone scripts retain public exports while their executable code is optimized.
     fn standalone_script_is_plain_and_ast_minified() {
         let source = br#"
             // comment must disappear
@@ -1267,7 +1623,7 @@ mod tests {
         let minified = protectArtifactNamedBytes(source, "core.mjs", false)
             .expect("standalone script should be minified");
         let minified = String::from_utf8(minified).expect("minified script should be UTF-8");
-        assert!(minified.contains("export function keepExternalName(value){return value+1}"));
+        assert!(minified.contains("export function keepExternalName"));
         assert!(!minified.contains("comment must disappear"));
         assert!(!minified.contains('\n'));
     }
@@ -1300,8 +1656,7 @@ exports.inspect = function(params) {
         let minified = String::from_utf8(minified).expect("minified package should be UTF-8");
         assert!(minified.starts_with("/* METADATA"));
         assert!(minified.contains("name: protected_package"));
-        assert!(minified
-            .contains("exports.inspect=function(params){return\"metadata-flow:\"+params.text};"));
+        assert!(minified.contains("exports.inspect="));
         assert!(!minified.contains("body comment must disappear"));
 
         let package = crate::JsPackageLoader::JsPackageLoader::parse(&minified)
@@ -1309,6 +1664,199 @@ exports.inspect = function(params) {
         assert_eq!(package.name, "protected_package");
         assert_eq!(package.tools.len(), 1);
         assert_eq!(package.tools[0].name, "inspect");
+    }
+
+    #[test]
+    /// Verifies direct marketplace uploads always carry the authenticated author provenance.
+    fn publish_processing_injects_script_provenance_with_or_without_minification() {
+        let source = r#"/* METADATA
+{
+  "name": "uuid_generator"
+}
+*/
+const internalUuidPrefix = "uuid:";
+exports.generate = function generateUuid(value) {
+    return internalUuidPrefix + value.trim();
+};
+"#;
+        let origin = ToolPkgMarketOrigin {
+            market: "Operit".to_string(),
+            toolpkgId: "uuid_generator".to_string(),
+            version: "1.0.2".to_string(),
+            author: vec!["authenticated-publisher".to_string()],
+        };
+
+        let unminified = processArtifactNamedBytesWithMarketOrigin(
+            source.as_bytes(),
+            "uuid_generator.js",
+            false,
+            &origin,
+            false,
+        )
+        .expect("unminified script processing should succeed");
+        let unminified = String::from_utf8(unminified).expect("processed script should be UTF-8");
+        assert!(unminified.contains("internalUuidPrefix"));
+        assert_eq!(
+            readScriptMarketOrigin(&unminified, "uuid_generator"),
+            Some(origin.clone())
+        );
+
+        let minified = processArtifactNamedBytesWithMarketOrigin(
+            source.as_bytes(),
+            "uuid_generator.js",
+            false,
+            &origin,
+            true,
+        )
+        .expect("minified script processing should succeed");
+        let minified = String::from_utf8(minified).expect("processed script should be UTF-8");
+        assert!(!minified.contains("internalUuidPrefix"));
+        assert_eq!(
+            readScriptMarketOrigin(&minified, "uuid_generator"),
+            Some(origin)
+        );
+    }
+
+    #[test]
+    /// Verifies ToolPkg publication preserves all files normally and keeps only reachable files when minified.
+    fn publish_processing_marks_toolpkg_and_trims_to_reachable_entries() {
+        let manifest = br#"{
+            "toolpkg_id": "tree-publish-test",
+            "version": "1.0.2",
+            "author": ["manifest-author"],
+            "main": "main.js",
+            "subpackages": [{"id": "child", "entry": "modules/child.js"}],
+            "resources": [{"key": "web", "path": "assets", "mime": "vnd.android.document/directory"}],
+            "wasm_modules": [{"id": "core", "path": "native/core.wasm", "exports": ["run"]}]
+        }"#;
+        let mut source = Vec::new();
+        let mut archive = zip::ZipWriter::new(Cursor::new(&mut source));
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for (name, bytes) in [
+            ("manifest.json", manifest.as_slice()),
+            (
+                "main.js",
+                b"const helper = require('./lib/used'); globalThis.main = helper.value;".as_slice(),
+            ),
+            (
+                "modules/child.js",
+                b"const helper = require('../lib/child-used'); globalThis.child = helper.value;"
+                    .as_slice(),
+            ),
+            ("lib/used.js", b"exports.value = 'main';".as_slice()),
+            ("lib/child-used.js", b"exports.value = 'child';".as_slice()),
+            ("assets/site.js", b"window.asset = true;".as_slice()),
+            ("native/core.wasm", b"\0asm\x01\0\0\0".as_slice()),
+            ("src/private.js", b"const privateSource = true;".as_slice()),
+            ("unused.js", b"const unusedEntry = true;".as_slice()),
+            ("main.js.map", b"{}".as_slice()),
+        ] {
+            archive
+                .start_file(name, options)
+                .expect("test archive entry should start");
+            archive
+                .write_all(bytes)
+                .expect("test archive entry should be written");
+        }
+        archive.finish().expect("test archive should finish");
+
+        let origin = ToolPkgMarketOrigin {
+            market: "Operit".to_string(),
+            toolpkgId: "tree-publish-test".to_string(),
+            version: "1.0.2".to_string(),
+            author: vec!["authenticated-publisher".to_string()],
+        };
+        let expectedInvocation = buildMarketOriginInvocation(
+            &origin.toolpkgId,
+            &origin.version,
+            &origin.author,
+        )
+        .expect("market origin invocation should be built");
+
+        let unminified = processArtifactNamedBytesWithMarketOrigin(
+            &source,
+            "tree-publish-test.toolpkg",
+            true,
+            &origin,
+            false,
+        )
+        .expect("unminified ToolPkg processing should succeed");
+        let mut unminified = zip::ZipArchive::new(Cursor::new(unminified))
+            .expect("unminified result should remain a ZIP");
+        assert!(unminified.by_name("src/private.js").is_ok());
+        let mut unminifiedMain = String::new();
+        unminified
+            .by_name("main.js")
+            .expect("main entry should remain")
+            .read_to_string(&mut unminifiedMain)
+            .expect("main entry should be text");
+        assert!(unminifiedMain.contains(&expectedInvocation));
+
+        let minified = processArtifactNamedBytesWithMarketOrigin(
+            &source,
+            "tree-publish-test.toolpkg",
+            true,
+            &origin,
+            true,
+        )
+        .expect("minified ToolPkg processing should succeed");
+        let mut minified =
+            zip::ZipArchive::new(Cursor::new(minified)).expect("minified result should remain a ZIP");
+        for retained in [
+            "manifest.json",
+            "main.js",
+            "modules/child.js",
+            "lib/used.js",
+            "lib/child-used.js",
+            "assets/site.js",
+            "native/core.wasm",
+        ] {
+            assert!(minified.by_name(retained).is_ok(), "{retained} should remain");
+        }
+        for removed in ["src/private.js", "unused.js", "main.js.map"] {
+            assert!(minified.by_name(removed).is_err(), "{removed} should be removed");
+        }
+        let mut minifiedMain = String::new();
+        minified
+            .by_name("main.js")
+            .expect("main entry should remain")
+            .read_to_string(&mut minifiedMain)
+            .expect("main entry should be text");
+        assert!(minifiedMain.contains(&expectedInvocation));
+    }
+
+    #[test]
+    /// Verifies release optimization removes private names without changing a CommonJS export.
+    fn release_optimization_preserves_commonjs_export_and_removes_private_names() {
+        let source = r#"
+            // This implementation detail must not be retained in a published artifact.
+            const internalPrefixForUuidGenerator = "normalized:";
+            function normalizeUserSuppliedUuid(sourceText) {
+                return sourceText.trim().toLowerCase();
+            }
+            exports.generate_uuid = function generateUuidImplementation(params) {
+                const suppliedText = params.text;
+                return internalPrefixForUuidGenerator + normalizeUserSuppliedUuid(suppliedText);
+            };
+        "#;
+        let protected = protectArtifactNamedBytes(source.as_bytes(), "uuid_generator.js", false)
+            .expect("standalone script should be optimized");
+        let protected = String::from_utf8(protected).expect("optimized script should be UTF-8");
+
+        assert!(protected.len() < source.len());
+        assert!(protected.contains("exports.generate_uuid="));
+        assert!(!protected.contains("internalPrefixForUuidGenerator"));
+        assert!(!protected.contains("normalizeUserSuppliedUuid"));
+        assert!(!protected.contains("generateUuidImplementation"));
+
+        let mut minifier = ToolPkgJsAstMinifier::new().expect("QuickJS minifier should initialize");
+        let result = minifier
+            .evalString(&format!(
+                "globalThis.exports={{}};{protected}JSON.stringify(exports.generate_uuid({{text:\"  A1B2-C3D4  \"}}));"
+            ))
+            .expect("optimized CommonJS export should execute");
+        assert_eq!(result, "\"normalized:a1b2-c3d4\"");
     }
 
     #[test]
@@ -1320,6 +1868,9 @@ exports.inspect = function(params) {
             "main": "main.js",
             "resources": [
                 {"key": "web", "path": "assets", "mime": "vnd.android.document/directory"}
+            ],
+            "wasm_modules": [
+                {"id": "core", "path": "modules/core.wasm", "exports": ["run"]}
             ]
         }"#;
         let mut source_bytes = Vec::new();
@@ -1423,9 +1974,9 @@ exports.inspect = function(params) {
         let similarity = compareToolPkgJavaScriptSimilarity(&source, &published)
             .expect("source and published package should be comparable");
 
-        assert_eq!(similarity.referenceCoverage, 1.0);
-        assert!(similarity.candidateCoverage > 0.75, "{similarity:?}");
-        assert!(similarity.score > 0.85, "{similarity:?}");
+        assert!(similarity.referenceCoverage > 0.98, "{similarity:?}");
+        assert!(similarity.candidateCoverage > 0.98, "{similarity:?}");
+        assert!(similarity.score > 0.98, "{similarity:?}");
     }
 
     #[test]
@@ -1454,9 +2005,9 @@ exports.inspect = function(params) {
         let similarity = compareToolPkgJavaScriptSimilarity(&reference, &published)
             .expect("modified package should be comparable");
 
-        assert!(similarity.referenceCoverage > 0.6, "{similarity:?}");
-        assert!(similarity.candidateCoverage > 0.5, "{similarity:?}");
-        assert!(similarity.score > 0.5, "{similarity:?}");
+        assert!(similarity.referenceCoverage > 0.3, "{similarity:?}");
+        assert!(similarity.candidateCoverage > 0.25, "{similarity:?}");
+        assert!(similarity.score > 0.25, "{similarity:?}");
     }
 
     #[test]
@@ -1485,8 +2036,8 @@ exports.inspect = function(params) {
         let similarity = compareToolPkgJavaScriptSimilarity(&reference, &published)
             .expect("broadly modified package should be comparable");
 
-        assert!(similarity.referenceCoverage > 0.2, "{similarity:?}");
-        assert!(similarity.score < 0.6, "{similarity:?}");
+        assert!(similarity.referenceCoverage > 0.1, "{similarity:?}");
+        assert!(similarity.score < 0.1, "{similarity:?}");
     }
 
     #[test]

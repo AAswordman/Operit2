@@ -1,5 +1,7 @@
 use std::env;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
 use operit_host_api::{
@@ -7,17 +9,13 @@ use operit_host_api::{
     RuntimeSqliteTransaction, RuntimeStorageEntry, RuntimeStorageHost, SqliteRow, SqliteValue,
 };
 use rusqlite::types::Value;
-#[cfg(target_os = "linux")]
-use std::collections::HashMap;
-#[cfg(target_os = "linux")]
-use zbus::blocking::{Connection, Proxy};
-#[cfg(target_os = "linux")]
-use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value as ZbusValue};
+use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub struct LinuxRuntimeStorageHost {
     runtimeRoot: PathBuf,
     workspaceRoot: PathBuf,
+    secretRoot: PathBuf,
 }
 
 impl LinuxRuntimeStorageHost {
@@ -57,6 +55,7 @@ impl LinuxRuntimeStorageHost {
         Self {
             runtimeRoot,
             workspaceRoot,
+            secretRoot: defaultHostSecretRoot(),
         }
     }
 
@@ -89,6 +88,100 @@ impl LinuxRuntimeStorageHost {
             path.display()
         )))
     }
+
+    /// Reads one Linux host secret from the private secret directory.
+    fn readSecretFile(&self, key: &str) -> HostResult<Option<Vec<u8>>> {
+        let path = self.secretPath(key)?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        self.validateSecretFile(&path, &metadata)?;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&path)?;
+        let mut content = Vec::new();
+        file.read_to_end(&mut content)?;
+        Ok(Some(content))
+    }
+
+    /// Writes one Linux host secret through an atomic private file replacement.
+    fn writeSecretFile(&self, key: &str, content: &[u8]) -> HostResult<()> {
+        self.ensureSecretRoot()?;
+        let path = self.secretPath(key)?;
+        let temporaryPath = self.secretRoot.join(format!(
+            ".{}.{}.tmp",
+            validateSecretKey(key)?,
+            Uuid::new_v4()
+        ));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&temporaryPath)?;
+        file.write_all(content)?;
+        file.sync_all()?;
+        fs::rename(temporaryPath, path)?;
+        self.syncSecretRoot()
+    }
+
+    /// Deletes one Linux host secret from the private secret directory.
+    fn deleteSecretFile(&self, key: &str) -> HostResult<()> {
+        let path = self.secretPath(key)?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        self.validateSecretFile(&path, &metadata)?;
+        fs::remove_file(path)?;
+        self.syncSecretRoot()
+    }
+
+    /// Ensures the Linux host secret directory exists with private permissions.
+    fn ensureSecretRoot(&self) -> HostResult<()> {
+        fs::create_dir_all(&self.secretRoot)?;
+        let metadata = fs::symlink_metadata(&self.secretRoot)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(HostError::new(format!(
+                "Linux host secret root must be a directory: {}",
+                self.secretRoot.display()
+            )));
+        }
+        fs::set_permissions(&self.secretRoot, fs::Permissions::from_mode(0o700))?;
+        Ok(())
+    }
+
+    /// Resolves one validated secret key beneath the Linux host secret directory.
+    fn secretPath(&self, key: &str) -> HostResult<PathBuf> {
+        Ok(self.secretRoot.join(validateSecretKey(key)?))
+    }
+
+    /// Validates that one persisted Linux host secret is a private regular file.
+    fn validateSecretFile(&self, path: &Path, metadata: &fs::Metadata) -> HostResult<()> {
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(HostError::new(format!(
+                "Linux host secret must be a regular file: {}",
+                path.display()
+            )));
+        }
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(HostError::new(format!(
+                "Linux host secret has insecure permissions: {}",
+                path.display()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Synchronizes Linux host secret directory metadata after a mutation.
+    fn syncSecretRoot(&self) -> HostResult<()> {
+        File::open(&self.secretRoot)?.sync_all()?;
+        Ok(())
+    }
 }
 
 /// Resolves the legacy secure storage namespace beside the runtime root.
@@ -104,6 +197,21 @@ fn legacySecurePath(runtimeRoot: &Path, segments: &[&str]) -> HostResult<PathBuf
         resolved.push(segment);
     }
     Ok(resolved)
+}
+
+/// Returns the per-user Linux directory used for private host secrets.
+fn defaultHostSecretRoot() -> PathBuf {
+    if let Some(xdg_state_home) = env::var_os("XDG_STATE_HOME") {
+        return PathBuf::from(xdg_state_home)
+            .join("operit2")
+            .join("secrets");
+    }
+    let home = env::var_os("HOME").expect("HOME is required for Operit2 host secrets");
+    PathBuf::from(home)
+        .join(".local")
+        .join("state")
+        .join("operit2")
+        .join("secrets")
 }
 
 impl RuntimeStorageHost for LinuxRuntimeStorageHost {
@@ -170,15 +278,15 @@ impl RuntimeStorageHost for LinuxRuntimeStorageHost {
 
 impl HostSecretStore for LinuxRuntimeStorageHost {
     fn readSecret(&self, key: &str) -> HostResult<Option<Vec<u8>>> {
-        linuxReadSecret(key)
+        self.readSecretFile(key)
     }
 
     fn writeSecret(&self, key: &str, content: &[u8]) -> HostResult<()> {
-        linuxWriteSecret(key, content)
+        self.writeSecretFile(key, content)
     }
 
     fn deleteSecret(&self, key: &str) -> HostResult<()> {
-        linuxDeleteSecret(key)
+        self.deleteSecretFile(key)
     }
 }
 
@@ -235,208 +343,6 @@ fn validateSecretKey(key: &str) -> HostResult<String> {
         return Err(HostError::new(format!("invalid host secret key: {key}")));
     }
     Ok(key.to_string())
-}
-
-#[cfg(target_os = "linux")]
-const SECRET_SERVICE_DESTINATION: &str = "org.freedesktop.secrets";
-#[cfg(target_os = "linux")]
-const SECRET_SERVICE_PATH: &str = "/org/freedesktop/secrets";
-#[cfg(target_os = "linux")]
-const SECRET_SERVICE_INTERFACE: &str = "org.freedesktop.Secret.Service";
-#[cfg(target_os = "linux")]
-const SECRET_COLLECTION_INTERFACE: &str = "org.freedesktop.Secret.Collection";
-#[cfg(target_os = "linux")]
-const SECRET_ITEM_INTERFACE: &str = "org.freedesktop.Secret.Item";
-#[cfg(target_os = "linux")]
-const SECRET_SESSION_PATH: &str = "/org/freedesktop/secrets/session/operit_plain";
-
-#[cfg(target_os = "linux")]
-#[derive(serde::Serialize, serde::Deserialize, zbus::zvariant::Type)]
-struct SecretServiceSecret {
-    session: OwnedObjectPath,
-    parameters: Vec<u8>,
-    value: Vec<u8>,
-    content_type: String,
-}
-
-#[cfg(target_os = "linux")]
-/// Reads a host secret through the Linux Secret Service session bus.
-fn linuxReadSecret(key: &str) -> HostResult<Option<Vec<u8>>> {
-    let key = validateSecretKey(key)?;
-    let connection = Connection::session()
-        .map_err(|error| HostError::new(format!("connect Secret Service failed: {error}")))?;
-    let service = secretServiceProxy(&connection)?;
-    let (_, unlocked) = searchSecretItems(&service, &key)?;
-    if unlocked.is_empty() {
-        return Ok(None);
-    }
-    let item = secretItemProxy(&connection, &unlocked[0])?;
-    let secret: SecretServiceSecret = item
-        .call("GetSecret", &(plainSessionPath()?,))
-        .map_err(|error| HostError::new(format!("read Secret Service item failed: {error}")))?;
-    Ok(Some(secret.value))
-}
-
-#[cfg(not(target_os = "linux"))]
-/// Rejects Linux Secret Service reads on non-Linux targets.
-fn linuxReadSecret(_key: &str) -> HostResult<Option<Vec<u8>>> {
-    Err(HostError::new(
-        "Linux Secret Service is only available on Linux",
-    ))
-}
-
-#[cfg(target_os = "linux")]
-/// Writes a host secret through the Linux Secret Service session bus.
-fn linuxWriteSecret(key: &str, content: &[u8]) -> HostResult<()> {
-    let key = validateSecretKey(key)?;
-    let connection = Connection::session()
-        .map_err(|error| HostError::new(format!("connect Secret Service failed: {error}")))?;
-    let service = secretServiceProxy(&connection)?;
-    let collectionPath: OwnedObjectPath =
-        service.call("ReadAlias", &("default",)).map_err(|error| {
-            HostError::new(format!(
-                "read default Secret Service collection failed: {error}"
-            ))
-        })?;
-    let collection = secretCollectionProxy(&connection, &collectionPath)?;
-    let attributes = secretAttributes(&key);
-    let properties = secretItemProperties(&key, &attributes)?;
-    let secret = SecretServiceSecret {
-        session: plainSessionPath()?,
-        parameters: Vec::new(),
-        value: content.to_vec(),
-        content_type: "application/octet-stream".to_string(),
-    };
-    let _: (OwnedObjectPath, OwnedObjectPath) = collection
-        .call("CreateItem", &(properties, secret, true))
-        .map_err(|error| HostError::new(format!("write Secret Service item failed: {error}")))?;
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-/// Rejects Linux Secret Service writes on non-Linux targets.
-fn linuxWriteSecret(_key: &str, _content: &[u8]) -> HostResult<()> {
-    Err(HostError::new(
-        "Linux Secret Service is only available on Linux",
-    ))
-}
-
-#[cfg(target_os = "linux")]
-/// Deletes matching host secret items from the Linux Secret Service.
-fn linuxDeleteSecret(key: &str) -> HostResult<()> {
-    let key = validateSecretKey(key)?;
-    let connection = Connection::session()
-        .map_err(|error| HostError::new(format!("connect Secret Service failed: {error}")))?;
-    let service = secretServiceProxy(&connection)?;
-    let (locked, unlocked) = searchSecretItems(&service, &key)?;
-    for itemPath in locked.into_iter().chain(unlocked.into_iter()) {
-        let item = secretItemProxy(&connection, &itemPath)?;
-        let _: OwnedObjectPath = item.call("Delete", &()).map_err(|error| {
-            HostError::new(format!("delete Secret Service item failed: {error}"))
-        })?;
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-/// Rejects Linux Secret Service deletes on non-Linux targets.
-fn linuxDeleteSecret(_key: &str) -> HostResult<()> {
-    Err(HostError::new(
-        "Linux Secret Service is only available on Linux",
-    ))
-}
-
-#[cfg(target_os = "linux")]
-/// Creates a proxy for the Linux Secret Service root object.
-fn secretServiceProxy(connection: &Connection) -> HostResult<Proxy<'_>> {
-    Proxy::new(
-        connection,
-        SECRET_SERVICE_DESTINATION,
-        SECRET_SERVICE_PATH,
-        SECRET_SERVICE_INTERFACE,
-    )
-    .map_err(|error| HostError::new(format!("create Secret Service proxy failed: {error}")))
-}
-
-#[cfg(target_os = "linux")]
-/// Creates a proxy for a Linux Secret Service collection object.
-fn secretCollectionProxy<'a>(
-    connection: &'a Connection,
-    path: &'a OwnedObjectPath,
-) -> HostResult<Proxy<'a>> {
-    Proxy::new(
-        connection,
-        SECRET_SERVICE_DESTINATION,
-        path.as_str(),
-        SECRET_COLLECTION_INTERFACE,
-    )
-    .map_err(|error| {
-        HostError::new(format!(
-            "create Secret Service collection proxy failed: {error}"
-        ))
-    })
-}
-
-#[cfg(target_os = "linux")]
-/// Creates a proxy for a Linux Secret Service item object.
-fn secretItemProxy<'a>(
-    connection: &'a Connection,
-    path: &'a OwnedObjectPath,
-) -> HostResult<Proxy<'a>> {
-    Proxy::new(
-        connection,
-        SECRET_SERVICE_DESTINATION,
-        path.as_str(),
-        SECRET_ITEM_INTERFACE,
-    )
-    .map_err(|error| HostError::new(format!("create Secret Service item proxy failed: {error}")))
-}
-
-#[cfg(target_os = "linux")]
-/// Searches Linux Secret Service items by the Operit host secret attributes.
-fn searchSecretItems(
-    service: &Proxy<'_>,
-    key: &str,
-) -> HostResult<(Vec<OwnedObjectPath>, Vec<OwnedObjectPath>)> {
-    service
-        .call("SearchItems", &(secretAttributes(key),))
-        .map_err(|error| HostError::new(format!("search Secret Service items failed: {error}")))
-}
-
-#[cfg(target_os = "linux")]
-/// Builds stable Secret Service attributes for one host secret key.
-fn secretAttributes(key: &str) -> HashMap<String, String> {
-    HashMap::from([
-        ("application".to_string(), "operit2".to_string()),
-        ("key".to_string(), key.to_string()),
-    ])
-}
-
-#[cfg(target_os = "linux")]
-/// Builds Secret Service item properties for a host secret item.
-fn secretItemProperties(
-    key: &str,
-    attributes: &HashMap<String, String>,
-) -> HostResult<HashMap<String, OwnedValue>> {
-    Ok(HashMap::from([
-        (
-            format!("{SECRET_ITEM_INTERFACE}.Label"),
-            OwnedValue::try_from(ZbusValue::from(format!("Operit2 {key}")))
-                .map_err(|error| HostError::new(error.to_string()))?,
-        ),
-        (
-            format!("{SECRET_ITEM_INTERFACE}.Attributes"),
-            OwnedValue::try_from(ZbusValue::from(attributes.clone()))
-                .map_err(|error| HostError::new(error.to_string()))?,
-        ),
-    ]))
-}
-
-#[cfg(target_os = "linux")]
-/// Returns the plain Secret Service session object path used by this host.
-fn plainSessionPath() -> HostResult<OwnedObjectPath> {
-    OwnedObjectPath::try_from(SECRET_SESSION_PATH)
-        .map_err(|error| HostError::new(format!("invalid Secret Service session path: {error}")))
 }
 
 impl RuntimeSqliteHost for LinuxRuntimeStorageHost {
