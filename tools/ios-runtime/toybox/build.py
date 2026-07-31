@@ -179,7 +179,7 @@ def set_toybox_config(source: Path) -> None:
 
 
 def patch_toybox_sources(source: Path) -> None:
-    """Installs the stream indirection and compiles the Toybox wrapper with its source objects."""
+    """Installs iOS-safe source fixes and the stream-indirected Toybox wrapper."""
     shutil.copy2(RUNNER_PATH, source / RUNNER_PATH.name)
     shutil.copy2(PUBLIC_HEADER_PATH, source / PUBLIC_HEADER_PATH.name)
     shutil.copy2(STREAMS_HEADER_PATH, source / STREAMS_HEADER_PATH.name)
@@ -199,6 +199,24 @@ def patch_toybox_sources(source: Path) -> None:
         raise RuntimeError("Toybox wrapper compilation anchor is invalid")
     make_script.write_text(
         make_source.replace(make_anchor, "for i in lib/*.c operit_toybox_runner.c click $TOYFILES\n"),
+        encoding="utf-8",
+    )
+    portability_path = source / "lib" / "portability.c"
+    portability_source = portability_path.read_text(encoding="utf-8")
+    disk_size_anchor = """#if defined(__APPLE__)
+#include <sys/disk.h>
+"""
+    ios_disk_size_anchor = """#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
+#if defined(__APPLE__) && !TARGET_OS_IPHONE
+#include <sys/disk.h>
+"""
+    if portability_source.count(disk_size_anchor) != 1:
+        raise RuntimeError("Toybox iOS disk compatibility anchor is invalid")
+    portability_path.write_text(
+        portability_source.replace(disk_size_anchor, ios_disk_size_anchor),
         encoding="utf-8",
     )
 
