@@ -33,6 +33,11 @@ SCIPY_ACCELERATE_HEADER_PATH = Path("scipy/_build_utils/src/scipy_blas_defines.h
 SCIPY_CYTHON_BLAS_MESON_PATH = Path("scipy/linalg/meson.build")
 SCIPY_IOS_ACCELERATE_COMPAT_SOURCE_PATH = Path("scipy/linalg/ios_accelerate_compat.c")
 SCIPY_SPECIAL_MESON_PATH = Path("scipy/special/meson.build")
+SCIPY_SUPERLU_BLAS_CONFIG_PATH = Path("scipy/sparse/linalg/_dsolve/scipy_slu_blas_config.h")
+SCIPY_SUPERLU_MESON_PATH = Path("scipy/sparse/linalg/_dsolve/meson.build")
+SCIPY_IOS_SUPERLU_ACCELERATE_COMPAT_SOURCE_PATH = Path(
+    "scipy/sparse/linalg/_dsolve/ios_accelerate_compat.c"
+)
 SCIPY_F2PY_GENERATOR_PATH = Path("tools/building/generate_f2pymod.py")
 SCIPY_PYTHRAN_PROGRAM_PATH = Path("meson.build")
 SCIPY_ACCELERATE_PLATFORM_CHECK = """macOS13_3_or_later = false
@@ -106,6 +111,47 @@ SCIPY_IOS_ACCELERATE_COMPAT_SOURCE = """#include <numpy/npy_math.h>
 double dcabs1_(const npy_complex128 *z) {
     return npy_fabs(npy_creal(*z)) + npy_fabs(npy_cimag(*z));
 }
+"""
+
+SCIPY_IOS_SUPERLU_ACCELERATE_COMPAT_SOURCE = """#include "slu_dcomplex.h"
+
+/* Implements SuperLU's dcabs1 symbol after its new Accelerate ABI remapping. */
+double dcabs1$NEWLAPACK(const doublecomplex *z) {
+    double real = z->r;
+    double imaginary = z->i;
+    if (real < 0.0) {
+        real = -real;
+    }
+    if (imaginary < 0.0) {
+        imaginary = -imaginary;
+    }
+    return real + imaginary;
+}
+"""
+SCIPY_SUPERLU_ACCELERATE_NEW_LAPACK = """/* Accelerate doesn't use an underscore as suffix, so fix that up here */
+#ifdef ACCELERATE_NEW_LAPACK
+#undef BLAS_FORTRAN_SUFFIX
+#define BLAS_FORTRAN_SUFFIX
+#endif
+"""
+SCIPY_IOS_SUPERLU_ACCELERATE_NEW_LAPACK = """/* Accelerate's new ABI uses $NEWLAPACK suffixes without an underscore. */
+#ifdef ACCELERATE_NEW_LAPACK
+#undef BLAS_SYMBOL_SUFFIX
+#ifdef HAVE_BLAS_ILP64
+#define BLAS_SYMBOL_SUFFIX $NEWLAPACK$ILP64
+#else
+#define BLAS_SYMBOL_SUFFIX $NEWLAPACK
+#endif
+#undef BLAS_FORTRAN_SUFFIX
+#define BLAS_FORTRAN_SUFFIX
+#endif
+"""
+SCIPY_SUPERLU_SOURCES = """    'SuperLU/SRC/zutil.c',
+    superlu_config,
+"""
+SCIPY_IOS_SUPERLU_SOURCES = """    'SuperLU/SRC/zutil.c',
+    superlu_config,
+    'ios_accelerate_compat.c',
 """
 SCIPY_SPECIAL_NPZ_COMMAND = """    command: [
       py3, '@CURRENT_SOURCE_DIR@/utils/makenpz.py',
@@ -416,6 +462,28 @@ def configure_scipy_ios_accelerate(source: Path) -> None:
     if compat_source.exists():
         raise RuntimeError(f"SciPy iOS Accelerate compatibility source already exists: {compat_source}")
     compat_source.write_text(SCIPY_IOS_ACCELERATE_COMPAT_SOURCE, encoding="utf-8")
+    superlu_blas_config = source / SCIPY_SUPERLU_BLAS_CONFIG_PATH
+    if not superlu_blas_config.is_file():
+        raise RuntimeError(f"SciPy SuperLU BLAS configuration file is missing: {superlu_blas_config}")
+    replace_required_source_text(
+        superlu_blas_config,
+        SCIPY_SUPERLU_ACCELERATE_NEW_LAPACK,
+        SCIPY_IOS_SUPERLU_ACCELERATE_NEW_LAPACK,
+        "SuperLU Accelerate symbol configuration",
+    )
+    superlu_meson = source / SCIPY_SUPERLU_MESON_PATH
+    if not superlu_meson.is_file():
+        raise RuntimeError(f"SciPy SuperLU Meson file is missing: {superlu_meson}")
+    replace_required_source_text(
+        superlu_meson,
+        SCIPY_SUPERLU_SOURCES,
+        SCIPY_IOS_SUPERLU_SOURCES,
+        "SuperLU source list",
+    )
+    superlu_compat_source = source / SCIPY_IOS_SUPERLU_ACCELERATE_COMPAT_SOURCE_PATH
+    if superlu_compat_source.exists():
+        raise RuntimeError(f"SciPy SuperLU iOS compatibility source already exists: {superlu_compat_source}")
+    superlu_compat_source.write_text(SCIPY_IOS_SUPERLU_ACCELERATE_COMPAT_SOURCE, encoding="utf-8")
 
 
 def configure_scipy_host_f2py(source: Path) -> None:
