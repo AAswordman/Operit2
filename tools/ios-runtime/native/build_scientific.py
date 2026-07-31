@@ -26,6 +26,7 @@ FRAMEWORK_OUTPUT = OUTPUT_DIR / f"{FRAMEWORK_NAME}.xcframework"
 PYTHON_VERSION = "3.13"
 MINIMUM_IOS_VERSION = "13.0"
 SCIPY_NUMPY_CONFIG_TOOL = TOOL_DIR / "scipy_numpy_config.py"
+SCIPY_NUMPY_CONSTRAINTS = TOOL_DIR / "scipy-numpy-constraints.txt"
 
 
 @dataclass(frozen=True)
@@ -292,8 +293,8 @@ def build_wheels(package: SourcePackage, source: Path, build_python: Path) -> No
     env["CIBW_CONFIG_SETTINGS"] = CIBW_CONFIG_SETTINGS_BY_PACKAGE[package.name]
     if package.name == SCIPY.name:
         env["CIBW_BEFORE_BUILD"] = (
-            f"python -m pip install --no-index --find-links={WHEEL_DIR} "
-            f"numpy=={NUMPY.version}"
+            f"python {SCIPY_NUMPY_CONFIG_TOOL} --prepare-cross-build "
+            f"{WHEEL_DIR} {scipy_numpy_config_cross_file()}"
         )
         env["CIBW_CONFIG_SETTINGS"] += f" setup-args=--cross-file={scipy_numpy_config_cross_file()}"
     env["CIBW_ENVIRONMENT"] = (
@@ -301,6 +302,8 @@ def build_wheels(package: SourcePackage, source: Path, build_python: Path) -> No
         "NPY_LAPACK_ORDER=accelerate "
         f"IPHONEOS_DEPLOYMENT_TARGET={MINIMUM_IOS_VERSION}"
     )
+    if package.name == SCIPY.name:
+        env["CIBW_ENVIRONMENT"] += f" PIP_CONSTRAINT={SCIPY_NUMPY_CONSTRAINTS}"
     env["CIBW_TEST_SKIP"] = "*"
     run(
         [
