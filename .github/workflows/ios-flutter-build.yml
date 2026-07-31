@@ -149,7 +149,7 @@ jobs:
         run: python3 tools/build_scripts/build_flutter_web_access.py --base-href /
 
       - name: Install GNU sed
-        run: brew install gnu-sed
+        run: brew install gnu-sed cmake ninja
 
       - name: Build iOS Toybox runtime
         run: python3 tools/ios-runtime/toybox/build.py
