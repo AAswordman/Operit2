@@ -30,6 +30,8 @@ SCIPY_NUMPY_CONFIG_TOOL = TOOL_DIR / "scipy_numpy_config.py"
 SCIPY_NUMPY_CONSTRAINTS = TOOL_DIR / "scipy-numpy-constraints.txt"
 SCIPY_IOS_ACCELERATE_MESON_PATH = Path("scipy/meson.build")
 SCIPY_ACCELERATE_HEADER_PATH = Path("scipy/_build_utils/src/scipy_blas_defines.h")
+SCIPY_CYTHON_BLAS_MESON_PATH = Path("scipy/linalg/meson.build")
+SCIPY_IOS_ACCELERATE_COMPAT_SOURCE_PATH = Path("scipy/linalg/ios_accelerate_compat.c")
 SCIPY_F2PY_GENERATOR_PATH = Path("tools/building/generate_f2pymod.py")
 SCIPY_PYTHRAN_PROGRAM_PATH = Path("meson.build")
 SCIPY_ACCELERATE_PLATFORM_CHECK = """macOS13_3_or_later = false
@@ -85,6 +87,24 @@ SCIPY_IOS_ACCELERATE_SDK_CHECK = """#ifdef ACCELERATE_NEW_LAPACK
         #define BLAS_SYMBOL_SUFFIX $NEWLAPACK
     #endif
 #endif
+"""
+SCIPY_CYTHON_BLAS_SOURCES = """  [
+    linalg_cython_gen.process(cython_linalg[0]),  # cython_blas.pyx
+    cython_linalg[4],  # _blas_subroutines.h
+  ],
+"""
+SCIPY_IOS_CYTHON_BLAS_SOURCES = """  [
+    linalg_cython_gen.process(cython_linalg[0]),  # cython_blas.pyx
+    cython_linalg[4],  # _blas_subroutines.h
+    'ios_accelerate_compat.c',
+  ],
+"""
+SCIPY_IOS_ACCELERATE_COMPAT_SOURCE = """#include <numpy/npy_math.h>
+
+/* Implements the historical BLAS dcabs1 symbol absent from new Accelerate. */
+double dcabs1_(const npy_complex128 *z) {
+    return npy_fabs(npy_creal(*z)) + npy_fabs(npy_cimag(*z));
+}
 """
 SCIPY_F2PY_COMMAND = """        cmd = ['f2py', fname_pyf, '--build-dir', outdir_abs] + nogil_arg
 """
@@ -368,6 +388,21 @@ def configure_scipy_ios_accelerate(source: Path) -> None:
         SCIPY_IOS_ACCELERATE_SDK_CHECK,
         "Accelerate SDK check",
     )
+    cython_blas_meson = source / SCIPY_CYTHON_BLAS_MESON_PATH
+    if not cython_blas_meson.is_file():
+        raise RuntimeError(f"SciPy Cython BLAS configuration file is missing: {cython_blas_meson}")
+    replace_required_source_text(
+        cython_blas_meson,
+        SCIPY_CYTHON_BLAS_SOURCES,
+        SCIPY_IOS_CYTHON_BLAS_SOURCES,
+        "Cython BLAS source list",
+    )
+    compat_source = source / SCIPY_IOS_ACCELERATE_COMPAT_SOURCE_PATH
+    if compat_source.exists():
+        raise RuntimeError(f"SciPy iOS Accelerate compatibility source already exists: {compat_source}")
+    compat_source.write_text(SCIPY_IOS_ACCELERATE_COMPAT_SOURCE, encoding="utf-8")
+
+
 def configure_scipy_host_f2py(source: Path) -> None:
     """Requires SciPy's F2Py generator subprocess to use the native host executable."""
     generator = source / SCIPY_F2PY_GENERATOR_PATH
