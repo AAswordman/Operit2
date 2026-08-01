@@ -302,8 +302,7 @@ CIBW_CONFIG_SETTINGS_BY_PACKAGE = {
         "setup-args=-Duse-ilp64=false "
         "setup-args=-Dallow-noblas=false "
         "setup-args=-Dblas=accelerate "
-        "setup-args=-Dlapack=accelerate "
-        "build-dir=build"
+        "setup-args=-Dlapack=accelerate"
     ),
     "scipy": (
         "setup-args=-Duse-ilp64=false "
@@ -587,16 +586,12 @@ def build_wheels(
             f" PIP_CONSTRAINT={SCIPY_NUMPY_CONSTRAINTS} SCIPY_HOST_F2PY={host_f2py}"
         )
     env["CIBW_TEST_SKIP"] = "*"
-    build_selections = IOS_BUILD_TAGS if package.name == SCIPY.name else [" ".join(IOS_BUILD_TAGS)]
+    build_selections = IOS_BUILD_TAGS
     for build_selection in build_selections:
         env["CIBW_BUILD"] = build_selection
+        env["CIBW_CONFIG_SETTINGS"] = f"{config_settings} build-dir=build-{build_selection}"
         if package.name == SCIPY.name:
-            env["CIBW_CONFIG_SETTINGS"] = (
-                f"{config_settings} build-dir=build-{build_selection} "
-                f"setup-args=--cross-file={cross_file}"
-            )
-        else:
-            env["CIBW_CONFIG_SETTINGS"] = config_settings
+            env["CIBW_CONFIG_SETTINGS"] += f" setup-args=--cross-file={cross_file}"
         run(
             [
                 str(build_python),
