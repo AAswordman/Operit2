@@ -19,6 +19,11 @@ on:
         options:
           - "false"
           - "true"
+      scientific_runtime_run_id:
+        description: "Existing workflow run ID containing the iOS scientific runtime artifact"
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       build_web_assets:
@@ -164,7 +169,25 @@ jobs:
         run: python3 tools/ios-runtime/toybox/build.py
 
       - name: Build iOS scientific runtime
+        if: github.event_name != 'workflow_dispatch' || inputs.scientific_runtime_run_id == ''
         run: python3 tools/ios-runtime/native/build_scientific.py
+
+      - name: Download iOS scientific runtime
+        if: github.event_name == 'workflow_dispatch' && inputs.scientific_runtime_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.scientific_runtime_run_id }}
+          pattern: operit2-ios-scientific-runtime-*
+          merge-multiple: true
+          path: tools/ios-runtime/native/output/OperitPythonScientific.xcframework
+
+      - name: Verify iOS scientific runtime
+        if: github.event_name == 'workflow_dispatch' && inputs.scientific_runtime_run_id != ''
+        run: |
+          test -f tools/ios-runtime/native/output/OperitPythonScientific.xcframework/Info.plist
+          test -f tools/ios-runtime/native/output/OperitPythonScientific.xcframework/ios-arm64/OperitPythonScientific.framework/OperitPythonScientific
+          test -f tools/ios-runtime/native/output/OperitPythonScientific.xcframework/ios-arm64_x86_64-simulator/OperitPythonScientific.framework/OperitPythonScientific
 
       - name: Build and package unsigned iOS app
         run: python3 tools/build_scripts/build_flutter_ios.py
