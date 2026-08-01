@@ -237,7 +237,9 @@ static void ORTIosInitializePython(void) {
 
 /// Ensures that the embedded CPython interpreter has been initialized successfully.
 static BOOL ORTIosEnsurePython(NSString **error) {
-  dispatch_once(&ORTIosPythonOnce, ORTIosInitializePython);
+  dispatch_once(&ORTIosPythonOnce, ^{
+    ORTIosInitializePython();
+  });
   if (ORTIosPythonInitializationError != nil) {
     *error = ORTIosPythonInitializationError;
     return NO;
@@ -362,7 +364,9 @@ static uint16_t ORTIosNodePort(NSString **error) {
 
 /// Sends one JSON request to the loopback-only Node Mobile service and reads one JSON response.
 static NSDictionary *ORTIosCallNodeService(NSDictionary *request, NSString **error) {
-  dispatch_once(&ORTIosNodeOnce, ORTIosInitializeNode);
+  dispatch_once(&ORTIosNodeOnce, ^{
+    ORTIosInitializeNode();
+  });
   if (ORTIosNodeInitializationError != nil) {
     *error = ORTIosNodeInitializationError;
     return nil;
@@ -560,7 +564,7 @@ static NSString *ORTIosExecuteToyboxLine(ORTIosTerminalSession *session, NSStrin
       return nil;
     }
   }
-  OperitToyboxResult result = {};
+  __block OperitToyboxResult result = {};
   __block int status = 0;
   ORTIosEnsureToyboxQueue();
   dispatch_sync(ORTIosToyboxQueue, ^{
