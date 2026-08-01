@@ -27,7 +27,6 @@ for arch in $ARCHS; do
     --manifest-path "$crate_dir/Cargo.toml" \
     --release \
     --target "$rust_target" \
-    -- \
     --crate-type staticlib
 
   cp "$crate_dir/target/$rust_target/release/deps/$lib_name" "$out_dir/$arch/$lib_name"
