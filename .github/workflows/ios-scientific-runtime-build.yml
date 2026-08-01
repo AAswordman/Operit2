@@ -1,6 +1,9 @@
 name: iOS Scientific Runtime Build
 
 on:
+  push:
+    branches:
+      - codex/apple-build-20260731
   workflow_dispatch:
 
 permissions:
