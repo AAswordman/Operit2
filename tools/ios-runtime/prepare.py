@@ -215,9 +215,12 @@ def extract_native_runtimes(destination: Path) -> tuple[Path, Path]:
     with zipfile.ZipFile(ensure_runtime_archive(NODE_ARCHIVE)) as archive:
         for member in archive.infolist():
             require_safe_archive_path(node_staging, member.filename)
-            if not member.is_dir() and not member.filename.startswith("NodeMobile.xcframework/"):
-                raise RuntimeError(f"unexpected Node Mobile archive entry: {member.filename}")
-        archive.extractall(node_staging)
+        runtime_members = [
+            member
+            for member in archive.infolist()
+            if member.filename.startswith("NodeMobile.xcframework/")
+        ]
+        archive.extractall(node_staging, members=runtime_members)
     with tarfile.open(ensure_runtime_archive(PYTHON_ARCHIVE), "r:gz") as archive:
         members = archive.getmembers()
         for member in members:
