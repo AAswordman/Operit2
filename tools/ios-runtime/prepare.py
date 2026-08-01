@@ -297,7 +297,7 @@ def stage_runtime_resources(manifest: dict[str, object]) -> None:
     stage_python_resource_library(python_xcframework_staging, python_resource_staging)
     node_resource_staging.mkdir()
     site_packages = python_resource_staging / "lib" / PYTHON_VERSION / "site-packages"
-    site_packages.mkdir(parents=True)
+    site_packages.mkdir(parents=True, exist_ok=True)
     extract_python_packages(manifest, site_packages)
     extract_node_packages(manifest, node_resource_staging)
     shutil.copy2(RESOURCE_DIR / "node_terminal_service.js", node_resource_staging / "operit_node_terminal_service.js")
