@@ -136,13 +136,13 @@ def require_safe_archive_link(root: Path, member: tarfile.TarInfo) -> None:
         raise RuntimeError(f"iOS runtime archive link escapes staging: {member.name}")
 
 
-def copy_directory(source: Path, target: Path) -> None:
+def copy_directory(source: Path, target: Path, *, ignore=None) -> None:
     """Replaces one generated application directory with verified staged contents."""
     if not source.is_dir():
         raise RuntimeError(f"iOS runtime component is missing: {source}")
     shutil.rmtree(target, ignore_errors=True)
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source, target)
+    shutil.copytree(source, target, ignore=ignore)
 
 
 # Returns CPython runtime dylib entries that are not valid PYTHONHOME resources.
@@ -305,7 +305,11 @@ def stage_runtime_resources(manifest: dict[str, object]) -> None:
     shutil.copy2(RESOURCE_DIR / "python_terminal_runtime.py", python_resource_staging / "operit_terminal_runtime.py")
     copy_directory(node_staging / "NodeMobile.xcframework", FRAMEWORKS_DIR / "NodeMobile.xcframework")
     copy_directory(python_xcframework_staging, FRAMEWORKS_DIR / "Python.xcframework")
-    copy_directory(SCIENTIFIC_FRAMEWORK, FRAMEWORKS_DIR / "OperitPythonScientific.xcframework")
+    copy_directory(
+        SCIENTIFIC_FRAMEWORK,
+        FRAMEWORKS_DIR / "OperitPythonScientific.xcframework",
+        ignore=shutil.ignore_patterns("*.a"),
+    )
     copy_directory(TOYBOX_FRAMEWORK, FRAMEWORKS_DIR / "OperitToybox.xcframework")
     copy_directory(python_resource_staging, PYTHON_RESOURCE_DIR)
     copy_directory(node_resource_staging, NODE_RESOURCE_DIR)
@@ -367,6 +371,13 @@ def verify_staged_runtime() -> None:
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise RuntimeError("iOS staged runtime files are missing: " + ", ".join(missing))
+    scientific_framework = FRAMEWORKS_DIR / "OperitPythonScientific.xcframework"
+    static_archives = sorted(scientific_framework.rglob("*.a"))
+    if static_archives:
+        raise RuntimeError(
+            "iOS scientific framework contains static build archives: "
+            + ", ".join(str(path) for path in static_archives)
+        )
 
 
 def prepare_ios_runtime() -> None:
