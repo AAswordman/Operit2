@@ -123,6 +123,16 @@ def require_safe_archive_path(root: Path, member_name: str) -> None:
         raise RuntimeError(f"iOS runtime archive entry escapes staging: {member_name}")
 
 
+def require_safe_archive_link(root: Path, member: tarfile.TarInfo) -> None:
+    """Rejects archive links whose resolved targets escape the designated staging directory."""
+    destination = (root / member.name).resolve()
+    link_base = destination.parent if member.issym() else root
+    link_target = (link_base / member.linkname).resolve()
+    resolved_root = root.resolve()
+    if link_target != resolved_root and resolved_root not in link_target.parents:
+        raise RuntimeError(f"iOS runtime archive link escapes staging: {member.name}")
+
+
 def copy_directory(source: Path, target: Path) -> None:
     """Replaces one generated application directory with verified staged contents."""
     if not source.is_dir():
@@ -225,7 +235,9 @@ def extract_native_runtimes(destination: Path) -> tuple[Path, Path]:
         members = archive.getmembers()
         for member in members:
             require_safe_archive_path(python_staging, member.name)
-            if member.issym() or member.islnk() or (not member.isfile() and not member.isdir()):
+            if member.issym() or member.islnk():
+                require_safe_archive_link(python_staging, member)
+            elif not member.isfile() and not member.isdir():
                 raise RuntimeError(f"unsupported Python iOS archive member: {member.name}")
         archive.extractall(python_staging, members=members)
     return node_staging, python_staging
