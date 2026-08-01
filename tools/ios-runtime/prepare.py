@@ -30,6 +30,9 @@ TOYBOX_FRAMEWORK = (
     / "OperitToybox.xcframework"
 )
 STAGING_DIR = APPLE_DIR / ".ios-runtime-staging"
+PYTHON_VERSION = "python3.13"
+PYTHON_DEVICE_SLICE = "ios-arm64"
+PYTHON_DEVICE_LIBRARY = "lib-arm64"
 
 
 @dataclass(frozen=True)
@@ -142,6 +145,46 @@ def copy_directory(source: Path, target: Path) -> None:
     shutil.copytree(source, target)
 
 
+# Returns CPython runtime dylib entries that are not valid PYTHONHOME resources.
+def ignore_python_runtime_dylibs(directory: str, names: list[str]) -> set[str]:
+    """Returns libpython dylib names that must stay inside the native framework."""
+    return {
+        name
+        for name in names
+        if name.startswith("libpython") and name.endswith(".dylib")
+    }
+
+
+# Copies one CPython library tree into the staged app PYTHONHOME directory.
+def copy_python_library_tree(source: Path, target: Path) -> None:
+    """Merges one official CPython iOS library tree into the app resource library."""
+    if not source.is_dir():
+        raise RuntimeError(f"iOS CPython library directory is missing: {source}")
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        source,
+        target,
+        dirs_exist_ok=True,
+        ignore=ignore_python_runtime_dylibs,
+    )
+
+
+# Stages CPython's common standard library and device-specific extension modules.
+def stage_python_resource_library(python_xcframework: Path, destination: Path) -> None:
+    """Builds the Runner python resource directory from the official Python.xcframework."""
+    if not python_xcframework.is_dir():
+        raise RuntimeError(f"iOS CPython framework is missing: {python_xcframework}")
+    shutil.rmtree(destination, ignore_errors=True)
+    shared_library = python_xcframework / "lib"
+    device_library = (
+        python_xcframework
+        / PYTHON_DEVICE_SLICE
+        / PYTHON_DEVICE_LIBRARY
+    )
+    copy_python_library_tree(shared_library, destination / "lib")
+    copy_python_library_tree(device_library, destination / "lib")
+
+
 def load_manifest() -> dict[str, object]:
     """Loads the complete pinned iOS package manifest."""
     with PACKAGE_MANIFEST.open(encoding="utf-8") as stream:
@@ -248,11 +291,12 @@ def stage_runtime_resources(manifest: dict[str, object]) -> None:
     shutil.rmtree(STAGING_DIR, ignore_errors=True)
     STAGING_DIR.mkdir(parents=True)
     node_staging, python_staging = extract_native_runtimes(STAGING_DIR)
+    python_xcframework_staging = python_staging / "Python.xcframework"
     python_resource_staging = STAGING_DIR / "python-resource"
     node_resource_staging = STAGING_DIR / "node-resource"
-    shutil.copytree(python_staging / "python", python_resource_staging)
+    stage_python_resource_library(python_xcframework_staging, python_resource_staging)
     node_resource_staging.mkdir()
-    site_packages = python_resource_staging / "lib" / "python3.13" / "site-packages"
+    site_packages = python_resource_staging / "lib" / PYTHON_VERSION / "site-packages"
     site_packages.mkdir(parents=True)
     extract_python_packages(manifest, site_packages)
     extract_node_packages(manifest, node_resource_staging)
@@ -260,7 +304,7 @@ def stage_runtime_resources(manifest: dict[str, object]) -> None:
     (node_resource_staging / "runtime-entry.js").write_text("\"use strict\";\n", encoding="utf-8")
     shutil.copy2(RESOURCE_DIR / "python_terminal_runtime.py", python_resource_staging / "operit_terminal_runtime.py")
     copy_directory(node_staging / "NodeMobile.xcframework", FRAMEWORKS_DIR / "NodeMobile.xcframework")
-    copy_directory(python_staging / "Python.xcframework", FRAMEWORKS_DIR / "Python.xcframework")
+    copy_directory(python_xcframework_staging, FRAMEWORKS_DIR / "Python.xcframework")
     copy_directory(SCIENTIFIC_FRAMEWORK, FRAMEWORKS_DIR / "OperitPythonScientific.xcframework")
     copy_directory(TOYBOX_FRAMEWORK, FRAMEWORKS_DIR / "OperitToybox.xcframework")
     copy_directory(python_resource_staging, PYTHON_RESOURCE_DIR)
@@ -309,8 +353,14 @@ def verify_staged_runtime() -> None:
         FRAMEWORKS_DIR / "Python.xcframework" / "Info.plist",
         FRAMEWORKS_DIR / "OperitPythonScientific.xcframework" / "Info.plist",
         FRAMEWORKS_DIR / "OperitToybox.xcframework" / "Info.plist",
-        PYTHON_RESOURCE_DIR / "lib" / "python3.13" / "os.py",
-        PYTHON_RESOURCE_DIR / "lib" / "python3.13" / "site-packages" / "requests" / "__init__.py",
+        PYTHON_RESOURCE_DIR / "lib" / PYTHON_VERSION / "os.py",
+        PYTHON_RESOURCE_DIR / "lib" / PYTHON_VERSION / "_sysconfigdata__ios_arm64-iphoneos.py",
+        PYTHON_RESOURCE_DIR
+        / "lib"
+        / PYTHON_VERSION
+        / "lib-dynload"
+        / "_ssl.cpython-313-iphoneos.so",
+        PYTHON_RESOURCE_DIR / "lib" / PYTHON_VERSION / "site-packages" / "requests" / "__init__.py",
         NODE_RESOURCE_DIR / "operit_node_terminal_service.js",
         NODE_RESOURCE_DIR / "node_modules" / "lodash" / "lodash.js",
     ]
