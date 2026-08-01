@@ -162,6 +162,29 @@ jobs:
         if: steps.web-build.outputs.needed == 'true'
         run: python3 tools/build_scripts/build_flutter_web_access.py --base-href /
 
+      - name: Save wasm-bindgen CLI
+        if: steps.web-build.outputs.needed == 'true' && steps.wasm-bindgen-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-tools/wasm-bindgen
+          key: ${{ runner.os }}-${{ runner.arch }}-wasm-bindgen-${{ env.WASM_BINDGEN_VERSION }}
+
+      - name: Save WASI SDK
+        if: steps.web-build.outputs.needed == 'true' && steps.wasi-sdk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: target/operit-build-tools/wasi-sdk-${{ env.WASI_SDK_VERSION }}-macos
+          key: ${{ runner.os }}-${{ runner.arch }}-wasi-sdk-${{ env.WASI_SDK_VERSION }}
+
+      - name: Save web access bundle
+        if: steps.web-build.outputs.needed == 'true' && steps.web-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            apps/web_access/build/bundle
+            apps/flutter/app/assets/web_access
+          key: ${{ steps.web-build-cache.outputs.cache-primary-key }}
+
       - name: Install GNU sed
         run: brew install gnu-sed cmake ninja
 
@@ -198,29 +221,6 @@ jobs:
         with:
           path: .ci-tools/typescript
           key: ${{ runner.os }}-typescript-${{ env.TYPESCRIPT_VERSION }}
-
-      - name: Save wasm-bindgen CLI
-        if: steps.web-build.outputs.needed == 'true' && steps.wasm-bindgen-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: .ci-tools/wasm-bindgen
-          key: ${{ runner.os }}-${{ runner.arch }}-wasm-bindgen-${{ env.WASM_BINDGEN_VERSION }}
-
-      - name: Save WASI SDK
-        if: steps.web-build.outputs.needed == 'true' && steps.wasi-sdk-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: target/operit-build-tools/wasi-sdk-${{ env.WASI_SDK_VERSION }}-macos
-          key: ${{ runner.os }}-${{ runner.arch }}-wasi-sdk-${{ env.WASI_SDK_VERSION }}
-
-      - name: Save web access bundle
-        if: steps.web-build.outputs.needed == 'true' && steps.web-build-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            apps/web_access/build/bundle
-            apps/flutter/app/assets/web_access
-          key: ${{ steps.web-build-cache.outputs.cache-primary-key }}
 
       - name: Upload unsigned iOS app artifact
         uses: actions/upload-artifact@v4
