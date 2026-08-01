@@ -29,5 +29,5 @@ for arch in $ARCHS; do
     --target "$rust_target" \
     --crate-type staticlib
 
-  cp "$crate_dir/target/$rust_target/release/deps/$lib_name" "$out_dir/$arch/$lib_name"
+  cp "$crate_dir/target/$rust_target/release/$lib_name" "$out_dir/$arch/$lib_name"
 done
