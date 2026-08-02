@@ -708,21 +708,16 @@ Future<Uint8List?> _showThemeImageCropDialog(
   required double aspectRatio,
 }) async {
   final sourceImage = await _decodeThemeImage(bytes);
-  try {
-    final result = await showDialog<Uint8List>(
-      // ignore: use_build_context_synchronously
-      context: context,
-      builder: (dialogContext) {
-        return _ThemeImageCropDialog(
-          sourceImage: sourceImage,
-          aspectRatio: aspectRatio,
-        );
-      },
-    );
-    return result;
-  } finally {
-    sourceImage.dispose();
-  }
+  return showDialog<Uint8List>(
+    // ignore: use_build_context_synchronously
+    context: context,
+    builder: (dialogContext) {
+      return _ThemeImageCropDialog(
+        sourceImage: sourceImage,
+        aspectRatio: aspectRatio,
+      );
+    },
+  );
 }
 
 /// Decodes selected image bytes for the crop editor.
@@ -764,6 +759,13 @@ class _ThemeImageCropDialogState extends State<_ThemeImageCropDialog> {
   double _zoom = 1;
   double _offsetX = 0;
   double _offsetY = 0;
+
+  /// Releases the decoded source image after the dialog is unmounted.
+  @override
+  void dispose() {
+    widget.sourceImage.dispose();
+    super.dispose();
+  }
 
   /// Builds the crop editor with cover preview controls.
   @override

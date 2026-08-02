@@ -1,11 +1,17 @@
-/// Builds the JavaScript bridge used while registering a tool package.
+/// Builds the JavaScript bridge used by a ToolPkg runtime or registration call.
 #[allow(non_snake_case)]
-pub fn buildToolPkgRegistrationBridgeScript() -> String {
+pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> String {
+    let registrationOnly = if restrictHostCapabilities {
+        "true"
+    } else {
+        "false"
+    };
     r#"
     (function() {
         var root = typeof globalThis !== 'undefined'
             ? globalThis
             : (typeof window !== 'undefined' ? window : this);
+        var registrationOnly = __OPERIT_TOOLPKG_REGISTRATION_ONLY__;
         var moduleRefFunctionCounter = 0;
         var capture = {
             marketOrigin: null,
@@ -316,6 +322,9 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
         }
 
         function readToolPkgResource(key, outputFileName, internal) {
+            if (registrationOnly) {
+                throw new Error('ToolPkg.readResource is unavailable during ToolPkg registration');
+            }
             var resourceKey = String(key || '').trim();
             if (!resourceKey) {
                 return Promise.reject(new Error('resource key is required'));
@@ -413,6 +422,9 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
         }
 
         function callToolPkgWasm(moduleId, exportName, args) {
+            if (registrationOnly) {
+                throw new Error('ToolPkg.wasm.call is unavailable during ToolPkg registration');
+            }
             var normalizedModuleId = String(moduleId || '').trim();
             if (!normalizedModuleId) {
                 return Promise.reject(new Error('ToolPkg.wasm module id is required'));
@@ -553,5 +565,5 @@ pub fn buildToolPkgRegistrationBridgeScript() -> String {
         installGlobal('ToolPkg', api);
     })();
     "#
-    .to_string()
+    .replace("__OPERIT_TOOLPKG_REGISTRATION_ONLY__", registrationOnly)
 }

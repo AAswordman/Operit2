@@ -131,6 +131,23 @@ enum JsEngineRequest {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+impl JsEngineRequest {
+    /// Responds to a queued request after its JavaScript worker was destroyed.
+    fn respondWorkerDestroyed(self) {
+        let reason = "JS execution worker was destroyed";
+        match self {
+            Self::ExecuteScript { response, .. } => {
+                let _ = response.send(Err(JsExecutionError::worker_unavailable(reason)));
+            }
+            Self::ExecuteToolPkgMainRegistration { response, .. } => {
+                let _ = response.send(Err(JsExecutionError::worker_unavailable(reason)));
+            }
+            Self::Shutdown => {}
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 struct JsExecutionInterrupt {
     deadline: Instant,
     cancelled: AtomicBool,
@@ -706,7 +723,11 @@ impl JsEngineWorker {
                 let mut state = JsEngineState::new(executionHost);
                 for request in receiver {
                     if workerControl.isDestroyed() {
-                        break;
+                        match request {
+                            JsEngineRequest::Shutdown => break,
+                            request => request.respondWorkerDestroyed(),
+                        }
+                        continue;
                     }
                     match request {
                         JsEngineRequest::ExecuteScript {
@@ -1045,7 +1066,7 @@ impl JsEngineState {
     ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
         self.initJavaScriptEnvironment()
             .map_err(JsExecutionError::initialization)?;
-        let bridge = buildToolPkgRegistrationBridgeScript();
+        let bridge = buildToolPkgRegistrationBridgeScript(true);
         self.evalJavaScriptVoid(&bridge)
             .map_err(JsExecutionError::runtime)?;
         CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {

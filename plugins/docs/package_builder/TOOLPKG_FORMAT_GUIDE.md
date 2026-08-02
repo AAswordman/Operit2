@@ -446,7 +446,7 @@ exports.onXmlRender = onXmlRender;
 exports.onInputMenuToggle = onInputMenuToggle;
 ```
 
-每个 ToolPkg 的 `registerToolPkg()` 会在独立的临时 JavaScript engine 中执行，注册状态不会跨包共享。主脚本注册必须在 60 秒内完成；同步死循环和超过时限的异步注册都会被终止，并将加载错误归属到当前包，扫描随后继续处理其他包。
+每个 ToolPkg 的 `registerToolPkg()` 会在独立的临时 JavaScript engine 中执行，注册状态不会跨包共享。主脚本注册必须在 60 秒内完成；同步死循环和超过时限的异步注册都会被终止，并将加载错误归属到当前包，扫描随后继续处理其他包。注册期间禁止调用 `ToolPkg.readResource(...)` 和 `ToolPkg.wasm.call(...)`，调用会立即抛出异常；模块加载仍可使用 `require/import`。
 
 注册项字段：
 

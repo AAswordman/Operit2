@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use operit_host_api::HostManager::HostManager;
@@ -77,8 +77,20 @@ struct LocalModelInstallOperation {
     modelControl: HttpDownloadControl,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct LocalEngineInstallLockKey {
+    runtimeRoot: PathBuf,
+    engineId: String,
+    version: String,
+    target: String,
+}
+
 static LOCAL_MODEL_INSTALL_OPERATIONS: OnceLock<
     Mutex<BTreeMap<String, LocalModelInstallOperation>>,
+> = OnceLock::new();
+
+static LOCAL_ENGINE_INSTALL_LOCKS: OnceLock<
+    Mutex<BTreeMap<LocalEngineInstallLockKey, Arc<Mutex<()>>>>,
 > = OnceLock::new();
 
 #[derive(Clone)]
@@ -183,41 +195,60 @@ impl LocalModelService {
                 target.storageSegment()
             )
         })?;
-        let engineInstaller = self.engineInstaller()?;
-        let currentRegistry = engineInstaller.readRegistry().map_err(errorString)?;
-        let engineInstalled = currentRegistry
-            .getInstalledEngine(&engineManifest.id, &engineManifest.version, &target)
-            .map(|installed| installed.artifact == *engineArtifact)
-            .unwrap_or(false);
-        let engineDownloadBytes = match (&engineArtifact.delivery, engineInstalled) {
-            (_, true) | (LocalEngineDelivery::Embedded, false) => 0,
-            (LocalEngineDelivery::DownloadArchive, false) => engineArtifact.byteSize,
-        };
-        let totalBytes = engineDownloadBytes
-            .checked_add(manifest.declaredByteSize())
-            .ok_or_else(|| {
-                format!(
-                    "local model installation byte total overflowed: {}",
-                    manifest.registryKey()
-                )
-            })?;
         let operationId = installOperationId(&manifest.id, &manifest.version);
-        let (engineControl, modelControl) = registerInstallOperation(
-            operationId.clone(),
-            manifest.id.clone(),
-            manifest.version.clone(),
-            totalBytes,
-        )?;
-        let result = self.performInstall(
-            manifest,
-            engineManifest,
-            target,
-            engineInstaller,
-            engineInstalled,
-            operationId.clone(),
-            engineControl,
-            modelControl,
-        );
+        let engineLock = engineInstallLock(engineInstallLockKey(
+            &self.runtimeRoot,
+            &engineManifest,
+            &target,
+        ))?;
+        let (engineControl, modelControl, engineResult) = {
+            let _engineInstallGuard = engineLock
+                .lock()
+                .map_err(|error| format!("local engine install lock poisoned: {error}"))?;
+            let engineInstaller = self.engineInstaller()?;
+            let currentRegistry = engineInstaller.readRegistry().map_err(errorString)?;
+            let engineInstalled = currentRegistry
+                .getInstalledEngine(&engineManifest.id, &engineManifest.version, &target)
+                .map(|installed| installed.artifact == *engineArtifact)
+                .unwrap_or(false);
+            let engineDownloadBytes = match (&engineArtifact.delivery, engineInstalled) {
+                (_, true) | (LocalEngineDelivery::Embedded, false) => 0,
+                (LocalEngineDelivery::DownloadArchive, false) => engineArtifact.byteSize,
+            };
+            let totalBytes = engineDownloadBytes
+                .checked_add(manifest.declaredByteSize())
+                .ok_or_else(|| {
+                    format!(
+                        "local model installation byte total overflowed: {}",
+                        manifest.registryKey()
+                    )
+                })?;
+            let (engineControl, modelControl) = registerInstallOperation(
+                operationId.clone(),
+                manifest.id.clone(),
+                manifest.version.clone(),
+                totalBytes,
+            )?;
+            let engineResult = self.installRequiredEngine(
+                engineManifest,
+                target,
+                engineInstaller,
+                engineInstalled,
+                operationId.clone(),
+                engineControl.clone(),
+            );
+            (engineControl, modelControl, engineResult)
+        };
+        let result = engineResult.and_then(|(installedEngine, engineDownloadedBytes)| {
+            self.performInstall(
+                manifest,
+                installedEngine,
+                engineDownloadedBytes,
+                operationId.clone(),
+                engineControl,
+                modelControl,
+            )
+        });
         match result {
             Ok(result) => {
                 completeInstallOperation(&operationId, &result)?;
@@ -280,45 +311,51 @@ impl LocalModelService {
         Ok(operation.status.clone())
     }
 
-    /// Performs one registered model bundle installation.
-    fn performInstall(
+    /// Installs or verifies the engine required by one registered model installation.
+    fn installRequiredEngine(
         &self,
-        manifest: LocalModelManifest,
         engineManifest: LocalEngineManifest,
         target: LocalPlatformTarget,
         engineInstaller: LocalEngineInstaller,
         engineInstalled: bool,
         operationId: String,
         engineControl: HttpDownloadControl,
+    ) -> Result<(InstalledLocalEngine, u64), String> {
+        match engineInstalled {
+            true => engineInstaller
+                .verifyInstalledEngine(
+                    &engineManifest.id,
+                    &engineManifest.version,
+                    &target,
+                    currentTimeMillis(),
+                )
+                .map(|installedEngine| (installedEngine, 0))
+                .map_err(errorString),
+            false => engineInstaller
+                .install(
+                    LocalEngineInstallRequest {
+                        manifest: engineManifest,
+                        target,
+                        installedAtMs: currentTimeMillis(),
+                    },
+                    engineControl,
+                    engineInstallProgressCallback(operationId),
+                )
+                .map(|result| (result.installedEngine, result.downloadedBytes))
+                .map_err(errorString),
+        }
+    }
+
+    /// Downloads and registers one model after its required engine has been resolved.
+    fn performInstall(
+        &self,
+        manifest: LocalModelManifest,
+        installedEngine: InstalledLocalEngine,
+        engineDownloadedBytes: u64,
+        operationId: String,
+        engineControl: HttpDownloadControl,
         modelControl: HttpDownloadControl,
     ) -> Result<LocalModelBundleInstallResult, String> {
-        let (installedEngine, engineDownloadedBytes) = match engineInstalled {
-            true => (
-                engineInstaller
-                    .verifyInstalledEngine(
-                        &engineManifest.id,
-                        &engineManifest.version,
-                        &target,
-                        currentTimeMillis(),
-                    )
-                    .map_err(errorString)?,
-                0,
-            ),
-            false => {
-                let result = engineInstaller
-                    .install(
-                        LocalEngineInstallRequest {
-                            manifest: engineManifest,
-                            target,
-                            installedAtMs: currentTimeMillis(),
-                        },
-                        engineControl.clone(),
-                        engineInstallProgressCallback(operationId.clone()),
-                    )
-                    .map_err(errorString)?;
-                (result.installedEngine, result.downloadedBytes)
-            }
-        };
         if engineControl.isCancelled() || modelControl.isCancelled() {
             return Err(format!("local model installation cancelled: {operationId}"));
         }
@@ -511,6 +548,36 @@ fn errorString(error: impl std::fmt::Display) -> String {
 /// Returns the shared installation operation table.
 fn installOperations() -> &'static Mutex<BTreeMap<String, LocalModelInstallOperation>> {
     LOCAL_MODEL_INSTALL_OPERATIONS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// Returns the process-wide registry of exclusive engine installation locks.
+fn engineInstallLocks() -> &'static Mutex<BTreeMap<LocalEngineInstallLockKey, Arc<Mutex<()>>>> {
+    LOCAL_ENGINE_INSTALL_LOCKS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// Returns the exclusive installation lock assigned to one engine artifact location.
+fn engineInstallLock(key: LocalEngineInstallLockKey) -> Result<Arc<Mutex<()>>, String> {
+    let mut locks = engineInstallLocks()
+        .lock()
+        .map_err(|error| format!("local engine install lock registry poisoned: {error}"))?;
+    Ok(locks
+        .entry(key)
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone())
+}
+
+/// Builds the exact engine artifact location identity used for installation exclusion.
+fn engineInstallLockKey(
+    runtimeRoot: &Path,
+    engineManifest: &LocalEngineManifest,
+    target: &LocalPlatformTarget,
+) -> LocalEngineInstallLockKey {
+    LocalEngineInstallLockKey {
+        runtimeRoot: runtimeRoot.to_path_buf(),
+        engineId: engineManifest.id.trim().to_string(),
+        version: engineManifest.version.trim().to_string(),
+        target: target.storageSegment(),
+    }
 }
 
 /// Builds the stable operation id for one exact model release.
@@ -739,6 +806,37 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    /// Verifies identical engine targets use one exclusive installation lock.
+    #[test]
+    fn identicalEngineTargetsShareInstallLock() {
+        let sequence = TEST_OPERATION_SEQUENCE.fetch_add(1, Ordering::SeqCst);
+        let runtimeRoot = PathBuf::from(format!(
+            "test-engine-lock-{}-{sequence}",
+            std::process::id()
+        ));
+        let key = LocalEngineInstallLockKey {
+            runtimeRoot: runtimeRoot.clone(),
+            engineId: "engine-a".to_string(),
+            version: "1".to_string(),
+            target: "android-arm64".to_string(),
+        };
+        let first = engineInstallLock(key.clone()).unwrap();
+        let second = engineInstallLock(key).unwrap();
+        let different = engineInstallLock(LocalEngineInstallLockKey {
+            runtimeRoot,
+            engineId: "engine-a".to_string(),
+            version: "1".to_string(),
+            target: "android-x86_64".to_string(),
+        })
+        .unwrap();
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(!Arc::ptr_eq(&first, &different));
+        let guard = first.lock().unwrap();
+        assert!(second.try_lock().is_err());
+        drop(guard);
+    }
 
     /// Verifies engine and model callbacks publish monotonic aggregate bytes.
     #[test]

@@ -134,7 +134,16 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
           return;
         }
       }
-      _activeExecutionContext = executionContext;
+      if (_activeExecutionContext != executionContext) {
+        _activeExecutionContext = executionContext;
+        await _acquireExecutionContext(executionContext);
+        if (!_isCurrentRouteLoad(routeLoadGeneration)) {
+          if (_activeExecutionContext != executionContext) {
+            await _releaseExecutionContext(executionContext);
+          }
+          return;
+        }
+      }
       final script = await _packageManager.getToolPkgComposeDslScript(
         containerPackageName: widget.plugin.packageName,
         uiModuleId: uiModuleId,
@@ -191,6 +200,16 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
 
   bool _isCurrentRouteLoad(int routeLoadGeneration) {
     return mounted && routeLoadGeneration == _routeLoadGeneration;
+  }
+
+  /// Acquires one page-owned ToolPkg execution context.
+  Future<void> _acquireExecutionContext(
+    ({String contextKey, String containerPackageName}) executionContext,
+  ) async {
+    await _packageManager.acquireToolPkgExecutionEngine(
+      contextKey: executionContext.contextKey,
+      containerPackageName: executionContext.containerPackageName,
+    );
   }
 
   /// Releases one page-owned ToolPkg execution context.

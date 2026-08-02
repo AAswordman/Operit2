@@ -11,19 +11,6 @@ on:
         options:
           - "false"
           - "true"
-      scientific_runtime_only:
-        description: "Build only the iOS NumPy and SciPy runtime"
-        required: false
-        default: "false"
-        type: choice
-        options:
-          - "false"
-          - "true"
-      scientific_runtime_run_id:
-        description: "Existing workflow run ID containing the iOS scientific runtime artifact"
-        required: false
-        default: ""
-        type: string
   workflow_call:
     inputs:
       build_web_assets:
@@ -32,8 +19,31 @@ on:
         default: "false"
         type: string
 jobs:
+  build-ish-rootfs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build iSH Alpine rootfs
+        run: bash tools/ios-runtime/ish/build_alpine_rootfs_linux.sh
+
+      - name: Upload iSH Alpine rootfs
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-ios-ish-rootfs-${{ github.sha }}
+          path: apps/flutter/app/ios/Runner/ish-root.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   build-ios:
-    if: github.event_name != 'workflow_dispatch' || inputs.scientific_runtime_only != 'true'
+    needs: build-ish-rootfs
     runs-on: macos-15
     timeout-minutes: 90
     env:
@@ -54,6 +64,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download iSH Alpine rootfs
+        uses: actions/download-artifact@v4
+        with:
+          name: operit2-ios-ish-rootfs-${{ github.sha }}
+          path: apps/flutter/app/ios/Runner
 
       - name: Install bootstrap Flutter
         uses: subosito/flutter-action@v2
@@ -185,33 +201,6 @@ jobs:
             apps/flutter/app/assets/web_access
           key: ${{ steps.web-build-cache.outputs.cache-primary-key }}
 
-      - name: Install GNU sed
-        run: brew install gnu-sed cmake ninja
-
-      - name: Build iOS Toybox runtime
-        run: python3 tools/ios-runtime/toybox/build.py
-
-      - name: Build iOS scientific runtime
-        if: github.event_name != 'workflow_dispatch' || inputs.scientific_runtime_run_id == ''
-        run: python3 tools/ios-runtime/native/build_scientific.py
-
-      - name: Download iOS scientific runtime
-        if: github.event_name == 'workflow_dispatch' && inputs.scientific_runtime_run_id != ''
-        uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.scientific_runtime_run_id }}
-          pattern: operit2-ios-scientific-runtime-*
-          merge-multiple: true
-          path: tools/ios-runtime/native/output/OperitPythonScientific.xcframework
-
-      - name: Verify iOS scientific runtime
-        if: github.event_name == 'workflow_dispatch' && inputs.scientific_runtime_run_id != ''
-        run: |
-          test -f tools/ios-runtime/native/output/OperitPythonScientific.xcframework/Info.plist
-          test -f tools/ios-runtime/native/output/OperitPythonScientific.xcframework/ios-arm64/OperitPythonScientific.framework/OperitPythonScientific
-          test -f tools/ios-runtime/native/output/OperitPythonScientific.xcframework/ios-arm64_x86_64-simulator/OperitPythonScientific.framework/OperitPythonScientific
-
       - name: Build and package unsigned iOS app
         run: python3 tools/build_scripts/build_flutter_ios.py
 
@@ -227,29 +216,5 @@ jobs:
         with:
           name: operit2-ios-${{ github.sha }}
           path: tools/release/dist/operit2-app-ios-arm64.zip
-          if-no-files-found: error
-          retention-days: 14
-
-  build-scientific-runtime:
-    if: github.event_name == 'workflow_dispatch' && inputs.scientific_runtime_only == 'true'
-    runs-on: macos-15
-    timeout-minutes: 45
-
-    defaults:
-      run:
-        shell: bash
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Build iOS scientific runtime
-        run: python3 tools/ios-runtime/native/build_scientific.py
-
-      - name: Upload scientific runtime
-        uses: actions/upload-artifact@v4
-        with:
-          name: operit2-ios-scientific-runtime-${{ github.sha }}
-          path: tools/ios-runtime/native/output/OperitPythonScientific.xcframework
           if-no-files-found: error
           retention-days: 14

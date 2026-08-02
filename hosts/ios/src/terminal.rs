@@ -5,53 +5,36 @@ use operit_host_api::{
 };
 use serde_json::{json, Value};
 
-use crate::runtime::callRuntime;
+use crate::bridge::callIshTerminal;
 
-const PYTHON_TERMINAL_TYPE: &str = "python";
-const NODE_TERMINAL_TYPE: &str = "node";
-const TOYBOX_TERMINAL_TYPE: &str = "toybox";
+const SHELL_TERMINAL_TYPE: &str = "shell";
 
-/// Hosts the native Toybox, Python, and Node interactive terminals embedded in the iOS application.
+/// Hosts iSH Alpine Linux shell terminals embedded in the iOS application.
 #[derive(Clone, Default)]
 pub struct IosTerminalHost;
 
 impl IosTerminalHost {
-    /// Creates the iOS-native embedded terminal host.
+    /// Creates the iSH-backed iOS terminal host.
     pub fn new() -> Self {
         Self
     }
 }
 
 impl TerminalHost for IosTerminalHost {
-    /// Describes the embedded terminal types available on iOS.
+    /// Describes the iSH terminal type available on iOS.
     fn terminalInfo(&self) -> HostResult<TerminalInfo> {
         Ok(TerminalInfo {
-            platform: "ios-native".to_string(),
-            defaultType: TOYBOX_TERMINAL_TYPE.to_string(),
-            types: vec![
-                TerminalTypeInfo {
-                    terminalType: TOYBOX_TERMINAL_TYPE.to_string(),
-                    available: true,
-                    description: "Embedded Toybox terminal with common Unix command applets"
-                        .to_string(),
-                },
-                TerminalTypeInfo {
-                    terminalType: PYTHON_TERMINAL_TYPE.to_string(),
-                    available: true,
-                    description: "Embedded CPython terminal with bundled scientific packages"
-                        .to_string(),
-                },
-                TerminalTypeInfo {
-                    terminalType: NODE_TERMINAL_TYPE.to_string(),
-                    available: true,
-                    description: "Embedded Node.js terminal with bundled JavaScript packages"
-                        .to_string(),
-                },
-            ],
+            platform: "ios".to_string(),
+            defaultType: SHELL_TERMINAL_TYPE.to_string(),
+            types: vec![TerminalTypeInfo {
+                terminalType: SHELL_TERMINAL_TYPE.to_string(),
+                available: true,
+                description: "iSH Alpine Linux shell".to_string(),
+            }],
         })
     }
 
-    /// Starts one typed interactive embedded terminal.
+    /// Starts one typed interactive iSH terminal.
     fn startPtySession(
         &self,
         sessionName: &str,
@@ -61,7 +44,7 @@ impl TerminalHost for IosTerminalHost {
         cols: u16,
     ) -> HostResult<String> {
         let terminalType = terminalTypeName(terminalType)?;
-        let response = callRuntime(
+        let response = callIshTerminal(
             "terminalStart",
             json!({
                 "sessionName": requiredText(sessionName, "session_name")?,
@@ -74,20 +57,20 @@ impl TerminalHost for IosTerminalHost {
         requiredString(&response, "sessionId")
     }
 
-    /// Drains raw output bytes from one embedded terminal.
+    /// Drains raw output bytes from one iSH terminal.
     fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>> {
-        let response = callRuntime(
+        let response = callIshTerminal(
             "terminalRead",
             json!({"sessionId": requiredText(sessionId, "session_id")?}),
         )?;
         Ok(requiredString(&response, "output")?.into_bytes())
     }
 
-    /// Writes raw UTF-8 terminal input to one embedded terminal.
+    /// Writes raw UTF-8 terminal input to one iSH terminal.
     fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
         let input = std::str::from_utf8(data)
-            .map_err(|_| HostError::new("iOS embedded terminal input must be UTF-8"))?;
-        let response = callRuntime(
+            .map_err(|_| HostError::new("iSH terminal input must be UTF-8"))?;
+        let response = callIshTerminal(
             "terminalWrite",
             json!({
                 "sessionId": requiredText(sessionId, "session_id")?,
@@ -97,9 +80,9 @@ impl TerminalHost for IosTerminalHost {
         requiredUsize(&response, "acceptedChars")
     }
 
-    /// Updates the screen dimensions retained by one embedded terminal.
+    /// Updates the screen dimensions for one iSH terminal.
     fn resizePtySession(&self, sessionId: &str, rows: u16, cols: u16) -> HostResult<()> {
-        callRuntime(
+        callIshTerminal(
             "terminalResize",
             json!({
                 "sessionId": requiredText(sessionId, "session_id")?,
@@ -110,9 +93,9 @@ impl TerminalHost for IosTerminalHost {
         Ok(())
     }
 
-    /// Returns the terminal exit status after an embedded terminal session has closed.
+    /// Returns the terminal exit status after an iSH terminal session has closed.
     fn pollPtyExitCode(&self, sessionId: &str) -> HostResult<Option<i32>> {
-        let response = callRuntime(
+        let response = callIshTerminal(
             "terminalPoll",
             json!({"sessionId": requiredText(sessionId, "session_id")?}),
         )?;
@@ -122,37 +105,37 @@ impl TerminalHost for IosTerminalHost {
                 .as_i64()
                 .and_then(|value| i32::try_from(value).ok())
                 .map(Some)
-                .ok_or_else(|| HostError::new("iOS terminal exit code is invalid")),
-            Some(_) => Err(HostError::new("iOS terminal exit code is invalid")),
+                .ok_or_else(|| HostError::new("iSH terminal exit code is invalid")),
+            Some(_) => Err(HostError::new("iSH terminal exit code is invalid")),
         }
     }
 
-    /// Closes one embedded terminal session.
+    /// Closes one iSH terminal session.
     fn closePtySession(&self, sessionId: &str) -> HostResult<()> {
-        callRuntime(
+        callIshTerminal(
             "terminalClose",
             json!({"sessionId": requiredText(sessionId, "session_id")?}),
         )?;
         Ok(())
     }
 
-    /// Lists all active embedded terminal sessions.
+    /// Lists all active iSH terminal sessions.
     fn listSessions(&self) -> HostResult<Vec<TerminalSessionListEntry>> {
-        let response = callRuntime("terminalList", Value::Null)?;
+        let response = callIshTerminal("terminalList", Value::Null)?;
         let sessions = response
             .get("sessions")
             .and_then(Value::as_array)
-            .ok_or_else(|| HostError::new("iOS terminal session list is invalid"))?;
+            .ok_or_else(|| HostError::new("iSH terminal session list is invalid"))?;
         sessions.iter().map(sessionEntry).collect()
     }
 
-    /// Reuses a named embedded terminal or creates one in the app workspace.
+    /// Reuses a named iSH terminal or creates one at the iSH root directory.
     fn createOrGetSession(
         &self,
         sessionName: &str,
         terminalType: &str,
     ) -> HostResult<TerminalSessionInfo> {
-        let response = callRuntime(
+        let response = callIshTerminal(
             "terminalCreateOrGet",
             json!({
                 "sessionName": requiredText(sessionName, "session_name")?,
@@ -167,7 +150,7 @@ impl TerminalHost for IosTerminalHost {
         })
     }
 
-    /// Executes one complete line through one embedded terminal.
+    /// Executes one complete line through one iSH terminal.
     fn executeInSession(
         &self,
         sessionId: &str,
@@ -175,7 +158,7 @@ impl TerminalHost for IosTerminalHost {
         timeoutMs: u64,
     ) -> HostResult<TerminalCommandOutput> {
         let command = requiredText(command, "command")?;
-        let response = callRuntime(
+        let response = callIshTerminal(
             "terminalExecute",
             json!({
                 "sessionId": requiredText(sessionId, "session_id")?,
@@ -193,7 +176,7 @@ impl TerminalHost for IosTerminalHost {
         })
     }
 
-    /// Executes one hidden command through a persistent typed embedded terminal.
+    /// Executes one hidden command through a persistent typed iSH terminal.
     fn executeHiddenCommand(
         &self,
         command: &str,
@@ -242,20 +225,20 @@ impl TerminalHost for IosTerminalHost {
         })
     }
 
-    /// Closes an embedded terminal and returns its close result.
+    /// Closes an iSH terminal and returns its close result.
     fn closeSession(&self, sessionId: &str) -> HostResult<TerminalCloseOutput> {
         let sessionId = requiredText(sessionId, "session_id")?;
         self.closePtySession(&sessionId)?;
         Ok(TerminalCloseOutput {
             sessionId,
             success: true,
-            message: "iOS embedded terminal session closed".to_string(),
+            message: "iSH terminal session closed".to_string(),
         })
     }
 
-    /// Returns the retained screen contents for one embedded terminal.
+    /// Returns the retained screen contents for one iSH terminal.
     fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
-        let response = callRuntime(
+        let response = callIshTerminal(
             "terminalScreen",
             json!({"sessionId": requiredText(sessionId, "session_id")?}),
         )?;
@@ -282,15 +265,11 @@ fn sessionEntry(value: &Value) -> HostResult<TerminalSessionListEntry> {
     })
 }
 
-/// Validates one terminal type implemented by the iOS embedded runtime.
+/// Validates the terminal type implemented by the iSH runtime.
 fn terminalTypeName(value: &str) -> HostResult<String> {
     match value.trim() {
-        PYTHON_TERMINAL_TYPE => Ok(PYTHON_TERMINAL_TYPE.to_string()),
-        NODE_TERMINAL_TYPE => Ok(NODE_TERMINAL_TYPE.to_string()),
-        TOYBOX_TERMINAL_TYPE => Ok(TOYBOX_TERMINAL_TYPE.to_string()),
-        other => Err(HostError::new(format!(
-            "unsupported iOS embedded terminal type: {other}"
-        ))),
+        SHELL_TERMINAL_TYPE => Ok(SHELL_TERMINAL_TYPE.to_string()),
+        other => Err(HostError::new(format!("unsupported iSH terminal type: {other}"))),
     }
 }
 
@@ -299,7 +278,7 @@ fn requiredText(value: &str, field: &str) -> HostResult<String> {
     let normalized = value.trim();
     if normalized.is_empty() {
         Err(HostError::new(format!(
-            "iOS terminal {field} must not be blank"
+            "iSH terminal {field} must not be blank"
         )))
     } else {
         Ok(normalized.to_string())
@@ -310,7 +289,7 @@ fn requiredText(value: &str, field: &str) -> HostResult<String> {
 fn positiveDimension(value: u16, field: &str) -> HostResult<u16> {
     if value == 0 {
         Err(HostError::new(format!(
-            "iOS terminal {field} must be positive"
+            "iSH terminal {field} must be positive"
         )))
     } else {
         Ok(value)
@@ -323,7 +302,7 @@ fn requiredString(value: &Value, field: &str) -> HostResult<String> {
         .get(field)
         .and_then(Value::as_str)
         .map(ToString::to_string)
-        .ok_or_else(|| HostError::new(format!("iOS terminal result has invalid {field}")))
+        .ok_or_else(|| HostError::new(format!("iSH terminal result has invalid {field}")))
 }
 
 /// Reads a required Boolean field from one native bridge result object.
@@ -331,7 +310,7 @@ fn requiredBool(value: &Value, field: &str) -> HostResult<bool> {
     value
         .get(field)
         .and_then(Value::as_bool)
-        .ok_or_else(|| HostError::new(format!("iOS terminal result has invalid {field}")))
+        .ok_or_else(|| HostError::new(format!("iSH terminal result has invalid {field}")))
 }
 
 /// Reads a required signed 32-bit integer field from one native bridge result object.
@@ -340,7 +319,7 @@ fn requiredI32(value: &Value, field: &str) -> HostResult<i32> {
         .get(field)
         .and_then(Value::as_i64)
         .and_then(|value| i32::try_from(value).ok())
-        .ok_or_else(|| HostError::new(format!("iOS terminal result has invalid {field}")))
+        .ok_or_else(|| HostError::new(format!("iSH terminal result has invalid {field}")))
 }
 
 /// Reads a required unsigned platform-size integer field from one native bridge result object.
@@ -349,7 +328,7 @@ fn requiredUsize(value: &Value, field: &str) -> HostResult<usize> {
         .get(field)
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
-        .ok_or_else(|| HostError::new(format!("iOS terminal result has invalid {field}")))
+        .ok_or_else(|| HostError::new(format!("iSH terminal result has invalid {field}")))
 }
 
 /// Maps a supported iOS terminal control name into its UTF-8 byte sequence.
