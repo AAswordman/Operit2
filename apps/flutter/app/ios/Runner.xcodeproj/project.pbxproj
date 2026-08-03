@@ -66,7 +66,7 @@
 		3D2A100C2D000001003D2A10 /* Accelerate.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = System/Library/Frameworks/Accelerate.framework; sourceTree = SDKROOT; };
 		3D2A100E2D000001003D2A10 /* CoreML.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreML.framework; path = System/Library/Frameworks/CoreML.framework; sourceTree = SDKROOT; };
 		3D2A10252D000001003D2A10 /* IshTerminalBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = IshTerminalBridge.mm; sourceTree = "<group>"; };
-		3D2A10272D000001003D2A10 /* fchdir.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = fchdir.c; path = tools/ios-runtime/ish/sources/ish/util/fchdir.c; sourceTree = SOURCE_ROOT; };
+		3D2A10272D000001003D2A10 /* fchdir.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = fchdir.c; path = ../../../../tools/ios-runtime/ish/sources/ish/util/fchdir.c; sourceTree = SOURCE_ROOT; };
 		3D2A10232D000001003D2A10 /* ish-root.tar.gz */ = {isa = PBXFileReference; lastKnownFileType = archive.gzip; path = "ish-root.tar.gz"; sourceTree = "<group>"; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
