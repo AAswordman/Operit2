@@ -45,6 +45,7 @@ build_target "$source_dir/iSH.xcodeproj" liblinux
 build_target "$source_dir/iSH.xcodeproj" libiSHLinux
 build_target "$source_dir/iSH.xcodeproj" libiSHLinuxUser
 build_target "$source_dir/iSH.xcodeproj" libfakefs
+build_target "$source_dir/iSH.xcodeproj" libiSHApp
 build_target "$source_dir/iSH.xcodeproj" libish_emu
 configuration="${1:?missing Xcode configuration}"
 build_target "$source_dir/deps/libarchive.xcodeproj" libarchive
@@ -53,5 +54,6 @@ verify_static_library liblinux.a
 verify_static_library libiSHLinux.a
 verify_static_library libiSHLinuxUser.a
 verify_static_library libfakefs.a
+verify_static_library libiSHApp.a
 verify_static_library libish_emu.a
 verify_static_library libarchive.a
