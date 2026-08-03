@@ -1,0 +1,67 @@
+name: iOS iSH Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ish-rootfs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build iSH Alpine rootfs
+        run: bash tools/ios-runtime/ish/build_alpine_rootfs_linux.sh
+
+      - name: Upload iSH Alpine rootfs
+        uses: actions/upload-artifact@v4
+        with:
+          name: ish-ios-rootfs-${{ github.sha }}
+          path: apps/flutter/app/ios/Runner/ish-root.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  build-ish:
+    needs: build-ish-rootfs
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download iSH Alpine rootfs
+        uses: actions/download-artifact@v4
+        with:
+          name: ish-ios-rootfs-${{ github.sha }}
+          path: apps/flutter/app/ios/Runner
+
+      - name: Install iSH build tools
+        run: |
+          brew install llvm lld meson ninja
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+
+      - name: Build iSH static libraries
+        run: bash tools/ios-runtime/ish/build_ish_ios.sh Release iphoneos iphoneos arm64
+
+      - name: Upload iSH static libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: ish-ios-static-libraries-${{ github.sha }}
+          path: apps/flutter/app/apple/ish-build/Release-iphoneos/*.a
+          if-no-files-found: error
+          retention-days: 7

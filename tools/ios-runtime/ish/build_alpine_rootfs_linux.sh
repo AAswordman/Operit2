@@ -68,6 +68,7 @@ install_apk_static() {
     local archive_name
     local archive_path
 
+    mkdir -p "$downloads_dir"
     record="$(apk_index_record apk-tools-static)"
     version="$(record_value "$record" V)"
     test -n "$version"

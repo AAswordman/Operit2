@@ -180,6 +180,7 @@ def check_native_app_tools(include_ios: bool) -> list[CheckResult]:
     elif platform_name == "macos":
         results.extend([check_command("xcodebuild", ["-version"]), check_command("xcrun", ["--version"]), check_command("ditto")])
         if include_ios:
+            results.extend([check_command("llvm-config"), check_command("ld.lld"), check_command("meson"), check_command("ninja")])
             sdk = command_output(["xcrun", "--sdk", "iphoneos", "--show-sdk-path"])
             if sdk.returncode == 0 and sdk.stdout.strip():
                 results.append(ok("iOS Xcode platform", sdk.stdout.strip()))
