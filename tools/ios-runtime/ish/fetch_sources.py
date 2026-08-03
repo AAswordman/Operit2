@@ -117,6 +117,8 @@ def prepare_ish_sources() -> None:
     for spec in ISH_ARCHIVES:
         download_archive(spec.url, DOWNLOAD_DIR / spec.archive_name, spec.sha256)
         extract_source_archive(spec)
+    for script_name in ("xcode-meson.sh", "xcode-ninja.sh"):
+        (SOURCE_DIR / "ish" / "app" / script_name).chmod(0o755)
     shutil.rmtree(SOURCE_DIR / ".extract", ignore_errors=True)
 
 
