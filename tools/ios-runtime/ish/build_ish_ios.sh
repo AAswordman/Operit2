@@ -60,6 +60,7 @@ build_ish_source_static_library() {
             -arch "$architecture" \
             -isysroot "$sdk_root" \
             -I "$source_dir" \
+            -I "$source_dir/deps/libarchive/libarchive" \
             -c "$source_path" \
             -o "$object_path"
         xcrun --sdk "$sdk_name" libtool -static \
