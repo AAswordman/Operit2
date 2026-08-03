@@ -19,6 +19,7 @@
 		3D2A100B2D000001003D2A10 /* Accelerate.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3D2A100C2D000001003D2A10 /* Accelerate.framework */; };
 		3D2A100D2D000001003D2A10 /* CoreML.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3D2A100E2D000001003D2A10 /* CoreML.framework */; };
 		3D2A10242D000001003D2A10 /* IshTerminalBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10252D000001003D2A10 /* IshTerminalBridge.mm */; };
+		3D2A10262D000001003D2A10 /* fchdir.c in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10272D000001003D2A10 /* fchdir.c */; };
 		3D2A10222D000001003D2A10 /* ish-root.tar.gz in Resources */ = {isa = PBXBuildFile; fileRef = 3D2A10232D000001003D2A10 /* ish-root.tar.gz */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
@@ -65,6 +66,7 @@
 		3D2A100C2D000001003D2A10 /* Accelerate.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = System/Library/Frameworks/Accelerate.framework; sourceTree = SDKROOT; };
 		3D2A100E2D000001003D2A10 /* CoreML.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreML.framework; path = System/Library/Frameworks/CoreML.framework; sourceTree = SDKROOT; };
 		3D2A10252D000001003D2A10 /* IshTerminalBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = IshTerminalBridge.mm; sourceTree = "<group>"; };
+		3D2A10272D000001003D2A10 /* fchdir.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = fchdir.c; path = tools/ios-runtime/ish/sources/ish/util/fchdir.c; sourceTree = SOURCE_ROOT; };
 		3D2A10232D000001003D2A10 /* ish-root.tar.gz */ = {isa = PBXFileReference; lastKnownFileType = archive.gzip; path = "ish-root.tar.gz"; sourceTree = "<group>"; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -158,6 +160,7 @@
 				3D2A10042D000001003D2A10 /* AppleLocalInferenceRunner.swift */,
 				3D2A10062D000001003D2A10 /* AppleLocalInferenceBridge.mm */,
 				3D2A10252D000001003D2A10 /* IshTerminalBridge.mm */,
+				3D2A10272D000001003D2A10 /* fchdir.c */,
 				3D2A10232D000001003D2A10 /* ish-root.tar.gz */,
 				3D2A10022D000001003D2A10 /* OperitFlutterBridge.h */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
@@ -368,6 +371,7 @@
 				3D2A10032D000001003D2A10 /* AppleLocalInferenceRunner.swift in Sources */,
 				3D2A10052D000001003D2A10 /* AppleLocalInferenceBridge.mm in Sources */,
 				3D2A10242D000001003D2A10 /* IshTerminalBridge.mm in Sources */,
+				3D2A10262D000001003D2A10 /* fchdir.c in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
