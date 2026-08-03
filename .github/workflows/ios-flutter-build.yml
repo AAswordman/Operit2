@@ -105,6 +105,9 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
 
+      - name: Install iSH build tools
+        run: brew install meson ninja
+
       - name: Check build environment
         run: python3 tools/build_scripts/check_environment.py --products app --include-ios --github-runner
 
