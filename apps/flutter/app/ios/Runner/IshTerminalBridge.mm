@@ -141,7 +141,7 @@ static BOOL ORTIshWrite(ORTIshTerminalSession *session, NSData *input, NSString 
     }
     struct linux_tty *tty = session.tty;
     async_do_in_workqueue(^{
-      tty->ops->send_input(tty, input.bytes, input.length);
+      tty->ops->send_input(tty, static_cast<const char *>(input.bytes), input.length);
     });
   }
   return YES;
@@ -322,7 +322,7 @@ static NSDictionary *ORTIshExecute(ORTIshTerminalSession *session, NSString *com
     NSRange markerRange = [output rangeOfData:markerData options:0 range:NSMakeRange(0, output.length)];
     if (markerRange.location != NSNotFound) {
       NSUInteger statusStart = markerRange.location + markerRange.length + 1;
-      const uint8_t *bytes = output.bytes;
+      const uint8_t *bytes = static_cast<const uint8_t *>(output.bytes);
       NSUInteger statusEnd = statusStart;
       while (statusEnd < output.length && bytes[statusEnd] != '\037') {
         statusEnd++;
