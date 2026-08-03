@@ -6,7 +6,7 @@ import shutil
 import urllib.request
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 RUNTIME_DIR = Path(__file__).resolve().parent
@@ -106,10 +106,25 @@ def extract_source_archive(spec: ArchiveSpec) -> None:
     extracted = extraction_root / spec.extracted_directory
     if not extracted.is_dir():
         raise RuntimeError(f"Archive has no expected source directory: {extracted}")
+    restore_archive_permissions(archive_path, extracted, spec.extracted_directory)
     shutil.rmtree(destination, ignore_errors=True)
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(extracted), str(destination))
     shutil.rmtree(extraction_root)
+
+
+# Restores executable permissions recorded by GitHub's ZIP archive metadata.
+def restore_archive_permissions(
+    archive_path: Path, extracted: Path, extracted_directory: str
+) -> None:
+    with zipfile.ZipFile(archive_path) as archive:
+        for member in archive.infolist():
+            permissions = member.external_attr >> 16
+            if permissions & 0o111:
+                relative_path = PurePosixPath(member.filename).relative_to(
+                    extracted_directory
+                )
+                extracted.joinpath(*relative_path.parts).chmod(permissions & 0o777)
 
 
 # Downloads and extracts every iSH source dependency at its pinned revision.
@@ -117,8 +132,6 @@ def prepare_ish_sources() -> None:
     for spec in ISH_ARCHIVES:
         download_archive(spec.url, DOWNLOAD_DIR / spec.archive_name, spec.sha256)
         extract_source_archive(spec)
-    for script_name in ("xcode-meson.sh", "xcode-ninja.sh"):
-        (SOURCE_DIR / "ish" / "app" / script_name).chmod(0o755)
     shutil.rmtree(SOURCE_DIR / ".extract", ignore_errors=True)
 
 
