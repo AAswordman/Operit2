@@ -565,6 +565,50 @@ fn execute_inline_hook_function_source() {
 }
 
 #[test]
+/// Verifies Compose rendering waits for the CommonJS module to initialize lexical bindings.
+fn compose_dsl_default_export_can_capture_later_lexical_constants() {
+    ensure_test_runtime_root();
+    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    let script = r#"
+        exports.default = function(ctx) {
+            return ctx.h('Text', {
+                fontSize: FONT_TITLE,
+                hintFontSize: FONT_HINT,
+                reasonFontSize: FONT_REASON,
+                iconSize: ICON_SIZE,
+                chevronSize: CHEVRON_SIZE
+            }, []);
+        };
+        const FONT_TITLE = 13;
+        const FONT_HINT = 11;
+        const FONT_REASON = 11;
+        const ICON_SIZE = 22;
+        const CHEVRON_SIZE = 16;
+    "#;
+    let mut params = testParams();
+    params.insert(
+        "packageName".to_string(),
+        Value::String("compose_lexical_initialization_test".to_string()),
+    );
+    params.insert(
+        "routeInstanceId".to_string(),
+        Value::String("compose_lexical_initialization_route".to_string()),
+    );
+
+    let raw = expect_js_output(
+        engine.execute_compose_dsl_script(script, &params, &BTreeMap::new()),
+        "compose lexical initialization render result",
+    );
+    let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
+
+    assert_eq!(parsed["tree"]["props"]["fontSize"], 13);
+    assert_eq!(parsed["tree"]["props"]["hintFontSize"], 11);
+    assert_eq!(parsed["tree"]["props"]["reasonFontSize"], 11);
+    assert_eq!(parsed["tree"]["props"]["iconSize"], 22);
+    assert_eq!(parsed["tree"]["props"]["chevronSize"], 16);
+}
+
+#[test]
 fn compose_dsl_action_uses_rendered_runtime() {
     let engine = super::JsEngine::new_toolpkg_registration_engine();
     let script = r#"

@@ -9,19 +9,21 @@ use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_host_api::{FileSystemHost, RuntimeStorageHost};
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
-    CoreLinkError, CoreLinkSharedClient, CoreObjectPath, CoreRequestId, CoreValue,
+    CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CoreObjectPath, CoreRequestId, CoreValue,
     CoreWatchRequest,
 };
-use operit_model::ChatMessage::SharedAiResponseStream;
+use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_util::stream::RevisableTextStream::{TextStreamEvent, TextStreamEventType};
+use operit_util::stream::ReverseStream::ReverseStreamSender;
 use operit_util::stream::Stream::Stream;
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 
 pub mod RuntimeCoreRouter;
@@ -38,7 +40,103 @@ pub struct LocalCoreProxy {
     chatRuntimeHolder: Arc<Mutex<ChatRuntimeHolder>>,
 }
 
+/// Owns the runtime-side endpoints for one generated reverse stream invocation.
+pub struct CoreReverseStreamSession {
+    sender: Box<dyn CoreReverseStreamSender>,
+    completion: Option<oneshot::Receiver<Result<(), CoreLinkError>>>,
+}
+
+/// Accepts Link values for one typed reverse stream item channel.
+#[async_trait]
+trait CoreReverseStreamSender: Send {
+    /// Decodes and delivers one Link item to the typed stream consumer.
+    async fn send(&self, value: CoreValue) -> Result<(), CoreLinkError>;
+
+    /// Completes the typed stream consumer input.
+    fn close(&mut self);
+}
+
+/// Bridges one typed reverse stream producer to Link values.
+struct TypedCoreReverseStreamSender<T> {
+    sender: ReverseStreamSender<T>,
+}
+
+#[async_trait]
+impl<T> CoreReverseStreamSender for TypedCoreReverseStreamSender<T>
+where
+    T: DeserializeOwned + Send + 'static,
+{
+    /// Decodes one Link item and forwards it to the typed stream.
+    async fn send(&self, value: CoreValue) -> Result<(), CoreLinkError> {
+        let value = operit_link::fromCoreValue(value)
+            .map_err(|error| CoreLinkError::new("INVALID_REVERSE_STREAM_ITEM", error.to_string()))?;
+        self.sender.send(value).await.map_err(CoreLinkError::internal)
+    }
+
+    /// Closes the typed sender after the Link input completes.
+    fn close(&mut self) {
+        self.sender.close();
+    }
+}
+
+impl CoreReverseStreamSession {
+    /// Creates one Link session over a typed reverse stream sender and completion receiver.
+    pub fn new<T>(
+        sender: ReverseStreamSender<T>,
+        completion: oneshot::Receiver<Result<(), CoreLinkError>>,
+    ) -> Self
+    where
+        T: DeserializeOwned + Send + 'static,
+    {
+        Self {
+            sender: Box::new(TypedCoreReverseStreamSender { sender }),
+            completion: Some(completion),
+        }
+    }
+
+    /// Delivers one ordered Link item into the reverse stream.
+    pub async fn pushItem(&mut self, value: CoreValue) -> Result<(), CoreLinkError> {
+        self.sender.send(value).await
+    }
+
+    /// Completes the reverse stream and waits for its runtime consumer.
+    pub async fn close(&mut self) -> Result<(), CoreLinkError> {
+        self.sender.close();
+        self.completion
+            .take()
+            .ok_or_else(|| CoreLinkError::new("REVERSE_STREAM_CLOSED", "reverse stream is already closed"))?
+            .await
+            .map_err(|error| CoreLinkError::internal(error.to_string()))?
+    }
+}
+
+#[async_trait]
+impl CoreLinkPushSession for CoreReverseStreamSession {
+    /// Delivers one Link value into the generated typed reverse stream.
+    async fn send(&mut self, value: CoreValue) -> Result<(), CoreLinkError> {
+        self.pushItem(value).await
+    }
+
+    /// Closes the generated typed reverse stream and awaits its service result.
+    async fn close(mut self: Box<Self>) -> Result<(), CoreLinkError> {
+        CoreReverseStreamSession::close(&mut self).await
+    }
+}
+
 impl LocalCoreProxy {
+    /// Reports whether a push request is a generated reverse-stream method.
+    #[allow(non_snake_case)]
+    pub fn isReverseStreamRequest(&self, request: &operit_link::CorePushRequest) -> bool {
+        generated_is_reverse_stream_request(request)
+    }
+    /// Opens one generated reverse stream selected by its proxy schema declaration.
+    #[allow(non_snake_case)]
+    pub fn openReverseStream(
+        &self,
+        request: operit_link::CorePushRequest,
+    ) -> Result<CoreReverseStreamSession, CoreLinkError> {
+        generated_open_reverse_stream(self, request)
+    }
     /// Creates a local link client backed by an in-process application.
     pub fn new(application: OperitApplication) -> Self {
         Self {
@@ -91,6 +189,14 @@ impl CoreLinkClient for LocalCoreProxy {
 
     async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         CoreLinkSharedClient::watch(self, request).await
+    }
+
+    #[allow(non_snake_case)]
+    async fn openPush(
+        &mut self,
+        request: operit_link::CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        Ok(Box::new(self.openReverseStream(request)?))
     }
 }
 
@@ -214,6 +320,7 @@ fn core_event_stream_channel() -> (
     (sender, CoreEventStream::new(receiver))
 }
 
+/// Converts one revisable provider response into streamed Markdown render events.
 fn core_text_event_stream(
     stream_chat_id: String,
     stream: SharedAiResponseStream,
@@ -294,7 +401,7 @@ fn core_text_event_stream(
     })
 }
 
-/// Starts one host-scheduled markdown renderer that forwards text chunks as Link events.
+/// Runs one host-scheduled Markdown parser over the live response chunks.
 fn spawn_text_markdown_processor(
     streamChatId: String,
     mut input: tokio::sync::mpsc::UnboundedReceiver<String>,

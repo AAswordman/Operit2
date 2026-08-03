@@ -1732,7 +1732,7 @@ fn print_chat_message(message: &operit_model::ChatMessage::ChatMessage) {
     println!("completedAt={}", message.completedAt);
     println!("displayMode={:?}", message.displayMode);
     println!("isFavorite={}", message.isFavorite);
-    println!("content={}", message.content);
+    println!("content={}", message.displayText());
 }
 
 fn print_tag(tag: &operit_model::PromptTag::PromptTag) {

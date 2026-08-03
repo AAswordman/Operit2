@@ -22,6 +22,8 @@ use operit_model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
+use operit_model::MessagePart::MessagePart;
+use operit_model::MessagePartCodec::{AssistantMarkupStreamState, MessagePartCodec};
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_providers::chat::EnhancedAIService::{
@@ -362,6 +364,16 @@ impl MessageProcessingDelegate {
         runtimes.get_mut(&key).map(action)
     }
 
+    /// Clones an active provider response stream for internal runtime coordination.
+    #[allow(non_snake_case)]
+    pub(crate) fn activeResponseStreamForChat(
+        &self,
+        chatId: String,
+    ) -> Option<SharedAiResponseStream> {
+        self.withExistingRuntime(Some(chatId), |runtime| runtime.responseStream.clone())
+            .flatten()
+    }
+
     /// Recomputes aggregate loading state and active streaming chat ids.
     #[allow(non_snake_case)]
     pub fn updateGlobalLoadingState(&mut self) {
@@ -566,41 +578,6 @@ impl MessageProcessingDelegate {
         Ok(finalMessageContent)
     }
 
-    /// Returns the current response stream for a chat.
-    #[allow(non_snake_case)]
-    pub fn getResponseStream(&self, chatId: String) -> Option<SharedAiResponseStream> {
-        self.withExistingRuntime(Some(chatId), |runtime| runtime.responseStream.clone())
-            .flatten()
-    }
-
-    /// Resolves the final display content from an AI message and its active variant.
-    #[allow(non_snake_case)]
-    pub fn resolveFinalContent(aiMessage: ChatMessage) -> String {
-        let replayChunks = aiMessage
-            .contentStream
-            .as_ref()
-            .map(|stream| stream.replay_cache());
-        let eventCarrier = aiMessage
-            .contentStream
-            .as_ref()
-            .map(|stream| stream as &dyn TextStreamEventCarrier);
-
-        if eventCarrier
-            .map(|carrier| !carrier.event_channel().replay_cache().is_empty())
-            .unwrap_or(false)
-        {
-            aiMessage.content
-        } else if replayChunks
-            .as_ref()
-            .map(|chunks| !chunks.is_empty())
-            .unwrap_or(false)
-        {
-            replayChunks.unwrap_or_default().join("")
-        } else {
-            aiMessage.content
-        }
-    }
-
     /// Runs an action while attaching timing metrics to the current turn.
     #[allow(non_snake_case)]
     pub fn withTurnMetrics(
@@ -623,7 +600,7 @@ impl MessageProcessingDelegate {
 
     /// Claims the next streaming persistence interval before allocating a snapshot.
     #[allow(non_snake_case)]
-    fn claimStreamingSnapshot(
+    fn claimStreamingPersistenceSnapshot(
         turnOptions: &ChatTurnOptions,
         lastStreamingPersistAt: &Arc<Mutex<i64>>,
     ) -> bool {
@@ -647,15 +624,8 @@ impl MessageProcessingDelegate {
         chatHistoryDelegate: &mut ChatHistoryDelegate,
         chatId: &str,
         aiMessage: &ChatMessage,
-        contentSnapshot: String,
     ) {
-        chatHistoryDelegate.addMessageToChat(
-            ChatMessage {
-                content: contentSnapshot,
-                ..aiMessage.clone()
-            },
-            Some(chatId.to_string()),
-        );
+        chatHistoryDelegate.persistStreamingMessage(aiMessage.clone(), chatId.to_string());
     }
 
     /// Reads the latest cancellation snapshot for a chat's active turn.
@@ -924,7 +894,11 @@ impl MessageProcessingDelegate {
         let mut userMessageAdded = false;
         let mut userMessage = ChatMessage {
             sender: "user".to_string(),
-            content: finalMessageContent.clone(),
+            parts: vec![MessagePart::markdown(
+                "part-0".to_string(),
+                0,
+                finalMessageContent.clone(),
+            )],
             roleName: "user".to_string(),
             displayMode: if request.turnOptions.hideUserMessage {
                 ChatMessageDisplayMode::HIDDEN_PLACEHOLDER
@@ -959,7 +933,7 @@ impl MessageProcessingDelegate {
                     ("timestamp", userMessage.timestamp.to_string()),
                     (
                         "contentChars",
-                        userMessage.content.chars().count().to_string(),
+                        userMessage.displayText().chars().count().to_string(),
                     ),
                 ],
             );
@@ -1090,7 +1064,6 @@ impl MessageProcessingDelegate {
         let (initialProvider, initialModelName) = split_provider_model(&initialProviderModel);
         let mut aiMessage = ChatMessage {
             sender: "ai".to_string(),
-            content: String::new(),
             timestamp: ChatMessageTimestampAllocator::next(),
             roleName: currentRoleName.clone(),
             provider: initialProvider,
@@ -1099,7 +1072,6 @@ impl MessageProcessingDelegate {
             outputTokens: 0,
             cachedInputTokens: 0,
             displayMode: ChatMessageDisplayMode::NORMAL,
-            contentStream: Some(completionStream.clone()),
             ..ChatMessage::new("ai".to_string())
         };
         let workerChatId = chatId.clone();
@@ -1108,6 +1080,7 @@ impl MessageProcessingDelegate {
         let workerResponseStream = sharedResponseStream.clone();
         let workerEventCollector = sharedResponseStream.event_channel().clone();
         let workerRevisionTracker = Arc::new(Mutex::new(TextStreamRevisionTracker::new("")));
+        let workerPartStream = Arc::new(Mutex::new(AssistantMarkupStreamState::new()));
         let workerService = request.enhancedAiService.clone();
         let workerChatHistoryDelegate =
             Arc::new(Mutex::new(request.chatHistoryDelegate.clone_for_core()));
@@ -1154,12 +1127,14 @@ impl MessageProcessingDelegate {
         let chunkAiMessage = workerAiMessage.clone();
         let chunkChatHistoryDelegate = workerChatHistoryDelegate.clone();
         let chunkRevisionTracker = workerRevisionTracker.clone();
+        let chunkPartStream = workerPartStream.clone();
         let chunkStreamingSnapshotPersistAt = workerStreamingSnapshotPersistAt.clone();
         let completionChatId = workerChatId.clone();
         let completionTurnOptions = workerTurnOptions.clone();
         let completionAiMessage = workerAiMessage.clone();
         let completionChatHistoryDelegate = workerChatHistoryDelegate.clone();
         let completionRevisionTracker = workerRevisionTracker.clone();
+        let completionPartStream = workerPartStream.clone();
         let completionMessageProcessingDelegate = workerMessageProcessingDelegate.clone();
         let completionWorkspaceToolHookSession = workerWorkspaceToolHookSession.clone();
         let completionWorkspaceToolHookHandler = workerWorkspaceToolHookHandler.clone();
@@ -1205,10 +1180,11 @@ impl MessageProcessingDelegate {
                                         .lock()
                                         .expect("revision tracker mutex poisoned");
                                     let _ = tracker.append(&chunk);
-                                    if MessageProcessingDelegate::claimStreamingSnapshot(
+                                    let shouldPersist = MessageProcessingDelegate::claimStreamingPersistenceSnapshot(
                                         &chunkTurnOptions,
                                         &chunkStreamingSnapshotPersistAt,
-                                    ) {
+                                    );
+                                    if shouldPersist {
                                         Some(tracker.current_content().to_owned())
                                     } else {
                                         None
@@ -1216,10 +1192,19 @@ impl MessageProcessingDelegate {
                                 };
                                 if let Some(content) = contentSnapshot {
                                     let workerAiMessage = {
+                                        let parts = {
+                                            let mut partStream = chunkPartStream
+                                                .lock()
+                                                .expect("assistant message-part stream mutex poisoned");
+                                            partStream.pushSnapshot(&content).expect(
+                                                "streaming assistant snapshot must extend message-part source",
+                                            );
+                                            partStream.parts().to_vec()
+                                        };
                                         let mut workerAiMessage = chunkAiMessage
                                             .lock()
                                             .expect("worker AI message mutex poisoned");
-                                        workerAiMessage.content = content.clone();
+                                        workerAiMessage.parts = parts;
                                         workerAiMessage.clone()
                                     };
                                     let mut workerChatHistoryDelegate = chunkChatHistoryDelegate
@@ -1229,7 +1214,6 @@ impl MessageProcessingDelegate {
                                         &mut workerChatHistoryDelegate,
                                         &chunkChatId,
                                         &workerAiMessage,
-                                        content,
                                     );
                                 }
                             })
@@ -1262,28 +1246,41 @@ impl MessageProcessingDelegate {
                                         .lock()
                                         .expect("revision tracker mutex poisoned");
                                     let rolled_back = tracker.rollback(&event.id).is_some();
-                                    if rolled_back
-                                        && MessageProcessingDelegate::claimStreamingSnapshot(
+                                    let shouldPersist = rolled_back
+                                        && MessageProcessingDelegate::claimStreamingPersistenceSnapshot(
                                             &completionTurnOptions,
                                             &completionStreamingSnapshotPersistAt,
-                                        )
-                                    {
+                                        );
+                                    if rolled_back {
                                         let snapshot = tracker.current_content().to_owned();
                                         drop(tracker);
-                                        let workerAiMessage = completionAiMessage
-                                            .lock()
-                                            .expect("worker AI message mutex poisoned")
-                                            .clone();
+                                        let workerAiMessage = {
+                                            let parts = {
+                                                let mut partStream = completionPartStream
+                                                    .lock()
+                                                    .expect("assistant message-part stream mutex poisoned");
+                                                partStream.resetToSnapshot(&snapshot).expect(
+                                                    "rolled-back assistant snapshot must parse into message parts",
+                                                );
+                                                partStream.parts().to_vec()
+                                            };
+                                            let mut workerAiMessage = completionAiMessage
+                                                .lock()
+                                                .expect("worker AI message mutex poisoned");
+                                            workerAiMessage.parts = parts;
+                                            workerAiMessage.clone()
+                                        };
                                         let mut workerChatHistoryDelegate =
                                             completionChatHistoryDelegate
                                                 .lock()
                                                 .expect("worker chat history mutex poisoned");
-                                        MessageProcessingDelegate::persistStreamingSnapshot(
-                                            &mut workerChatHistoryDelegate,
-                                            &completionChatId,
-                                            &workerAiMessage,
-                                            snapshot,
-                                        );
+                                        if shouldPersist {
+                                            MessageProcessingDelegate::persistStreamingSnapshot(
+                                                &mut workerChatHistoryDelegate,
+                                                &completionChatId,
+                                                &workerAiMessage,
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -1306,6 +1303,17 @@ impl MessageProcessingDelegate {
                         );
                         let completedElapsed = messageTimingNow().startedAtMs as i64;
                         let finalMessage = {
+                            let parts = {
+                                let mut partStream = completionPartStream
+                                    .lock()
+                                    .expect("assistant message-part stream mutex poisoned");
+                                partStream.pushSnapshot(&finalContent).expect(
+                                    "completed assistant snapshot must extend message-part source",
+                                );
+                                partStream.finish().expect(
+                                    "completed assistant markup must parse into message parts",
+                                )
+                            };
                             let mut workerAiMessage = completionAiMessage
                                 .lock()
                                 .expect("worker AI message mutex poisoned");
@@ -1314,8 +1322,7 @@ impl MessageProcessingDelegate {
                             workerAiMessage.inputTokens = tokenSnapshot.inputTokens;
                             workerAiMessage.outputTokens = tokenSnapshot.outputTokens;
                             workerAiMessage.cachedInputTokens = tokenSnapshot.cachedInputTokens;
-                            workerAiMessage.content = finalContent;
-                            workerAiMessage.contentStream = None;
+                            workerAiMessage.parts = parts;
                             MessageProcessingDelegate::withTurnMetrics(
                                 ChatMessage {
                                     completedAt: completedElapsed,
@@ -1338,7 +1345,7 @@ impl MessageProcessingDelegate {
                                     ("timestamp", finalMessage.timestamp.to_string()),
                                     (
                                         "contentChars",
-                                        finalMessage.content.chars().count().to_string(),
+                                        finalMessage.displayText().chars().count().to_string(),
                                     ),
                                 ],
                             );
@@ -1526,7 +1533,7 @@ impl MessageProcessingDelegate {
             publishOwnerAppNotification(RuntimeHostInteractionAppNotificationPayload {
                 notificationType: "ai_message_completed".to_string(),
                 title: "Operit".to_string(),
-                message: aiMessageNotificationPreview(&aiMessage.content),
+                message: aiMessageNotificationPreview(&aiMessage.displayText()),
                 chatId: Some(chatId),
                 messageTimestamp: Some(aiMessage.timestamp),
             });

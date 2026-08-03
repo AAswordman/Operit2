@@ -42,7 +42,6 @@ use operit_tools::tools::climode::CliToolModeSupport::{
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::ConversationMarkupManager::{
     ConversationMarkupManager, ENHANCED_PURE_THINKING_ONLY_WARNING,
-    ENHANCED_TRUNCATED_TOOL_CALL_WARNING,
 };
 use operit_tools::ToolExecutionManager::{
     AITool as RuntimeAITool, ToolExecutionManager, ToolExposureMode as RuntimeToolExposureMode,
@@ -50,7 +49,7 @@ use operit_tools::ToolExecutionManager::{
 use operit_util::stream::RevisableTextStream::{with_event_channel_shared, TextStreamEventCarrier};
 use operit_util::stream::Stream::Stream;
 use operit_util::AppLogger::AppLogger;
-use operit_util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
+use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ChatUtils::ChatUtils;
 use operit_util::OperitPaths::{characterMemoryOwnerKey, sharedMemoryOwnerKey};
 
@@ -2118,6 +2117,15 @@ impl EnhancedAIService {
         }
 
         let content = context.streamBuffer.trim().to_string();
+        let rawContentJson = serde_json::to_string(&context.streamBuffer)
+            .expect("completed model response must serialize as JSON string");
+        AppLogger::d(
+            TAG,
+            &format!(
+                "chat.response.raw executionId={} round={} content={}",
+                context.executionId, context.roundManager.roundIndex, rawContentJson
+            ),
+        );
         AppLogger::d(
             TAG,
             &format!(
@@ -2218,29 +2226,8 @@ impl EnhancedAIService {
             .await;
         }
 
-        let enhancedContent = self.enhanceToolDetection(&content);
-        let truncatedToolRecovery = self.detectAndRepairTruncatedToolRound(&content);
-        let finalContent = truncatedToolRecovery
-            .as_ref()
-            .map(|recovery| recovery.repairedContent.clone())
-            .unwrap_or(enhancedContent);
-
-        if let Some(recovery) = &truncatedToolRecovery {
-            AppLogger::w(
-                TAG,
-                &format!(
-                    "chat.tool_call.truncated executionId={} round={} appendedChars={} invalidatedTools={}",
-                    context.executionId,
-                    context.roundManager.roundIndex,
-                    recovery.appendedSuffix.len(),
-                    recovery.invalidatedToolNames.join(", ")
-                ),
-            );
-            if !recovery.appendedSuffix.is_empty() {
-                context.streamBuffer.push_str(&recovery.appendedSuffix);
-                context.roundManager.appendContent(&recovery.appendedSuffix);
-            }
-        } else if finalContent != content {
+        let finalContent = self.enhanceToolDetection(&content);
+        if finalContent != content {
             AppLogger::d(
                 TAG,
                 &format!(
@@ -2256,11 +2243,7 @@ impl EnhancedAIService {
             context.roundManager.updateContent(finalContent.clone());
         }
 
-        let extractedToolInvocations = if truncatedToolRecovery.is_none() {
-            ToolExecutionManager::extractToolInvocations(&finalContent)
-        } else {
-            Vec::new()
-        };
+        let extractedToolInvocations = ToolExecutionManager::extractToolInvocations(&finalContent);
         let extractedToolNames = extractedToolInvocations
             .iter()
             .map(|invocation| invocation.tool.name.clone())
@@ -2291,67 +2274,6 @@ impl EnhancedAIService {
 
         if !self.isExecutionContextActive(context) {
             return Ok(());
-        }
-
-        if let Some(_recovery) = truncatedToolRecovery {
-            if disableWarning {
-                let displayContent = context.roundManager.getDisplayContent();
-                AppLogger::w(
-                    TAG,
-                    &format!(
-                        "chat.response.finalize_truncated_tool executionId={} round={} disableWarning=true",
-                        context.executionId, context.roundManager.roundIndex
-                    ),
-                );
-                self.finalizeAssistantResponse(
-                    context,
-                    &displayContent,
-                    enableMemoryAutoUpdate,
-                    onNonFatalError,
-                    isSubTask,
-                    chatId.clone(),
-                    characterName,
-                    avatarUri,
-                    notifyReplyOverride,
-                    callbacks,
-                );
-                return Ok(());
-            }
-            let warningStatus = ConversationMarkupManager::createWarningStatus(
-                ENHANCED_TRUNCATED_TOOL_CALL_WARNING,
-            );
-            let warningDisplayContent = format!("\n{warningStatus}");
-            context.roundManager.appendContent(&warningDisplayContent);
-            context.streamBuffer.push_str(&warningDisplayContent);
-            collector.upstream.emit(warningDisplayContent);
-            return Box::pin(self.handleToolInvocation(
-                collector,
-                Vec::new(),
-                context,
-                functionType,
-                promptFunctionType,
-                enableThinking,
-                enableMemoryAutoUpdate,
-                onNonFatalError,
-                onTokenLimitExceeded,
-                maxTokens,
-                tokenUsageThreshold,
-                isSubTask,
-                characterName,
-                avatarUri,
-                roleCardId,
-                chatId,
-                onToolInvocation,
-                notifyReplyOverride,
-                chatProviderIdOverride.clone(),
-                chatModelIdOverride,
-                stream,
-                enableGroupOrchestrationHint,
-                Some(warningStatus),
-                disableWarning,
-                runtime,
-            ))
-            .await;
         }
 
         if !extractedToolInvocations.is_empty() {
@@ -2473,7 +2395,7 @@ impl EnhancedAIService {
 
         for invocation in &toolInvocations {
             if let Some(callback) = onToolInvocation.as_ref() {
-                callback(invocation.tool.name.clone());
+                callback(resolveToolDisplayName(&invocation.tool));
             }
         }
 
@@ -2654,133 +2576,6 @@ impl EnhancedAIService {
     fn isToolXmlBlock(&self, xml: &str, tagName: &str) -> bool {
         let trimmed = xml.trim();
         trimmed.ends_with("/>") || trimmed.contains(&format!("</{tagName}>"))
-    }
-
-    fn detectAndRepairTruncatedToolRound(
-        &self,
-        content: &str,
-    ) -> Option<TruncatedToolRoundRecovery> {
-        if !content.to_ascii_lowercase().contains("<tool") {
-            return None;
-        }
-        let completeToolBlocks = ChatMarkupRegex::tool_call_matches(content);
-        let openToolPattern = Regex::new(&format!(
-            r#"(?is)<({})\b[^>]*"#,
-            operit_util::ChatMarkupRegex::TOOL_TAG_NAME_REGEX_SOURCE
-        ))
-        .ok()?;
-        let candidate = openToolPattern.find_iter(content).last()?;
-        if completeToolBlocks
-            .iter()
-            .any(|block| candidate.start() >= block.start && candidate.end() <= block.end)
-        {
-            return None;
-        }
-        let fragment = &content[candidate.start()..];
-        if !Regex::new(r#"(?i)\bname\s*=\s*""#).ok()?.is_match(fragment) {
-            return None;
-        }
-        let tagName = ChatMarkupRegex::extract_opening_tag_name(fragment)
-            .or_else(|| {
-                openToolPattern
-                    .captures(fragment)
-                    .and_then(|captures| captures.get(1).map(|value| value.as_str().to_string()))
-            })
-            .filter(|name| ChatMarkupRegex::is_tool_tag_name(Some(name)))
-            .unwrap_or_else(ChatMarkupRegex::generate_random_tool_tag_name);
-        if Regex::new(&format!(r#"(?i)</{}\s*>"#, regex::escape(&tagName)))
-            .ok()?
-            .is_match(fragment)
-        {
-            return None;
-        }
-        let appendedSuffix = self.buildTruncatedToolRepairSuffix(fragment, &tagName);
-        if appendedSuffix.is_empty() {
-            return None;
-        }
-        let mut invalidatedToolNames = completeToolBlocks
-            .iter()
-            .map(|tool| tool.name.trim().to_string())
-            .filter(|name| !name.is_empty())
-            .collect::<Vec<_>>();
-        if let Some(name) = extractXmlAttributeValue(fragment, "name") {
-            if !name.trim().is_empty() {
-                invalidatedToolNames.push(name.trim().to_string());
-            }
-        }
-        invalidatedToolNames.sort();
-        invalidatedToolNames.dedup();
-        Some(TruncatedToolRoundRecovery {
-            repairedContent: format!("{content}{appendedSuffix}"),
-            appendedSuffix,
-            invalidatedToolNames,
-        })
-    }
-
-    fn buildTruncatedToolRepairSuffix(&self, fragment: &str, fallbackTagName: &str) -> String {
-        let toolTagName = if ChatMarkupRegex::is_tool_tag_name(Some(fallbackTagName)) {
-            fallbackTagName.to_string()
-        } else {
-            ChatMarkupRegex::generate_random_tool_tag_name()
-        };
-        let Some(openingTagEnd) = fragment.find('>') else {
-            return format!(
-                "{}</{}>",
-                completePartialOpenTag(fragment, &toolTagName, "truncated_tool_call"),
-                toolTagName
-            );
-        };
-        let body = &fragment[openingTagEnd + 1..];
-        let tagPattern = Regex::new(r#"(?is)</?([A-Za-z][A-Za-z0-9_]*)\b[^>]*>"#)
-            .expect("tag pattern must compile");
-        let mut openParamCount = 0usize;
-        for capture in tagPattern.captures_iter(body) {
-            let tagText = capture.get(0).map(|value| value.as_str()).unwrap_or("");
-            let tagName = capture.get(1).map(|value| value.as_str()).unwrap_or("");
-            let isClosing = tagText.starts_with("</");
-            if tagName.eq_ignore_ascii_case("param") {
-                if isClosing {
-                    openParamCount = openParamCount.saturating_sub(1);
-                } else if !tagText.ends_with("/>") {
-                    openParamCount += 1;
-                }
-            } else if tagName.eq_ignore_ascii_case(&toolTagName) && isClosing {
-                return String::new();
-            }
-        }
-        let mut suffix = String::new();
-        if let Some(trailingPartialTag) = extractTrailingPartialTag(fragment) {
-            if isPartialClosingTagFor(&trailingPartialTag, "param") {
-                suffix.push_str(&completePartialClosingTag(&trailingPartialTag, "param"));
-                openParamCount = openParamCount.saturating_sub(1);
-            } else if isPartialOpeningTagFor(&trailingPartialTag, "param") {
-                suffix.push_str(&completePartialOpenTag(
-                    &trailingPartialTag,
-                    "param",
-                    "_truncated_fragment",
-                ));
-                openParamCount += 1;
-            } else if isPartialClosingTagFor(&trailingPartialTag, &toolTagName) {
-                suffix.push_str(&completePartialClosingTag(
-                    &trailingPartialTag,
-                    &toolTagName,
-                ));
-                return suffix;
-            } else if isPartialOpeningTagFor(&trailingPartialTag, &toolTagName) {
-                suffix.push_str(&completePartialOpenTag(
-                    &trailingPartialTag,
-                    &toolTagName,
-                    "truncated_tool_call",
-                ));
-            } else if trailingPartialTag == "<" {
-                suffix.push_str("!-- truncated -->");
-            }
-        }
-        for _ in 0..openParamCount {
-            suffix.push_str("</param>");
-        }
-        suffix.push_str(&format!("</{toolTagName}>"));
-        suffix
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2993,13 +2788,7 @@ fn persistProviderModelTokenUsage(
         .map_err(AiServiceError::RequestFailed)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct TruncatedToolRoundRecovery {
-    repairedContent: String,
-    appendedSuffix: String,
-    invalidatedToolNames: Vec<String>,
-}
-
+/// Resolves proxy wrappers to the concrete tool name shown to users and callbacks.
 fn resolveToolDisplayName(tool: &RuntimeAITool) -> String {
     if tool.name != "package_proxy" && tool.name != "proxy" {
         return tool.name.clone();
@@ -3055,68 +2844,6 @@ fn buildPackageProxyToolPrompt() -> ToolPrompt {
         ]),
         details: String::new(),
         notes: String::new(),
-    }
-}
-
-fn extractXmlAttributeValue(fragment: &str, name: &str) -> Option<String> {
-    attr_value(fragment, name)
-}
-
-fn extractTrailingPartialTag(fragment: &str) -> Option<String> {
-    let start = fragment.rfind('<')?;
-    let tail = &fragment[start..];
-    if tail.contains('>') {
-        None
-    } else {
-        Some(tail.to_string())
-    }
-}
-
-fn isPartialClosingTagFor(partial: &str, tagName: &str) -> bool {
-    let normalized = partial.trim_start().to_ascii_lowercase();
-    let target = format!("</{}", tagName.to_ascii_lowercase());
-    target.starts_with(&normalized) || normalized.starts_with(&target)
-}
-
-fn isPartialOpeningTagFor(partial: &str, tagName: &str) -> bool {
-    let normalized = partial.trim_start().to_ascii_lowercase();
-    if normalized.starts_with("</") {
-        return false;
-    }
-    let target = format!("<{}", tagName.to_ascii_lowercase());
-    target.starts_with(&normalized) || normalized.starts_with(&target)
-}
-
-fn completePartialClosingTag(partial: &str, tagName: &str) -> String {
-    let target = format!("</{tagName}>");
-    completePartialToken(partial, &target)
-}
-
-fn completePartialOpenTag(partial: &str, tagName: &str, defaultNameValue: &str) -> String {
-    let mut completed = partial.to_string();
-    if !completed.starts_with('<') {
-        completed.insert(0, '<');
-    }
-    if !completed
-        .to_ascii_lowercase()
-        .starts_with(&format!("<{}", tagName.to_ascii_lowercase()))
-    {
-        completed = format!("<{tagName}");
-    }
-    if !completed.to_ascii_lowercase().contains(" name=") {
-        completed.push_str(&format!(r#" name="{defaultNameValue}""#));
-    }
-    if !completed.ends_with('>') {
-        completed.push('>');
-    }
-    completed
-}
-
-fn completePartialToken(partial: &str, target: &str) -> String {
-    if target.starts_with(partial) {
-        target[partial.len()..].to_string()
-    } else {
-        target.to_string()
     }
 }
 

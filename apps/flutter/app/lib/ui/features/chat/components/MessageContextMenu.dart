@@ -308,7 +308,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     switch (action) {
       case _MessageMenuAction.copy:
         await Clipboard.setData(
-          ClipboardData(text: cleanMessageContent(widget.message.content)),
+          ClipboardData(text: cleanMessageContent(widget.message.displayText)),
         );
         break;
       case _MessageMenuAction.editAndResend:

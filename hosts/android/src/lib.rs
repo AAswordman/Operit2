@@ -55,9 +55,18 @@ pub fn createRuntimeHostManager(
     workspaceRoot: PathBuf,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
 ) -> HostManager {
+    let runtimeStorageWriteHost = Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
+        runtimeRoot.clone(),
+        workspaceRoot.clone(),
+    ));
     let runtimeStorageHost = Arc::new(AndroidRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
+    let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
+        runtimeStorageHost
+            .runtimeRootDir()
+            .expect("Android runtime storage root must be configured"),
+    ));
     HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
         Arc::new(AndroidFileSystemHost::new()),
         webVisitHost,
@@ -68,6 +77,8 @@ pub fn createRuntimeHostManager(
         runtimeSqliteHost,
     )
     .withHostSecretStore(hostSecretStore)
+    .withArchiveStagingHost(archiveStagingHost)
+    .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withLocalInferenceHost(Arc::new(AndroidLocalInferenceHost::new()))
     .withHostRuntimeEventSchedulerHost(Arc::new(AndroidHostRuntimeEventSchedulerHost::new()))
     .withHostRuntimeTaskSchedulerHost(Arc::new(AndroidHostRuntimeTaskSchedulerHost::new()))

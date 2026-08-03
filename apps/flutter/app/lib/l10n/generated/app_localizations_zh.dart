@@ -2171,6 +2171,17 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsAppearanceInputFloating => '悬浮输入框';
 
   @override
+  String get settingsAppearanceLongPastedTextAsAttachment => '将超长粘贴文本转为文件';
+
+  @override
+  String get settingsAppearanceLongPastedTextThreshold => '转换阈值';
+
+  @override
+  String settingsAppearanceLongPastedTextThresholdValue(int count) {
+    return '$count 个字符';
+  }
+
+  @override
   String get settingsAppearanceColorSection => '主题色';
 
   @override

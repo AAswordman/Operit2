@@ -8,7 +8,6 @@ pub struct MessageVariantEntity {
     pub chatId: String,
     pub messageTimestamp: i64,
     pub variantIndex: i32,
-    pub content: String,
     pub roleName: String,
     pub provider: String,
     pub modelName: String,
@@ -22,9 +21,15 @@ pub struct MessageVariantEntity {
 }
 
 impl MessageVariantEntity {
-    pub fn applyTo(&self, baseMessage: ChatMessage, variantCount: i32) -> ChatMessage {
+    /// Applies revision metadata and its selected parts to a base message.
+    pub fn applyTo(
+        &self,
+        baseMessage: ChatMessage,
+        parts: Vec<super::MessagePart::MessagePart>,
+        variantCount: i32,
+    ) -> ChatMessage {
         ChatMessage {
-            content: self.content.clone(),
+            parts,
             roleName: if self.roleName.is_empty() {
                 baseMessage.roleName
             } else {
@@ -57,7 +62,6 @@ impl MessageVariantEntity {
             chatId,
             messageTimestamp,
             variantIndex,
-            content: message.content,
             roleName: message.roleName,
             provider: message.provider,
             modelName: message.modelName,

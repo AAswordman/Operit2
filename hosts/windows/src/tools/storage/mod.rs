@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::ptr::null_mut;
 use std::slice;
@@ -104,6 +105,16 @@ impl RuntimeStorageHost for WindowsRuntimeStorageHost {
 
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
         Ok(fs::read(self.resolve(path)?)?)
+    }
+
+    /// Reads one bounded byte range from Windows runtime storage.
+    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        let mut file = fs::File::open(self.resolve(path)?)?;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut bytes = vec![0; length];
+        let count = file.read(&mut bytes)?;
+        bytes.truncate(count);
+        Ok(bytes)
     }
 
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {

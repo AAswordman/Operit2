@@ -2,13 +2,13 @@ use serde::{Deserialize, Serialize};
 
 use super::ChatMessage::ChatMessage;
 use super::ChatMessageDisplayMode::ChatMessageDisplayMode;
+use super::MessagePart::MessagePart;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageEntity {
     pub messageId: i64,
     pub chatId: String,
     pub sender: String,
-    pub content: String,
     pub timestamp: i64,
     pub orderIndex: i32,
     pub roleName: String,
@@ -27,10 +27,11 @@ pub struct MessageEntity {
 }
 
 impl MessageEntity {
-    pub fn toChatMessage(&self) -> ChatMessage {
+    /// Builds a chat message from stored metadata and ordered parts.
+    pub fn toChatMessage(&self, parts: Vec<MessagePart>) -> ChatMessage {
         ChatMessage {
             sender: self.sender.clone(),
-            content: self.content.clone(),
+            parts,
             timestamp: self.timestamp,
             roleName: self.roleName.clone(),
             selectedVariantIndex: self.selectedVariantIndex,
@@ -51,7 +52,6 @@ impl MessageEntity {
             },
             isFavorite: self.isFavorite,
             isVariantPreview: false,
-            contentStream: None,
         }
     }
 
@@ -65,7 +65,6 @@ impl MessageEntity {
             messageId,
             chatId,
             sender: message.sender,
-            content: message.content,
             timestamp: message.timestamp,
             orderIndex,
             roleName: message.roleName,

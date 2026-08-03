@@ -10,5 +10,7 @@ pub use operit_host_native_scheduler::NativeHostRuntimeEventSchedulerHost;
 pub use operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost;
 #[cfg(feature = "storage")]
 pub use operit_host_native_storage::NativeRuntimeStorageHost;
+#[cfg(feature = "storage")]
+pub use operit_host_native_storage::NativeArchiveStagingHost;
 #[cfg(feature = "terminal")]
 pub use operit_host_native_terminal::NativePtyTerminalHost;

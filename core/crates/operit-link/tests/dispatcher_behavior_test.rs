@@ -4,13 +4,30 @@ use async_trait::async_trait;
 use axum::body::{to_bytes, Bytes};
 use operit_link::{
     decodeLink, encodeLink, CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind,
-    CoreEventStream, CoreLinkClient, CoreLinkError, CoreLinkHttpDispatcher, CorePushItem,
-    CorePushRequest, CoreValue, CoreWatchRequest, LinkCallEnvelope, LinkPushItemResponse,
+    CoreEventStream, CoreLinkError, CoreLinkHttpDispatcher, CoreLinkPushSession,
+    CoreLinkTransportClient, CorePushItem, CorePushRequest, CoreValue, CoreWatchRequest,
+    LinkCallEnvelope, LinkPushItemResponse,
     LinkPushOpenEnvelope, LinkPushOpenResponse, LinkWatchEnvelope,
 };
 use tokio::sync::mpsc;
 
 struct TestCoreClient;
+
+/// Accepts test input values through the generic Link push session contract.
+struct TestPushSession;
+
+#[async_trait]
+impl CoreLinkPushSession for TestPushSession {
+    /// Accepts one test input value.
+    async fn send(&mut self, _value: CoreValue) -> Result<(), CoreLinkError> {
+        Ok(())
+    }
+
+    /// Completes the test input stream.
+    async fn close(self: Box<Self>) -> Result<(), CoreLinkError> {
+        Ok(())
+    }
+}
 
 /// Builds a string-keyed CoreValue map for dispatcher tests.
 fn core_map(entries: impl IntoIterator<Item = (&'static str, CoreValue)>) -> CoreValue {
@@ -23,7 +40,7 @@ fn core_map(entries: impl IntoIterator<Item = (&'static str, CoreValue)>) -> Cor
 }
 
 #[async_trait]
-impl CoreLinkClient for TestCoreClient {
+impl CoreLinkTransportClient for TestCoreClient {
     /// Executes a deterministic test call response.
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
         CoreCallResponse::ok(
@@ -59,6 +76,15 @@ impl CoreLinkClient for TestCoreClient {
             })
             .unwrap();
         Ok(CoreEventStream::new(receiver))
+    }
+
+    /// Opens a test input stream without translating items into calls.
+    #[allow(non_snake_case)]
+    async fn openPush(
+        &mut self,
+        _request: CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        Ok(Box::new(TestPushSession))
     }
 }
 

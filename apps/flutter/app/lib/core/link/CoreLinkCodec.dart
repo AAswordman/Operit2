@@ -48,10 +48,11 @@ Uint8List encodeNativeCoreCallRequest(CoreCallRequest request) {
 /// Encodes a CoreProxy push-open request using the compact native tuple format.
 Uint8List encodeNativeCorePushOpenRequest(CorePushRequest request) {
   final writer = _CoreLinkMessagePackWriter();
-  writer.writeArrayHeader(3);
+  writer.writeArrayHeader(4);
   writer.writeValue(request.requestId);
   _writeNativeCorePath(writer, request.targetPath);
   writer.writeValue(request.methodName);
+  writer.writeValue(request.args);
   return writer.takeBytes();
 }
 

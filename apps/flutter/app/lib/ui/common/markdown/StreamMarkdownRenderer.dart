@@ -38,6 +38,7 @@ class StreamMarkdownRenderer extends StatefulWidget {
     this.initialThinkingExpanded = false,
     this.allowExpandedThinkingFullHeight = false,
     this.selectionRoot = true,
+    this.onContentReady,
   });
 
   final String content;
@@ -53,6 +54,7 @@ class StreamMarkdownRenderer extends StatefulWidget {
   final bool initialThinkingExpanded;
   final bool allowExpandedThinkingFullHeight;
   final bool selectionRoot;
+  final VoidCallback? onContentReady;
 
   @override
   State<StreamMarkdownRenderer> createState() => _StreamMarkdownRendererState();
@@ -96,6 +98,10 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         staticContentChanged) {
       _rendererId = nextRendererId;
       _startCurrentContent();
+    } else if (oldWidget.onContentReady != widget.onContentReady &&
+        widget.contentStream == null &&
+        _rendererState.streamParsingCompletedSuccessfully) {
+      _notifyContentReady(_startGeneration);
     }
   }
 
@@ -112,6 +118,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
   }
 
   void _startCurrentContent() {
+    final generation = ++_startGeneration;
     _subscription?.cancel();
     _renderTimer?.cancel();
     _renderTimer = null;
@@ -125,6 +132,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       _rendererState.xmlNodeStreams.clear();
       _rendererState.xmlMarkdownEventStreams.clear();
       _streamDone = true;
+      _notifyContentReady(generation);
       return;
     }
 
@@ -144,13 +152,13 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
               )] =
               true;
         }
+        _notifyContentReady(generation);
         return;
       }
-      _loadStaticContent(widget.content, ++_startGeneration);
+      _loadStaticContent(widget.content, generation);
       return;
     }
 
-    _startGeneration++;
     _synchronizeRenderNodes(isStreaming: true);
     _subscribe(stream);
   }
@@ -175,6 +183,23 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
           true;
     }
     setState(() {});
+    _notifyContentReady(generation);
+  }
+
+  /// Reports static render readiness after its completed nodes have painted once.
+  void _notifyContentReady(int generation) {
+    final callback = widget.onContentReady;
+    if (callback == null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          generation != _startGeneration ||
+          widget.contentStream != null) {
+        return;
+      }
+      callback();
+    });
   }
 
   void _subscribe(Stream<Object> stream) {
@@ -890,9 +915,11 @@ class _AnimatedMarkdownNodeState extends State<_AnimatedMarkdownNode>
   }
 }
 
+/// Finds the final node that can own a visible streaming indicator.
 int _lastRenderableNodeIndex(List<MarkdownNodeStable> nodes) {
   for (var index = nodes.length - 1; index >= 0; index--) {
-    if (nodes[index].content.isNotEmpty) {
+    final node = nodes[index];
+    if (node.content.trim().isNotEmpty || node.children.isNotEmpty) {
       return index;
     }
   }

@@ -357,7 +357,7 @@ class ChatScreenContent extends StatelessWidget {
         _showTtsSnack(context, '角色卡匹配数量不是 1：$targetCharacterName');
         return;
       }
-      final text = cleanMessageContent(message.content);
+      final text = cleanMessageContent(message.displayText);
       if (text.isEmpty) {
         _showTtsSnack(context, '消息内容为空，无法生成语音');
         return;
@@ -404,7 +404,7 @@ class ChatScreenContent extends StatelessWidget {
     final selectedMessages = selectedMessageIndices.toList()..sort();
     final text = selectedMessages
         .map((index) => messages[index])
-        .map((message) => cleanMessageContent(message.content))
+        .map((message) => cleanMessageContent(message.displayText))
         .join('\n\n');
     await Clipboard.setData(ClipboardData(text: text));
   }

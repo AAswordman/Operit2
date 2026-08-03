@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::PreferencesDataStore::{
@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::dao::ChatDao::ChatDao;
 use crate::dao::MessageDao::MessageDao;
+use crate::dao::MessagePartDao::MessagePartDao;
 use crate::dao::MessageVariantDao::MessageVariantDao;
 use crate::db::AppDatabase::{AppDatabase, AppDatabaseError};
 use crate::sync::SqlChatSyncStore::{SqlChatSyncStore, SqlChatSyncStoreError};
@@ -21,6 +22,8 @@ use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use operit_model::MessageEntity::MessageEntity;
+use operit_model::MessagePart::MessagePart;
+use operit_model::MessagePartEntity::MessagePartEntity;
 use operit_model::MessageVariantEntity::MessageVariantEntity;
 use operit_model::OperitChatArchive::{
     OperitArchivedChat, OperitArchivedMessage, OperitArchivedMessageVariant, OperitChatArchive,
@@ -29,6 +32,41 @@ use operit_model::OperitChatArchive::{
 use serde::{Deserialize, Serialize};
 
 const LOCATOR_PREVIEW_CHAR_COUNT: i32 = 48;
+
+/// Builds persistence rows for every part in one message revision.
+fn messagePartEntities(
+    chatId: &str,
+    messageTimestamp: i64,
+    variantIndex: i32,
+    parts: &[MessagePart],
+) -> Vec<MessagePartEntity> {
+    parts
+        .iter()
+        .cloned()
+        .map(|part| {
+            MessagePartEntity::fromMessagePart(
+                chatId.to_string(),
+                messageTimestamp,
+                variantIndex,
+                part,
+            )
+        })
+        .collect()
+}
+
+/// Groups part rows by their owning message revision for repository persistence.
+fn groupMessagePartEntities(
+    parts: Vec<MessagePartEntity>,
+) -> BTreeMap<(i64, i32), Vec<MessagePartEntity>> {
+    let mut groups = BTreeMap::new();
+    for part in parts {
+        groups
+            .entry((part.messageTimestamp, part.variantIndex))
+            .or_insert_with(Vec::new)
+            .push(part);
+    }
+    groups
+}
 
 /// Error surface for chat history persistence and import/export operations.
 #[derive(Debug, Error)]
@@ -56,6 +94,7 @@ pub struct ChatHistoryManager {
     database: Arc<AppDatabase>,
     chatDao: ChatDao,
     messageDao: MessageDao,
+    messagePartDao: MessagePartDao,
     messageVariantDao: MessageVariantDao,
     syncStore: SqlChatSyncStore,
     currentChatIdDataStore: PreferencesDataStore,
@@ -114,6 +153,7 @@ impl ChatHistoryManager {
         let database = AppDatabase::getDatabase(paths.clone())?;
         let chatDao = database.chatDao();
         let messageDao = database.messageDao();
+        let messagePartDao = database.messagePartDao();
         let messageVariantDao = database.messageVariantDao();
         let syncStore = SqlChatSyncStore::new(paths.clone(), &database)?;
         let currentChatIdFlow = currentChatIdDataStore
@@ -143,6 +183,7 @@ impl ChatHistoryManager {
             database,
             chatDao,
             messageDao,
+            messagePartDao,
             messageVariantDao,
             syncStore,
             currentChatIdDataStore,
@@ -157,39 +198,69 @@ impl ChatHistoryManager {
         &self,
         messageEntities: Vec<MessageEntity>,
         variants: Vec<MessageVariantEntity>,
-    ) -> Vec<ChatMessage> {
-        let mut variantsByTimestamp: HashMap<i64, Vec<MessageVariantEntity>> = HashMap::new();
+        partEntities: Vec<MessagePartEntity>,
+    ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
+        let mut variantsByTimestamp = messageEntities
+            .iter()
+            .map(|message| (message.timestamp, Vec::<MessageVariantEntity>::new()))
+            .collect::<HashMap<_, _>>();
         for variant in variants {
             variantsByTimestamp
                 .entry(variant.messageTimestamp)
-                .or_default()
+                .or_insert_with(Vec::new)
                 .push(variant);
         }
         for variants in variantsByTimestamp.values_mut() {
             variants.sort_by_key(|variant| variant.variantIndex);
         }
 
+        let mut partsByRevision = HashMap::<(i64, i32), Vec<MessagePart>>::new();
+        for part in partEntities {
+            partsByRevision
+                .entry((part.messageTimestamp, part.variantIndex))
+                .or_insert_with(Vec::new)
+                .push(part.toMessagePart());
+        }
+        for parts in partsByRevision.values_mut() {
+            parts.sort_by_key(|part| part.sequence);
+        }
+
         messageEntities
             .into_iter()
             .map(|messageEntity| {
-                let baseMessage = messageEntity.toChatMessage();
+                let baseParts = partsByRevision
+                    .remove(&(messageEntity.timestamp, 0))
+                    .ok_or_else(|| {
+                        ChatHistoryManagerError::IllegalState(format!(
+                            "Missing base parts for message {}",
+                            messageEntity.timestamp
+                        ))
+                    })?;
+                let baseMessage = messageEntity.toChatMessage(baseParts);
                 let messageVariants = variantsByTimestamp
-                    .get(&messageEntity.timestamp)
-                    .cloned()
-                    .unwrap_or_default();
+                    .remove(&messageEntity.timestamp)
+                    .expect("every message must initialize a variant list");
                 let variantCount = messageVariants.len() as i32 + 1;
                 if messageEntity.selectedVariantIndex == 0 {
-                    ChatMessage {
+                    Ok(ChatMessage {
                         selectedVariantIndex: 0,
                         variantCount,
                         ..baseMessage
-                    }
+                    })
                 } else {
                     let selectedVariant = messageVariants
                         .iter()
                         .find(|variant| variant.variantIndex == messageEntity.selectedVariantIndex)
                         .expect("selected variant must exist for message");
-                    selectedVariant.applyTo(baseMessage, variantCount)
+                    let selectedParts = partsByRevision
+                        .remove(&(messageEntity.timestamp, selectedVariant.variantIndex))
+                        .ok_or_else(|| {
+                            ChatHistoryManagerError::IllegalState(format!(
+                                "Missing parts for message {} variant {}",
+                                messageEntity.timestamp, selectedVariant.variantIndex
+                            ))
+                        })?;
+                    Ok(selectedVariant.applyTo(baseMessage, selectedParts, variantCount))
                 }
             })
             .collect()
@@ -211,7 +282,8 @@ impl ChatHistoryManager {
         let variants = self
             .messageVariantDao
             .getVariantsForMessages(chatId, visibleTimestamps)?;
-        Ok(self.hydrateMessages(messageEntities, variants))
+        let parts = self.messagePartDao.getPartsForChat(chatId)?;
+        self.hydrateMessages(messageEntities, variants, parts)
     }
 
     /// Loads a chat history row with display-ready messages.
@@ -244,11 +316,31 @@ impl ChatHistoryManager {
         chatHistory: ChatHistory,
     ) -> ChatHistoryManagerResult<OperitArchivedChat> {
         let messageEntities = self.messageDao.getMessagesForChat(&chatHistory.id)?;
-        let mut variantsByTimestamp: HashMap<i64, Vec<MessageVariantEntity>> = HashMap::new();
+        let mut partsByRevision = self
+            .messagePartDao
+            .getPartsForChat(&chatHistory.id)?
+            .into_iter()
+            .fold(
+                HashMap::<(i64, i32), Vec<MessagePart>>::new(),
+                |mut groups, part| {
+                    groups
+                        .entry((part.messageTimestamp, part.variantIndex))
+                        .or_insert_with(Vec::new)
+                        .push(part.toMessagePart());
+                    groups
+                },
+            );
+        for parts in partsByRevision.values_mut() {
+            parts.sort_by_key(|part| part.sequence);
+        }
+        let mut variantsByTimestamp = messageEntities
+            .iter()
+            .map(|message| (message.timestamp, Vec::<MessageVariantEntity>::new()))
+            .collect::<HashMap<_, _>>();
         for variant in self.messageVariantDao.getVariantsForChat(&chatHistory.id)? {
             variantsByTimestamp
-                .entry(variant.messageTimestamp)
-                .or_default()
+                .get_mut(&variant.messageTimestamp)
+                .expect("every variant must reference a base message")
                 .push(variant);
         }
         for variants in variantsByTimestamp.values_mut() {
@@ -259,15 +351,23 @@ impl ChatHistoryManager {
             .map(|messageEntity| {
                 let messageVariants = variantsByTimestamp
                     .remove(&messageEntity.timestamp)
-                    .unwrap_or_default();
+                    .expect("every archived message must initialize a variant list");
+                let baseParts = partsByRevision
+                    .remove(&(messageEntity.timestamp, 0))
+                    .expect("every archived message must have base parts");
                 OperitArchivedMessage {
                     baseMessage: ChatMessage {
                         variantCount: messageVariants.len() as i32 + 1,
-                        ..messageEntity.toChatMessage()
+                        ..messageEntity.toChatMessage(baseParts)
                     },
                     variants: messageVariants
                         .into_iter()
-                        .map(OperitArchivedMessageVariant::fromEntity)
+                        .map(|variant| {
+                            let parts = partsByRevision
+                                .remove(&(messageEntity.timestamp, variant.variantIndex))
+                                .expect("every archived variant must have parts");
+                            OperitArchivedMessageVariant::fromEntity(variant, parts)
+                        })
                         .collect(),
                 }
             })
@@ -342,28 +442,37 @@ impl ChatHistoryManager {
     fn saveChatHistoryInternal(&self, history: ChatHistory) -> ChatHistoryManagerResult<()> {
         let chatEntity = ChatEntity::fromChatHistory(&history);
         self.chatDao.insertChat(chatEntity.clone())?;
+        self.messagePartDao.deleteAllPartsForChat(&chatEntity.id)?;
         self.messageDao.deleteAllMessagesForChat(&chatEntity.id)?;
         self.messageVariantDao
             .deleteAllVariantsForChat(&chatEntity.id)?;
 
-        let messageEntities = history
-            .messages
-            .into_iter()
-            .enumerate()
-            .map(|(index, message)| {
-                MessageEntity::fromChatMessage(
-                    chatEntity.id.clone(),
-                    ChatMessage {
-                        selectedVariantIndex: 0,
-                        variantCount: 1,
-                        ..message
-                    },
-                    index as i32,
-                    0,
-                )
-            })
-            .collect::<Vec<_>>();
+        let mut messageEntities = Vec::new();
+        let mut partEntities = Vec::new();
+        for (index, message) in history.messages.into_iter().enumerate() {
+            let message = ChatMessage {
+                selectedVariantIndex: 0,
+                variantCount: 1,
+                ..message
+            };
+            partEntities.extend(messagePartEntities(
+                &chatEntity.id,
+                message.timestamp,
+                0,
+                &message.parts,
+            ));
+            messageEntities.push(MessageEntity::fromChatMessage(
+                chatEntity.id.clone(),
+                message,
+                index as i32,
+                0,
+            ));
+        }
         self.messageDao.insertMessages(messageEntities)?;
+        for ((timestamp, variantIndex), parts) in groupMessagePartEntities(partEntities) {
+            self.messagePartDao
+                .replaceParts(&chatEntity.id, timestamp, variantIndex, parts)?;
+        }
         Ok(())
     }
 
@@ -454,10 +563,12 @@ impl ChatHistoryManager {
             .map_err(ChatHistoryManagerError::IllegalArgument)?;
         self.chatDao
             .insertChat(ChatEntity::fromChatHistory(&history))?;
+        self.messagePartDao.deleteAllPartsForChat(&chatId)?;
         self.messageDao.deleteAllMessagesForChat(&chatId)?;
         self.messageVariantDao.deleteAllVariantsForChat(&chatId)?;
 
         let mut variants = Vec::new();
+        let mut partEntities = Vec::new();
         let messages = archivedChat
             .messages
             .into_iter()
@@ -465,13 +576,29 @@ impl ChatHistoryManager {
             .map(|(index, archivedMessage)| {
                 let baseMessage = archivedMessage.baseMessage;
                 for variant in archivedMessage.variants {
+                    partEntities.extend(messagePartEntities(
+                        &chatId,
+                        baseMessage.timestamp,
+                        variant.variantIndex,
+                        &variant.parts,
+                    ));
                     variants.push(variant.toEntity(chatId.clone(), baseMessage.timestamp));
                 }
+                partEntities.extend(messagePartEntities(
+                    &chatId,
+                    baseMessage.timestamp,
+                    0,
+                    &baseMessage.parts,
+                ));
                 MessageEntity::fromChatMessage(chatId.clone(), baseMessage, index as i32, 0)
             })
             .collect::<Vec<_>>();
         self.messageDao.insertMessages(messages)?;
         self.messageVariantDao.insertVariants(variants)?;
+        for ((timestamp, variantIndex), parts) in groupMessagePartEntities(partEntities) {
+            self.messagePartDao
+                .replaceParts(&chatId, timestamp, variantIndex, parts)?;
+        }
         self.recordChatSnapshot(&chatId)?;
         Ok(())
     }
@@ -500,6 +627,17 @@ impl ChatHistoryManager {
         let messageEntity =
             MessageEntity::fromChatMessage(chatId.to_string(), messageToPersist.clone(), 0, 0);
         self.messageDao.insertMessage(messageEntity)?;
+        self.messagePartDao.replaceParts(
+            chatId,
+            messageToPersist.timestamp,
+            0,
+            messagePartEntities(
+                chatId,
+                messageToPersist.timestamp,
+                0,
+                &messageToPersist.parts,
+            ),
+        )?;
         self.touchChatMetadata(chatId)?;
         self.recordMessageSnapshot(chatId, messageToPersist.timestamp)?;
         Ok(messageToPersist)
@@ -735,6 +873,8 @@ impl ChatHistoryManager {
 
     /// Deletes one message and records sync deletion state.
     pub fn deleteMessage(&self, chatId: String, timestamp: i64) -> ChatHistoryManagerResult<()> {
+        self.messagePartDao
+            .deletePartsForMessageTimestamp(&chatId, timestamp)?;
         self.messageVariantDao
             .deleteVariantsForMessage(&chatId, timestamp)?;
         self.messageDao
@@ -771,6 +911,8 @@ impl ChatHistoryManager {
         }
         self.messageVariantDao
             .deleteVariant(&chatId, messageTimestamp, variantIndex)?;
+        self.messagePartDao
+            .deletePartsForMessage(&chatId, messageTimestamp, variantIndex)?;
         if baseMessage.selectedVariantIndex == variantIndex {
             self.messageDao
                 .updateSelectedVariantIndex(&chatId, messageTimestamp, 0)?;
@@ -793,6 +935,7 @@ impl ChatHistoryManager {
         if let Some(existingMessage) = existingMessage {
             if message.selectedVariantIndex > 0 {
                 let messageTimestamp = message.timestamp;
+                let parts = message.parts.clone();
                 let existingVariant = self
                     .messageVariantDao
                     .getVariantForMessage(&chatId, message.timestamp, message.selectedVariantIndex)?
@@ -811,6 +954,12 @@ impl ChatHistoryManager {
                         message,
                         existingVariant.variantId,
                     ))?;
+                self.messagePartDao.replaceParts(
+                    &chatId,
+                    messageTimestamp,
+                    selectedVariantIndex,
+                    messagePartEntities(&chatId, messageTimestamp, selectedVariantIndex, &parts),
+                )?;
                 self.messageDao.updateSelectedVariantIndex(
                     &chatId,
                     existingMessage.timestamp,
@@ -822,8 +971,8 @@ impl ChatHistoryManager {
             }
 
             let messageTimestamp = message.timestamp;
-            let shouldUpdateChatMetadata = message.contentStream.is_none()
-                || (existingMessage.content.is_empty() && !message.content.is_empty());
+            let shouldUpdateChatMetadata = message.sender != "ai" || message.completedAt > 0;
+            let parts = message.parts.clone();
             let updatedMessageEntity = MessageEntity::fromChatMessage(
                 chatId.clone(),
                 message,
@@ -831,14 +980,27 @@ impl ChatHistoryManager {
                 existingMessage.messageId,
             );
             self.messageDao.updateMessage(updatedMessageEntity)?;
+            self.messagePartDao.replaceParts(
+                &chatId,
+                messageTimestamp,
+                0,
+                messagePartEntities(&chatId, messageTimestamp, 0, &parts),
+            )?;
             if shouldUpdateChatMetadata {
                 self.touchChatMetadata(&chatId)?;
             }
             self.recordMessageSnapshot(&chatId, messageTimestamp)?;
         } else {
             let messageTimestamp = message.timestamp;
+            let parts = message.parts.clone();
             let messageEntity = MessageEntity::fromChatMessage(chatId.clone(), message, 0, 0);
             self.messageDao.insertMessage(messageEntity)?;
+            self.messagePartDao.replaceParts(
+                &chatId,
+                messageTimestamp,
+                0,
+                messagePartEntities(&chatId, messageTimestamp, 0, &parts),
+            )?;
             self.touchChatMetadata(&chatId)?;
             self.recordMessageSnapshot(&chatId, messageTimestamp)?;
         }
@@ -888,6 +1050,7 @@ impl ChatHistoryManager {
             .getVariantsForMessage(&chatId, messageTimestamp)?
             .len() as i32
             + 1;
+        let parts = message.parts.clone();
         self.messageVariantDao
             .insertVariant(MessageVariantEntity::fromChatMessage(
                 chatId.clone(),
@@ -900,6 +1063,12 @@ impl ChatHistoryManager {
                 },
                 0,
             ))?;
+        self.messagePartDao.replaceParts(
+            &chatId,
+            messageTimestamp,
+            nextVariantIndex,
+            messagePartEntities(&chatId, messageTimestamp, nextVariantIndex, &parts),
+        )?;
         self.messageDao
             .updateSelectedVariantIndex(&chatId, messageTimestamp, nextVariantIndex)?;
         self.touchChatMetadata(&chatId)?;
@@ -945,6 +1114,7 @@ impl ChatHistoryManager {
         chatId: String,
         timestamp: i64,
     ) -> ChatHistoryManagerResult<()> {
+        self.messagePartDao.deletePartsFrom(&chatId, timestamp)?;
         self.messageVariantDao
             .deleteVariantsFrom(&chatId, timestamp)?;
         self.messageDao.deleteMessagesFrom(&chatId, timestamp)?;
@@ -955,6 +1125,7 @@ impl ChatHistoryManager {
 
     /// Deletes every message and variant in a chat.
     pub fn clearChatMessages(&self, chatId: String) -> ChatHistoryManagerResult<()> {
+        self.messagePartDao.deleteAllPartsForChat(&chatId)?;
         self.messageVariantDao.deleteAllVariantsForChat(&chatId)?;
         self.messageDao.deleteAllMessagesForChat(&chatId)?;
         self.touchChatMetadata(&chatId)?;
@@ -1212,6 +1383,11 @@ impl ChatHistoryManager {
                 upToMessageTimestamp,
             )?;
             self.messageVariantDao.copyVariantsToChat(
+                &parentChatId,
+                &branchEntity.id,
+                upToMessageTimestamp,
+            )?;
+            self.messagePartDao.copyPartsToChat(
                 &parentChatId,
                 &branchEntity.id,
                 upToMessageTimestamp,

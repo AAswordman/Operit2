@@ -543,6 +543,34 @@ workspace 位于 root/workspaces，不属于 runtime/ 子树
 raw snapshot 当前导出 runtime/ 子树
 ```
 
+#### 3.6.1.1 大对象与归档 Host 边界
+
+业务层只能使用 `RuntimeStorageHost` 的相对路径。大文件写入使用
+`RuntimeStorageWriteHost` 的顺序 session，完成后由 host 原子发布；归档输入使用
+`ArchiveStagingHost`，其生命周期由 `ArchiveTransferManager` 绑定到 Core Link push。
+这两个 host 不属于 `OperitApplication` 的业务状态，也不由 Flutter 保存。
+
+```text
+Flutter / CLI / Web input stream
+  -> Core Link push
+  -> runtime owner ArchiveTransferManager
+  -> owner ArchiveStagingHost
+  -> portable ZIP/Operit1 parser
+  -> RuntimeStorageWriteHost / RuntimeSqliteHost / repository
+```
+
+`Operit1SnapshotArchive` 只接收范围可读的 `ArchiveSource`；DataStore、manifest 和
+LMDB 记录都有明确大小上限。SQLite 迁移先通过 `RuntimeStorageWriteHost` 写入相对
+路径，再通过 `RuntimeSqliteHost` 打开，迁移器不允许使用 `std::fs`、`rusqlite`
+或 `lmdb` 的物理路径 API。工作区目标统一写入 `workspaces/`，runtime 目标统一写入
+`runtime/`。
+
+Web runtime 的 OPFS data/index 文件只由 dedicated runtime worker 持有
+`SyncAccessHandle`。runtime storage、runtime SQLite、runtime/workspace 文件系统和
+归档 staging 使用同一 worker-owned OPFS 命名空间；主线程不得维护一份可写的完整
+runtime storage 镜像。worker 与主线程之间的 host RPC 使用 `SharedArrayBuffer`，部署
+页面必须同时发送 COOP/COEP 响应头并在 `crossOriginIsolated` 环境运行。
+
 敏感配置：
 
 ```text
@@ -1327,8 +1355,10 @@ POST /link/session
 Push stream 语义：
 
 ```text
-push 是 watch 的方向对偶，由客户端持有 CorePushSink。
-CorePushSink.add 发送有序参数 item，close 结束逻辑流。
+push 是 watch 的方向对偶。服务以 `ReverseStream<T>` 声明输入，生成的 Dart client
+以 `Stream<T>` 暴露，生成的 Rust client 保持 typed `ReverseStream<T>`。
+CorePushSink.add/close 只存在于 bridge/link carrier，用于传输有序 item 并结束逻辑流。
+业务调用方不得直接构造 CorePushRequest、CorePushItem 或循环调用 call。
 同一个 pushId 内 sequence 单调递增并保持消费顺序。
 高频输入使用独立 WebSocket carrier，不通过反复 /link/call 传输。
 push 与 watch 使用不同物理通道，避免大帧阻塞输入。

@@ -6,9 +6,49 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
+import 'package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart';
 import 'package:operit2/ui/features/chat/components/part/ThinkToolsXmlNodeGrouper.dart';
+import 'package:operit2/ui/features/chat/components/part/ToolDisplayComponents.dart';
 
 void main() {
+  group('MarkdownEventNodeBuilder streaming cursor', () {
+    test(
+      'keeps trailing empty and line-break nodes from owning the cursor',
+      () {
+        final state = StreamMarkdownRendererState();
+        state.eventBuilder.startBlock(
+          blockId: 1,
+          type: MarkdownNodeType.xmlBlock,
+          headerLevel: null,
+        );
+        state.eventBuilder.appendBlock(
+          blockId: 1,
+          content: '<tool name="read_file"></tool>',
+        );
+        state.eventBuilder.startBlock(
+          blockId: 2,
+          type: MarkdownNodeType.htmlBreak,
+          headerLevel: null,
+        );
+        state.eventBuilder.startBlock(
+          blockId: 3,
+          type: MarkdownNodeType.plainText,
+          headerLevel: null,
+        );
+
+        final nodes = state.eventBuilder.toStableNodes(isStreaming: true);
+
+        expect(nodes, hasLength(3));
+        expect(nodes.first.isStreaming, isTrue);
+        expect(nodes[1].content, '\n');
+        expect(nodes[1].isStreaming, isFalse);
+        expect(nodes.last.content, isEmpty);
+        expect(nodes.last.isStreaming, isFalse);
+        state.reset();
+      },
+    );
+  });
+
   group('ThinkToolsXmlNodeGrouper.group', () {
     test(
       'all mode collapses a thinking block with at least two tool calls',
@@ -128,10 +168,19 @@ void main() {
             2,
             '<tool name="read_file"><param name="path">README.md</param></tool>',
           ),
-        );
+        )
+        ..add(_markdownBlockStart(3, nodeType: 'HtmlBreak'));
       await tester.pump(const Duration(milliseconds: 250));
 
       expect(find.textContaining('read_file'), findsWidgets);
+      expect(find.byType(StreamingCursor), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(CompactToolDisplay),
+          matching: find.byType(StreamingCursor),
+        ),
+        findsOneWidget,
+      );
 
       await controller.close();
     });

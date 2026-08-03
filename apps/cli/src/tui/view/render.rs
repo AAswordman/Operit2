@@ -172,9 +172,6 @@ impl OperitTui {
         let thinking_line = thinking_indicator_line(text.thinking());
         let content_width = area.width.saturating_sub(2).max(1) as usize;
         let current_chat_id = self.current_chat_id_cache.clone();
-        let stream_markdown_state = current_chat_id
-            .as_ref()
-            .and_then(|chat_id| self.response_stream_markdown_by_chat_id.get(chat_id));
         let mut transcript_lines = render_transcript_lines(
             &messages,
             current_chat_id.as_deref(),
@@ -184,7 +181,6 @@ impl OperitTui {
             content_width,
             &mut self.typewriter_state,
             &mut self.transcript_render_cache,
-            stream_markdown_state,
             text,
         );
         self.transcript_copy_lines = transcript_lines.iter().map(transcript_copy_line).collect();

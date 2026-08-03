@@ -70,6 +70,12 @@ pub mod MemorySearchConfig;
 pub mod MemorySearchDebugInfo;
 #[path = "MessageEntity.rs"]
 pub mod MessageEntity;
+#[path = "MessagePart.rs"]
+pub mod MessagePart;
+#[path = "MessagePartCodec.rs"]
+pub mod MessagePartCodec;
+#[path = "MessagePartEntity.rs"]
+pub mod MessagePartEntity;
 #[path = "MessageVariantEntity.rs"]
 pub mod MessageVariantEntity;
 #[path = "ModelCatalog.rs"]
@@ -86,6 +92,8 @@ pub mod OperitChatArchive;
 pub mod OperitNodeInfo;
 #[path = "PromptFunctionType.rs"]
 pub mod PromptFunctionType;
+#[path = "PendingQueueMessageItem.rs"]
+pub mod PendingQueueMessageItem;
 #[path = "PromptTag.rs"]
 pub mod PromptTag;
 #[path = "PromptTurn.rs"]
@@ -148,6 +156,9 @@ pub use MemoryExportModel::*;
 pub use MemorySearchConfig::*;
 pub use MemorySearchDebugInfo::*;
 pub use MessageEntity::*;
+pub use MessagePart::*;
+pub use MessagePartCodec::*;
+pub use MessagePartEntity::*;
 pub use MessageVariantEntity::*;
 pub use ModelCatalog::*;
 pub use ModelConfigData::*;
@@ -156,6 +167,7 @@ pub use OpenAIModels::*;
 pub use OperitChatArchive::*;
 pub use OperitNodeInfo::*;
 pub use PromptFunctionType::*;
+pub use PendingQueueMessageItem::*;
 pub use PromptTag::*;
 pub use PromptTurn::*;
 pub use SerializableColorScheme::*;

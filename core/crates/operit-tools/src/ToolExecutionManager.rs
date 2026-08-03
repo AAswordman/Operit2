@@ -472,6 +472,12 @@ impl ToolExecutionManager {
         ensureEndsWithNewline(content)
     }
 
+    /// Returns the concrete target carried by a proxy tool invocation.
+    pub(crate) fn resolveProxyTargetTool(tool: &AITool) -> AITool {
+        Self::resolveToolTarget(tool).tool
+    }
+
+    /// Resolves one proxy wrapper into its concrete target and display name.
     fn resolveToolTarget(tool: &AITool) -> ResolvedToolTarget {
         if tool.name != PACKAGE_PROXY_TOOL_NAME && tool.name != CLI_PROXY_TOOL_NAME {
             return ResolvedToolTarget {

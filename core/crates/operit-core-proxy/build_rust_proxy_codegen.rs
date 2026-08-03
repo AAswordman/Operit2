@@ -127,9 +127,78 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
         {
             output.push_str(&render_proxy_watch_method(object, method));
         }
+        for method in object
+            .methods
+            .iter()
+            .filter(|method| method.reverse_stream_protocol().is_some())
+        {
+            output.push_str(&render_proxy_reverse_stream_method(method));
+        }
         output.push_str(&render_proxy_watch_all_method(object));
         output.push_str("}\n\n");
     }
+    output
+}
+
+/// Renders one typed caller-to-runtime stream method for Rust proxy consumers.
+fn render_proxy_reverse_stream_method(method: &SourceMethod) -> String {
+    let protocol = method
+        .reverse_stream_protocol()
+        .expect("reverse stream protocol");
+    let params = method
+        .args
+        .iter()
+        .map(|arg| {
+            if arg.name == protocol.argument_name {
+                format!("mut {}: {}", arg.name, arg.ty)
+            } else {
+                format!("{}: {}", arg.name, arg.ty)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let params = if params.is_empty() {
+        String::new()
+    } else {
+        format!(", {params}")
+    };
+    let entries = method
+        .args
+        .iter()
+        .filter(|arg| arg.name != protocol.argument_name)
+        .map(|arg| {
+            format!(
+                "__core_args.insert({:?}.to_string(), {});",
+                arg.name,
+                render_proxy_arg_core_value_expr(arg),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let args = format!(
+        "{{ let mut __core_args = std::collections::BTreeMap::new(); {entries} operit_link::CoreValue::Map(__core_args) }}"
+    );
+    let input = &protocol.argument_name;
+    let mut output = render_cfg_attrs(method);
+    output.push_str(&render_doc_comments(method));
+    output.push_str(&format!(
+        "    pub async fn {}(&mut self{}) -> Result<(), operit_link::CoreLinkError> {{\n",
+        method.name, params
+    ));
+    output.push_str(&format!(
+        "        let request = operit_link::CorePushRequest::new(generated_proxy_request_id(), self.target_path.clone(), {:?}).withArgs({});\n",
+        method.name, args
+    ));
+    output.push_str("        let mut sink = self.client.openPush(request).await?;\n");
+    output.push_str(&format!(
+        "        while let Some(item) = {}.recv().await {{\n",
+        input
+    ));
+    output.push_str("            let value = operit_link::toCoreValue(item).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_ARGS\", error.to_string()))?;\n");
+    output.push_str("            sink.send(value).await?;\n");
+    output.push_str("        }\n");
+    output.push_str("        sink.close().await\n");
+    output.push_str("    }\n\n");
     output
 }
 

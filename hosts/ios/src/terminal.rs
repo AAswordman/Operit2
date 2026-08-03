@@ -269,7 +269,9 @@ fn sessionEntry(value: &Value) -> HostResult<TerminalSessionListEntry> {
 fn terminalTypeName(value: &str) -> HostResult<String> {
     match value.trim() {
         SHELL_TERMINAL_TYPE => Ok(SHELL_TERMINAL_TYPE.to_string()),
-        other => Err(HostError::new(format!("unsupported iSH terminal type: {other}"))),
+        other => Err(HostError::new(format!(
+            "unsupported iSH terminal type: {other}"
+        ))),
     }
 }
 

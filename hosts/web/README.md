@@ -11,6 +11,7 @@ before constructing the web host structs.
 - `src/tools/browser/mod.rs` implements `WebVisitHost`.
 - `src/tools/runtime/mod.rs` implements `ManagedRuntimeHost`.
 - `src/tools/storage/mod.rs` implements `RuntimeStorageHost` and `RuntimeSqliteHost`.
+- `src/tools/archive/mod.rs` implements `ArchiveStagingHost` through the runtime worker.
 - `src/tools/system/mod.rs` implements `SystemOperationHost`.
 - `src/common.rs` contains the shared JS bridge and value conversion helpers.
 
@@ -39,11 +40,16 @@ are checked against pinned SHA-256 digests before being served by the applicatio
 The bridge values use the same field names as `operit-host-api`. Binary data is passed as
 `Uint8Array`. SQLite integers are passed as strings to preserve 64-bit values across JS.
 
-`localInference` executes installed Sherpa ONNX Web STT and TTS bundles. The
-browser host stores model files in IndexedDB, materializes model bundle files as
-Blob URLs, runs TTS in a module Worker, and returns the same local inference
-response types used by native hosts. The serving origin must provide COOP and
-COEP headers because Sherpa TTS uses `SharedArrayBuffer`.
+`localInference` executes installed Sherpa ONNX Web STT and TTS bundles. Runtime-owned
+files are stored in OPFS by the dedicated runtime worker; the host bridge never loads the
+complete runtime tree into a main-thread map. The serving origin must provide COOP and
+COEP headers because the runtime worker host RPC uses `SharedArrayBuffer`.
+
+Archive staging is also worker-owned OPFS. `createArchive` reserves the declared byte range,
+`appendArchive` writes ordered chunks, `sealArchive` verifies the exact length, and
+`readArchive` serves bounded ZIP-reader ranges. Browser file selection remains on the UI
+thread, but the selected `Blob` is read with bounded `openRead()` chunks and sent through
+Core Link push.
 
 ```ts
 type SqliteValue =

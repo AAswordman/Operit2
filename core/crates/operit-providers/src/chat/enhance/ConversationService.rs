@@ -140,21 +140,10 @@ impl ConversationService {
             });
         }
 
-        for (index, turn) in effective_chat_history.iter().enumerate() {
+        for turn in &effective_chat_history {
             match turn.kind {
                 PromptTurnKind::ASSISTANT => {
-                    let xml_tags = self.split_xml_tag(&turn.content);
-                    if xml_tags.is_empty() {
-                        prepared_history.push(turn.clone());
-                    } else {
-                        self.process_chat_message_with_tools(
-                            &turn.content,
-                            &xml_tags,
-                            &mut prepared_history,
-                            index,
-                            effective_chat_history.len(),
-                        );
-                    }
+                    prepared_history.push(turn.clone());
                 }
                 PromptTurnKind::TOOL_RESULT => {
                     prepared_history.push(PromptTurn {

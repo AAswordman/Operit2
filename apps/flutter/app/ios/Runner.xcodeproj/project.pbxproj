@@ -11,6 +11,7 @@
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
 		3D2A10012D000001003D2A10 /* AppleRuntimeChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10002D000001003D2A10 /* AppleRuntimeChannel.swift */; };
+		3D2A10112D000001003D2A10 /* AppleSnapshotImportInputChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10122D000001003D2A10 /* AppleSnapshotImportInputChannel.swift */; };
 		3D2A10032D000001003D2A10 /* AppleLocalInferenceRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10042D000001003D2A10 /* AppleLocalInferenceRunner.swift */; };
 		3D2A10052D000001003D2A10 /* AppleLocalInferenceBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10062D000001003D2A10 /* AppleLocalInferenceBridge.mm */; };
 		3D2A10072D000001003D2A10 /* sherpa-onnx.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3D2A10082D000001003D2A10 /* sherpa-onnx.xcframework */; };
@@ -55,6 +56,7 @@
 		331C8081294A63A400263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
 		3D2A10002D000001003D2A10 /* AppleRuntimeChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleRuntimeChannel.swift; sourceTree = "<group>"; };
+		3D2A10122D000001003D2A10 /* AppleSnapshotImportInputChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSnapshotImportInputChannel.swift; sourceTree = "<group>"; };
 		3D2A10022D000001003D2A10 /* OperitFlutterBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = OperitFlutterBridge.h; sourceTree = "<group>"; };
 		3D2A10042D000001003D2A10 /* AppleLocalInferenceRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleLocalInferenceRunner.swift; sourceTree = "<group>"; };
 		3D2A10062D000001003D2A10 /* AppleLocalInferenceBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = AppleLocalInferenceBridge.mm; sourceTree = "<group>"; };
@@ -152,6 +154,7 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				3D2A10002D000001003D2A10 /* AppleRuntimeChannel.swift */,
+				3D2A10122D000001003D2A10 /* AppleSnapshotImportInputChannel.swift */,
 				3D2A10042D000001003D2A10 /* AppleLocalInferenceRunner.swift */,
 				3D2A10062D000001003D2A10 /* AppleLocalInferenceBridge.mm */,
 				3D2A10252D000001003D2A10 /* IshTerminalBridge.mm */,
@@ -354,6 +357,7 @@
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				3D2A10012D000001003D2A10 /* AppleRuntimeChannel.swift in Sources */,
+				3D2A10112D000001003D2A10 /* AppleSnapshotImportInputChannel.swift in Sources */,
 				3D2A10032D000001003D2A10 /* AppleLocalInferenceRunner.swift in Sources */,
 				3D2A10052D000001003D2A10 /* AppleLocalInferenceBridge.mm in Sources */,
 				3D2A10242D000001003D2A10 /* IshTerminalBridge.mm in Sources */,

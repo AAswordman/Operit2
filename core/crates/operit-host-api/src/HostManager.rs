@@ -5,7 +5,9 @@ use crate::{
     ComposeDslWebViewHost, FileSystemHost, HostEnvironmentDescriptor, HostRuntimeEventHost,
     HostRuntimeEventSchedulerHost, HostRuntimeTaskSchedulerHost, HostSecretStore, HttpHost,
     LocalInferenceHost, ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost,
-    SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost, WebVisitHost,
+    RuntimeStorageWriteHost,
+    ArchiveStagingHost, SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost,
+    WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
@@ -63,6 +65,8 @@ pub struct HostManager {
     pub managedRuntimeHost: Option<Arc<dyn ManagedRuntimeHost>>,
     pub terminalHost: Option<Arc<dyn TerminalHost>>,
     pub runtimeStorageHost: Option<Arc<dyn RuntimeStorageHost>>,
+    pub runtimeStorageWriteHost: Option<Arc<dyn RuntimeStorageWriteHost>>,
+    pub archiveStagingHost: Option<Arc<dyn ArchiveStagingHost>>,
     pub runtimeSqliteHost: Option<Arc<dyn RuntimeSqliteHost>>,
     pub hostSecretStore: Option<Arc<dyn HostSecretStore>>,
     pub hostRuntimeEventHost: Option<Arc<dyn HostRuntimeEventHost>>,
@@ -91,6 +95,8 @@ impl HostManager {
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
+            runtimeStorageWriteHost: None,
+            archiveStagingHost: None,
             runtimeSqliteHost: None,
             hostSecretStore: None,
             hostRuntimeEventHost: None,
@@ -121,6 +127,8 @@ impl HostManager {
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
+            runtimeStorageWriteHost: None,
+            archiveStagingHost: None,
             runtimeSqliteHost: None,
             hostSecretStore: None,
             hostRuntimeEventHost: None,
@@ -154,6 +162,8 @@ impl HostManager {
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
+            runtimeStorageWriteHost: None,
+            archiveStagingHost: None,
             runtimeSqliteHost: None,
             hostSecretStore: None,
             hostRuntimeEventHost: None,
@@ -188,6 +198,8 @@ impl HostManager {
             managedRuntimeHost: None,
             terminalHost: None,
             runtimeStorageHost: None,
+            runtimeStorageWriteHost: None,
+            archiveStagingHost: None,
             runtimeSqliteHost: None,
             hostSecretStore: None,
             hostRuntimeEventHost: None,
@@ -226,6 +238,8 @@ impl HostManager {
             managedRuntimeHost: Some(managedRuntimeHost),
             terminalHost: None,
             runtimeStorageHost: Some(runtimeStorageHost),
+            runtimeStorageWriteHost: None,
+            archiveStagingHost: None,
             runtimeSqliteHost: Some(runtimeSqliteHost),
             hostSecretStore: None,
             hostRuntimeEventHost: None,
@@ -247,6 +261,26 @@ impl HostManager {
     #[allow(non_snake_case)]
     pub fn withHostSecretStore(mut self, hostSecretStore: Arc<dyn HostSecretStore>) -> Self {
         self.hostSecretStore = Some(hostSecretStore);
+        self
+    }
+
+    /// Adds platform-owned staged archive storage for streamed transfers.
+    #[allow(non_snake_case)]
+    pub fn withArchiveStagingHost(
+        mut self,
+        archiveStagingHost: Arc<dyn ArchiveStagingHost>,
+    ) -> Self {
+        self.archiveStagingHost = Some(archiveStagingHost);
+        self
+    }
+
+    /// Adds platform-owned sequential writers for large runtime storage files.
+    #[allow(non_snake_case)]
+    pub fn withRuntimeStorageWriteHost(
+        mut self,
+        runtimeStorageWriteHost: Arc<dyn RuntimeStorageWriteHost>,
+    ) -> Self {
+        self.runtimeStorageWriteHost = Some(runtimeStorageWriteHost);
         self
     }
 

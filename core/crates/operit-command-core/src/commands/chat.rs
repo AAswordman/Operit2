@@ -18,7 +18,6 @@ use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfig
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::services::ChatServiceCore::ChatServiceCore;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
-use operit_util::stream::Stream::Stream;
 
 /// Runs a synchronous action against the local main chat runtime core.
 fn with_main_chat_core<R>(
@@ -529,7 +528,7 @@ async fn send_chat_message_with_application(
 ) -> Result<ChatSendResult, String> {
     let beforeLastAiTimestamp =
         dispatch_chat_message_with_application(application, sendArgs).await?;
-    let (currentChatId, mut aiMessage) = with_main_chat_core(application, |core| {
+    let (currentChatId, aiMessage) = with_main_chat_core(application, |core| {
         let currentChatId = core
             .currentChatIdFlow()
             .value()
@@ -544,17 +543,7 @@ async fn send_chat_message_with_application(
             .clone();
         Ok::<_, String>((currentChatId, aiMessage))
     })??;
-    if let Some(mut stream) = aiMessage.contentStream.clone() {
-        let mut content = String::new();
-        stream
-            .collect(&mut |chunk| {
-                content.push_str(&chunk);
-            })
-            .await;
-        aiMessage.content = content;
-        aiMessage.contentStream = None;
-    }
-    aiMessage = wait_for_committed_ai_message(
+    let aiMessage = wait_for_committed_ai_message(
         application,
         &currentChatId,
         aiMessage.timestamp,
@@ -654,10 +643,7 @@ fn wait_for_committed_ai_message(
     loop {
         let result = with_main_chat_core(application, |core| {
             if let Some(message) = core.chatHistoryFlow().value().into_iter().find(|message| {
-                message.sender == "ai"
-                    && message.timestamp == timestamp
-                    && message.contentStream.is_none()
-                    && message.completedAt > 0
+                message.sender == "ai" && message.timestamp == timestamp && message.completedAt > 0
             }) {
                 return Ok(Some(message));
             }
@@ -680,7 +666,7 @@ fn wait_for_committed_ai_message(
 }
 
 fn print_chat_send_result(result: &ChatSendResult, output: &mut CoreCommandOutput) {
-    output.push_stdout(&result.aiMessage.content);
+    output.push_stdout(&result.aiMessage.displayText());
     output.push_stdout_line("");
     output.push_stderr_line(format!(
         "chat={} provider={} modelName={} inputTokens={} cachedInputTokens={} outputTokens={}",
@@ -790,7 +776,7 @@ fn print_chat_message(message: &ChatMessage, output: &mut CoreCommandOutput) {
     output.push_stdout_line(format!("completedAt={}", message.completedAt));
     output.push_stdout_line(format!("displayMode={:?}", message.displayMode));
     output.push_stdout_line(format!("isFavorite={}", message.isFavorite));
-    output.push_stdout_line(format!("content={}", message.content));
+    output.push_stdout_line(format!("content={}", message.displayText()));
 }
 
 fn nonBlankString(value: String) -> Option<String> {

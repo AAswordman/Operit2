@@ -1,8 +1,18 @@
 use async_trait::async_trait;
 
 use crate::protocol::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError, CoreWatchRequest,
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError, CorePushRequest,
+    CoreValue, CoreWatchRequest,
 };
+
+#[async_trait]
+pub trait CoreLinkPushSession: Send {
+    /// Sends one typed input value through the opened Link stream.
+    async fn send(&mut self, value: CoreValue) -> Result<(), CoreLinkError>;
+
+    /// Closes the input stream and waits for its target method to finish.
+    async fn close(self: Box<Self>) -> Result<(), CoreLinkError>;
+}
 
 #[async_trait(?Send)]
 pub trait CoreLinkClient {
@@ -18,6 +28,13 @@ pub trait CoreLinkClient {
 
     /// Opens a stream of events for a watched core path.
     async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError>;
+
+    /// Opens a caller-owned input stream for one schema-declared method.
+    #[allow(non_snake_case)]
+    async fn openPush(
+        &mut self,
+        request: CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError>;
 }
 
 #[async_trait(?Send)]
@@ -48,6 +65,13 @@ pub trait CoreLinkTransportClient: Send {
 
     /// Opens one watch stream through the transport boundary.
     async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError>;
+
+    /// Opens one caller-owned input stream through the transport boundary.
+    #[allow(non_snake_case)]
+    async fn openPush(
+        &mut self,
+        request: CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError>;
 }
 
 #[async_trait(?Send)]
@@ -69,5 +93,13 @@ where
 
     async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         self.as_mut().watch(request).await
+    }
+
+    #[allow(non_snake_case)]
+    async fn openPush(
+        &mut self,
+        request: CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        self.as_mut().openPush(request).await
     }
 }

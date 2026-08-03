@@ -507,8 +507,8 @@ impl StandardChatManagerTool {
                         .into_iter()
                         .filter(|message| message.sender != "summary")
                         .map(|message| ChatMessageInfo {
+                            content: message.displayText(),
                             sender: message.sender,
-                            content: message.content,
                             timestamp: message.timestamp,
                             roleName: message.roleName,
                             provider: message.provider,
@@ -804,7 +804,7 @@ fn latestAssistantMessage(chatId: &str) -> Option<String> {
             messages
                 .into_iter()
                 .find(|message| message.sender != "user" && message.sender != "summary")
-                .map(|message| message.content)
+                .map(|message| message.displayText())
         })
 }
 

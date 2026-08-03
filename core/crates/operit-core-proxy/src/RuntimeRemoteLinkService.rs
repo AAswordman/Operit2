@@ -1,13 +1,13 @@
+#[cfg(not(target_arch = "wasm32"))]
+use crate::RuntimeRemoteLinkDiscovery::discoverRemoteDevices;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::{HostRuntimeTaskSchedulerHost, TimeUtils::currentTimeMillis};
 use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CoreLinkSharedClient, CoreValue};
 use operit_link_access::{
     LinkAccessAutoSyncConfig, LinkAccessRoute, LinkAccessRoutingConfig, LinkAccessStore,
-    PairedRemoteSession, PairedRemoteSessionRecord, PendingOutboundPairingRecord,
-    RemoteDeviceInfo, RemoteLinkClient,
+    PairedRemoteSession, PairedRemoteSessionRecord, PendingOutboundPairingRecord, RemoteDeviceInfo,
+    RemoteLinkClient,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use crate::RuntimeRemoteLinkDiscovery::discoverRemoteDevices;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -118,7 +118,9 @@ impl RuntimeRemoteLinkService {
 
     /// Returns every paired remote session owned by the local runtime.
     #[allow(non_snake_case)]
-    pub fn pairedRemoteSessions(&self) -> Result<BTreeMap<String, PairedRemoteSessionRecord>, String> {
+    pub fn pairedRemoteSessions(
+        &self,
+    ) -> Result<BTreeMap<String, PairedRemoteSessionRecord>, String> {
         self.linkAccessStore.outboundSessions()
     }
 
@@ -138,7 +140,9 @@ impl RuntimeRemoteLinkService {
                 config.autoSyncRemoteNames.push(name);
             }
         } else {
-            config.autoSyncRemoteNames.retain(|existing| existing != &name);
+            config
+                .autoSyncRemoteNames
+                .retain(|existing| existing != &name);
         }
         config.updatedAt = currentTimeMillis();
         self.linkAccessStore.saveAutoSyncConfig(config.clone())?;
@@ -188,7 +192,8 @@ impl RuntimeRemoteLinkService {
         let devices = receiver
             .await
             .map_err(|_| "runtime discovery task ended before producing a result".to_string())??;
-        self.refreshDiscoveredPairedRemoteEndpoints(&devices).await?;
+        self.refreshDiscoveredPairedRemoteEndpoints(&devices)
+            .await?;
         Ok(devices)
     }
 
@@ -212,9 +217,11 @@ impl RuntimeRemoteLinkService {
             return Err(format!("paired remote runtime does not exist: {name}"));
         }
         let route = self.linkAccessStore.initializeRoutingConfig()?;
-        if route.route == (LinkAccessRoute::Remote {
-            sessionName: name.clone(),
-        }) {
+        if route.route
+            == (LinkAccessRoute::Remote {
+                sessionName: name.clone(),
+            })
+        {
             self.linkAccessStore
                 .saveRoutingConfig(LinkAccessRoutingConfig {
                     route: LinkAccessRoute::Local,
@@ -222,7 +229,9 @@ impl RuntimeRemoteLinkService {
                 })?;
         }
         let mut autoSync = self.linkAccessStore.initializeAutoSyncConfig()?;
-        autoSync.autoSyncRemoteNames.retain(|existing| existing != &name);
+        autoSync
+            .autoSyncRemoteNames
+            .retain(|existing| existing != &name);
         autoSync.updatedAt = currentTimeMillis();
         self.linkAccessStore.saveAutoSyncConfig(autoSync)?;
         self.linkAccessStore.removeOutboundSession(&name)
@@ -250,7 +259,10 @@ impl RuntimeRemoteLinkService {
         }
         self.linkAccessStore.savePendingOutboundPairing(
             state.pairingId.clone(),
-            PendingOutboundPairingRecord { baseUrl, state: state.clone() },
+            PendingOutboundPairingRecord {
+                baseUrl,
+                state: state.clone(),
+            },
         )?;
         Ok(RuntimeRemotePairStartResult {
             pairingId: state.pairingId,
@@ -298,7 +310,8 @@ impl RuntimeRemoteLinkService {
                 route: LinkAccessRoute::Remote { sessionName: name },
                 updatedAt: currentTimeMillis(),
             })?;
-        self.linkAccessStore.removePendingOutboundPairing(&pairingId)?;
+        self.linkAccessStore
+            .removePendingOutboundPairing(&pairingId)?;
         Ok(record)
     }
 
@@ -463,10 +476,7 @@ impl RuntimeRemoteLinkService {
 
 /// Schedules one Host-owned automatic sync tick and no persistent executor-owned timer.
 #[allow(non_snake_case)]
-fn scheduleAutoSyncTick(
-    service: RuntimeRemoteLinkService,
-    delayMs: u64,
-) -> Result<(), String> {
+fn scheduleAutoSyncTick(service: RuntimeRemoteLinkService, delayMs: u64) -> Result<(), String> {
     defaultHostRuntimeTaskSchedulerHost()
         .scheduleDelayedHostRuntimeTask(
             "runtime-remote-auto-sync-tick",

@@ -5,6 +5,7 @@ use operit_util::streamnative::NativeMarkdownStreamOperators::NativeMarkdownStre
 use operit_util::ChatMarkupRegex::{attr_value, tag_body, ChatMarkupRegex};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
@@ -520,15 +521,27 @@ fn render_tool_xml(
     });
     let body = tag_body(content, &tag_name).unwrap_or("").trim();
     if is_result {
-        render_tool_result_xml(&name, status.as_deref(), body, content_width, lines);
+        lines.extend(render_tool_result_part(
+            status.as_deref(),
+            body,
+            content_width,
+        ));
         return;
     }
 
     let params = extract_param_pairs(body);
+    lines.extend(render_tool_call_part(&name, &params, content_width));
+}
+
+/// Renders a structured tool-call part without reconstructing XML markup.
+pub(super) fn render_tool_call_part(
+    name: &str,
+    params: &[(String, String)],
+    content_width: usize,
+) -> Vec<Line<'static>> {
     let is_strict_proxy = name == "package_proxy" || name == "proxy";
-    let (display_name, display_params) = normalize_tool_display_for_strict_proxy(&name, &params);
-    let summary =
-        render_tool_param_summary(&display_params, if is_strict_proxy { "" } else { body });
+    let (display_name, display_params) = normalize_tool_display_for_strict_proxy(name, params);
+    let summary = render_tool_param_summary(&display_params, if is_strict_proxy { "" } else { "" });
     let leading_symbol = tool_leading_symbol(&display_name);
     let name_width = display_width(&display_name);
     let prefix_width = display_width(leading_symbol) + 1 + name_width;
@@ -561,7 +574,20 @@ fn render_tool_xml(
             Style::default().fg(theme::TEXT_SUBTLE),
         ));
     }
-    lines.push(Line::from(header));
+    vec![Line::from(header)]
+}
+
+/// Renders a structured tool-call parameter map without parsing XML attributes.
+pub(super) fn render_tool_call_part_from_attributes(
+    name: &str,
+    attributes: &BTreeMap<String, String>,
+    content_width: usize,
+) -> Vec<Line<'static>> {
+    let params = attributes
+        .iter()
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    render_tool_call_part(name, &params, content_width)
 }
 
 fn render_attachment_xml(content: &str, lines: &mut Vec<Line<'static>>) {
@@ -719,16 +745,13 @@ fn tool_leading_symbol(tool_name: &str) -> &'static str {
     }
 }
 
-fn render_tool_result_xml(
-    _name: &str,
+/// Renders a structured tool-result part without parsing XML tags.
+pub(super) fn render_tool_result_part(
     status: Option<&str>,
-    body: &str,
+    content: &str,
     content_width: usize,
-    lines: &mut Vec<Line<'static>>,
-) {
-    let content = extract_first_tag_body(body, "content")
-        .unwrap_or(body)
-        .trim();
+) -> Vec<Line<'static>> {
+    let content = content.trim();
     let error = extract_first_tag_body(content, "error").map(str::trim);
     let is_error = status
         .map(|value| value.eq_ignore_ascii_case("error"))
@@ -769,7 +792,7 @@ fn render_tool_result_xml(
             Style::default().fg(theme::TOOL_RESULT),
         ));
     }
-    lines.push(Line::from(header));
+    vec![Line::from(header)]
 }
 
 fn render_tool_param_summary(params: &[(String, String)], body: &str) -> String {

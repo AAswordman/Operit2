@@ -437,10 +437,13 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
     return _visibleItemKeys.contains(itemKey);
   }
 
+  /// Reports whether a trailing node is only part of the active tool sequence layout.
   bool _isConformingTailNode(MarkdownNodeStable node) {
     switch (node.type) {
       case MarkdownNodeType.plainText:
         return node.content.trim().isEmpty;
+      case MarkdownNodeType.htmlBreak:
+        return true;
       case MarkdownNodeType.xmlBlock:
         final tag = _extractXmlTagName(node.content);
         switch (tag) {

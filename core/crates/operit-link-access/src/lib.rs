@@ -47,8 +47,8 @@ use operit_host_api::HostManager::defaultHttpHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_host_api::{HttpRequestData, RuntimeStorageHost, TimeUtils::currentTimeMillis};
 use operit_link::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError, CorePushItem,
-    CorePushRequest, CoreWatchRequest,
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError,
+    CoreLinkPushSession, CorePushItem, CorePushRequest, CoreValue, CoreWatchRequest,
 };
 use operit_link::CoreLinkClient;
 #[cfg(not(target_arch = "wasm32"))]
@@ -766,6 +766,29 @@ impl CoreLinkTransportClient for SharedAccessCoreClient {
             .await
             .map_err(|error| CoreLinkError::internal(error.to_string()))?
     }
+
+    #[allow(non_snake_case)]
+    async fn openPush(
+        &mut self,
+        request: CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        let (sender, receiver) = oneshot::channel();
+        let core = self.core.clone();
+        defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask(
+                "link-access-push-open",
+                Box::new(move || {
+                    Box::pin(async move {
+                        let response = core.lock().await.openPush(request).await;
+                        let _ = sender.send(response);
+                    })
+                }),
+            )
+            .map_err(|error| CoreLinkError::internal(error.to_string()))?;
+        receiver
+            .await
+            .map_err(|error| CoreLinkError::internal(error.to_string()))?
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -961,7 +984,7 @@ pub struct RemotePushAccepted {
 
 #[cfg(not(target_arch = "wasm32"))]
 struct RemotePushState {
-    request: CorePushRequest,
+    session: Box<dyn CoreLinkPushSession>,
     nextSequence: u64,
 }
 
@@ -1679,6 +1702,53 @@ impl CoreLinkClient for PairedRemoteSession {
             .await
             .map_err(CoreLinkError::internal)
     }
+
+    #[allow(non_snake_case)]
+    async fn openPush(
+        &mut self,
+        request: CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        let pushId = PairedRemoteSession::pushOpen(self, request)
+            .await
+            .map_err(CoreLinkError::internal)?;
+        Ok(Box::new(PairedRemotePushSession {
+            session: self.clone(),
+            pushId,
+            nextSequence: 0,
+        }))
+    }
+}
+
+/// Owns one HTTP-carried input stream opened on a paired runtime.
+struct PairedRemotePushSession {
+    session: PairedRemoteSession,
+    pushId: String,
+    nextSequence: u64,
+}
+
+#[async_trait]
+impl CoreLinkPushSession for PairedRemotePushSession {
+    /// Sends one ordered value through the paired runtime carrier.
+    async fn send(&mut self, value: CoreValue) -> Result<(), CoreLinkError> {
+        self.session
+            .pushItem(CorePushItem {
+                pushId: self.pushId.clone(),
+                sequence: self.nextSequence,
+                args: value,
+            })
+            .await
+            .map_err(CoreLinkError::internal)?;
+        self.nextSequence += 1;
+        Ok(())
+    }
+
+    /// Closes the paired runtime carrier stream.
+    async fn close(self: Box<Self>) -> Result<(), CoreLinkError> {
+        self.session
+            .pushClose(self.pushId)
+            .await
+            .map_err(CoreLinkError::internal)
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -2131,14 +2201,23 @@ async fn handle_ws_envelope(
                     "Link push stream already exists",
                 ));
             }
-            pushes.insert(
-                pushId.clone(),
-                RemotePushState {
-                    request,
-                    nextSequence: 0,
-                },
-            );
-            RemoteWsResponse::PushOpened(pushId)
+            let opened = withRuntimeHostInteractionOrigin(verified.origin(), async {
+                state.core.lock().await.openPush(request).await
+            })
+            .await;
+            match opened {
+                Ok(session) => {
+                    pushes.insert(
+                        pushId.clone(),
+                        RemotePushState {
+                            session,
+                            nextSequence: 0,
+                        },
+                    );
+                    RemoteWsResponse::PushOpened(pushId)
+                }
+                Err(error) => RemoteWsResponse::Error(error),
+            }
         }
         RemoteWsPayload::PushItem(item) => {
             let Some(push) = pushes.get_mut(&item.pushId) else {
@@ -2156,30 +2235,33 @@ async fn handle_ws_envelope(
                     ),
                 ));
             }
-            push.nextSequence += 1;
-            let request = push.request.clone();
-            let response = withRuntimeHostInteractionOrigin(verified.origin(), async {
-                let mut core = state.core.lock().await;
-                core.call(request.itemCall(item.sequence, item.args.clone()))
-                    .await
-            })
-            .await;
-            match response.result {
-                Ok(_) => RemoteWsResponse::PushAccepted(RemotePushAccepted {
+            match withRuntimeHostInteractionOrigin(
+                verified.origin(),
+                push.session.send(item.args),
+            )
+            .await
+            {
+                Ok(()) => {
+                    push.nextSequence += 1;
+                    RemoteWsResponse::PushAccepted(RemotePushAccepted {
                     pushId: item.pushId,
                     sequence: item.sequence,
-                }),
+                    })
+                }
                 Err(error) => RemoteWsResponse::Error(error),
             }
         }
         RemoteWsPayload::PushClose(pushId) => {
-            if pushes.remove(&pushId).is_none() {
+            let Some(push) = pushes.remove(&pushId) else {
                 return RemoteWsResponse::Error(CoreLinkError::new(
                     "PUSH_NOT_FOUND",
                     "Link push stream not found",
                 ));
+            };
+            match withRuntimeHostInteractionOrigin(verified.origin(), push.session.close()).await {
+                Ok(()) => RemoteWsResponse::PushClosed(pushId),
+                Err(error) => RemoteWsResponse::Error(error),
             }
-            RemoteWsResponse::PushClosed(pushId)
         }
     }
 }

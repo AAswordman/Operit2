@@ -1,8 +1,9 @@
 use std::ops::{Deref, DerefMut};
 
-use operit_core_proxy::GeneratedCoreProxy;
+use operit_core_proxy::{GeneratedCoreProxy, LocalCoreProxy};
 use operit_host_api::HostManager::HostManager;
 use operit_link::CoreLinkClient;
+use operit_link_access::PairedRemoteSession;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 
@@ -13,9 +14,10 @@ pub(crate) struct CliCore {
     localHostManager: Option<HostManager>,
 }
 
-pub(crate) fn cli_core(client: impl CoreLinkClient + Send + 'static) -> CliCore {
+/// Creates a CLI proxy over one explicitly paired remote runtime session.
+pub(crate) fn cli_core(client: PairedRemoteSession) -> CliCore {
     CliCore {
-        proxy: GeneratedCoreProxy::new(Box::new(client)),
+        proxy: GeneratedCoreProxy::new(Box::new(client.clone())),
         localHostManager: None,
     }
 }
@@ -37,7 +39,7 @@ pub(crate) fn local_cli_core() -> Result<CliCore, String> {
         holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService = Some(enhanced_ai_service);
     }
     Ok(CliCore {
-        proxy: GeneratedCoreProxy::new(Box::new(core)),
+        proxy: GeneratedCoreProxy::new(Box::new(core.clone())),
         localHostManager: Some(localHostManager),
     })
 }
@@ -49,6 +51,7 @@ impl CliCore {
             .as_ref()
             .ok_or_else(|| "this CLI command requires an in-process runtime".to_string())
     }
+
 }
 
 impl Deref for CliCore {

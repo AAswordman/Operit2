@@ -63,7 +63,7 @@ fn render_dart_models(
     types.sort_by(|left, right| left.full_type.cmp(&right.full_type));
 
     let mut output = generated_header();
-    output.push_str("import 'dart:typed_data';\n\n");
+    output.push_str("import 'dart:async';\nimport 'dart:typed_data';\n\n");
     output.push_str("import '../../link/CoreLinkProtocol.dart';\n\n");
     output.push_str(&render_core_proxy_error_details());
     for ty in types {
@@ -164,7 +164,7 @@ fn render_dart_clients(
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
     let mut output = generated_header();
-    output.push_str("import 'dart:typed_data';\n\n");
+    output.push_str("import 'dart:async';\nimport 'dart:typed_data';\n\n");
     output.push_str("import '../../bridge/OperitRuntimeBridge.dart';\n");
     output.push_str("import '../../link/CoreLinkProtocol.dart';\n");
     output.push_str("import 'CoreProxyModels.g.dart';\n\n");
@@ -232,8 +232,71 @@ fn render_dart_client_class(
                 serializable_types,
             ));
         }
+        if method.reverse_stream_protocol().is_some() {
+            output.push_str(&render_dart_reverse_stream_method(
+                object,
+                method,
+                serializable_types,
+            ));
+        }
     }
     output.push_str("}\n\n");
+    output
+}
+
+/// Renders one generated caller-to-runtime reverse stream method.
+fn render_dart_reverse_stream_method(
+    _object: &SourceObject,
+    method: &SourceMethod,
+    serializable_types: &HashMap<String, SerializableType>,
+) -> String {
+    let protocol = method
+        .reverse_stream_protocol()
+        .expect("reverse stream protocol");
+    let item_type = dart_type(&protocol.item_type, serializable_types);
+    let params = method
+        .args
+        .iter()
+        .map(|argument| {
+            if argument.name == protocol.argument_name {
+                format!("required Stream<{item_type}> {}", dart_identifier(&argument.name))
+            } else {
+                format!(
+                    "required {} {}",
+                    dart_type(&argument.ty, serializable_types),
+                    dart_identifier(&argument.name)
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let open_args = method
+        .args
+        .iter()
+        .filter(|argument| argument.name != protocol.argument_name)
+        .map(|argument| format!(
+            "'{}': {}",
+            argument.name,
+            dart_encode_expr(&dart_identifier(&argument.name), &dart_type(&argument.ty, serializable_types), serializable_types)
+        ))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let method_name = dart_identifier(&method.name);
+    let input_name = dart_identifier(&protocol.argument_name);
+    let mut output = render_dart_doc_comments(method, "  ");
+    output.push_str(&format!("  Future<void> {method_name}({{{params}}}) async {{\n"));
+    output.push_str("    final sink = await bridge.push(\n");
+    output.push_str("      CorePushRequest(\n");
+    output.push_str("        requestId: _coreProxyRequestId(),\n");
+    output.push_str("        targetPath: targetPath,\n");
+    output.push_str(&format!("        methodName: '{}',\n", method.name));
+    output.push_str(&format!("        args: <String, Object?>{{{open_args}}},\n"));
+    output.push_str("      ),\n    );\n");
+    output.push_str("    try {\n");
+    output.push_str(&format!("      await for (final item in {input_name}) {{\n"));
+    output.push_str(&format!("        await sink.add(item);\n"));
+    output.push_str("      }\n");
+    output.push_str("    } finally {\n      await sink.close();\n    }\n  }\n\n");
     output
 }
 

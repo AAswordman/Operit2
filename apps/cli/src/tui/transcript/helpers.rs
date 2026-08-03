@@ -5,17 +5,13 @@ use std::collections::HashSet;
 
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::InputProcessingState::InputProcessingState;
-use operit_util::stream::HotStream::SharedStream;
-use operit_util::streamnative::NativeMarkdownSplitter::{
-    MarkdownNodeStable, MarkdownProcessorType,
-};
-use operit_util::ChatMarkupRegex::{attr_value, tag_body, tag_ranges, ChatMarkupRegex};
+use operit_model::MessagePart::MessagePartKind;
+use operit_util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 
 use super::empty_state::render_blue_cat_lines;
 use super::i18n::TuiText;
 use super::markdown::{
-    render_markdown_lines, render_markdown_lines_cached, render_markdown_nodes_lines,
-    render_markdown_nodes_lines_cached, MarkdownRenderCache,
+    render_markdown_lines, render_tool_call_part_from_attributes, render_tool_result_part,
 };
 use super::selection::mark_soft_wrap_continuation;
 use super::theme;
@@ -84,8 +80,6 @@ pub(super) fn render_transcript_message_lines(
         thinking_line,
         typewriter_state,
         text,
-        None,
-        None,
     )
 }
 
@@ -98,8 +92,6 @@ pub(super) fn render_transcript_message_lines_with_cache(
     thinking_line: &Line<'static>,
     typewriter_state: &mut TypewriterState,
     text: TuiText,
-    stream_markdown_nodes: Option<&[MarkdownNodeStable]>,
-    mut markdown_cache: Option<&mut MarkdownRenderCache>,
 ) -> Vec<Line<'static>> {
     let role = message.roleName.trim();
     let sender = message_header_label(message.sender.as_str(), role);
@@ -142,7 +134,7 @@ pub(super) fn render_transcript_message_lines_with_cache(
         append_user_message_card(
             &mut lines,
             header_spans,
-            &message.content,
+            &message.displayText(),
             content_width,
             text,
         );
@@ -156,78 +148,101 @@ pub(super) fn render_transcript_message_lines_with_cache(
     ));
     let is_streaming_message =
         is_streaming_message_for_tui(message, index, messages_len, is_loading);
-    let full_content = if is_streaming_message && stream_markdown_nodes.is_some() {
-        message.content.clone()
-    } else if is_streaming_message {
-        message
-            .contentStream
-            .as_ref()
-            .map(|stream| stream.replay_cache().join(""))
-            .unwrap_or_else(|| message.content.clone())
-    } else if message.content.is_empty() {
-        String::new()
+    let mut parts = message.parts.iter().collect::<Vec<_>>();
+    parts.sort_by_key(|part| part.sequence);
+    let has_visible_part = parts.iter().any(|part| {
+        matches!(
+            part.kind,
+            MessagePartKind::Markdown
+                | MessagePartKind::ToolCall
+                | MessagePartKind::ToolResult
+                | MessagePartKind::Status
+        )
+    });
+    let has_thinking_part = parts
+        .iter()
+        .any(|part| part.kind == MessagePartKind::Thinking);
+    if !has_visible_part && has_thinking_part {
+        lines.push(style_message_line(
+            thinking_line.clone(),
+            message.sender.as_str(),
+            block_style,
+            message_layout,
+        ));
+    } else if !has_visible_part && is_streaming_message {
+        lines.push(style_message_line(
+            thinking_line.clone(),
+            message.sender.as_str(),
+            block_style,
+            message_layout,
+        ));
     } else {
-        message.content.clone()
-    };
-    let split_content = split_thinking_for_tui(&full_content);
-    let display_is_thinking = split_content.visible.trim().is_empty() && split_content.has_thinking;
-    let display_content = if display_is_thinking {
-        if split_content.thinking.trim().is_empty() {
-            String::new()
-        } else {
-            format!("<thinking>{}</thinking>", split_content.thinking.trim())
-        }
-    } else if stream_markdown_nodes.is_some() && is_streaming_message {
-        split_content.visible.trim().to_string()
-    } else {
-        let typewriter_frame = typewriter_state.frame(
-            message.timestamp,
-            &split_content.visible,
-            is_streaming_message,
-        );
-        let mut rendered_content = typewriter_frame.content;
-        if let Some(pending_char) = typewriter_frame.pending_char {
-            if pending_char == '\n' || !pending_char.is_control() {
-                rendered_content.push(pending_char);
+        let mut rendered_part = false;
+        for part in parts {
+            match part.kind {
+                MessagePartKind::Markdown | MessagePartKind::Status => {
+                    let rendered_lines =
+                        render_markdown_lines(&part.content, message_content_width, text);
+                    lines.extend(
+                        wrap_message_lines(rendered_lines, message_content_width)
+                            .into_iter()
+                            .map(|line| {
+                                style_message_line(
+                                    line,
+                                    message.sender.as_str(),
+                                    block_style,
+                                    message_layout,
+                                )
+                            }),
+                    );
+                    rendered_part = true;
+                }
+                MessagePartKind::Thinking => {}
+                MessagePartKind::ToolCall => {
+                    let tool_name = part
+                        .toolName
+                        .as_deref()
+                        .expect("tool-call message parts require a tool name");
+                    lines.extend(
+                        render_tool_call_part_from_attributes(
+                            tool_name,
+                            &part.attributes,
+                            message_content_width,
+                        )
+                        .into_iter()
+                        .map(|line| {
+                            style_message_line(
+                                line,
+                                message.sender.as_str(),
+                                block_style,
+                                message_layout,
+                            )
+                        }),
+                    );
+                    rendered_part = true;
+                }
+                MessagePartKind::ToolResult => {
+                    lines.extend(
+                        render_tool_result_part(
+                            part.attributes.get("status").map(String::as_str),
+                            &part.content,
+                            message_content_width,
+                        )
+                        .into_iter()
+                        .map(|line| {
+                            style_message_line(
+                                line,
+                                message.sender.as_str(),
+                                block_style,
+                                message_layout,
+                            )
+                        }),
+                    );
+                    rendered_part = true;
+                }
             }
         }
-        rendered_content.trim().to_string()
-    };
-    if display_content.is_empty() && display_is_thinking && message.sender == "ai" {
-        lines.push(style_message_line(
-            thinking_line.clone(),
-            message.sender.as_str(),
-            block_style,
-            message_layout,
-        ));
-    } else if display_content.is_empty()
-        && is_loading
-        && index + 1 == messages_len
-        && message.sender == "ai"
-    {
-        lines.push(style_message_line(
-            thinking_line.clone(),
-            message.sender.as_str(),
-            block_style,
-            message_layout,
-        ));
-    } else {
-        let rendered_lines = render_message_markdown_lines(
-            &display_content,
-            message_content_width,
-            is_streaming_message,
-            stream_markdown_nodes,
-            markdown_cache.as_deref_mut(),
-            text,
-        );
-        lines.extend(
-            wrap_message_lines(rendered_lines, message_content_width)
-                .into_iter()
-                .map(|line| {
-                    style_message_line(line, message.sender.as_str(), block_style, message_layout)
-                }),
-        );
-        if display_content.is_empty() {
+        if !rendered_part {
             lines.push(style_message_line(
                 Line::from(""),
                 message.sender.as_str(),
@@ -237,40 +252,6 @@ pub(super) fn render_transcript_message_lines_with_cache(
         }
     }
     lines
-}
-
-fn render_message_markdown_lines(
-    display_content: &str,
-    message_content_width: usize,
-    is_streaming_message: bool,
-    stream_markdown_nodes: Option<&[MarkdownNodeStable]>,
-    markdown_cache: Option<&mut MarkdownRenderCache>,
-    text: TuiText,
-) -> Vec<Line<'static>> {
-    if let Some(nodes) = stream_markdown_nodes {
-        let visible_nodes = visible_markdown_nodes_for_tui(nodes);
-        return match markdown_cache {
-            Some(cache) => render_markdown_nodes_lines_cached(
-                &visible_nodes,
-                message_content_width,
-                cache,
-                is_streaming_message,
-                text,
-            ),
-            None => render_markdown_nodes_lines(&visible_nodes, message_content_width, text),
-        };
-    }
-
-    match markdown_cache {
-        Some(cache) => render_markdown_lines_cached(
-            display_content,
-            message_content_width,
-            cache,
-            is_streaming_message,
-            text,
-        ),
-        None => render_markdown_lines(display_content, message_content_width, text),
-    }
 }
 
 pub(super) fn render_loading_ai_placeholder_lines(
@@ -324,108 +305,7 @@ pub(super) fn is_streaming_message_for_tui(
     messages_len: usize,
     is_loading: bool,
 ) -> bool {
-    message.sender == "ai"
-        && (message.contentStream.is_some() || (is_loading && index + 1 == messages_len))
-}
-
-fn visible_markdown_nodes_for_tui(nodes: &[MarkdownNodeStable]) -> Vec<MarkdownNodeStable> {
-    nodes
-        .iter()
-        .filter(|node| !is_thinking_markdown_node(node))
-        .cloned()
-        .collect()
-}
-
-fn is_thinking_markdown_node(node: &MarkdownNodeStable) -> bool {
-    if node.r#type != MarkdownProcessorType::XmlBlock {
-        return false;
-    }
-    let raw_tag = ChatMarkupRegex::extract_opening_tag_name(&node.content);
-    matches!(
-        ChatMarkupRegex::normalize_tool_like_tag_name(raw_tag.as_deref()).as_deref(),
-        Some("think") | Some("thinking")
-    )
-}
-
-struct TuiThinkingSplit {
-    visible: String,
-    thinking: String,
-    has_thinking: bool,
-}
-
-fn split_thinking_for_tui(content: &str) -> TuiThinkingSplit {
-    let ranges = ChatMarkupRegex::think_ranges(content);
-    let mut thinking_parts = Vec::new();
-    for &(start, end) in &ranges {
-        let raw = &content[start..end];
-        let tag_name = ChatMarkupRegex::extract_opening_tag_name(raw)
-            .unwrap_or_else(|| "thinking".to_string());
-        let body = tag_body(raw, &tag_name)
-            .or_else(|| raw.split_once('>').map(|(_, body)| body))
-            .unwrap_or("")
-            .trim();
-        if !body.is_empty() {
-            thinking_parts.push(body.to_string());
-        }
-    }
-
-    let mut visible = remove_content_ranges(content, &ranges);
-    let mut has_thinking = !ranges.is_empty();
-    if let Some(open_start) = find_thinking_open_start(&visible) {
-        has_thinking = true;
-        let open = visible[open_start..].to_string();
-        if let Some((_, body)) = open.split_once('>') {
-            let trimmed = body.trim();
-            if !trimmed.is_empty() {
-                thinking_parts.push(trimmed.to_string());
-            }
-        }
-        visible.truncate(open_start);
-    }
-
-    TuiThinkingSplit {
-        visible: visible.trim().to_string(),
-        thinking: thinking_parts.join("\n"),
-        has_thinking,
-    }
-}
-
-fn remove_content_ranges(content: &str, ranges: &[(usize, usize)]) -> String {
-    if ranges.is_empty() {
-        return content.to_string();
-    }
-    let mut result = String::new();
-    let mut cursor = 0;
-    for &(start, end) in ranges {
-        if start >= cursor {
-            result.push_str(&content[cursor..start]);
-            cursor = end;
-        }
-    }
-    result.push_str(&content[cursor..]);
-    result
-}
-
-fn find_thinking_open_start(content: &str) -> Option<usize> {
-    content
-        .match_indices('<')
-        .find_map(|(index, _)| is_thinking_open_at(content, index).then_some(index))
-}
-
-fn is_thinking_open_at(content: &str, start: usize) -> bool {
-    let tail = &content[start..];
-    tag_open_matches(tail, "thinking") || tag_open_matches(tail, "think")
-}
-
-fn tag_open_matches(tail: &str, name: &str) -> bool {
-    let prefix = format!("<{name}");
-    if !tail.starts_with(&prefix) {
-        return false;
-    }
-    matches!(
-        tail.as_bytes().get(prefix.len()).copied(),
-        Some(b'>') | Some(b' ') | Some(b'\t') | Some(b'\r') | Some(b'\n')
-    )
+    message.sender == "ai" && is_loading && index + 1 == messages_len
 }
 
 fn message_header_label(sender: &str, role: &str) -> String {
@@ -1057,7 +937,7 @@ mod tests {
 
     #[test]
     fn user_message_workspace_attachment_is_rendered_above_user_card() {
-        let mut user = ChatMessage::new_with_timestamp(
+        let mut user = ChatMessage::new_with_markdown_timestamp(
             "user".to_string(),
             "你好 <workspace_attachment></workspace_attachment>".to_string(),
             1,
@@ -1105,7 +985,7 @@ mod tests {
 
     #[test]
     fn ai_thinking_block_is_hidden_from_transcript() {
-        let mut ai = ChatMessage::new_with_timestamp(
+        let mut ai = ChatMessage::new_with_markdown_timestamp(
             "ai".to_string(),
             "<thinking>内部推理</thinking>\n你好！".to_string(),
             1,
@@ -1131,8 +1011,11 @@ mod tests {
 
     #[test]
     fn streaming_open_thinking_block_shows_thinking_content() {
-        let ai =
-            ChatMessage::new_with_timestamp("ai".to_string(), "<thinking>内部推理".to_string(), 1);
+        let ai = ChatMessage::new_with_markdown_timestamp(
+            "ai".to_string(),
+            "<thinking>内部推理".to_string(),
+            1,
+        );
         let mut typewriter_state = TypewriterState::default();
         let lines = render_message_lines(
             &[ai],
@@ -1152,10 +1035,11 @@ mod tests {
     #[test]
     #[ignore = "debug-only TUI preview; run with --ignored --nocapture"]
     fn tui_user_card_preview() {
-        let mut user = ChatMessage::new_with_timestamp("user".to_string(), "你好".to_string(), 1);
+        let mut user =
+            ChatMessage::new_with_markdown_timestamp("user".to_string(), "你好".to_string(), 1);
         user.roleName = String::new();
 
-        let mut ai = ChatMessage::new_with_timestamp(
+        let mut ai = ChatMessage::new_with_markdown_timestamp(
             "ai".to_string(),
             "你好！\n我是Operit，一个全能AI助手，很高兴为你服务！\n\n我可以帮你完成各种任务，比如：\n- 文件管理 - 浏览、创建、编辑、删除文件\n- 网页访问 - 查看网页内容、下载文件\n- 代码搜索 - 在项目中查找特定代码\n有什么我可以帮你的吗？"
                 .to_string(),

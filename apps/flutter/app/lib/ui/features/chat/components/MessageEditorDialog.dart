@@ -12,21 +12,45 @@ class _ParsedMessagePart {
     required this.content,
     this.tag,
     this.attributes,
+    this.prefix = '',
+    this.suffix = '',
   });
 
   final _MessagePartType type;
   final String content;
   final String? tag;
   final String? attributes;
+  final String prefix;
+  final String suffix;
 
-  _ParsedMessagePart copyWith({String? content}) {
+  /// Creates an edited part while retaining its protocol boundary whitespace.
+  _ParsedMessagePart copyWith({
+    String? content,
+    String? prefix,
+    String? suffix,
+  }) {
     return _ParsedMessagePart(
       type: type,
       content: content ?? this.content,
       tag: tag,
       attributes: attributes,
+      prefix: prefix ?? this.prefix,
+      suffix: suffix ?? this.suffix,
     );
   }
+}
+
+class _TextBoundarySplit {
+  /// Creates one editable text body with its hidden protocol separators.
+  const _TextBoundarySplit({
+    required this.prefix,
+    required this.content,
+    required this.suffix,
+  });
+
+  final String prefix;
+  final String content;
+  final String suffix;
 }
 
 class MessageEditorDialog extends StatefulWidget {
@@ -592,6 +616,7 @@ class _TagEditorDialogState extends State<_TagEditorDialog> {
   }
 }
 
+/// Splits protocol markup into visual editor parts without showing separators.
 List<_ParsedMessagePart> _parseMessageContentForEditor(String content) {
   final parts = <_ParsedMessagePart>[];
   final regex = RegExp(
@@ -599,13 +624,22 @@ List<_ParsedMessagePart> _parseMessageContentForEditor(String content) {
     multiLine: true,
   );
   var lastIndex = 0;
+  var pendingPrefix = '';
   for (final match in regex.allMatches(content)) {
     if (match.start > lastIndex) {
       final textPart = content.substring(lastIndex, match.start);
       if (textPart.trim().isNotEmpty) {
+        final split = _splitTextBoundaryNewlines(textPart);
         parts.add(
-          _ParsedMessagePart(type: _MessagePartType.text, content: textPart),
+          _ParsedMessagePart(
+            type: _MessagePartType.text,
+            content: split.content,
+            prefix: '$pendingPrefix${split.prefix}',
+          ),
         );
+        pendingPrefix = split.suffix;
+      } else {
+        pendingPrefix += textPart;
       }
     }
     parts.add(
@@ -614,26 +648,63 @@ List<_ParsedMessagePart> _parseMessageContentForEditor(String content) {
         content: match.group(3) ?? '',
         tag: match.group(1),
         attributes: match.group(2),
+        prefix: pendingPrefix,
       ),
     );
+    pendingPrefix = '';
     lastIndex = match.end;
   }
   if (lastIndex < content.length) {
     final trailingText = content.substring(lastIndex);
     if (trailingText.trim().isNotEmpty) {
+      final split = _splitTextBoundaryNewlines(trailingText);
       parts.add(
-        _ParsedMessagePart(type: _MessagePartType.text, content: trailingText),
+        _ParsedMessagePart(
+          type: _MessagePartType.text,
+          content: split.content,
+          prefix: '$pendingPrefix${split.prefix}',
+          suffix: split.suffix,
+        ),
       );
+      pendingPrefix = '';
+    } else {
+      pendingPrefix += trailingText;
     }
+  }
+  if (pendingPrefix.isNotEmpty && parts.isNotEmpty) {
+    final lastPart = parts.last;
+    parts[parts.length - 1] = lastPart.copyWith(
+      suffix: '${lastPart.suffix}$pendingPrefix',
+    );
   }
   return parts;
 }
 
+/// Separates line-break whitespace at a text/XML boundary from editable text.
+_TextBoundarySplit _splitTextBoundaryNewlines(String content) {
+  final prefixMatch = RegExp(r'^(?:[ \t]*\r?\n)+').firstMatch(content);
+  final prefixEnd = prefixMatch?.end ?? 0;
+  final suffixMatch = RegExp(
+    r'(?:\r?\n[ \t]*)+$',
+  ).firstMatch(content.substring(prefixEnd));
+  final suffixStart = suffixMatch == null
+      ? content.length
+      : prefixEnd + suffixMatch.start;
+  return _TextBoundarySplit(
+    prefix: content.substring(0, prefixEnd),
+    content: content.substring(prefixEnd, suffixStart),
+    suffix: content.substring(suffixStart),
+  );
+}
+
+/// Reconstructs the exact protocol text, including hidden boundary whitespace.
 String _recomposeMessageFromParts(List<_ParsedMessagePart> parts) {
   return parts.map((part) {
-    if (part.type == _MessagePartType.text) {
-      return part.content;
-    }
-    return '<${part.tag}${part.attributes ?? ''}>${part.content}</${part.tag}>';
+    final body = switch (part.type) {
+      _MessagePartType.text => part.content,
+      _MessagePartType.xml =>
+        '<${part.tag}${part.attributes ?? ''}>${part.content}</${part.tag}>',
+    };
+    return '${part.prefix}$body${part.suffix}';
   }).join();
 }

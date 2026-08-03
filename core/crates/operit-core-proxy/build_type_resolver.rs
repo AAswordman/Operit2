@@ -367,6 +367,7 @@ fn serializable_enum_type(
     item_enum: &ItemEnum,
     resolver: &TypeResolver,
 ) -> SerializableType {
+    let rename_all = serde_rename_all(&item_enum.attrs);
     let mapped: Vec<SerializableEnumVariant> = item_enum
         .variants
         .iter()
@@ -413,7 +414,9 @@ fn serializable_enum_type(
                 Fields::Unit => (true, Vec::new()),
             };
             SerializableEnumVariant {
-                json_name: serde_rename(&variant.attrs).unwrap_or_else(|| name.clone()),
+                json_name: serde_rename(&variant.attrs)
+                    .or_else(|| rename_all.as_deref().map(|rule| serde_case_name(&name, rule)))
+                    .unwrap_or_else(|| name.clone()),
                 fields_are_unit,
                 fields,
                 name,
@@ -504,6 +507,99 @@ fn serde_rename(attrs: &[syn::Attribute]) -> Option<String> {
         }
     }
     None
+}
+
+/// Reads a serde enum-wide variant naming rule from an attribute list.
+fn serde_rename_all(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        let mut rename_all = None;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename_all") {
+                let value = meta.value()?;
+                let literal: syn::LitStr = value.parse()?;
+                rename_all = Some(literal.value());
+            }
+            Ok(())
+        });
+        if rename_all.is_some() {
+            return rename_all;
+        }
+    }
+    None
+}
+
+/// Applies one serde naming rule to a Rust enum variant identifier.
+fn serde_case_name(name: &str, rule: &str) -> String {
+    let words = identifier_words(name);
+    match rule {
+        "snake_case" => words.join("_"),
+        "SCREAMING_SNAKE_CASE" => words.join("_").to_ascii_uppercase(),
+        "kebab-case" => words.join("-"),
+        "camelCase" => {
+            let mut output = String::new();
+            for (index, word) in words.iter().enumerate() {
+                if index == 0 {
+                    output.push_str(word);
+                } else {
+                    output.push_str(&title_word(word));
+                }
+            }
+            output
+        }
+        "PascalCase" => words.iter().map(|word| title_word(word)).collect(),
+        "lowercase" => words.join("").to_ascii_lowercase(),
+        "UPPERCASE" => words.join("").to_ascii_uppercase(),
+        other => panic!("unsupported serde rename_all rule: {other}"),
+    }
+}
+
+/// Splits a Rust identifier into lower-case words for serde name conversion.
+fn identifier_words(name: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    for segment in name.split(|character: char| !character.is_ascii_alphanumeric()) {
+        if segment.is_empty() {
+            continue;
+        }
+        let characters = segment.chars().collect::<Vec<_>>();
+        let mut start = 0usize;
+        for index in 1..characters.len() {
+            let previous = characters[index - 1];
+            let current = characters[index];
+            let next = characters.get(index + 1).copied();
+            let lower_to_upper = previous.is_ascii_lowercase() && current.is_ascii_uppercase();
+            let acronym_to_word = previous.is_ascii_uppercase()
+                && current.is_ascii_uppercase()
+                && next.map(|character| character.is_ascii_lowercase()).unwrap_or(false);
+            if lower_to_upper || acronym_to_word {
+                words.push(
+                    characters[start..index]
+                        .iter()
+                        .collect::<String>()
+                        .to_ascii_lowercase(),
+                );
+                start = index;
+            }
+        }
+        words.push(
+            characters[start..]
+                .iter()
+                .collect::<String>()
+                .to_ascii_lowercase(),
+        );
+    }
+    words
+}
+
+/// Capitalizes one lower-case identifier word for serde camel or Pascal case.
+fn title_word(word: &str) -> String {
+    let mut characters = word.chars();
+    let Some(first) = characters.next() else {
+        return String::new();
+    };
+    first.to_ascii_uppercase().to_string() + characters.as_str()
 }
 
 pub(crate) struct TypeResolver {
@@ -850,7 +946,12 @@ pub(crate) fn generic_args<'a>(ty: &'a str, name: &str) -> Option<Vec<&'a str>> 
         return None;
     }
     let base = &ty[..generic_start];
-    if base.rsplit("::").next()? != name {
+    let matches_name = if name.contains("::") {
+        base == name
+    } else {
+        base.rsplit("::").next()? == name
+    };
+    if !matches_name {
         return None;
     }
     let inner = &ty[generic_start + 1..ty.len() - 1];

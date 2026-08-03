@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
@@ -107,6 +108,16 @@ impl RuntimeStorageHost for AppleRuntimeStorageHost {
     #[allow(non_snake_case)]
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
         Ok(fs::read(self.resolve(path)?)?)
+    }
+
+    /// Reads one bounded byte range from Apple runtime storage.
+    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        let mut file = fs::File::open(self.resolve(path)?)?;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut bytes = vec![0; length];
+        let count = file.read(&mut bytes)?;
+        bytes.truncate(count);
+        Ok(bytes)
     }
 
     /// Writes bytes into Apple runtime storage.

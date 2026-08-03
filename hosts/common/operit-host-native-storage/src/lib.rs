@@ -1,9 +1,13 @@
+use std::collections::HashMap;
 use std::fs;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use operit_host_api::{
     HostError, HostResult, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeSqliteTransaction,
-    RuntimeStorageEntry, RuntimeStorageHost, SqliteRow, SqliteValue,
+    ArchiveStagingHost, RuntimeStorageEntry, RuntimeStorageHost, RuntimeStorageWriteHost,
+    RuntimeStorageWriteSession, SqliteRow, SqliteValue,
 };
 use rusqlite::types::Value;
 
@@ -11,6 +15,220 @@ use rusqlite::types::Value;
 pub struct NativeRuntimeStorageHost {
     runtimeRoot: PathBuf,
     workspaceRoot: PathBuf,
+}
+
+/// Writes one runtime storage file through a private sibling staging path.
+struct NativeRuntimeStorageWriteSession {
+    targetPath: PathBuf,
+    temporaryPath: PathBuf,
+    file: Option<fs::File>,
+}
+
+impl RuntimeStorageWriteSession for NativeRuntimeStorageWriteSession {
+    /// Appends one chunk to the private staging file.
+    fn writeChunk(&mut self, chunk: &[u8]) -> HostResult<()> {
+        let file = self
+            .file
+            .as_mut()
+            .ok_or_else(|| HostError::new("Runtime storage write session is closed"))?;
+        file.write_all(chunk)?;
+        Ok(())
+    }
+
+    /// Flushes the staged file and atomically publishes it at the requested path.
+    fn commit(mut self: Box<Self>) -> HostResult<()> {
+        let file = self
+            .file
+            .take()
+            .ok_or_else(|| HostError::new("Runtime storage write session is closed"))?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&self.temporaryPath, &self.targetPath)?;
+        Ok(())
+    }
+
+    /// Removes the private staging file without modifying the published target.
+    fn discard(mut self: Box<Self>) -> HostResult<()> {
+        self.file.take();
+        if self.temporaryPath.exists() {
+            fs::remove_file(&self.temporaryPath)?;
+        }
+        Ok(())
+    }
+}
+
+/// Stages streamed archive uploads in the runtime-private temporary directory.
+#[derive(Clone, Debug)]
+pub struct NativeArchiveStagingHost {
+    runtimeRoot: PathBuf,
+    uploads: Arc<Mutex<HashMap<String, NativeArchiveUpload>>>,
+}
+
+/// Tracks the declared length and lifecycle state of one current-process archive upload.
+#[derive(Clone, Debug)]
+struct NativeArchiveUpload {
+    expectedByteLength: u64,
+    sealed: bool,
+}
+
+impl NativeArchiveStagingHost {
+    /// Creates native archive staging rooted under one runtime data directory.
+    pub fn new(runtimeRoot: PathBuf) -> Self {
+        Self {
+            runtimeRoot,
+            uploads: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Returns the private directory containing staged archive files.
+    fn stagingRoot(&self) -> PathBuf {
+        self.runtimeRoot.join("temp").join("archive_staging")
+    }
+
+    /// Validates an opaque archive identifier supplied by the Core API.
+    fn validateArchiveId(&self, archiveId: &str) -> HostResult<()> {
+        if archiveId.is_empty()
+            || !archiveId
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            return Err(HostError::new("Archive staging ID is invalid"));
+        }
+        Ok(())
+    }
+
+    /// Resolves one upload-in-progress path from a validated opaque archive ID.
+    fn uploadingArchivePath(&self, archiveId: &str) -> HostResult<PathBuf> {
+        self.validateArchiveId(archiveId)?;
+        Ok(self.stagingRoot().join(format!("{archiveId}.upload")))
+    }
+
+    /// Resolves one immutable sealed path from a validated opaque archive ID.
+    fn sealedArchivePath(&self, archiveId: &str) -> HostResult<PathBuf> {
+        self.validateArchiveId(archiveId)?;
+        Ok(self.stagingRoot().join(format!("{archiveId}.sealed")))
+    }
+}
+
+impl ArchiveStagingHost for NativeArchiveStagingHost {
+    /// Creates one empty private staging file without replacing an existing upload.
+    fn createArchive(&self, archiveId: &str, expectedByteLength: u64) -> HostResult<()> {
+        let path = self.uploadingArchivePath(archiveId)?;
+        let sealedPath = self.sealedArchivePath(archiveId)?;
+        let mut uploads = self
+            .uploads
+            .lock()
+            .map_err(|_| HostError::new("Archive staging upload state is poisoned"))?;
+        if uploads.contains_key(archiveId) {
+            return Err(HostError::new("Archive staging ID already exists"));
+        }
+        fs::create_dir_all(self.stagingRoot())?;
+        if sealedPath.exists() {
+            return Err(HostError::new("Archive staging ID already exists"));
+        }
+        fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(path)?;
+        uploads.insert(
+            archiveId.to_string(),
+            NativeArchiveUpload {
+                expectedByteLength,
+                sealed: false,
+            },
+        );
+        Ok(())
+    }
+
+    /// Appends one ordered upload chunk to the private staging file.
+    fn appendArchive(&self, archiveId: &str, chunk: &[u8]) -> HostResult<()> {
+        let path = self.uploadingArchivePath(archiveId)?;
+        let uploads = self
+            .uploads
+            .lock()
+            .map_err(|_| HostError::new("Archive staging upload state is poisoned"))?;
+        let upload = uploads
+            .get(archiveId)
+            .ok_or_else(|| HostError::new("Archive staging ID does not exist"))?;
+        if upload.sealed {
+            return Err(HostError::new("Archive staging upload is already sealed"));
+        }
+        let currentByteLength = fs::metadata(&path)?.len();
+        let remainingByteLength = upload
+            .expectedByteLength
+            .checked_sub(currentByteLength)
+            .ok_or_else(|| HostError::new("Archive staging upload exceeds its declared byte length"))?;
+        if u64::try_from(chunk.len())
+            .map_err(|_| HostError::new("Archive staging chunk length does not fit u64"))?
+            > remainingByteLength
+        {
+            return Err(HostError::new(
+                "Archive staging upload exceeds its declared byte length",
+            ));
+        }
+        let mut file = fs::OpenOptions::new().append(true).open(path)?;
+        file.write_all(chunk)?;
+        Ok(())
+    }
+
+    /// Flushes one staged upload and returns the resulting persisted byte length.
+    fn sealArchive(&self, archiveId: &str) -> HostResult<u64> {
+        let uploadingPath = self.uploadingArchivePath(archiveId)?;
+        let sealedPath = self.sealedArchivePath(archiveId)?;
+        let mut uploads = self
+            .uploads
+            .lock()
+            .map_err(|_| HostError::new("Archive staging upload state is poisoned"))?;
+        let upload = uploads
+            .get_mut(archiveId)
+            .ok_or_else(|| HostError::new("Archive staging ID does not exist"))?;
+        if upload.sealed {
+            return Ok(fs::metadata(sealedPath)?.len());
+        }
+        let actualByteLength = fs::metadata(&uploadingPath)?.len();
+        if actualByteLength != upload.expectedByteLength {
+            return Err(HostError::new(
+                "Archive staging upload does not match its declared byte length",
+            ));
+        }
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&uploadingPath)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(uploadingPath, &sealedPath)?;
+        upload.sealed = true;
+        Ok(actualByteLength)
+    }
+
+    /// Reads one requested byte range from a staged upload.
+    fn readArchive(&self, archiveId: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        let path = self.sealedArchivePath(archiveId)?;
+        let mut file = fs::File::open(path)?;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut bytes = vec![0; length];
+        let count = file.read(&mut bytes)?;
+        bytes.truncate(count);
+        Ok(bytes)
+    }
+
+    /// Deletes one private staged upload.
+    fn removeArchive(&self, archiveId: &str) -> HostResult<()> {
+        let uploadingPath = self.uploadingArchivePath(archiveId)?;
+        let sealedPath = self.sealedArchivePath(archiveId)?;
+        self.uploads
+            .lock()
+            .map_err(|_| HostError::new("Archive staging upload state is poisoned"))?
+            .remove(archiveId);
+        if uploadingPath.exists() {
+            fs::remove_file(uploadingPath)?;
+        }
+        if sealedPath.exists() {
+            fs::remove_file(sealedPath)?;
+        }
+        Ok(())
+    }
 }
 
 impl NativeRuntimeStorageHost {
@@ -52,6 +270,39 @@ impl NativeRuntimeStorageHost {
             path.display()
         )))
     }
+
+    /// Creates a unique sibling path used while one storage file is streamed.
+    fn writeTemporaryPath(targetPath: &Path) -> HostResult<PathBuf> {
+        let parent = targetPath
+            .parent()
+            .ok_or_else(|| HostError::new("Runtime storage file has no parent directory"))?;
+        let fileName = targetPath
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| HostError::new("Runtime storage file has an invalid name"))?;
+        Ok(parent.join(format!(".{fileName}.{}.partial", uuid::Uuid::new_v4())))
+    }
+}
+
+impl RuntimeStorageWriteHost for NativeRuntimeStorageHost {
+    /// Opens one private streaming write session for a validated storage path.
+    fn createWriteSession(&self, path: &str) -> HostResult<Box<dyn RuntimeStorageWriteSession>> {
+        let targetPath = self.resolve(path)?;
+        let parent = targetPath
+            .parent()
+            .ok_or_else(|| HostError::new("Runtime storage file has no parent directory"))?;
+        fs::create_dir_all(parent)?;
+        let temporaryPath = Self::writeTemporaryPath(&targetPath)?;
+        let file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporaryPath)?;
+        Ok(Box::new(NativeRuntimeStorageWriteSession {
+            targetPath,
+            temporaryPath,
+            file: Some(file),
+        }))
+    }
 }
 
 impl RuntimeStorageHost for NativeRuntimeStorageHost {
@@ -65,6 +316,16 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
 
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
         Ok(fs::read(self.resolve(path)?)?)
+    }
+
+    /// Reads one bounded byte range from native runtime storage.
+    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        let mut file = fs::File::open(self.resolve(path)?)?;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut bytes = vec![0; length];
+        let count = file.read(&mut bytes)?;
+        bytes.truncate(count);
+        Ok(bytes)
     }
 
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
@@ -323,5 +584,42 @@ fn fromRusqliteValue(value: Value) -> SqliteValue {
         Value::Real(value) => SqliteValue::Real(value),
         Value::Text(value) => SqliteValue::Text(value),
         Value::Blob(value) => SqliteValue::Blob(value),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use operit_host_api::ArchiveStagingHost;
+
+    use super::NativeArchiveStagingHost;
+
+    /// Verifies that a native staged archive rejects excess bytes and seals only at its declared length.
+    #[test]
+    fn archive_staging_enforces_declared_length() {
+        let root = std::env::temp_dir().join(format!("operit-archive-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("temporary archive test root must be created");
+        let host = NativeArchiveStagingHost::new(root.clone());
+
+        host.createArchive("archive", 4)
+            .expect("archive must be created");
+        host.appendArchive("archive", b"ab")
+            .expect("first archive chunk must append");
+        assert!(host.appendArchive("archive", b"cde").is_err());
+        assert!(host.sealArchive("archive").is_err());
+
+        host.appendArchive("archive", b"cd")
+            .expect("final archive chunk must append");
+        assert_eq!(host.sealArchive("archive").expect("archive must seal"), 4);
+        assert_eq!(
+            host.readArchive("archive", 0, 4)
+                .expect("sealed archive must be readable"),
+            b"abcd"
+        );
+
+        host.removeArchive("archive")
+            .expect("sealed archive must be removed");
+        fs::remove_dir_all(root).expect("temporary archive test root must be removed");
     }
 }

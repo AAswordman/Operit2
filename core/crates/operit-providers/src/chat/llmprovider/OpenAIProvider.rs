@@ -77,6 +77,9 @@ pub struct StreamingState {
     pub hasEmittedThinkStart: bool,
     pub hasEmittedRegularContent: bool,
     pub isFirstResponse: bool,
+    pub regularContentDeltaCount: usize,
+    pub regularContentBytes: usize,
+    pub nativeToolCallDeltaCount: usize,
     pub accumulatedToolCalls: HashMap<i32, Value>,
     pub toolCallState: ToolCallState,
     pub lastProcessedToolIndex: Option<i32>,
@@ -821,6 +824,9 @@ impl OpenAIProvider {
             hasEmittedThinkStart: false,
             hasEmittedRegularContent: false,
             isFirstResponse: true,
+            regularContentDeltaCount: 0,
+            regularContentBytes: 0,
+            nativeToolCallDeltaCount: 0,
             accumulatedToolCalls: HashMap::new(),
             toolCallState: ToolCallState::default(),
             lastProcessedToolIndex: None,
@@ -880,11 +886,14 @@ impl OpenAIProvider {
             AppLogger::i(
                 PROVIDER_TRANSPORT_LOG_TAG,
                 &format!(
-                    "provider.http.response.stream.done providerModel={} elapsedMs={} bytes={} chunks={}",
+                    "provider.http.response.stream.done providerModel={} elapsedMs={} bytes={} chunks={} contentDeltas={} contentBytes={} nativeToolCallDeltas={}",
                     provider_model,
                     currentTimeMillis().saturating_sub(stream_started_at),
                     received_byte_count,
                     state.chunkCount,
+                    state.regularContentDeltaCount,
+                    state.regularContentBytes,
+                    state.nativeToolCallDeltaCount,
                 ),
             );
             Ok(())
@@ -911,6 +920,7 @@ impl OpenAIProvider {
 
         let json_response: Value = serde_json::from_str(data)
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        state.chunkCount += 1;
 
         if json_response.get("type").and_then(Value::as_str).is_some() {
             return self.processResponsesStreamingEvent(&json_response, state, on_tool_invocation);
@@ -992,6 +1002,17 @@ impl OpenAIProvider {
                 accumulated["function"]["name"] = json!(name);
             }
             if state.toolCallState.nameEmitted.get(&index).copied() != Some(true) {
+                AppLogger::d(
+                    PROVIDER_TRANSPORT_LOG_TAG,
+                    &format!(
+                        "provider.stream.tool_call.start providerModel={} index={} tool={} precedingContentDeltas={} precedingContentBytes={}",
+                        self.provider_model(),
+                        index,
+                        name,
+                        state.regularContentDeltaCount,
+                        state.regularContentBytes,
+                    ),
+                );
                 if let Some(callback) = on_tool_invocation {
                     callback(name.to_string());
                 }
@@ -1112,6 +1133,7 @@ impl OpenAIProvider {
             state.hasEmittedThinkStart = false;
         }
 
+        state.nativeToolCallDeltaCount += toolCallsDeltas.len();
         for deltaCall in toolCallsDeltas {
             let index = deltaCall.get("index").and_then(Value::as_i64).unwrap_or(-1) as i32;
             if index < 0 {
@@ -1215,6 +1237,8 @@ impl OpenAIProvider {
         }
 
         if hasRegular {
+            state.regularContentDeltaCount += 1;
+            state.regularContentBytes += regularContent.len();
             if state.isInReasoningMode {
                 state.isInReasoningMode = false;
                 state.chunks.push("</think>".to_string());

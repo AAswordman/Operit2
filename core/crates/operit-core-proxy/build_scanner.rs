@@ -753,7 +753,7 @@ fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
                     continue;
                 };
                 let ty = normalize_type(&pat_type.ty, resolver);
-                if !is_supported_arg_type(&ty, resolver) {
+                if reverse_stream_item_type(&ty).is_none() && !is_supported_arg_type(&ty, resolver) {
                     method_error = Some(format!("unsupported argument type: {ty}"));
                 }
                 args.push(SourceArg {
@@ -768,6 +768,22 @@ fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
         method_error = Some("associated function is not an instance method".to_string());
     }
     let (rust_return_type, mut protocol) = scan_return_protocol(&function.sig.output, resolver);
+    let reverse_arguments = args
+        .iter()
+        .filter_map(|argument| {
+            reverse_stream_item_type(&argument.ty)
+                .map(|item_type| (argument.name.clone(), item_type))
+        })
+        .collect::<Vec<_>>();
+    if reverse_arguments.len() == 1 {
+        let (argument_name, item_type) = reverse_arguments.into_iter().next().expect("one reverse stream argument");
+        protocol = MethodProtocol::ReverseStream(ReverseStreamProtocol {
+            argument_name,
+            item_type,
+        });
+    } else if reverse_arguments.len() > 1 {
+        method_error = Some("a reverse-stream method accepts exactly one ReverseStream argument".to_string());
+    }
     if is_async && matches!(protocol, MethodProtocol::Watch(_)) {
         protocol = MethodProtocol::Unsupported("async watch method is not supported".to_string());
     }
@@ -934,6 +950,12 @@ fn plain_stream_item_type(ty: &str, resolver: &TypeResolver) -> Option<String> {
         .type_registry
         .stream_item(&resolved)
         .map(|item| item.to_string())
+}
+
+/// Returns the item type for the portable caller-owned reverse stream argument.
+fn reverse_stream_item_type(ty: &str) -> Option<String> {
+    single_generic_arg(ty, "operit_util::stream::ReverseStream::ReverseStream")
+        .map(str::to_string)
 }
 
 fn is_text_event_stream_type(ty: &str, resolver: &TypeResolver) -> bool {

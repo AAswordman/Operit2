@@ -27,7 +27,6 @@ use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, PermissionRequestResult};
-use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_util::AppLogger::AppLogger;
 use operit_util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStage, FullUpdateTarget, ReleaseInfo,
@@ -44,7 +43,6 @@ use super::selection::{
     mouse_drag_transcript_position, mouse_transcript_position, TranscriptCopyLine,
     TranscriptSelectionState,
 };
-use super::stream_markdown::TuiMarkdownStreamState;
 use super::transcript::TranscriptRenderCache;
 use super::typewriter::TypewriterState;
 use crate::cli::CliInstallProgress;
@@ -112,10 +110,6 @@ pub(super) struct OperitTui {
     pub(super) awaiting_runtime_loading: bool,
     pub(super) last_runtime_status_refresh_at: Option<Instant>,
     pub(super) typewriter_state: TypewriterState,
-    pub(super) response_stream_subscription_chat_ids: HashSet<String>,
-    pub(super) response_stream_markdown_by_chat_id: HashMap<String, TuiMarkdownStreamState>,
-    pub(super) response_stream_revision_tracker_by_chat_id:
-        HashMap<String, TextStreamRevisionTracker>,
     pub(super) approval_bridge: TuiApprovalBridge,
     pub(super) language: TuiLanguage,
     pub(super) show_help: bool,
@@ -349,9 +343,6 @@ impl OperitTui {
             awaiting_runtime_loading: false,
             last_runtime_status_refresh_at: None,
             typewriter_state: TypewriterState::default(),
-            response_stream_subscription_chat_ids: HashSet::new(),
-            response_stream_markdown_by_chat_id: HashMap::new(),
-            response_stream_revision_tracker_by_chat_id: HashMap::new(),
             approval_bridge,
             language,
             show_help: false,
@@ -437,7 +428,6 @@ impl OperitTui {
             self.ensure_pending_queue_chat_id();
             self.apply_pushed_events();
             self.ensure_pending_queue_chat_id();
-            self.sync_response_stream_subscriptions().await;
             self.refresh_runtime_status_if_due().await;
             self.advance_pending_message_queue().await?;
             self.clear_expired_status_message();
@@ -1987,11 +1977,7 @@ impl OperitTui {
                     if let Ok(value) = operit_link::fromCoreValue::<HashSet<String>>(event.value) {
                         self.active_streaming_chat_ids_cache = value;
                         self.update_current_chat_loading_from_streaming_ids();
-                        self.retain_active_response_stream_state();
                     }
-                }
-                "getResponseStream" => {
-                    self.apply_response_stream_event(event.value);
                 }
                 "inputProcessingStateByChatIdFlow" => {
                     if let Ok(value) = operit_link::fromCoreValue::<
@@ -2144,28 +2130,7 @@ impl OperitTui {
     }
 
     pub(super) fn current_messages(&mut self) -> Vec<ChatMessage> {
-        let mut messages = self.current_messages_cache.clone();
-        let Some(chat_id) = self.current_chat_id_cache.as_ref() else {
-            return messages;
-        };
-        let Some(tracker) = self
-            .response_stream_revision_tracker_by_chat_id
-            .get(chat_id)
-        else {
-            return messages;
-        };
-        let content = tracker.current_content();
-        if content.is_empty() {
-            return messages;
-        }
-        if let Some(message) = messages
-            .iter_mut()
-            .rev()
-            .find(|message| message.sender == "ai")
-        {
-            message.content = content.to_owned();
-        }
-        messages
+        self.current_messages_cache.clone()
     }
 
     pub(super) fn current_chat_is_loading(&mut self) -> bool {
@@ -2174,6 +2139,15 @@ impl OperitTui {
 
     fn raw_current_chat_is_loading(&mut self) -> bool {
         self.current_chat_is_loading_cache
+    }
+
+    /// Updates the selected chat loading state from the active streaming chat identifiers.
+    fn update_current_chat_loading_from_streaming_ids(&mut self) {
+        self.current_chat_is_loading_cache = self
+            .current_chat_id_cache
+            .as_ref()
+            .map(|chat_id| self.active_streaming_chat_ids_cache.contains(chat_id))
+            .unwrap_or(false);
     }
 
     pub(super) fn current_chat_input_processing_state(&mut self) -> InputProcessingState {

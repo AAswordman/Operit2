@@ -10,6 +10,17 @@ use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
 };
+use operit_util::AppLogger::AppLogger;
+
+const TAG: &str = "MCPToolExecutor";
+const REPLACEMENT_CHARACTER: char = '\u{FFFD}';
+
+struct ArgumentIntegrityViolation {
+    parameter_name: String,
+    replacement_character_count: usize,
+    character_offset: usize,
+    utf8_byte_offset: usize,
+}
 
 #[derive(Clone)]
 /// Tool executor that dispatches package-qualified calls to MCP servers.
@@ -176,6 +187,26 @@ impl MCPToolExecutor {
         result
     }
 
+    /// Returns the first tool parameter whose text already contains replacement characters.
+    fn findArgumentIntegrityViolation(&self, tool: &AITool) -> Option<ArgumentIntegrityViolation> {
+        let parameter = tool
+            .parameters
+            .iter()
+            .find(|parameter| parameter.value.contains(REPLACEMENT_CHARACTER))?;
+        let utf8_byte_offset = parameter.value.find(REPLACEMENT_CHARACTER)?;
+
+        Some(ArgumentIntegrityViolation {
+            parameter_name: parameter.name.clone(),
+            replacement_character_count: parameter
+                .value
+                .chars()
+                .filter(|character| *character == REPLACEMENT_CHARACTER)
+                .count(),
+            character_offset: parameter.value[..utf8_byte_offset].chars().count(),
+            utf8_byte_offset,
+        })
+    }
+
     #[allow(non_snake_case)]
     /// Invokes one MCP tool and converts its structured response into tool result text.
     pub fn invoke(&self, tool: &AITool) -> ToolResult {
@@ -271,6 +302,32 @@ impl ToolExecutor for MCPToolExecutor {
                     .to_string(),
             };
         }
+
+        if let Some(violation) = self.findArgumentIntegrityViolation(tool) {
+            // U+FFFD means the original argument bytes have already been lost. Sending a write
+            // request would silently persist corrupted user content on the remote MCP server.
+            AppLogger::e(
+                TAG,
+                &format!(
+                    "Blocked MCP tool call with corrupted argument: tool={}, parameter={}, replacementCount={}, characterOffset={}, utf8ByteOffset={}",
+                    tool.name,
+                    violation.parameter_name,
+                    violation.replacement_character_count,
+                    violation.character_offset,
+                    violation.utf8_byte_offset,
+                ),
+            );
+            return ToolValidationResult {
+                valid: false,
+                errorMessage: format!(
+                    "MCP tool argument '{}' contains {} invalid UTF-8 replacement character(s) (U+FFFD); the call was blocked before it reached the MCP server. First UTF-8 byte offset: {}",
+                    violation.parameter_name,
+                    violation.replacement_character_count,
+                    violation.utf8_byte_offset,
+                ),
+            };
+        }
+
         ToolValidationResult {
             valid: true,
             errorMessage: String::new(),

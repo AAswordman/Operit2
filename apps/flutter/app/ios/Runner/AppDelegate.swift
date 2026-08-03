@@ -11,6 +11,10 @@ import UserNotifications
     GeneratedPluginRegistrant.register(with: self)
     if let controller = window?.rootViewController as? FlutterViewController {
       AppleRuntimeChannel.register(binaryMessenger: controller.binaryMessenger)
+      AppleSnapshotImportInputChannel.register(
+        binaryMessenger: controller.binaryMessenger,
+        presenter: controller
+      )
     }
     UNUserNotificationCenter.current().delegate = self
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)

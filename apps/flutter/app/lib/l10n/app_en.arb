@@ -1154,6 +1154,16 @@
   "settingsAppearanceInputStyleClassic": "Classic",
   "settingsAppearanceInputStyleAgent": "Agent",
   "settingsAppearanceInputFloating": "Floating input",
+  "settingsAppearanceLongPastedTextAsAttachment": "Convert long pasted text to a file",
+  "settingsAppearanceLongPastedTextThreshold": "Conversion threshold",
+  "settingsAppearanceLongPastedTextThresholdValue": "{count} characters",
+  "@settingsAppearanceLongPastedTextThresholdValue": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsAppearanceColorSection": "Theme color",
   "settingsAppearanceColorDescription": "Choose a simple color preset. System bars and current app chrome follow the theme automatically.",
   "settingsAppearanceColorDefault": "Default",

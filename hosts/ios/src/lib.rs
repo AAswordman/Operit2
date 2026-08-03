@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 #[cfg(target_os = "ios")]
 use operit_host_api::HostManager::HostManager;
+#[cfg(target_os = "ios")]
+use operit_host_api::RuntimeStorageHost;
 
 pub mod bridge;
 pub mod terminal;
@@ -32,9 +34,18 @@ pub fn createRuntimeHostManager(
     workspaceRoot: PathBuf,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
 ) -> HostManager {
+    let runtimeStorageWriteHost = Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
+        runtimeRoot.clone(),
+        workspaceRoot.clone(),
+    ));
     let runtimeStorageHost = Arc::new(IosRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
+    let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
+        runtimeStorageHost
+            .runtimeRootDir()
+            .expect("iOS runtime storage root must be configured"),
+    ));
     let mut hostManager = HostManager::withFileSystemWebVisitAndSystemOperationHosts(
         Arc::new(IosFileSystemHost::new()),
         webVisitHost,
@@ -44,6 +55,8 @@ pub fn createRuntimeHostManager(
     hostManager.runtimeStorageHost = Some(runtimeStorageHost);
     hostManager.runtimeSqliteHost = Some(runtimeSqliteHost);
     hostManager = hostManager.withHostSecretStore(hostSecretStore);
+    hostManager = hostManager.withArchiveStagingHost(archiveStagingHost);
+    hostManager = hostManager.withRuntimeStorageWriteHost(runtimeStorageWriteHost);
     hostManager = hostManager
         .withHostRuntimeEventSchedulerHost(Arc::new(IosHostRuntimeEventSchedulerHost::new()));
     hostManager.withHostRuntimeTaskSchedulerHost(Arc::new(IosHostRuntimeTaskSchedulerHost::new()))

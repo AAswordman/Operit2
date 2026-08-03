@@ -20,7 +20,6 @@ use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use operit_runtime::services::ChatServiceCore::ChatServiceCore;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
-use operit_util::stream::Stream::Stream;
 
 /// Runs a synchronous action against the local main chat runtime core.
 fn with_main_chat_core<R>(
@@ -1349,14 +1348,6 @@ pub(crate) async fn send_chat_message_with_application(
     sendArgs: ChatSendArgs,
 ) -> Result<ChatSendResult, String> {
     let mut result = begin_chat_message_with_application(application, sendArgs).await?;
-    if let Some(mut stream) = result.aiMessage.contentStream.clone() {
-        let mut content = String::new();
-        stream.collect(&mut |chunk| {
-            content.push_str(&chunk);
-        });
-        result.aiMessage.content = content;
-        result.aiMessage.contentStream = None;
-    }
     result.aiMessage = wait_for_committed_ai_message(
         application,
         &result.chatId,
@@ -1376,10 +1367,7 @@ fn wait_for_committed_ai_message(
     loop {
         let result = with_main_chat_core(application, |core| {
             if let Some(message) = core.chatHistoryFlow().value().into_iter().find(|message| {
-                message.sender == "ai"
-                    && message.timestamp == timestamp
-                    && message.contentStream.is_none()
-                    && message.completedAt > 0
+                message.sender == "ai" && message.timestamp == timestamp && message.completedAt > 0
             }) {
                 return Ok(Some(message));
             }
@@ -1402,7 +1390,7 @@ fn wait_for_committed_ai_message(
 }
 
 fn print_chat_send_result(result: &ChatSendResult) {
-    print!("{}", result.aiMessage.content);
+    print!("{}", result.aiMessage.displayText());
     println!();
     eprintln!(
         "chat={} provider={} modelName={} inputTokens={} cachedInputTokens={} outputTokens={}",
@@ -1598,7 +1586,7 @@ fn print_chat_message(message: &operit_model::ChatMessage::ChatMessage) {
     println!("completedAt={}", message.completedAt);
     println!("displayMode={:?}", message.displayMode);
     println!("isFavorite={}", message.isFavorite);
-    println!("content={}", message.content);
+    println!("content={}", message.displayText());
 }
 
 fn nonBlankString(value: String) -> Option<String> {

@@ -175,6 +175,11 @@ fn render_schema_protocol(protocol: &MethodProtocol) -> String {
             };
             format!("{{\"mode\":\"Watch\",\"payload\":\"{payload}\",\"initial\":\"{initial}\"}}")
         }
+        MethodProtocol::ReverseStream(stream) => format!(
+            "{{\"mode\":\"ReverseStream\",\"payload\":\"Json\",\"itemType\":{},\"argument\":{}}}",
+            json_string(&stream.item_type),
+            json_string(&stream.argument_name)
+        ),
         MethodProtocol::Factory(factory) => format!(
             "{{\"mode\":\"Factory\",\"target\":{}}}",
             json_string(&factory.target_schema_key)

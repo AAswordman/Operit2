@@ -47,6 +47,12 @@ pub(crate) fn call_storage(method: &str, args: &[JsValue]) -> HostResult<JsValue
     call_function(&module, method, args)
 }
 
+/// Calls one worker-owned staged archive storage operation.
+pub(crate) fn call_archive_staging(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
+    let module = bridge_module("archiveStaging")?;
+    call_function(&module, method, args)
+}
+
 pub(crate) fn call_secret_store(method: &str, args: &[JsValue]) -> HostResult<JsValue> {
     let module = bridge_module("hostSecretStore")?;
     call_function(&module, method, args)

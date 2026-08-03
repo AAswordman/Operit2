@@ -1154,6 +1154,16 @@
   "settingsAppearanceInputStyleClassic": "经典",
   "settingsAppearanceInputStyleAgent": "Agent",
   "settingsAppearanceInputFloating": "悬浮输入框",
+  "settingsAppearanceLongPastedTextAsAttachment": "将超长粘贴文本转为文件",
+  "settingsAppearanceLongPastedTextThreshold": "转换阈值",
+  "settingsAppearanceLongPastedTextThresholdValue": "{count} 个字符",
+  "@settingsAppearanceLongPastedTextThresholdValue": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsAppearanceColorSection": "主题色",
   "settingsAppearanceColorDescription": "选择一个简单的颜色预设。系统栏和当前应用外壳会自动跟随主题，不再单独配置。",
   "settingsAppearanceColorDefault": "默认",

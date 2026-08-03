@@ -30,7 +30,7 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final textColor = colorScheme.onPrimaryContainer;
-    final parseResult = parseMessageContent(widget.message.content);
+    final parseResult = parseMessageContent(widget.message.displayText);
     final themePreferenceSnapshot = OperitTheme.of(
       context,
     ).themePreferenceSnapshot;

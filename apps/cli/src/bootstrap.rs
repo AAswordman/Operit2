@@ -54,7 +54,14 @@ compile_error!("operit2 CLI host is implemented for Windows, Linux, and macOS.")
 /// Creates the CLI application with the configured runtime and workspace roots.
 pub(crate) fn create_cli_application() -> OperitApplication {
     let storageConfig = CliStorageConfig::read();
+    let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
+        storageConfig.runtimeRoot.clone(),
+    ));
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(
+        storageConfig.runtimeRoot.clone(),
+        storageConfig.workspaceRoot.clone(),
+    ));
+    let runtimeStorageWriteHost = Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
         storageConfig.runtimeRoot,
         storageConfig.workspaceRoot,
     ));
@@ -69,7 +76,9 @@ pub(crate) fn create_cli_application() -> OperitApplication {
         runtimeStorageHost,
         runtimeSqliteHost,
     )
-    .withHostSecretStore(hostSecretStore);
+    .withHostSecretStore(hostSecretStore)
+    .withArchiveStagingHost(archiveStagingHost)
+    .withRuntimeStorageWriteHost(runtimeStorageWriteHost);
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     {
         context = context.withTerminalHost(Arc::new(NativeTerminalHost::new()));

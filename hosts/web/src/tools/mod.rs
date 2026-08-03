@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod archive;
 pub mod bluetooth;
 pub mod browser;
 pub mod browser_session;
