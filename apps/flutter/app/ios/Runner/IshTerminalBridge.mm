@@ -1,10 +1,13 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
-#import "LinuxInterop.h"
 #include <stdlib.h>
 #include <string.h>
+
+extern "C" {
+#import "LinuxInterop.h"
 #include "tools/fakefs.h"
+}
 
 static const NSUInteger ORTIshOutputCapacity = 1024 * 1024;
 static const NSTimeInterval ORTIshStartTimeout = 30.0;
@@ -489,24 +492,24 @@ extern "C" void operit_ios_ish_terminal_free(char *value) {
 }
 
 /// Retains one Objective-C object passed into iSH kernel state.
-nsobj_t objc_get(nsobj_t object) {
+extern "C" nsobj_t objc_get(nsobj_t object) {
   return CFBridgingRetain((__bridge id)object);
 }
 
 /// Releases one Objective-C object retained for iSH kernel state.
-void objc_put(nsobj_t object) {
+extern "C" void objc_put(nsobj_t object) {
   CFBridgingRelease(object);
 }
 
 /// Creates the session object attached to a newly allocated iSH PTY.
-nsobj_t Terminal_terminalWithType_number(int type, int number) {
+extern "C" nsobj_t Terminal_terminalWithType_number(int type, int number) {
   ORTIshInitializeState();
   if (ORTIshPendingSession == nil) return NULL;
   return objc_get((__bridge nsobj_t)ORTIshPendingSession);
 }
 
 /// Records the iSH Linux TTY pointer required for input, resize, and close.
-void Terminal_setLinuxTTY(nsobj_t object, struct linux_tty *tty) {
+extern "C" void Terminal_setLinuxTTY(nsobj_t object, struct linux_tty *tty) {
   ORTIshTerminalSession *session = (__bridge ORTIshTerminalSession *)object;
   @synchronized (session) {
     session.tty = tty;
@@ -521,7 +524,7 @@ void Terminal_setLinuxTTY(nsobj_t object, struct linux_tty *tty) {
 }
 
 /// Appends raw iSH PTY output to the bridge-owned session buffers.
-int Terminal_sendOutput_length(nsobj_t object, const char *data, int size) {
+extern "C" int Terminal_sendOutput_length(nsobj_t object, const char *data, int size) {
   ORTIshTerminalSession *session = (__bridge ORTIshTerminalSession *)object;
   @synchronized (session) {
     if (size < 0 || session.pendingOutput.length + (NSUInteger)size > ORTIshOutputCapacity) return 0;
@@ -533,7 +536,7 @@ int Terminal_sendOutput_length(nsobj_t object, const char *data, int size) {
 }
 
 /// Reports the available iSH PTY output capacity before back-pressuring the kernel.
-int Terminal_roomForOutput(nsobj_t object) {
+extern "C" int Terminal_roomForOutput(nsobj_t object) {
   ORTIshTerminalSession *session = (__bridge ORTIshTerminalSession *)object;
   @synchronized (session) {
     return (int)(ORTIshOutputCapacity - session.pendingOutput.length);
@@ -541,57 +544,57 @@ int Terminal_roomForOutput(nsobj_t object) {
 }
 
 /// Dispatches an iSH kernel callback onto the iOS main queue.
-void async_do_in_ios(void (^block)(void)) {
+extern "C" void async_do_in_ios(void (^block)(void)) {
   dispatch_async(dispatch_get_main_queue(), block);
 }
 
 /// Executes one callback on the iSH work queue and waits for its completion callback.
-void sync_do_in_workqueue(void (^block)(void (^done)(void))) {
+extern "C" void sync_do_in_workqueue(void (^block)(void (^done)(void))) {
   dispatch_semaphore_t completion = dispatch_semaphore_create(0);
   async_do_in_workqueue(^{ block(^{ dispatch_semaphore_signal(completion); }); });
   dispatch_semaphore_wait(completion, DISPATCH_TIME_FOREVER);
 }
 
 /// Logs iSH kernel diagnostics through the iOS unified console.
-void ConsoleLog(const char *data, unsigned len) {
+extern "C" void ConsoleLog(const char *data, unsigned len) {
   NSLog(@"%.*s", (int)len, data);
 }
 
 /// Records an iSH kernel panic in the iOS unified console.
-void ReportPanic(const char *message) {
+extern "C" void ReportPanic(const char *message) {
   NSLog(@"iSH kernel panic: %s", message);
 }
 
 /// Returns the initialized iSH fakefs root path to the Linux kernel.
-const char *DefaultRootPath(void) {
+extern "C" const char *DefaultRootPath(void) {
   return ORTIshRootPath.fileSystemRepresentation;
 }
 
 /// Performs no App-specific iSH filesystem migration in the embedded runtime.
-void FsInitialize(void) {
+extern "C" void FsInitialize(void) {
 }
 
 /// Returns the iOS pasteboard retained for iSH clipboard operations.
-nsobj_t UIPasteboard_get(void) {
+extern "C" nsobj_t UIPasteboard_get(void) {
   return objc_get((__bridge nsobj_t)UIPasteboard.generalPasteboard);
 }
 
 /// Returns the iOS pasteboard change counter for iSH clipboard operations.
-long UIPasteboard_changeCount(void) {
+extern "C" long UIPasteboard_changeCount(void) {
   return UIPasteboard.generalPasteboard.changeCount;
 }
 
 /// Replaces the iOS pasteboard UTF-8 content from iSH clipboard operations.
-void UIPasteboard_set(const char *data, size_t len) {
+extern "C" void UIPasteboard_set(const char *data, size_t len) {
   UIPasteboard.generalPasteboard.string = [[NSString alloc] initWithBytes:data length:len encoding:NSUTF8StringEncoding];
 }
 
 /// Returns the byte length of one retained NSData object supplied to iSH.
-size_t NSData_length(nsobj_t data) {
+extern "C" size_t NSData_length(nsobj_t data) {
   return [(__bridge NSData *)data length];
 }
 
 /// Returns the byte pointer of one retained NSData object supplied to iSH.
-const void *NSData_bytes(nsobj_t data) {
+extern "C" const void *NSData_bytes(nsobj_t data) {
   return [(__bridge NSData *)data bytes];
 }
