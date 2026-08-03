@@ -40,6 +40,40 @@ verify_static_library() {
     test -f "$build_products_dir/$library_name"
 }
 
+# Builds one iSH source file into a universal static library.
+build_ish_source_static_library() {
+    local source_path="$1"
+    local library_name="$2"
+    local sdk_root
+    local source_name
+    local architecture
+    local object_path
+    local architecture_library
+    local -a architecture_libraries=()
+
+    sdk_root="$(xcrun --sdk "$sdk_name" --show-sdk-path)"
+    source_name="$(basename "$source_path" .c)"
+    for architecture in $architectures; do
+        object_path="$build_products_dir/$source_name-$architecture.o"
+        architecture_library="$build_products_dir/$library_name-$architecture.a"
+        xcrun --sdk "$sdk_name" clang \
+            -arch "$architecture" \
+            -isysroot "$sdk_root" \
+            -I "$source_dir" \
+            -I "$source_dir/deps/libarchive/libarchive" \
+            -c "$source_path" \
+            -o "$object_path"
+        xcrun --sdk "$sdk_name" libtool -static \
+            -o "$architecture_library" \
+            "$object_path"
+        architecture_libraries+=("$architecture_library")
+    done
+
+    xcrun --sdk "$sdk_name" lipo -create \
+        "${architecture_libraries[@]}" \
+        -output "$build_products_dir/$library_name.a"
+}
+
 configuration="$ish_configuration"
 build_target "$source_dir/iSH.xcodeproj" liblinux
 build_target "$source_dir/iSH.xcodeproj" libiSHLinux
@@ -47,7 +81,9 @@ build_target "$source_dir/iSH.xcodeproj" libiSHLinuxUser
 build_target "$source_dir/iSH.xcodeproj" libfakefs
 build_target "$source_dir/iSH.xcodeproj" libish_emu
 configuration="${1:?missing Xcode configuration}"
-build_target "$source_dir/deps/libarchive/libarchive.xcodeproj" libarchive
+build_target "$source_dir/deps/libarchive.xcodeproj" libarchive
+build_ish_source_static_library "$source_dir/tools/fakefs.c" libiSHFakefs
+build_ish_source_static_library "$source_dir/util/fchdir.c" libiSHFchdir
 
 verify_static_library liblinux.a
 verify_static_library libiSHLinux.a
@@ -55,3 +91,5 @@ verify_static_library libiSHLinuxUser.a
 verify_static_library libfakefs.a
 verify_static_library libish_emu.a
 verify_static_library libarchive.a
+verify_static_library libiSHFakefs.a
+verify_static_library libiSHFchdir.a
