@@ -10,6 +10,7 @@ sdk_name="${2:?missing Xcode SDK name}"
 platform_name="${3:?missing Xcode platform name}"
 architectures="${4:?missing Xcode architectures}"
 build_products_dir="$repo_dir/apps/flutter/app/apple/ish-build/${configuration}-${platform_name}"
+ish_configuration="${configuration}Linux"
 
 python3 "$script_dir/fetch_sources.py"
 
@@ -39,11 +40,13 @@ verify_static_library() {
     test -f "$build_products_dir/$library_name"
 }
 
+configuration="$ish_configuration"
 build_target "$source_dir/iSH.xcodeproj" liblinux
 build_target "$source_dir/iSH.xcodeproj" libiSHLinux
 build_target "$source_dir/iSH.xcodeproj" libiSHLinuxUser
 build_target "$source_dir/iSH.xcodeproj" libfakefs
 build_target "$source_dir/iSH.xcodeproj" libish_emu
+configuration="${1:?missing Xcode configuration}"
 build_target "$source_dir/deps/libarchive/libarchive.xcodeproj" libarchive
 
 verify_static_library liblinux.a
