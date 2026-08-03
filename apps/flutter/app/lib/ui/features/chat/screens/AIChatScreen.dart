@@ -3,9 +3,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../../../../core/logging/ClientLogger.dart';
+import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../main/MainLayoutController.dart';
 import '../../../main/TopBarController.dart';
@@ -24,6 +26,53 @@ import '../viewmodel/ChatViewModel.dart';
 
 bool _chatWorkspaceOpen = false;
 const String _localSttLogTag = 'LocalSTT';
+
+/// Derives text inserted by one editing update from the previous selection.
+String? _insertedTextFromInputChange({
+  required TextEditingValue previousValue,
+  required TextEditingValue proposedValue,
+}) {
+  final selection = previousValue.selection;
+  final previousText = previousValue.text;
+  if (!selection.isValid ||
+      selection.start > previousText.length ||
+      selection.end > previousText.length) {
+    return null;
+  }
+  final prefix = previousText.substring(0, selection.start);
+  final suffix = previousText.substring(selection.end);
+  final proposedText = proposedValue.text;
+  if (proposedText.length < prefix.length + suffix.length ||
+      !proposedText.startsWith(prefix) ||
+      !proposedText.endsWith(suffix)) {
+    return null;
+  }
+  final insertedTextEnd = proposedText.length - suffix.length;
+  return proposedText.substring(selection.start, insertedTextEnd);
+}
+
+/// Returns clipboard text when it exactly matches the insertion modulo line endings.
+String? _pastedTextFromClipboard({
+  required TextEditingValue previousValue,
+  required TextEditingValue proposedValue,
+  required String clipboardText,
+}) {
+  final insertedText = _insertedTextFromInputChange(
+    previousValue: previousValue,
+    proposedValue: proposedValue,
+  );
+  if (insertedText == null ||
+      _normalizedLineEndings(insertedText) !=
+          _normalizedLineEndings(clipboardText)) {
+    return null;
+  }
+  return clipboardText;
+}
+
+/// Normalizes platform line-ending conventions for exact clipboard comparison.
+String _normalizedLineEndings(String value) {
+  return value.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+}
 
 class AIChatScreen extends StatelessWidget {
   /// Creates the full host-owned AI chat screen.
@@ -138,13 +187,12 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
   late final ChatViewModel _viewModel =
       widget.viewModel ?? ChatViewModel(runtimeSurface: widget.runtimeSurface);
   final TextEditingController _messageController = TextEditingController();
+  TextEditingValue _previousMessageInputValue = TextEditingValue.empty;
   final FocusNode _inputFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final LocalSpeechRecorder _speechRecorder = LocalSpeechRecorder();
   late final Map<String?, TextEditingValue> _inputDraftsByChatId;
   final List<ChatUiMessage> _messages = <ChatUiMessage>[];
-  final List<PendingQueueMessageItem> _pendingQueueMessages =
-      <PendingQueueMessageItem>[];
   List<AttachmentInfo> _attachments = const <AttachmentInfo>[];
   late final ValueNotifier<_ChatContentData> _chatContentDataNotifier;
   late final ValueNotifier<bool> _autoScrollToBottomNotifier;
@@ -189,10 +237,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
   late bool _workspaceOpen;
   bool _isCurrentMainScreen = true;
   bool _topBarActionsUpdateScheduled = false;
-  bool _isPendingQueueExpanded = true;
-  int _nextPendingQueueId = 1;
-  bool _wasQueueBlocked = false;
-  bool _suppressNextAutoDequeue = false;
+  bool _pendingQueueEnqueueInFlight = false;
   bool _isApplyingChatDraft = false;
   bool _isSpeechRecording = false;
   bool _isSpeechTranscribing = false;
@@ -220,6 +265,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
     _onChatSwitchRenderRequest();
     _inputFocusNode.addListener(_onInputFocusChanged);
     _messageController.addListener(_onMessageControllerChanged);
+    unawaited(_loadLongPastedTextInputSettings());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _consumePendingChatDraft();
       _refreshAttachments();
@@ -270,6 +316,20 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
     super.dispose();
   }
 
+  /// Loads the global long-paste conversion settings used by this chat surface.
+  Future<void> _loadLongPastedTextInputSettings() async {
+    try {
+      await const UserPreferencesManager().loadLongPastedTextInputSettings();
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Unable to load long pasted text preferences',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
   void _consumePendingChatDraft() {
     if (!mounted) {
       return;
@@ -286,11 +346,35 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
   }
 
   void _onMessageControllerChanged() {
+    final previousValue = _previousMessageInputValue;
+    final proposedValue = _messageController.value;
+    _previousMessageInputValue = proposedValue;
     if (_isApplyingChatDraft) {
       return;
     }
-    _saveCurrentInputDraft();
-    final value = _messageController.value;
+    final settings = UserPreferencesManager.longPastedTextInputSettings.value;
+    final insertedText = _insertedTextFromInputChange(
+      previousValue: previousValue,
+      proposedValue: proposedValue,
+    );
+    if (settings.enabled &&
+        insertedText != null &&
+        insertedText.runes.length > settings.threshold) {
+      unawaited(
+        _convertLongPastedText(
+          previousValue: previousValue,
+          proposedValue: proposedValue,
+          chatId: _currentChatId,
+        ),
+      );
+      return;
+    }
+    _recordMessageInputChange(proposedValue);
+  }
+
+  /// Persists and dispatches one accepted message input editing value.
+  void _recordMessageInputChange(TextEditingValue value) {
+    _saveInputDraft(value);
     unawaited(
       _viewModel
           .dispatchChatInputChanged(
@@ -311,8 +395,91 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
     );
   }
 
+  /// Converts a verified long clipboard insertion into a text attachment.
+  Future<void> _convertLongPastedText({
+    required TextEditingValue previousValue,
+    required TextEditingValue proposedValue,
+    required String? chatId,
+  }) async {
+    try {
+      final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+      final clipboardText = clipboardData?.text;
+      if (clipboardText == null) {
+        _recordDeferredMessageInputChange(chatId, proposedValue);
+        return;
+      }
+      final pastedText = _pastedTextFromClipboard(
+        previousValue: previousValue,
+        proposedValue: proposedValue,
+        clipboardText: clipboardText,
+      );
+      if (pastedText == null) {
+        _recordDeferredMessageInputChange(chatId, proposedValue);
+        return;
+      }
+      if (!_matchesPendingLongPaste(chatId, proposedValue)) {
+        return;
+      }
+      await _viewModel.attachPastedText(pastedText);
+      if (!_matchesPendingLongPaste(chatId, proposedValue)) {
+        return;
+      }
+      try {
+        await _refreshAttachments();
+      } catch (error, stackTrace) {
+        ClientLogger.e(
+          'Unable to refresh attachments after converting pasted text',
+          tag: 'AIChatScreen',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+      if (!_matchesPendingLongPaste(chatId, proposedValue)) {
+        return;
+      }
+      _isApplyingChatDraft = true;
+      _messageController.value = previousValue;
+      _isApplyingChatDraft = false;
+      _previousMessageInputValue = previousValue;
+      _recordMessageInputChange(previousValue);
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Unable to convert pasted text to an attachment',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      _recordDeferredMessageInputChange(chatId, proposedValue);
+    }
+  }
+
+  /// Records a deferred input update while it still belongs to the active chat.
+  void _recordDeferredMessageInputChange(
+    String? chatId,
+    TextEditingValue proposedValue,
+  ) {
+    if (_matchesPendingLongPaste(chatId, proposedValue)) {
+      _recordMessageInputChange(proposedValue);
+    }
+  }
+
+  /// Checks whether a long-paste conversion still targets the active editor value.
+  bool _matchesPendingLongPaste(
+    String? chatId,
+    TextEditingValue proposedValue,
+  ) {
+    return mounted &&
+        _currentChatId == chatId &&
+        _messageController.value == proposedValue;
+  }
+
   void _saveCurrentInputDraft() {
-    _inputDraftsByChatId[_currentChatId] = _messageController.value;
+    _saveInputDraft(_messageController.value);
+  }
+
+  /// Stores one editing value as the active chat's current draft.
+  void _saveInputDraft(TextEditingValue value) {
+    _inputDraftsByChatId[_currentChatId] = value;
   }
 
   void _restoreInputDraftForChat(String? chatId) {
@@ -326,122 +493,229 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
     return _loading || _inputProcessingState.isProcessing;
   }
 
-  void _resetPendingQueueState() {
-    _pendingQueueMessages.clear();
-    _isPendingQueueExpanded = true;
-    _nextPendingQueueId = 1;
-    _wasQueueBlocked = false;
-    _suppressNextAutoDequeue = false;
-  }
-
+  /// Requests a Rust-owned automatic dequeue after the active chat becomes ready.
   void _syncPendingQueueAfterSnapshot() {
-    final queueBlocked = _isQueueBlocked;
-    if (_wasQueueBlocked && !queueBlocked) {
-      if (_suppressNextAutoDequeue) {
-        _suppressNextAutoDequeue = false;
-      } else {
-        _schedulePendingQueueAutoDequeue();
-      }
+    if (_viewModel.runtimeSurface is! MainChatRuntimeSurface) {
+      return;
     }
-    _wasQueueBlocked = queueBlocked;
+    final contentData = _chatContentDataNotifier.value;
+    if (!_isQueueBlocked && contentData.pendingQueueMessages.isNotEmpty) {
+      _schedulePendingQueueAutoDequeue();
+    }
   }
 
+  /// Schedules an atomic Rust dequeue only while the owning chat remains active.
   void _schedulePendingQueueAutoDequeue() {
-    if (_pendingQueueMessages.isEmpty) {
+    final queueChatId = _currentChatId;
+    final contentData = _chatContentDataNotifier.value;
+    if (queueChatId == null || contentData.pendingQueueMessages.isEmpty) {
       return;
     }
     Future<void>.delayed(const Duration(milliseconds: 250), () {
-      if (!mounted || _isQueueBlocked || _pendingQueueMessages.isEmpty) {
+      final currentContentData = _chatContentDataNotifier.value;
+      if (!mounted ||
+          _currentChatId != queueChatId ||
+          _isQueueBlocked ||
+          currentContentData.pendingQueueMessages.isEmpty) {
         return;
       }
-      final nextMessage = _pendingQueueMessages.removeAt(0);
-      _publishChatContentData();
-      _sendQueuedItemNow(nextMessage, false);
+      unawaited(_takeNextPendingQueueMessageIfReady(queueChatId));
     });
   }
 
-  void _enqueueDraftToPendingQueue() {
-    final draftText = _messageController.text.trim();
-    if (draftText.isEmpty) {
-      return;
-    }
-    _mutateChatContentData(() {
-      _pendingQueueMessages.add(
-        PendingQueueMessageItem(id: _nextPendingQueueId, text: draftText),
+  /// Atomically takes and submits the next Rust-owned queued message when available.
+  Future<void> _takeNextPendingQueueMessageIfReady(String chatId) async {
+    try {
+      final item = await _viewModel.takeNextPendingQueueMessageIfReady(chatId);
+      if (item == null) {
+        return;
+      }
+      await _sendQueuedItemNow(chatId, item, false);
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Failed to dequeue pending chat message',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
       );
-      _nextPendingQueueId += 1;
-      _isPendingQueueExpanded = true;
-      _messageController.clear();
-    });
-    _showLocalToast(AppLocalizations.of(context)!.chatQueueAdded);
-  }
-
-  PendingQueueMessageItem? _removePendingQueueMessageById(int id) {
-    final index = _pendingQueueMessages.indexWhere((item) => item.id == id);
-    if (index < 0) {
-      return null;
     }
-    final item = _pendingQueueMessages.removeAt(index);
-    _publishChatContentData();
-    return item;
   }
 
-  void _deletePendingQueueMessage(int id) {
-    _removePendingQueueMessageById(id);
+  /// Enqueues the current draft in the Rust-owned queue for the active chat.
+  void _enqueueDraftToPendingQueue() {
+    unawaited(_enqueueDraftToPendingQueueInRuntime());
   }
 
-  void _editPendingQueueMessage(int id) {
-    final item = _removePendingQueueMessageById(id);
-    if (item == null) {
+  /// Commits the current draft to the Rust-owned queue without losing a changed draft.
+  Future<void> _enqueueDraftToPendingQueueInRuntime() async {
+    final draftText = _messageController.text.trim();
+    final chatId = _currentChatId;
+    if (_pendingQueueEnqueueInFlight || draftText.isEmpty || chatId == null) {
       return;
     }
-    _messageController.text = item.text;
-    _messageController.selection = TextSelection.collapsed(
-      offset: item.text.length,
-    );
-    _inputFocusNode.requestFocus();
-  }
-
-  void _sendPendingQueueMessage(int id) {
-    final item = _removePendingQueueMessageById(id);
-    if (item != null) {
-      _sendQueuedItemNow(item, true).catchError((
-        Object error,
-        StackTrace stackTrace,
-      ) {
-        debugPrint('Failed to send queued message: $error\n$stackTrace');
-        return null;
-      });
+    _pendingQueueEnqueueInFlight = true;
+    try {
+      await _viewModel.enqueuePendingQueueMessage(
+        chatId: chatId,
+        messageText: draftText,
+      );
+      final savedDraft = _inputDraftsByChatId[chatId];
+      if (savedDraft != null && savedDraft.text.trim() == draftText) {
+        _inputDraftsByChatId[chatId] = TextEditingValue.empty;
+      }
+      if (!mounted || _currentChatId != chatId) {
+        return;
+      }
+      if (_messageController.text.trim() == draftText) {
+        _messageController.clear();
+      }
+      _showLocalToast(AppLocalizations.of(context)!.chatQueueAdded);
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Failed to enqueue pending chat message',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      _pendingQueueEnqueueInFlight = false;
     }
   }
 
+  /// Deletes one message from the Rust-owned queue for the active chat.
+  void _deletePendingQueueMessage(int id) {
+    unawaited(_deletePendingQueueMessageInRuntime(id));
+  }
+
+  /// Applies a pending-message deletion through the chat runtime.
+  Future<void> _deletePendingQueueMessageInRuntime(int id) async {
+    final chatId = _currentChatId;
+    if (chatId == null) {
+      return;
+    }
+    try {
+      await _viewModel.deletePendingQueueMessage(
+        chatId: chatId,
+        messageId: id,
+      );
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Failed to delete pending chat message',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  /// Moves one Rust-owned queue item into the input editor for the active chat.
+  void _editPendingQueueMessage(int id) {
+    unawaited(_editPendingQueueMessageInRuntime(id));
+  }
+
+  /// Atomically takes a queue item before placing it in the active input editor.
+  Future<void> _editPendingQueueMessageInRuntime(int id) async {
+    final chatId = _currentChatId;
+    if (chatId == null) {
+      return;
+    }
+    try {
+      final item = await _viewModel.takePendingQueueMessage(
+        chatId: chatId,
+        messageId: id,
+        suppressNextAutoDequeue: false,
+      );
+      if (item == null) {
+        return;
+      }
+      if (!mounted || _currentChatId != chatId) {
+        await _viewModel.restorePendingQueueMessage(
+          chatId: chatId,
+          message: item,
+        );
+        return;
+      }
+      _messageController.text = item.text;
+      _messageController.selection = TextSelection.collapsed(
+        offset: item.text.length,
+      );
+      _inputFocusNode.requestFocus();
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Failed to edit pending chat message',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  /// Sends a manually selected item through the chat that owns the Rust queue.
+  void _sendPendingQueueMessage(int id) {
+    unawaited(_sendPendingQueueMessageInRuntime(id));
+  }
+
+  /// Atomically takes the selected queue item before submitting it.
+  Future<void> _sendPendingQueueMessageInRuntime(int id) async {
+    final queueChatId = _currentChatId;
+    if (queueChatId == null) {
+      return;
+    }
+    try {
+      final item = await _viewModel.takePendingQueueMessage(
+        chatId: queueChatId,
+        messageId: id,
+        suppressNextAutoDequeue: true,
+      );
+      if (item == null) {
+        return;
+      }
+      await _sendQueuedItemNow(queueChatId, item, true);
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Failed to send pending chat message',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  /// Runs queue submission hooks and sends the item to its owning chat.
   Future<void> _sendQueuedItemNow(
+    String queueChatId,
     PendingQueueMessageItem item,
     bool cancelCurrentConversation,
   ) async {
     var queuedText = item.text;
     final decision = await _viewModel.dispatchChatInputSubmitRequested(
-      chatId: _currentChatId,
+      chatId: queueChatId,
       text: queuedText,
       selectionStart: queuedText.length,
       selectionEnd: queuedText.length,
       attachmentCount: 0,
     );
-    if (!mounted) {
-      return;
-    }
     if (decision != null) {
       if (decision.action == 'block') {
-        _restorePendingQueueItem(item);
+        if (cancelCurrentConversation) {
+          await _viewModel.clearPendingQueueAutoDequeueSuppression(queueChatId);
+        }
+        await _viewModel.restorePendingQueueMessage(
+          chatId: queueChatId,
+          message: item,
+        );
         final message = decision.message;
-        if (message != null && message.trim().isNotEmpty) {
+        if (mounted && message != null && message.trim().isNotEmpty) {
           _showLocalToast(message);
         }
         return;
       }
       if (decision.action == 'consume') {
+        if (cancelCurrentConversation) {
+          await _viewModel.clearPendingQueueAutoDequeueSuppression(queueChatId);
+        }
         final message = decision.message;
-        if (message != null && message.trim().isNotEmpty) {
+        if (mounted && message != null && message.trim().isNotEmpty) {
           _showLocalToast(message);
         }
         return;
@@ -453,49 +727,45 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
         }
       }
     }
-    final shouldWaitForCancel = cancelCurrentConversation && _isQueueBlocked;
-    if (shouldWaitForCancel) {
-      _suppressNextAutoDequeue = true;
-    }
     if (cancelCurrentConversation) {
-      await _viewModel.cancelCurrentMessage();
-    }
-    if (shouldWaitForCancel) {
-      await _waitUntilQueueUnblocked();
-    }
-    if (!mounted) {
-      return;
-    }
-    if (_currentChatId == null || _currentChatId!.trim().isEmpty) {
-      _showLocalToast(AppLocalizations.of(context)!.chatPleaseCreateNewChat);
-      return;
+      await _viewModel.cancelMessage(queueChatId);
     }
     if (queuedText.trim().isEmpty) {
       return;
     }
-    _inputFocusNode.unfocus();
-    _startSendMessageText(queuedText.trim());
+    if (mounted && _currentChatId == queueChatId) {
+      _inputFocusNode.unfocus();
+    }
+    await _viewModel.sendUserMessage(
+      queuedText.trim(),
+      chatIdOverride: queueChatId,
+    );
   }
 
-  void _restorePendingQueueItem(PendingQueueMessageItem item) {
-    if (_pendingQueueMessages.any((queued) => queued.id == item.id)) {
+  /// Persists the pending-queue expanded state through the chat runtime.
+  void _setPendingQueueExpanded(bool expanded) {
+    unawaited(_setPendingQueueExpandedInRuntime(expanded));
+  }
+
+  /// Applies a queue-expansion change to the currently active chat.
+  Future<void> _setPendingQueueExpandedInRuntime(bool expanded) async {
+    final chatId = _currentChatId;
+    if (chatId == null) {
       return;
     }
-    _mutateChatContentData(() {
-      _pendingQueueMessages.insert(0, item);
-    });
-  }
-
-  Future<void> _waitUntilQueueUnblocked() async {
-    while (mounted && _isQueueBlocked) {
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+    try {
+      await _viewModel.setPendingQueueExpanded(
+        chatId: chatId,
+        isExpanded: expanded,
+      );
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Failed to update pending queue expanded state',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
-  }
-
-  void _setPendingQueueExpanded(bool expanded) {
-    _mutateChatContentData(() {
-      _isPendingQueueExpanded = expanded;
-    });
   }
 
   void _showLocalToast(String message) {
@@ -747,15 +1017,15 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
     ChatViewModelSnapshot snapshot, {
     required bool keepPreparingChatSwitch,
   }) {
-    final pendingQueueChatChanged = _currentChatId != snapshot.currentChatId;
+    final chatChanged = _currentChatId != snapshot.currentChatId;
     final workspaceChanged =
         _currentChatId != snapshot.currentChatId ||
         _currentWorkspacePath != snapshot.currentWorkspacePath;
-    if (pendingQueueChatChanged) {
+    if (chatChanged) {
       _saveCurrentInputDraft();
     }
     _mutateChatContentData(() {
-      final chatChanged =
+      final didSwitchChat =
           _currentChatId != null &&
           snapshot.currentChatId != null &&
           _currentChatId != snapshot.currentChatId;
@@ -775,10 +1045,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
       _hasNewerDisplayHistory = snapshot.hasNewerDisplayHistory;
       _isLoadingDisplayWindow = snapshot.isLoadingDisplayWindow;
       _isPreparingChatSwitch = keepPreparingChatSwitch;
-      if (pendingQueueChatChanged) {
-        _resetPendingQueueState();
-      }
-      if (chatChanged) {
+      if (didSwitchChat) {
         _isMultiSelectMode = false;
         _selectedMessageIndices = const <int>{};
       } else if (_selectedMessageIndices.isNotEmpty) {
@@ -791,7 +1058,11 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
         }).toSet();
       }
     });
-    if (pendingQueueChatChanged) {
+    _chatContentDataNotifier.value = _currentChatContentData(
+      pendingQueueMessages: snapshot.pendingQueueMessages,
+      isPendingQueueExpanded: snapshot.isPendingQueueExpanded,
+    );
+    if (chatChanged) {
       _restoreInputDraftForChat(snapshot.currentChatId);
     }
     if (workspaceChanged && mounted) {
@@ -1132,7 +1403,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
       context: context,
       builder: (context) {
         return MessageEditorDialog(
-          initialText: message.content,
+          initialText: message.editableText,
           showResendButton: message.sender == 'user',
           onSave: (content) async {
             await _viewModel.updateMessage(index, content);
@@ -1557,10 +1828,18 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
   }
 
   void _publishChatContentData() {
-    _chatContentDataNotifier.value = _currentChatContentData();
+    final previousContentData = _chatContentDataNotifier.value;
+    _chatContentDataNotifier.value = _currentChatContentData(
+      pendingQueueMessages: previousContentData.pendingQueueMessages,
+      isPendingQueueExpanded: previousContentData.isPendingQueueExpanded,
+    );
   }
 
-  _ChatContentData _currentChatContentData() {
+  _ChatContentData _currentChatContentData({
+    List<PendingQueueMessageItem> pendingQueueMessages =
+        const <PendingQueueMessageItem>[],
+    bool isPendingQueueExpanded = true,
+  }) {
     return _ChatContentData(
       messages: List<ChatUiMessage>.unmodifiable(_messages),
       loading: _loading,
@@ -1575,9 +1854,9 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
       currentCharacterCardAvatarUri: _currentCharacterCardAvatarUri,
       isPreparingChatSwitch: _isPreparingChatSwitch,
       pendingQueueMessages: List<PendingQueueMessageItem>.unmodifiable(
-        _pendingQueueMessages,
+        pendingQueueMessages,
       ),
-      isPendingQueueExpanded: _isPendingQueueExpanded,
+      isPendingQueueExpanded: isPendingQueueExpanded,
       attachments: List<AttachmentInfo>.unmodifiable(_attachments),
       isSpeechRecording: _isSpeechRecording,
       isSpeechTranscribing: _isSpeechTranscribing,

@@ -3,10 +3,10 @@ use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::plugins::toolpkg::ToolPkgChatInputHookBridge::{
-    CHAT_INPUT_EVENT_INPUT_CHANGED, CHAT_INPUT_EVENT_SUBMIT_REQUESTED, CHAT_INPUT_EVENT_SUBMITTED,
+    ChatInputHookContext, ChatInputHookResult, ToolPkgChatInputHookBridge,
+    CHAT_INPUT_EVENT_INPUT_CHANGED, CHAT_INPUT_EVENT_SUBMITTED, CHAT_INPUT_EVENT_SUBMIT_REQUESTED,
     CHAT_INPUT_SUBMIT_ACTION_ALLOW, CHAT_INPUT_SUBMIT_ACTION_BLOCK,
-    CHAT_INPUT_SUBMIT_ACTION_CONSUME, CHAT_INPUT_SUBMIT_ACTION_REPLACE, ChatInputHookContext,
-    ChatInputHookResult, ToolPkgChatInputHookBridge,
+    CHAT_INPUT_SUBMIT_ACTION_CONSUME, CHAT_INPUT_SUBMIT_ACTION_REPLACE,
 };
 use crate::plugins::toolpkg::ToolPkgXmlRenderBridge::ToolPkgXmlRenderBridge;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
@@ -30,16 +30,19 @@ use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
+use operit_model::MessagePart::MessagePart;
+use operit_model::MessagePartCodec::MessagePartCodec;
+use operit_model::PendingQueueMessageItem::PendingQueueMessageItem;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
-use operit_store::PreferencesDataStore::{StateFlow, combine3, combine5};
 use operit_store::repository::ChatHistoryManager::ChatImportResult;
+use operit_store::PreferencesDataStore::{combine3, combine4, combine5, MutableStateFlow, StateFlow};
+use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
-use operit_tools::files::PathMapper::PathMapper;
-use operit_tools::tools::AIToolHandler::AIToolHandler;
-use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_util::AppLogger::AppLogger;
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};
@@ -50,6 +53,7 @@ use std::sync::Arc;
 use url::Url;
 
 const PACKAGE_ATTACHMENT_PREFIX: &str = "package_attach:";
+const PASTED_TEXT_ATTACHMENT_PREFIX: &str = "pasted_text:";
 const OCR_INLINE_INSTRUCTION: &str = "Do not read the file, answer the user's question directly based on the attachment content and the user's question.";
 
 pub trait ChatServiceUiBridge {}
@@ -80,6 +84,50 @@ struct ChatMainFlowInputs {
     chatHistories: Vec<ChatHistory>,
     activeStreamingChatIds: HashSet<String>,
     inputProcessingStateByChatId: HashMap<String, InputProcessingState>,
+    pendingQueueStateByChatId: HashMap<String, PendingChatQueueState>,
+}
+
+/// Stores the runtime-owned pending message queue for one chat.
+#[derive(Clone, Debug, PartialEq)]
+struct PendingChatQueueState {
+    messages: Vec<PendingQueueMessageItem>,
+    isExpanded: bool,
+    nextMessageId: i64,
+    wasBlocked: bool,
+    suppressNextAutoDequeue: bool,
+}
+
+impl PendingChatQueueState {
+    /// Creates the initial queue state for a chat.
+    fn new() -> Self {
+        Self {
+            messages: Vec::new(),
+            isExpanded: true,
+            nextMessageId: 1,
+            wasBlocked: false,
+            suppressNextAutoDequeue: false,
+        }
+    }
+}
+
+/// Shares pending-message queues between every chat surface in one runtime.
+#[derive(Clone)]
+pub(crate) struct PendingChatQueueStore {
+    stateFlow: MutableStateFlow<HashMap<String, PendingChatQueueState>>,
+}
+
+impl PendingChatQueueStore {
+    /// Creates an empty queue store shared by chat runtime slots.
+    pub(crate) fn new() -> Self {
+        Self {
+            stateFlow: MutableStateFlow::new(HashMap::new()),
+        }
+    }
+
+    /// Returns the queue-state flow shared by all chat runtime slots.
+    fn stateFlow(&self) -> MutableStateFlow<HashMap<String, PendingChatQueueState>> {
+        self.stateFlow.clone()
+    }
 }
 
 fn buildChatMainState(
@@ -114,6 +162,14 @@ fn buildChatMainState(
         Some(chatId) => inputs.activeStreamingChatIds.contains(chatId),
         None => false,
     };
+    let (pendingQueueMessages, isPendingQueueExpanded) = match inputs
+        .currentChatId
+        .as_ref()
+        .and_then(|chatId| inputs.pendingQueueStateByChatId.get(chatId))
+    {
+        Some(queueState) => (queueState.messages.clone(), queueState.isExpanded),
+        None => (Vec::new(), true),
+    };
 
     ChatMainState {
         currentChatId: inputs.currentChatId,
@@ -131,6 +187,8 @@ fn buildChatMainState(
         hasOlderDisplayHistory: displayWindowState.hasOlderDisplayHistory,
         hasNewerDisplayHistory: displayWindowState.hasNewerDisplayHistory,
         isLoadingDisplayWindow: displayWindowState.isLoadingDisplayWindow,
+        pendingQueueMessages,
+        isPendingQueueExpanded,
     }
 }
 
@@ -191,11 +249,25 @@ pub struct ChatServiceCore {
     pub additionalOnTurnComplete: Option<fn(Option<String>, i32, i32, i32)>,
     pub uiBridge: EmptyChatServiceUiBridge,
     pub attachments: Vec<AttachmentInfo>,
+    pendingQueueStore: Arc<PendingChatQueueStore>,
 }
 
 impl ChatServiceCore {
     /// Creates a chat service core for the selected chat target mode.
     pub fn new(selectionMode: ChatSelectionMode, fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
+        Self::newWithPendingQueueStore(
+            selectionMode,
+            fileSystemHost,
+            Arc::new(PendingChatQueueStore::new()),
+        )
+    }
+
+    /// Creates a chat service core backed by a queue store shared with sibling runtime slots.
+    pub(crate) fn newWithPendingQueueStore(
+        selectionMode: ChatSelectionMode,
+        fileSystemHost: Arc<dyn FileSystemHost>,
+        pendingQueueStore: Arc<PendingChatQueueStore>,
+    ) -> Self {
         let mut core = Self {
             fileSystemHost,
             selectionMode: selectionMode.clone(),
@@ -208,6 +280,7 @@ impl ChatServiceCore {
             additionalOnTurnComplete: None,
             uiBridge: EmptyChatServiceUiBridge,
             attachments: Vec::new(),
+            pendingQueueStore,
         };
         core.initializeDelegates();
         core
@@ -220,6 +293,47 @@ impl ChatServiceCore {
             .expect("ChatServiceCore requires an enhanced AI service for runtime tool access")
             .tool_handler
             .clone()
+    }
+
+    /// Returns the shared pending-message queue state for this chat runtime.
+    fn pendingQueueStateFlow(&self) -> MutableStateFlow<HashMap<String, PendingChatQueueState>> {
+        self.pendingQueueStore.stateFlow()
+    }
+
+    /// Reports whether the specified chat is currently unable to accept a new turn.
+    fn isChatQueueBlocked(&self, chatId: &str) -> bool {
+        if self
+            .messageProcessingDelegate
+            .activeStreamingChatIds
+            .contains(chatId)
+        {
+            return true;
+        }
+        match self
+            .messageProcessingDelegate
+            .inputProcessingStateByChatId
+            .get(chatId)
+        {
+            Some(InputProcessingState::Idle)
+            | Some(InputProcessingState::Completed)
+            | Some(InputProcessingState::Error { .. })
+            | None => false,
+            Some(_) => true,
+        }
+    }
+
+    /// Marks an existing queue as blocked when a new turn starts for its chat.
+    fn markPendingQueueBlocked(&mut self, chatId: &str) {
+        let mut queueStateByChatId = self.pendingQueueStateFlow().value();
+        let Some(queueState) = queueStateByChatId.get_mut(chatId) else {
+            return;
+        };
+        if queueState.messages.is_empty() || queueState.wasBlocked {
+            return;
+        }
+        queueState.wasBlocked = true;
+        self.pendingQueueStateFlow()
+            .set_value(queueStateByChatId);
     }
 
     fn initializeDelegates(&mut self) {
@@ -417,6 +531,9 @@ impl ChatServiceCore {
                 CHAT_INPUT_EVENT_SUBMITTED,
             ),
         );
+        if self.enhancedAiService.is_some() && self.messageCoordinationDelegate.is_some() {
+            self.markPendingQueueBlocked(&hookChatId);
+        }
         if let (Some(service), Some(delegate)) = (
             self.enhancedAiService.as_mut(),
             self.messageCoordinationDelegate.as_mut(),
@@ -455,9 +572,146 @@ impl ChatServiceCore {
         self.messageProcessingDelegate.cancelMessage(chatId).await;
     }
 
-    /// Returns the live response stream attached to a chat turn.
+    /// Returns the live provider response stream for the active turn of a chat.
+    #[allow(non_snake_case)]
     pub fn getResponseStream(&self, chatId: String) -> Option<SharedAiResponseStream> {
-        self.messageProcessingDelegate.getResponseStream(chatId)
+        self.messageProcessingDelegate
+            .activeResponseStreamForChat(chatId)
+    }
+
+    /// Adds one message to the queue owned by a specific chat.
+    #[allow(non_snake_case)]
+    pub fn enqueuePendingQueueMessage(&mut self, chatId: String, messageText: String) {
+        let mut queueStateByChatId = self.pendingQueueStateFlow().value();
+        let queueState = queueStateByChatId
+            .entry(chatId)
+            .or_insert_with(PendingChatQueueState::new);
+        let messageId = queueState.nextMessageId;
+        queueState.nextMessageId += 1;
+        queueState.messages.push(PendingQueueMessageItem {
+            id: messageId,
+            text: messageText,
+        });
+        queueState.isExpanded = true;
+        queueState.wasBlocked = true;
+        self.pendingQueueStateFlow()
+            .set_value(queueStateByChatId);
+    }
+
+    /// Deletes one queued message from a specific chat.
+    #[allow(non_snake_case)]
+    pub fn deletePendingQueueMessage(&mut self, chatId: String, messageId: i64) {
+        let mut queueStateByChatId = self.pendingQueueStateFlow().value();
+        let Some(queueState) = queueStateByChatId.get_mut(&chatId) else {
+            return;
+        };
+        queueState.messages.retain(|item| item.id != messageId);
+        self.pendingQueueStateFlow()
+            .set_value(queueStateByChatId);
+    }
+
+    /// Removes one queued message for editing or explicit user delivery.
+    #[allow(non_snake_case)]
+    pub fn takePendingQueueMessage(
+        &mut self,
+        chatId: String,
+        messageId: i64,
+        suppressNextAutoDequeue: bool,
+    ) -> Option<PendingQueueMessageItem> {
+        let shouldSuppressAutoDequeue =
+            suppressNextAutoDequeue && self.isChatQueueBlocked(&chatId);
+        let mut queueStateByChatId = self.pendingQueueStateFlow().value();
+        let queueState = queueStateByChatId.get_mut(&chatId)?;
+        let messageIndex = queueState
+            .messages
+            .iter()
+            .position(|item| item.id == messageId)?;
+        let message = queueState.messages.remove(messageIndex);
+        if shouldSuppressAutoDequeue && !queueState.messages.is_empty() {
+            queueState.suppressNextAutoDequeue = true;
+        }
+        self.pendingQueueStateFlow()
+            .set_value(queueStateByChatId);
+        Some(message)
+    }
+
+    /// Clears a manual-send suppression after that message is not delivered.
+    #[allow(non_snake_case)]
+    pub fn clearPendingQueueAutoDequeueSuppression(&mut self, chatId: String) {
+        let mut queueStateByChatId = self.pendingQueueStateFlow().value();
+        let Some(queueState) = queueStateByChatId.get_mut(&chatId) else {
+            return;
+        };
+        if !queueState.suppressNextAutoDequeue {
+            return;
+        }
+        queueState.suppressNextAutoDequeue = false;
+        self.pendingQueueStateFlow()
+            .set_value(queueStateByChatId);
+    }
+
+    /// Atomically removes the next queued message after a chat becomes ready.
+    #[allow(non_snake_case)]
+    pub fn takeNextPendingQueueMessageIfReady(
+        &mut self,
+        chatId: String,
+    ) -> Option<PendingQueueMessageItem> {
+        if self.isChatQueueBlocked(&chatId) {
+            return None;
+        }
+        let mut queueStateByChatId = self.pendingQueueStateFlow().value();
+        let queueState = queueStateByChatId.get_mut(&chatId)?;
+        if !queueState.wasBlocked {
+            return None;
+        }
+        queueState.wasBlocked = false;
+        if queueState.suppressNextAutoDequeue {
+            queueState.suppressNextAutoDequeue = false;
+            self.pendingQueueStateFlow()
+                .set_value(queueStateByChatId);
+            return None;
+        }
+        let Some(message) = queueState.messages.first().cloned() else {
+            self.pendingQueueStateFlow()
+                .set_value(queueStateByChatId);
+            return None;
+        };
+        queueState.messages.remove(0);
+        self.pendingQueueStateFlow()
+            .set_value(queueStateByChatId);
+        Some(message)
+    }
+
+    /// Inserts a rejected queued message back at the front of its chat queue.
+    #[allow(non_snake_case)]
+    pub fn restorePendingQueueMessage(
+        &mut self,
+        chatId: String,
+        message: PendingQueueMessageItem,
+    ) {
+        let mut queueStateByChatId = self.pendingQueueStateFlow().value();
+        let queueState = queueStateByChatId
+            .entry(chatId)
+            .or_insert_with(PendingChatQueueState::new);
+        if queueState.messages.iter().any(|item| item.id == message.id) {
+            return;
+        }
+        queueState.nextMessageId = queueState.nextMessageId.max(message.id + 1);
+        queueState.messages.insert(0, message);
+        self.pendingQueueStateFlow()
+            .set_value(queueStateByChatId);
+    }
+
+    /// Updates whether a chat's pending-message queue is expanded in the UI.
+    #[allow(non_snake_case)]
+    pub fn setPendingQueueExpanded(&mut self, chatId: String, isExpanded: bool) {
+        let mut queueStateByChatId = self.pendingQueueStateFlow().value();
+        let queueState = queueStateByChatId
+            .entry(chatId)
+            .or_insert_with(PendingChatQueueState::new);
+        queueState.isExpanded = isExpanded;
+        self.pendingQueueStateFlow()
+            .set_value(queueStateByChatId);
     }
 
     /// Splits markdown content into stable render events for the client.
@@ -572,9 +826,32 @@ impl ChatServiceCore {
         let Some(message) = self.chatHistoryDelegate.chatHistory.get(index).cloned() else {
             return false;
         };
+        let editedParts = match message.sender.as_str() {
+            "ai" => match MessagePartCodec::parseAssistantMarkup(&editedContent) {
+                Ok(parts) => parts,
+                Err(error) => {
+                    AppLogger::e(
+                        "ChatServiceCore",
+                        &format!("cannot update assistant message: invalid markup: {error}"),
+                    );
+                    return false;
+                }
+            },
+            "user" => vec![MessagePart::markdown(
+                "part-0".to_string(),
+                0,
+                editedContent,
+            )],
+            sender => {
+                AppLogger::e(
+                    "ChatServiceCore",
+                    &format!("cannot update message from unsupported sender: {sender}"),
+                );
+                return false;
+            }
+        };
         let editedMessage = ChatMessage {
-            content: editedContent,
-            contentStream: None,
+            parts: editedParts,
             ..message
         };
         self.chatHistoryDelegate
@@ -880,7 +1157,7 @@ impl ChatServiceCore {
         self.rewindWorkspaceForMessage(index);
         self.chatHistoryDelegate
             .truncateChatHistory(Some(targetMessage.timestamp));
-        Some(stripXmlLikeTags(&targetMessage.content))
+        Some(stripXmlLikeTags(&targetMessage.displayText()))
     }
 
     /// Rewinds a user message and sends edited content as a new turn.
@@ -973,8 +1250,13 @@ impl ChatServiceCore {
         }
     }
 
-    /// Adds a file, package, screen capture, notification capture, or location capture as an attachment.
+    /// Adds a file, pasted text, package, screen capture, notification capture, or location capture as an attachment.
     pub fn handleAttachment(&mut self, _filePath: String) {
+        if let Some(content) = _filePath.strip_prefix(PASTED_TEXT_ATTACHMENT_PREFIX) {
+            self.attachPastedText(content.to_string());
+            return;
+        }
+
         let filePath = _filePath.trim();
         if filePath.is_empty() {
             self.messageProcessingDelegate
@@ -1017,6 +1299,25 @@ impl ChatServiceCore {
                 self.messageProcessingDelegate.showToast(message);
             }
         }
+    }
+
+    /// Adds the supplied pasted text as an in-memory plain-text attachment.
+    #[allow(non_snake_case)]
+    fn attachPastedText(&mut self, content: String) {
+        let attachmentInfo = AttachmentInfo {
+            filePath: format!(
+                "pasted_text_{}_{}",
+                currentTimeMillis(),
+                self.attachments.len()
+            ),
+            fileName: "pasted_text.txt".to_string(),
+            mimeType: "text/plain".to_string(),
+            fileSize: content.len() as i64,
+            content,
+        };
+        self.attachments.push(attachmentInfo);
+        self.messageProcessingDelegate
+            .showToast("已添加粘贴文本附件".to_string());
     }
 
     #[allow(non_snake_case)]
@@ -1436,6 +1737,7 @@ impl ChatServiceCore {
         let inputProcessingStateByChatIdFlow = self
             .messageProcessingDelegate
             .inputProcessingStateByChatIdFlow();
+        let pendingQueueStateByChatIdFlow = self.pendingQueueStateFlow().asStateFlow();
         let displayWindowStateFlow = self.chatHistoryDelegate.displayWindowStateFlow();
         let activePromptFlow = self
             .chatHistoryDelegate
@@ -1458,6 +1760,7 @@ impl ChatServiceCore {
                     chatHistories,
                     activeStreamingChatIds,
                     inputProcessingStateByChatId,
+                    pendingQueueStateByChatId: HashMap::new(),
                 }
             },
         );
@@ -1467,13 +1770,17 @@ impl ChatServiceCore {
             .functionalConfigManager
             .clone();
         let modelConfigManager = self.messageProcessingDelegate.modelConfigManager.clone();
-        combine3(
+        combine4(
             &inputsFlow,
             &displayWindowStateFlow,
             &activePromptFlow,
-            move |inputs, displayWindowState, activePrompt| {
+            &pendingQueueStateByChatIdFlow,
+            move |inputs, displayWindowState, activePrompt, pendingQueueStateByChatId| {
                 buildChatMainState(
-                    inputs,
+                    ChatMainFlowInputs {
+                        pendingQueueStateByChatId,
+                        ..inputs
+                    },
                     displayWindowState,
                     activePrompt,
                     &characterCardManager,
@@ -1519,7 +1826,7 @@ impl ChatServiceCore {
 
     /// Returns the current context window size state flow.
     #[allow(non_snake_case)]
-    pub fn currentWindowSizeFlow(&self) -> StateFlow<i32> {
+    pub fn currentWindowSizeFlow(&self) -> StateFlow<i64> {
         self.getTokenStatisticsDelegate()
             .expect("TokenStatisticsDelegate must be initialized")
             .currentWindowSizeFlow()
@@ -1527,7 +1834,7 @@ impl ChatServiceCore {
 
     /// Returns the cumulative input token count state flow.
     #[allow(non_snake_case)]
-    pub fn inputTokenCountFlow(&self) -> StateFlow<i32> {
+    pub fn inputTokenCountFlow(&self) -> StateFlow<i64> {
         self.getTokenStatisticsDelegate()
             .expect("TokenStatisticsDelegate must be initialized")
             .cumulativeInputTokensFlow()
@@ -1535,7 +1842,7 @@ impl ChatServiceCore {
 
     /// Returns the cumulative output token count state flow.
     #[allow(non_snake_case)]
-    pub fn outputTokenCountFlow(&self) -> StateFlow<i32> {
+    pub fn outputTokenCountFlow(&self) -> StateFlow<i64> {
         self.getTokenStatisticsDelegate()
             .expect("TokenStatisticsDelegate must be initialized")
             .cumulativeOutputTokensFlow()

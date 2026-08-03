@@ -102,7 +102,7 @@ impl TuiText {
         )
     }
 
-    pub(super) fn context_usage_raw(self, current: i32, max_tokens: i32) -> String {
+    pub(super) fn context_usage_raw(self, current: i64, max_tokens: i64) -> String {
         self.render(
             TuiTextKey::ContextUsageRaw,
             &[
@@ -112,7 +112,7 @@ impl TuiText {
         )
     }
 
-    pub(super) fn context_usage(self, percent: i32, current: i32, max_tokens: i32) -> String {
+    pub(super) fn context_usage(self, percent: i32, current: i64, max_tokens: i64) -> String {
         self.render(
             TuiTextKey::ContextUsage,
             &[

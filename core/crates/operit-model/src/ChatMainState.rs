@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ChatMessage::ChatMessage;
 use super::InputProcessingState::InputProcessingState;
+use crate::PendingQueueMessageItem::PendingQueueMessageItem;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChatMainState {
@@ -18,4 +19,6 @@ pub struct ChatMainState {
     pub hasOlderDisplayHistory: bool,
     pub hasNewerDisplayHistory: bool,
     pub isLoadingDisplayWindow: bool,
+    pub pendingQueueMessages: Vec<PendingQueueMessageItem>,
+    pub isPendingQueueExpanded: bool,
 }

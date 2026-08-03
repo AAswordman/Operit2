@@ -24,12 +24,8 @@ mod markdown;
 mod pending_queue;
 #[path = "view/render.rs"]
 mod render;
-#[path = "transcript/response_stream.rs"]
-mod response_stream;
 #[path = "transcript/selection.rs"]
 mod selection;
-#[path = "transcript/stream_markdown.rs"]
-mod stream_markdown;
 #[path = "view/theme.rs"]
 mod theme;
 #[path = "transcript/transcript.rs"]

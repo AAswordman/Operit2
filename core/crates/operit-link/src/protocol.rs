@@ -399,6 +399,8 @@ pub struct CorePushRequest {
     pub requestId: CoreRequestId,
     pub targetPath: CoreObjectPath,
     pub methodName: String,
+    #[serde(default = "CoreValue::emptyMap")]
+    pub args: CoreValue,
 }
 
 impl CorePushRequest {
@@ -412,18 +414,17 @@ impl CorePushRequest {
             requestId: CoreRequestId::new(requestId),
             targetPath: targetPath.into(),
             methodName: methodName.into(),
+            args: CoreValue::emptyMap(),
         }
     }
 
-    /// Builds the one-shot call represented by one ordered push item.
-    pub fn itemCall(&self, sequence: u64, args: CoreValue) -> CoreCallRequest {
-        CoreCallRequest {
-            requestId: CoreRequestId::new(format!("{}:{sequence}", self.requestId.0)),
-            targetPath: self.targetPath.clone(),
-            methodName: self.methodName.clone(),
-            args,
-        }
+    /// Attaches one-time non-stream arguments to this reverse stream open request.
+    #[allow(non_snake_case)]
+    pub fn withArgs(mut self, args: CoreValue) -> Self {
+        self.args = args;
+        self
     }
+
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

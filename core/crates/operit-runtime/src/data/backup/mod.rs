@@ -1,9 +1,11 @@
-#[cfg(not(target_arch = "wasm32"))]
+#[path = "Operit1SnapshotArchive.rs"]
+pub(crate) mod Operit1SnapshotArchive;
+#[path = "Operit1LmdbReader.rs"]
+pub(crate) mod Operit1LmdbReader;
 #[path = "Operit1SnapshotImportManager.rs"]
 pub mod Operit1SnapshotImportManager;
 #[path = "RawSnapshotBackupManager.rs"]
 pub mod RawSnapshotBackupManager;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub use Operit1SnapshotImportManager::*;
 pub use RawSnapshotBackupManager::*;

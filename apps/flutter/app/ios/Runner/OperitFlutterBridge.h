@@ -9,8 +9,8 @@ extern "C" {
 #endif
 
 void *operit_flutter_bridge_create(void);
-char *operit_ios_native_runtime_call(const char *command, const char *request_json);
-void operit_ios_native_runtime_free(char *value);
+char *operit_ios_ish_terminal_call(const char *command, const char *request_json);
+void operit_ios_ish_terminal_free(char *value);
 void *operit_flutter_bridge_create_with_storage_roots(
     const char *runtime_root,
     const char *workspace_root);

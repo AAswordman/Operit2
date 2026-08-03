@@ -9,6 +9,7 @@ import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 import '../../../../core/runtime/RuntimeConnectionManager.dart';
+import '../../../../core/snapshot/SnapshotImportUploader.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
@@ -198,7 +199,8 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     }
     setState(() => _busy = true);
     try {
-      final bytes = await widget.clients.application.exportRawSnapshot();
+      final bytes = await widget.clients.servicesSnapshotImportManager
+          .exportRawSnapshot();
       await XFile.fromData(
         Uint8List.fromList(bytes),
         name: suggestedName,
@@ -229,21 +231,23 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
 
   Future<void> _importRawSnapshot() async {
     final l10n = AppLocalizations.of(context)!;
-    final file = await openFile(
-      acceptedTypeGroups: const <XTypeGroup>[_rawSnapshotFileTypeGroup],
-    );
+    final file = await SnapshotImportFile.pick();
     if (file == null) {
       return;
     }
     setState(() => _busy = true);
-    late final Uint8List bytes;
+    SnapshotImportSession? stagedSession;
     late final RawSnapshotManifest manifest;
     try {
-      bytes = await file.readAsBytes();
-      manifest = await widget.clients.application.inspectRawSnapshot(
-        bytes: bytes,
-      );
+      stagedSession = await SnapshotImportUploader(
+        widget.clients,
+      ).stage(file);
+      manifest = await stagedSession.completeRaw();
     } catch (error) {
+      final session = stagedSession;
+      if (session != null) {
+        await session.discard();
+      }
       if (!mounted) {
         return;
       }
@@ -256,20 +260,24 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
         setState(() => _busy = false);
       }
     }
+    final session = stagedSession;
     if (!mounted) {
+      await session.discard();
       return;
     }
     final confirmed = await _RawSnapshotRestoreDialog.show(
       context: context,
       manifest: manifest,
-      byteCount: bytes.length,
+      byteCount: session.byteLength,
     );
     if (confirmed != true) {
+      await session.discard();
       return;
     }
     setState(() => _busy = true);
     try {
-      await widget.clients.application.importRawSnapshot(bytes: bytes);
+      await session.commitRaw();
+      await session.discard();
       if (!mounted) {
         return;
       }
@@ -278,6 +286,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
       );
       _reload();
     } catch (error) {
+      await session.discard();
       if (!mounted) {
         return;
       }

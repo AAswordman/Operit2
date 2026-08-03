@@ -214,7 +214,8 @@ Generated TTS audio playback
 CorePushRequest {
   requestId: "browser-input-0",
   targetPath: CoreObjectPath { segments: ["services", "runtimeBrowserService"] },
-  methodName: "submitBrowserCommand"
+  methodName: "submitBrowserInteractions",
+  args: CoreValue::Map(...)
 }
 
 CorePushItem {
@@ -244,8 +245,30 @@ WebSocket carrier 使用签名信封承载原始 MessagePack payload bytes，pay
 阻塞鼠标、滚轮和键盘输入。
 
 Flutter MethodChannel、WASM 和 CLI 必须暴露同一组 push 生命周期语义。平台载体
-可以按自身消息机制传输 item，但 Dart API 必须表现为 `CorePushSink.add/close`，
-而不是让业务层循环调用 `call`。
+可以按自身消息机制传输 item，但业务 API 必须声明为 `ReverseStream<T>`，由生成器映射为
+Dart `Stream<T>` 和 Rust typed stream；`CorePushSink.add/close` 仅属于 bridge/link carrier，
+业务层不得循环调用 `call` 或手写 push 帧。
+
+### 5.1 流式归档输入
+
+快照和其他归档输入使用同一条 Core Link push 生命周期：
+
+```text
+beginArchiveUpload(expectedByteLength)
+  -> writeArchiveUpload(archiveId, Stream<Uint8List>)
+  -> completeArchiveUpload(archiveId, expectedByteLength)
+  -> consumer.inspect/restore/import(archive)
+  -> discardArchiveUpload(archiveId)
+```
+
+Flutter、CLI 和 Web UI 只拥有输入流及其元数据，不传递本地路径，也不保留完整归档
+字节。`ArchiveTransferManager` 只负责校验长度、分块上限和 Core Link 生命周期；归档
+字节由运行时 owner 的 `ArchiveStagingHost` 持有。远程 client 的 staged archive 始终
+位于远程 runtime owner，client 不得访问本地同名文件。
+
+`ArchiveStagingHost` 的 `create/append/seal/read/remove` 是唯一归档暂存边界。`seal`
+只接受已经收到声明长度的归档，`read` 只接受有界范围；ZIP 解析器通过范围读取，不能
+调用一次性文件读取来绕过这个边界。所有异常路径都必须释放未 seal 的 session。
 
 Link v3 首次加入 push；v2 与 v3 不协商混用，握手、HTTP header 和 WebSocket
 envelope 必须声明版本 3。WebSocket envelope 字段固定为
@@ -364,7 +387,7 @@ MessagePack tuple，避免在 Dart 与 Rust 之间构造 Link envelope 的字段
 
 ```text
 callRequest          = [requestId, targetPathSegments, methodName, args]
-pushOpenRequest      = [requestId, targetPathSegments, methodName]
+pushOpenRequest      = [requestId, targetPathSegments, methodName, args]
 pushItem             = [pushId, sequence, args]
 watchSnapshotRequest = [requestId, targetPathSegments, propertyName, args]
 watchStreamRequest   = [subscriptionId, requestId, targetPathSegments, propertyName, args]

@@ -166,6 +166,18 @@ tools/android-runtime/*
 tools/android-runtime/build/
 tools/android-runtime/downloads/
 tools/android-runtime/sources/
+tools/ios-runtime/ish/*
+!tools/ios-runtime/ish/
+!tools/ios-runtime/ish/*.md
+!tools/ios-runtime/ish/*.py
+!tools/ios-runtime/ish/*.sh
+!tools/ios-runtime/ish/patches/
+!tools/ios-runtime/ish/patches/*.patch
+tools/ios-runtime/ish/build/
+tools/ios-runtime/ish/downloads/
+tools/ios-runtime/ish/sources/
+apps/flutter/app/apple/ish-build/
+apps/flutter/app/ios/Runner/ish-root.tar.gz
 
 # Plugin packaging outputs
 plugins/**/*.toolpkg
@@ -192,3 +204,4 @@ plugins/**/.sync_hot_reload_state.json
 
 AGENTS.md
 .codex*
+tools/ios-runtime/native/sources

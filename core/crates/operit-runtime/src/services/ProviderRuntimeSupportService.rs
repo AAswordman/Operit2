@@ -58,9 +58,9 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
     fn updateTokensForProviderModel(
         &self,
         providerModel: &str,
-        inputTokens: i32,
-        outputTokens: i32,
-        cachedInputTokens: i32,
+        inputTokens: i64,
+        outputTokens: i64,
+        cachedInputTokens: i64,
     ) -> Result<(), String> {
         ApiPreferences::getInstance()
             .updateTokensForProviderModel(

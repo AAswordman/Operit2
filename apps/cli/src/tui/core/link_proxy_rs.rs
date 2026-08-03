@@ -28,25 +28,6 @@ impl TuiCore {
     }
 
     #[allow(non_snake_case)]
-    pub(super) async fn watchMainChatResponseStream(
-        &mut self,
-        chatId: String,
-    ) -> Result<(), CoreLinkError> {
-        let mut stream = self
-            .proxy
-            .chat_runtime_holder_main()
-            .getResponseStream(chatId)
-            .await?;
-        let sender = self.eventSender.clone();
-        tokio::spawn(async move {
-            while let Some(event) = stream.recv().await {
-                let _ = sender.send(event);
-            }
-        });
-        Ok(())
-    }
-
-    #[allow(non_snake_case)]
     pub(super) fn drainEvents(&mut self) -> Vec<CoreEvent> {
         let mut events = Vec::new();
         while let Ok(event) = self.eventReceiver.try_recv() {

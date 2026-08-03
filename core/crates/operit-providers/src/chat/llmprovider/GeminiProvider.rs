@@ -39,9 +39,9 @@ pub struct GeminiProvider {
 
 #[derive(Debug, Default)]
 struct GeminiProviderState {
-    inputTokenCount: i32,
-    cachedInputTokenCount: i32,
-    outputTokenCount: i32,
+    inputTokenCount: i64,
+    cachedInputTokenCount: i64,
+    outputTokenCount: i64,
     cancelled: bool,
 }
 
@@ -99,7 +99,7 @@ impl GeminiProvider {
         state.outputTokenCount = token_counts.output;
     }
 
-    fn set_input_token_counts(&self, input: i32, cached_input: i32) {
+    fn set_input_token_counts(&self, input: i64, cached_input: i64) {
         let mut state = self
             .state
             .lock()
@@ -108,7 +108,7 @@ impl GeminiProvider {
         state.cachedInputTokenCount = cached_input;
     }
 
-    fn add_output_tokens(&self, output: i32) {
+    fn add_output_tokens(&self, output: i64) {
         self.state
             .lock()
             .expect("GeminiProvider state mutex poisoned")
@@ -238,7 +238,7 @@ impl GeminiProvider {
         chat_history: &[PromptTurn],
         tools_json: Option<&str>,
         preserve_think_in_history: bool,
-    ) -> Result<(Vec<Value>, Option<Value>, i32), AiServiceError> {
+    ) -> Result<(Vec<Value>, Option<Value>, i64), AiServiceError> {
         let provider_ready_history = StructuredToolCallBridge::compileHistoryForProvider(
             chat_history,
             self.enable_tool_call,
@@ -248,7 +248,7 @@ impl GeminiProvider {
             .map(|turn| turn.content.chars().count())
             .sum();
         let tools_chars = tools_json.map(str::len).unwrap_or(0);
-        let token_count = ((history_chars + tools_chars + 3) / 4) as i32;
+        let token_count = ((history_chars + tools_chars + 3) / 4) as i64;
 
         let mut contents_array = Vec::new();
         let system_messages = provider_ready_history
@@ -941,7 +941,7 @@ impl GeminiProvider {
                         self.isInThinkingMode = false;
                     }
                     content_builder.push_str(text);
-                    self.add_output_tokens(((text.chars().count() + 3) / 4) as i32);
+                    self.add_output_tokens(((text.chars().count() + 3) / 4) as i64);
                 }
             }
         }
@@ -968,17 +968,17 @@ impl GeminiProvider {
             .get("promptTokenCount")
             .and_then(Value::as_i64)
             .unwrap_or(0)
-            .max(0) as i32;
+            .max(0) as i64;
         let cached = usage
             .get("cachedContentTokenCount")
             .and_then(Value::as_i64)
             .unwrap_or(0)
-            .max(0) as i32;
+            .max(0) as i64;
         let candidates = usage
             .get("candidatesTokenCount")
             .and_then(Value::as_i64)
             .unwrap_or(0)
-            .max(0) as i32;
+            .max(0) as i64;
         if prompt > 0 || cached > 0 || candidates > 0 {
             self.set_token_counts(TokenCounts {
                 input: (prompt - cached).max(0),
@@ -992,19 +992,19 @@ impl GeminiProvider {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for GeminiProvider {
-    fn input_token_count(&self) -> i32 {
+    fn input_token_count(&self) -> i64 {
         self.state
             .lock()
             .expect("GeminiProvider state mutex poisoned")
             .inputTokenCount
     }
-    fn cached_input_token_count(&self) -> i32 {
+    fn cached_input_token_count(&self) -> i64 {
         self.state
             .lock()
             .expect("GeminiProvider state mutex poisoned")
             .cachedInputTokenCount
     }
-    fn output_token_count(&self) -> i32 {
+    fn output_token_count(&self) -> i64 {
         self.state
             .lock()
             .expect("GeminiProvider state mutex poisoned")
@@ -1081,7 +1081,7 @@ impl AIService for GeminiProvider {
         &self,
         chat_history: &[PromptTurn],
         available_tools: &[ToolPrompt],
-    ) -> Result<i32, AiServiceError> {
+    ) -> Result<i64, AiServiceError> {
         let tools_json = if self.external_tools_enabled() && !available_tools.is_empty() {
             Some(Value::Array(self.build_tool_definitions_for_gemini(available_tools)).to_string())
         } else if self.gemini_google_search_enabled() {

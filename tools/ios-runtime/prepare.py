@@ -30,6 +30,9 @@ TOYBOX_FRAMEWORK = (
     / "OperitToybox.xcframework"
 )
 STAGING_DIR = APPLE_DIR / ".ios-runtime-staging"
+PYTHON_VERSION = "python3.13"
+PYTHON_DEVICE_SLICE = "ios-arm64"
+PYTHON_DEVICE_LIBRARY = "lib-arm64"
 
 
 @dataclass(frozen=True)
@@ -123,13 +126,63 @@ def require_safe_archive_path(root: Path, member_name: str) -> None:
         raise RuntimeError(f"iOS runtime archive entry escapes staging: {member_name}")
 
 
-def copy_directory(source: Path, target: Path) -> None:
+def require_safe_archive_link(root: Path, member: tarfile.TarInfo) -> None:
+    """Rejects archive links whose resolved targets escape the designated staging directory."""
+    destination = (root / member.name).resolve()
+    link_base = destination.parent if member.issym() else root
+    link_target = (link_base / member.linkname).resolve()
+    resolved_root = root.resolve()
+    if link_target != resolved_root and resolved_root not in link_target.parents:
+        raise RuntimeError(f"iOS runtime archive link escapes staging: {member.name}")
+
+
+def copy_directory(source: Path, target: Path, *, ignore=None) -> None:
     """Replaces one generated application directory with verified staged contents."""
     if not source.is_dir():
         raise RuntimeError(f"iOS runtime component is missing: {source}")
     shutil.rmtree(target, ignore_errors=True)
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source, target)
+    shutil.copytree(source, target, ignore=ignore)
+
+
+# Returns CPython runtime dylib entries that are not valid PYTHONHOME resources.
+def ignore_python_runtime_dylibs(directory: str, names: list[str]) -> set[str]:
+    """Returns libpython dylib names that must stay inside the native framework."""
+    return {
+        name
+        for name in names
+        if name.startswith("libpython") and name.endswith(".dylib")
+    }
+
+
+# Copies one CPython library tree into the staged app PYTHONHOME directory.
+def copy_python_library_tree(source: Path, target: Path) -> None:
+    """Merges one official CPython iOS library tree into the app resource library."""
+    if not source.is_dir():
+        raise RuntimeError(f"iOS CPython library directory is missing: {source}")
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        source,
+        target,
+        dirs_exist_ok=True,
+        ignore=ignore_python_runtime_dylibs,
+    )
+
+
+# Stages CPython's common standard library and device-specific extension modules.
+def stage_python_resource_library(python_xcframework: Path, destination: Path) -> None:
+    """Builds the Runner python resource directory from the official Python.xcframework."""
+    if not python_xcframework.is_dir():
+        raise RuntimeError(f"iOS CPython framework is missing: {python_xcframework}")
+    shutil.rmtree(destination, ignore_errors=True)
+    shared_library = python_xcframework / "lib"
+    device_library = (
+        python_xcframework
+        / PYTHON_DEVICE_SLICE
+        / PYTHON_DEVICE_LIBRARY
+    )
+    copy_python_library_tree(shared_library, destination / "lib")
+    copy_python_library_tree(device_library, destination / "lib")
 
 
 def load_manifest() -> dict[str, object]:
@@ -215,14 +268,19 @@ def extract_native_runtimes(destination: Path) -> tuple[Path, Path]:
     with zipfile.ZipFile(ensure_runtime_archive(NODE_ARCHIVE)) as archive:
         for member in archive.infolist():
             require_safe_archive_path(node_staging, member.filename)
-            if not member.is_dir() and not member.filename.startswith("NodeMobile.xcframework/"):
-                raise RuntimeError(f"unexpected Node Mobile archive entry: {member.filename}")
-        archive.extractall(node_staging)
+        runtime_members = [
+            member
+            for member in archive.infolist()
+            if member.filename.startswith("NodeMobile.xcframework/")
+        ]
+        archive.extractall(node_staging, members=runtime_members)
     with tarfile.open(ensure_runtime_archive(PYTHON_ARCHIVE), "r:gz") as archive:
         members = archive.getmembers()
         for member in members:
             require_safe_archive_path(python_staging, member.name)
-            if member.issym() or member.islnk() or (not member.isfile() and not member.isdir()):
+            if member.issym() or member.islnk():
+                require_safe_archive_link(python_staging, member)
+            elif not member.isfile() and not member.isdir():
                 raise RuntimeError(f"unsupported Python iOS archive member: {member.name}")
         archive.extractall(python_staging, members=members)
     return node_staging, python_staging
@@ -233,20 +291,25 @@ def stage_runtime_resources(manifest: dict[str, object]) -> None:
     shutil.rmtree(STAGING_DIR, ignore_errors=True)
     STAGING_DIR.mkdir(parents=True)
     node_staging, python_staging = extract_native_runtimes(STAGING_DIR)
+    python_xcframework_staging = python_staging / "Python.xcframework"
     python_resource_staging = STAGING_DIR / "python-resource"
     node_resource_staging = STAGING_DIR / "node-resource"
-    shutil.copytree(python_staging / "python", python_resource_staging)
+    stage_python_resource_library(python_xcframework_staging, python_resource_staging)
     node_resource_staging.mkdir()
-    site_packages = python_resource_staging / "lib" / "python3.13" / "site-packages"
-    site_packages.mkdir(parents=True)
+    site_packages = python_resource_staging / "lib" / PYTHON_VERSION / "site-packages"
+    site_packages.mkdir(parents=True, exist_ok=True)
     extract_python_packages(manifest, site_packages)
     extract_node_packages(manifest, node_resource_staging)
     shutil.copy2(RESOURCE_DIR / "node_terminal_service.js", node_resource_staging / "operit_node_terminal_service.js")
     (node_resource_staging / "runtime-entry.js").write_text("\"use strict\";\n", encoding="utf-8")
     shutil.copy2(RESOURCE_DIR / "python_terminal_runtime.py", python_resource_staging / "operit_terminal_runtime.py")
     copy_directory(node_staging / "NodeMobile.xcframework", FRAMEWORKS_DIR / "NodeMobile.xcframework")
-    copy_directory(python_staging / "Python.xcframework", FRAMEWORKS_DIR / "Python.xcframework")
-    copy_directory(SCIENTIFIC_FRAMEWORK, FRAMEWORKS_DIR / "OperitPythonScientific.xcframework")
+    copy_directory(python_xcframework_staging, FRAMEWORKS_DIR / "Python.xcframework")
+    copy_directory(
+        SCIENTIFIC_FRAMEWORK,
+        FRAMEWORKS_DIR / "OperitPythonScientific.xcframework",
+        ignore=shutil.ignore_patterns("*.a"),
+    )
     copy_directory(TOYBOX_FRAMEWORK, FRAMEWORKS_DIR / "OperitToybox.xcframework")
     copy_directory(python_resource_staging, PYTHON_RESOURCE_DIR)
     copy_directory(node_resource_staging, NODE_RESOURCE_DIR)
@@ -294,14 +357,27 @@ def verify_staged_runtime() -> None:
         FRAMEWORKS_DIR / "Python.xcframework" / "Info.plist",
         FRAMEWORKS_DIR / "OperitPythonScientific.xcframework" / "Info.plist",
         FRAMEWORKS_DIR / "OperitToybox.xcframework" / "Info.plist",
-        PYTHON_RESOURCE_DIR / "lib" / "python3.13" / "os.py",
-        PYTHON_RESOURCE_DIR / "lib" / "python3.13" / "site-packages" / "requests" / "__init__.py",
+        PYTHON_RESOURCE_DIR / "lib" / PYTHON_VERSION / "os.py",
+        PYTHON_RESOURCE_DIR / "lib" / PYTHON_VERSION / "_sysconfigdata__ios_arm64-iphoneos.py",
+        PYTHON_RESOURCE_DIR
+        / "lib"
+        / PYTHON_VERSION
+        / "lib-dynload"
+        / "_ssl.cpython-313-iphoneos.so",
+        PYTHON_RESOURCE_DIR / "lib" / PYTHON_VERSION / "site-packages" / "requests" / "__init__.py",
         NODE_RESOURCE_DIR / "operit_node_terminal_service.js",
         NODE_RESOURCE_DIR / "node_modules" / "lodash" / "lodash.js",
     ]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise RuntimeError("iOS staged runtime files are missing: " + ", ".join(missing))
+    scientific_framework = FRAMEWORKS_DIR / "OperitPythonScientific.xcframework"
+    static_archives = sorted(scientific_framework.rglob("*.a"))
+    if static_archives:
+        raise RuntimeError(
+            "iOS scientific framework contains static build archives: "
+            + ", ".join(str(path) for path in static_archives)
+        )
 
 
 def prepare_ios_runtime() -> None:

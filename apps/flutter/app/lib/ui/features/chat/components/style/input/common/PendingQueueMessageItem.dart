@@ -1,8 +1,6 @@
 // ignore_for_file: file_names
 
-class PendingQueueMessageItem {
-  const PendingQueueMessageItem({required this.id, required this.text});
+import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
+    as core_proxy;
 
-  final int id;
-  final String text;
-}
+typedef PendingQueueMessageItem = core_proxy.PendingQueueMessageItem;

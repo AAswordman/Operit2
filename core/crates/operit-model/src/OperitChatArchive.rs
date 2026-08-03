@@ -3,10 +3,11 @@ use serde::{Deserialize, Serialize};
 
 use super::ChatHistory::ChatHistory;
 use super::ChatMessage::ChatMessage;
+use super::MessagePart::MessagePart;
 use super::MessageVariantEntity::MessageVariantEntity;
 
 pub const ARCHIVE_TYPE: &str = "operit_chat_archive";
-pub const CURRENT_FORMAT_VERSION: i32 = 2;
+pub const CURRENT_FORMAT_VERSION: i32 = 3;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct OperitChatArchive {
@@ -23,9 +24,9 @@ pub struct OperitArchivedChat {
     pub messages: Vec<OperitArchivedMessage>,
     pub createdAt: String,
     pub updatedAt: String,
-    pub inputTokens: i32,
-    pub outputTokens: i32,
-    pub currentWindowSize: i32,
+    pub inputTokens: i64,
+    pub outputTokens: i64,
+    pub currentWindowSize: i64,
     pub group: Option<String>,
     pub displayOrder: i64,
     pub workspace: Option<String>,
@@ -98,13 +99,13 @@ pub struct OperitArchivedMessage {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct OperitArchivedMessageVariant {
     pub variantIndex: i32,
-    pub content: String,
+    pub parts: Vec<MessagePart>,
     pub roleName: String,
     pub provider: String,
     pub modelName: String,
-    pub inputTokens: i32,
-    pub outputTokens: i32,
-    pub cachedInputTokens: i32,
+    pub inputTokens: i64,
+    pub outputTokens: i64,
+    pub cachedInputTokens: i64,
     pub sentAt: i64,
     pub outputDurationMs: i64,
     pub waitDurationMs: i64,
@@ -113,10 +114,11 @@ pub struct OperitArchivedMessageVariant {
 
 impl OperitArchivedMessageVariant {
     #[allow(non_snake_case)]
-    pub fn fromEntity(entity: MessageVariantEntity) -> Self {
+    /// Creates an archived revision from its metadata and ordered parts.
+    pub fn fromEntity(entity: MessageVariantEntity, parts: Vec<MessagePart>) -> Self {
         Self {
             variantIndex: entity.variantIndex,
-            content: entity.content,
+            parts,
             roleName: entity.roleName,
             provider: entity.provider,
             modelName: entity.modelName,
@@ -131,13 +133,13 @@ impl OperitArchivedMessageVariant {
     }
 
     #[allow(non_snake_case)]
+    /// Converts archived revision metadata into a persistence entity.
     pub fn toEntity(&self, chatId: String, messageTimestamp: i64) -> MessageVariantEntity {
         MessageVariantEntity {
             variantId: 0,
             chatId,
             messageTimestamp,
             variantIndex: self.variantIndex,
-            content: self.content.clone(),
             roleName: self.roleName.clone(),
             provider: self.provider.clone(),
             modelName: self.modelName.clone(),

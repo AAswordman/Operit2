@@ -51,7 +51,7 @@ pub fn buildRuntimeBootstrapModules() -> Vec<JsBootstrapModule> {
         ),
         JsBootstrapModule::new(
             "quickjs/init/toolpkg-bridge.js",
-            buildToolPkgRegistrationBridgeScript(),
+            buildToolPkgRegistrationBridgeScript(false),
             &["ToolPkg"],
         ),
         JsBootstrapModule::new(
@@ -1680,7 +1680,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
         executionPreludeJson,
         buildJavaClassBridgeDefinition(),
         buildComposeDslContextBridgeDefinition(),
-        buildToolPkgRegistrationBridgeScript(),
+        buildToolPkgRegistrationBridgeScript(false),
         getJsToolsDefinition(),
         getJsThirdPartyLibraries(),
         loadPluginConfigJs(),

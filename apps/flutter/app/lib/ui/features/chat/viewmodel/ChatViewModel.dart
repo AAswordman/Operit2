@@ -17,6 +17,8 @@ typedef WorkspaceFileChange = core_proxy.WorkspaceFileChange;
 typedef ChatResponseStreamEvent = core_proxy.MarkdownStreamEvent;
 typedef AttachmentInfo = core_proxy.AttachmentInfo;
 
+const String _pastedTextAttachmentPrefix = 'pasted_text:';
+
 class ChatInputSubmitDecision {
   const ChatInputSubmitDecision({
     required this.action,
@@ -92,6 +94,7 @@ class ChatViewModel {
     };
   }
 
+  /// Watches structured chat-state snapshots for this runtime surface.
   Stream<ChatViewModelSnapshot> watchMainState() {
     final controller = StreamController<ChatViewModelSnapshot>();
     StreamSubscription<core_proxy.ChatMainState>? subscription;
@@ -129,6 +132,7 @@ class ChatViewModel {
     return controller.stream;
   }
 
+  /// Converts core state and binds its active AI turn to the live response stream.
   ChatViewModelSnapshot _snapshotFromMainState(
     core_proxy.ChatMainState state, {
     required Map<int, _ReplayTextStream<ChatResponseStreamEvent>>
@@ -155,6 +159,8 @@ class ChatViewModel {
         hasOlderDisplayHistory: state.hasOlderDisplayHistory,
         hasNewerDisplayHistory: state.hasNewerDisplayHistory,
         isLoadingDisplayWindow: state.isLoadingDisplayWindow,
+        pendingQueueMessages: state.pendingQueueMessages,
+        isPendingQueueExpanded: state.isPendingQueueExpanded,
       ),
       boundMessageStreams: boundMessageStreams,
       boundResponseSubscriptions: boundResponseSubscriptions,
@@ -164,12 +170,13 @@ class ChatViewModel {
   Future<void> sendUserMessage(
     String text, {
     ChatUiMessage? replyToMessage,
+    String? chatIdOverride,
   }) async {
     final attachments = await _chat.attachments();
     await _chat.sendUserMessage(
       promptFunctionType: core_proxy.PromptFunctionType.chat,
       roleCardIdOverride: null,
-      chatIdOverride: null,
+      chatIdOverride: chatIdOverride,
       messageText: text,
       proxySenderNameOverride: null,
       chatProviderIdOverride: null,
@@ -229,12 +236,87 @@ class ChatViewModel {
     return _chat.cancelCurrentMessage();
   }
 
+  /// Cancels generation for the specified chat without changing the active UI selection.
+  Future<void> cancelMessage(String chatId) {
+    return _chat.cancelMessage(chatId: chatId);
+  }
+
+  /// Adds a message to the runtime-owned queue for one chat.
+  Future<void> enqueuePendingQueueMessage({
+    required String chatId,
+    required String messageText,
+  }) {
+    return _chat.enqueuePendingQueueMessage(
+      chatId: chatId,
+      messageText: messageText,
+    );
+  }
+
+  /// Deletes a queued message from the runtime-owned queue for one chat.
+  Future<void> deletePendingQueueMessage({
+    required String chatId,
+    required int messageId,
+  }) {
+    return _chat.deletePendingQueueMessage(
+      chatId: chatId,
+      messageId: messageId,
+    );
+  }
+
+  /// Atomically takes a queued message for a local edit or explicit send action.
+  Future<core_proxy.PendingQueueMessageItem?> takePendingQueueMessage({
+    required String chatId,
+    required int messageId,
+    required bool suppressNextAutoDequeue,
+  }) {
+    return _chat.takePendingQueueMessage(
+      chatId: chatId,
+      messageId: messageId,
+      suppressNextAutoDequeue: suppressNextAutoDequeue,
+    );
+  }
+
+  /// Clears the one-shot automatic dequeue suppression for a manually claimed item.
+  Future<void> clearPendingQueueAutoDequeueSuppression(String chatId) {
+    return _chat.clearPendingQueueAutoDequeueSuppression(chatId: chatId);
+  }
+
+  /// Atomically takes the next queued message when its chat has become ready.
+  Future<core_proxy.PendingQueueMessageItem?>
+  takeNextPendingQueueMessageIfReady(String chatId) {
+    return _chat.takeNextPendingQueueMessageIfReady(chatId: chatId);
+  }
+
+  /// Restores a queued message after its submit hook rejects delivery.
+  Future<void> restorePendingQueueMessage({
+    required String chatId,
+    required core_proxy.PendingQueueMessageItem message,
+  }) {
+    return _chat.restorePendingQueueMessage(chatId: chatId, message: message);
+  }
+
+  /// Saves the expanded state for a chat's runtime-owned queue.
+  Future<void> setPendingQueueExpanded({
+    required String chatId,
+    required bool isExpanded,
+  }) {
+    return _chat.setPendingQueueExpanded(
+      chatId: chatId,
+      isExpanded: isExpanded,
+    );
+  }
+
   Future<List<AttachmentInfo>> attachments() {
     return _chat.attachments();
   }
 
   Future<void> handleAttachment(String filePath) {
     return _chat.handleAttachment(filePath: filePath);
+  }
+
+  /// Adds pasted text through the runtime's virtual plain-text attachment path.
+  Future<void> attachPastedText(String text) {
+    return handleAttachment('$_pastedTextAttachmentPrefix$text');
   }
 
   Future<void> removeAttachment(String filePath) {
@@ -260,6 +342,7 @@ class ChatViewModel {
     return buffer.toString();
   }
 
+  /// Watches the raw Markdown revision events for one active chat turn.
   Stream<ChatResponseStreamEvent> watchResponseStream(String chatId) {
     return _chat.getResponseStreamChanges(chatId: chatId).map((event) {
       return core_proxy.MarkdownStreamEvent.fromJson(
@@ -428,6 +511,7 @@ class ChatViewModel {
     );
   }
 
+  /// Attaches the active turn stream to its in-progress AI message.
   ChatViewModelSnapshot _bindActiveResponseStream(
     ChatViewModelSnapshot snapshot, {
     required Map<int, _ReplayTextStream<ChatResponseStreamEvent>>
@@ -462,9 +546,7 @@ class ChatViewModel {
           onError: (Object error, StackTrace stackTrace) {
             debugPrint('Failed to watch response stream: $error\n$stackTrace');
           },
-          onDone: () {
-            stream.close();
-          },
+          onDone: stream.close,
         );
       });
     }
@@ -474,7 +556,7 @@ class ChatViewModel {
         for (final message in snapshot.messages)
           if (message.timestamp == activeTimestamp)
             message
-                .copyWith(content: '')
+                .copyWith(parts: const <core_proxy.MessagePart>[])
                 .copyWithContentStream(boundMessageStreams[message.timestamp])
           else
             message,
@@ -482,6 +564,7 @@ class ChatViewModel {
     );
   }
 
+  /// Finds the unfinished AI message owned by the active chat turn.
   int? _activeStreamingMessageTimestamp(ChatViewModelSnapshot snapshot) {
     if (!snapshot.isLoading || snapshot.currentChatId == null) {
       return null;
@@ -494,6 +577,7 @@ class ChatViewModel {
     return null;
   }
 
+  /// Closes response bindings that no longer belong to an active message.
   void _closeInactiveBoundResponseStreams(
     Set<int> activeKeys, {
     required Map<int, _ReplayTextStream<ChatResponseStreamEvent>>
@@ -510,6 +594,7 @@ class ChatViewModel {
     }
   }
 
+  /// Closes every response binding owned by this main-state watcher.
   Future<void> _closeAllBoundResponseStreams({
     required Map<int, _ReplayTextStream<ChatResponseStreamEvent>>
     boundMessageStreams,
@@ -530,6 +615,7 @@ class ChatViewModel {
     }
   }
 
+  /// Returns the selected chat id required by workspace operations.
   Future<String> _requiredCurrentChatId() async {
     final chatId = await _chat.currentChatIdFlowSnapshot();
     if (chatId == null || chatId.isEmpty) {
@@ -554,6 +640,8 @@ class ChatViewModelSnapshot {
     required this.hasOlderDisplayHistory,
     required this.hasNewerDisplayHistory,
     required this.isLoadingDisplayWindow,
+    required this.pendingQueueMessages,
+    required this.isPendingQueueExpanded,
   });
 
   final String? currentChatId;
@@ -569,6 +657,8 @@ class ChatViewModelSnapshot {
   final bool hasOlderDisplayHistory;
   final bool hasNewerDisplayHistory;
   final bool isLoadingDisplayWindow;
+  final List<core_proxy.PendingQueueMessageItem> pendingQueueMessages;
+  final bool isPendingQueueExpanded;
 
   ChatViewModelSnapshot copyWith({List<ChatUiMessage>? messages}) {
     return ChatViewModelSnapshot(
@@ -585,6 +675,8 @@ class ChatViewModelSnapshot {
       hasOlderDisplayHistory: hasOlderDisplayHistory,
       hasNewerDisplayHistory: hasNewerDisplayHistory,
       isLoadingDisplayWindow: isLoadingDisplayWindow,
+      pendingQueueMessages: pendingQueueMessages,
+      isPendingQueueExpanded: isPendingQueueExpanded,
     );
   }
 }
@@ -592,7 +684,7 @@ class ChatViewModelSnapshot {
 class ChatUiMessage {
   const ChatUiMessage({
     required this.sender,
-    required this.content,
+    required this.parts,
     required this.timestamp,
     required this.roleName,
     required this.selectedVariantIndex,
@@ -615,7 +707,7 @@ class ChatUiMessage {
   factory ChatUiMessage.fromProxy(core_proxy.ChatMessage message) {
     return ChatUiMessage(
       sender: message.sender,
-      content: message.content,
+      parts: message.parts,
       timestamp: message.timestamp,
       roleName: message.roleName,
       selectedVariantIndex: message.selectedVariantIndex,
@@ -628,7 +720,7 @@ class ChatUiMessage {
       sentAt: message.sentAt,
       outputDurationMs: message.outputDurationMs,
       waitDurationMs: message.waitDurationMs,
-      displayMode: message.displayMode as String,
+      displayMode: message.displayMode.value,
       isFavorite: message.isFavorite,
       isVariantPreview: message.isVariantPreview,
       completedAt: message.completedAt,
@@ -638,7 +730,13 @@ class ChatUiMessage {
   factory ChatUiMessage.fromJson(Map<String, Object?> json) {
     return ChatUiMessage(
       sender: json['sender'] as String,
-      content: json['content'] as String,
+      parts: (json['parts'] as List<Object?>)
+          .map(
+            (item) => core_proxy.MessagePart.fromJson(
+              Map<String, Object?>.from(item! as Map<Object?, Object?>),
+            ),
+          )
+          .toList(growable: false),
       timestamp: json['timestamp'] as int,
       roleName: json['roleName'] as String,
       selectedVariantIndex: json['selectedVariantIndex'] as int,
@@ -658,10 +756,14 @@ class ChatUiMessage {
     );
   }
 
-  ChatUiMessage copyWith({String? content, bool? isFavorite}) {
+  /// Creates a copy with changed editable message properties.
+  ChatUiMessage copyWith({
+    List<core_proxy.MessagePart>? parts,
+    bool? isFavorite,
+  }) {
     return ChatUiMessage(
       sender: sender,
-      content: content ?? this.content,
+      parts: parts ?? this.parts,
       timestamp: timestamp,
       roleName: roleName,
       selectedVariantIndex: selectedVariantIndex,
@@ -682,10 +784,11 @@ class ChatUiMessage {
     );
   }
 
+  /// Creates a copy with a live response stream attached to this UI message.
   ChatUiMessage copyWithContentStream(Stream<ChatResponseStreamEvent>? value) {
     return ChatUiMessage(
       sender: sender,
-      content: content,
+      parts: parts,
       timestamp: timestamp,
       roleName: roleName,
       selectedVariantIndex: selectedVariantIndex,
@@ -709,7 +812,7 @@ class ChatUiMessage {
   core_proxy.ChatMessage toProxy() {
     return core_proxy.ChatMessage(
       sender: sender,
-      content: content,
+      parts: parts,
       timestamp: timestamp,
       roleName: roleName,
       selectedVariantIndex: selectedVariantIndex,
@@ -723,15 +826,124 @@ class ChatUiMessage {
       outputDurationMs: outputDurationMs,
       waitDurationMs: waitDurationMs,
       completedAt: completedAt,
-      displayMode: displayMode,
+      displayMode: core_proxy.ChatMessageDisplayMode.fromJson(displayMode),
       isFavorite: isFavorite,
       isVariantPreview: isVariantPreview,
-      contentStream: null,
     );
   }
 
   final String sender;
-  final String content;
+  final List<core_proxy.MessagePart> parts;
+
+  /// Returns text from parts rendered directly in the chat transcript.
+  String get displayText {
+    final orderedParts = parts.toList(growable: false)
+      ..sort((left, right) => left.sequence.compareTo(right.sequence));
+    return orderedParts
+        .where(
+          (part) =>
+              part.kind == core_proxy.MessagePartKind.markdown ||
+              part.kind == core_proxy.MessagePartKind.status,
+        )
+        .map((part) => part.content)
+        .join();
+  }
+
+  /// Reconstructs the complete assistant protocol markup from semantic parts.
+  String get assistantProtocolMarkup {
+    final orderedParts = parts.toList(growable: false)
+      ..sort((left, right) => left.sequence.compareTo(right.sequence));
+    final markup = StringBuffer();
+    for (final part in orderedParts) {
+      switch (part.kind) {
+        case core_proxy.MessagePartKind.markdown:
+          markup.write(part.content);
+        case core_proxy.MessagePartKind.thinking:
+          markup
+            ..write('<think>')
+            ..write(part.content)
+            ..write('</think>');
+        case core_proxy.MessagePartKind.toolCall:
+          markup
+            ..write('<tool name="')
+            ..write(_escapeProtocolAttribute(part.toolName!))
+            ..write('" call_id="')
+            ..write(_escapeProtocolAttribute(part.toolCallId!))
+            ..write('">');
+          final parameterNames = part.attributes.keys.toList(growable: false)
+            ..sort();
+          for (final name in parameterNames) {
+            markup
+              ..write('<param name="')
+              ..write(_escapeProtocolAttribute(name))
+              ..write('">')
+              ..write(part.attributes[name]!)
+              ..write('</param>');
+          }
+          markup.write('</tool>');
+        case core_proxy.MessagePartKind.toolResult:
+          markup
+            ..write('<tool_result name="')
+            ..write(_escapeProtocolAttribute(part.toolName!))
+            ..write('"');
+          final toolCallId = part.toolCallId;
+          if (toolCallId != null) {
+            markup
+              ..write(' call_id="')
+              ..write(_escapeProtocolAttribute(toolCallId))
+              ..write('"');
+          }
+          _writeProtocolAttributes(markup, part.attributes);
+          markup
+            ..write('><content>')
+            ..write(part.content)
+            ..write('</content></tool_result>');
+        case core_proxy.MessagePartKind.status:
+          markup.write('<status');
+          _writeProtocolAttributes(markup, part.attributes);
+          markup
+            ..write('>')
+            ..write(part.content)
+            ..write('</status>');
+      }
+    }
+    return markup.toString();
+  }
+
+  /// Returns the complete text representation accepted by message editing.
+  String get editableText {
+    return switch (sender) {
+      'ai' => assistantProtocolMarkup,
+      'user' => displayText,
+      _ => throw StateError('Message sender cannot be edited: $sender'),
+    };
+  }
+
+  /// Appends sorted and escaped XML-like protocol attributes.
+  static void _writeProtocolAttributes(
+    StringBuffer markup,
+    Map<String, String> attributes,
+  ) {
+    final names = attributes.keys.toList(growable: false)..sort();
+    for (final name in names) {
+      markup
+        ..write(' ')
+        ..write(name)
+        ..write('="')
+        ..write(_escapeProtocolAttribute(attributes[name]!))
+        ..write('"');
+    }
+  }
+
+  /// Escapes one XML-like protocol attribute value.
+  static String _escapeProtocolAttribute(String value) {
+    return value
+        .replaceAll('&', '&amp;')
+        .replaceAll('"', '&quot;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+  }
+
   final int timestamp;
   final String roleName;
   final int selectedVariantIndex;
@@ -832,16 +1044,16 @@ class ChatInputProcessingState {
   }
 }
 
+/// Replays all received response events to each renderer subscription.
 class _ReplayTextStream<T> extends Stream<T> {
   _ReplayTextStream(this.timestamp);
 
   final int timestamp;
   final List<T> _cache = <T>[];
   final StreamController<T> _liveController = StreamController<T>.broadcast();
-  Object? _error;
-  StackTrace? _stackTrace;
   bool _closed = false;
 
+  /// Appends one event to the replay cache and live subscribers.
   void add(T chunk) {
     if (_closed) {
       return;
@@ -850,6 +1062,7 @@ class _ReplayTextStream<T> extends Stream<T> {
     _liveController.add(chunk);
   }
 
+  /// Closes the live event channel once generation has ended.
   Future<void> close() async {
     if (_closed) {
       return;
@@ -858,6 +1071,7 @@ class _ReplayTextStream<T> extends Stream<T> {
     await _liveController.close();
   }
 
+  /// Creates a subscription that receives cached events before live events.
   @override
   StreamSubscription<T> listen(
     void Function(T event)? onData, {
@@ -871,10 +1085,6 @@ class _ReplayTextStream<T> extends Stream<T> {
     replayController.onListen = () {
       for (final chunk in _cache) {
         replayController.add(chunk);
-      }
-      final error = _error;
-      if (error != null) {
-        replayController.addError(error, _stackTrace);
       }
       if (_closed) {
         replayController.close();

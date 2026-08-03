@@ -74,11 +74,13 @@ class CorePushRequest {
     required this.requestId,
     required this.targetPath,
     required this.methodName,
+    this.args = const <String, Object?>{},
   });
 
   final String requestId;
   final CoreObjectPath targetPath;
   final String methodName;
+  final Object? args;
 
   /// Encodes this push target for the Link carrier.
   Map<String, Object?> toJson() {
@@ -86,6 +88,7 @@ class CorePushRequest {
       'requestId': requestId,
       'targetPath': targetPath.toJson(),
       'methodName': methodName,
+      'args': args,
     };
   }
 }

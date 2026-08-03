@@ -52,7 +52,7 @@ class _BubbleUserMessageComposableState
         widget.message.displayMode == 'HIDDEN_PLACEHOLDER';
     final parseResult = isHiddenPlaceholder
         ? const MessageParseResult(processedText: '', trailingAttachments: [])
-        : parseMessageContent(widget.message.content);
+        : parseMessageContent(widget.message.displayText);
     final isProxySender =
         parseResult.proxySenderName != null &&
         parseResult.proxySenderName!.isNotEmpty;

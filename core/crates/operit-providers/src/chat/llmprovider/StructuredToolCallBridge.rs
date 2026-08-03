@@ -753,8 +753,11 @@ impl StructuredToolCallBridge {
             return (content.to_string(), None);
         }
         let mut toolCalls = Vec::new();
-        let mut textContent = content.to_string();
+        let mut textContent = String::with_capacity(content.len());
+        let mut cursor = 0usize;
         for (callIndex, toolMatch) in matches.iter().enumerate() {
+            textContent.push_str(&content[cursor..toolMatch.start]);
+            cursor = toolMatch.end;
             let mut params = Map::new();
             for (start, end) in tag_ranges(&toolMatch.body, "param") {
                 let raw = &toolMatch.body[start..end];
@@ -786,8 +789,8 @@ impl StructuredToolCallBridge {
                     "arguments": Value::Object(params).to_string(),
                 }
             }));
-            textContent = textContent.replace(&toolMatch.rawText(), "");
         }
+        textContent.push_str(&content[cursor..]);
         (textContent.trim().to_string(), Some(toolCalls))
     }
 
@@ -943,19 +946,6 @@ impl StructuredToolCallBridge {
     }
 }
 
-trait ToolCallMatchRawText {
-    fn rawText(&self) -> String;
-}
-
-impl ToolCallMatchRawText for operit_util::ChatMarkupRegex::ToolCallMatch {
-    fn rawText(&self) -> String {
-        format!(
-            "<{} name=\"{}\">{}</{}>",
-            self.tag_name, self.name, self.body, self.tag_name
-        )
-    }
-}
-
 fn jsonValueToText(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
@@ -1061,4 +1051,51 @@ fn toBase36(mut value: u32) -> String {
         value /= 36;
     }
     chars.iter().rev().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::StructuredToolCallBridge;
+    use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
+
+    /// Verifies canonical stored tool markup becomes only a native provider tool call.
+    #[test]
+    fn nativeHistoryRemovesCanonicalToolMarkupWithCallId() {
+        let history = vec![PromptTurn::new(
+            PromptTurnKind::ASSISTANT,
+            concat!(
+                "Opening page\n",
+                "<tool name=\"package_proxy\" call_id=\"part-1\">",
+                "<param name=\"params\">{\"url\":\"https://example.com\"}</param>",
+                "<param name=\"tool_name\">browser:goto</param>",
+                "</tool>"
+            ),
+        )];
+
+        let messages: Value = serde_json::from_str(
+            &StructuredToolCallBridge::buildMessagesJsonForProvider(&history, true, true),
+        )
+        .expect("native provider messages must be valid JSON");
+        let assistant = &messages
+            .as_array()
+            .expect("provider messages must be an array")[0];
+
+        assert_eq!(
+            assistant.get("content"),
+            Some(&Value::String("Opening page".to_string()))
+        );
+        let toolCalls = assistant
+            .get("tool_calls")
+            .and_then(Value::as_array)
+            .expect("canonical tool markup must become native tool calls");
+        assert_eq!(toolCalls.len(), 1);
+        assert_eq!(
+            toolCalls[0]
+                .pointer("/function/name")
+                .and_then(Value::as_str),
+            Some("package_proxy")
+        );
+    }
 }

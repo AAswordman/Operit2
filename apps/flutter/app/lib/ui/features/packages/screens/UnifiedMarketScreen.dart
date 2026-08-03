@@ -822,7 +822,8 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
   Future<void> _openManagedEntry(
     core_proxy.MarketPublisherEntrySummary entry,
   ) async {
-    if (entry.stateCode != 'approved') {
+    if (entry.stateCode != 'approved' ||
+        entry.listingState == 'pending_listing') {
       _showPrivateEntrySummary(entry);
       return;
     }
@@ -859,7 +860,8 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
   Future<void> _publishManagedVersion(
     core_proxy.MarketPublisherEntrySummary entry,
   ) async {
-    if (entry.stateCode != 'approved') {
+    if (entry.stateCode != 'approved' ||
+        entry.listingState == 'pending_listing') {
       _showPrivateEntrySummary(entry);
       return;
     }
@@ -925,6 +927,9 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
     showDialog<void>(
       context: context,
       builder: (context) {
+        final stateLabel = entry.listingState == 'pending_listing'
+            ? '待上架'
+            : _marketStateLabel(entry.stateCode);
         final reasons = entry.reasonCodes
             .map(_marketReasonLabel)
             .where((reason) => reason.trim().isNotEmpty)
@@ -935,7 +940,7 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text('状态：${_marketStateLabel(entry.stateCode)}'),
+              Text('状态：$stateLabel'),
               const SizedBox(height: 8),
               Text('关系：${_marketRelationLabel(entry.relation)}'),
               if ((entry.categoryId ?? '').trim().isNotEmpty) ...<Widget>[
@@ -1067,7 +1072,12 @@ class _MarketManageEntryTile extends StatelessWidget {
         .map(_marketReasonLabel)
         .where((reason) => reason.trim().isNotEmpty)
         .toList(growable: false);
-    final canPublishVersion = entry.stateCode == 'approved';
+    final isPendingListing = entry.listingState == 'pending_listing';
+    final stateLabel = isPendingListing
+        ? '待上架'
+        : _marketStateLabel(entry.stateCode);
+    final canPublishVersion =
+        entry.stateCode == 'approved' && !isPendingListing;
     return OperitGlassSurface(
       color: colorScheme.surface,
       layer: OperitGlassSurfaceLayer.card,
@@ -1085,7 +1095,7 @@ class _MarketManageEntryTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Text(
-                '${_marketTypeLabel(entry.type)} · ${_marketStateLabel(entry.stateCode)} · ${_marketRelationLabel(entry.relation)}',
+                '${_marketTypeLabel(entry.type)} · $stateLabel · ${_marketRelationLabel(entry.relation)}',
               ),
               if (reasons.isNotEmpty) ...<Widget>[
                 const SizedBox(height: 4),

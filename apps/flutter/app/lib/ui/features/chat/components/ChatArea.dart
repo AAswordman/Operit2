@@ -565,6 +565,7 @@ class _ChatAreaState extends State<ChatArea> {
     return row;
   }
 
+  /// Shows the standalone cursor only before an AI response stream is attached.
   bool _shouldShowLoadingIndicator() {
     if (!widget.isLoading || widget.messages.isEmpty) {
       return widget.isLoading && widget.messages.isEmpty;
@@ -572,23 +573,17 @@ class _ChatAreaState extends State<ChatArea> {
     final lastMessage = widget.messages.last;
     return lastMessage.sender == 'user' ||
         (lastMessage.sender == 'ai' &&
-            lastMessage.content.isEmpty &&
+            lastMessage.parts.isEmpty &&
             lastMessage.contentStream == null);
   }
 
+  /// Reports whether this AI row currently owns a live response stream.
   bool _isStreamingMessage(int index) {
-    if (!widget.isLoading || index < 0 || index >= widget.messages.length) {
+    if (index < 0 || index >= widget.messages.length) {
       return false;
     }
-    if (widget.messages[index].sender != 'ai') {
-      return false;
-    }
-    for (var i = widget.messages.length - 1; i >= 0; i--) {
-      if (widget.messages[i].sender == 'ai') {
-        return i == index;
-      }
-    }
-    return false;
+    final message = widget.messages[index];
+    return message.sender == 'ai' && message.contentStream != null;
   }
 }
 
@@ -787,9 +782,10 @@ Color? _optionalColor(int? value) {
   return value == null ? null : Color(value);
 }
 
+/// Reports whether one cached message row can be reused unchanged.
 bool _sameMessageForRender(ChatUiMessage left, ChatUiMessage right) {
   return left.sender == right.sender &&
-      left.content == right.content &&
+      _sameMessagePartsForRender(left, right) &&
       left.timestamp == right.timestamp &&
       left.roleName == right.roleName &&
       left.selectedVariantIndex == right.selectedVariantIndex &&
@@ -807,6 +803,27 @@ bool _sameMessageForRender(ChatUiMessage left, ChatUiMessage right) {
       left.isVariantPreview == right.isVariantPreview &&
       left.completedAt == right.completedAt &&
       identical(left.contentStream, right.contentStream);
+}
+
+/// Compares canonical message parts by value for message-row cache reuse.
+bool _sameMessagePartsForRender(ChatUiMessage left, ChatUiMessage right) {
+  if (left.parts.length != right.parts.length) {
+    return false;
+  }
+  for (var index = 0; index < left.parts.length; index++) {
+    final leftPart = left.parts[index];
+    final rightPart = right.parts[index];
+    if (leftPart.partId != rightPart.partId ||
+        leftPart.sequence != rightPart.sequence ||
+        leftPart.kind != rightPart.kind ||
+        leftPart.content != rightPart.content ||
+        leftPart.toolCallId != rightPart.toolCallId ||
+        leftPart.toolName != rightPart.toolName ||
+        !mapEquals(leftPart.attributes, rightPart.attributes)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 class _EmptyChatArea extends StatelessWidget {

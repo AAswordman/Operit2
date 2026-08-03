@@ -137,8 +137,7 @@ impl ChatHistoryDelegate {
     /// Clones the delegate while reusing live state-flow handles for core services.
     pub fn clone_for_core(&self) -> Self {
         Self {
-            chatHistoryManager: ChatHistoryManager::default()
-                .expect("ChatHistoryManager must initialize for ChatHistoryDelegate"),
+            chatHistoryManager: self.chatHistoryManager.clone(),
             characterCardManager: CharacterCardManager::getInstance(),
             activePromptManager: ActivePromptManager::getInstance(),
             characterGroupCardManager: CharacterGroupCardManager::getInstance(),
@@ -823,7 +822,7 @@ impl ChatHistoryDelegate {
         {
             if let Some(card) = resolvedCard {
                 let mut openingMessage =
-                    ChatMessage::new_with_content("ai".to_string(), card.openingStatement);
+                    ChatMessage::new_with_markdown("ai".to_string(), card.openingStatement);
                 openingMessage.roleName = card.name;
                 let persistedOpeningMessage = openingMessage.clone();
                 self.chatHistoryManager
@@ -1162,9 +1161,9 @@ impl ChatHistoryDelegate {
     /// Persists token metrics for the current or supplied chat.
     pub fn saveCurrentChat(
         &mut self,
-        inputTokens: i32,
-        outputTokens: i32,
-        actualContextWindowSize: i32,
+        inputTokens: i64,
+        outputTokens: i64,
+        actualContextWindowSize: i64,
         chatIdOverride: Option<String>,
     ) {
         let chatId = chatIdOverride.or_else(|| self.currentChatId.clone());
@@ -1310,12 +1309,8 @@ impl ChatHistoryDelegate {
             .iter()
             .position(|existing| existing.timestamp == message.timestamp)
         {
-            if message.contentStream.is_none()
-                || self.chatHistory[existingIndex].contentStream.is_none()
-            {
-                self.chatHistory[existingIndex] = message;
-                self.emitChatHistoryState();
-            }
+            self.chatHistory[existingIndex] = message;
+            self.emitChatHistoryState();
             return true;
         }
         self.chatHistory.push(message);
@@ -1331,7 +1326,7 @@ impl ChatHistoryDelegate {
         };
         let messageSender = message.sender.clone();
         let messageTimestamp = message.timestamp;
-        let messageChars = ChainLogger::lenField(&message.content);
+        let messageChars = ChainLogger::lenField(&message.displayText());
         let isCurrentChat = self.currentChatIdFlow.value().as_ref() == Some(&targetChatId);
         if message.isVariantPreview {
             if isCurrentChat {
@@ -1460,6 +1455,26 @@ impl ChatHistoryDelegate {
                 ],
             );
         }
+    }
+
+    /// Persists a streaming snapshot without publishing a new transcript state.
+    pub fn persistStreamingMessage(&mut self, message: ChatMessage, chatId: String) {
+        let messageSender = message.sender.clone();
+        let messageTimestamp = message.timestamp;
+        let messageChars = ChainLogger::lenField(&message.displayText());
+        self.chatHistoryManager
+            .updateMessage(chatId.clone(), message)
+            .expect("ChatHistoryManager.updateMessage must succeed");
+        ChainLogger::info(
+            MESSAGE_STORE_CHAIN,
+            "message.store.streaming.update",
+            &[
+                ("chatId", chatId),
+                ("sender", messageSender),
+                ("timestamp", messageTimestamp.to_string()),
+                ("messageChars", messageChars),
+            ],
+        );
     }
 
     #[allow(non_snake_case)]
@@ -1615,10 +1630,10 @@ impl ChatHistoryDelegate {
     pub fn shouldGenerateSummary(
         &self,
         messages: Vec<ChatMessage>,
-        currentTokens: i32,
+        currentTokens: i64,
         maxTokens: i32,
     ) -> bool {
-        !messages.is_empty() && currentTokens >= maxTokens
+        !messages.is_empty() && currentTokens >= i64::from(maxTokens)
     }
 
     #[allow(non_snake_case)]
@@ -1661,7 +1676,7 @@ impl ChatHistoryDelegate {
 
     #[allow(non_snake_case)]
     /// Returns the current chat's input and output token counts.
-    pub fn getCurrentTokenCounts(&self) -> (i32, i32) {
+    pub fn getCurrentTokenCounts(&self) -> (i64, i64) {
         let Some(chatId) = self.currentChatId.clone() else {
             return (0, 0);
         };

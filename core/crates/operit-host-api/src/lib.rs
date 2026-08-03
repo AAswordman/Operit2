@@ -1278,6 +1278,13 @@ pub trait RuntimeStorageHost: Send + Sync {
     fn workspaceRootDir(&self) -> Option<PathBuf>;
     /// Reads bytes from a virtual runtime storage path.
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>>;
+    /// Reads one bounded byte range without materializing the complete storage object.
+    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        let _ = (path, offset, length);
+        Err(HostError::new(
+            "Runtime storage host does not expose bounded range reads",
+        ))
+    }
     /// Writes bytes to a virtual runtime storage path.
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()>;
     /// Deletes a virtual runtime storage entry.
@@ -1286,6 +1293,42 @@ pub trait RuntimeStorageHost: Send + Sync {
     fn exists(&self, path: &str) -> HostResult<bool>;
     /// Lists entries under a virtual runtime storage prefix.
     fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>>;
+}
+
+/// Owns one sequential write into a runtime storage file.
+pub trait RuntimeStorageWriteSession: Send {
+    /// Appends one bounded byte chunk to the pending storage file.
+    fn writeChunk(&mut self, chunk: &[u8]) -> HostResult<()>;
+
+    /// Publishes the fully written storage file.
+    fn commit(self: Box<Self>) -> HostResult<()>;
+
+    /// Discards the pending storage file without publishing it.
+    fn discard(self: Box<Self>) -> HostResult<()>;
+}
+
+/// Creates host-owned sequential writers for runtime storage files.
+pub trait RuntimeStorageWriteHost: Send + Sync {
+    /// Opens a new writer for one virtual runtime storage path.
+    fn createWriteSession(&self, path: &str) -> HostResult<Box<dyn RuntimeStorageWriteSession>>;
+}
+
+/// Stores one staged archive as an append-only, randomly readable byte source.
+pub trait ArchiveStagingHost: Send + Sync {
+    /// Creates an empty staged archive with its final byte length reserved by the owner host.
+    fn createArchive(&self, archiveId: &str, expectedByteLength: u64) -> HostResult<()>;
+
+    /// Appends one ordered byte chunk to an existing staged archive.
+    fn appendArchive(&self, archiveId: &str, chunk: &[u8]) -> HostResult<()>;
+
+    /// Finalizes a staged archive and returns its persisted byte length.
+    fn sealArchive(&self, archiveId: &str) -> HostResult<u64>;
+
+    /// Reads a bounded byte range from a finalized staged archive.
+    fn readArchive(&self, archiveId: &str, offset: u64, length: usize) -> HostResult<Vec<u8>>;
+
+    /// Removes one staged archive and all platform-owned resources for it.
+    fn removeArchive(&self, archiveId: &str) -> HostResult<()>;
 }
 
 pub trait HostSecretStore: Send + Sync {

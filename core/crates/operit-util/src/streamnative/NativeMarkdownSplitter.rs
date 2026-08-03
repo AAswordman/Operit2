@@ -11,8 +11,6 @@ use crate::stream::plugins::StreamMarkdownPlugin::{
 };
 use crate::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
 use crate::stream::plugins::StreamXmlPlugin::StreamXmlPlugin;
-use crate::stream::Stream::{Stream, VecStream};
-use crate::stream::StreamGroup::StreamGroup;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[repr(i32)]
@@ -81,7 +79,7 @@ pub struct Segment {
 
 const SEG_BREAK: i32 = -1;
 
-pub struct PluginEntry {
+struct PluginEntry {
     plugin: Box<dyn StreamPlugin>,
     tag: MarkdownProcessorType,
 }
@@ -176,8 +174,6 @@ impl MarkdownSession {
         Self::flush_run(&mut out, &mut run);
         out
     }
-
-    pub fn destroy(self) {}
 
     fn process_one(
         &mut self,
@@ -465,7 +461,7 @@ impl NativeMarkdownSplitter {
         MarkdownSession::new(Self::get_inline_plugins())
     }
 
-    pub fn get_block_plugins() -> Vec<PluginEntry> {
+    fn get_block_plugins() -> Vec<PluginEntry> {
         vec![
             PluginEntry {
                 plugin: Box::new(StreamMarkdownHeaderPlugin::new(true)),
@@ -514,7 +510,7 @@ impl NativeMarkdownSplitter {
         ]
     }
 
-    pub fn get_inline_plugins() -> Vec<PluginEntry> {
+    fn get_inline_plugins() -> Vec<PluginEntry> {
         vec![
             PluginEntry {
                 plugin: Box::new(StreamMarkdownBoldPlugin::new(false)),
@@ -564,55 +560,9 @@ impl NativeMarkdownSplitter {
         Self::segments_to_stable_nodes(content, session.push(content), true)
     }
 
-    pub async fn native_markdown_split_stream_by_block(
-        mut chars: impl Stream<Item = char>,
-    ) -> Vec<MarkdownNodeStable> {
-        let mut content = String::new();
-        chars.collect(&mut |ch| content.push(ch)).await;
-        Self::native_markdown_split_by_block(&content)
-    }
-
-    pub async fn native_markdown_split_string_stream_by_block(
-        mut source: impl Stream<Item = String>,
-    ) -> Vec<MarkdownNodeStable> {
-        let mut content = String::new();
-        source.collect(&mut |chunk| content.push_str(&chunk)).await;
-        Self::native_markdown_split_by_block(&content)
-    }
-
     pub fn native_markdown_split_by_inline(content: &str) -> Vec<MarkdownNodeStable> {
         let mut session = Self::create_inline_session();
         Self::segments_to_stable_nodes(content, session.push(content), false)
-    }
-
-    pub async fn native_markdown_split_stream_by_inline(
-        mut chars: impl Stream<Item = char>,
-    ) -> Vec<MarkdownNodeStable> {
-        let mut content = String::new();
-        chars.collect(&mut |ch| content.push(ch)).await;
-        Self::native_markdown_split_by_inline(&content)
-    }
-
-    pub async fn native_markdown_split_string_stream_by_inline(
-        mut source: impl Stream<Item = String>,
-    ) -> Vec<MarkdownNodeStable> {
-        let mut content = String::new();
-        source.collect(&mut |chunk| content.push_str(&chunk)).await;
-        Self::native_markdown_split_by_inline(&content)
-    }
-
-    pub fn native_markdown_split_by_block_groups(
-        content: &str,
-    ) -> VecStream<StreamGroup<Option<MarkdownProcessorType>>> {
-        let mut session = Self::create_block_session();
-        Self::segments_to_groups(content, session.push(content))
-    }
-
-    pub fn native_markdown_split_by_inline_groups(
-        content: &str,
-    ) -> VecStream<StreamGroup<Option<MarkdownProcessorType>>> {
-        let mut session = Self::create_inline_session();
-        Self::segments_to_groups(content, session.push(content))
     }
 
     fn segments_to_stable_nodes(
@@ -650,36 +600,6 @@ impl NativeMarkdownSplitter {
             });
         }
         nodes
-    }
-
-    fn segments_to_groups(
-        content: &str,
-        segments: Vec<Segment>,
-    ) -> VecStream<StreamGroup<Option<MarkdownProcessorType>>> {
-        let groups = segments
-            .into_iter()
-            .filter_map(|segment| {
-                if segment.r#type < 0 {
-                    return None;
-                }
-                let node_type = MarkdownProcessorType::from_ordinal(segment.r#type)
-                    .unwrap_or(MarkdownProcessorType::PlainText);
-                let node_content = if node_type == MarkdownProcessorType::HtmlBreak {
-                    "\n".to_string()
-                } else {
-                    char_slice(content, segment.start, segment.end)
-                };
-                Some(StreamGroup::new(
-                    if node_type == MarkdownProcessorType::PlainText {
-                        None
-                    } else {
-                        Some(node_type)
-                    },
-                    Box::new(VecStream::new(vec![node_content])),
-                ))
-            })
-            .collect::<Vec<_>>();
-        VecStream::new(groups)
     }
 
     fn is_inline_container(block_type: MarkdownProcessorType) -> bool {

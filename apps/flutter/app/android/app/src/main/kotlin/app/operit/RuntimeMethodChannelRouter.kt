@@ -12,6 +12,7 @@ class RuntimeMethodChannelRouter(
     private val linkHostChannel = RuntimeLinkHostChannel(runtimeHost)
     private val ownerSystemChannel = ownerSystem
     private val androidPlatformChannel = AndroidPlatformChannel(activity, runtimeHost)
+    private val snapshotImportInputChannel = SnapshotImportInputChannel(activity)
     private var runtimeChannel: MethodChannel? = null
 
     fun configure(messenger: BinaryMessenger) {
@@ -33,10 +34,12 @@ class RuntimeMethodChannelRouter(
                 }
             }
         }
+        snapshotImportInputChannel.attach(messenger)
     }
 
     fun clear() {
         coreLinkChannel.clear()
+        snapshotImportInputChannel.clear()
         runtimeChannel?.setMethodCallHandler(null)
         runtimeChannel = null
     }
@@ -52,5 +55,10 @@ class RuntimeMethodChannelRouter(
         grantResults: IntArray,
     ): Boolean {
         return androidPlatformChannel.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    }
+
+    /** Delivers one Android document picker result to the snapshot input channel. */
+    fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean {
+        return snapshotImportInputChannel.onActivityResult(requestCode, resultCode, data)
     }
 }

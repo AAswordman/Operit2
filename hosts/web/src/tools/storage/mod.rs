@@ -1,7 +1,8 @@
 use js_sys::{Array, Uint8Array};
 use operit_host_api::{
     HostResult, HostSecretStore, RuntimeSqliteConnection, RuntimeSqliteHost,
-    RuntimeSqliteTransaction, RuntimeStorageEntry, RuntimeStorageHost, SqliteRow, SqliteValue,
+    RuntimeSqliteTransaction, RuntimeStorageEntry, RuntimeStorageHost, RuntimeStorageWriteHost,
+    RuntimeStorageWriteSession, SqliteRow, SqliteValue,
 };
 use std::path::PathBuf;
 use wasm_bindgen::prelude::*;
@@ -50,6 +51,23 @@ impl RuntimeStorageHost for WebRuntimeStorageHost {
         Ok(Uint8Array::new(&value).to_vec())
     }
 
+    /// Reads one bounded byte range from worker-owned OPFS runtime storage.
+    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        let offset = i64::try_from(offset)
+            .map_err(|_| operit_host_api::HostError::new("runtime storage offset does not fit i64"))?;
+        let length = i64::try_from(length)
+            .map_err(|_| operit_host_api::HostError::new("runtime storage length does not fit i64"))?;
+        let value = call_storage(
+            "readBytesRange",
+            &[
+                JsValue::from_str(path),
+                JsValue::from_f64(offset as f64),
+                JsValue::from_f64(length as f64),
+            ],
+        )?;
+        Ok(Uint8Array::new(&value).to_vec())
+    }
+
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         call_storage(
             "writeBytes",
@@ -86,6 +104,46 @@ impl RuntimeStorageHost for WebRuntimeStorageHost {
             });
         }
         Ok(entries)
+    }
+}
+
+/// Writes one Web runtime storage file through a worker-owned OPFS session.
+struct WebRuntimeStorageWriteSession {
+    sessionId: String,
+}
+
+unsafe impl Send for WebRuntimeStorageWriteSession {}
+
+impl RuntimeStorageWriteSession for WebRuntimeStorageWriteSession {
+    /// Appends one chunk to the worker-owned pending storage file.
+    fn writeChunk(&mut self, chunk: &[u8]) -> HostResult<()> {
+        call_storage(
+            "writeSessionChunk",
+            &[JsValue::from_str(&self.sessionId), bytes_to_js(chunk)],
+        )?;
+        Ok(())
+    }
+
+    /// Publishes the completed worker-owned storage file.
+    fn commit(self: Box<Self>) -> HostResult<()> {
+        call_storage("commitWriteSession", &[JsValue::from_str(&self.sessionId)])?;
+        Ok(())
+    }
+
+    /// Discards the incomplete worker-owned storage file.
+    fn discard(self: Box<Self>) -> HostResult<()> {
+        call_storage("discardWriteSession", &[JsValue::from_str(&self.sessionId)])?;
+        Ok(())
+    }
+}
+
+impl RuntimeStorageWriteHost for WebRuntimeStorageHost {
+    /// Creates one worker-owned sequential runtime storage write session.
+    fn createWriteSession(&self, path: &str) -> HostResult<Box<dyn RuntimeStorageWriteSession>> {
+        let value = call_storage("createWriteSession", &[JsValue::from_str(path)])?;
+        Ok(Box::new(WebRuntimeStorageWriteSession {
+            sessionId: js_string(value, "runtimeStorage.createWriteSession")?,
+        }))
     }
 }
 

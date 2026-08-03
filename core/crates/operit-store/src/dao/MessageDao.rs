@@ -56,11 +56,31 @@ impl MessageDao {
                     sender AS sender,
                     CASE
                         WHEN sender = 'user' AND displayMode = 'HIDDEN_PLACEHOLDER' THEN ''
-                        ELSE SUBSTR(content, 1, ?2)
+                        ELSE SUBSTR((
+                            SELECT GROUP_CONCAT(content, '')
+                            FROM (
+                                SELECT content FROM message_parts
+                                WHERE message_parts.chatId = messages.chatId
+                                    AND message_parts.messageTimestamp = messages.timestamp
+                                    AND message_parts.variantIndex = messages.selectedVariantIndex
+                                    AND message_parts.kind IN ('markdown', 'status')
+                                ORDER BY sequence ASC
+                            )
+                        ), 1, ?2)
                     END AS previewContent,
                     CASE
                         WHEN sender = 'user' AND displayMode = 'HIDDEN_PLACEHOLDER' THEN 0
-                        ELSE LENGTH(content)
+                        ELSE LENGTH((
+                            SELECT GROUP_CONCAT(content, '')
+                            FROM (
+                                SELECT content FROM message_parts
+                                WHERE message_parts.chatId = messages.chatId
+                                    AND message_parts.messageTimestamp = messages.timestamp
+                                    AND message_parts.variantIndex = messages.selectedVariantIndex
+                                    AND message_parts.kind IN ('markdown', 'status')
+                                ORDER BY sequence ASC
+                            )
+                        ))
                     END AS contentLength,
                     displayMode AS displayMode,
                     isFavorite AS isFavorite
@@ -104,17 +124,57 @@ impl MessageDao {
                     timestamp AS timestamp,
                     sender AS sender,
                     SUBSTR(
-                        content,
-                        MAX(1, INSTR(LOWER(content), LOWER(?2)) - (?3 / 2)),
+                        (
+                            SELECT GROUP_CONCAT(content, '')
+                            FROM (
+                                SELECT content FROM message_parts
+                                WHERE message_parts.chatId = messages.chatId
+                                    AND message_parts.messageTimestamp = messages.timestamp
+                                    AND message_parts.variantIndex = messages.selectedVariantIndex
+                                    AND message_parts.kind IN ('markdown', 'status')
+                                ORDER BY sequence ASC
+                            )
+                        ),
+                        MAX(1, INSTR(LOWER((
+                            SELECT GROUP_CONCAT(content, '')
+                            FROM (
+                                SELECT content FROM message_parts
+                                WHERE message_parts.chatId = messages.chatId
+                                    AND message_parts.messageTimestamp = messages.timestamp
+                                    AND message_parts.variantIndex = messages.selectedVariantIndex
+                                    AND message_parts.kind IN ('markdown', 'status')
+                                ORDER BY sequence ASC
+                            )
+                        )), LOWER(?2)) - (?3 / 2)),
                         ?3
                     ) AS previewContent,
-                    LENGTH(content) AS contentLength,
+                    LENGTH((
+                        SELECT GROUP_CONCAT(content, '')
+                        FROM (
+                            SELECT content FROM message_parts
+                            WHERE message_parts.chatId = messages.chatId
+                                AND message_parts.messageTimestamp = messages.timestamp
+                                AND message_parts.variantIndex = messages.selectedVariantIndex
+                                AND message_parts.kind IN ('markdown', 'status')
+                            ORDER BY sequence ASC
+                        )
+                    )) AS contentLength,
                     displayMode AS displayMode,
                     isFavorite AS isFavorite
                 FROM messages
                 WHERE chatId = ?1
                     AND NOT (sender = 'user' AND displayMode = 'HIDDEN_PLACEHOLDER')
-                    AND INSTR(LOWER(content), LOWER(?2)) > 0
+                    AND INSTR(LOWER((
+                        SELECT GROUP_CONCAT(content, '')
+                        FROM (
+                            SELECT content FROM message_parts
+                            WHERE message_parts.chatId = messages.chatId
+                                AND message_parts.messageTimestamp = messages.timestamp
+                                AND message_parts.variantIndex = messages.selectedVariantIndex
+                                AND message_parts.kind IN ('markdown', 'status')
+                            ORDER BY sequence ASC
+                        )
+                    )), LOWER(?2)) > 0
                 ORDER BY timestamp ASC
                 "#,
                 sqliteParams![chatId, query, previewCharCount],
@@ -355,13 +415,13 @@ impl MessageDao {
         self.store.execute(
             r#"
                 INSERT INTO messages (
-                    chatId, sender, content, timestamp, orderIndex, roleName,
+                    chatId, sender, timestamp, orderIndex, roleName,
                     selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
                     cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
                     completedAt, displayMode, isFavorite
                 )
                 SELECT
-                    ?2, sender, content, timestamp, orderIndex, roleName,
+                    ?2, sender, timestamp, orderIndex, roleName,
                     selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
                     cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
                     completedAt, displayMode, isFavorite
@@ -377,19 +437,18 @@ impl MessageDao {
         self.store.execute(
             r#"
                 UPDATE messages
-                SET chatId = ?2, sender = ?3, content = ?4, timestamp = ?5,
-                    orderIndex = ?6, roleName = ?7, selectedVariantIndex = ?8,
-                    provider = ?9, modelName = ?10, inputTokens = ?11,
-                    outputTokens = ?12, cachedInputTokens = ?13, sentAt = ?14,
-                    outputDurationMs = ?15, waitDurationMs = ?16, completedAt = ?17,
-                    displayMode = ?18, isFavorite = ?19
+                SET chatId = ?2, sender = ?3, timestamp = ?4,
+                    orderIndex = ?5, roleName = ?6, selectedVariantIndex = ?7,
+                    provider = ?8, modelName = ?9, inputTokens = ?10,
+                    outputTokens = ?11, cachedInputTokens = ?12, sentAt = ?13,
+                    outputDurationMs = ?14, waitDurationMs = ?15, completedAt = ?16,
+                    displayMode = ?17, isFavorite = ?18
                 WHERE messageId = ?1
                 "#,
             sqliteParams![
                 message.messageId,
                 message.chatId,
                 message.sender,
-                message.content,
                 message.timestamp,
                 message.orderIndex,
                 message.roleName,
@@ -406,18 +465,6 @@ impl MessageDao {
                 message.displayMode,
                 message.isFavorite,
             ],
-        )?;
-        Ok(())
-    }
-
-    pub fn updateMessageContent(
-        &self,
-        messageId: i64,
-        content: String,
-    ) -> Result<(), SqliteStoreError> {
-        self.store.execute(
-            "UPDATE messages SET content = ?2 WHERE messageId = ?1",
-            sqliteParams![messageId, content],
         )?;
         Ok(())
     }
@@ -511,7 +558,16 @@ impl MessageDao {
     pub fn searchChatIdsByContent(&self, query: &str) -> Result<Vec<String>, SqliteStoreError> {
         self.store
             .queryRows(
-                "SELECT DISTINCT chatId FROM messages WHERE content LIKE '%' || ?1 || '%' ESCAPE '\\' COLLATE NOCASE",
+                r#"
+                SELECT DISTINCT messages.chatId
+                FROM messages
+                INNER JOIN message_parts
+                    ON message_parts.chatId = messages.chatId
+                    AND message_parts.messageTimestamp = messages.timestamp
+                    AND message_parts.variantIndex = messages.selectedVariantIndex
+                WHERE message_parts.kind IN ('markdown', 'status')
+                    AND message_parts.content LIKE '%' || ?1 || '%' ESCAPE '\\' COLLATE NOCASE
+                "#,
                 sqliteParams![query],
             )?
             .into_iter()
@@ -566,7 +622,6 @@ fn mapMessageEntity(row: &SqliteRow) -> Result<MessageEntity, SqliteStoreError> 
         messageId: row.get("messageId")?,
         chatId: row.get("chatId")?,
         sender: row.get("sender")?,
-        content: row.get("content")?,
         timestamp: row.get("timestamp")?,
         orderIndex: row.get("orderIndex")?,
         roleName: row.get("roleName")?,
@@ -589,22 +644,22 @@ fn insertMessageSql(withMessageId: bool) -> &'static str {
     if withMessageId {
         r#"
         INSERT OR REPLACE INTO messages (
-            messageId, chatId, sender, content, timestamp, orderIndex,
-            roleName, selectedVariantIndex, provider, modelName, inputTokens,
-            outputTokens, cachedInputTokens, sentAt, outputDurationMs,
-            waitDurationMs, completedAt, displayMode, isFavorite
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
-        "#
-    } else {
-        r#"
-        INSERT OR REPLACE INTO messages (
-            chatId, sender, content, timestamp, orderIndex,
+            messageId, chatId, sender, timestamp, orderIndex,
             roleName, selectedVariantIndex, provider, modelName, inputTokens,
             outputTokens, cachedInputTokens, sentAt, outputDurationMs,
             waitDurationMs, completedAt, displayMode, isFavorite
         )
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+        "#
+    } else {
+        r#"
+        INSERT OR REPLACE INTO messages (
+            chatId, sender, timestamp, orderIndex,
+            roleName, selectedVariantIndex, provider, modelName, inputTokens,
+            outputTokens, cachedInputTokens, sentAt, outputDurationMs,
+            waitDurationMs, completedAt, displayMode, isFavorite
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
         "#
     }
 }
@@ -615,7 +670,6 @@ fn insertMessageParams(message: &MessageEntity, withMessageId: bool) -> Vec<Sqli
             message.messageId,
             message.chatId,
             message.sender,
-            message.content,
             message.timestamp,
             message.orderIndex,
             message.roleName,
@@ -636,7 +690,6 @@ fn insertMessageParams(message: &MessageEntity, withMessageId: bool) -> Vec<Sqli
         sqliteParams![
             message.chatId,
             message.sender,
-            message.content,
             message.timestamp,
             message.orderIndex,
             message.roleName,

@@ -1625,6 +1625,12 @@ struct PreferencesDataStoreLoadedPreferences {
     preferences: Preferences,
 }
 
+#[derive(Hash, PartialEq, Eq)]
+struct PreferencesDataStoreRegistryKey {
+    storageHostAddress: usize,
+    path: PathBuf,
+}
+
 enum StoredEncryptedPreferences {
     LegacyPlaintext(Preferences),
     EncryptedEnvelope(Vec<u8>),
@@ -1645,11 +1651,12 @@ impl Drop for PreferencesDataStoreFlowSubscription {
 impl PreferencesDataStore {
     /// Creates a preferences store backed by the default runtime storage host.
     pub fn new(path: PathBuf) -> Self {
-        let changeSignal = preferencesDataStoreChangeSignal(&path);
-        let sharedState = preferencesDataStoreSharedState(&path);
+        let storageHost = defaultRuntimeStorageHost();
+        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
+        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
         Self {
             storagePath: runtimeStoragePath(&path),
-            storageHost: defaultRuntimeStorageHost(),
+            storageHost,
             encryption: None,
             syncOperationStore: Some(SyncOperationStore::native(RuntimeStorePaths::default())),
             syncDescriptor: Some(PreferencesSyncDescriptor::forPreferencesPath(&path)),
@@ -1664,8 +1671,8 @@ impl PreferencesDataStore {
     pub fn newEncryptedSynced(path: PathBuf) -> Self {
         let storageHost = defaultRuntimeStorageHost();
         let storagePath = runtimeStoragePath(&path);
-        let changeSignal = preferencesDataStoreChangeSignal(&path);
-        let sharedState = preferencesDataStoreSharedState(&path);
+        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
+        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
         let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
             .expect("preferences encryption key must be available");
         Self {
@@ -1685,8 +1692,8 @@ impl PreferencesDataStore {
     pub fn newEncrypted(path: PathBuf) -> Self {
         let storageHost = defaultRuntimeStorageHost();
         let storagePath = runtimeStoragePath(&path);
-        let changeSignal = preferencesDataStoreChangeSignal(&path);
-        let sharedState = preferencesDataStoreSharedState(&path);
+        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
+        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
         let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
             .expect("preferences encryption key must be available");
         Self {
@@ -1709,8 +1716,8 @@ impl PreferencesDataStore {
     ) -> Self {
         let storagePath = storagePath.into();
         let path = PathBuf::from(&storagePath);
-        let changeSignal = preferencesDataStoreChangeSignal(&path);
-        let sharedState = preferencesDataStoreSharedState(&path);
+        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
+        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
         Self {
             path,
             storagePath,
@@ -1732,8 +1739,8 @@ impl PreferencesDataStore {
     ) -> Self {
         let storagePath = storagePath.into();
         let path = PathBuf::from(&storagePath);
-        let changeSignal = preferencesDataStoreChangeSignal(&path);
-        let sharedState = preferencesDataStoreSharedState(&path);
+        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
+        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
         let syncDescriptor = PreferencesSyncDescriptor::forStoragePath(&storagePath);
         Self {
             path: path.clone(),
@@ -1755,8 +1762,8 @@ impl PreferencesDataStore {
     ) -> Self {
         let storagePath = storagePath.into();
         let path = PathBuf::from(&storagePath);
-        let changeSignal = preferencesDataStoreChangeSignal(&path);
-        let sharedState = preferencesDataStoreSharedState(&path);
+        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
+        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
         let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
             .expect("preferences encryption key must be available");
         Self {
@@ -1780,8 +1787,8 @@ impl PreferencesDataStore {
     ) -> Self {
         let storagePath = storagePath.into();
         let path = PathBuf::from(&storagePath);
-        let changeSignal = preferencesDataStoreChangeSignal(&path);
-        let sharedState = preferencesDataStoreSharedState(&path);
+        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
+        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
         let syncDescriptor = PreferencesSyncDescriptor::forStoragePath(&storagePath);
         let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
             .expect("preferences encryption key must be available");
@@ -1824,7 +1831,7 @@ impl PreferencesDataStore {
         storageHost.writeBytes(entityId, &contentBytes)?;
         let path = RuntimeStorePaths::default().runtime_storage_path(entityId);
         {
-            let sharedState = preferencesDataStoreSharedState(&path);
+            let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
             let mut loaded = sharedState
                 .preferences
                 .lock()
@@ -1832,7 +1839,7 @@ impl PreferencesDataStore {
             loaded.loaded = true;
             loaded.preferences = preferences;
         }
-        let signal = preferencesDataStoreChangeSignal(&path);
+        let signal = preferencesDataStoreChangeSignal(&storageHost, &path);
         let mut version = signal
             .version
             .lock()
@@ -2064,31 +2071,54 @@ fn encryptedSyncedPreferencesPath(storagePath: &str) -> bool {
 }
 
 #[allow(non_snake_case)]
-fn preferencesDataStoreSharedState(path: &Path) -> Arc<PreferencesDataStoreSharedState> {
-    static SHARED_STATES: OnceLock<Mutex<HashMap<PathBuf, Weak<PreferencesDataStoreSharedState>>>> =
-        OnceLock::new();
+/// Builds the process-local registry key for one storage host and preference path.
+fn preferencesDataStoreRegistryKey(
+    storageHost: &Arc<dyn RuntimeStorageHost>,
+    path: &Path,
+) -> PreferencesDataStoreRegistryKey {
+    PreferencesDataStoreRegistryKey {
+        storageHostAddress: Arc::as_ptr(storageHost) as *const () as usize,
+        path: path.to_path_buf(),
+    }
+}
+
+#[allow(non_snake_case)]
+/// Returns the preference cache shared by stores using the same storage host and path.
+fn preferencesDataStoreSharedState(
+    storageHost: &Arc<dyn RuntimeStorageHost>,
+    path: &Path,
+) -> Arc<PreferencesDataStoreSharedState> {
+    static SHARED_STATES: OnceLock<
+        Mutex<HashMap<PreferencesDataStoreRegistryKey, Weak<PreferencesDataStoreSharedState>>>,
+    > = OnceLock::new();
     let states = SHARED_STATES.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = preferencesDataStoreRegistryKey(storageHost, path);
     let mut states = states
         .lock()
         .expect("PreferencesDataStore shared state registry mutex must not be poisoned");
-    if let Some(state) = states.get(path).and_then(Weak::upgrade) {
+    if let Some(state) = states.get(&key).and_then(Weak::upgrade) {
         return state;
     }
     let state = Arc::new(PreferencesDataStoreSharedState::default());
-    states.insert(path.to_path_buf(), Arc::downgrade(&state));
+    states.insert(key, Arc::downgrade(&state));
     state
 }
 
 #[allow(non_snake_case)]
-fn preferencesDataStoreChangeSignal(path: &Path) -> Arc<PreferencesDataStoreChangeSignal> {
+/// Returns the change signal shared by stores using the same storage host and path.
+fn preferencesDataStoreChangeSignal(
+    storageHost: &Arc<dyn RuntimeStorageHost>,
+    path: &Path,
+) -> Arc<PreferencesDataStoreChangeSignal> {
     static CHANGE_SIGNALS: OnceLock<
-        Mutex<HashMap<PathBuf, Weak<PreferencesDataStoreChangeSignal>>>,
+        Mutex<HashMap<PreferencesDataStoreRegistryKey, Weak<PreferencesDataStoreChangeSignal>>>,
     > = OnceLock::new();
     let signals = CHANGE_SIGNALS.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = preferencesDataStoreRegistryKey(storageHost, path);
     let mut signals = signals
         .lock()
         .expect("PreferencesDataStore change signal registry mutex must not be poisoned");
-    if let Some(signal) = signals.get(path).and_then(Weak::upgrade) {
+    if let Some(signal) = signals.get(&key).and_then(Weak::upgrade) {
         return signal;
     }
     let signal = Arc::new(PreferencesDataStoreChangeSignal {
@@ -2099,7 +2129,7 @@ fn preferencesDataStoreChangeSignal(path: &Path) -> Arc<PreferencesDataStoreChan
             callbacks: HashMap::new(),
         }),
     });
-    signals.insert(path.to_path_buf(), Arc::downgrade(&signal));
+    signals.insert(key, Arc::downgrade(&signal));
     signal
 }
 

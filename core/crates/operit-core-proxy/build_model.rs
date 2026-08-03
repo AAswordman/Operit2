@@ -285,6 +285,7 @@ pub(crate) struct ErrorField {
 pub(crate) enum MethodProtocol {
     Call(CallProtocol),
     Watch(WatchProtocol),
+    ReverseStream(ReverseStreamProtocol),
     Factory(FactoryProtocol),
     Unsupported(String),
 }
@@ -306,6 +307,12 @@ pub(crate) enum CallProtocol {
 pub(crate) struct WatchProtocol {
     pub(crate) snapshot_type: Option<String>,
     pub(crate) stream: WatchStreamProtocol,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ReverseStreamProtocol {
+    pub(crate) argument_name: String,
+    pub(crate) item_type: String,
 }
 
 #[derive(Clone, Debug)]
@@ -340,6 +347,13 @@ impl SourceMethod {
     pub(crate) fn factory_protocol(&self) -> Option<&FactoryProtocol> {
         match &self.protocol {
             MethodProtocol::Factory(protocol) => Some(protocol),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn reverse_stream_protocol(&self) -> Option<&ReverseStreamProtocol> {
+        match &self.protocol {
+            MethodProtocol::ReverseStream(protocol) => Some(protocol),
             _ => None,
         }
     }

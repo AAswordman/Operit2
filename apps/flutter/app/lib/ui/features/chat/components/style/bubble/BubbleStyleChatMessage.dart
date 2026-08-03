@@ -136,7 +136,7 @@ class _SummaryMessageComposable extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
       ),
       child: SelectableText(
-        message.content,
+        message.displayText,
         style: theme.textTheme.bodySmall?.copyWith(
           color: textColor,
           height: 1.4,
@@ -161,7 +161,7 @@ class _SystemMessageComposable extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: SelectableText(
-        message.content,
+        message.displayText,
         style: theme.textTheme.bodySmall?.copyWith(color: textColor),
       ),
     );

@@ -12,7 +12,11 @@ struct MemoryStorageHost {
 }
 
 impl RuntimeStorageHost for MemoryStorageHost {
-    fn rootDir(&self) -> Option<std::path::PathBuf> {
+    fn runtimeRootDir(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+
+    fn workspaceRootDir(&self) -> Option<std::path::PathBuf> {
         None
     }
 
@@ -27,6 +31,26 @@ impl RuntimeStorageHost for MemoryStorageHost {
                 "missing runtime storage file: {path}"
             ))),
         }
+    }
+
+    /// Reads one bounded byte range from an in-memory test file.
+    fn readBytesRange(
+        &self,
+        path: &str,
+        offset: u64,
+        length: usize,
+    ) -> operit_host_api::HostResult<Vec<u8>> {
+        let content = self.readBytes(path)?;
+        let start = usize::try_from(offset)
+            .map_err(|_| HostError::new("runtime storage offset does not fit usize"))?;
+        if start >= content.len() {
+            return Ok(Vec::new());
+        }
+        let end = start
+            .checked_add(length)
+            .ok_or_else(|| HostError::new("runtime storage byte range overflows usize"))?
+            .min(content.len());
+        Ok(content[start..end].to_vec())
     }
 
     fn writeBytes(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {

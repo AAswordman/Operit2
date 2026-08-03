@@ -3,7 +3,6 @@ use std::hash::{Hash, Hasher};
 
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::InputProcessingState::InputProcessingState;
-use operit_util::streamnative::NativeMarkdownSplitter::MarkdownNodeStable;
 use ratatui::text::Line;
 
 use super::empty_state::render_blue_cat_lines;
@@ -12,8 +11,6 @@ use super::helpers::{
     render_transcript_message_lines_with_cache,
 };
 use super::i18n::{TuiLanguage, TuiText};
-use super::markdown::MarkdownRenderCache;
-use super::stream_markdown::TuiMarkdownStreamState;
 use super::typewriter::TypewriterState;
 
 #[derive(Clone, Debug, Default)]
@@ -26,7 +23,6 @@ pub(super) struct TranscriptRenderCache {
 pub(super) struct TranscriptMessageRenderCache {
     pub(super) key: TranscriptMessageRenderKey,
     pub(super) lines: Vec<Line<'static>>,
-    pub(super) markdown: MarkdownRenderCache,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,7 +33,7 @@ pub(super) struct TranscriptMessageRenderKey {
     role_name: String,
     provider: String,
     model_name: String,
-    output_tokens: i32,
+    output_tokens: i64,
     content_hash: u64,
     language: TuiLanguage,
 }
@@ -48,6 +44,11 @@ impl TranscriptMessageRenderKey {
         content_width: usize,
         language: TuiLanguage,
     ) -> Self {
+        let content = if message.sender == "ai" {
+            format!("{:?}", message.parts)
+        } else {
+            message.displayText()
+        };
         Self {
             timestamp: message.timestamp,
             content_width,
@@ -56,7 +57,7 @@ impl TranscriptMessageRenderKey {
             provider: message.provider.clone(),
             model_name: message.modelName.clone(),
             output_tokens: message.outputTokens,
-            content_hash: stable_content_hash(&message.content),
+            content_hash: stable_content_hash(&content),
             language,
         }
     }
@@ -71,7 +72,6 @@ pub(super) fn render_transcript_lines(
     content_width: usize,
     typewriter_state: &mut TypewriterState,
     transcript_cache: &mut TranscriptRenderCache,
-    stream_markdown_state: Option<&TuiMarkdownStreamState>,
     text: TuiText,
 ) -> Vec<Line<'static>> {
     if messages.is_empty() {
@@ -88,9 +88,6 @@ pub(super) fn render_transcript_lines(
         .messages
         .retain(|timestamp, _| active_message_timestamps.contains(timestamp));
 
-    let stream_markdown_nodes = stream_markdown_state.map(TuiMarkdownStreamState::stable_nodes);
-    let stream_markdown_nodes = stream_markdown_nodes.as_deref();
-
     let mut lines = Vec::new();
     for (index, message) in messages.iter().enumerate() {
         append_message_gap(&mut lines);
@@ -103,7 +100,6 @@ pub(super) fn render_transcript_lines(
                 .or_insert_with(|| TranscriptMessageRenderCache {
                     key: TranscriptMessageRenderKey::build(message, content_width, text.language()),
                     lines: Vec::new(),
-                    markdown: MarkdownRenderCache::default(),
                 });
             let rendered = render_transcript_message_lines_with_cache(
                 message,
@@ -114,8 +110,6 @@ pub(super) fn render_transcript_lines(
                 thinking_line,
                 typewriter_state,
                 text,
-                stream_markdown_nodes,
-                Some(&mut cache.markdown),
             );
             cache.key = TranscriptMessageRenderKey::build(message, content_width, text.language());
             cache.lines = rendered.clone();
@@ -142,15 +136,12 @@ pub(super) fn render_transcript_lines(
             thinking_line,
             typewriter_state,
             text,
-            None,
-            None,
         );
         transcript_cache.messages.insert(
             message.timestamp,
             TranscriptMessageRenderCache {
                 key,
                 lines: rendered.clone(),
-                markdown: MarkdownRenderCache::default(),
             },
         );
         lines.extend(rendered);

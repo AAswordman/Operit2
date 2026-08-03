@@ -1,18 +1,20 @@
 use async_trait::async_trait;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkClient, CoreLinkError,
-    CoreLinkSharedClient, CoreObjectPath, CorePushItem, CorePushRequest, CoreWatchRequest,
+    CoreLinkPushSession, CoreLinkSharedClient, CoreObjectPath, CorePushItem, CorePushRequest,
+    CoreValue, CoreWatchRequest,
 };
 use operit_link_access::{LinkAccessRoute, LinkAccessStore, PairedRemoteSession};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::LocalCoreProxy;
 
 /// Stores the transport selected when one client-owned Link push stream opens.
 #[derive(Clone)]
 pub enum RuntimeCorePushTarget {
-    Local {
-        request: CorePushRequest,
+    LocalReverseStream {
+        session: Arc<Mutex<crate::CoreReverseStreamSession>>,
     },
     Remote {
         session: PairedRemoteSession,
@@ -21,6 +23,7 @@ pub enum RuntimeCorePushTarget {
 }
 
 /// Routes incoming Core Link traffic through the runtime-owned Link routing configuration.
+#[derive(Clone)]
 pub struct RuntimeCoreRouter {
     localCore: Arc<LocalCoreProxy>,
     linkAccessStore: LinkAccessStore,
@@ -48,7 +51,11 @@ impl RuntimeCoreRouter {
         request: CorePushRequest,
     ) -> Result<RuntimeCorePushTarget, CoreLinkError> {
         match self.resolveTarget(&request.targetPath).await? {
-            RuntimeCoreTarget::Local => Ok(RuntimeCorePushTarget::Local { request }),
+            RuntimeCoreTarget::Local => {
+                Ok(RuntimeCorePushTarget::LocalReverseStream {
+                    session: Arc::new(Mutex::new(self.localCore.openReverseStream(request)?)),
+                })
+            }
             RuntimeCoreTarget::Remote(session) => {
                 let remotePushId = session
                     .pushOpen(request)
@@ -70,13 +77,8 @@ impl RuntimeCoreRouter {
         item: CorePushItem,
     ) -> Result<(), CoreLinkError> {
         match target {
-            RuntimeCorePushTarget::Local { request } => {
-                let response = CoreLinkSharedClient::call(
-                    self.localCore.as_ref(),
-                    request.itemCall(item.sequence, item.args),
-                )
-                .await;
-                response.result.map(|_| ())
+            RuntimeCorePushTarget::LocalReverseStream { session } => {
+                session.lock().await.pushItem(item.args).await
             }
             RuntimeCorePushTarget::Remote {
                 session,
@@ -96,7 +98,7 @@ impl RuntimeCoreRouter {
     #[allow(non_snake_case)]
     pub async fn closePush(&self, target: RuntimeCorePushTarget) -> Result<(), CoreLinkError> {
         match target {
-            RuntimeCorePushTarget::Local { .. } => Ok(()),
+            RuntimeCorePushTarget::LocalReverseStream { session } => session.lock().await.close().await,
             RuntimeCorePushTarget::Remote {
                 session,
                 remotePushId,
@@ -162,6 +164,59 @@ impl CoreLinkClient for RuntimeCoreRouter {
     async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         CoreLinkSharedClient::watch(self, request).await
     }
+
+    #[allow(non_snake_case)]
+    async fn openPush(
+        &mut self,
+        request: CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        let pushId = request.requestId.0.clone();
+        let target = RuntimeCoreRouter::openPush(self, request).await?;
+        Ok(Box::new(RuntimeRouterPushSession {
+            router: self.clone(),
+            target: Some(target),
+            pushId,
+            nextSequence: 0,
+        }))
+    }
+}
+
+/// Owns one routed push target behind the generic Link client contract.
+struct RuntimeRouterPushSession {
+    router: RuntimeCoreRouter,
+    target: Option<RuntimeCorePushTarget>,
+    pushId: String,
+    nextSequence: u64,
+}
+
+#[async_trait]
+impl CoreLinkPushSession for RuntimeRouterPushSession {
+    /// Sends one value through the route fixed when this session opened.
+    async fn send(&mut self, value: CoreValue) -> Result<(), CoreLinkError> {
+        let target = self.target.as_ref().ok_or_else(|| {
+            CoreLinkError::new("PUSH_CLOSED", "Link push stream is already closed")
+        })?;
+        self.router
+            .pushItem(
+                target,
+                CorePushItem {
+                    pushId: self.pushId.clone(),
+                    sequence: self.nextSequence,
+                    args: value,
+                },
+            )
+            .await?;
+        self.nextSequence += 1;
+        Ok(())
+    }
+
+    /// Closes the route fixed when this session opened.
+    async fn close(mut self: Box<Self>) -> Result<(), CoreLinkError> {
+        let target = self.target.take().ok_or_else(|| {
+            CoreLinkError::new("PUSH_CLOSED", "Link push stream is already closed")
+        })?;
+        self.router.closePush(target).await
+    }
 }
 
 #[async_trait(?Send)]
@@ -216,14 +271,14 @@ mod tests {
     /// Verifies runtime Link control endpoints remain local under every route selection.
     #[test]
     fn runtime_control_paths_are_local() {
-        assert!(crate::generated_is_local_runtime_control_path(&CoreObjectPath::parse(
-            "linkAccessStore"
-        )));
-        assert!(crate::generated_is_local_runtime_control_path(&CoreObjectPath::parse(
-            "runtimeRemoteLinkService"
-        )));
-        assert!(!crate::generated_is_local_runtime_control_path(&CoreObjectPath::parse(
-            "application"
-        )));
+        assert!(crate::generated_is_local_runtime_control_path(
+            &CoreObjectPath::parse("linkAccessStore")
+        ));
+        assert!(crate::generated_is_local_runtime_control_path(
+            &CoreObjectPath::parse("runtimeRemoteLinkService")
+        ));
+        assert!(!crate::generated_is_local_runtime_control_path(
+            &CoreObjectPath::parse("application")
+        ));
     }
 }

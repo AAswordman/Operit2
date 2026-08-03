@@ -6,13 +6,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::db::AppDatabase::DATABASE_VERSION;
 use crate::sqliteParams;
 use crate::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
 use operit_host_api::{
     HostError, HostResult, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeSqliteTransaction,
     RuntimeStorageEntry, RuntimeStorageHost, SqliteRow as HostSqliteRow, SqliteValue,
 };
-use operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRoot;
+use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
 use rusqlite::types::Value as RusqliteValue;
 
 static HOSTS: OnceLock<()> = OnceLock::new();
@@ -55,12 +56,31 @@ impl TestRuntimeHost {
 }
 
 impl RuntimeStorageHost for TestRuntimeHost {
-    fn rootDir(&self) -> Option<PathBuf> {
+    fn runtimeRootDir(&self) -> Option<PathBuf> {
         Some(self.root.clone())
+    }
+
+    fn workspaceRootDir(&self) -> Option<PathBuf> {
+        Some(self.root.join("workspaces"))
     }
 
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
         Ok(fs::read(self.resolve(path)?)?)
+    }
+
+    /// Reads one bounded byte range from the filesystem-backed test host.
+    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        let content = self.readBytes(path)?;
+        let start = usize::try_from(offset)
+            .map_err(|_| HostError::new("runtime storage offset does not fit usize"))?;
+        if start >= content.len() {
+            return Ok(Vec::new());
+        }
+        let end = start
+            .checked_add(length)
+            .ok_or_else(|| HostError::new("runtime storage byte range overflows usize"))?
+            .min(content.len());
+        Ok(content[start..end].to_vec())
     }
 
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
@@ -286,7 +306,10 @@ fn installTestHosts() {
         ));
         fs::create_dir_all(&root).expect("test runtime host root must be created");
         let host = Arc::new(TestRuntimeHost::new(root));
-        setDefaultRuntimeStoreRoot(host.root.clone());
+        setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
+            host.root.clone(),
+            host.root.join("workspaces"),
+        ));
         setDefaultRuntimeStorageHost(host.clone());
         setDefaultRuntimeSqliteHost(host);
     });
@@ -295,11 +318,10 @@ fn installTestHosts() {
 fn testPaths(name: &str) -> RuntimeStorePaths {
     installTestHosts();
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-    RuntimeStorePaths::new(
-        RuntimeStorePaths::default()
-            .root_dir()
-            .join(format!("sync-tests/{name}-{id}")),
-    )
+    let runtimeDir = RuntimeStorePaths::default()
+        .runtime_dir()
+        .join(format!("sync-tests/{name}-{id}"));
+    RuntimeStorePaths::new(runtimeDir.clone(), runtimeDir.join("workspaces"))
 }
 
 fn openTestStore(name: &str) -> (RuntimeStorePaths, Arc<AppDatabase>, SqlChatSyncStore) {
@@ -319,7 +341,6 @@ fn message(chatId: &str, timestamp: i64, content: &str) -> MessageEntity {
         messageId: 0,
         chatId: chatId.to_string(),
         sender: "ai".to_string(),
-        content: content.to_string(),
         timestamp,
         orderIndex: 0,
         roleName: String::new(),
@@ -338,12 +359,52 @@ fn message(chatId: &str, timestamp: i64, content: &str) -> MessageEntity {
     }
 }
 
+/// Builds the markdown part row used by the sync fixtures.
+fn messagePart(chatId: &str, timestamp: i64, content: &str) -> MessagePartEntity {
+    MessagePartEntity::fromMessagePart(
+        chatId.to_string(),
+        timestamp,
+        0,
+        operit_model::MessagePart::MessagePart::markdown(
+            "part-0".to_string(),
+            0,
+            content.to_string(),
+        ),
+    )
+}
+
+/// Inserts a fixture message and its canonical markdown part without replacing its parent chat.
 fn insertChatMessage(database: &AppDatabase, chatId: &str, timestamp: i64, content: &str) -> i64 {
-    database.chatDao().insertChat(chat(chatId)).unwrap();
-    database
+    if database.chatDao().getChatById(chatId).unwrap().is_none() {
+        database.chatDao().insertChat(chat(chatId)).unwrap();
+    }
+    let messageId = database
         .messageDao()
         .insertMessage(message(chatId, timestamp, content))
-        .unwrap()
+        .unwrap();
+    database
+        .messagePartDao()
+        .replaceParts(
+            chatId,
+            timestamp,
+            0,
+            vec![messagePart(chatId, timestamp, content)],
+        )
+        .unwrap();
+    messageId
+}
+
+/// Replaces the markdown part used by one sync fixture message.
+fn updateMessagePart(database: &AppDatabase, chatId: &str, timestamp: i64, content: String) {
+    database
+        .messagePartDao()
+        .replaceParts(
+            chatId,
+            timestamp,
+            0,
+            vec![messagePart(chatId, timestamp, &content)],
+        )
+        .unwrap();
 }
 
 fn exportedPayload(operation: &SyncOperation) -> ChatSyncPayload {
@@ -367,10 +428,12 @@ fn sqlMessageRowCount(database: &AppDatabase) -> i64 {
         .unwrap()
 }
 
+/// Builds a current schema sync operation for merge and ordering fixtures.
 fn upsertOperation(sequence: i64, content: &str) -> SyncOperation {
     let payload = ChatSyncPayload {
         chatRows: vec![chat("chat-remote")],
         messageRows: vec![message("chat-remote", 2_000, content)],
+        partRows: vec![messagePart("chat-remote", 2_000, content)],
         variantRows: Vec::new(),
         deletions: Vec::new(),
     };
@@ -384,7 +447,7 @@ fn upsertOperation(sequence: i64, content: &str) -> SyncOperation {
         operation: "upsert".to_string(),
         payload: serde_json::to_value(payload).unwrap(),
         createdAt: sequence,
-        schemaVersion: 1,
+        schemaVersion: 2,
     }
 }
 
@@ -414,7 +477,14 @@ fn chat_dao_update_chats_preserves_child_messages() {
     assert_eq!(updated.group.as_deref(), Some("updated-group"));
     let messages = database.messageDao().getMessagesForChat(chatId).unwrap();
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].content, "kept");
+    assert_eq!(
+        database
+            .messagePartDao()
+            .getPartsForMessage(chatId, messages[0].timestamp, 0)
+            .unwrap()[0]
+            .content,
+        "kept"
+    );
     AppDatabase::closeDatabase();
 }
 
@@ -424,10 +494,7 @@ fn message_dao_locator_previews_match_kotlin_projection() {
     let (_paths, database, _syncStore) = openTestStore("message-dao-locator");
     let chatId = "chat-locator";
     insertChatMessage(&database, chatId, 10_000, "alpha content");
-    database
-        .messageDao()
-        .insertMessage(message(chatId, 10_100, "beta searchable content"))
-        .unwrap();
+    insertChatMessage(&database, chatId, 10_100, "beta searchable content");
 
     let previews = database
         .messageDao()
@@ -447,6 +514,154 @@ fn message_dao_locator_previews_match_kotlin_projection() {
     AppDatabase::closeDatabase();
 }
 
+/// Verifies the single version-22 migration creates final structured message parts.
+#[test]
+fn migrates_version_22_messages_to_final_structured_parts() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    AppDatabase::closeDatabase();
+    let paths = testPaths("structured-message-migration");
+    {
+        let store = SqliteStore::open(paths.sqlite_database_path()).unwrap();
+        store
+            .executeBatch(
+                r#"
+                CREATE TABLE chats (id TEXT PRIMARY KEY NOT NULL);
+                CREATE TABLE messages (
+                    messageId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    chatId TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    orderIndex INTEGER NOT NULL,
+                    roleName TEXT NOT NULL DEFAULT '',
+                    selectedVariantIndex INTEGER NOT NULL DEFAULT 0,
+                    provider TEXT NOT NULL DEFAULT '',
+                    modelName TEXT NOT NULL DEFAULT '',
+                    inputTokens INTEGER NOT NULL DEFAULT 0,
+                    outputTokens INTEGER NOT NULL DEFAULT 0,
+                    cachedInputTokens INTEGER NOT NULL DEFAULT 0,
+                    sentAt INTEGER NOT NULL DEFAULT 0,
+                    outputDurationMs INTEGER NOT NULL DEFAULT 0,
+                    waitDurationMs INTEGER NOT NULL DEFAULT 0,
+                    completedAt INTEGER NOT NULL DEFAULT 0,
+                    displayMode TEXT NOT NULL DEFAULT 'NORMAL',
+                    isFavorite INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE message_variants (
+                    variantId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    chatId TEXT NOT NULL,
+                    messageTimestamp INTEGER NOT NULL,
+                    variantIndex INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    roleName TEXT NOT NULL DEFAULT '',
+                    provider TEXT NOT NULL DEFAULT '',
+                    modelName TEXT NOT NULL DEFAULT '',
+                    inputTokens INTEGER NOT NULL DEFAULT 0,
+                    outputTokens INTEGER NOT NULL DEFAULT 0,
+                    cachedInputTokens INTEGER NOT NULL DEFAULT 0,
+                    sentAt INTEGER NOT NULL DEFAULT 0,
+                    outputDurationMs INTEGER NOT NULL DEFAULT 0,
+                    waitDurationMs INTEGER NOT NULL DEFAULT 0,
+                    completedAt INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE sync_sql_operations (
+                    opId TEXT PRIMARY KEY NOT NULL,
+                    originDeviceId TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    domain TEXT NOT NULL,
+                    entityType TEXT NOT NULL,
+                    entityId TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    createdAt INTEGER NOT NULL,
+                    schemaVersion INTEGER NOT NULL
+                );
+                CREATE TABLE sync_sql_message_rows (
+                    opId TEXT NOT NULL,
+                    chatId TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    orderIndex INTEGER NOT NULL DEFAULT 0,
+                    roleName TEXT NOT NULL DEFAULT '',
+                    selectedVariantIndex INTEGER NOT NULL DEFAULT 0,
+                    provider TEXT NOT NULL DEFAULT '',
+                    modelName TEXT NOT NULL DEFAULT '',
+                    inputTokens INTEGER NOT NULL DEFAULT 0,
+                    outputTokens INTEGER NOT NULL DEFAULT 0,
+                    cachedInputTokens INTEGER NOT NULL DEFAULT 0,
+                    sentAt INTEGER NOT NULL DEFAULT 0,
+                    outputDurationMs INTEGER NOT NULL DEFAULT 0,
+                    waitDurationMs INTEGER NOT NULL DEFAULT 0,
+                    completedAt INTEGER NOT NULL DEFAULT 0,
+                    displayMode TEXT NOT NULL DEFAULT 'NORMAL',
+                    isFavorite INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(opId, chatId, timestamp)
+                );
+                CREATE TABLE sync_sql_message_variant_rows (
+                    opId TEXT NOT NULL,
+                    chatId TEXT NOT NULL,
+                    messageTimestamp INTEGER NOT NULL,
+                    variantIndex INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    roleName TEXT NOT NULL DEFAULT '',
+                    provider TEXT NOT NULL DEFAULT '',
+                    modelName TEXT NOT NULL DEFAULT '',
+                    inputTokens INTEGER NOT NULL DEFAULT 0,
+                    outputTokens INTEGER NOT NULL DEFAULT 0,
+                    cachedInputTokens INTEGER NOT NULL DEFAULT 0,
+                    sentAt INTEGER NOT NULL DEFAULT 0,
+                    outputDurationMs INTEGER NOT NULL DEFAULT 0,
+                    waitDurationMs INTEGER NOT NULL DEFAULT 0,
+                    completedAt INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(opId, chatId, messageTimestamp, variantIndex)
+                );
+                INSERT INTO chats (id) VALUES ('chat-22');
+                INSERT INTO messages (chatId, sender, content, timestamp, orderIndex)
+                VALUES ('chat-22', 'ai', '<think>**Stored thought**</think># Stored heading<tool_G543 name="read_file">', 1, 0);
+                INSERT INTO message_variants (chatId, messageTimestamp, variantIndex, content)
+                VALUES ('chat-22', 1, 1, '# Stored variant');
+                INSERT INTO sync_sql_operations (
+                    opId, originDeviceId, sequence, domain, entityType, entityId,
+                    operation, createdAt, schemaVersion
+                ) VALUES ('operation-22', 'device', 1, 'chat', 'message', 'chat-22:1', 'upsert', 1, 1);
+                INSERT INTO sync_sql_message_rows (opId, chatId, sender, content, timestamp)
+                VALUES ('operation-22', 'chat-22', 'ai', '# Queued heading', 1);
+                "#,
+            )
+            .unwrap();
+        store.setUserVersion(22).unwrap();
+    }
+
+    let database = AppDatabase::getDatabase(paths).unwrap();
+    assert_eq!(database.store().getUserVersion().unwrap(), DATABASE_VERSION);
+    let baseParts = database
+        .messagePartDao()
+        .getPartsForMessage("chat-22", 1, 0)
+        .unwrap();
+    assert_eq!(baseParts.len(), 2);
+    assert_eq!(baseParts[0].content, "**Stored thought**");
+    assert_eq!(
+        baseParts[1].content,
+        "# Stored heading<tool_G543 name=\"read_file\">"
+    );
+    let variantParts = database
+        .messagePartDao()
+        .getPartsForMessage("chat-22", 1, 1)
+        .unwrap();
+    assert_eq!(variantParts[0].content, "# Stored variant");
+    assert_eq!(
+        database
+            .store()
+            .queryScalar::<i32>(
+                "SELECT schemaVersion FROM sync_sql_operations WHERE opId = 'operation-22'",
+                sqliteParams![],
+            )
+            .unwrap(),
+        2
+    );
+    AppDatabase::closeDatabase();
+}
+
 #[test]
 fn record_message_snapshots_are_merged_into_final_stream_state() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
@@ -456,10 +671,7 @@ fn record_message_snapshots_are_merged_into_final_stream_state() {
     let messageId = insertChatMessage(&database, chatId, timestamp, "");
 
     for index in 1..=100 {
-        database
-            .messageDao()
-            .updateMessageContent(messageId, format!("token-{index}"))
-            .unwrap();
+        updateMessagePart(&database, chatId, timestamp, format!("token-{index}"));
         syncStore.recordMessageSnapshot(chatId, timestamp).unwrap();
     }
 
@@ -469,9 +681,10 @@ fn record_message_snapshots_are_merged_into_final_stream_state() {
         .unwrap();
     assert_eq!(operations.len(), 1);
     assert_eq!(operations[0].sequence, 100);
+    assert_eq!(operations[0].schemaVersion, 2);
     let payload = exportedPayload(&operations[0]);
     assert_eq!(payload.messageRows.len(), 1);
-    assert_eq!(payload.messageRows[0].content, "token-100");
+    assert_eq!(payload.partRows[0].content, "token-100");
     AppDatabase::closeDatabase();
 }
 
@@ -484,10 +697,7 @@ fn compacted_stream_snapshot_applies_to_new_receiver() {
     let messageId = insertChatMessage(&sourceDatabase, chatId, timestamp, "");
 
     for index in 1..=50 {
-        sourceDatabase
-            .messageDao()
-            .updateMessageContent(messageId, format!("chunk-{index}"))
-            .unwrap();
+        updateMessagePart(&sourceDatabase, chatId, timestamp, format!("chunk-{index}"));
         sourceSyncStore
             .recordMessageSnapshot(chatId, timestamp)
             .unwrap();
@@ -507,7 +717,14 @@ fn compacted_stream_snapshot_applies_to_new_receiver() {
         .getMessageByTimestamp(chatId, timestamp)
         .unwrap()
         .unwrap();
-    assert_eq!(message.content, "chunk-50");
+    assert_eq!(
+        targetDatabase
+            .messagePartDao()
+            .getPartsForMessage(chatId, timestamp, 0)
+            .unwrap()[0]
+            .content,
+        "chunk-50"
+    );
     assert_eq!(
         targetSyncStore
             .localClock()
@@ -533,7 +750,14 @@ fn older_merged_upsert_does_not_revert_newer_state() {
         .getMessageByTimestamp("chat-remote", 2_000)
         .unwrap()
         .unwrap();
-    assert_eq!(message.content, "new");
+    assert_eq!(
+        database
+            .messagePartDao()
+            .getPartsForMessage("chat-remote", 2_000, 0)
+            .unwrap()[0]
+            .content,
+        "new"
+    );
     assert_eq!(sqlOperationCount(&database), 1);
     AppDatabase::closeDatabase();
 }
@@ -594,10 +818,12 @@ fn stress_stream_snapshots_export_single_final_operation() {
     let messageId = insertChatMessage(&database, chatId, timestamp, "");
 
     for index in 1..=1_000 {
-        database
-            .messageDao()
-            .updateMessageContent(messageId, format!("stress-token-{index}"))
-            .unwrap();
+        updateMessagePart(
+            &database,
+            chatId,
+            timestamp,
+            format!("stress-token-{index}"),
+        );
         syncStore.recordMessageSnapshot(chatId, timestamp).unwrap();
     }
 
@@ -607,7 +833,7 @@ fn stress_stream_snapshots_export_single_final_operation() {
         .unwrap();
     assert_eq!(operations.len(), 1);
     let payload = exportedPayload(&operations[0]);
-    assert_eq!(payload.messageRows[0].content, "stress-token-1000");
+    assert_eq!(payload.partRows[0].content, "stress-token-1000");
     AppDatabase::closeDatabase();
 }
 
@@ -627,6 +853,7 @@ fn stress_many_messages_roundtrip_with_stream_compaction() {
             .messageDao()
             .insertMessage(message(chatId, timestamp, ""))
             .unwrap();
+        updateMessagePart(&sourceDatabase, chatId, timestamp, String::new());
         messageIds.push((timestamp, messageId));
     }
 
@@ -635,10 +862,12 @@ fn stress_many_messages_roundtrip_with_stream_compaction() {
             eprintln!("sql sync ultra stress: recording round {round}/{updateRounds}");
         }
         for (messageIndex, (timestamp, messageId)) in messageIds.iter().enumerate() {
-            sourceDatabase
-                .messageDao()
-                .updateMessageContent(*messageId, format!("message-{messageIndex}-round-{round}"))
-                .unwrap();
+            updateMessagePart(
+                &sourceDatabase,
+                chatId,
+                *timestamp,
+                format!("message-{messageIndex}-round-{round}"),
+            );
             sourceSyncStore
                 .recordMessageSnapshot(chatId, *timestamp)
                 .unwrap();
@@ -672,7 +901,11 @@ fn stress_many_messages_roundtrip_with_stream_compaction() {
             .unwrap()
             .unwrap();
         assert_eq!(
-            message.content,
+            targetDatabase
+                .messagePartDao()
+                .getPartsForMessage(chatId, timestamp, 0)
+                .unwrap()[0]
+                .content,
             format!("message-{messageIndex}-round-{updateRounds}")
         );
     }
@@ -703,15 +936,18 @@ fn stress_ultra_many_messages_roundtrip_with_stream_compaction() {
             .messageDao()
             .insertMessage(message(chatId, timestamp, ""))
             .unwrap();
+        updateMessagePart(&sourceDatabase, chatId, timestamp, String::new());
         messageIds.push((timestamp, messageId));
     }
 
     for round in 1..=updateRounds {
         for (messageIndex, (timestamp, messageId)) in messageIds.iter().enumerate() {
-            sourceDatabase
-                .messageDao()
-                .updateMessageContent(*messageId, format!("message-{messageIndex}-round-{round}"))
-                .unwrap();
+            updateMessagePart(
+                &sourceDatabase,
+                chatId,
+                *timestamp,
+                format!("message-{messageIndex}-round-{round}"),
+            );
             sourceSyncStore
                 .recordMessageSnapshot(chatId, *timestamp)
                 .unwrap();
@@ -758,7 +994,11 @@ fn stress_ultra_many_messages_roundtrip_with_stream_compaction() {
             .unwrap()
             .unwrap();
         assert_eq!(
-            message.content,
+            targetDatabase
+                .messagePartDao()
+                .getPartsForMessage(chatId, timestamp, 0)
+                .unwrap()[0]
+                .content,
             format!("message-{messageIndex}-round-{updateRounds}")
         );
     }

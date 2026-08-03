@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::client::CoreLinkTransportClient;
+use crate::client::{CoreLinkPushSession, CoreLinkTransportClient};
 use crate::codec::{decodeLink, encodeLink};
 use crate::http_protocol::{
     LinkCallEnvelope, LinkPushCloseEnvelope, LinkPushCloseResponse, LinkPushItemResponse,
@@ -37,7 +37,7 @@ struct CoreLinkHttpState {
 }
 
 struct LinkPushState {
-    request: CorePushRequest,
+    session: Box<dyn CoreLinkPushSession>,
     nextSequence: u64,
 }
 
@@ -242,25 +242,15 @@ impl CoreLinkHttpDispatcher {
             Ok(value) => value,
             Err(error) => return bad_request(error.to_string()),
         };
-        if self
-            .state
-            .pushStreams
-            .lock()
-            .await
-            .remove(&envelope.pushId)
-            .is_none()
-        {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found"),
-            );
+        match self.closePushStream(&envelope.pushId).await {
+            Ok(()) => encode_response(
+                StatusCode::OK,
+                LinkPushCloseResponse {
+                    pushId: envelope.pushId,
+                },
+            ),
+            Err(error) => error_response(StatusCode::BAD_REQUEST, error),
         }
-        encode_response(
-            StatusCode::OK,
-            LinkPushCloseResponse {
-                pushId: envelope.pushId,
-            },
-        )
     }
 
     /// Upgrades an HTTP request into a WebSocket core link session.
@@ -287,10 +277,12 @@ impl CoreLinkHttpDispatcher {
                 "Link push stream already exists",
             ));
         }
+        let CoreLinkHttpCore::Locked(core) = &self.state.core;
+        let session = core.lock().await.openPush(request).await?;
         streams.insert(
             pushId.clone(),
             LinkPushState {
-                request,
+                session,
                 nextSequence: 0,
             },
         );
@@ -303,33 +295,38 @@ impl CoreLinkHttpDispatcher {
         &self,
         item: CorePushItem,
     ) -> Result<LinkPushItemResponse, CoreLinkError> {
-        let request = {
-            let mut streams = self.state.pushStreams.lock().await;
-            let state = streams.get_mut(&item.pushId).ok_or_else(|| {
-                CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found")
-            })?;
-            if item.sequence != state.nextSequence {
-                return Err(CoreLinkError::new(
-                    "PUSH_SEQUENCE_MISMATCH",
-                    format!(
-                        "Link push sequence is {}, expected {}",
-                        item.sequence, state.nextSequence
-                    ),
-                ));
-            }
-            state.nextSequence += 1;
-            state.request.clone()
-        };
-        let response = self
-            .executeCall(request.itemCall(item.sequence, item.args))
-            .await;
-        match response.result {
-            Ok(_) => Ok(LinkPushItemResponse {
-                pushId: item.pushId,
-                sequence: item.sequence,
-            }),
-            Err(error) => Err(error),
+        let mut streams = self.state.pushStreams.lock().await;
+        let state = streams.get_mut(&item.pushId).ok_or_else(|| {
+            CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found")
+        })?;
+        if item.sequence != state.nextSequence {
+            return Err(CoreLinkError::new(
+                "PUSH_SEQUENCE_MISMATCH",
+                format!(
+                    "Link push sequence is {}, expected {}",
+                    item.sequence, state.nextSequence
+                ),
+            ));
         }
+        state.session.send(item.args).await?;
+        state.nextSequence += 1;
+        Ok(LinkPushItemResponse {
+            pushId: item.pushId,
+            sequence: item.sequence,
+        })
+    }
+
+    /// Removes and closes one registered input stream.
+    #[allow(non_snake_case)]
+    async fn closePushStream(&self, pushId: &str) -> Result<(), CoreLinkError> {
+        let state = self
+            .state
+            .pushStreams
+            .lock()
+            .await
+            .remove(pushId)
+            .ok_or_else(|| CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found"))?;
+        state.session.close().await
     }
 
     #[allow(non_snake_case)]
@@ -488,18 +485,8 @@ impl CoreLinkHttpDispatcher {
                 Err(error) => CoreLinkWsResponse::Error(error),
             },
             CoreLinkWsPayload::PushClose(envelope) => {
-                if self
-                    .state
-                    .pushStreams
-                    .lock()
-                    .await
-                    .remove(&envelope.pushId)
-                    .is_none()
-                {
-                    return CoreLinkWsResponse::Error(CoreLinkError::new(
-                        "PUSH_NOT_FOUND",
-                        "Link push stream not found",
-                    ));
+                if let Err(error) = self.closePushStream(&envelope.pushId).await {
+                    return CoreLinkWsResponse::Error(error);
                 }
                 CoreLinkWsResponse::PushClosed(LinkPushCloseResponse {
                     pushId: envelope.pushId,

@@ -31,10 +31,9 @@ impl HostRuntimeEventSchedulerHost for AndroidHostRuntimeEventSchedulerHost {
         schedules: Vec<HostRuntimeEventSchedule>,
         sink: HostRuntimeEventScheduleSink,
     ) -> HostResult<()> {
-        *scheduleSinkSlot()
-            .lock()
-            .map_err(|_| HostError::new("Android runtime event schedule sink lock is poisoned"))? =
-            Some(sink);
+        *scheduleSinkSlot().lock().map_err(|_| {
+            HostError::new("Android runtime event schedule sink lock is poisoned")
+        })? = Some(sink);
         androidHostSecretStoreBridge()?.replaceHostRuntimeEventSchedules(&schedules)
     }
 }

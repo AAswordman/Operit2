@@ -565,6 +565,50 @@ fn execute_inline_hook_function_source() {
 }
 
 #[test]
+/// Verifies Compose rendering waits for the CommonJS module to initialize lexical bindings.
+fn compose_dsl_default_export_can_capture_later_lexical_constants() {
+    ensure_test_runtime_root();
+    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    let script = r#"
+        exports.default = function(ctx) {
+            return ctx.h('Text', {
+                fontSize: FONT_TITLE,
+                hintFontSize: FONT_HINT,
+                reasonFontSize: FONT_REASON,
+                iconSize: ICON_SIZE,
+                chevronSize: CHEVRON_SIZE
+            }, []);
+        };
+        const FONT_TITLE = 13;
+        const FONT_HINT = 11;
+        const FONT_REASON = 11;
+        const ICON_SIZE = 22;
+        const CHEVRON_SIZE = 16;
+    "#;
+    let mut params = testParams();
+    params.insert(
+        "packageName".to_string(),
+        Value::String("compose_lexical_initialization_test".to_string()),
+    );
+    params.insert(
+        "routeInstanceId".to_string(),
+        Value::String("compose_lexical_initialization_route".to_string()),
+    );
+
+    let raw = expect_js_output(
+        engine.execute_compose_dsl_script(script, &params, &BTreeMap::new()),
+        "compose lexical initialization render result",
+    );
+    let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
+
+    assert_eq!(parsed["tree"]["props"]["fontSize"], 13);
+    assert_eq!(parsed["tree"]["props"]["hintFontSize"], 11);
+    assert_eq!(parsed["tree"]["props"]["reasonFontSize"], 11);
+    assert_eq!(parsed["tree"]["props"]["iconSize"], 22);
+    assert_eq!(parsed["tree"]["props"]["chevronSize"], 16);
+}
+
+#[test]
 fn compose_dsl_action_uses_rendered_runtime() {
     let engine = super::JsEngine::new_toolpkg_registration_engine();
     let script = r#"
@@ -909,6 +953,49 @@ fn registration_mode_uses_ui_module_placeholder() {
     assert_eq!(capture.uiRoutes.len(), 1);
     let route = serde_json::from_str::<Value>(&capture.uiRoutes[0]).unwrap();
     assert_eq!(route["screen"], "screens/main.ui.js");
+}
+
+/// Verifies registration blocks resource and WASM execution before native host access.
+#[test]
+fn registration_mode_blocks_resource_and_wasm_calls() {
+    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    let script = r#"
+        exports.registerToolPkg = function() {
+            var resourceError = '';
+            var wasmError = '';
+            try {
+                ToolPkg.readResource('blocked-resource');
+            } catch (error) {
+                resourceError = error.message;
+            }
+            try {
+                ToolPkg.wasm.call('blocked-module', 'blocked-export', []);
+            } catch (error) {
+                wasmError = error.message;
+            }
+            ToolPkg.registerNavigationEntry({
+                id: 'registration-capability-check',
+                resourceError: resourceError,
+                wasmError: wasmError
+            });
+        };
+    "#;
+
+    let capture = engine
+        .execute_toolpkg_main_registration_function(script, "registerToolPkg", &testParams())
+        .expect("registration must reject forbidden runtime capabilities");
+
+    assert_eq!(capture.navigationEntries.len(), 1);
+    let entry = serde_json::from_str::<Value>(&capture.navigationEntries[0])
+        .expect("registration capability check entry");
+    assert_eq!(
+        entry["resourceError"],
+        "ToolPkg.readResource is unavailable during ToolPkg registration"
+    );
+    assert_eq!(
+        entry["wasmError"],
+        "ToolPkg.wasm.call is unavailable during ToolPkg registration"
+    );
 }
 
 /// Verifies call-scoped environment overrides are visible through `getEnv`.

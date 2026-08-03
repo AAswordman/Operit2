@@ -4105,6 +4105,24 @@ abstract class AppLocalizations {
   /// **'Floating input'**
   String get settingsAppearanceInputFloating;
 
+  /// No description provided for @settingsAppearanceLongPastedTextAsAttachment.
+  ///
+  /// In en, this message translates to:
+  /// **'Convert long pasted text to a file'**
+  String get settingsAppearanceLongPastedTextAsAttachment;
+
+  /// No description provided for @settingsAppearanceLongPastedTextThreshold.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversion threshold'**
+  String get settingsAppearanceLongPastedTextThreshold;
+
+  /// No description provided for @settingsAppearanceLongPastedTextThresholdValue.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} characters'**
+  String settingsAppearanceLongPastedTextThresholdValue(int count);
+
   /// No description provided for @settingsAppearanceColorSection.
   ///
   /// In en, this message translates to:

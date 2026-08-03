@@ -71,10 +71,7 @@ pub(crate) fn discoverRemoteDevices(
         }
     }
 
-    Ok(devices
-        .into_values()
-        .map(|(_, device)| device)
-        .collect())
+    Ok(devices.into_values().map(|(_, device)| device).collect())
 }
 
 /// Reads one required property from a resolved Operit mDNS service record.

@@ -821,10 +821,10 @@ pub struct ChatInfo {
     pub isCurrent: bool,
     ///Total input tokens used
     #[serde(rename = "inputTokens")]
-    pub inputTokens: i32,
+    pub inputTokens: i64,
     ///Total output tokens used
     #[serde(rename = "outputTokens")]
-    pub outputTokens: i32,
+    pub outputTokens: i64,
     #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
     ///Bound character card name (if any)
     #[serde(rename = "characterCardName")]

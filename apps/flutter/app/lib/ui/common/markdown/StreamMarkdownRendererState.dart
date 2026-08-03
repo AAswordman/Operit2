@@ -328,12 +328,18 @@ class MarkdownEventNodeBuilder {
     xmlMarkdownEventStreams.clear();
   }
 
+  /// Freezes mutable nodes and marks only the final renderable node as live.
   List<MarkdownNodeStable> toStableNodes({required bool isStreaming}) {
     for (final node in nodes) {
       node.isStreaming = false;
     }
-    if (isStreaming && nodes.isNotEmpty) {
-      nodes.last.isStreaming = true;
+    if (isStreaming) {
+      for (final node in nodes.reversed) {
+        if (_isRenderableStreamingNode(node)) {
+          node.isStreaming = true;
+          break;
+        }
+      }
     }
     return <MarkdownNodeStable>[for (final node in nodes) node.toStable()];
   }
@@ -486,6 +492,11 @@ class MarkdownEventNodeBuilder {
     }
     return null;
   }
+}
+
+/// Reports whether a node should own the live streaming indicator.
+bool _isRenderableStreamingNode(MutableMarkdownNode node) {
+  return node.content.toString().trim().isNotEmpty || node.children.isNotEmpty;
 }
 
 const int _maxConsecutiveRenderedNewlines = 2;

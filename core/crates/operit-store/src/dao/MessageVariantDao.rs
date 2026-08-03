@@ -6,7 +6,7 @@ use crate::SqliteStore::{
 use operit_model::MessageVariantEntity::MessageVariantEntity;
 
 const SELECT_VARIANT_COLUMNS: &str = r#"
-    SELECT variantId, chatId, messageTimestamp, variantIndex, content, roleName,
+    SELECT variantId, chatId, messageTimestamp, variantIndex, roleName,
         provider, modelName, inputTokens, outputTokens, cachedInputTokens,
         sentAt, outputDurationMs, waitDurationMs, completedAt
     FROM message_variants
@@ -136,12 +136,12 @@ impl MessageVariantDao {
         self.store.execute(
             r#"
                 INSERT INTO message_variants (
-                    chatId, messageTimestamp, variantIndex, content, roleName, provider,
+                    chatId, messageTimestamp, variantIndex, roleName, provider,
                     modelName, inputTokens, outputTokens, cachedInputTokens, sentAt,
                     outputDurationMs, waitDurationMs, completedAt
                 )
                 SELECT
-                    ?2, messageTimestamp, variantIndex, content, roleName, provider,
+                    ?2, messageTimestamp, variantIndex, roleName, provider,
                     modelName, inputTokens, outputTokens, cachedInputTokens, sentAt,
                     outputDurationMs, waitDurationMs, completedAt
                 FROM message_variants
@@ -156,10 +156,10 @@ impl MessageVariantDao {
         self.store.execute(
             r#"
                 UPDATE message_variants
-                SET chatId = ?2, messageTimestamp = ?3, variantIndex = ?4, content = ?5,
-                    roleName = ?6, provider = ?7, modelName = ?8, inputTokens = ?9,
-                    outputTokens = ?10, cachedInputTokens = ?11, sentAt = ?12,
-                    outputDurationMs = ?13, waitDurationMs = ?14, completedAt = ?15
+                SET chatId = ?2, messageTimestamp = ?3, variantIndex = ?4,
+                    roleName = ?5, provider = ?6, modelName = ?7, inputTokens = ?8,
+                    outputTokens = ?9, cachedInputTokens = ?10, sentAt = ?11,
+                    outputDurationMs = ?12, waitDurationMs = ?13, completedAt = ?14
                 WHERE variantId = ?1
                 "#,
             sqliteParams![
@@ -167,7 +167,6 @@ impl MessageVariantDao {
                 variant.chatId,
                 variant.messageTimestamp,
                 variant.variantIndex,
-                variant.content,
                 variant.roleName,
                 variant.provider,
                 variant.modelName,
@@ -247,17 +246,16 @@ fn mapMessageVariantEntity(row: &SqliteRow) -> Result<MessageVariantEntity, Sqli
         chatId: row.get(1)?,
         messageTimestamp: row.get(2)?,
         variantIndex: row.get(3)?,
-        content: row.get(4)?,
-        roleName: row.get(5)?,
-        provider: row.get(6)?,
-        modelName: row.get(7)?,
-        inputTokens: row.get(8)?,
-        outputTokens: row.get(9)?,
-        cachedInputTokens: row.get(10)?,
-        sentAt: row.get(11)?,
-        outputDurationMs: row.get(12)?,
-        waitDurationMs: row.get(13)?,
-        completedAt: row.get(14)?,
+        roleName: row.get(4)?,
+        provider: row.get(5)?,
+        modelName: row.get(6)?,
+        inputTokens: row.get(7)?,
+        outputTokens: row.get(8)?,
+        cachedInputTokens: row.get(9)?,
+        sentAt: row.get(10)?,
+        outputDurationMs: row.get(11)?,
+        waitDurationMs: row.get(12)?,
+        completedAt: row.get(13)?,
     })
 }
 
@@ -265,20 +263,20 @@ fn insertVariantSql(withVariantId: bool) -> &'static str {
     if withVariantId {
         r#"
         INSERT OR REPLACE INTO message_variants (
-            variantId, chatId, messageTimestamp, variantIndex, content, roleName,
-            provider, modelName, inputTokens, outputTokens, cachedInputTokens,
-            sentAt, outputDurationMs, waitDurationMs, completedAt
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-        "#
-    } else {
-        r#"
-        INSERT OR REPLACE INTO message_variants (
-            chatId, messageTimestamp, variantIndex, content, roleName,
+            variantId, chatId, messageTimestamp, variantIndex, roleName,
             provider, modelName, inputTokens, outputTokens, cachedInputTokens,
             sentAt, outputDurationMs, waitDurationMs, completedAt
         )
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        "#
+    } else {
+        r#"
+        INSERT OR REPLACE INTO message_variants (
+            chatId, messageTimestamp, variantIndex, roleName,
+            provider, modelName, inputTokens, outputTokens, cachedInputTokens,
+            sentAt, outputDurationMs, waitDurationMs, completedAt
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
         "#
     }
 }
@@ -290,7 +288,6 @@ fn insertVariantParams(variant: &MessageVariantEntity, withVariantId: bool) -> V
             variant.chatId,
             variant.messageTimestamp,
             variant.variantIndex,
-            variant.content,
             variant.roleName,
             variant.provider,
             variant.modelName,
@@ -307,7 +304,6 @@ fn insertVariantParams(variant: &MessageVariantEntity, withVariantId: bool) -> V
             variant.chatId,
             variant.messageTimestamp,
             variant.variantIndex,
-            variant.content,
             variant.roleName,
             variant.provider,
             variant.modelName,

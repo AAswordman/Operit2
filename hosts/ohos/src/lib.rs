@@ -50,6 +50,13 @@ pub fn createRuntimeHostManager(
     systemController: OhosSystemController,
 ) -> HostManager {
     let managedRuntimeHost = Arc::new(OhosManagedRuntimeHost::new(workspaceRoot.clone()));
+    let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
+        runtimeRoot.clone(),
+    ));
+    let runtimeStorageWriteHost = Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
+        runtimeRoot.clone(),
+        workspaceRoot.clone(),
+    ));
     let runtimeStorageHost = Arc::new(OhosRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let systemOperationHost = Arc::new(OhosSystemOperationHost::fromOwnerCallbacks(
@@ -69,6 +76,8 @@ pub fn createRuntimeHostManager(
     context.managedRuntimeHost = Some(managedRuntimeHost);
     context.runtimeStorageHost = Some(runtimeStorageHost);
     context.runtimeSqliteHost = Some(runtimeSqliteHost);
+    context = context.withArchiveStagingHost(archiveStagingHost);
+    context = context.withRuntimeStorageWriteHost(runtimeStorageWriteHost);
     context = context.withLocalInferenceHost(Arc::new(OhosLocalInferenceHost::new()));
     context = context
         .withHostRuntimeEventSchedulerHost(Arc::new(OhosHostRuntimeEventSchedulerHost::new()));

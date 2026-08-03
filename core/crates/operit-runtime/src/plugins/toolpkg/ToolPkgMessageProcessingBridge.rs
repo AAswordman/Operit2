@@ -145,6 +145,7 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
             let executionIdForWorker = executionId.clone();
             let released = Arc::new(AtomicBool::new(false));
             let released_for_worker = released.clone();
+            manager.acquireToolPkgExecutionEngine(&executionId, &hook.containerPackageName);
             self.runtime
                 .host_manager()
                 .hostRuntimeTaskSchedulerHost

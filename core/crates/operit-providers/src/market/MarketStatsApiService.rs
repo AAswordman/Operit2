@@ -305,6 +305,8 @@ pub struct MarketPublisherEntrySummary {
     pub relation: String,
     #[serde(rename = "stateCode", default)]
     pub state_code: String,
+    #[serde(rename = "listingState")]
+    pub listing_state: Option<String>,
     #[serde(rename = "categoryId", default)]
     pub category_id: Option<String>,
     #[serde(rename = "updatedAt", default)]

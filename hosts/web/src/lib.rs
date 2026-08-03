@@ -17,6 +17,7 @@ pub use runtime_event::WebHostRuntimeEventHost;
 pub use runtime_event_scheduler::WebHostRuntimeEventSchedulerHost;
 pub use runtime_task_scheduler::WebHostRuntimeTaskSchedulerHost;
 pub use tools::audio::WebAudioPlaybackHost;
+pub use tools::archive::WebArchiveStagingHost;
 pub use tools::bluetooth::WebBluetoothHost;
 pub use tools::browser::WebWebVisitHost;
 pub use tools::browser_session::WebBrowserSessionHost;
@@ -41,6 +42,8 @@ pub fn createLocalCore(
     let runtimeStorageHost = Arc::new(WebRuntimeStorageHost::new());
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
+    let runtimeStorageWriteHost = runtimeStorageHost.clone();
+    let archiveStagingHost = Arc::new(WebArchiveStagingHost::new());
     let mut context = HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
         Arc::new(WebFileSystemHost::new()),
         Arc::new(WebWebVisitHost::new()),
@@ -50,7 +53,9 @@ pub fn createLocalCore(
         runtimeStorageHost,
         runtimeSqliteHost,
     )
-    .withHostSecretStore(hostSecretStore);
+    .withHostSecretStore(hostSecretStore)
+    .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
+    .withArchiveStagingHost(archiveStagingHost);
     context = context.withBrowserSessionHost(Arc::new(WebBrowserSessionHost::new()));
     context = context.withTerminalHost(Arc::new(WebTerminalHost::new()));
     context = context.withAudioPlaybackHost(Arc::new(WebAudioPlaybackHost::new()));

@@ -6,7 +6,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../bridge/ProxyCoreRuntimeBridge.dart';
-import '../link/CoreLinkProtocol.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart';
 
@@ -73,7 +72,7 @@ class BrowserSessions {
   }) : _clients = clients;
 
   final GeneratedCoreProxyClients _clients;
-  Future<CorePushSink>? _interactionPush;
+  StreamController<RuntimeBrowserCommand>? _interactionInput;
   final Queue<_BrowserSurfaceInteraction> _orderedInteractions =
       Queue<_BrowserSurfaceInteraction>();
   _BrowserSurfaceInteraction? _pendingPointerMoveInteraction;
@@ -209,21 +208,16 @@ class BrowserSessions {
     );
   }
 
-  /// Opens the shared client-owned stream for compositor interactions.
-  Future<CorePushSink> _interactionSink() {
-    final current = _interactionPush;
+  /// Opens the generated reverse stream for compositor interactions.
+  StreamController<RuntimeBrowserCommand> _interactionStream() {
+    final current = _interactionInput;
     if (current != null) {
       return current;
     }
-    final opened = _browser.bridge.push(
-      CorePushRequest(
-        requestId: 'browser-input-${DateTime.now().microsecondsSinceEpoch}',
-        targetPath: _browser.targetPath,
-        methodName: 'submitBrowserCommand',
-      ),
-    );
-    _interactionPush = opened;
-    return opened;
+    final input = StreamController<RuntimeBrowserCommand>();
+    unawaited(_browser.submitBrowserInteractions(commands: input.stream));
+    _interactionInput = input;
+    return input;
   }
 
   /// Enqueues one browser interaction with pointer movement compaction.
@@ -246,7 +240,7 @@ class BrowserSessions {
     unawaited(_drainInteractions());
   }
 
-  /// Drains browser interactions through the Core push stream.
+  /// Drains browser interactions through the generated reverse stream.
   Future<void> _drainInteractions() async {
     try {
       while (true) {
@@ -264,11 +258,11 @@ class BrowserSessions {
     }
   }
 
-  /// Sends one browser interaction through the Core push stream.
+  /// Sends one browser interaction through the generated reverse stream.
   Future<void> _sendInteraction(_BrowserSurfaceInteraction interaction) async {
-    final sink = await _interactionSink();
-    await sink.add(<String, Object?>{
-      'command': RuntimeBrowserCommand(
+    final input = _interactionStream();
+    input.add(
+      RuntimeBrowserCommand(
         action: 'interact',
         sessionId: interaction.sessionId,
         url: null,
@@ -276,8 +270,9 @@ class BrowserSessions {
         payloadJson: jsonEncode(interaction.payload),
         userAgent: null,
         headers: const <String, String>{},
-      ).toJson(),
-    });
+      ),
+    );
+    await Future<void>.value();
   }
 
   /// Returns whether any browser interaction is waiting to be sent.

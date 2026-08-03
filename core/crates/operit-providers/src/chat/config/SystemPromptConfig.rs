@@ -230,7 +230,7 @@ impl SystemPromptConfig {
             packages_section.push_str("No packages are currently available.\n");
         }
 
-        if package_system_visible {
+        if package_system_visible && !options.use_tool_call_api {
             packages_section.push('\n');
             packages_section.push_str("To use a package:\n");
             packages_section.push_str("<tool name=\"use_package\"><param name=\"package_name\">package_name_here</param></tool>\n");
@@ -601,4 +601,41 @@ fn collapse_blank_lines(input: &str) -> String {
         }
     }
     output.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PackageInfo, SystemPromptConfig, SystemPromptOptions};
+
+    /// Creates package-enabled prompt options for one tool transport mode.
+    fn packagePromptOptions(useToolCallApi: bool) -> SystemPromptOptions {
+        SystemPromptOptions {
+            use_english: true,
+            use_tool_call_api: useToolCallApi,
+            enabled_packages: vec![PackageInfo {
+                name: "browser".to_string(),
+                description: "Browser automation".to_string(),
+            }],
+            ..SystemPromptOptions::default()
+        }
+    }
+
+    /// Verifies native tool-call prompts never advertise the text XML protocol.
+    #[test]
+    fn nativeToolCallPromptExcludesXmlToolSyntax() {
+        let prompt = SystemPromptConfig::getSystemPrompt(packagePromptOptions(true));
+
+        assert!(prompt.contains("call the use_package function"));
+        assert!(!prompt.contains("<tool"));
+        assert!(!prompt.contains("<param"));
+    }
+
+    /// Verifies text-protocol prompts retain the XML package invocation syntax.
+    #[test]
+    fn xmlToolPromptIncludesPackageInvocationSyntax() {
+        let prompt = SystemPromptConfig::getSystemPrompt(packagePromptOptions(false));
+
+        assert!(prompt.contains("<tool name=\"use_package\">"));
+        assert!(prompt.contains("<param name=\"package_name\">"));
+    }
 }

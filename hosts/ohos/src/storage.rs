@@ -35,6 +35,11 @@ impl RuntimeStorageHost for OhosRuntimeStorageHost {
         self.inner.readBytes(path)
     }
 
+    /// Reads one bounded byte range from OpenHarmony runtime storage.
+    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        self.inner.readBytesRange(path, offset, length)
+    }
+
     /// Writes bytes into OpenHarmony runtime storage.
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         self.inner.writeBytes(path, content)

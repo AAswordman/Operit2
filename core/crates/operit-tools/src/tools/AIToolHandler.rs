@@ -1,4 +1,6 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use operit_host_api::HostEnvironmentDescriptor;
@@ -32,6 +34,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime_support::{ToolRuntimeDependencies, ToolRuntimeSupport};
 
+const PACKAGE_PROXY_TOOL_NAME: &str = "package_proxy";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolRegistrationVisibility {
     PUBLIC,
@@ -41,6 +45,7 @@ pub enum ToolRegistrationVisibility {
 #[derive(Clone)]
 pub struct AIToolHandler {
     inner: Arc<Mutex<AIToolHandlerState>>,
+    nestedExecutionAuthorization: PackageNestedExecutionAuthorizationState,
 }
 
 pub struct AIToolHandlerState {
@@ -53,6 +58,85 @@ pub struct AIToolHandlerState {
     hooks: Vec<Arc<dyn AIToolHook>>,
     toolPermissionSystem: ToolPermissionSystem,
     packageManager: Option<Arc<Mutex<RuntimePackageManager>>>,
+}
+
+thread_local! {
+    static ASYNC_TOOL_EXECUTION_SCOPE_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Marks synchronous nested tool calls as descendants of an approved async invocation.
+struct AsyncToolExecutionScope;
+
+/// Tracks one package executor's nested authorization across worker threads.
+#[derive(Clone)]
+struct PackageNestedExecutionAuthorizationState {
+    depth: Arc<AtomicUsize>,
+}
+
+/// Keeps one package executor's nested authorization active across worker threads.
+pub(crate) struct PackageNestedExecutionAuthorization {
+    depth: Arc<AtomicUsize>,
+}
+
+impl AsyncToolExecutionScope {
+    /// Enters one approved asynchronous tool execution call stack.
+    fn enter() -> Self {
+        ASYNC_TOOL_EXECUTION_SCOPE_DEPTH.with(|depth| depth.set(depth.get() + 1));
+        Self
+    }
+
+    /// Reports whether the current thread is executing an approved async tool stack.
+    fn isActive() -> bool {
+        ASYNC_TOOL_EXECUTION_SCOPE_DEPTH.with(|depth| depth.get() > 0)
+    }
+}
+
+impl Drop for AsyncToolExecutionScope {
+    /// Leaves the approved asynchronous tool execution call stack.
+    fn drop(&mut self) {
+        ASYNC_TOOL_EXECUTION_SCOPE_DEPTH.with(|depth| {
+            let current = depth.get();
+            debug_assert!(current > 0, "async tool execution scope underflow");
+            depth.set(current - 1);
+        });
+    }
+}
+
+impl PackageNestedExecutionAuthorizationState {
+    /// Creates an inactive authorization state for one package executor.
+    fn new() -> Self {
+        Self {
+            depth: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Activates cross-thread authorization for one approved package invocation.
+    fn enter(&self) -> PackageNestedExecutionAuthorization {
+        assert!(
+            AsyncToolExecutionScope::isActive(),
+            "package execution must inherit an approved async tool scope"
+        );
+        self.depth.fetch_add(1, Ordering::AcqRel);
+        PackageNestedExecutionAuthorization {
+            depth: self.depth.clone(),
+        }
+    }
+
+    /// Reports whether one package invocation currently owns authorization.
+    fn isActive(&self) -> bool {
+        self.depth.load(Ordering::Acquire) > 0
+    }
+}
+
+impl Drop for PackageNestedExecutionAuthorization {
+    /// Releases one package-scoped cross-thread authorization grant.
+    fn drop(&mut self) {
+        let previous = self.depth.fetch_sub(1, Ordering::AcqRel);
+        assert!(
+            previous > 0,
+            "package nested execution authorization underflow"
+        );
+    }
 }
 
 impl AIToolHandler {
@@ -100,7 +184,28 @@ impl AIToolHandler {
                 toolPermissionSystem: ToolPermissionSystem::getInstance(),
                 packageManager: None,
             })),
+            nestedExecutionAuthorization: PackageNestedExecutionAuthorizationState::new(),
         }
+    }
+
+    /// Creates a handler sharing tools while owning an isolated package authorization token.
+    pub(crate) fn withIsolatedNestedExecutionAuthorization(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            nestedExecutionAuthorization: PackageNestedExecutionAuthorizationState::new(),
+        }
+    }
+
+    /// Carries the approved async call context into one package's worker threads.
+    pub(crate) fn enterPackageNestedExecutionAuthorization(
+        &self,
+    ) -> PackageNestedExecutionAuthorization {
+        self.nestedExecutionAuthorization.enter()
+    }
+
+    /// Reports whether this call stack or package worker owns nested authorization.
+    fn hasNestedExecutionAuthorization(&self) -> bool {
+        AsyncToolExecutionScope::isActive() || self.nestedExecutionAuthorization.isActive()
     }
 
     /// Removes one registered tool and its visibility metadata.
@@ -657,6 +762,10 @@ impl AIToolHandler {
             });
         }
 
+        if self.hasNestedExecutionAuthorization() {
+            return Ok(accessSpec);
+        }
+
         if mode == AiPermissionMode::WorkspaceWrite
             && accessSpec.effect == ToolEffect::WRITE
             && matches!(accessSpec.boundary, ToolBoundary::None)
@@ -677,7 +786,7 @@ impl AIToolHandler {
         &self,
         tool: &AITool,
         accessSpec: ToolAccessSpec,
-    ) -> Result<ToolAccessSpec, ToolResult> {
+    ) -> Result<(ToolAccessSpec, bool), ToolResult> {
         let permissionSystem = self.getToolPermissionSystem();
         let mode = permissionSystem
             .getAiPermissionMode()
@@ -709,10 +818,20 @@ impl AIToolHandler {
             });
         }
 
+        let usesPackagePermission =
+            tool.name == PACKAGE_PROXY_TOOL_NAME || tool.name.split_once(':').is_some();
+        let packageApprovalTool = if tool.name == PACKAGE_PROXY_TOOL_NAME {
+            let resolvedTarget = ToolExecutionManager::resolveProxyTargetTool(tool);
+            (resolvedTarget.name != tool.name).then_some(resolvedTarget)
+        } else {
+            tool.name.split_once(':').map(|_| tool.clone())
+        };
+
+        let mut permitsNestedInteractiveExecution = false;
         if mode == AiPermissionMode::WorkspaceWrite
             && accessSpec.effect == ToolEffect::WRITE
             && matches!(accessSpec.boundary, ToolBoundary::None)
-            && tool.name.split_once(':').is_none()
+            && !usesPackagePermission
         {
             let approved = permissionSystem
                 .checkSandboxEscapeApprovalAsync(tool)
@@ -738,32 +857,38 @@ impl AIToolHandler {
                 true,
                 Some("WorkspaceWrite non-file WRITE approved for this session."),
             );
+            permitsNestedInteractiveExecution = true;
         }
 
-        if tool.name.split_once(':').is_some() {
+        if let Some(packageApprovalTool) = packageApprovalTool {
             let approved = permissionSystem
-                .checkPackageToolApprovalAsync(tool)
+                .checkPackageToolApprovalAsync(&packageApprovalTool)
                 .await
                 .map_err(|error| ToolResult {
-                    toolName: tool.name.clone(),
+                    toolName: packageApprovalTool.name.clone(),
                     success: false,
                     result: stringResultData(""),
                     error: Some(error.to_string()),
                 })?;
             if !approved {
                 let error = "User cancelled the tool execution.".to_string();
-                self.notifyToolPermissionChecked(tool, false, Some(&error));
+                self.notifyToolPermissionChecked(&packageApprovalTool, false, Some(&error));
                 return Err(ToolResult {
-                    toolName: tool.name.clone(),
+                    toolName: packageApprovalTool.name.clone(),
                     success: false,
                     result: stringResultData(""),
                     error: Some(error),
                 });
             }
-            self.notifyToolPermissionChecked(tool, true, Some("PackageTool approved."));
+            self.notifyToolPermissionChecked(
+                &packageApprovalTool,
+                true,
+                Some("PackageTool approved."),
+            );
+            permitsNestedInteractiveExecution = true;
         }
 
-        Ok(accessSpec)
+        Ok((accessSpec, permitsNestedInteractiveExecution))
     }
 
     /// Builds a typed denial for callers that have not migrated to asynchronous execution.
@@ -887,7 +1012,7 @@ impl AIToolHandler {
             });
             match accessSpec {
                 Ok(accessSpec) => match self.executeAccessPreflightAsync(tool, accessSpec).await {
-                    Ok(accessSpec) => {
+                    Ok((accessSpec, permitsNestedInteractiveExecution)) => {
                         ChainLogger::info(
                             TOOL_CHAIN,
                             "tool.stream.start",
@@ -897,6 +1022,8 @@ impl AIToolHandler {
                                 ("effect", format!("{:?}", accessSpec.effect)),
                             ],
                         );
+                        let _executionScope =
+                            permitsNestedInteractiveExecution.then(AsyncToolExecutionScope::enter);
                         executor.invokeAndStream(tool)
                     }
                     Err(errorResult) => vec![errorResult],
@@ -1085,6 +1212,9 @@ impl AIToolHandler {
             "tool.execute.start",
             &[("tool", tool.name.clone())],
         );
+        let _inheritedExecutionScope = self
+            .hasNestedExecutionAuthorization()
+            .then(AsyncToolExecutionScope::enter);
         let collected = executor.invokeAndStream(&tool);
         if collected.is_empty() {
             ChainLogger::error(
@@ -1424,5 +1554,36 @@ impl ToolExecutor for FnToolExecutor {
 
     fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
         vec![(self.invoke)(tool)]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AsyncToolExecutionScope, PackageNestedExecutionAuthorizationState};
+
+    /// Verifies that package authorization crosses threads without leaking across states.
+    #[test]
+    fn package_nested_authorization_is_cross_thread_scoped_and_isolated() {
+        let authorized_state = PackageNestedExecutionAuthorizationState::new();
+        let isolated_state = PackageNestedExecutionAuthorizationState::new();
+        let async_scope = AsyncToolExecutionScope::enter();
+        let authorization = authorized_state.enter();
+        drop(async_scope);
+
+        let worker_authorized_state = authorized_state.clone();
+        let worker_isolated_state = isolated_state.clone();
+        let (authorized_on_worker, isolated_on_worker) = std::thread::spawn(move || {
+            (
+                worker_authorized_state.isActive(),
+                worker_isolated_state.isActive(),
+            )
+        })
+        .join()
+        .expect("authorization test worker must complete");
+
+        assert!(authorized_on_worker);
+        assert!(!isolated_on_worker);
+        drop(authorization);
+        assert!(!authorized_state.isActive());
     }
 }

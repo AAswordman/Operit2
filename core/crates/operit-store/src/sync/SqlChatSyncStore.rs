@@ -13,14 +13,19 @@ use thiserror::Error;
 
 use crate::dao::ChatDao::ChatDao;
 use crate::dao::MessageDao::MessageDao;
+use crate::dao::MessagePartDao::MessagePartDao;
 use crate::dao::MessageVariantDao::MessageVariantDao;
 use crate::db::AppDatabase::{AppDatabase, AppDatabaseError};
 use operit_model::ChatEntity::ChatEntity;
 use operit_model::MessageEntity::MessageEntity;
+use operit_model::MessagePart::MessagePartKind;
+use operit_model::MessagePartEntity::MessagePartEntity;
 use operit_model::MessageVariantEntity::MessageVariantEntity;
 
 /// Sync domain used for SQL-backed chat history operations.
 pub const CHAT_SYNC_DOMAIN: &str = "chat";
+
+const CHAT_SYNC_OPERATION_SCHEMA_VERSION: i32 = 2;
 
 const DELETE_CHAT: &str = "chats";
 const DELETE_MESSAGE: &str = "messages";
@@ -55,11 +60,12 @@ pub struct ChatSyncDeletion {
     pub variantIndex: Option<i32>,
 }
 
-/// Carries chat, message, variant, and deletion rows for one sync operation.
+/// Carries chat, message, part, variant, and deletion rows for one sync operation.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatSyncPayload {
     pub chatRows: Vec<ChatEntity>,
     pub messageRows: Vec<MessageEntity>,
+    pub partRows: Vec<MessagePartEntity>,
     pub variantRows: Vec<MessageVariantEntity>,
     pub deletions: Vec<ChatSyncDeletion>,
 }
@@ -119,6 +125,7 @@ impl SqlChatSyncStore {
         let payload = self.payloadForMessageSnapshot(chatId, timestamp)?;
         if payload.chatRows.is_empty()
             && payload.messageRows.is_empty()
+            && payload.partRows.is_empty()
             && payload.variantRows.is_empty()
         {
             return Ok(());
@@ -278,7 +285,7 @@ impl SqlChatSyncStore {
 
     /// Applies a remote SQL chat sync operation to the local database.
     pub fn applyOperation(&self, operation: &SyncOperation) -> Result<(), SqlChatSyncStoreError> {
-        let payload: ChatSyncPayload = serde_json::from_value(operation.payload.clone())?;
+        let payload = decodePayload(operation)?;
         let didApply = self.store.transaction(|transaction| {
             if operation.sequence <= sequenceFor(transaction, &operation.originDeviceId)? {
                 return Ok(false);
@@ -324,7 +331,7 @@ impl SqlChatSyncStore {
                 operation: operationName.to_string(),
                 payload: payloadValue,
                 createdAt,
-                schemaVersion: 1,
+                schemaVersion: CHAT_SYNC_OPERATION_SCHEMA_VERSION,
             };
             insertOperation(transaction, &operation, &payload)?;
             observeOperation(transaction, &operation)?;
@@ -353,13 +360,16 @@ impl SqlChatSyncStore {
     ) -> Result<ChatSyncPayload, SqlChatSyncStoreError> {
         let chatDao = ChatDao::new(self.store.clone());
         let messageDao = MessageDao::new(self.store.clone());
+        let partDao = MessagePartDao::new(self.store.clone());
         let variantDao = MessageVariantDao::new(self.store.clone());
         let chatRows = chatDao.getChatById(chatId)?.into_iter().collect::<Vec<_>>();
         let messageRows = messageDao.getMessagesForChat(chatId)?;
+        let partRows = partDao.getPartsForChat(chatId)?;
         let variantRows = variantDao.getVariantsForChat(chatId)?;
         Ok(ChatSyncPayload {
             chatRows,
             messageRows,
+            partRows,
             variantRows,
             deletions: Vec::new(),
         })
@@ -373,6 +383,7 @@ impl SqlChatSyncStore {
     ) -> Result<ChatSyncPayload, SqlChatSyncStoreError> {
         let chatDao = ChatDao::new(self.store.clone());
         let messageDao = MessageDao::new(self.store.clone());
+        let partDao = MessagePartDao::new(self.store.clone());
         let variantDao = MessageVariantDao::new(self.store.clone());
         let chatRows = chatDao.getChatById(chatId)?.into_iter().collect::<Vec<_>>();
         let messageRows = messageDao
@@ -380,12 +391,30 @@ impl SqlChatSyncStore {
             .into_iter()
             .collect::<Vec<_>>();
         let variantRows = variantDao.getVariantsForMessage(chatId, timestamp)?;
+        let partRows = partDao
+            .getPartsForChat(chatId)?
+            .into_iter()
+            .filter(|part| part.messageTimestamp == timestamp)
+            .collect();
         Ok(ChatSyncPayload {
             chatRows,
             messageRows,
+            partRows,
             variantRows,
             deletions: Vec::new(),
         })
+    }
+}
+
+/// Decodes one versioned chat sync payload into the canonical structured representation.
+fn decodePayload(operation: &SyncOperation) -> Result<ChatSyncPayload, SqlChatSyncStoreError> {
+    match operation.schemaVersion {
+        CHAT_SYNC_OPERATION_SCHEMA_VERSION => {
+            Ok(serde_json::from_value(operation.payload.clone())?)
+        }
+        unsupported => Err(SqlChatSyncStoreError::Message(format!(
+            "unsupported chat sync operation schemaVersion: {unsupported}"
+        ))),
     }
 }
 
@@ -409,6 +438,7 @@ fn readPayload(store: &SqliteStore, opId: &str) -> Result<ChatSyncPayload, Sqlit
     Ok(ChatSyncPayload {
         chatRows: readChatRows(store, opId)?,
         messageRows: readMessageRows(store, opId)?,
+        partRows: readPartRows(store, opId)?,
         variantRows: readVariantRows(store, opId)?,
         deletions: readDeletions(store, opId)?,
     })
@@ -457,7 +487,7 @@ fn readMessageRows(
     store
         .queryRows(
             r#"
-            SELECT chatId, sender, content, timestamp, orderIndex, roleName,
+            SELECT chatId, sender, timestamp, orderIndex, roleName,
                 selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
                 cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
                 completedAt, displayMode, isFavorite
@@ -473,22 +503,21 @@ fn readMessageRows(
                 messageId: 0,
                 chatId: row.get(0)?,
                 sender: row.get(1)?,
-                content: row.get(2)?,
-                timestamp: row.get(3)?,
-                orderIndex: row.get(4)?,
-                roleName: row.get(5)?,
-                selectedVariantIndex: row.get(6)?,
-                provider: row.get(7)?,
-                modelName: row.get(8)?,
-                inputTokens: row.get(9)?,
-                outputTokens: row.get(10)?,
-                cachedInputTokens: row.get(11)?,
-                sentAt: row.get(12)?,
-                outputDurationMs: row.get(13)?,
-                waitDurationMs: row.get(14)?,
-                completedAt: row.get(15)?,
-                displayMode: row.get(16)?,
-                isFavorite: row.get(17)?,
+                timestamp: row.get(2)?,
+                orderIndex: row.get(3)?,
+                roleName: row.get(4)?,
+                selectedVariantIndex: row.get(5)?,
+                provider: row.get(6)?,
+                modelName: row.get(7)?,
+                inputTokens: row.get(8)?,
+                outputTokens: row.get(9)?,
+                cachedInputTokens: row.get(10)?,
+                sentAt: row.get(11)?,
+                outputDurationMs: row.get(12)?,
+                waitDurationMs: row.get(13)?,
+                completedAt: row.get(14)?,
+                displayMode: row.get(15)?,
+                isFavorite: row.get(16)?,
             })
         })
         .collect()
@@ -501,7 +530,7 @@ fn readVariantRows(
     store
         .queryRows(
             r#"
-            SELECT chatId, messageTimestamp, variantIndex, content, roleName,
+            SELECT chatId, messageTimestamp, variantIndex, roleName,
                 provider, modelName, inputTokens, outputTokens, cachedInputTokens,
                 sentAt, outputDurationMs, waitDurationMs, completedAt
             FROM sync_sql_message_variant_rows
@@ -517,17 +546,56 @@ fn readVariantRows(
                 chatId: row.get(0)?,
                 messageTimestamp: row.get(1)?,
                 variantIndex: row.get(2)?,
-                content: row.get(3)?,
-                roleName: row.get(4)?,
-                provider: row.get(5)?,
-                modelName: row.get(6)?,
-                inputTokens: row.get(7)?,
-                outputTokens: row.get(8)?,
-                cachedInputTokens: row.get(9)?,
-                sentAt: row.get(10)?,
-                outputDurationMs: row.get(11)?,
-                waitDurationMs: row.get(12)?,
-                completedAt: row.get(13)?,
+                roleName: row.get(3)?,
+                provider: row.get(4)?,
+                modelName: row.get(5)?,
+                inputTokens: row.get(6)?,
+                outputTokens: row.get(7)?,
+                cachedInputTokens: row.get(8)?,
+                sentAt: row.get(9)?,
+                outputDurationMs: row.get(10)?,
+                waitDurationMs: row.get(11)?,
+                completedAt: row.get(12)?,
+            })
+        })
+        .collect()
+}
+
+/// Reads structured part rows stored for one pending sync operation.
+fn readPartRows(
+    store: &SqliteStore,
+    opId: &str,
+) -> Result<Vec<MessagePartEntity>, SqliteStoreError> {
+    store
+        .queryRows(
+            r#"
+            SELECT chatId, messageTimestamp, variantIndex, partId, sequence, kind, content,
+                toolCallId, toolName, attributesJson
+            FROM sync_sql_message_part_rows
+            WHERE opId = ?1
+            ORDER BY chatId, messageTimestamp, variantIndex, sequence
+            "#,
+            sqliteParams![opId],
+        )?
+        .into_iter()
+        .map(|row| {
+            let attributesJson: String = row.get(9)?;
+            let kind: String = row.get(5)?;
+            Ok(MessagePartEntity {
+                chatId: row.get(0)?,
+                messageTimestamp: row.get(1)?,
+                variantIndex: row.get(2)?,
+                partId: row.get(3)?,
+                sequence: row.get(4)?,
+                kind: messagePartKindFromLabel(&kind)?,
+                content: row.get(6)?,
+                toolCallId: row.get(7)?,
+                toolName: row.get(8)?,
+                attributes: serde_json::from_str(&attributesJson).map_err(|error| {
+                    SqliteStoreError::Message(format!(
+                        "invalid sync message-part attributes JSON: {error}"
+                    ))
+                })?,
             })
         })
         .collect()
@@ -590,6 +658,9 @@ fn insertOperation(
     }
     for message in &payload.messageRows {
         insertMessageSyncRow(transaction, &operation.opId, message)?;
+    }
+    for part in &payload.partRows {
+        insertPartSyncRow(transaction, &operation.opId, part)?;
     }
     for variant in &payload.variantRows {
         insertVariantSyncRow(transaction, &operation.opId, variant)?;
@@ -659,18 +730,17 @@ fn insertMessageSyncRow(
     transaction.execute(
         r#"
         INSERT INTO sync_sql_message_rows (
-            opId, chatId, sender, content, timestamp, orderIndex, roleName,
+            opId, chatId, sender, timestamp, orderIndex, roleName,
             selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
             cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
             completedAt, displayMode, isFavorite
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
         "#,
         sqliteParams![
             opId,
             message.chatId,
             message.sender,
-            message.content,
             message.timestamp,
             message.orderIndex,
             message.roleName,
@@ -691,6 +761,40 @@ fn insertMessageSyncRow(
     Ok(())
 }
 
+/// Inserts one canonical message part into a pending sync operation.
+fn insertPartSyncRow(
+    transaction: &mut SqliteTransaction<'_>,
+    opId: &str,
+    part: &MessagePartEntity,
+) -> Result<(), SqliteStoreError> {
+    let attributesJson = serde_json::to_string(&part.attributes).map_err(|error| {
+        SqliteStoreError::Message(format!("message-part attributes cannot serialize: {error}"))
+    })?;
+    transaction.execute(
+        r#"
+        INSERT INTO sync_sql_message_part_rows (
+            opId, chatId, messageTimestamp, variantIndex, partId, sequence, kind,
+            content, toolCallId, toolName, attributesJson
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        "#,
+        sqliteParams![
+            opId,
+            part.chatId,
+            part.messageTimestamp,
+            part.variantIndex,
+            part.partId,
+            part.sequence,
+            messagePartKindLabel(&part.kind),
+            part.content,
+            part.toolCallId,
+            part.toolName,
+            attributesJson,
+        ],
+    )?;
+    Ok(())
+}
+
 fn insertVariantSyncRow(
     transaction: &mut SqliteTransaction<'_>,
     opId: &str,
@@ -699,18 +803,17 @@ fn insertVariantSyncRow(
     transaction.execute(
         r#"
         INSERT INTO sync_sql_message_variant_rows (
-            opId, chatId, messageTimestamp, variantIndex, content, roleName,
+            opId, chatId, messageTimestamp, variantIndex, roleName,
             provider, modelName, inputTokens, outputTokens, cachedInputTokens,
             sentAt, outputDurationMs, waitDurationMs, completedAt
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         "#,
         sqliteParams![
             opId,
             variant.chatId,
             variant.messageTimestamp,
             variant.variantIndex,
-            variant.content,
             variant.roleName,
             variant.provider,
             variant.modelName,
@@ -742,6 +845,7 @@ fn applyPayload(
     for variant in &payload.variantRows {
         upsertVariant(transaction, variant)?;
     }
+    replacePartRows(transaction, &payload.partRows)?;
     Ok(())
 }
 
@@ -759,6 +863,10 @@ fn applyDeletion(
         DELETE_MESSAGE => {
             let timestamp = requiredTimestamp(deletion)?;
             transaction.execute(
+                "DELETE FROM message_parts WHERE chatId = ?1 AND messageTimestamp = ?2",
+                sqliteParams![deletion.chatId, timestamp],
+            )?;
+            transaction.execute(
                 "DELETE FROM messages WHERE chatId = ?1 AND timestamp = ?2",
                 sqliteParams![deletion.chatId, timestamp],
             )?;
@@ -766,11 +874,19 @@ fn applyDeletion(
         DELETE_MESSAGES_FROM => {
             let timestamp = requiredTimestamp(deletion)?;
             transaction.execute(
+                "DELETE FROM message_parts WHERE chatId = ?1 AND messageTimestamp >= ?2",
+                sqliteParams![deletion.chatId, timestamp],
+            )?;
+            transaction.execute(
                 "DELETE FROM messages WHERE chatId = ?1 AND timestamp >= ?2",
                 sqliteParams![deletion.chatId, timestamp],
             )?;
         }
         DELETE_MESSAGES_FOR_CHAT => {
+            transaction.execute(
+                "DELETE FROM message_parts WHERE chatId = ?1",
+                sqliteParams![deletion.chatId],
+            )?;
             transaction.execute(
                 "DELETE FROM messages WHERE chatId = ?1",
                 sqliteParams![deletion.chatId],
@@ -780,12 +896,20 @@ fn applyDeletion(
             let timestamp = requiredTimestamp(deletion)?;
             let variantIndex = requiredVariantIndex(deletion)?;
             transaction.execute(
+                "DELETE FROM message_parts WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+                sqliteParams![deletion.chatId, timestamp, variantIndex],
+            )?;
+            transaction.execute(
                 "DELETE FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
                 sqliteParams![deletion.chatId, timestamp, variantIndex],
             )?;
         }
         DELETE_VARIANTS_FROM => {
             let timestamp = requiredTimestamp(deletion)?;
+            transaction.execute(
+                "DELETE FROM message_parts WHERE chatId = ?1 AND messageTimestamp >= ?2 AND variantIndex > 0",
+                sqliteParams![deletion.chatId, timestamp],
+            )?;
             transaction.execute(
                 "DELETE FROM message_variants WHERE chatId = ?1 AND messageTimestamp >= ?2",
                 sqliteParams![deletion.chatId, timestamp],
@@ -794,11 +918,19 @@ fn applyDeletion(
         DELETE_VARIANTS_FOR_MESSAGE => {
             let timestamp = requiredTimestamp(deletion)?;
             transaction.execute(
+                "DELETE FROM message_parts WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex > 0",
+                sqliteParams![deletion.chatId, timestamp],
+            )?;
+            transaction.execute(
                 "DELETE FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2",
                 sqliteParams![deletion.chatId, timestamp],
             )?;
         }
         DELETE_VARIANTS_FOR_CHAT => {
+            transaction.execute(
+                "DELETE FROM message_parts WHERE chatId = ?1 AND variantIndex > 0",
+                sqliteParams![deletion.chatId],
+            )?;
             transaction.execute(
                 "DELETE FROM message_variants WHERE chatId = ?1",
                 sqliteParams![deletion.chatId],
@@ -867,23 +999,26 @@ fn upsertMessage(
     message: &MessageEntity,
 ) -> Result<(), SqliteStoreError> {
     transaction.execute(
+        "DELETE FROM message_parts WHERE chatId = ?1 AND messageTimestamp = ?2",
+        sqliteParams![message.chatId, message.timestamp],
+    )?;
+    transaction.execute(
         "DELETE FROM messages WHERE chatId = ?1 AND timestamp = ?2",
         sqliteParams![message.chatId, message.timestamp],
     )?;
     transaction.execute(
         r#"
         INSERT INTO messages (
-            chatId, sender, content, timestamp, orderIndex, roleName,
+            chatId, sender, timestamp, orderIndex, roleName,
             selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
             cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
             completedAt, displayMode, isFavorite
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
         "#,
         sqliteParams![
             message.chatId,
             message.sender,
-            message.content,
             message.timestamp,
             message.orderIndex,
             message.roleName,
@@ -915,17 +1050,16 @@ fn upsertVariant(
     transaction.execute(
         r#"
         INSERT INTO message_variants (
-            chatId, messageTimestamp, variantIndex, content, roleName, provider,
+            chatId, messageTimestamp, variantIndex, roleName, provider,
             modelName, inputTokens, outputTokens, cachedInputTokens, sentAt,
             outputDurationMs, waitDurationMs, completedAt
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
         "#,
         sqliteParams![
             variant.chatId,
             variant.messageTimestamp,
             variant.variantIndex,
-            variant.content,
             variant.roleName,
             variant.provider,
             variant.modelName,
@@ -939,6 +1073,84 @@ fn upsertVariant(
         ],
     )?;
     Ok(())
+}
+
+/// Replaces every structured revision contained in one received sync payload.
+fn replacePartRows(
+    transaction: &mut SqliteTransaction<'_>,
+    parts: &[MessagePartEntity],
+) -> Result<(), SqliteStoreError> {
+    let mut groups = BTreeMap::<(String, i64, i32), Vec<&MessagePartEntity>>::new();
+    for part in parts {
+        groups
+            .entry((
+                part.chatId.clone(),
+                part.messageTimestamp,
+                part.variantIndex,
+            ))
+            .or_default()
+            .push(part);
+    }
+    for ((chatId, timestamp, variantIndex), parts) in groups {
+        transaction.execute(
+            "DELETE FROM message_parts WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+            sqliteParams![chatId, timestamp, variantIndex],
+        )?;
+        for part in parts {
+            let attributesJson = serde_json::to_string(&part.attributes).map_err(|error| {
+                SqliteStoreError::Message(format!(
+                    "message-part attributes cannot serialize: {error}"
+                ))
+            })?;
+            transaction.execute(
+                r#"
+                INSERT INTO message_parts (
+                    chatId, messageTimestamp, variantIndex, partId, sequence, kind, content,
+                    toolCallId, toolName, attributesJson
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                "#,
+                sqliteParams![
+                    part.chatId,
+                    part.messageTimestamp,
+                    part.variantIndex,
+                    part.partId,
+                    part.sequence,
+                    messagePartKindLabel(&part.kind),
+                    part.content,
+                    part.toolCallId,
+                    part.toolName,
+                    attributesJson,
+                ],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Converts a canonical message-part kind into its SQL label.
+fn messagePartKindLabel(kind: &MessagePartKind) -> &'static str {
+    match kind {
+        MessagePartKind::Markdown => "markdown",
+        MessagePartKind::Thinking => "thinking",
+        MessagePartKind::ToolCall => "tool_call",
+        MessagePartKind::ToolResult => "tool_result",
+        MessagePartKind::Status => "status",
+    }
+}
+
+/// Converts one persisted SQL part label into its canonical message-part kind.
+fn messagePartKindFromLabel(value: &str) -> Result<MessagePartKind, SqliteStoreError> {
+    match value {
+        "markdown" => Ok(MessagePartKind::Markdown),
+        "thinking" => Ok(MessagePartKind::Thinking),
+        "tool_call" => Ok(MessagePartKind::ToolCall),
+        "tool_result" => Ok(MessagePartKind::ToolResult),
+        "status" => Ok(MessagePartKind::Status),
+        _ => Err(SqliteStoreError::Message(format!(
+            "unknown message-part kind: {value}"
+        ))),
+    }
 }
 
 fn operationExists(

@@ -14,15 +14,11 @@ import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../core/runtime/RemotePairingBridge.dart';
 import '../../../core/runtime/RuntimeConnectionManager.dart';
+import '../../../core/snapshot/SnapshotImportUploader.dart';
 import '../../common/OperitLogoMark.dart';
 import '../../common/RuntimeBootstrapScreen.dart';
 import '../../common/components/CommonNetworkErrorView.dart';
 import '../../main/navigation/StartupRouteStrategy.dart';
-
-const XTypeGroup _operit1SnapshotFileTypeGroup = XTypeGroup(
-  label: 'Operit snapshot',
-  extensions: <String>['opsnapshot', 'zip'],
-);
 
 enum _AiSetupPage {
   intro,
@@ -230,7 +226,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   core_proxy.Operit1SnapshotPreview? _operit1Snapshot;
   core_proxy.Operit1SnapshotImportProgress? _operit1ImportProgress;
   RemotePairStartResult? _remotePairing;
-  Uint8List? _operit1SnapshotBytes;
+  SnapshotImportSession? _operit1SnapshotSession;
   String? _operit1SnapshotFileName;
   List<core_proxy.ProviderCatalogEntry> _catalogEntries =
       const <core_proxy.ProviderCatalogEntry>[];
@@ -348,6 +344,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    final session = _operit1SnapshotSession;
+    if (session != null) {
+      unawaited(session.discard());
+    }
     _agreementCountdownTimer?.cancel();
     _operit1ImportProgressSubscription?.cancel();
     _introAnimationController.dispose();
@@ -494,7 +494,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     if (_operit1ImportProgressSubscription != null) {
       return;
     }
-    _operit1ImportProgressSubscription = widget.clients.application
+    _operit1ImportProgressSubscription = widget
+        .clients
+        .servicesSnapshotImportManager
         .operit1SnapshotImportProgressFlowChanges()
         .listen(
           (progress) {
@@ -972,31 +974,43 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _pickOperit1Snapshot() async {
+    final previousSession = _operit1SnapshotSession;
+    SnapshotImportSession? stagedSession;
     setState(() {
       _readingOperit1Snapshot = true;
       _setupError = null;
       _operit1Snapshot = null;
       _operit1ImportProgress = null;
-      _operit1SnapshotBytes = null;
+      _operit1SnapshotSession = null;
       _operit1SnapshotFileName = null;
     });
     try {
-      final picked = await _pickOperit1SnapshotFile();
-      if (picked == null) {
+      if (previousSession != null) {
+        await previousSession.discard();
+      }
+      final file = await SnapshotImportFile.pick();
+      if (file == null) {
         return;
       }
-      final snapshot = await widget.clients.application.inspectOperit1Snapshot(
-        bytes: picked.bytes,
-      );
+      final session = await SnapshotImportUploader(
+        widget.clients,
+      ).stage(file);
+      stagedSession = session;
+      final snapshot = await session.completeOperit1();
       if (!mounted) {
+        await session.discard();
         return;
       }
       setState(() {
         _operit1Snapshot = snapshot;
-        _operit1SnapshotBytes = picked.bytes;
-        _operit1SnapshotFileName = picked.name;
+        _operit1SnapshotSession = session;
+        _operit1SnapshotFileName = file.name;
       });
     } catch (error) {
+      final session = stagedSession;
+      if (session != null) {
+        await session.discard();
+      }
       if (!mounted) {
         return;
       }
@@ -1012,22 +1026,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     }
   }
 
-  Future<_PickedOperit1SnapshotFile?> _pickOperit1SnapshotFile() async {
-    final file = await openFile(
-      acceptedTypeGroups: const <XTypeGroup>[_operit1SnapshotFileTypeGroup],
-    );
-    if (file == null) {
-      return null;
-    }
-    return _PickedOperit1SnapshotFile(
-      bytes: await file.readAsBytes(),
-      name: file.name,
-    );
-  }
-
   Future<void> _saveOperit1Import() async {
-    final bytes = _operit1SnapshotBytes;
-    if (bytes == null || bytes.isEmpty) {
+    final session = _operit1SnapshotSession;
+    if (session == null) {
       setState(() {
         _setupError = '请选择 Operit1 快照文件';
       });
@@ -1040,7 +1041,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     });
     try {
       _subscribeOperit1ImportProgress();
-      await widget.clients.application.importOperit1Snapshot(bytes: bytes);
+      await session.commitOperit1();
+      await session.discard();
       await widget.onComplete();
     } catch (error) {
       if (!mounted) {
@@ -3267,11 +3269,4 @@ String _requirementButtonLabel(_OnboardingRequirement requirement) {
     return '无需操作';
   }
   return '去授权';
-}
-
-class _PickedOperit1SnapshotFile {
-  const _PickedOperit1SnapshotFile({required this.bytes, required this.name});
-
-  final Uint8List bytes;
-  final String name;
 }

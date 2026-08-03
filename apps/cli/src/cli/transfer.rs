@@ -2,9 +2,14 @@ use std::fs;
 use std::path::Path;
 
 use operit_model::ImportStrategy;
+use operit_runtime::services::ArchiveTransferManager::StagedArchive;
+use operit_util::stream::ReverseStream::ReverseStream;
+use tokio::io::AsyncReadExt;
 
 use super::*;
 use crate::core_proxy::CliCore;
+
+const SNAPSHOT_IMPORT_CHUNK_BYTES: usize = 64 * 1024;
 
 pub(super) async fn run_export_command(core: &mut CliCore, args: &[String]) -> Result<(), String> {
     if args.is_empty() {
@@ -108,12 +113,13 @@ pub(super) async fn run_backup_command(core: &mut CliCore, args: &[String]) -> R
             let path = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 backup inspect <snapshot-zip-path>".to_string())?;
-            let bytes = fs::read(path).map_err(|error| error.to_string())?;
-            let manifest = core
-                .application()
-                .inspectRawSnapshot(bytes)
+            let archive = stageArchiveUpload(core, path).await?;
+            let result = core
+                .services_snapshot_import_manager()
+                .inspectRawSnapshot(archive.clone())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| error.to_string());
+            let manifest = finishStagedArchive(core, &archive, result).await?;
             println!("formatVersion={}", manifest.formatVersion);
             println!("createdAt={}", manifest.createdAt);
             println!("fileCount={}", manifest.includes.len());
@@ -126,12 +132,13 @@ pub(super) async fn run_backup_command(core: &mut CliCore, args: &[String]) -> R
             let path = args.get(1).ok_or_else(|| {
                 "usage: operit2 backup inspect-operit1-snapshot <snapshot-zip-path>".to_string()
             })?;
-            let bytes = fs::read(path).map_err(|error| error.to_string())?;
-            let preview = core
-                .application()
-                .inspectOperit1Snapshot(bytes)
+            let archive = stageArchiveUpload(core, path).await?;
+            let result = core
+                .services_snapshot_import_manager()
+                .inspectOperit1Snapshot(archive.clone())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| error.to_string());
+            let preview = finishStagedArchive(core, &archive, result).await?;
             println!("formatVersion={}", preview.formatVersion);
             println!("packageName={}", preview.packageName);
             println!("createdAt={}", preview.createdAt);
@@ -198,7 +205,7 @@ pub(super) async fn run_backup_command(core: &mut CliCore, args: &[String]) -> R
 async fn export_snapshot(core: &mut CliCore, path: Option<&String>) -> Result<(), String> {
     let path = path.ok_or_else(|| "usage: operit2 export snapshot <path>".to_string())?;
     let bytes = core
-        .application()
+        .services_snapshot_import_manager()
         .exportRawSnapshot()
         .await
         .map_err(|error| error.to_string())?;
@@ -210,11 +217,19 @@ async fn export_snapshot(core: &mut CliCore, path: Option<&String>) -> Result<()
 
 async fn import_snapshot(core: &mut CliCore, path: Option<&String>) -> Result<(), String> {
     let path = path.ok_or_else(|| "usage: operit2 import snapshot <path>".to_string())?;
-    let bytes = fs::read(path).map_err(|error| error.to_string())?;
-    core.application()
-        .importRawSnapshot(bytes)
-        .await
-        .map_err(|error| error.to_string())?;
+    let archive = stageArchiveUpload(core, path).await?;
+    let result = async {
+        core.services_snapshot_import_manager()
+            .inspectRawSnapshot(archive.clone())
+            .await
+            .map_err(|error| error.to_string())?;
+        core.services_snapshot_import_manager()
+            .restoreRawSnapshot(archive.clone())
+            .await
+            .map_err(|error| error.to_string())
+    }
+    .await;
+    finishStagedArchive(core, &archive, result).await?;
     println!("imported={}", Path::new(path).display());
     Ok(())
 }
@@ -222,12 +237,19 @@ async fn import_snapshot(core: &mut CliCore, path: Option<&String>) -> Result<()
 async fn import_operit1_snapshot(core: &mut CliCore, path: Option<&String>) -> Result<(), String> {
     let path = path
         .ok_or_else(|| "usage: operit2 import operit1-snapshot <snapshot-zip-path>".to_string())?;
-    let bytes = fs::read(path).map_err(|error| error.to_string())?;
-    let result = core
-        .application()
-        .importOperit1Snapshot(bytes)
-        .await
-        .map_err(|error| error.to_string())?;
+    let archive = stageArchiveUpload(core, path).await?;
+    let importResult = async {
+        core.services_snapshot_import_manager()
+            .inspectOperit1Snapshot(archive.clone())
+            .await
+            .map_err(|error| error.to_string())?;
+        core.services_snapshot_import_manager()
+            .importOperit1Snapshot(archive.clone())
+            .await
+            .map_err(|error| error.to_string())
+    }
+    .await;
+    let result = finishStagedArchive(core, &archive, importResult).await?;
     println!("providerId={}", result.modelConfig.providerId);
     println!("providerTypeId={}", result.modelConfig.providerTypeId);
     println!("providerName={}", result.modelConfig.providerName);
@@ -257,6 +279,86 @@ async fn import_operit1_snapshot(core: &mut CliCore, path: Option<&String>) -> R
         );
     }
     Ok(())
+}
+
+/// Streams one local archive file through the generated reverse-stream API.
+async fn stageArchiveUpload(core: &mut CliCore, path: &str) -> Result<StagedArchive, String> {
+    let byteLength = i64::try_from(fs::metadata(path).map_err(|error| error.to_string())?.len())
+        .map_err(|_| format!("archive is too large: {}", Path::new(path).display()))?;
+    let archiveId = core
+        .services_archive_transfer_manager()
+        .beginArchiveUpload(byteLength)
+        .await
+        .map_err(|error| error.to_string())?;
+    let (mut sender, bytes) = ReverseStream::channel();
+    let uploadPath = path.to_string();
+    let producer = tokio::spawn(async move {
+        let mut file = tokio::fs::File::open(&uploadPath)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut buffer = vec![0u8; SNAPSHOT_IMPORT_CHUNK_BYTES];
+        loop {
+            let read = file
+                .read(&mut buffer)
+                .await
+                .map_err(|error| error.to_string())?;
+            if read == 0 {
+                break;
+            }
+            sender.send(buffer[..read].to_vec()).await?;
+        }
+        sender.close();
+        Ok::<(), String>(())
+    });
+    let result = async {
+        core.services_archive_transfer_manager()
+            .writeArchiveUpload(archiveId.clone(), bytes)
+            .await
+            .map_err(|error| error.to_string())?;
+        producer
+            .await
+            .map_err(|error| format!("archive upload producer failed: {error}"))??;
+        core.services_archive_transfer_manager()
+            .completeArchiveUpload(archiveId.clone(), byteLength)
+            .await
+            .map_err(|error| error.to_string())
+    }
+    .await;
+    match result {
+        Ok(archive) => Ok(archive),
+        Err(error) => {
+            let mut messages = vec![error];
+            if let Err(discardError) = core
+                .services_archive_transfer_manager()
+                .discardArchiveUpload(archiveId)
+                .await
+            {
+                messages.push(format!("failed to discard archive upload: {discardError}"));
+            }
+            Err(messages.join("; "))
+        }
+    }
+}
+
+/// Discards one staged archive after its terminal consumer operation completes or fails.
+async fn finishStagedArchive<T>(
+    core: &mut CliCore,
+    archive: &StagedArchive,
+    result: Result<T, String>,
+) -> Result<T, String> {
+    let discardResult = core
+        .services_archive_transfer_manager()
+        .discardArchiveUpload(archive.archiveId.clone())
+        .await
+        .map_err(|error| error.to_string());
+    match (result, discardResult) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(discardError)) => Err(format!("failed to discard staged archive: {discardError}")),
+        (Err(operationError), Ok(())) => Err(operationError),
+        (Err(operationError), Err(discardError)) => Err(format!(
+            "{operationError}; failed to discard staged archive: {discardError}"
+        )),
+    }
 }
 
 fn memory_owner_key_arg_for_transfer(value: Option<&String>) -> Result<String, String> {

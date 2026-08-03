@@ -41,6 +41,13 @@ pub fn createRuntimeHostManager(
     workspaceRoot: PathBuf,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
 ) -> HostManager {
+    let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
+        runtimeRoot.clone(),
+    ));
+    let runtimeStorageWriteHost = Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
+        runtimeRoot.clone(),
+        workspaceRoot.clone(),
+    ));
     let runtimeStorageHost = Arc::new(LinuxRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
@@ -54,6 +61,8 @@ pub fn createRuntimeHostManager(
         runtimeSqliteHost,
     )
     .withHostSecretStore(hostSecretStore)
+    .withArchiveStagingHost(archiveStagingHost)
+    .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withAudioPlaybackHost(Arc::new(LinuxAudioPlaybackHost::new()))
     .withBluetoothHost(Arc::new(LinuxBluetoothHost::new()))
     .withTtsSynthesisHost(Arc::new(LinuxTtsSynthesisHost::new()))

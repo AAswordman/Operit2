@@ -36,7 +36,8 @@ use operit_host_api::HostManager::HostManager;
 use operit_host_api::RuntimeStorageHost;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
-    CoreLinkError, CoreLinkSharedClient, CorePushItem, CorePushRequest, CoreWatchRequest,
+    CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CorePushItem, CorePushRequest,
+    CoreWatchRequest,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use operit_link_access::{
@@ -107,8 +108,7 @@ use operit_host_ios_native::{
     IosHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
     IosHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
     IosHttpHost as NativeHttpHost, IosLocalInferenceHost as NativeLocalInferenceHost,
-    IosManagedRuntimeHost as NativeManagedRuntimeHost, IosMusicCommand as NativeMusicCommand,
-    IosRuntimeStorageHost as NativeRuntimeStorageHost,
+    IosMusicCommand as NativeMusicCommand, IosRuntimeStorageHost as NativeRuntimeStorageHost,
     IosSystemOperationHost as NativeSystemOperationHost, IosTerminalHost as NativeTerminalHost,
     IosTtsPlaybackHost as NativeTtsPlaybackHost, IosTtsSynthesisHost as NativeTtsSynthesisHost,
 };
@@ -523,6 +523,14 @@ impl CoreLinkClient for SharedFlutterCoreClient {
 
     async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         CoreLinkSharedClient::watch(self.proxyCore.as_ref(), request).await
+    }
+
+    #[allow(non_snake_case)]
+    async fn openPush(
+        &mut self,
+        request: CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        Ok(Box::new(self.proxyCore.openReverseStream(request)?))
     }
 }
 

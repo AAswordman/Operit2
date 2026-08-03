@@ -239,6 +239,13 @@ impl RuntimePackageManager {
     }
 
     #[allow(non_snake_case)]
+    /// Acquires one explicit owner lease for a ToolPkg execution engine.
+    pub fn acquireToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) {
+        self.toolPkgManager()
+            .acquireToolPkgExecutionEngine(contextKey, containerPackageName);
+    }
+
+    #[allow(non_snake_case)]
     /// Returns the ToolPkg execution engine for one explicitly owned context.
     pub fn getToolPkgExecutionEngine(
         &self,

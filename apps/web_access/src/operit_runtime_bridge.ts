@@ -118,6 +118,7 @@ interface LinkPushOpenRequest {
   requestId: DynamicValue;
   targetPath: { segments: DynamicValue };
   methodName: DynamicValue;
+  args: DynamicValue;
 }
 
 interface PairStartResponse {
@@ -466,7 +467,10 @@ interface ManagedRuntimeProcess {
 
 interface RuntimeGlobals {
   __OPERIT_MODEL_INSTALL_WORKER__?: boolean;
+  __OPERIT_RUNTIME_WORKER__?: boolean;
   __operitRuntime?: RuntimeBridge;
+  __operitRuntimeWorkerEnsureStorage?: () => Promise<void>;
+  __operitRuntimeWorkerStorage?: RuntimeWorkerStorageBridge;
   __operitModelInstallWorkerStorageChanges?: () => Promise<ModelInstallWorkerStorageChange[]>;
   __operitModelInstallWorkerSetSecrets?: (secrets: ModelInstallWorkerSecret[]) => void;
   __operitModelInstallWorkerSetDownloads?: (downloads: ModelInstallWorkerDownload[]) => void;
@@ -484,6 +488,66 @@ interface RuntimeGlobals {
     pause(url: string): void;
     delete(url: string): Promise<void>;
   };
+}
+
+interface RuntimeWorkerStorageBridge {
+  read(prefix: string, path: string): Uint8Array;
+  readRange(prefix: string, path: string, offset: number, length: number): Uint8Array;
+  write(prefix: string, path: string, content: Uint8Array): void;
+  hasFile(prefix: string, path: string): boolean;
+  exists(prefix: string, path: string): boolean;
+  delete(prefix: string, path: string, recursive: boolean): void;
+  list(prefix: string, path: string): FileStorageEntry[];
+  createWriteSession(path: string): string;
+  writeSessionChunk(sessionId: string, content: Uint8Array): void;
+  commitWriteSession(sessionId: string): void;
+  discardWriteSession(sessionId: string): void;
+}
+
+interface RuntimeWorkerCoreRequest {
+  type: "coreRequest";
+  id: number;
+  operation: "call" | "pushOpen" | "pushItem" | "pushClose" | "watchSnapshot" | "watchStream" | "closeWatchStream";
+  payload: Uint8Array | string;
+}
+
+interface RuntimeWorkerCoreResult {
+  type: "coreResult";
+  id: number;
+  response: Uint8Array;
+}
+
+interface RuntimeWorkerCoreError {
+  type: "coreError";
+  id: number;
+  message: string;
+}
+
+interface RuntimeWorkerWatchEvent {
+  type: "coreWatchEvent";
+  id: number;
+  event: Uint8Array;
+}
+
+interface RuntimeWorkerHostCall {
+  type: "hostCall";
+  id: number;
+  module: string;
+  method: string;
+  args: unknown[];
+  control: SharedArrayBuffer;
+}
+
+interface RuntimeWorkerHostPayload {
+  type: "hostPayload";
+  id: number;
+  payload: SharedArrayBuffer;
+  control: SharedArrayBuffer;
+}
+
+interface RuntimeWorkerPendingRequest {
+  resolve(response: Uint8Array): void;
+  reject(error: Error): void;
 }
 
 interface ModelInstallWorkerStorageChange {
@@ -1115,6 +1179,7 @@ interface ModelInstallWorkerError {
         requestId: tuple[0],
         targetPath: { segments: tuple[1] },
         methodName: tuple[2],
+        args: tuple[3],
       };
     }
 
@@ -1295,6 +1360,16 @@ interface ModelInstallWorkerError {
     return runtimeGlobal.__OPERIT_MODEL_INSTALL_WORKER__ === true;
   }
 
+  /** Returns whether this bridge is executing in the dedicated local runtime worker. */
+  function isRuntimeWorker(): boolean {
+    return runtimeGlobal.__OPERIT_RUNTIME_WORKER__ === true;
+  }
+
+  /** Returns whether this bridge owns the browser UI thread and its DOM-bound hosts. */
+  function isMainRuntimeHost(): boolean {
+    return !isModelInstallWorker() && !isRuntimeWorker();
+  }
+
   function bytesToBase64(bytes: Uint8Array): string {
     let binary = "";
     for (const byte of bytes) {
@@ -1400,6 +1475,14 @@ interface ModelInstallWorkerError {
 
   // Loads the persisted storage entries into the synchronous memory view.
   async function ensureBrowserStorage(): Promise<void> {
+    if (isRuntimeWorker()) {
+      const initialize = runtimeGlobal.__operitRuntimeWorkerEnsureStorage;
+      if (initialize === undefined) {
+        throw new Error("runtime worker OPFS storage is not installed");
+      }
+      await initialize();
+      return;
+    }
     if (!storageReadyPromise) {
       storageReadyPromise = (async () => {
         const database = await openStorageDatabase();
@@ -1679,10 +1762,40 @@ interface ModelInstallWorkerError {
   }
 
   function storageRead(prefix: string, path: string): Uint8Array {
+    if (isRuntimeWorker()) {
+      const storage = runtimeGlobal.__operitRuntimeWorkerStorage;
+      if (storage === undefined) {
+        throw new Error("runtime worker OPFS storage is not installed");
+      }
+      const address = workerStorageAddress(prefix, path);
+      return storage.read(address.prefix, address.path);
+    }
     return storageCache.get(key(prefix, path)) || new Uint8Array();
   }
 
+  /** Reads one bounded range from worker-owned runtime storage. */
+  function storageReadRange(prefix: string, path: string, offset: number, length: number): Uint8Array {
+    if (!isRuntimeWorker()) {
+      throw new Error("bounded runtime storage reads are owned by the runtime worker");
+    }
+    const storage = runtimeGlobal.__operitRuntimeWorkerStorage;
+    if (storage === undefined) {
+      throw new Error("runtime worker OPFS storage is not installed");
+    }
+    const address = workerStorageAddress(prefix, path);
+    return storage.readRange(address.prefix, address.path, offset, length);
+  }
+
   function storageWrite(prefix: string, path: string, content: Uint8Array | ArrayBuffer): void {
+    if (isRuntimeWorker()) {
+      const storage = runtimeGlobal.__operitRuntimeWorkerStorage;
+      if (storage === undefined) {
+        throw new Error("runtime worker OPFS storage is not installed");
+      }
+      const address = workerStorageAddress(prefix, path);
+      storage.write(address.prefix, address.path, new Uint8Array(content));
+      return;
+    }
     const itemKey = key(prefix, path);
     const bytes = new Uint8Array(content);
     storageCache.set(itemKey, bytes);
@@ -1693,7 +1806,28 @@ interface ModelInstallWorkerError {
     }
   }
 
+  /** Reports whether one exact virtual storage path is a persisted file. */
+  function storageHasFile(prefix: string, path: string): boolean {
+    if (isRuntimeWorker()) {
+      const storage = runtimeGlobal.__operitRuntimeWorkerStorage;
+      if (storage === undefined) {
+        throw new Error("runtime worker OPFS storage is not installed");
+      }
+      const address = workerStorageAddress(prefix, path);
+      return storage.hasFile(address.prefix, address.path);
+    }
+    return storageCache.has(key(prefix, path));
+  }
+
   function storageExists(prefix: string, path: string): boolean {
+    if (isRuntimeWorker()) {
+      const storage = runtimeGlobal.__operitRuntimeWorkerStorage;
+      if (storage === undefined) {
+        throw new Error("runtime worker OPFS storage is not installed");
+      }
+      const address = workerStorageAddress(prefix, path);
+      return storage.exists(address.prefix, address.path);
+    }
     const exact = key(prefix, path);
     const directory = exact.endsWith("/") ? exact : exact + "/";
     if (storageCache.has(exact)) {
@@ -1708,6 +1842,15 @@ interface ModelInstallWorkerError {
   }
 
   function storageDelete(prefix: string, path: string, recursive: boolean): void {
+    if (isRuntimeWorker()) {
+      const storage = runtimeGlobal.__operitRuntimeWorkerStorage;
+      if (storage === undefined) {
+        throw new Error("runtime worker OPFS storage is not installed");
+      }
+      const address = workerStorageAddress(prefix, path);
+      storage.delete(address.prefix, address.path, recursive);
+      return;
+    }
     const exact = key(prefix, path);
     const directory = exact.endsWith("/") ? exact : exact + "/";
     storageCache.delete(exact);
@@ -1739,6 +1882,14 @@ interface ModelInstallWorkerError {
   }
 
   function storageList(prefix: string, path: string): FileStorageEntry[] {
+    if (isRuntimeWorker()) {
+      const storage = runtimeGlobal.__operitRuntimeWorkerStorage;
+      if (storage === undefined) {
+        throw new Error("runtime worker OPFS storage is not installed");
+      }
+      const address = workerStorageAddress(prefix, path);
+      return storage.list(address.prefix, address.path);
+    }
     const root = key(prefix, path);
     const directory = root.endsWith(".") || root.endsWith("/") ? root : root + "/";
     const entries: FileStorageEntry[] = [];
@@ -1756,6 +1907,19 @@ interface ModelInstallWorkerError {
     return entries;
   }
 
+  /** Maps runtime and workspace file-system paths onto canonical runtime OPFS storage. */
+  function workerStorageAddress(prefix: string, path: string): { prefix: string; path: string } {
+    if (prefix !== filePrefix) {
+      return { prefix, path };
+    }
+    const normalized = normalizeRuntimePath(path);
+    const root = normalized.split("/", 1)[0];
+    if (root === "runtime" || root === "workspaces" || root === "secure") {
+      return { prefix: runtimePrefix, path: normalized };
+    }
+    return { prefix, path: normalized };
+  }
+
   // Builds the canonical in-memory key for one browser-host directory.
   function fileDirectoryKey(path: string): string {
     const normalized = normalizeRuntimePath(path);
@@ -1767,6 +1931,9 @@ interface ModelInstallWorkerError {
     const directory = fileDirectoryKey(path);
     if (fileDirectories.has(directory)) {
       return true;
+    }
+    if (isRuntimeWorker()) {
+      return storageExists(filePrefix, path);
     }
     for (const itemKey of storageCache.keys()) {
       if (itemKey.startsWith(directory)) {
@@ -1809,17 +1976,33 @@ interface ModelInstallWorkerError {
       const name = separator < 0 ? relative : relative.slice(0, separator);
       entries.set(name, { path: name, isDirectory: true, size: 0 });
     }
-    for (const [itemKey, bytes] of storageCache.entries()) {
-      if (!itemKey.startsWith(directory)) {
-        continue;
+    if (isRuntimeWorker()) {
+      for (const entry of storageList(filePrefix, path)) {
+        const relative = entry.path.slice(normalizeRuntimePath(path).length).replace(/^\/+/, "");
+        const separator = relative.indexOf("/");
+        const name = separator < 0 ? relative : relative.slice(0, separator);
+        if (name.length === 0) {
+          continue;
+        }
+        entries.set(name, {
+          path: name,
+          isDirectory: separator >= 0,
+          size: separator < 0 ? entry.size : 0,
+        });
       }
-      const relative = itemKey.slice(directory.length);
-      const separator = relative.indexOf("/");
-      const name = separator < 0 ? relative : relative.slice(0, separator);
-      if (separator < 0) {
-        entries.set(name, { path: name, isDirectory: false, size: bytes.length });
-      } else {
-        entries.set(name, { path: name, isDirectory: true, size: 0 });
+    } else {
+      for (const [itemKey, bytes] of storageCache.entries()) {
+        if (!itemKey.startsWith(directory)) {
+          continue;
+        }
+        const relative = itemKey.slice(directory.length);
+        const separator = relative.indexOf("/");
+        const name = separator < 0 ? relative : relative.slice(0, separator);
+        if (separator < 0) {
+          entries.set(name, { path: name, isDirectory: false, size: bytes.length });
+        } else {
+          entries.set(name, { path: name, isDirectory: true, size: 0 });
+        }
       }
     }
     return Array.from(entries.values());
@@ -1841,7 +2024,7 @@ interface ModelInstallWorkerError {
 
   /** Loads one classic runtime script in the browser window or model installation worker. */
   async function loadScript(src: string): Promise<void> {
-    if (isModelInstallWorker()) {
+    if (isModelInstallWorker() || isRuntimeWorker()) {
       const response = await fetch(src);
       if (!response.ok) {
         throw new Error(`failed to load ${src}: HTTP ${response.status}`);
@@ -1891,11 +2074,11 @@ interface ModelInstallWorkerError {
   }
 
   function sqliteKey(path: string): string {
-    return key(sqlitePrefix, path);
+    return key(runtimePrefix, path);
   }
 
   function saveSqliteDatabase(connection: SqliteConnection): void {
-    storageWrite(sqlitePrefix, connection.path, connection.db.export());
+    storageWrite(runtimePrefix, connection.path, connection.db.export());
   }
 
   function sqliteConnection(id: string): SqliteConnection {
@@ -1985,12 +2168,14 @@ interface ModelInstallWorkerError {
     lastModified: string;
     rawStatOutput: string;
   } {
-    const exists = storageExists(filePrefix, path);
-    const bytes = exists ? storageRead(filePrefix, path) : new Uint8Array();
+    const isFile = storageHasFile(filePrefix, path);
+    const isDirectory = !isFile && fileDirectoryExists(path);
+    const exists = isFile || isDirectory;
+    const bytes = isFile ? storageRead(filePrefix, path) : new Uint8Array();
     return {
       path,
       exists,
-      fileType: exists ? "file" : "missing",
+      fileType: isFile ? "file" : isDirectory ? "directory" : "missing",
       size: bytes.length,
       permissions: "rw",
       owner: "web",
@@ -3819,6 +4004,9 @@ self.onmessage = (event) => {
       readBytes(path: string): Uint8Array {
         return storageRead(runtimePrefix, path);
       },
+      readBytesRange(path: string, offset: number, length: number): Uint8Array {
+        return storageReadRange(runtimePrefix, path, offset, length);
+      },
       writeBytes(path: string, content: Uint8Array): void {
         storageWrite(runtimePrefix, path, content);
       },
@@ -3867,10 +4055,10 @@ self.onmessage = (event) => {
           throw new Error("sqlite host is not initialized");
         }
         const id = `sqlite-${++sqliteConnectionIndex}`;
-        const bytes = storageCache.get(sqliteKey(path));
+        const bytes = storageRead(runtimePrefix, path);
         sqliteConnections.set(id, {
           path,
-          db: bytes === undefined ? new SQLite.Database() : new SQLite.Database(bytes),
+          db: bytes.byteLength === 0 ? new SQLite.Database() : new SQLite.Database(bytes),
         });
         return id;
       },
@@ -3960,13 +4148,12 @@ self.onmessage = (event) => {
         deleteFileDirectory(path, recursive);
       },
       fileExists(path: string) {
-        const itemKey = key(filePrefix, path);
-        const isDirectory = !storageCache.has(itemKey) && fileDirectoryExists(path);
-        const exists = storageCache.has(itemKey) || isDirectory;
+        const isFile = storageHasFile(filePrefix, path);
+        const isDirectory = !isFile && fileDirectoryExists(path);
         return {
-          exists,
+          exists: isFile || isDirectory,
           isDirectory,
-          size: storageCache.has(itemKey) ? storageRead(filePrefix, path).length : 0,
+          size: isFile ? storageRead(filePrefix, path).length : 0,
         };
       },
       moveFile(source: string, destination: string): void {
@@ -4315,7 +4502,7 @@ self.onmessage = (event) => {
   ): Promise<RuntimeBridge> {
     await ensureBrowserStorage();
     await ensureSqlite();
-    if (!isModelInstallWorker()) {
+    if (isMainRuntimeHost()) {
       await ensureWebLocalInference();
     }
     const wasm = await module.default({ module_or_path: "./operit_flutter_bridge_bg.wasm" });
@@ -4779,12 +4966,184 @@ self.onmessage = (event) => {
     return { handled: true, response: MessagePack.encode([0, null]) };
   }
 
+  /** Installs the main-thread proxy that owns one local runtime worker. */
+  function installRuntimeWorkerProxy(): void {
+    const worker = new Worker(new URL("./operit_runtime_worker.js", import.meta.url), {
+      type: "module",
+    });
+    let nextRequestId = 0;
+    const pendingRequests = new Map<number, RuntimeWorkerPendingRequest>();
+    const watchCallbacks = new Map<number, (event: Uint8Array) => void>();
+    const watchSubscriptions = new Map<string, number>();
+    const hostPayloads = new Map<number, Uint8Array>();
+
+    worker.addEventListener("message", event => {
+      const message = event.data as {
+        type?: string;
+        id?: number;
+        response?: unknown;
+        message?: unknown;
+        event?: unknown;
+      };
+      if (message.type === "coreResult" && typeof message.id === "number" && message.response instanceof Uint8Array) {
+        const pending = pendingRequests.get(message.id);
+        if (pending !== undefined) {
+          pendingRequests.delete(message.id);
+          pending.resolve(Uint8Array.from(message.response));
+        }
+        return;
+      }
+      if (message.type === "coreError" && typeof message.id === "number") {
+        const pending = pendingRequests.get(message.id);
+        if (pending !== undefined) {
+          pendingRequests.delete(message.id);
+          watchCallbacks.delete(message.id);
+          pending.reject(new Error(String(message.message)));
+        }
+        return;
+      }
+      if (message.type === "coreWatchEvent" && typeof message.id === "number" && message.event instanceof Uint8Array) {
+        watchCallbacks.get(message.id)?.(Uint8Array.from(message.event));
+        return;
+      }
+      if (message.type === "hostCall") {
+        void handleRuntimeWorkerHostCall(message as RuntimeWorkerHostCall, hostPayloads);
+        return;
+      }
+      if (message.type === "hostPayload") {
+        handleRuntimeWorkerHostPayload(message as RuntimeWorkerHostPayload, hostPayloads);
+      }
+    });
+
+    /** Sends one Core command to the local runtime worker and retains its request identity. */
+    function request(
+      operation: RuntimeWorkerCoreRequest["operation"],
+      payload: Uint8Array | string,
+      onWatchEvent?: (event: Uint8Array) => void,
+    ): Promise<{ id: number; response: Uint8Array }> {
+      const id = ++nextRequestId;
+      const response = new Promise<Uint8Array>((resolve, reject) => {
+        pendingRequests.set(id, { resolve, reject });
+      });
+      if (onWatchEvent !== undefined) {
+        watchCallbacks.set(id, onWatchEvent);
+      }
+      const message: RuntimeWorkerCoreRequest = { type: "coreRequest", id, operation, payload };
+      worker.postMessage(message);
+      return response.then(value => ({ id, response: value }));
+    }
+
+    /** Removes a callback after a watch stream has been explicitly closed. */
+    function forgetWatchSubscription(subscriptionId: string): void {
+      const requestId = watchSubscriptions.get(subscriptionId);
+      if (requestId !== undefined) {
+        watchSubscriptions.delete(subscriptionId);
+        watchCallbacks.delete(requestId);
+      }
+    }
+
+    runtimeGlobal.__operitRuntime = {
+      async call(requestBytes: Uint8Array): Promise<Uint8Array> {
+        return (await request("call", requestBytes)).response;
+      },
+      async pushOpen(requestBytes: Uint8Array): Promise<Uint8Array> {
+        return (await request("pushOpen", requestBytes)).response;
+      },
+      async pushItem(item: Uint8Array): Promise<Uint8Array> {
+        return (await request("pushItem", item)).response;
+      },
+      async pushClose(pushId: string): Promise<Uint8Array> {
+        return (await request("pushClose", pushId)).response;
+      },
+      async watchSnapshot(requestBytes: Uint8Array): Promise<Uint8Array> {
+        return (await request("watchSnapshot", requestBytes)).response;
+      },
+      async watchStream(
+        requestBytes: Uint8Array,
+        onEvent: (event: Uint8Array) => void,
+      ): Promise<Uint8Array> {
+        const result = await request("watchStream", requestBytes, onEvent);
+        const decoded = MessagePack.decode(result.response);
+        if (Array.isArray(decoded) && decoded.length === 2 && decoded[0] === 0 && typeof decoded[1] === "string") {
+          watchSubscriptions.set(decoded[1], result.id);
+        }
+        return result.response;
+      },
+      async closeWatchStream(subscriptionId: string): Promise<Uint8Array> {
+        const response = (await request("closeWatchStream", subscriptionId)).response;
+        forgetWatchSubscription(subscriptionId);
+        return response;
+      },
+    };
+  }
+
+  /** Executes one synchronous host method requested by the dedicated runtime worker. */
+  async function handleRuntimeWorkerHostCall(
+    message: RuntimeWorkerHostCall,
+    hostPayloads: Map<number, Uint8Array>,
+  ): Promise<void> {
+    let encoded: Uint8Array;
+    try {
+      const host = runtimeGlobal.__operitHost as Record<string, Record<string, unknown>> | undefined;
+      const module = host?.[message.module];
+      const method = module?.[message.method];
+      if (typeof method !== "function") {
+        throw new Error(`web host method is not available: ${message.module}.${message.method}`);
+      }
+      const value = method.apply(module, message.args);
+      if (value instanceof Promise) {
+        throw new Error(`web host method returned an asynchronous Promise: ${message.module}.${message.method}`);
+      }
+      encoded = MessagePack.encode([0, value === undefined ? null : value]);
+    } catch (error) {
+      encoded = MessagePack.encode([1, runtimeWorkerErrorMessage(error)]);
+    }
+    if (encoded.byteLength <= 0 || encoded.byteLength > 0x7fffffff) {
+      throw new Error("web host response is outside the synchronous worker limit");
+    }
+    hostPayloads.set(message.id, encoded);
+    const control = new Int32Array(message.control);
+    Atomics.store(control, 1, encoded.byteLength);
+    Atomics.store(control, 0, 1);
+    Atomics.notify(control, 0);
+  }
+
+  /** Copies one prepared host response into the worker-provided shared buffer. */
+  function handleRuntimeWorkerHostPayload(
+    message: RuntimeWorkerHostPayload,
+    hostPayloads: Map<number, Uint8Array>,
+  ): void {
+    const encoded = hostPayloads.get(message.id);
+    if (encoded === undefined) {
+      throw new Error("web host response payload is no longer available");
+    }
+    const payload = new Uint8Array(message.payload);
+    if (payload.byteLength !== encoded.byteLength) {
+      throw new Error("web host response payload length does not match metadata");
+    }
+    payload.set(encoded);
+    hostPayloads.delete(message.id);
+    const control = new Int32Array(message.control);
+    Atomics.store(control, 0, 2);
+    Atomics.notify(control, 0);
+  }
+
+  /** Converts one local runtime worker exception into a stable host error message. */
+  function runtimeWorkerErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  if (isMainRuntimeHost()) {
+    installRuntimeWorkerProxy();
+    return;
+  }
+
   runtimeGlobal.__operitRuntime = {
     async call(request: Uint8Array): Promise<Uint8Array> {
-      if (!isModelInstallWorker() && isLocalModelInstallRequest(request)) {
+      if (isMainRuntimeHost() && isLocalModelInstallRequest(request)) {
         return installLocalModelInWorker(request);
       }
-      if (!isModelInstallWorker()) {
+      if (isMainRuntimeHost()) {
         const downloadCall = await handleLocalModelDownloadCall(request);
         if (downloadCall.handled) {
           return downloadCall.response;

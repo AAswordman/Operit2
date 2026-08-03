@@ -10,6 +10,7 @@ use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
+use operit_model::MessagePart::MessagePartKind;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_providers::chat::llmprovider::AIService::{AiServiceError, SharedAiResponseStream};
@@ -369,7 +370,7 @@ impl AIMessageManager {
             .iter()
             .rposition(|message| message.sender == "summary");
         let previousSummary = lastSummaryIndex.and_then(|index| {
-            let content = messages[index].content.trim().to_string();
+            let content = messages[index].displayText().trim().to_string();
             if content.is_empty() {
                 None
             } else {
@@ -470,7 +471,11 @@ impl AIMessageManager {
 
         Ok(Some(ChatMessage {
             sender: "summary".to_string(),
-            content: finalSummary,
+            parts: vec![operit_model::MessagePart::MessagePart::markdown(
+                "part-0".to_string(),
+                0,
+                finalSummary,
+            )],
             timestamp: ChatMessageTimestampAllocator::next(),
             roleName: "system".to_string(),
             ..ChatMessage::new("summary".to_string())
@@ -480,7 +485,7 @@ impl AIMessageManager {
     #[allow(non_snake_case)]
     pub async fn calculateStableContextWindow(
         request: StableContextWindowRequest<'_>,
-    ) -> Result<i32, operit_providers::chat::llmprovider::AIService::AiServiceError> {
+    ) -> Result<i64, operit_providers::chat::llmprovider::AIService::AiServiceError> {
         let memory = Self::getMemoryFromMessages(
             request.chatHistory,
             request.splitHistoryByRole,
@@ -510,7 +515,7 @@ impl AIMessageManager {
     #[allow(non_snake_case)]
     pub fn shouldGenerateSummary(
         messages: Vec<ChatMessage>,
-        currentTokens: i32,
+        currentTokens: i64,
         maxTokens: i32,
         tokenUsageThreshold: f64,
         enableSummary: bool,
@@ -521,7 +526,7 @@ impl AIMessageManager {
             return false;
         }
         if maxTokens > 0 {
-            let usageRatio = currentTokens as f64 / maxTokens as f64;
+            let usageRatio = currentTokens as f64 / f64::from(maxTokens);
             if usageRatio >= tokenUsageThreshold {
                 return true;
             }
@@ -574,7 +579,7 @@ impl AIMessageManager {
                 )),
                 "summary" => Some(PromptTurn::new(
                     PromptTurnKind::SUMMARY,
-                    message.content.clone(),
+                    message.displayText(),
                 )),
                 _ => None,
             })
@@ -590,7 +595,7 @@ impl AIMessageManager {
         if !isRoleScopedMode {
             return Some(PromptTurn::new(
                 PromptTurnKind::ASSISTANT,
-                message.content.clone(),
+                message.assistantProtocolMarkup(),
             ));
         }
 
@@ -598,11 +603,16 @@ impl AIMessageManager {
         if messageRoleName == targetRoleName {
             return Some(PromptTurn::new(
                 PromptTurnKind::ASSISTANT,
-                message.content.clone(),
+                message.assistantProtocolMarkup(),
             ));
         }
 
-        let cleanedContent = remove_status_tags(&remove_thinking_content(&message.content));
+        let cleanedContent = message
+            .parts
+            .iter()
+            .filter(|part| part.kind == MessagePartKind::Markdown)
+            .map(|part| part.content.as_str())
+            .collect::<String>();
         if cleanedContent.trim().is_empty() {
             return None;
         }
@@ -624,7 +634,7 @@ impl AIMessageManager {
         isRoleScopedMode: bool,
         groupOrchestrationMode: bool,
     ) -> PromptTurn {
-        let baseContent = message.content.clone();
+        let baseContent = message.displayText();
         if groupOrchestrationMode && isRoleScopedMode {
             let trimmed = baseContent.trim();
             if trimmed.is_empty() {
@@ -639,7 +649,7 @@ impl AIMessageManager {
     }
 
     fn buildReplyTag(message: &ChatMessage) -> String {
-        let cleanContent = strip_xml_tags(&message.content).trim().to_string();
+        let cleanContent = strip_xml_tags(&message.displayText()).trim().to_string();
         let clipped = if cleanContent.chars().count() > 100 {
             let mut text = cleanContent.chars().take(100).collect::<String>();
             text.push_str("...");
@@ -953,7 +963,12 @@ fn remove_status_tags(input: &str) -> String {
 
 #[allow(non_snake_case)]
 fn cleanSummarySourceMessage(message: &ChatMessage) -> String {
-    let mut cleaned = strip_tag_blocks(&message.content, "memory");
+    let source = if message.sender == "ai" {
+        message.assistantProtocolMarkup()
+    } else {
+        message.displayText()
+    };
+    let mut cleaned = strip_tag_blocks(&source, "memory");
     if message.sender == "ai" {
         cleaned = remove_thinking_content(&cleaned);
     }

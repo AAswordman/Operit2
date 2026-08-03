@@ -8,3 +8,4 @@ publish = false
 [dependencies]
 operit-host-api = { path = "../../../core/crates/operit-host-api" }
 rusqlite = { version = "0.31", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }

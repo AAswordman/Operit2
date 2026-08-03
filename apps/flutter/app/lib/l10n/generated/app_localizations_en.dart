@@ -2257,6 +2257,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsAppearanceInputFloating => 'Floating input';
 
   @override
+  String get settingsAppearanceLongPastedTextAsAttachment =>
+      'Convert long pasted text to a file';
+
+  @override
+  String get settingsAppearanceLongPastedTextThreshold =>
+      'Conversion threshold';
+
+  @override
+  String settingsAppearanceLongPastedTextThresholdValue(int count) {
+    return '$count characters';
+  }
+
+  @override
   String get settingsAppearanceColorSection => 'Theme color';
 
   @override

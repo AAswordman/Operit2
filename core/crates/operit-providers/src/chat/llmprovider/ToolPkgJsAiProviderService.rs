@@ -32,9 +32,9 @@ pub struct ToolPkgJsAiProviderService {
 
 #[derive(Clone, Debug, Default)]
 struct ToolPkgProviderTokenCounts {
-    input: i32,
-    cachedInput: i32,
-    output: i32,
+    input: i64,
+    cachedInput: i64,
+    output: i64,
 }
 
 impl ToolPkgJsAiProviderService {
@@ -174,18 +174,18 @@ impl ToolPkgJsAiProviderService {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for ToolPkgJsAiProviderService {
-    fn input_token_count(&self) -> i32 {
+    fn input_token_count(&self) -> i64 {
         self.tokenCounts.lock().expect("token mutex poisoned").input
     }
 
-    fn cached_input_token_count(&self) -> i32 {
+    fn cached_input_token_count(&self) -> i64 {
         self.tokenCounts
             .lock()
             .expect("token mutex poisoned")
             .cachedInput
     }
 
-    fn output_token_count(&self) -> i32 {
+    fn output_token_count(&self) -> i64 {
         self.tokenCounts
             .lock()
             .expect("token mutex poisoned")
@@ -339,7 +339,7 @@ impl AIService for ToolPkgJsAiProviderService {
         &self,
         chat_history: &[PromptTurn],
         available_tools: &[ToolPrompt],
-    ) -> Result<i32, AiServiceError> {
+    ) -> Result<i64, AiServiceError> {
         let mut payload = self.buildBasePayload();
         if let Value::Object(object) = &mut payload {
             object.insert(
@@ -471,21 +471,17 @@ fn parseConnectionMessage(decoded: &Value) -> Result<String, AiServiceError> {
 }
 
 #[allow(non_snake_case)]
-fn parseTokenCount(decoded: &Value) -> Result<i32, AiServiceError> {
+fn parseTokenCount(decoded: &Value) -> Result<i64, AiServiceError> {
     match decoded {
-        Value::Number(value) => value
-            .as_i64()
-            .and_then(|value| i32::try_from(value).ok())
-            .ok_or_else(|| {
-                AiServiceError::TokenCalculationFailed("Invalid token count result".to_string())
-            }),
-        Value::String(value) => value.trim().parse::<i32>().map_err(|_| {
+        Value::Number(value) => value.as_i64().ok_or_else(|| {
+            AiServiceError::TokenCalculationFailed("Invalid token count result".to_string())
+        }),
+        Value::String(value) => value.trim().parse::<i64>().map_err(|_| {
             AiServiceError::TokenCalculationFailed(format!("Invalid token count result: {value}"))
         }),
         Value::Object(object) => ["tokens", "inputTokens", "count"]
             .iter()
             .find_map(|key| object.get(*key).and_then(Value::as_i64))
-            .and_then(|value| i32::try_from(value).ok())
             .ok_or_else(|| {
                 AiServiceError::TokenCalculationFailed("Invalid token count result".to_string())
             }),
@@ -497,9 +493,9 @@ fn parseTokenCount(decoded: &Value) -> Result<i32, AiServiceError> {
 
 #[derive(Clone, Debug)]
 struct TokenUsage {
-    input: i32,
-    cachedInput: i32,
-    output: i32,
+    input: i64,
+    cachedInput: i64,
+    output: i64,
 }
 
 #[allow(non_snake_case)]
@@ -511,10 +507,10 @@ fn extractUsage(decoded: &Value, current: &ToolPkgProviderTokenCounts) -> Option
         .get("usage")
         .and_then(Value::as_object)
         .unwrap_or(object);
-    let input = read_i32(source, "input").or_else(|| read_i32(source, "inputTokens"));
+    let input = read_i64(source, "input").or_else(|| read_i64(source, "inputTokens"));
     let cachedInput =
-        read_i32(source, "cachedInput").or_else(|| read_i32(source, "cachedInputTokens"));
-    let output = read_i32(source, "output").or_else(|| read_i32(source, "outputTokens"));
+        read_i64(source, "cachedInput").or_else(|| read_i64(source, "cachedInputTokens"));
+    let output = read_i64(source, "output").or_else(|| read_i64(source, "outputTokens"));
     if input.is_none() && cachedInput.is_none() && output.is_none() {
         return None;
     }
@@ -577,11 +573,8 @@ fn extractMessageChunks(decoded: &Value) -> Vec<String> {
     }
 }
 
-fn read_i32(object: &serde_json::Map<String, Value>, key: &str) -> Option<i32> {
-    object
-        .get(key)
-        .and_then(Value::as_i64)
-        .and_then(|value| i32::try_from(value).ok())
+fn read_i64(object: &serde_json::Map<String, Value>, key: &str) -> Option<i64> {
+    object.get(key).and_then(Value::as_i64)
 }
 
 #[allow(non_snake_case)]

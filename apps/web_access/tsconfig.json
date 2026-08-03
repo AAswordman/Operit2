@@ -13,6 +13,7 @@
   },
   "include": [
     "src/operit_runtime_bridge.ts",
+    "src/operit_runtime_worker.ts",
     "src/operit_model_install_worker.ts",
     "src/v86_runtime_worker.ts"
   ]

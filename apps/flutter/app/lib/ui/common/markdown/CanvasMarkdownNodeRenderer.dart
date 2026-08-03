@@ -20,6 +20,7 @@ class CanvasMarkdownNodeRenderer extends StatelessWidget {
   final bool isLastNode;
   final void Function(String url)? onLinkClick;
 
+  /// Builds one stable Markdown node without repainting preceding nodes.
   @override
   Widget build(BuildContext context) {
     return _MarkdownText(
@@ -431,7 +432,7 @@ class _MarkdownTextState extends State<_MarkdownText>
     flushCode();
     flushParagraph();
 
-    if (widget.isStreaming && !enableTypewriter) {
+    if (widget.isStreaming && widget.isLastNode && !enableTypewriter) {
       widgets.add(
         const Padding(
           padding: EdgeInsets.only(top: 2),

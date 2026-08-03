@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use crate::services::core::ChatHistoryDelegate::ChatSelectionMode;
-use crate::services::ChatServiceCore::ChatServiceCore;
+use crate::services::ChatServiceCore::{ChatServiceCore, PendingChatQueueStore};
 use operit_host_api::FileSystemHost;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::runtime_support::ProviderRuntimeContext;
@@ -19,6 +19,7 @@ struct ChatRuntimeDependencies {
 pub struct ChatRuntimeCoreFactory {
     fileSystemHost: Arc<dyn FileSystemHost>,
     runtimeDependencies: Option<ChatRuntimeDependencies>,
+    pendingQueueStore: Arc<PendingChatQueueStore>,
 }
 
 impl ChatRuntimeCoreFactory {
@@ -27,6 +28,7 @@ impl ChatRuntimeCoreFactory {
         Self {
             fileSystemHost,
             runtimeDependencies: None,
+            pendingQueueStore: Arc::new(PendingChatQueueStore::new()),
         }
     }
 
@@ -42,12 +44,13 @@ impl ChatRuntimeCoreFactory {
                 toolHandler,
                 providerRuntimeContext,
             }),
+            pendingQueueStore: Arc::new(PendingChatQueueStore::new()),
         }
     }
 
     /// Creates a chat service core configured for the requested slot.
     pub fn createCore(&self, slot: ChatRuntimeSlot) -> ChatServiceCore {
-        let mut core = ChatServiceCore::new(
+        let mut core = ChatServiceCore::newWithPendingQueueStore(
             match slot {
                 ChatRuntimeSlot::MAIN => ChatSelectionMode::FOLLOW_GLOBAL,
                 ChatRuntimeSlot::FLOATING | ChatRuntimeSlot::DETACHED(_) => {
@@ -55,6 +58,7 @@ impl ChatRuntimeCoreFactory {
                 }
             },
             self.fileSystemHost.clone(),
+            self.pendingQueueStore.clone(),
         );
         if let Some(runtimeDependencies) = &self.runtimeDependencies {
             core.enhancedAiService = Some(EnhancedAIService::new(

@@ -1,6 +1,6 @@
 use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
@@ -225,6 +225,16 @@ impl RuntimeStorageHost for LinuxRuntimeStorageHost {
 
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
         Ok(fs::read(self.resolve(path)?)?)
+    }
+
+    /// Reads one bounded byte range from Linux runtime storage.
+    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        let mut file = fs::File::open(self.resolve(path)?)?;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut bytes = vec![0; length];
+        let count = file.read(&mut bytes)?;
+        bytes.truncate(count);
+        Ok(bytes)
     }
 
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {

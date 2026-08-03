@@ -34,6 +34,7 @@ pub trait ToolPkgAssetSource: Send + Sync {
 struct ToolPkgExecutionEngineEntry {
     containerPackageName: String,
     engine: Arc<dyn JsExecutionEngine>,
+    activeLeases: usize,
 }
 
 /// Manages loaded ToolPkg runtimes, resources, listeners, and execution engines.
@@ -332,9 +333,46 @@ impl ToolPkgManager {
             ToolPkgExecutionEngineEntry {
                 containerPackageName: normalizedContainer.to_string(),
                 engine: engine.clone(),
+                activeLeases: 0,
             },
         );
         engine
+    }
+
+    /// Acquires one counted lease for a ToolPkg JavaScript execution context.
+    #[allow(non_snake_case)]
+    pub fn acquireToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) {
+        let normalizedKey = contextKey.trim();
+        let normalizedContainer = containerPackageName.trim();
+        assert!(
+            !normalizedKey.is_empty(),
+            "ToolPkg execution context key is required"
+        );
+        assert!(
+            !normalizedContainer.is_empty(),
+            "ToolPkg execution container is required"
+        );
+        let mut engines = self
+            .toolPkgExecutionEngines
+            .lock()
+            .expect("toolpkg execution engine mutex poisoned");
+        if let Some(entry) = engines.get_mut(normalizedKey) {
+            assert_eq!(
+                entry.containerPackageName, normalizedContainer,
+                "ToolPkg execution context belongs to a different container"
+            );
+            entry.activeLeases += 1;
+            return;
+        }
+        let engine = self.executionEngineFactory.createToolPkgExecutionEngine();
+        engines.insert(
+            normalizedKey.to_string(),
+            ToolPkgExecutionEngineEntry {
+                containerPackageName: normalizedContainer.to_string(),
+                engine,
+                activeLeases: 1,
+            },
+        );
     }
 
     /// Finds a cached ToolPkg execution engine without creating one.
@@ -361,7 +399,7 @@ impl ToolPkgManager {
         Some(entry.engine.clone())
     }
 
-    /// Releases a cached ToolPkg JavaScript execution engine.
+    /// Releases one counted lease for a ToolPkg JavaScript execution context.
     #[allow(non_snake_case)]
     pub fn releaseToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) {
         let normalizedKey = contextKey.trim();
@@ -374,13 +412,23 @@ impl ToolPkgManager {
                 .toolPkgExecutionEngines
                 .lock()
                 .expect("toolpkg execution engine mutex poisoned");
-            if let Some(entry) = engines.get(normalizedKey) {
-                assert_eq!(
-                    entry.containerPackageName, normalizedContainer,
-                    "ToolPkg execution context belongs to a different container"
-                );
+            let Some(entry) = engines.get_mut(normalizedKey) else {
+                return;
+            };
+            assert_eq!(
+                entry.containerPackageName, normalizedContainer,
+                "ToolPkg execution context belongs to a different container"
+            );
+            assert!(
+                entry.activeLeases > 0,
+                "ToolPkg execution context has no active lease"
+            );
+            entry.activeLeases -= 1;
+            if entry.activeLeases == 0 {
+                engines.remove(normalizedKey)
+            } else {
+                None
             }
-            engines.remove(normalizedKey)
         };
         if let Some(entry) = removed {
             entry.engine.destroy();
@@ -904,6 +952,38 @@ mod tests {
         let (manager, _) = recordingManager();
         manager.getToolPkgExecutionEngine("opaque-main-context", "package_a");
         manager.getToolPkgExecutionEngine("opaque-main-context", "package_b");
+    }
+
+    /// Verifies each acquired context lease keeps the engine alive until released.
+    #[test]
+    fn retainsExecutionEngineUntilEveryLeaseIsReleased() {
+        let (manager, factory) = recordingManager();
+        manager.acquireToolPkgExecutionEngine("shared-ui-context", "package_a");
+        manager.acquireToolPkgExecutionEngine("shared-ui-context", "package_a");
+
+        manager.releaseToolPkgExecutionEngine("shared-ui-context", "package_a");
+
+        let engines = factory
+            .engines
+            .lock()
+            .expect("recording engine factory mutex poisoned");
+        assert_eq!(engines.len(), 1);
+        assert!(!engines[0].destroyed.load(Ordering::Acquire));
+        drop(engines);
+        assert!(manager
+            .findToolPkgExecutionEngine("shared-ui-context", "package_a")
+            .is_some());
+
+        manager.releaseToolPkgExecutionEngine("shared-ui-context", "package_a");
+
+        let engines = factory
+            .engines
+            .lock()
+            .expect("recording engine factory mutex poisoned");
+        assert!(engines[0].destroyed.load(Ordering::Acquire));
+        assert!(manager
+            .findToolPkgExecutionEngine("shared-ui-context", "package_a")
+            .is_none());
     }
 
     /// Verifies container cleanup covers main, provider, and UI execution contexts.

@@ -32,9 +32,9 @@ pub struct OpenAIResponsesProvider {
 
 #[derive(Default)]
 struct OpenAIResponsesProviderState {
-    inputTokenCount: i32,
-    cachedInputTokenCount: i32,
-    outputTokenCount: i32,
+    inputTokenCount: i64,
+    cachedInputTokenCount: i64,
+    outputTokenCount: i64,
     cancelled: bool,
     activeParent: Option<OpenAIProvider>,
     activeParentGeneration: u64,
@@ -42,10 +42,10 @@ struct OpenAIResponsesProviderState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UsageCounts {
-    pub totalInputTokens: i32,
-    pub actualInputTokens: i32,
-    pub cachedInputTokens: i32,
-    pub outputTokens: i32,
+    pub totalInputTokens: i64,
+    pub actualInputTokens: i64,
+    pub cachedInputTokens: i64,
+    pub outputTokens: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -361,16 +361,16 @@ impl OpenAIResponsesPayloadAdapter {
 
     pub fn parse_usage_counts(usage: Option<&Value>) -> Option<UsageCounts> {
         let usage = usage?;
-        let totalInputTokens = opt_i32(usage, "prompt_tokens")
-            .unwrap_or_else(|| opt_i32(usage, "input_tokens").unwrap_or(0));
-        let outputTokens = opt_i32(usage, "completion_tokens")
-            .unwrap_or_else(|| opt_i32(usage, "output_tokens").unwrap_or(0));
+        let totalInputTokens = opt_i64(usage, "prompt_tokens")
+            .unwrap_or_else(|| opt_i64(usage, "input_tokens").unwrap_or(0));
+        let outputTokens = opt_i64(usage, "completion_tokens")
+            .unwrap_or_else(|| opt_i64(usage, "output_tokens").unwrap_or(0));
         let cachedDetails = usage
             .get("prompt_tokens_details")
             .or_else(|| usage.get("input_tokens_details"));
         let cachedInputTokens = cachedDetails
-            .and_then(|details| opt_i32(details, "cached_tokens"))
-            .unwrap_or_else(|| opt_i32(usage, "cached_tokens").unwrap_or(0));
+            .and_then(|details| opt_i64(details, "cached_tokens"))
+            .unwrap_or_else(|| opt_i64(usage, "cached_tokens").unwrap_or(0));
         let actualInputTokens = (totalInputTokens - cachedInputTokens).max(0);
 
         if totalInputTokens > 0 || outputTokens > 0 || cachedInputTokens > 0 {
@@ -712,21 +712,21 @@ impl OpenAIResponsesPayloadAdapter {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for OpenAIResponsesProvider {
-    fn input_token_count(&self) -> i32 {
+    fn input_token_count(&self) -> i64 {
         self.state
             .lock()
             .map(|state| state.inputTokenCount)
             .unwrap_or(0)
     }
 
-    fn cached_input_token_count(&self) -> i32 {
+    fn cached_input_token_count(&self) -> i64 {
         self.state
             .lock()
             .map(|state| state.cachedInputTokenCount)
             .unwrap_or(0)
     }
 
-    fn output_token_count(&self) -> i32 {
+    fn output_token_count(&self) -> i64 {
         self.state
             .lock()
             .map(|state| state.outputTokenCount)
@@ -858,9 +858,6 @@ impl AIService for OpenAIResponsesProvider {
     }
 }
 
-fn opt_i32(value: &Value, key: &str) -> Option<i32> {
-    value
-        .get(key)
-        .and_then(Value::as_i64)
-        .and_then(|number| i32::try_from(number).ok())
+fn opt_i64(value: &Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(Value::as_i64)
 }

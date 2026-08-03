@@ -85,6 +85,15 @@ class MainActivity : FlutterActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 
+    /** Delivers document-picker results to platform channels that own the selected content stream. */
+    @Deprecated("Deprecated in Android API 35")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (::runtimeRouter.isInitialized && runtimeRouter.onActivityResult(requestCode, resultCode, data)) {
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)

@@ -77,6 +77,7 @@ class AppearanceSettingsPanel extends StatelessWidget {
                 );
               },
             ),
+            const _LongPastedTextInputSettingsControl(),
           ],
         ),
         _SectionCard(
@@ -708,21 +709,16 @@ Future<Uint8List?> _showThemeImageCropDialog(
   required double aspectRatio,
 }) async {
   final sourceImage = await _decodeThemeImage(bytes);
-  try {
-    final result = await showDialog<Uint8List>(
-      // ignore: use_build_context_synchronously
-      context: context,
-      builder: (dialogContext) {
-        return _ThemeImageCropDialog(
-          sourceImage: sourceImage,
-          aspectRatio: aspectRatio,
-        );
-      },
-    );
-    return result;
-  } finally {
-    sourceImage.dispose();
-  }
+  return showDialog<Uint8List>(
+    // ignore: use_build_context_synchronously
+    context: context,
+    builder: (dialogContext) {
+      return _ThemeImageCropDialog(
+        sourceImage: sourceImage,
+        aspectRatio: aspectRatio,
+      );
+    },
+  );
 }
 
 /// Decodes selected image bytes for the crop editor.
@@ -764,6 +760,13 @@ class _ThemeImageCropDialogState extends State<_ThemeImageCropDialog> {
   double _zoom = 1;
   double _offsetX = 0;
   double _offsetY = 0;
+
+  /// Releases the decoded source image after the dialog is unmounted.
+  @override
+  void dispose() {
+    widget.sourceImage.dispose();
+    super.dispose();
+  }
 
   /// Builds the crop editor with cover preview controls.
   @override
@@ -1997,6 +2000,121 @@ class _InputStyleSelector extends StatelessWidget {
         selected: <String>{value},
         onSelectionChanged: (selection) => onChanged(selection.single),
       ),
+    );
+  }
+}
+
+class _LongPastedTextInputSettingsControl extends StatefulWidget {
+  /// Creates the controls for long pasted text conversion preferences.
+  const _LongPastedTextInputSettingsControl();
+
+  /// Creates the mutable state for the long-paste preference controls.
+  @override
+  State<_LongPastedTextInputSettingsControl> createState() =>
+      _LongPastedTextInputSettingsControlState();
+}
+
+class _LongPastedTextInputSettingsControlState
+    extends State<_LongPastedTextInputSettingsControl> {
+  final UserPreferencesManager _preferences = const UserPreferencesManager();
+
+  /// Starts loading persisted long-paste preferences for the settings controls.
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadSettings());
+  }
+
+  /// Loads the persisted long-paste preferences into the shared settings value.
+  Future<void> _loadSettings() async {
+    try {
+      await _preferences.loadLongPastedTextInputSettings();
+    } catch (error, stackTrace) {
+      debugPrint(
+        'Unable to load long pasted text preferences: $error\n$stackTrace',
+      );
+    }
+  }
+
+  /// Persists one complete long-paste preference value.
+  Future<void> _saveSettings({
+    required bool enabled,
+    required int threshold,
+  }) async {
+    try {
+      await _preferences.saveLongPastedTextInputSettings(
+        enabled: enabled,
+        threshold: threshold,
+      );
+    } catch (error, stackTrace) {
+      debugPrint(
+        'Unable to save long pasted text preferences: $error\n$stackTrace',
+      );
+    }
+  }
+
+  /// Builds the switch and threshold slider for long pasted text conversion.
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return ValueListenableBuilder<LongPastedTextInputSettings>(
+      valueListenable: UserPreferencesManager.longPastedTextInputSettings,
+      builder: (context, settings, _) {
+        return Column(
+          children: <Widget>[
+            _SettingSwitch(
+              title: l10n.settingsAppearanceLongPastedTextAsAttachment,
+              value: settings.enabled,
+              onChanged: (enabled) {
+                UserPreferencesManager.longPastedTextInputSettings.value =
+                    LongPastedTextInputSettings(
+                      enabled: enabled,
+                      threshold: settings.threshold,
+                    );
+                unawaited(
+                  _saveSettings(
+                    enabled: enabled,
+                    threshold: settings.threshold,
+                  ),
+                );
+              },
+            ),
+            _ValueSlider(
+              label: l10n.settingsAppearanceLongPastedTextThreshold,
+              value: settings.threshold.toDouble(),
+              min: UserPreferencesManager.longPastedTextInputMinimumThreshold
+                  .toDouble(),
+              max: UserPreferencesManager.longPastedTextInputMaximumThreshold
+                  .toDouble(),
+              divisions:
+                  (UserPreferencesManager.longPastedTextInputMaximumThreshold -
+                      UserPreferencesManager
+                          .longPastedTextInputMinimumThreshold) ~/
+                  UserPreferencesManager.longPastedTextInputThresholdStep,
+              valueText: l10n.settingsAppearanceLongPastedTextThresholdValue(
+                settings.threshold,
+              ),
+              onChanged: (value) {
+                final threshold = value.round();
+                UserPreferencesManager.longPastedTextInputSettings.value =
+                    LongPastedTextInputSettings(
+                      enabled: settings.enabled,
+                      threshold: threshold,
+                    );
+              },
+              onChangeEnd: (value) {
+                final threshold = value.round();
+                unawaited(
+                  _saveSettings(
+                    enabled: settings.enabled,
+                    threshold: threshold,
+                  ),
+                );
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -3235,6 +3353,7 @@ class _ValueSlider extends StatelessWidget {
     required this.max,
     required this.divisions,
     required this.onChanged,
+    this.onChangeEnd,
     this.valueText,
   });
 
@@ -3245,6 +3364,7 @@ class _ValueSlider extends StatelessWidget {
   final int divisions;
   final String? valueText;
   final ValueChanged<double> onChanged;
+  final ValueChanged<double>? onChangeEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -3271,6 +3391,7 @@ class _ValueSlider extends StatelessWidget {
             divisions: divisions,
             label: text,
             onChanged: onChanged,
+            onChangeEnd: onChangeEnd,
           ),
         ],
       ),

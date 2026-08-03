@@ -7,7 +7,9 @@ pub mod protocol;
 
 pub const LINK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub use client::{CoreLinkClient, CoreLinkSharedClient, CoreLinkTransportClient};
+pub use client::{
+    CoreLinkClient, CoreLinkPushSession, CoreLinkSharedClient, CoreLinkTransportClient,
+};
 pub use codec::{decodeLink, encodeLink, CoreLinkCodecError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use http::{

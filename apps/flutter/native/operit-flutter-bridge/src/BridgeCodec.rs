@@ -33,7 +33,7 @@ pub(crate) fn decode_native_call_request(
 pub(crate) fn decode_native_push_open_request(
     request_bytes: &[u8],
 ) -> Result<CorePushRequest, CoreLinkError> {
-    let (request_id, target_segments, method_name): (String, Vec<String>, String) =
+    let (request_id, target_segments, method_name, args): (String, Vec<String>, String, operit_link::CoreValue) =
         operit_link::decodeLink(request_bytes).map_err(|error| {
             CoreLinkError::new(
                 "flutter-bridge-invalid-request",
@@ -46,7 +46,7 @@ pub(crate) fn decode_native_push_open_request(
             segments: target_segments,
         },
         method_name,
-    ))
+    ).withArgs(args))
 }
 
 /// Decodes one compact CoreProxy push item.

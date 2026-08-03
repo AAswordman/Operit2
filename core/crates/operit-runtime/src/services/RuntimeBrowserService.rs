@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use operit_host_api::HostManager::HostManager;
+use operit_util::stream::ReverseStream::ReverseStream;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_host_api::{
     BrowserSessionCommand, BrowserSessionCommandResult, BrowserSessionHost, BrowserSessionInfo,
@@ -340,6 +341,33 @@ impl RuntimeBrowserService {
             );
         }
         Ok(result)
+    }
+
+    /// Applies ordered compositor interactions supplied by one caller-owned input stream.
+    #[allow(non_snake_case)]
+    pub async fn submitBrowserInteractions(
+        &self,
+        mut commands: ReverseStream<RuntimeBrowserCommand>,
+    ) -> Result<(), String> {
+        let mut interactionError = None;
+        commands
+            .collect(&mut |command| {
+                if interactionError.is_some() {
+                    return;
+                }
+                if command.action != BROWSER_RUNTIME_INTERACTION_ACTION {
+                    interactionError = Some("browser interaction stream received a non-interaction command".to_string());
+                    return;
+                }
+                if let Err(error) = self.submitBrowserCommand(command) {
+                    interactionError = Some(error);
+                }
+            })
+            .await;
+        match interactionError {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     /// Returns the latest browser session snapshot for a controller.

@@ -1,21 +1,28 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
-use std::fs;
-use std::io::{Cursor, Read, Write};
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
 use chrono::TimeZone;
-use lmdb::{Cursor as LmdbCursor, Environment, EnvironmentFlags, Transaction};
+use operit_host_api::{
+    RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeStorageHost, RuntimeStorageWriteHost,
+    RuntimeStorageWriteSession, SqliteRow, SqliteValue,
+};
 use operit_store::PreferencesDataStore::{
     mutableStateFlow, stringPreferencesKey, MutableStateFlow, PreferencesDataStore, StateFlow,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_util::RuntimeStorageLayout::DATA_MEMORY_SHARED_DIR_PATH;
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use zip::ZipArchive;
+
+use crate::data::backup::Operit1SnapshotArchive::{
+    isDataStoreEntry as isArchiveDataStoreEntry, validateRelativePath, Operit1PreferenceValue,
+    Operit1SnapshotArchive,
+};
+use crate::data::backup::Operit1LmdbReader::visitLmdbRecords;
+use crate::data::archive::ArchiveSource::ArchiveSource;
 
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
@@ -35,6 +42,8 @@ use operit_model::FunctionType::FunctionType;
 use operit_model::MemoryExportModel::{
     ImportStrategy, MemoryExportData, SerializableLink, SerializableMemory,
 };
+use operit_model::MessagePart::MessagePart;
+use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::ModelCatalog::ModelCatalog;
 use operit_model::ModelConfigData::{
     ApiProviderType, ModelCapabilities, ModelCatalogKey, ModelConfigDefaults, ModelContextSpec,
@@ -72,8 +81,10 @@ const ENTRY_WORKSPACE_FILES_PREFIX: &str = "payload/files/workspace/";
 const ENTRY_EXTERNAL_FILES_PREFIX: &str = "payload/external_files/";
 const KEY_CONFIG_LIST: &str = "config_list";
 const KEY_FUNCTION_CONFIG_MAPPING: &str = "function_config_mapping";
-const SQLITE_INSPECTION_TEMP_FILE: &str = "operit1_snapshot_import_inspect.sqlite";
-const OBJECTBOX_IMPORT_TEMP_DIR: &str = "operit1_snapshot_objectbox_import";
+const SQLITE_INSPECTION_STORAGE_PATH: &str =
+    "runtime/temp/clean_on_exit/operit1_snapshot_import.sqlite";
+const OBJECTBOX_IMPORT_STORAGE_PATH: &str =
+    "runtime/temp/clean_on_exit/operit1_snapshot_objectbox.mdb";
 const OPERIT1_DEFAULT_PROFILE_ID: &str = "default";
 const OPERIT1_SHARED_MEMORY_STORE_ID_PREFIX: &str = "operit1-profile-";
 const RUNTIME_IMPORTED_OPERIT1_FILES_DIR: &str = "runtime/imported/operit1/files";
@@ -239,31 +250,51 @@ pub struct Operit1ModelConfigImportResult {
 /// Imports Operit1 backup snapshots into the current runtime storage layout.
 pub struct Operit1SnapshotImportManager {
     paths: RuntimeStorePaths,
+    storageHost: Arc<dyn RuntimeStorageHost>,
+    storageWriteHost: Arc<dyn RuntimeStorageWriteHost>,
+    sqliteHost: Arc<dyn RuntimeSqliteHost>,
 }
 
 impl Operit1SnapshotImportManager {
-    /// Creates an importer targeting explicit runtime and workspace roots.
-    pub fn new(paths: RuntimeStorePaths) -> Self {
-        Self { paths }
+    /// Creates an importer targeting one runtime owner's portable storage hosts.
+    pub fn new(
+        paths: RuntimeStorePaths,
+        storageHost: Arc<dyn RuntimeStorageHost>,
+        storageWriteHost: Arc<dyn RuntimeStorageWriteHost>,
+        sqliteHost: Arc<dyn RuntimeSqliteHost>,
+    ) -> Self {
+        Self {
+            paths,
+            storageHost,
+            storageWriteHost,
+            sqliteHost,
+        }
     }
 
     #[allow(non_snake_case)]
-    /// Reads an Operit1 snapshot and returns import preview metadata.
-    pub fn inspectSnapshot(&self, bytes: Vec<u8>) -> Result<Operit1SnapshotPreview, String> {
-        let parsed = ParsedOperit1Snapshot::fromBytes(bytes)?;
-        parsed.preview()
+    /// Reads an Operit1 snapshot from a range-readable source and returns preview metadata.
+    pub(crate) fn inspectSnapshotSource(
+        &self,
+        source: Arc<dyn ArchiveSource>,
+    ) -> Result<Operit1SnapshotPreview, String> {
+        let parsed = ParsedOperit1Snapshot::fromSource(source)?;
+        let databaseCounts = self.databaseCounts(&parsed)?;
+        parsed.preview(databaseCounts)
     }
 
     #[allow(non_snake_case)]
-    /// Imports a full Operit1 snapshot into runtime storage.
-    pub fn importSnapshot(&self, bytes: Vec<u8>) -> Result<Operit1SnapshotImportResult, String> {
+    /// Imports a full Operit1 snapshot from a range-readable source into runtime storage.
+    pub(crate) fn importSnapshotSource(
+        &self,
+        source: Arc<dyn ArchiveSource>,
+    ) -> Result<Operit1SnapshotImportResult, String> {
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "parse",
             "解析快照",
             "正在读取清单、配置和数据索引。",
             0.08,
         ));
-        let parsed = ParsedOperit1Snapshot::fromBytes(bytes)?;
+        let parsed = ParsedOperit1Snapshot::fromSource(source)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "model_config",
             "迁移模型配置",
@@ -277,7 +308,7 @@ impl Operit1SnapshotImportManager {
             .ok_or_else(|| "Operit1 快照里的聊天模型索引没有对应模型".to_string())?;
         let modelConfig =
             self.importModelConfigFromParsed(&parsed, selected.configId.clone(), selectedModelId)?;
-        let fileImportPlan = SnapshotFileImportPlan::new(&self.paths);
+        let fileImportPlan = SnapshotFileImportPlan::new();
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "structured_preferences",
             "迁移角色和语音",
@@ -315,7 +346,7 @@ impl Operit1SnapshotImportManager {
             "正在复制工作区、附件和外部资源。",
             0.90,
         ));
-        let fileImportResult = self.importSnapshotFiles(&parsed, &fileImportPlan)?;
+        let fileImportResult = self.importSnapshotFiles(&parsed)?;
         let result = Operit1SnapshotImportResult {
             modelConfig,
             importedDatastoreFiles,
@@ -343,6 +374,7 @@ impl Operit1SnapshotImportManager {
         let promptTags = buildOperit2PromptTags(parsed)?;
         if !promptTags.is_empty()
             || parsed
+                .archive
                 .datastorePreferences
                 .contains_key(ENTRY_CHARACTER_CARDS)
         {
@@ -387,30 +419,29 @@ impl Operit1SnapshotImportManager {
                 .get(&profileId)
                 .ok_or_else(|| format!("Operit1 角色卡绑定了不存在的用户偏好：{profileId}"))?;
             let markdown = buildOperit2UserMarkdown(profile)?;
-            appendSharedUserMarkdown(&self.paths, &profileId, &markdown)?;
+            appendSharedUserMarkdown(self.storageHost.as_ref(), &profileId, &markdown)?;
         }
         Ok(())
     }
 
     #[allow(non_snake_case)]
-    /// Reads only model configuration preview metadata from an Operit1 snapshot.
-    pub fn inspectModelConfigSnapshot(
+    /// Reads model configuration preview metadata from a range-readable Operit1 source.
+    pub(crate) fn inspectModelConfigSnapshotSource(
         &self,
-        bytes: Vec<u8>,
+        source: Arc<dyn ArchiveSource>,
     ) -> Result<Operit1ModelConfigSnapshotPreview, String> {
-        let parsed = ParsedOperit1Snapshot::fromBytes(bytes)?;
-        parsed.modelConfigPreview()
+        ParsedOperit1Snapshot::fromSource(source)?.modelConfigPreview()
     }
 
     #[allow(non_snake_case)]
-    /// Imports one selected Operit1 model configuration and model binding.
-    pub fn importModelConfigSnapshot(
+    /// Imports one selected model configuration from a range-readable Operit1 source.
+    pub(crate) fn importModelConfigSnapshotSource(
         &self,
-        bytes: Vec<u8>,
+        source: Arc<dyn ArchiveSource>,
         configId: String,
         modelId: String,
     ) -> Result<Operit1ModelConfigImportResult, String> {
-        let parsed = ParsedOperit1Snapshot::fromBytes(bytes)?;
+        let parsed = ParsedOperit1Snapshot::fromSource(source)?;
         self.importModelConfigFromParsed(&parsed, configId, modelId)
     }
 
@@ -504,7 +535,7 @@ impl Operit1SnapshotImportManager {
         let mut fileCount = 0;
         let mut keyCount = 0;
         for (entryName, filePath) in mappings {
-            let Some(preferences) = parsed.datastorePreferences.get(&entryName) else {
+            let Some(preferences) = parsed.archive.datastorePreferences.get(&entryName) else {
                 continue;
             };
             let encodedPreferences = preferences
@@ -531,18 +562,13 @@ impl Operit1SnapshotImportManager {
         parsed: &ParsedOperit1Snapshot,
         fileImportPlan: &SnapshotFileImportPlan,
     ) -> Result<(i32, i32), String> {
-        let databaseBytes = parsed
-            .entries
-            .get(ENTRY_DATABASE)
-            .ok_or_else(|| format!("Operit1 快照缺少聊天数据库：{ENTRY_DATABASE}"))?;
-        let tempPath = self
-            .paths
-            .runtime_dir()
-            .join("temp")
-            .join(SQLITE_INSPECTION_TEMP_FILE);
-        writeTempFile(&tempPath, databaseBytes)?;
+        self.stageArchiveEntry(parsed, ENTRY_DATABASE, SQLITE_INSPECTION_STORAGE_PATH)?;
         let result = (|| {
-            let archive = buildChatArchiveFromOperit1Database(&tempPath, fileImportPlan)?;
+            let mut connection = self
+                .sqliteHost
+                .openSqliteDatabase(SQLITE_INSPECTION_STORAGE_PATH)
+                .map_err(|error| error.to_string())?;
+            let archive = buildChatArchiveFromOperit1Database(connection.as_mut(), fileImportPlan)?;
             let chatCount = archive.chats.len() as i32;
             let messageCount = archive
                 .chats
@@ -557,7 +583,9 @@ impl Operit1SnapshotImportManager {
                 .map_err(|error| error.to_string())?;
             Ok((chatCount, messageCount))
         })();
-        let _ = fs::remove_file(&tempPath);
+        self.storageHost
+            .delete(SQLITE_INSPECTION_STORAGE_PATH, false)
+            .map_err(|error| error.to_string())?;
         result
     }
 
@@ -565,19 +593,18 @@ impl Operit1SnapshotImportManager {
     fn importSnapshotFiles(
         &self,
         parsed: &ParsedOperit1Snapshot,
-        fileImportPlan: &SnapshotFileImportPlan,
     ) -> Result<Operit1SnapshotFileImportResult, String> {
         let (importedWorkspaces, importedWorkspaceFiles) =
-            copyWorkspaceEntries(&parsed.entries, fileImportPlan)?;
+            copyWorkspaceEntries(self.storageWriteHost.as_ref(), parsed)?;
         let importedFiles = copyEntriesWithPrefix(
-            &self.paths,
-            &parsed.entries,
+            self.storageWriteHost.as_ref(),
+            parsed,
             ENTRY_FILES_PREFIX,
             RUNTIME_IMPORTED_OPERIT1_FILES_DIR,
         )?;
         let importedExternalFiles = copyEntriesWithPrefix(
-            &self.paths,
-            &parsed.entries,
+            self.storageWriteHost.as_ref(),
+            parsed,
             ENTRY_EXTERNAL_FILES_PREFIX,
             RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR,
         )?;
@@ -594,14 +621,6 @@ impl Operit1SnapshotImportManager {
         &self,
         parsed: &ParsedOperit1Snapshot,
     ) -> Result<(i32, i32), String> {
-        let tempDir = self
-            .paths
-            .runtime_dir()
-            .join("temp")
-            .join(OBJECTBOX_IMPORT_TEMP_DIR);
-        if tempDir.exists() {
-            fs::remove_dir_all(&tempDir).map_err(|error| error.to_string())?;
-        }
         let result = (|| {
             let paths = self.paths.clone();
             let sharedMemoryStoreManager = SharedMemoryStoreManager::new(paths);
@@ -609,13 +628,22 @@ impl Operit1SnapshotImportManager {
             let mut totalMemoryCount = 0;
             let mut totalLinkCount = 0;
             for profileId in profiles {
-                let objectBoxBytes = operit1ObjectBoxDataForProfile(parsed, &profileId)?;
-                if tempDir.exists() {
-                    fs::remove_dir_all(&tempDir).map_err(|error| error.to_string())?;
-                }
-                fs::create_dir_all(&tempDir).map_err(|error| error.to_string())?;
-                writeFile(&tempDir.join("data.mdb"), objectBoxBytes)?;
-                let exportData = buildMemoryExportDataFromOperit1ObjectBox(&tempDir)?;
+                let entry = operit1ObjectBoxEntryForProfile(&profileId);
+                self.stageArchiveEntry(parsed, &entry, OBJECTBOX_IMPORT_STORAGE_PATH)?;
+                let entryLength = parsed
+                    .archive
+                    .entries
+                    .get(&entry)
+                    .ok_or_else(|| format!("Operit1 记忆库条目不存在：{entry}"))?
+                    .uncompressedSize;
+                let exportData = buildMemoryExportDataFromOperit1ObjectBox(
+                    self.storageHost.as_ref(),
+                    OBJECTBOX_IMPORT_STORAGE_PATH,
+                    entryLength,
+                )?;
+                self.storageHost
+                    .delete(OBJECTBOX_IMPORT_STORAGE_PATH, false)
+                    .map_err(|error| error.to_string())?;
                 totalMemoryCount += exportData.memories.len() as i32;
                 totalLinkCount += exportData.links.len() as i32;
                 let storeId = operit1SharedMemoryStoreId(&profileId);
@@ -632,101 +660,86 @@ impl Operit1SnapshotImportManager {
             }
             Ok((totalMemoryCount, totalLinkCount))
         })();
-        if tempDir.exists() {
-            fs::remove_dir_all(&tempDir).map_err(|error| error.to_string())?;
-        }
+        result
+    }
+
+    /// Copies one archive entry into an owner-relative runtime storage object.
+    fn stageArchiveEntry(
+        &self,
+        parsed: &ParsedOperit1Snapshot,
+        entryName: &str,
+        storagePath: &str,
+    ) -> Result<(), String> {
+        writeArchiveEntryToStorage(
+            self.storageWriteHost.as_ref(),
+            parsed,
+            entryName,
+            storagePath,
+        )
+    }
+
+    /// Counts chat and message rows through the runtime owner's SQLite host.
+    fn databaseCounts(&self, parsed: &ParsedOperit1Snapshot) -> Result<(i32, i32), String> {
+        self.stageArchiveEntry(parsed, ENTRY_DATABASE, SQLITE_INSPECTION_STORAGE_PATH)?;
+        let result = (|| {
+            let mut connection = self
+                .sqliteHost
+                .openSqliteDatabase(SQLITE_INSPECTION_STORAGE_PATH)
+                .map_err(|error| error.to_string())?;
+            if !sqliteTableExists(connection.as_mut(), "chats")?
+                || !sqliteTableExists(connection.as_mut(), "messages")?
+            {
+                return Ok((0, 0));
+            }
+            Ok((
+                queryCount(connection.as_mut(), "SELECT COUNT(*) FROM chats")?,
+                queryCount(connection.as_mut(), "SELECT COUNT(*) FROM messages")?,
+            ))
+        })();
+        self.storageHost
+            .delete(SQLITE_INSPECTION_STORAGE_PATH, false)
+            .map_err(|error| error.to_string())?;
         result
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[allow(non_snake_case)]
-struct Operit1Manifest {
-    formatVersion: i32,
-    packageName: String,
-    createdAt: i64,
-}
-
 struct ParsedOperit1Snapshot {
-    manifest: Operit1Manifest,
-    entries: BTreeMap<String, Vec<u8>>,
-    datastorePreferences: BTreeMap<String, HashMap<String, Operit1PreferenceValue>>,
+    archive: Operit1SnapshotArchive,
     configs: Vec<Operit1ModelConfig>,
     chatMapping: Operit1FunctionConfigMapping,
 }
 
 impl ParsedOperit1Snapshot {
-    #[allow(non_snake_case)]
-    fn fromBytes(bytes: Vec<u8>) -> Result<Self, String> {
-        let mut archive = ZipArchive::new(Cursor::new(bytes)).map_err(|error| error.to_string())?;
-        let entries = readZipEntries(&mut archive)?;
-        let manifestText = String::from_utf8(
-            entries
-                .get(ENTRY_MANIFEST)
-                .ok_or_else(|| "Operit1 快照缺少 manifest.json".to_string())?
-                .clone(),
-        )
-        .map_err(|error| error.to_string())?;
-        let manifest: Operit1Manifest = serde_json::from_str(&manifestText)
-            .map_err(|error| format!("Operit1 快照清单格式不正确：{error}"))?;
-        if manifest.formatVersion != FORMAT_VERSION {
-            return Err(format!(
-                "暂不支持这个 Operit1 快照版本：{}",
-                manifest.formatVersion
-            ));
-        }
-
-        let datastorePreferences = decodeAllDataStorePreferences(&entries)?;
-        let modelPrefs = datastorePreferences
-            .get(ENTRY_MODEL_CONFIGS)
-            .ok_or_else(|| "快照里没有 Operit1 模型配置文件".to_string())?;
-        let configListJson = requiredPreferenceString(
-            modelPrefs,
-            KEY_CONFIG_LIST,
-            "快照里没有 Operit1 模型配置列表",
-        )?;
-        let configIds: Vec<String> = serde_json::from_str(configListJson)
-            .map_err(|error| format!("模型配置列表格式不正确：{error}"))?;
-        if configIds.is_empty() {
-            return Err("快照里的模型配置列表为空".to_string());
-        }
-
-        let mut configs = Vec::new();
-        for configId in configIds {
-            let key = format!("config_{configId}");
-            let configJson = requiredPreferenceString(
-                modelPrefs,
-                &key,
-                &format!("快照缺少模型配置：{configId}"),
-            )?;
-            configs.push(
-                serde_json::from_str(configJson)
-                    .map_err(|error| format!("模型配置「{configId}」格式不正确：{error}"))?,
-            );
-        }
-
-        let functionalPrefs = datastorePreferences
-            .get(ENTRY_FUNCTIONAL_CONFIGS)
-            .ok_or_else(|| "快照里没有 Operit1 功能配置文件".to_string())?;
-        let chatMappingJson = requiredPreferenceString(
-            functionalPrefs,
-            KEY_FUNCTION_CONFIG_MAPPING,
-            "快照里没有 Operit1 功能模型映射",
-        )?;
-        let chatMapping = decodeChatMapping(chatMappingJson)?;
+    /// Parses importer metadata from an immutable range-readable snapshot source.
+    fn fromSource(source: Arc<dyn ArchiveSource>) -> Result<Self, String> {
+        let archive = Operit1SnapshotArchive::fromSource(source)?;
+        let configs = archive
+            .modelConfigJsons
+            .iter()
+            .map(|config| {
+                serde_json::from_value(config.value.clone())
+                    .map_err(|error| format!("模型配置「{}」格式不正确：{error}", config.id))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let chatMapping = decodeChatMapping(archive.chatMappingJson.clone())?;
 
         Ok(Self {
-            manifest,
-            entries,
-            datastorePreferences,
+            archive,
             configs,
             chatMapping,
         })
     }
 
-    fn preview(&self) -> Result<Operit1SnapshotPreview, String> {
+    /// Copies one archive entry to a caller-owned output stream.
+    fn copyEntryTo<W: Write>(&self, name: &str, writer: &mut W) -> Result<(), String> {
+        self.archive.copyEntryTo(name, writer)
+    }
+
+    /// Builds snapshot preview metadata using host-derived database counts.
+    fn preview(&self, databaseCounts: (i32, i32)) -> Result<Operit1SnapshotPreview, String> {
         let modelConfig = self.modelConfigPreview()?;
         let datastoreFiles = self
+            .archive
             .datastorePreferences
             .iter()
             .map(|(entryName, values)| Operit1DataStoreFilePreview {
@@ -737,7 +750,7 @@ impl ParsedOperit1Snapshot {
                 keyCount: values.len() as i32,
             })
             .collect::<Vec<_>>();
-        let (chatCount, messageCount) = self.databaseCounts()?;
+        let (chatCount, messageCount) = databaseCounts;
         let importedFileCount = self.countImportableFiles(ENTRY_FILES_PREFIX);
         let importedExternalFileCount = self.countImportableFiles(ENTRY_EXTERNAL_FILES_PREFIX);
         let mut detectedDomains = Vec::new();
@@ -747,7 +760,7 @@ impl ParsedOperit1Snapshot {
         if chatCount > 0 || messageCount > 0 {
             detectedDomains.push("chat_history".to_string());
         }
-        for entry in self.datastorePreferences.keys() {
+        for entry in self.archive.datastorePreferences.keys() {
             let name = entry
                 .strip_prefix(ENTRY_DATASTORE_PREFIX)
                 .unwrap_or(entry)
@@ -761,9 +774,9 @@ impl ParsedOperit1Snapshot {
             detectedDomains.push("user_files".to_string());
         }
         Ok(Operit1SnapshotPreview {
-            formatVersion: self.manifest.formatVersion,
-            packageName: self.manifest.packageName.clone(),
-            createdAt: self.manifest.createdAt,
+            formatVersion: self.archive.manifest.formatVersion,
+            packageName: self.archive.manifest.packageName.clone(),
+            createdAt: self.archive.manifest.createdAt,
             modelConfig,
             datastoreFiles,
             chatCount,
@@ -813,9 +826,9 @@ impl ParsedOperit1Snapshot {
             });
 
         Ok(Operit1ModelConfigSnapshotPreview {
-            formatVersion: self.manifest.formatVersion,
-            packageName: self.manifest.packageName.clone(),
-            createdAt: self.manifest.createdAt,
+            formatVersion: self.archive.manifest.formatVersion,
+            packageName: self.archive.manifest.packageName.clone(),
+            createdAt: self.archive.manifest.createdAt,
             configs,
             chatConfigId,
             chatModelId,
@@ -842,35 +855,12 @@ impl ParsedOperit1Snapshot {
     }
 
     #[allow(non_snake_case)]
-    /// Counts chat and message rows in the snapshot database.
-    fn databaseCounts(&self) -> Result<(i32, i32), String> {
-        let databaseBytes = self
-            .entries
-            .get(ENTRY_DATABASE)
-            .ok_or_else(|| format!("Operit1 快照缺少聊天数据库：{ENTRY_DATABASE}"))?;
-        let tempPath = std::env::temp_dir().join(SQLITE_INSPECTION_TEMP_FILE);
-        writeTempFile(&tempPath, databaseBytes)?;
-        let result = (|| {
-            let connection = Connection::open(&tempPath).map_err(|error| error.to_string())?;
-            if !sqliteTableExists(&connection, "chats")?
-                || !sqliteTableExists(&connection, "messages")?
-            {
-                return Ok((0, 0));
-            }
-            let chatCount = queryCount(&connection, "SELECT COUNT(*) FROM chats")?;
-            let messageCount = queryCount(&connection, "SELECT COUNT(*) FROM messages")?;
-            Ok((chatCount, messageCount))
-        })();
-        let _ = fs::remove_file(&tempPath);
-        result
-    }
-
-    #[allow(non_snake_case)]
     fn countImportableFiles(&self, prefix: &str) -> i32 {
-        self.entries
+        self.archive
+            .entries
             .keys()
             .filter(|entry| entry.starts_with(prefix))
-            .filter(|entry| !isDataStoreEntry(entry))
+            .filter(|entry| !isArchiveDataStoreEntry(entry))
             .count() as i32
     }
 }
@@ -1190,20 +1180,14 @@ fn pushStandardParameter(
 }
 
 #[allow(non_snake_case)]
-fn decodeChatMapping(json: &str) -> Result<Operit1FunctionConfigMapping, String> {
-    let value: Value =
-        serde_json::from_str(json).map_err(|error| format!("功能模型映射格式不正确：{error}"))?;
-    let chat = value
-        .get("CHAT")
-        .ok_or_else(|| "功能模型映射缺少 CHAT".to_string())?;
-    if let Some(configId) = chat.as_str() {
+fn decodeChatMapping(value: Value) -> Result<Operit1FunctionConfigMapping, String> {
+    if let Some(configId) = value.as_str() {
         return Ok(Operit1FunctionConfigMapping {
             configId: configId.to_string(),
             modelIndex: 0,
         });
     }
-    serde_json::from_value(chat.clone())
-        .map_err(|error| format!("CHAT 模型映射格式不正确：{error}"))
+    serde_json::from_value(value).map_err(|error| format!("CHAT 模型映射格式不正确：{error}"))
 }
 
 #[allow(non_snake_case)]
@@ -1216,88 +1200,8 @@ fn splitModelIds(modelName: &str) -> Vec<String> {
         .collect()
 }
 
-#[allow(non_snake_case)]
-fn readZipText(archive: &mut ZipArchive<Cursor<Vec<u8>>>, name: &str) -> Result<String, String> {
-    let bytes = readZipBytes(archive, name)?;
-    String::from_utf8(bytes).map_err(|error| error.to_string())
-}
-
-#[allow(non_snake_case)]
-fn readZipBytes(archive: &mut ZipArchive<Cursor<Vec<u8>>>, name: &str) -> Result<Vec<u8>, String> {
-    let mut file = archive
-        .by_name(name)
-        .map_err(|_| format!("快照缺少必要文件：{name}"))?;
-    if file.is_dir() {
-        return Err(format!("快照条目不是文件：{name}"));
-    }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
-    Ok(bytes)
-}
-
-#[allow(non_snake_case)]
-fn readZipEntries(
-    archive: &mut ZipArchive<Cursor<Vec<u8>>>,
-) -> Result<BTreeMap<String, Vec<u8>>, String> {
-    let mut entries = BTreeMap::new();
-    for index in 0..archive.len() {
-        let mut file = archive.by_index(index).map_err(|error| error.to_string())?;
-        if file.is_dir() {
-            continue;
-        }
-        let name = file.name().to_string();
-        validateSnapshotEntryPath(&name)?;
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
-        entries.insert(name, bytes);
-    }
-    Ok(entries)
-}
-
-#[allow(non_snake_case)]
-fn decodeAllDataStorePreferences(
-    entries: &BTreeMap<String, Vec<u8>>,
-) -> Result<BTreeMap<String, HashMap<String, Operit1PreferenceValue>>, String> {
-    let mut result = BTreeMap::new();
-    for (entry, bytes) in entries {
-        if isDataStoreEntry(entry) {
-            result.insert(entry.clone(), decodeDataStorePreferences(bytes)?);
-        }
-    }
-    Ok(result)
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum Operit1PreferenceValue {
-    Boolean(bool),
-    Float(f32),
-    Double(f64),
-    Int(i32),
-    String(String),
-    StringSet(Vec<String>),
-    Long(i64),
-}
-
 impl Operit1PreferenceValue {
-    #[allow(non_snake_case)]
-    fn asString(&self) -> Option<&str> {
-        match self {
-            Self::String(value) => Some(value),
-            _ => None,
-        }
-    }
-
-    #[allow(non_snake_case)]
-    fn asStringSet(&self) -> Option<&[String]> {
-        match self {
-            Self::StringSet(value) => Some(value),
-            _ => None,
-        }
-    }
-
-    #[allow(non_snake_case)]
+    /// Converts one legacy preference value into its target text representation.
     fn toTargetPreferenceStringForKey(
         &self,
         key: &str,
@@ -1316,7 +1220,7 @@ impl Operit1PreferenceValue {
         }
     }
 
-    #[allow(non_snake_case)]
+    /// Rewrites one legacy preference key and its text representation for the target runtime.
     fn toTargetPreferenceEntry(
         &self,
         key: &str,
@@ -1330,9 +1234,8 @@ impl Operit1PreferenceValue {
 
 #[derive(Clone, Debug)]
 struct SnapshotFileImportPlan {
-    importedFilesRoot: PathBuf,
-    importedExternalFilesRoot: PathBuf,
-    workspaceRoot: PathBuf,
+    importedFilesRoot: String,
+    importedExternalFilesRoot: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1344,13 +1247,11 @@ struct Operit1SnapshotFileImportResult {
 }
 
 impl SnapshotFileImportPlan {
-    /// Creates a file import plan from explicit runtime and workspace roots.
-    fn new(paths: &RuntimeStorePaths) -> Self {
+    /// Creates a file import plan using stable virtual file-system destinations.
+    fn new() -> Self {
         Self {
-            importedFilesRoot: paths.runtime_storage_path(RUNTIME_IMPORTED_OPERIT1_FILES_DIR),
-            importedExternalFilesRoot: paths
-                .runtime_storage_path(RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR),
-            workspaceRoot: paths.workspace_dir(),
+            importedFilesRoot: "/app/data/imported/operit1/files".to_string(),
+            importedExternalFilesRoot: "/app/data/imported/operit1/external_files".to_string(),
         }
     }
 
@@ -1462,11 +1363,7 @@ impl SnapshotFileImportPlan {
             let (workspaceId, rest) = splitWorkspaceRelativePath(workspaceRelative)?;
             return Ok(workspaceVfsPath(workspaceId, rest));
         }
-        Ok(self
-            .importedFilesRoot
-            .join(relative)
-            .to_string_lossy()
-            .replace('\\', "/"))
+        Ok(joinVirtualPath(&self.importedFilesRoot, relative))
     }
 
     #[allow(non_snake_case)]
@@ -1476,11 +1373,7 @@ impl SnapshotFileImportPlan {
             let (workspaceId, rest) = splitWorkspaceRelativePath(workspaceRelative)?;
             return Ok(workspaceVfsPath(workspaceId, rest));
         }
-        Ok(self
-            .importedExternalFilesRoot
-            .join(relative)
-            .to_string_lossy()
-            .replace('\\', "/"))
+        Ok(joinVirtualPath(&self.importedExternalFilesRoot, relative))
     }
 
     #[allow(non_snake_case)]
@@ -1620,7 +1513,7 @@ fn datastorePreferenceMappings(paths: &RuntimeStorePaths) -> BTreeMap<String, Pa
 
 #[allow(non_snake_case)]
 fn buildOperit2PromptTags(parsed: &ParsedOperit1Snapshot) -> Result<Vec<PromptTag>, String> {
-    let Some(preferences) = parsed.datastorePreferences.get(ENTRY_PROMPT_TAGS) else {
+    let Some(preferences) = parsed.archive.datastorePreferences.get(ENTRY_PROMPT_TAGS) else {
         return Ok(Vec::new());
     };
     let ids = optionalPreferenceStringSet(preferences, "prompt_tag_list")?;
@@ -1666,10 +1559,15 @@ fn buildOperit2CharacterCards(
     parsed: &ParsedOperit1Snapshot,
     fileImportPlan: &SnapshotFileImportPlan,
 ) -> Result<Vec<CharacterCard>, String> {
-    let Some(preferences) = parsed.datastorePreferences.get(ENTRY_CHARACTER_CARDS) else {
+    let Some(preferences) = parsed
+        .archive
+        .datastorePreferences
+        .get(ENTRY_CHARACTER_CARDS)
+    else {
         return Ok(Vec::new());
     };
     let legacyPromptTagIds = parsed
+        .archive
         .datastorePreferences
         .get(ENTRY_PROMPT_TAGS)
         .map(collectOperit1LegacyPromptTagIds)
@@ -1836,7 +1734,11 @@ fn resolveOperit1CharacterMemoryBinding(
 fn collectOperit1CharacterMemoryProfileBindings(
     parsed: &ParsedOperit1Snapshot,
 ) -> Result<BTreeMap<String, String>, String> {
-    let Some(preferences) = parsed.datastorePreferences.get(ENTRY_CHARACTER_CARDS) else {
+    let Some(preferences) = parsed
+        .archive
+        .datastorePreferences
+        .get(ENTRY_CHARACTER_CARDS)
+    else {
         return Ok(BTreeMap::new());
     };
     let ids = optionalPreferenceStringSet(preferences, "character_card_list")?;
@@ -1879,7 +1781,7 @@ fn collectOperit1ObjectBoxProfileIds(
     parsed: &ParsedOperit1Snapshot,
 ) -> Result<BTreeSet<String>, String> {
     let mut ids = BTreeSet::new();
-    for entry in parsed.entries.keys() {
+    for entry in parsed.archive.entries.keys() {
         if entry == ENTRY_OBJECTBOX_DEFAULT_DATA {
             ids.insert(OPERIT1_DEFAULT_PROFILE_ID.to_string());
             continue;
@@ -1894,19 +1796,6 @@ fn collectOperit1ObjectBoxProfileIds(
         ids.insert(profileId.to_string());
     }
     Ok(ids)
-}
-
-#[allow(non_snake_case)]
-fn operit1ObjectBoxDataForProfile<'a>(
-    parsed: &'a ParsedOperit1Snapshot,
-    profileId: &str,
-) -> Result<&'a [u8], String> {
-    let entry = operit1ObjectBoxEntryForProfile(profileId);
-    parsed
-        .entries
-        .get(&entry)
-        .map(|bytes| bytes.as_slice())
-        .ok_or_else(|| format!("Operit1 快照缺少记忆库文件：{entry}"))
 }
 
 #[allow(non_snake_case)]
@@ -1958,6 +1847,7 @@ fn operit1SharedMemoryStoreName(
 #[allow(non_snake_case)]
 fn operit1ActiveProfileId(parsed: &ParsedOperit1Snapshot) -> Result<String, String> {
     let preferences = parsed
+        .archive
         .datastorePreferences
         .get(ENTRY_USER_PREFERENCES)
         .ok_or_else(|| format!("快照里没有 Operit1 用户偏好文件：{ENTRY_USER_PREFERENCES}"))?;
@@ -1978,7 +1868,11 @@ fn operit1ActiveProfileId(parsed: &ParsedOperit1Snapshot) -> Result<String, Stri
 fn buildOperit1UserPreferenceProfiles(
     parsed: &ParsedOperit1Snapshot,
 ) -> Result<BTreeMap<String, Operit1UserPreferenceProfile>, String> {
-    let Some(preferences) = parsed.datastorePreferences.get(ENTRY_USER_PREFERENCES) else {
+    let Some(preferences) = parsed
+        .archive
+        .datastorePreferences
+        .get(ENTRY_USER_PREFERENCES)
+    else {
         return Ok(BTreeMap::new());
     };
     let mut profiles = BTreeMap::new();
@@ -2038,20 +1932,26 @@ fn pushMarkdownField(lines: &mut Vec<String>, label: &str, value: &str) {
 
 #[allow(non_snake_case)]
 fn appendSharedUserMarkdown(
-    paths: &RuntimeStorePaths,
+    storageHost: &dyn RuntimeStorageHost,
     profileId: &str,
     importedMarkdown: &str,
 ) -> Result<(), String> {
     let storeId = operit1SharedMemoryStoreId(profileId);
-    let path = paths
-        .runtime_storage_path(DATA_MEMORY_SHARED_DIR_PATH)
-        .join(sanitizeMemoryOwnerId(&storeId))
-        .join("USER.md");
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let current = if path.exists() {
-        fs::read_to_string(&path).map_err(|error| error.to_string())?
+    let path = format!(
+        "{}/{}/USER.md",
+        DATA_MEMORY_SHARED_DIR_PATH.trim_end_matches('/'),
+        sanitizeMemoryOwnerId(&storeId)
+    );
+    let current = if storageHost
+        .exists(&path)
+        .map_err(|error| error.to_string())?
+    {
+        String::from_utf8(
+            storageHost
+                .readBytes(&path)
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?
     } else {
         "# USER\n\n".to_string()
     };
@@ -2062,14 +1962,20 @@ fn appendSharedUserMarkdown(
     }
     next.push_str(imported);
     next.push('\n');
-    fs::write(path, next).map_err(|error| error.to_string())
+    storageHost
+        .writeBytes(&path, next.as_bytes())
+        .map_err(|error| error.to_string())
 }
 
 #[allow(non_snake_case)]
 fn buildOperit2CharacterGroups(
     parsed: &ParsedOperit1Snapshot,
 ) -> Result<Vec<CharacterGroupCard>, String> {
-    let Some(preferences) = parsed.datastorePreferences.get(ENTRY_CHARACTER_GROUPS) else {
+    let Some(preferences) = parsed
+        .archive
+        .datastorePreferences
+        .get(ENTRY_CHARACTER_GROUPS)
+    else {
         return Ok(Vec::new());
     };
     let ids = optionalPreferenceStringSet(preferences, "character_group_list")?;
@@ -2103,7 +2009,11 @@ fn buildOperit2CharacterGroups(
 
 #[allow(non_snake_case)]
 fn buildOperit2TtsConfig(parsed: &ParsedOperit1Snapshot) -> Result<Option<TtsConfig>, String> {
-    let Some(preferences) = parsed.datastorePreferences.get(ENTRY_SPEECH_SERVICES) else {
+    let Some(preferences) = parsed
+        .archive
+        .datastorePreferences
+        .get(ENTRY_SPEECH_SERVICES)
+    else {
         return Ok(None);
     };
     let serviceType = optionalPreferenceString(preferences, "tts_service_type")?;
@@ -2394,11 +2304,10 @@ fn parseOperit1PromptTagType(value: Option<&str>) -> Result<TagType, String> {
 #[allow(non_snake_case)]
 /// Builds a chat archive from the Operit1 SQLite database.
 fn buildChatArchiveFromOperit1Database(
-    path: &Path,
+    connection: &mut dyn RuntimeSqliteConnection,
     fileImportPlan: &SnapshotFileImportPlan,
 ) -> Result<OperitChatArchive, String> {
-    let connection = Connection::open(path).map_err(|error| error.to_string())?;
-    if !sqliteTableExists(&connection, "chats")? || !sqliteTableExists(&connection, "messages")? {
+    if !sqliteTableExists(connection, "chats")? || !sqliteTableExists(connection, "messages")? {
         return Ok(OperitChatArchive {
             archiveType: ARCHIVE_TYPE.to_string(),
             formatVersion: CURRENT_FORMAT_VERSION,
@@ -2406,8 +2315,8 @@ fn buildChatArchiveFromOperit1Database(
             chats: Vec::new(),
         });
     }
-    let mut chatStatement = connection
-        .prepare(
+    let chatRows = connection
+        .query(
             r#"
             SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens,
                 currentWindowSize, "group", displayOrder, workspace, parentChatId,
@@ -2415,32 +2324,32 @@ fn buildChatArchiveFromOperit1Database(
             FROM chats
             ORDER BY displayOrder ASC, updatedAt DESC
             "#,
+            Vec::new(),
         )
         .map_err(|error| error.to_string())?;
-    let chatRows = chatStatement
-        .query_map([], |row| {
+    let chatRows = chatRows
+        .iter()
+        .map(|row| {
             Ok(Operit1ChatRow {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                createdAt: row.get(2)?,
-                updatedAt: row.get(3)?,
-                inputTokens: row.get(4)?,
-                outputTokens: row.get(5)?,
-                currentWindowSize: row.get(6)?,
-                group: row.get(7)?,
-                displayOrder: row.get(8)?,
-                workspace: row.get(9)?,
-                parentChatId: row.get(10)?,
-                characterCardName: row.get(11)?,
-                locked: row.get::<_, i32>(12)? != 0,
+                id: sqliteRowString(row, 0, "chats.id")?,
+                title: sqliteRowString(row, 1, "chats.title")?,
+                createdAt: sqliteRowI64(row, 2, "chats.createdAt")?,
+                updatedAt: sqliteRowI64(row, 3, "chats.updatedAt")?,
+                inputTokens: sqliteRowI64(row, 4, "chats.inputTokens")?,
+                outputTokens: sqliteRowI64(row, 5, "chats.outputTokens")?,
+                currentWindowSize: sqliteRowI64(row, 6, "chats.currentWindowSize")?,
+                group: sqliteRowOptionalString(row, 7, "chats.group")?,
+                displayOrder: sqliteRowI64(row, 8, "chats.displayOrder")?,
+                workspace: sqliteRowOptionalString(row, 9, "chats.workspace")?,
+                parentChatId: sqliteRowOptionalString(row, 10, "chats.parentChatId")?,
+                characterCardName: sqliteRowOptionalString(row, 11, "chats.characterCardName")?,
+                locked: sqliteRowI64(row, 12, "chats.locked")? != 0,
             })
         })
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
+        .collect::<Result<Vec<_>, String>>()?;
     let mut chats = Vec::new();
     for chat in chatRows {
-        let messages = readOperit1Messages(&connection, &chat.id)?;
+        let messages = readOperit1Messages(connection, &chat.id)?;
         if messages.is_empty() {
             continue;
         }
@@ -2478,9 +2387,9 @@ struct Operit1ChatRow {
     title: String,
     createdAt: i64,
     updatedAt: i64,
-    inputTokens: i32,
-    outputTokens: i32,
-    currentWindowSize: i32,
+    inputTokens: i64,
+    outputTokens: i64,
+    currentWindowSize: i64,
     group: Option<String>,
     displayOrder: i64,
     workspace: Option<String>,
@@ -2492,32 +2401,42 @@ struct Operit1ChatRow {
 #[allow(non_snake_case)]
 /// Reads archived messages for one Operit1 chat row.
 fn readOperit1Messages(
-    connection: &Connection,
+    connection: &mut dyn RuntimeSqliteConnection,
     chatId: &str,
 ) -> Result<Vec<OperitArchivedMessage>, String> {
-    let mut statement = connection
-        .prepare(
+    let rows = connection
+        .query(
             r#"
             SELECT sender, content, timestamp, orderIndex, roleName, provider, modelName
             FROM messages
             WHERE chatId = ?1
             ORDER BY orderIndex ASC, timestamp ASC
             "#,
+            vec![SqliteValue::Text(chatId.to_string())],
         )
         .map_err(|error| error.to_string())?;
-    let messages = statement
-        .query_map([chatId], |row| {
-            let timestamp = row.get::<_, i64>(2)?;
+    let messages = rows
+        .iter()
+        .map(|row| {
+            let timestamp = sqliteRowI64(row, 2, "messages.timestamp")?;
+            let sender = sqliteRowString(row, 0, "messages.sender")?;
+            let content = sqliteRowString(row, 1, "messages.content")?;
+            let parts = if sender == "ai" {
+                MessagePartCodec::parseAssistantMarkup(&content)
+                    .map_err(|error| format!("Operit1 assistant message markup is invalid: {error}"))?
+            } else {
+                vec![MessagePart::markdown("part-0".to_string(), 0, content)]
+            };
             Ok(OperitArchivedMessage {
                 baseMessage: ChatMessage {
-                    sender: row.get(0)?,
-                    content: row.get(1)?,
+                    sender,
+                    parts,
                     timestamp,
-                    roleName: row.get(4)?,
+                    roleName: sqliteRowString(row, 4, "messages.roleName")?,
                     selectedVariantIndex: 0,
                     variantCount: 1,
-                    provider: row.get(5)?,
-                    modelName: row.get(6)?,
+                provider: sqliteRowString(row, 5, "messages.provider")?,
+                modelName: sqliteRowString(row, 6, "messages.modelName")?,
                     inputTokens: 0,
                     outputTokens: 0,
                     cachedInputTokens: 0,
@@ -2528,46 +2447,86 @@ fn readOperit1Messages(
                     displayMode: ChatMessageDisplayMode::NORMAL,
                     isFavorite: false,
                     isVariantPreview: false,
-                    contentStream: None,
                 },
                 variants: Vec::new(),
             })
         })
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(messages)
 }
 
 #[allow(non_snake_case)]
 /// Returns whether the opened SQLite database contains the named table.
-fn sqliteTableExists(connection: &Connection, tableName: &str) -> Result<bool, String> {
-    connection
-        .query_row(
+fn sqliteTableExists(
+    connection: &mut dyn RuntimeSqliteConnection,
+    tableName: &str,
+) -> Result<bool, String> {
+    let rows = connection
+        .query(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
-            [tableName],
-            |row| row.get::<_, bool>(0),
+            vec![SqliteValue::Text(tableName.to_string())],
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    let row = rows
+        .first()
+        .ok_or_else(|| "SQLite table existence query returned no row".to_string())?;
+    Ok(sqliteRowI64(row, 0, "sqlite_master.exists")? != 0)
 }
 
 #[allow(non_snake_case)]
 /// Counts rows with a scalar count query.
-fn queryCount(connection: &Connection, sql: &str) -> Result<i32, String> {
-    connection
-        .query_row(sql, [], |row| row.get::<_, i32>(0))
-        .map_err(|error| error.to_string())
+fn queryCount(connection: &mut dyn RuntimeSqliteConnection, sql: &str) -> Result<i32, String> {
+    let rows = connection
+        .query(sql, Vec::new())
+        .map_err(|error| error.to_string())?;
+    let row = rows
+        .first()
+        .ok_or_else(|| "SQLite count query returned no row".to_string())?;
+    i32::try_from(sqliteRowI64(row, 0, "count")?)
+        .map_err(|_| "SQLite count does not fit i32".to_string())
+}
+
+/// Reads one required integer from a host-neutral SQLite row.
+fn sqliteRowI64(row: &SqliteRow, index: usize, label: &str) -> Result<i64, String> {
+    row.valueAt(index)
+        .map_err(|error| error.to_string())?
+        .asI64()
+        .map_err(|error| format!("{label}: {error}"))
+}
+
+/// Reads one required text value from a host-neutral SQLite row.
+fn sqliteRowString(row: &SqliteRow, index: usize, label: &str) -> Result<String, String> {
+    row.valueAt(index)
+        .map_err(|error| error.to_string())?
+        .asString()
+        .map_err(|error| format!("{label}: {error}"))
+}
+
+/// Reads one nullable text value from a host-neutral SQLite row.
+fn sqliteRowOptionalString(
+    row: &SqliteRow,
+    index: usize,
+    label: &str,
+) -> Result<Option<String>, String> {
+    let value = row.valueAt(index).map_err(|error| error.to_string())?;
+    if value.isNull() {
+        return Ok(None);
+    }
+    value
+        .asString()
+        .map(Some)
+        .map_err(|error| format!("{label}: {error}"))
 }
 
 #[allow(non_snake_case)]
 fn copyEntriesWithPrefix(
-    paths: &RuntimeStorePaths,
-    entries: &BTreeMap<String, Vec<u8>>,
+    storageWriteHost: &dyn RuntimeStorageWriteHost,
+    parsed: &ParsedOperit1Snapshot,
     sourcePrefix: &str,
     targetPrefix: &str,
 ) -> Result<i32, String> {
     let mut count = 0;
-    for (entry, bytes) in entries {
+    for entry in parsed.archive.entries.keys() {
         if !entry.starts_with(sourcePrefix) || isDataStoreEntry(entry) {
             continue;
         }
@@ -2578,8 +2537,8 @@ fn copyEntriesWithPrefix(
             .strip_prefix(sourcePrefix)
             .ok_or_else(|| format!("快照资源路径前缀不匹配：{entry}"))?;
         validateRelativePath(relative)?;
-        let target = paths.runtime_storage_path(targetPrefix).join(relative);
-        writeFile(&target, bytes)?;
+        let target = format!("{}/{relative}", targetPrefix.trim_end_matches('/'));
+        writeArchiveEntryToStorage(storageWriteHost, parsed, entry, &target)?;
         count += 1;
     }
     Ok(count)
@@ -2587,24 +2546,21 @@ fn copyEntriesWithPrefix(
 
 #[allow(non_snake_case)]
 fn copyWorkspaceEntries(
-    entries: &BTreeMap<String, Vec<u8>>,
-    fileImportPlan: &SnapshotFileImportPlan,
+    storageWriteHost: &dyn RuntimeStorageWriteHost,
+    parsed: &ParsedOperit1Snapshot,
 ) -> Result<(i32, i32), String> {
     let mut workspaceIds = BTreeSet::new();
     let mut fileCount = 0;
-    for (entry, bytes) in entries {
+    for entry in parsed.archive.entries.keys() {
         let Some(relative) = entry.strip_prefix(ENTRY_WORKSPACE_FILES_PREFIX) else {
             continue;
         };
         validateRelativePath(relative)?;
         let (workspaceId, rest) = splitWorkspaceRelativePath(relative)?;
         workspaceIds.insert(workspaceId.to_string());
-        if rest.is_empty() {
-            fs::create_dir_all(fileImportPlan.workspaceRoot.join(workspaceId))
-                .map_err(|error| error.to_string())?;
-        } else {
-            let target = fileImportPlan.workspaceRoot.join(workspaceId).join(rest);
-            writeFile(&target, bytes)?;
+        if !rest.is_empty() {
+            let target = format!("workspaces/{workspaceId}/{rest}");
+            writeArchiveEntryToStorage(storageWriteHost, parsed, entry, &target)?;
             fileCount += 1;
         }
     }
@@ -2645,6 +2601,11 @@ fn workspaceVfsPath(workspaceId: &str, rest: &str) -> String {
     }
 }
 
+/// Joins a validated relative path to one stable virtual file-system root.
+fn joinVirtualPath(root: &str, relative: &str) -> String {
+    format!("{}/{relative}", root.trim_end_matches('/'))
+}
+
 #[derive(Clone, Debug)]
 #[allow(non_snake_case)]
 struct Operit1MemoryRecord {
@@ -2680,28 +2641,17 @@ struct Operit1MemoryTagRecord {
 }
 
 #[allow(non_snake_case)]
-fn buildMemoryExportDataFromOperit1ObjectBox(path: &Path) -> Result<MemoryExportData, String> {
-    let environment = Environment::new()
-        .set_max_dbs(64)
-        .set_flags(EnvironmentFlags::NO_LOCK)
-        .open(path)
-        .map_err(|error| format!("打开 Operit1 记忆库失败：{error}"))?;
-    let transaction = environment
-        .begin_ro_txn()
-        .map_err(|error| format!("读取 Operit1 记忆库失败：{error}"))?;
-    let database = environment
-        .open_db(None)
-        .map_err(|error| format!("读取 Operit1 记忆库默认库失败：{error}"))?;
-    let mut cursor = transaction
-        .open_ro_cursor(database)
-        .map_err(|error| format!("读取 Operit1 记忆库游标失败：{error}"))?;
+fn buildMemoryExportDataFromOperit1ObjectBox(
+    storageHost: &dyn RuntimeStorageHost,
+    storagePath: &str,
+    byteLength: u64,
+) -> Result<MemoryExportData, String> {
     let mut memories = BTreeMap::<u32, Operit1MemoryRecord>::new();
     let mut links = BTreeMap::<u32, Operit1MemoryLinkRecord>::new();
     let mut tags = BTreeMap::<u32, Operit1MemoryTagRecord>::new();
     let mut memoryTagPairs = BTreeSet::<(u32, u32)>::new();
 
-    for item in cursor.iter() {
-        let (key, value) = item.map_err(|error| format!("读取 Operit1 记忆库记录失败：{error}"))?;
+    visitLmdbRecords(storageHost, storagePath, byteLength, &mut |key, value| {
         if key.len() == 8 && key[0..4] == OPERIT1_OBJECTBOX_KEY_MEMORY && !value.is_empty() {
             let memory = parseOperit1MemoryRecord(value)?;
             memories.insert(memory.id, memory);
@@ -2719,7 +2669,8 @@ fn buildMemoryExportDataFromOperit1ObjectBox(path: &Path) -> Result<MemoryExport
             let tagId = readBigEndianU32(&key[12..16])?;
             memoryTagPairs.insert((memoryId, tagId));
         }
-    }
+        Ok(())
+    })?;
 
     let mut tagNamesByMemoryId = HashMap::<u32, Vec<String>>::new();
     for (memoryId, tagId) in memoryTagPairs {
@@ -3014,38 +2965,51 @@ fn readLittleEndianI64(bytes: &[u8]) -> Result<i64, String> {
     })?))
 }
 
-#[allow(non_snake_case)]
-fn writeTempFile(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    writeFile(path, bytes)
+/// Adapts a host-owned sequential storage session to the standard writer contract.
+struct RuntimeStorageSessionWriter<'a> {
+    session: &'a mut dyn RuntimeStorageWriteSession,
 }
 
-#[allow(non_snake_case)]
-fn writeFile(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+impl Write for RuntimeStorageSessionWriter<'_> {
+    /// Writes one archive decoder chunk into the host-owned session.
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.session
+            .writeChunk(buffer)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error.message))?;
+        Ok(buffer.len())
     }
-    let mut file = fs::File::create(path).map_err(|error| error.to_string())?;
-    file.write_all(bytes).map_err(|error| error.to_string())
+
+    /// Flushes no additional state because each host chunk is synchronously accepted.
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
-#[allow(non_snake_case)]
-fn validateSnapshotEntryPath(path: &str) -> Result<(), String> {
-    if path.is_empty() || path.starts_with('/') || path.starts_with('\\') || path.contains('\\') {
-        return Err(format!("Operit1 快照包含非法路径：{path}"));
+/// Streams one indexed archive entry into a host-owned runtime storage session.
+fn writeArchiveEntryToStorage(
+    storageWriteHost: &dyn RuntimeStorageWriteHost,
+    parsed: &ParsedOperit1Snapshot,
+    entry: &str,
+    storagePath: &str,
+) -> Result<(), String> {
+    let mut session = storageWriteHost
+        .createWriteSession(storagePath)
+        .map_err(|error| error.to_string())?;
+    let copyResult = parsed.copyEntryTo(
+        entry,
+        &mut RuntimeStorageSessionWriter {
+            session: session.as_mut(),
+        },
+    );
+    match copyResult {
+        Ok(()) => session.commit().map_err(|error| error.to_string()),
+        Err(error) => {
+            session.discard().map_err(|discardError| {
+                format!("{error}; failed to discard incomplete storage entry: {discardError}")
+            })?;
+            Err(error)
+        }
     }
-    validateRelativePath(path)
-}
-
-#[allow(non_snake_case)]
-fn validateRelativePath(path: &str) -> Result<(), String> {
-    if path.is_empty()
-        || path.split('/').any(|segment| {
-            segment.is_empty() || segment == "." || segment == ".." || segment.contains(':')
-        })
-    {
-        return Err(format!("Operit1 快照包含非法相对路径：{path}"));
-    }
-    Ok(())
 }
 
 #[allow(non_snake_case)]
@@ -3086,223 +3050,6 @@ fn requiredPreferenceString<'a>(
     value
         .asString()
         .ok_or_else(|| format!("Operit1 DataStore 键不是字符串：{key}"))
-}
-
-#[allow(non_snake_case)]
-fn decodeDataStorePreferences(
-    bytes: &[u8],
-) -> Result<HashMap<String, Operit1PreferenceValue>, String> {
-    let mut decoder = ProtoDecoder::new(bytes);
-    let mut preferences = HashMap::new();
-    while !decoder.isComplete() {
-        let (fieldNumber, wireType) = decoder.readTag()?;
-        if fieldNumber != 1 || wireType != 2 {
-            return Err(format!(
-                "DataStore Preferences 出现未知字段：{fieldNumber}/{wireType}"
-            ));
-        }
-        let entryBytes = decoder.readLengthDelimited()?;
-        if let Some((key, value)) = decodePreferenceEntry(entryBytes)? {
-            preferences.insert(key, value);
-        }
-    }
-    Ok(preferences)
-}
-
-#[allow(non_snake_case)]
-fn decodePreferenceEntry(bytes: &[u8]) -> Result<Option<(String, Operit1PreferenceValue)>, String> {
-    let mut decoder = ProtoDecoder::new(bytes);
-    let mut key = None;
-    let mut value = None;
-    while !decoder.isComplete() {
-        let (fieldNumber, wireType) = decoder.readTag()?;
-        match (fieldNumber, wireType) {
-            (1, 2) => key = Some(decoder.readString()?),
-            (2, 2) => value = decodePreferenceValue(decoder.readLengthDelimited()?)?,
-            _ => decoder.skipField(wireType)?,
-        }
-    }
-    let key = key.ok_or_else(|| "DataStore PreferenceEntry 缺少 key".to_string())?;
-    Ok(value.map(|value| (key, value)))
-}
-
-#[allow(non_snake_case)]
-fn decodePreferenceValue(bytes: &[u8]) -> Result<Option<Operit1PreferenceValue>, String> {
-    let mut decoder = ProtoDecoder::new(bytes);
-    let mut value = None;
-    while !decoder.isComplete() {
-        let (fieldNumber, wireType) = decoder.readTag()?;
-        match (fieldNumber, wireType) {
-            (1, 0) => value = Some(Operit1PreferenceValue::Boolean(decoder.readVarint()? != 0)),
-            (2, 5) => {
-                value = Some(Operit1PreferenceValue::Float(f32::from_le_bytes(
-                    decoder.readFixed32()?.to_le_bytes(),
-                )))
-            }
-            (3, 1) => {
-                value = Some(Operit1PreferenceValue::Double(f64::from_le_bytes(
-                    decoder.readFixed64()?.to_le_bytes(),
-                )))
-            }
-            (4, 0) => {
-                value = Some(Operit1PreferenceValue::Int(decodeInt32Varint(
-                    decoder.readVarint()?,
-                )))
-            }
-            (5, 2) => value = Some(Operit1PreferenceValue::String(decoder.readString()?)),
-            (6, 2) => {
-                value = Some(Operit1PreferenceValue::StringSet(
-                    decodePreferenceStringSet(decoder.readLengthDelimited()?)?,
-                ));
-            }
-            (7, 0) => {
-                value = Some(Operit1PreferenceValue::Long(decodeInt64Varint(
-                    decoder.readVarint()?,
-                )))
-            }
-            _ => decoder.skipField(wireType)?,
-        }
-    }
-    Ok(value)
-}
-
-#[allow(non_snake_case)]
-fn decodePreferenceStringSet(bytes: &[u8]) -> Result<Vec<String>, String> {
-    let mut decoder = ProtoDecoder::new(bytes);
-    let mut values = Vec::new();
-    while !decoder.isComplete() {
-        let (fieldNumber, wireType) = decoder.readTag()?;
-        match (fieldNumber, wireType) {
-            (1, 2) => values.push(decoder.readString()?),
-            _ => decoder.skipField(wireType)?,
-        }
-    }
-    Ok(values)
-}
-
-#[allow(non_snake_case)]
-fn decodeInt32Varint(raw: u64) -> i32 {
-    raw as u32 as i32
-}
-
-#[allow(non_snake_case)]
-fn decodeInt64Varint(raw: u64) -> i64 {
-    raw as i64
-}
-
-struct ProtoDecoder<'a> {
-    bytes: &'a [u8],
-    position: usize,
-}
-
-impl<'a> ProtoDecoder<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, position: 0 }
-    }
-
-    #[allow(non_snake_case)]
-    fn isComplete(&self) -> bool {
-        self.position == self.bytes.len()
-    }
-
-    #[allow(non_snake_case)]
-    fn readTag(&mut self) -> Result<(u64, u64), String> {
-        let tag = self.readVarint()?;
-        Ok((tag >> 3, tag & 0x07))
-    }
-
-    #[allow(non_snake_case)]
-    fn readLengthDelimited(&mut self) -> Result<&'a [u8], String> {
-        let length = self.readVarint()? as usize;
-        let end = self
-            .position
-            .checked_add(length)
-            .ok_or_else(|| "DataStore protobuf 长度溢出".to_string())?;
-        if end > self.bytes.len() {
-            return Err("DataStore protobuf 内容不完整".to_string());
-        }
-        let slice = &self.bytes[self.position..end];
-        self.position = end;
-        Ok(slice)
-    }
-
-    #[allow(non_snake_case)]
-    fn readString(&mut self) -> Result<String, String> {
-        String::from_utf8(self.readLengthDelimited()?.to_vec()).map_err(|error| error.to_string())
-    }
-
-    #[allow(non_snake_case)]
-    fn readFixed32(&mut self) -> Result<u32, String> {
-        Ok(u32::from_le_bytes(self.readFixedBytes::<4>()?))
-    }
-
-    #[allow(non_snake_case)]
-    fn readFixed64(&mut self) -> Result<u64, String> {
-        Ok(u64::from_le_bytes(self.readFixedBytes::<8>()?))
-    }
-
-    #[allow(non_snake_case)]
-    fn skipField(&mut self, wireType: u64) -> Result<(), String> {
-        match wireType {
-            0 => {
-                self.readVarint()?;
-                Ok(())
-            }
-            1 => self.skipBytes(8),
-            2 => {
-                self.readLengthDelimited()?;
-                Ok(())
-            }
-            5 => self.skipBytes(4),
-            _ => Err(format!("DataStore protobuf 出现未知 wire type：{wireType}")),
-        }
-    }
-
-    #[allow(non_snake_case)]
-    fn skipBytes(&mut self, count: usize) -> Result<(), String> {
-        let end = self
-            .position
-            .checked_add(count)
-            .ok_or_else(|| "DataStore protobuf 长度溢出".to_string())?;
-        if end > self.bytes.len() {
-            return Err("DataStore protobuf 内容不完整".to_string());
-        }
-        self.position = end;
-        Ok(())
-    }
-
-    #[allow(non_snake_case)]
-    fn readFixedBytes<const N: usize>(&mut self) -> Result<[u8; N], String> {
-        let end = self
-            .position
-            .checked_add(N)
-            .ok_or_else(|| "DataStore protobuf 长度溢出".to_string())?;
-        if end > self.bytes.len() {
-            return Err("DataStore protobuf 内容不完整".to_string());
-        }
-        let bytes = self.bytes[self.position..end]
-            .try_into()
-            .map_err(|_| "DataStore protobuf 固定长度字段不完整".to_string())?;
-        self.position = end;
-        Ok(bytes)
-    }
-
-    #[allow(non_snake_case)]
-    fn readVarint(&mut self) -> Result<u64, String> {
-        let mut value = 0u64;
-        for shift in (0..64).step_by(7) {
-            if self.position >= self.bytes.len() {
-                return Err("DataStore protobuf varint 不完整".to_string());
-            }
-            let byte = self.bytes[self.position];
-            self.position += 1;
-            value |= u64::from(byte & 0x7f) << shift;
-            if byte & 0x80 == 0 {
-                return Ok(value);
-            }
-        }
-        Err("DataStore protobuf varint 无效".to_string())
-    }
 }
 
 #[allow(non_snake_case)]

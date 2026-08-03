@@ -32,9 +32,9 @@ pub struct ClaudeProvider {
 
 #[derive(Debug, Default)]
 struct ClaudeProviderState {
-    inputTokenCount: i32,
-    cachedInputTokenCount: i32,
-    outputTokenCount: i32,
+    inputTokenCount: i64,
+    cachedInputTokenCount: i64,
+    outputTokenCount: i64,
     cancelled: bool,
 }
 
@@ -438,22 +438,22 @@ impl ClaudeProvider {
             })
             .and_then(Value::as_i64)
             .unwrap_or(0)
-            .max(0) as i32;
+            .max(0) as i64;
         let cache_creation = usage
             .and_then(|value| value.get("cache_creation_input_tokens"))
             .and_then(Value::as_i64)
             .unwrap_or(0)
-            .max(0) as i32;
+            .max(0) as i64;
         let input_base = usage
             .and_then(|value| value.get("input_tokens"))
             .and_then(Value::as_i64)
             .unwrap_or(0)
-            .max(0) as i32;
+            .max(0) as i64;
         let input = input_base + cache_creation;
         let output = usage
             .and_then(|value| value.get("output_tokens"))
             .and_then(Value::as_i64)
-            .unwrap_or(0) as i32;
+            .unwrap_or(0) as i64;
         let token_counts = TokenCounts {
             input,
             cached_input,
@@ -467,19 +467,19 @@ impl ClaudeProvider {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for ClaudeProvider {
-    fn input_token_count(&self) -> i32 {
+    fn input_token_count(&self) -> i64 {
         self.state
             .lock()
             .expect("ClaudeProvider state mutex poisoned")
             .inputTokenCount
     }
-    fn cached_input_token_count(&self) -> i32 {
+    fn cached_input_token_count(&self) -> i64 {
         self.state
             .lock()
             .expect("ClaudeProvider state mutex poisoned")
             .cachedInputTokenCount
     }
-    fn output_token_count(&self) -> i32 {
+    fn output_token_count(&self) -> i64 {
         self.state
             .lock()
             .expect("ClaudeProvider state mutex poisoned")
@@ -553,13 +553,13 @@ impl AIService for ClaudeProvider {
         &self,
         chat_history: &[PromptTurn],
         available_tools: &[ToolPrompt],
-    ) -> Result<i32, AiServiceError> {
+    ) -> Result<i64, AiServiceError> {
         let history_chars: usize = chat_history.iter().map(|turn| turn.content.len()).sum();
         let tool_chars: usize = available_tools
             .iter()
             .map(|tool| tool.name.len() + tool.description.len())
             .sum();
-        Ok(((history_chars + tool_chars + 3) / 4) as i32)
+        Ok(((history_chars + tool_chars + 3) / 4) as i64)
     }
 }
 

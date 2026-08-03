@@ -67,8 +67,7 @@ fn watch_event_roundtrip_preserves_stream_identity() {
 
 /// Verifies push targets and ordered items preserve client-owned stream identity.
 #[test]
-fn push_item_roundtrip_builds_the_target_call() {
-    let request = CorePushRequest::new("push-input", "runtime.browser", "interact");
+fn push_item_roundtrip_preserves_stream_identity() {
     let item = CorePushItem {
         pushId: "push-input".to_string(),
         sequence: 7,
@@ -76,11 +75,9 @@ fn push_item_roundtrip_builds_the_target_call() {
     };
 
     let decoded = decodeLink::<CorePushItem>(&encodeLink(&item).unwrap()).unwrap();
-    let call = request.itemCall(decoded.sequence, decoded.args.clone());
-
     assert_eq!(decoded, item);
-    assert_eq!(call.requestId.0, "push-input:7");
-    assert_eq!(call.registryKey(), "runtime.browser::interact");
+    assert_eq!(decoded.pushId, "push-input");
+    assert_eq!(decoded.sequence, 7);
 }
 
 /// Verifies native bytes use the MessagePack bin family instead of an integer array.

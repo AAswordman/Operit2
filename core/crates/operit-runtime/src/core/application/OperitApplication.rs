@@ -1,16 +1,6 @@
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use crate::core::events::RuntimeEvent::RuntimeEvent;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::data::backup::Operit1SnapshotImportManager::{
-    observeOperit1SnapshotImportProgress, publishOperit1SnapshotImportProgress,
-    Operit1ModelConfigImportResult, Operit1ModelConfigSnapshotPreview,
-    Operit1SnapshotImportManager, Operit1SnapshotImportProgress, Operit1SnapshotImportResult,
-    Operit1SnapshotPreview,
-};
-use crate::data::backup::RawSnapshotBackupManager::{
-    RawSnapshotBackupManager, RawSnapshotManifest,
-};
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
@@ -32,7 +22,6 @@ use operit_js_bridge::javascript::JsExecutionProvider::QuickJsExecutionProvider;
 use operit_model::Memory::{Memory, MemoryLink};
 use operit_providers::chat::llmprovider::ModelConfigConnectionTester::ModelConnectionTestReport;
 use operit_providers::runtime_support::ProviderRuntimeContext;
-use operit_store::db::AppDatabase::AppDatabase;
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
@@ -214,17 +203,6 @@ impl OperitApplication {
         fileSystemHost
             .makeDirectory(&path.to_string_lossy(), true)
             .map_err(|error| error.message)
-    }
-
-    /// Reads one host-visible file as bytes through the configured file-system host.
-    fn readHostFileBytes(&self, path: &str) -> Result<Vec<u8>, String> {
-        let fileSystemHost =
-            self.hostManager.fileSystemHost.as_ref().ok_or_else(|| {
-                "FileSystemHost is not registered for runtime file reads".to_string()
-            })?;
-        fileSystemHost
-            .readFileBytes(path)
-            .map_err(|_| "无法读取 Operit1 快照文件".to_string())
     }
 
     /// Initializes persistent stores, prompt managers, tool handlers, plugins, and runtime events.
@@ -591,109 +569,6 @@ impl OperitApplication {
             applied += 1;
         }
         Ok(serde_json::json!({ "applied": applied }))
-    }
-
-    /// Exports all raw runtime storage into a portable snapshot archive.
-    #[allow(non_snake_case)]
-    pub fn exportRawSnapshot(&self) -> Result<Vec<u8>, String> {
-        RawSnapshotBackupManager::new(defaultRuntimeStorageHost()).exportSnapshot()
-    }
-
-    /// Restores a raw runtime storage snapshot after closing the active database handle.
-    #[allow(non_snake_case)]
-    pub fn importRawSnapshot(&self, bytes: Vec<u8>) -> Result<(), String> {
-        AppDatabase::closeDatabase();
-        RawSnapshotBackupManager::new(defaultRuntimeStorageHost()).restoreSnapshot(bytes)
-    }
-
-    /// Reads snapshot metadata without mutating the current runtime store.
-    #[allow(non_snake_case)]
-    pub fn inspectRawSnapshot(&self, bytes: Vec<u8>) -> Result<RawSnapshotManifest, String> {
-        RawSnapshotBackupManager::new(defaultRuntimeStorageHost()).inspectSnapshot(bytes)
-    }
-
-    /// Previews an Operit 1 model-configuration snapshot before import.
-    #[allow(non_snake_case)]
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn inspectOperit1ModelConfigSnapshot(
-        &self,
-        bytes: Vec<u8>,
-    ) -> Result<Operit1ModelConfigSnapshotPreview, String> {
-        Operit1SnapshotImportManager::new(RuntimeStorePaths::default())
-            .inspectModelConfigSnapshot(bytes)
-    }
-
-    /// Previews an Operit 1 full snapshot before import.
-    #[allow(non_snake_case)]
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn inspectOperit1Snapshot(&self, bytes: Vec<u8>) -> Result<Operit1SnapshotPreview, String> {
-        Operit1SnapshotImportManager::new(RuntimeStorePaths::default()).inspectSnapshot(bytes)
-    }
-
-    /// Reads and previews an Operit 1 snapshot file from disk.
-    #[allow(non_snake_case)]
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn inspectOperit1SnapshotFile(
-        &self,
-        path: String,
-    ) -> Result<Operit1SnapshotPreview, String> {
-        let bytes = self.readHostFileBytes(&path)?;
-        Operit1SnapshotImportManager::new(RuntimeStorePaths::default()).inspectSnapshot(bytes)
-    }
-
-    /// Imports a model configuration from an Operit 1 snapshot into the selected profile.
-    #[allow(non_snake_case)]
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn importOperit1ModelConfigSnapshot(
-        &self,
-        bytes: Vec<u8>,
-        configId: String,
-        modelId: String,
-    ) -> Result<Operit1ModelConfigImportResult, String> {
-        Operit1SnapshotImportManager::new(RuntimeStorePaths::default())
-            .importModelConfigSnapshot(bytes, configId, modelId)
-    }
-
-    /// Imports an Operit 1 full snapshot from bytes and publishes progress events.
-    #[allow(non_snake_case)]
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn importOperit1Snapshot(
-        &self,
-        bytes: Vec<u8>,
-    ) -> Result<Operit1SnapshotImportResult, String> {
-        publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress {
-            stage: "parse".to_string(),
-            title: "解析快照".to_string(),
-            detail: "正在读取 Operit1 快照内容。".to_string(),
-            progress: 0.04,
-            active: true,
-        });
-        Operit1SnapshotImportManager::new(RuntimeStorePaths::default()).importSnapshot(bytes)
-    }
-
-    /// Reads and imports an Operit 1 full snapshot file from disk.
-    #[allow(non_snake_case)]
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn importOperit1SnapshotFile(
-        &self,
-        path: String,
-    ) -> Result<Operit1SnapshotImportResult, String> {
-        publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress {
-            stage: "read_file".to_string(),
-            title: "读取快照文件".to_string(),
-            detail: "正在从所选路径读取快照。".to_string(),
-            progress: 0.02,
-            active: true,
-        });
-        let bytes = self.readHostFileBytes(&path)?;
-        Operit1SnapshotImportManager::new(RuntimeStorePaths::default()).importSnapshot(bytes)
-    }
-
-    /// Observes the latest Operit 1 snapshot import progress state.
-    #[allow(non_snake_case)]
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn operit1SnapshotImportProgressFlow(&self) -> StateFlow<Operit1SnapshotImportProgress> {
-        observeOperit1SnapshotImportProgress()
     }
 
     /// Applies a single non-chat sync operation to the correct persistent domain.

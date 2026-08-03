@@ -123,7 +123,11 @@ struct MemorySecretStore {
 }
 
 impl RuntimeStorageHost for MemoryStorageHost {
-    fn rootDir(&self) -> Option<std::path::PathBuf> {
+    fn runtimeRootDir(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+
+    fn workspaceRootDir(&self) -> Option<std::path::PathBuf> {
         None
     }
 
@@ -138,6 +142,26 @@ impl RuntimeStorageHost for MemoryStorageHost {
                 "missing runtime storage file: {path}"
             ))),
         }
+    }
+
+    /// Reads one bounded byte range from an in-memory test file.
+    fn readBytesRange(
+        &self,
+        path: &str,
+        offset: u64,
+        length: usize,
+    ) -> operit_host_api::HostResult<Vec<u8>> {
+        let content = self.readBytes(path)?;
+        let start = usize::try_from(offset)
+            .map_err(|_| HostError::new("runtime storage offset does not fit usize"))?;
+        if start >= content.len() {
+            return Ok(Vec::new());
+        }
+        let end = start
+            .checked_add(length)
+            .ok_or_else(|| HostError::new("runtime storage byte range overflows usize"))?
+            .min(content.len());
+        Ok(content[start..end].to_vec())
     }
 
     fn writeBytes(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
@@ -253,6 +277,57 @@ fn preferences_encryption_migrates_old_secure_key_into_host_secret_store() {
         host.exists("secure/preferences_encryption_key.json")
             .expect("legacy key exists check"),
         false
+    );
+}
+
+#[test]
+/// Verifies that stores with equal virtual paths stay isolated across storage hosts.
+fn preference_stores_isolate_shared_paths_by_storage_host() {
+    let firstHost = Arc::new(MemoryStorageHost::default());
+    let secondHost = Arc::new(MemoryStorageHost::default());
+    let storagePath = "runtime/config/preferences/shared_path.preferences.json";
+    let firstStore = PreferencesDataStore::newWithStorage(firstHost, storagePath);
+    let secondStore = PreferencesDataStore::newWithStorage(secondHost, storagePath);
+
+    let mut firstPreferences = Preferences::default();
+    firstPreferences.set(
+        &stringPreferencesKey("access_token"),
+        "first-host-token".to_string(),
+    );
+    firstStore
+        .replace(firstPreferences)
+        .expect("first host preferences write");
+
+    assert_eq!(
+        secondStore
+            .data()
+            .expect("second host preferences read")
+            .get(&stringPreferencesKey("access_token")),
+        None
+    );
+
+    let mut secondPreferences = Preferences::default();
+    secondPreferences.set(
+        &stringPreferencesKey("access_token"),
+        "second-host-token".to_string(),
+    );
+    secondStore
+        .replace(secondPreferences)
+        .expect("second host preferences write");
+
+    assert_eq!(
+        firstStore
+            .data()
+            .expect("first host preferences read")
+            .get(&stringPreferencesKey("access_token")),
+        Some(&"first-host-token".to_string())
+    );
+    assert_eq!(
+        secondStore
+            .data()
+            .expect("second host preferences read")
+            .get(&stringPreferencesKey("access_token")),
+        Some(&"second-host-token".to_string())
     );
 }
 
