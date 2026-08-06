@@ -202,51 +202,6 @@ class ToolDisplayData {
   final String params;
 }
 
-/// Resolves a canonical message-part tool call into its visible target and parameters.
-ToolDisplayData normalizeStructuredToolDisplay(
-  String toolName,
-  Map<String, String> parameters,
-) {
-  if (toolName != 'package_proxy' && toolName != 'proxy') {
-    return ToolDisplayData(toolName: toolName, params: jsonEncode(parameters));
-  }
-
-  final rawTargetToolName = parameters['tool_name'];
-  if (rawTargetToolName == null) {
-    throw const FormatException(
-      'Proxy tool message part is missing the tool_name parameter.',
-    );
-  }
-  final targetToolName = normalizeEscapedTextForDisplay(
-    rawTargetToolName,
-  ).trim();
-  if (targetToolName.isEmpty) {
-    throw const FormatException(
-      'Proxy tool message part has an empty tool_name parameter.',
-    );
-  }
-
-  final rawTargetParameters = parameters['params'];
-  if (rawTargetParameters == null) {
-    throw const FormatException(
-      'Proxy tool message part is missing the params parameter.',
-    );
-  }
-  final decodedTargetParameters = jsonDecode(
-    normalizeEscapedTextForDisplay(rawTargetParameters),
-  );
-  if (decodedTargetParameters is! Map<String, dynamic>) {
-    throw const FormatException(
-      'Proxy tool message part params must be a JSON object.',
-    );
-  }
-
-  return ToolDisplayData(
-    toolName: targetToolName,
-    params: const JsonEncoder.withIndent('  ').convert(decodedTargetParameters),
-  );
-}
-
 ToolDisplayData normalizeToolDisplayForStrictProxy(
   String toolName,
   String params,

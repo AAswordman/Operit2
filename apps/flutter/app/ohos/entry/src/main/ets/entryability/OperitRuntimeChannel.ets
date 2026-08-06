@@ -31,6 +31,9 @@ import MethodChannel, {
 import runtimeNative from 'liboperit_runtime_ohos.so';
 
 const CHANNEL = 'operit/runtime';
+const OHOS_VROOT_RAWFILE_DIRECTORY = 'ohos-vroot';
+const OHOS_VROOT_ROOTFS_ARCHIVE = 'alpine-minirootfs-3.22.1-aarch64.tar.gz';
+const OHOS_VROOT_ROOTFS_SHA256 = 'alpine-minirootfs-3.22.1-aarch64.tar.gz.sha256';
 
 interface FileOperationResponse {
   success: boolean;
@@ -611,6 +614,7 @@ export class OperitRuntimeChannel {
       this.runtimeRoot = roots.runtimeRoot;
       this.workspaceRoot = roots.workspaceRoot;
     }
+    this.stageOhosVrootAssets();
     this.runtimeHandle = nativeBridge.create(
       this.runtimeRoot,
       this.workspaceRoot,
@@ -618,6 +622,43 @@ export class OperitRuntimeChannel {
     );
     this.installHostEventMonitoring();
     return this.runtimeHandle;
+  }
+
+  /// Copies the packaged Alpine rootfs and checksum into app runtime storage before Rust starts.
+  private stageOhosVrootAssets(): void {
+    const assetDirectory = `${this.runtimeRoot}/${OHOS_VROOT_RAWFILE_DIRECTORY}`;
+    fs.mkdirSync(assetDirectory, true);
+    this.copyOhosVrootRawFile(
+      `${OHOS_VROOT_RAWFILE_DIRECTORY}/${OHOS_VROOT_ROOTFS_ARCHIVE}`,
+      `${assetDirectory}/${OHOS_VROOT_ROOTFS_ARCHIVE}`
+    );
+    this.copyOhosVrootRawFile(
+      `${OHOS_VROOT_RAWFILE_DIRECTORY}/${OHOS_VROOT_ROOTFS_SHA256}`,
+      `${assetDirectory}/${OHOS_VROOT_ROOTFS_SHA256}`
+    );
+  }
+
+  /// Copies one packaged OpenHarmony rawfile into an exact app-private destination path.
+  private copyOhosVrootRawFile(rawFilePath: string, destinationPath: string): void {
+    const content = this.context.resourceManager.getRawFileContentSync(rawFilePath);
+    const data = content.buffer.slice(
+      content.byteOffset,
+      content.byteOffset + content.byteLength
+    );
+    const file = fs.openSync(
+      destinationPath,
+      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY
+    );
+    try {
+      const written = fs.writeSync(file.fd, data);
+      if (written !== content.byteLength) {
+        throw new Error(
+          `OpenHarmony vroot asset write is incomplete: ${rawFilePath} expected=${content.byteLength} actual=${written}`
+        );
+      }
+    } finally {
+      fs.closeSync(file);
+    }
   }
 
   /// Installs OpenHarmony common-event, network, battery, and Bluetooth producers once.

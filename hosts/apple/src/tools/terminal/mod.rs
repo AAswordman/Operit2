@@ -24,18 +24,10 @@ mod ios {
 
     impl TerminalHost for AppleTerminalHost {
         fn terminalInfo(&self) -> HostResult<TerminalInfo> {
-            Ok(TerminalInfo {
-                platform: "ios".to_string(),
-                defaultType: "ios".to_string(),
-                types: vec![TerminalTypeInfo {
-                    terminalType: "ios".to_string(),
-                    available: false,
-                    description: "iOS does not expose a local PTY host".to_string(),
-                }],
-            })
+            Err(HostError::new("iOS does not expose a local PTY host"))
         }
 
-        fn startPtySession(&self, _: &str, _: &str, _: &str, _: u16, _: u16) -> HostResult<String> {
+        fn startPtySession(&self, _: &str, _: &str, _: &str, _: &str, _: u16, _: u16) -> HostResult<String> {
             Err(HostError::new("iOS does not expose a local PTY host"))
         }
 
@@ -63,7 +55,7 @@ mod ios {
             Ok(vec![])
         }
 
-        fn createOrGetSession(&self, _: &str, _: &str) -> HostResult<TerminalSessionInfo> {
+        fn createOrGetSession(&self, _: &str) -> HostResult<TerminalSessionInfo> {
             Err(HostError::new("iOS does not expose a local PTY host"))
         }
 
@@ -73,7 +65,6 @@ mod ios {
 
         fn executeHiddenCommand(
             &self,
-            _: &str,
             _: &str,
             _: &str,
             _: u64,
@@ -122,19 +113,12 @@ mod non_apple_target {
 
     impl TerminalHost for AppleTerminalHost {
         fn terminalInfo(&self) -> HostResult<TerminalInfo> {
-            Ok(TerminalInfo {
-                platform: "apple".to_string(),
-                defaultType: "apple".to_string(),
-                types: vec![TerminalTypeInfo {
-                    terminalType: "apple".to_string(),
-                    available: false,
-                    description: "Apple terminal host is available only on iOS or macOS"
-                        .to_string(),
-                }],
-            })
+            Err(HostError::new(
+                "Apple terminal host is available only on iOS or macOS",
+            ))
         }
 
-        fn startPtySession(&self, _: &str, _: &str, _: &str, _: u16, _: u16) -> HostResult<String> {
+        fn startPtySession(&self, _: &str, _: &str, _: &str, _: &str, _: u16, _: u16) -> HostResult<String> {
             Err(HostError::new(
                 "Apple terminal host is available only on iOS or macOS",
             ))
@@ -174,7 +158,7 @@ mod non_apple_target {
             Ok(vec![])
         }
 
-        fn createOrGetSession(&self, _: &str, _: &str) -> HostResult<TerminalSessionInfo> {
+        fn createOrGetSession(&self, _: &str) -> HostResult<TerminalSessionInfo> {
             Err(HostError::new(
                 "Apple terminal host is available only on iOS or macOS",
             ))
@@ -188,7 +172,6 @@ mod non_apple_target {
 
         fn executeHiddenCommand(
             &self,
-            _: &str,
             _: &str,
             _: &str,
             _: u64,

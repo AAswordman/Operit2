@@ -36,6 +36,8 @@
     "requestPermissions": [
       {"name" :  "ohos.permission.INTERNET"},
       {"name" :  "ohos.permission.GET_NETWORK_INFO"},
+      {"name": "ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY"},
+      {"name": "ohos.permission.kernel.DISABLE_CODE_MEMORY_PROTECTION"},
       {
         "name": "ohos.permission.USE_BLUETOOTH",
         "reason": "$string:permission_bluetooth_reason",
@@ -85,6 +87,16 @@
           "when": "inuse"
         }
       },
+    ],
+    "hnpPackages": [
+      {
+        "package": "harmonix-public.hnp",
+        "type": "public"
+      },
+      {
+        "package": "harmonix-private.hnp",
+        "type": "private"
+      }
     ]
   }
 }

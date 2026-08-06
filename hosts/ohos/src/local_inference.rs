@@ -665,8 +665,7 @@ unsafe fn runStreamingTranscription(
     }
     let resultValue = &*result;
     let textResult = cStringFromPointer(resultValue.text, "OHOS local STT text");
-    let resultJsonResult =
-        cStringFromPointer(resultValue.json, "OHOS local STT result JSON");
+    let resultJsonResult = cStringFromPointer(resultValue.json, "OHOS local STT result JSON");
     destroyResult(result);
     destroyStream(stream);
     destroyRecognizer(recognizer);

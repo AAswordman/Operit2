@@ -7,6 +7,9 @@ pub mod ToolPkgAppLifecycleHookBridge;
 #[path = "ToolPkgHookBridgeSupport.rs"]
 pub mod ToolPkgHookBridgeSupport;
 
+#[path = "ToolPkgPreHookTimeout.rs"]
+pub mod ToolPkgPreHookTimeout;
+
 #[path = "ToolPkgMessageProcessingBridge.rs"]
 pub mod ToolPkgMessageProcessingBridge;
 

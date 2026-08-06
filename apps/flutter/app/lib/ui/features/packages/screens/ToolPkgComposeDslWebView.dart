@@ -10,7 +10,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_all/webview_all.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
-import '../../../../core/concurrency/AppWorkers.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import 'ToolPkgComposeDslWebViewResourceServer.dart';
 
@@ -312,10 +311,7 @@ class ComposeDslWebViewHostRegistry {
   }
 
   static Future<String> handleControllerCommand(String payloadJson) async {
-    final payload = await AppWorkers.run(
-      () => _decodeJsonObject(payloadJson),
-      debugName: 'compose-webview-controller-command-decode',
-    );
+    final payload = _decodeJsonObject(payloadJson);
     if (payload == null) {
       return _bridgeError('invalid webview controller command payload');
     }
@@ -388,10 +384,7 @@ class ComposeDslWebViewHostRegistry {
         case 'evaluateJavascript':
           final script = _string(commandPayload['script']);
           final result = await controller.runJavaScriptReturningResult(script);
-          final decoded = await AppWorkers.run(
-            () => _decodePlainJsonValue(result),
-            debugName: 'compose-webview-evaluate-result-decode',
-          );
+          final decoded = _decodePlainJsonValue(result);
           return _bridgeSuccess(decoded);
         case 'getState':
           return _bridgeSuccess(binding.state.toPayload());
@@ -1076,10 +1069,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
 
   Future<void> _handleBridgeMessage(JavaScriptMessage message) async {
     final messageText = message.message;
-    final payload = await AppWorkers.run(
-      () => _decodeJsonObject(messageText),
-      debugName: 'compose-webview-bridge-message-decode',
-    );
+    final payload = _decodeJsonObject(messageText);
     if (payload == null) {
       return;
     }
@@ -1110,18 +1100,12 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     final descriptor = _boundControllerDescriptor;
     switch (type) {
       case 'controllerCommand':
-        final commandPayload = await AppWorkers.run(
-          () => jsonEncode(payload),
-          debugName: 'compose-webview-controller-command-encode',
-        );
+        final commandPayload = jsonEncode(payload);
         final result =
             await ComposeDslWebViewHostRegistry.handleControllerCommand(
               commandPayload,
             );
-        return AppWorkers.run(
-          () => _decodePlainJsonValue(result),
-          debugName: 'compose-webview-controller-command-result-decode',
-        );
+        return _decodePlainJsonValue(result);
       case 'listInterfaces':
         if (hostContext == null || descriptor == null) {
           return const <String, List<String>>{};
@@ -1149,10 +1133,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
         }
         final result = await hostContext.executeAction(
           actionId: actionId,
-          payload: await AppWorkers.run(
-            () => _decodePlainJsonValue(map['args']),
-            debugName: 'compose-webview-invoke-args-decode',
-          ),
+          payload: _decodePlainJsonValue(map['args']),
         );
         return result.actionResult;
       case 'dispatchAction':
@@ -1183,10 +1164,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     if (requestId.isEmpty) {
       return;
     }
-    final payload = await AppWorkers.run(
-      () => jsonEncode(<String, Object?>{'id': requestId, ...response}),
-      debugName: 'compose-webview-bridge-response-encode',
-    );
+    final payload = jsonEncode(<String, Object?>{'id': requestId, ...response});
     await _controller.runJavaScript('''
       if (typeof window.__operitComposeDslWebViewHostReceive === 'function') {
         window.__operitComposeDslWebViewHostReceive($payload);

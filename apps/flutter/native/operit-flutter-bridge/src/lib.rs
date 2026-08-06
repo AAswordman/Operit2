@@ -108,6 +108,7 @@ use operit_host_ios_native::{
     IosHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
     IosHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
     IosHttpHost as NativeHttpHost, IosLocalInferenceHost as NativeLocalInferenceHost,
+    IosManagedRuntimeHost as NativeManagedRuntimeHost,
     IosMusicCommand as NativeMusicCommand, IosRuntimeStorageHost as NativeRuntimeStorageHost,
     IosSystemOperationHost as NativeSystemOperationHost, IosTerminalHost as NativeTerminalHost,
     IosTtsPlaybackHost as NativeTtsPlaybackHost, IosTtsSynthesisHost as NativeTtsSynthesisHost,
@@ -235,15 +236,20 @@ impl OperitFlutterBridge {
         let browserSessionBridge = FlutterBrowserSessionBridge::new();
         let webVisitBridge = FlutterWebVisitBridge::new();
         let composeDslWebViewBridge = FlutterComposeDslWebViewBridge::new();
+        #[cfg(not(target_env = "ohos"))]
         #[cfg(any(
             windows,
             all(target_os = "linux", not(target_env = "ohos")),
             target_os = "android",
             target_os = "ios",
-            target_os = "macos",
-            target_env = "ohos"
+            target_os = "macos"
         ))]
         let terminalHost = Arc::new(NativeTerminalHost::new());
+        #[cfg(target_env = "ohos")]
+        let terminalHost = Arc::new(
+            NativeTerminalHost::new(runtime_root.clone(), workspace_root.clone())
+                .map_err(|error| error.message)?,
+        );
         let mut core = create_local_core(
             runtime_root,
             workspace_root,

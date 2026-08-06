@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
@@ -13,16 +13,17 @@ use operit_store::PreferencesDataStore::{
     mutableStateFlow, stringPreferencesKey, MutableStateFlow, PreferencesDataStore, StateFlow,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+use operit_util::AppLogger::AppLogger;
 use operit_util::RuntimeStorageLayout::DATA_MEMORY_SHARED_DIR_PATH;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::data::archive::ArchiveSource::ArchiveSource;
+use crate::data::backup::Operit1LmdbReader::visitLmdbRecords;
 use crate::data::backup::Operit1SnapshotArchive::{
     isDataStoreEntry as isArchiveDataStoreEntry, validateRelativePath, Operit1PreferenceValue,
     Operit1SnapshotArchive,
 };
-use crate::data::backup::Operit1LmdbReader::visitLmdbRecords;
-use crate::data::archive::ArchiveSource::ArchiveSource;
 
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
@@ -87,6 +88,8 @@ const OBJECTBOX_IMPORT_STORAGE_PATH: &str =
     "runtime/temp/clean_on_exit/operit1_snapshot_objectbox.mdb";
 const OPERIT1_DEFAULT_PROFILE_ID: &str = "default";
 const OPERIT1_SHARED_MEMORY_STORE_ID_PREFIX: &str = "operit1-profile-";
+const ARCHIVE_ENTRY_COPY_BUFFER_BYTES: usize = 256 * 1024;
+const OPERIT1_PROGRESS_REPORT_INTERVAL_MS: i64 = 250;
 const RUNTIME_IMPORTED_OPERIT1_FILES_DIR: &str = "runtime/imported/operit1/files";
 const RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR: &str = "runtime/imported/operit1/external_files";
 const OPERIT1_INTERNAL_FILES_PREFIX: &str = "/data/user/0/com.ai.assistance.operit/files/";
@@ -203,7 +206,64 @@ pub fn observeOperit1SnapshotImportProgress() -> StateFlow<Operit1SnapshotImport
 
 /// Publishes Operit1 snapshot import progress.
 pub fn publishOperit1SnapshotImportProgress(progress: Operit1SnapshotImportProgress) {
+    AppLogger::i(
+        "Operit1SnapshotImport",
+        &format!(
+            "stage={} progress={:.0}% active={} title={} detail={}",
+            progress.stage,
+            progress.progress * 100.0,
+            progress.active,
+            progress.title,
+            progress.detail,
+        ),
+    );
     operit1SnapshotImportProgressFlow().set_value(progress);
+}
+
+/// Publishes progress for a stage whose work is measured in completed units.
+fn publishOperit1SnapshotCountedProgress(
+    stage: &str,
+    title: &str,
+    detail: String,
+    stageStart: f32,
+    stageEnd: f32,
+    completed: usize,
+    total: usize,
+) {
+    let stageFraction = completed as f32 / total.max(1) as f32;
+    let progress = stageStart + (stageEnd - stageStart) * stageFraction;
+    publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
+        stage, title, &detail, progress,
+    ));
+}
+
+/// Limits high-frequency counted progress reports while preserving first and final updates.
+struct Operit1SnapshotProgressThrottle {
+    hasPublished: bool,
+    lastPublishedAt: i64,
+}
+
+impl Operit1SnapshotProgressThrottle {
+    /// Creates a progress-report throttle with no previously published unit.
+    fn new() -> Self {
+        Self {
+            hasPublished: false,
+            lastPublishedAt: 0,
+        }
+    }
+
+    /// Returns whether a completed-unit update should be published now.
+    fn shouldPublish(&mut self, completed: usize, total: usize) -> bool {
+        let now = currentTimeMillis();
+        let mustPublish = completed >= total
+            || !self.hasPublished
+            || now.saturating_sub(self.lastPublishedAt) >= OPERIT1_PROGRESS_REPORT_INTERVAL_MS;
+        if mustPublish {
+            self.hasPublished = true;
+            self.lastPublishedAt = now;
+        }
+        mustPublish
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -277,14 +337,62 @@ impl Operit1SnapshotImportManager {
         &self,
         source: Arc<dyn ArchiveSource>,
     ) -> Result<Operit1SnapshotPreview, String> {
-        let parsed = ParsedOperit1Snapshot::fromSource(source)?;
-        let databaseCounts = self.databaseCounts(&parsed)?;
-        parsed.preview(databaseCounts)
+        let result = (|| {
+            let parsed = ParsedOperit1Snapshot::fromSource(source)?;
+            let databaseCounts = self.databaseCounts(&parsed)?;
+            parsed.preview(databaseCounts)
+        })();
+        match &result {
+            Ok(preview) => AppLogger::i(
+                "Operit1SnapshotImport",
+                &format!(
+                    "inspection completed formatVersion={} configs={} chats={} messages={} files={}",
+                    preview.formatVersion,
+                    preview.modelConfig.configs.len(),
+                    preview.chatCount,
+                    preview.messageCount,
+                    preview.importedFileCount + preview.importedExternalFileCount,
+                ),
+            ),
+            Err(error) => AppLogger::e(
+                "Operit1SnapshotImport",
+                &format!("inspection failed: {error}"),
+            ),
+        };
+        result
     }
 
     #[allow(non_snake_case)]
     /// Imports a full Operit1 snapshot from a range-readable source into runtime storage.
     pub(crate) fn importSnapshotSource(
+        &self,
+        source: Arc<dyn ArchiveSource>,
+    ) -> Result<Operit1SnapshotImportResult, String> {
+        AppLogger::i("Operit1SnapshotImport", "full snapshot import started");
+        let result = self.importSnapshotSourceInner(source);
+        match &result {
+            Ok(imported) => AppLogger::i(
+                "Operit1SnapshotImport",
+                &format!(
+                    "full snapshot import completed chats={} messages={} memories={} files={}",
+                    imported.importedChats,
+                    imported.importedMessages,
+                    imported.importedMemories,
+                    imported.importedFiles
+                        + imported.importedExternalFiles
+                        + imported.importedWorkspaceFiles,
+                ),
+            ),
+            Err(error) => AppLogger::e(
+                "Operit1SnapshotImport",
+                &format!("full snapshot import failed: {error}"),
+            ),
+        };
+        result
+    }
+
+    /// Runs the full Operit1 snapshot migration after its start has been logged.
+    fn importSnapshotSourceInner(
         &self,
         source: Arc<dyn ArchiveSource>,
     ) -> Result<Operit1SnapshotImportResult, String> {
@@ -441,8 +549,17 @@ impl Operit1SnapshotImportManager {
         configId: String,
         modelId: String,
     ) -> Result<Operit1ModelConfigImportResult, String> {
-        let parsed = ParsedOperit1Snapshot::fromSource(source)?;
-        self.importModelConfigFromParsed(&parsed, configId, modelId)
+        let result = (|| {
+            let parsed = ParsedOperit1Snapshot::fromSource(source)?;
+            self.importModelConfigFromParsed(&parsed, configId, modelId)
+        })();
+        if let Err(error) = &result {
+            AppLogger::e(
+                "Operit1SnapshotImport",
+                &format!("model configuration import failed: {error}"),
+            );
+        }
+        result
     }
 
     #[allow(non_snake_case)]
@@ -525,6 +642,7 @@ impl Operit1SnapshotImportManager {
     }
 
     #[allow(non_snake_case)]
+    /// Imports mapped Operit1 DataStore preferences and reports each written file.
     fn importDataStorePreferences(
         &self,
         parsed: &ParsedOperit1Snapshot,
@@ -532,6 +650,10 @@ impl Operit1SnapshotImportManager {
     ) -> Result<(i32, i32), String> {
         let paths = self.paths.clone();
         let mappings = datastorePreferenceMappings(&paths);
+        let mappedFileCount = mappings
+            .iter()
+            .filter(|(entryName, _)| parsed.archive.datastorePreferences.contains_key(*entryName))
+            .count();
         let mut fileCount = 0;
         let mut keyCount = 0;
         for (entryName, filePath) in mappings {
@@ -552,11 +674,34 @@ impl Operit1SnapshotImportManager {
                 .map_err(|error| error.to_string())?;
             fileCount += 1;
             keyCount += preferences.len() as i32;
+            publishOperit1SnapshotCountedProgress(
+                "preferences",
+                "迁移偏好设置",
+                format!(
+                    "已写入 {fileCount}/{mappedFileCount} 个偏好文件，累计 {keyCount} 个配置项。"
+                ),
+                0.50,
+                0.64,
+                fileCount as usize,
+                mappedFileCount,
+            );
+        }
+        if mappedFileCount == 0 {
+            publishOperit1SnapshotCountedProgress(
+                "preferences",
+                "迁移偏好设置",
+                "快照没有可迁移的数据存储偏好文件。".to_string(),
+                0.50,
+                0.64,
+                0,
+                0,
+            );
         }
         Ok((fileCount, keyCount))
     }
 
     #[allow(non_snake_case)]
+    /// Imports Operit1 chats while reporting parsed messages and persisted chats.
     fn importChatDatabase(
         &self,
         parsed: &ParsedOperit1Snapshot,
@@ -568,19 +713,87 @@ impl Operit1SnapshotImportManager {
                 .sqliteHost
                 .openSqliteDatabase(SQLITE_INSPECTION_STORAGE_PATH)
                 .map_err(|error| error.to_string())?;
-            let archive = buildChatArchiveFromOperit1Database(connection.as_mut(), fileImportPlan)?;
+            let hasChatTables = sqliteTableExists(connection.as_mut(), "chats")?
+                && sqliteTableExists(connection.as_mut(), "messages")?;
+            let (totalChatCount, totalMessageCount) = if hasChatTables {
+                (
+                    queryCount(connection.as_mut(), "SELECT COUNT(*) FROM chats")?,
+                    queryCount(connection.as_mut(), "SELECT COUNT(*) FROM messages")?,
+                )
+            } else {
+                (0, 0)
+            };
+            let mut parsedMessageCount = 0usize;
+            let mut parsedMessageProgressThrottle = Operit1SnapshotProgressThrottle::new();
+            let mut onMessageParsed = |parsedChatCount: usize| {
+                parsedMessageCount += 1;
+                if parsedMessageProgressThrottle
+                    .shouldPublish(parsedMessageCount, totalMessageCount as usize)
+                {
+                    publishOperit1SnapshotCountedProgress(
+                        "chats",
+                        "迁移聊天记录",
+                        format!(
+                            "正在解析聊天：{parsedChatCount}/{totalChatCount} 个会话，{parsedMessageCount}/{totalMessageCount} 条消息。"
+                        ),
+                        0.64,
+                        0.71,
+                        parsedMessageCount,
+                        totalMessageCount as usize,
+                    );
+                }
+            };
+            let archive = buildChatArchiveFromOperit1Database(
+                connection.as_mut(),
+                fileImportPlan,
+                &mut onMessageParsed,
+            )?;
             let chatCount = archive.chats.len() as i32;
             let messageCount = archive
                 .chats
                 .iter()
                 .map(|chat| chat.messages.len() as i32)
                 .sum();
-            let json = serde_json::to_string(&archive).map_err(|error| error.to_string())?;
+            publishOperit1SnapshotCountedProgress(
+                "chats",
+                "迁移聊天记录",
+                format!("解析完成，正在写入 {chatCount} 个会话和 {messageCount} 条消息。"),
+                0.64,
+                0.71,
+                1,
+                1,
+            );
             let manager =
                 ChatHistoryManager::new(self.paths.clone()).map_err(|error| error.to_string())?;
+            let mut persistedChatProgressThrottle = Operit1SnapshotProgressThrottle::new();
             manager
-                .importChatHistoriesFromJson(json)
+                .importChatArchiveWithProgress(archive, |persistedChats, totalChats, _| {
+                    if persistedChatProgressThrottle.shouldPublish(persistedChats, totalChats) {
+                        publishOperit1SnapshotCountedProgress(
+                            "chats",
+                            "迁移聊天记录",
+                            format!(
+                                "正在写入聊天：{persistedChats}/{totalChats} 个会话，{messageCount} 条消息已解析。"
+                            ),
+                            0.71,
+                            0.78,
+                            persistedChats,
+                            totalChats,
+                        );
+                    }
+                })
                 .map_err(|error| error.to_string())?;
+            if chatCount == 0 {
+                publishOperit1SnapshotCountedProgress(
+                    "chats",
+                    "迁移聊天记录",
+                    "快照没有可导入的聊天记录。".to_string(),
+                    0.71,
+                    0.78,
+                    0,
+                    0,
+                );
+            }
             Ok((chatCount, messageCount))
         })();
         self.storageHost
@@ -590,33 +803,70 @@ impl Operit1SnapshotImportManager {
     }
 
     #[allow(non_snake_case)]
+    /// Imports workspace, internal, and external snapshot files one entry at a time.
     fn importSnapshotFiles(
         &self,
         parsed: &ParsedOperit1Snapshot,
     ) -> Result<Operit1SnapshotFileImportResult, String> {
-        let (importedWorkspaces, importedWorkspaceFiles) =
-            copyWorkspaceEntries(self.storageWriteHost.as_ref(), parsed)?;
-        let importedFiles = copyEntriesWithPrefix(
-            self.storageWriteHost.as_ref(),
-            parsed,
-            ENTRY_FILES_PREFIX,
-            RUNTIME_IMPORTED_OPERIT1_FILES_DIR,
-        )?;
-        let importedExternalFiles = copyEntriesWithPrefix(
-            self.storageWriteHost.as_ref(),
-            parsed,
-            ENTRY_EXTERNAL_FILES_PREFIX,
-            RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR,
-        )?;
+        let copyPlan = buildSnapshotFileCopyPlan(parsed)?;
+        let totalFileCount = copyPlan.items.len();
+        let sourceEntries = copyPlan
+            .items
+            .iter()
+            .map(|item| item.sourceEntry.clone())
+            .collect::<Vec<_>>();
+        let mut copiedFileCount = 0usize;
+        let mut copyBuffer = vec![0; ARCHIVE_ENTRY_COPY_BUFFER_BYTES];
+        let mut fileProgressThrottle = Operit1SnapshotProgressThrottle::new();
+        parsed
+            .archive
+            .copyEntriesTo(&sourceEntries, |index, entryName, reader| {
+                let item = copyPlan.items.get(index).ok_or_else(|| {
+                    format!("Operit1 snapshot copy plan is missing entry index: {index}")
+                })?;
+                writeArchiveReaderToStorage(
+                    self.storageWriteHost.as_ref(),
+                    reader,
+                    &item.targetPath,
+                    &mut copyBuffer,
+                )?;
+                copiedFileCount += 1;
+                if fileProgressThrottle.shouldPublish(copiedFileCount, totalFileCount) {
+                    publishOperit1SnapshotCountedProgress(
+                        "files",
+                        "迁移资源文件",
+                        format!(
+                            "正在复制资源：{copiedFileCount}/{totalFileCount} 个文件（{entryName}）。"
+                        ),
+                        0.90,
+                        1.0,
+                        copiedFileCount,
+                        totalFileCount,
+                    );
+                }
+                Ok(())
+            })?;
+        if totalFileCount == 0 {
+            publishOperit1SnapshotCountedProgress(
+                "files",
+                "迁移资源文件",
+                "快照没有可迁移的资源文件。".to_string(),
+                0.90,
+                1.0,
+                0,
+                0,
+            );
+        }
         Ok(Operit1SnapshotFileImportResult {
-            importedFiles,
-            importedExternalFiles,
-            importedWorkspaces,
-            importedWorkspaceFiles,
+            importedFiles: copyPlan.importedFiles,
+            importedExternalFiles: copyPlan.importedExternalFiles,
+            importedWorkspaces: copyPlan.workspaceIds.len() as i32,
+            importedWorkspaceFiles: copyPlan.importedWorkspaceFiles,
         })
     }
 
     #[allow(non_snake_case)]
+    /// Imports every Operit1 ObjectBox memory profile and reports each completed profile.
     fn importObjectBoxMemoryStore(
         &self,
         parsed: &ParsedOperit1Snapshot,
@@ -625,9 +875,10 @@ impl Operit1SnapshotImportManager {
             let paths = self.paths.clone();
             let sharedMemoryStoreManager = SharedMemoryStoreManager::new(paths);
             let profiles = collectOperit1MemoryProfileIds(parsed)?;
+            let profileCount = profiles.len();
             let mut totalMemoryCount = 0;
             let mut totalLinkCount = 0;
-            for profileId in profiles {
+            for (profileIndex, profileId) in profiles.into_iter().enumerate() {
                 let entry = operit1ObjectBoxEntryForProfile(&profileId);
                 self.stageArchiveEntry(parsed, &entry, OBJECTBOX_IMPORT_STORAGE_PATH)?;
                 let entryLength = parsed
@@ -657,6 +908,31 @@ impl Operit1SnapshotImportManager {
                 repository
                     .importMemoriesFromJson(json, ImportStrategy::UPDATE)
                     .map_err(|error| format!("导入 Operit1 记忆库失败：{error}"))?;
+                publishOperit1SnapshotCountedProgress(
+                    "memory",
+                    "迁移记忆库",
+                    format!(
+                        "已迁移 {}/{profileCount} 个记忆库，累计 {} 条记忆和 {} 条关联。",
+                        profileIndex + 1,
+                        totalMemoryCount,
+                        totalLinkCount,
+                    ),
+                    0.78,
+                    0.90,
+                    profileIndex + 1,
+                    profileCount,
+                );
+            }
+            if profileCount == 0 {
+                publishOperit1SnapshotCountedProgress(
+                    "memory",
+                    "迁移记忆库",
+                    "快照没有可迁移的记忆库。".to_string(),
+                    0.78,
+                    0.90,
+                    0,
+                    0,
+                );
             }
             Ok((totalMemoryCount, totalLinkCount))
         })();
@@ -1024,6 +1300,19 @@ impl Operit1ModelConfig {
         } else {
             ApiProviderType::DEEPSEEK.name()
         };
+        match providerTypeId.to_ascii_uppercase().as_str() {
+            "MNN" | "LLAMA_CPP" => {
+                AppLogger::i(
+                    "Operit1SnapshotImport",
+                    &format!(
+                        "legacy local provider mapped to LOCAL_MODEL configId={} providerType={providerTypeId}",
+                        self.id
+                    ),
+                );
+                return Ok(ApiProviderType::LOCAL_MODEL);
+            }
+            _ => {}
+        }
         ApiProviderType::fromProviderTypeId(providerTypeId)
             .ok_or_else(|| format!("无法识别 Operit1 供应商类型：{}", providerTypeId))
     }
@@ -1243,6 +1532,23 @@ struct Operit1SnapshotFileImportResult {
     importedFiles: i32,
     importedExternalFiles: i32,
     importedWorkspaces: i32,
+    importedWorkspaceFiles: i32,
+}
+
+#[derive(Clone, Debug)]
+/// Describes one archive entry and its final runtime storage destination.
+struct SnapshotFileCopyItem {
+    sourceEntry: String,
+    targetPath: String,
+}
+
+#[derive(Clone, Debug)]
+/// Collects every resource file that must be copied from one Operit1 snapshot.
+struct SnapshotFileCopyPlan {
+    items: Vec<SnapshotFileCopyItem>,
+    workspaceIds: BTreeSet<String>,
+    importedFiles: i32,
+    importedExternalFiles: i32,
     importedWorkspaceFiles: i32,
 }
 
@@ -2303,10 +2609,14 @@ fn parseOperit1PromptTagType(value: Option<&str>) -> Result<TagType, String> {
 
 #[allow(non_snake_case)]
 /// Builds a chat archive from the Operit1 SQLite database.
-fn buildChatArchiveFromOperit1Database(
+fn buildChatArchiveFromOperit1Database<F>(
     connection: &mut dyn RuntimeSqliteConnection,
     fileImportPlan: &SnapshotFileImportPlan,
-) -> Result<OperitChatArchive, String> {
+    onMessageParsed: &mut F,
+) -> Result<OperitChatArchive, String>
+where
+    F: FnMut(usize),
+{
     if !sqliteTableExists(connection, "chats")? || !sqliteTableExists(connection, "messages")? {
         return Ok(OperitChatArchive {
             archiveType: ARCHIVE_TYPE.to_string(),
@@ -2348,8 +2658,9 @@ fn buildChatArchiveFromOperit1Database(
         })
         .collect::<Result<Vec<_>, String>>()?;
     let mut chats = Vec::new();
-    for chat in chatRows {
-        let messages = readOperit1Messages(connection, &chat.id)?;
+    for (chatIndex, chat) in chatRows.into_iter().enumerate() {
+        let mut onMessageForChat = || onMessageParsed(chatIndex + 1);
+        let messages = readOperit1Messages(connection, &chat.id, &mut onMessageForChat)?;
         if messages.is_empty() {
             continue;
         }
@@ -2400,10 +2711,14 @@ struct Operit1ChatRow {
 
 #[allow(non_snake_case)]
 /// Reads archived messages for one Operit1 chat row.
-fn readOperit1Messages(
+fn readOperit1Messages<F>(
     connection: &mut dyn RuntimeSqliteConnection,
     chatId: &str,
-) -> Result<Vec<OperitArchivedMessage>, String> {
+    onMessageParsed: &mut F,
+) -> Result<Vec<OperitArchivedMessage>, String>
+where
+    F: FnMut(),
+{
     let rows = connection
         .query(
             r#"
@@ -2415,43 +2730,42 @@ fn readOperit1Messages(
             vec![SqliteValue::Text(chatId.to_string())],
         )
         .map_err(|error| error.to_string())?;
-    let messages = rows
-        .iter()
-        .map(|row| {
-            let timestamp = sqliteRowI64(row, 2, "messages.timestamp")?;
-            let sender = sqliteRowString(row, 0, "messages.sender")?;
-            let content = sqliteRowString(row, 1, "messages.content")?;
-            let parts = if sender == "ai" {
-                MessagePartCodec::parseAssistantMarkup(&content)
-                    .map_err(|error| format!("Operit1 assistant message markup is invalid: {error}"))?
-            } else {
-                vec![MessagePart::markdown("part-0".to_string(), 0, content)]
-            };
-            Ok(OperitArchivedMessage {
-                baseMessage: ChatMessage {
-                    sender,
-                    parts,
-                    timestamp,
-                    roleName: sqliteRowString(row, 4, "messages.roleName")?,
-                    selectedVariantIndex: 0,
-                    variantCount: 1,
+    let mut messages = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let timestamp = sqliteRowI64(row, 2, "messages.timestamp")?;
+        let sender = sqliteRowString(row, 0, "messages.sender")?;
+        let content = sqliteRowString(row, 1, "messages.content")?;
+        let parts = if sender == "ai" {
+            MessagePartCodec::parseAssistantMarkup(&content)
+                .map_err(|error| format!("Operit1 assistant message markup is invalid: {error}"))?
+        } else {
+            vec![MessagePart::markdown("part-0".to_string(), 0, content)]
+        };
+        messages.push(OperitArchivedMessage {
+            baseMessage: ChatMessage {
+                sender,
+                parts,
+                timestamp,
+                roleName: sqliteRowString(row, 4, "messages.roleName")?,
+                selectedVariantIndex: 0,
+                variantCount: 1,
                 provider: sqliteRowString(row, 5, "messages.provider")?,
                 modelName: sqliteRowString(row, 6, "messages.modelName")?,
-                    inputTokens: 0,
-                    outputTokens: 0,
-                    cachedInputTokens: 0,
-                    sentAt: 0,
-                    outputDurationMs: 0,
-                    waitDurationMs: 0,
-                    completedAt: 0,
-                    displayMode: ChatMessageDisplayMode::NORMAL,
-                    isFavorite: false,
-                    isVariantPreview: false,
-                },
-                variants: Vec::new(),
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+                inputTokens: 0,
+                outputTokens: 0,
+                cachedInputTokens: 0,
+                sentAt: 0,
+                outputDurationMs: 0,
+                waitDurationMs: 0,
+                completedAt: 0,
+                displayMode: ChatMessageDisplayMode::NORMAL,
+                isFavorite: false,
+                isVariantPreview: false,
+            },
+            variants: Vec::new(),
+        });
+        onMessageParsed();
+    }
     Ok(messages)
 }
 
@@ -2518,53 +2832,74 @@ fn sqliteRowOptionalString(
         .map_err(|error| format!("{label}: {error}"))
 }
 
-#[allow(non_snake_case)]
-fn copyEntriesWithPrefix(
-    storageWriteHost: &dyn RuntimeStorageWriteHost,
+/// Builds the exact resource-copy plan before opening the ZIP for streaming extraction.
+fn buildSnapshotFileCopyPlan(
     parsed: &ParsedOperit1Snapshot,
-    sourcePrefix: &str,
-    targetPrefix: &str,
-) -> Result<i32, String> {
-    let mut count = 0;
-    for entry in parsed.archive.entries.keys() {
-        if !entry.starts_with(sourcePrefix) || isDataStoreEntry(entry) {
-            continue;
-        }
-        if sourcePrefix == ENTRY_FILES_PREFIX && entry.starts_with(ENTRY_WORKSPACE_FILES_PREFIX) {
-            continue;
-        }
-        let relative = entry
-            .strip_prefix(sourcePrefix)
-            .ok_or_else(|| format!("快照资源路径前缀不匹配：{entry}"))?;
-        validateRelativePath(relative)?;
-        let target = format!("{}/{relative}", targetPrefix.trim_end_matches('/'));
-        writeArchiveEntryToStorage(storageWriteHost, parsed, entry, &target)?;
-        count += 1;
-    }
-    Ok(count)
-}
-
-#[allow(non_snake_case)]
-fn copyWorkspaceEntries(
-    storageWriteHost: &dyn RuntimeStorageWriteHost,
-    parsed: &ParsedOperit1Snapshot,
-) -> Result<(i32, i32), String> {
-    let mut workspaceIds = BTreeSet::new();
-    let mut fileCount = 0;
+) -> Result<SnapshotFileCopyPlan, String> {
+    let mut plan = SnapshotFileCopyPlan {
+        items: Vec::new(),
+        workspaceIds: BTreeSet::new(),
+        importedFiles: 0,
+        importedExternalFiles: 0,
+        importedWorkspaceFiles: 0,
+    };
     for entry in parsed.archive.entries.keys() {
         let Some(relative) = entry.strip_prefix(ENTRY_WORKSPACE_FILES_PREFIX) else {
             continue;
         };
         validateRelativePath(relative)?;
         let (workspaceId, rest) = splitWorkspaceRelativePath(relative)?;
-        workspaceIds.insert(workspaceId.to_string());
+        plan.workspaceIds.insert(workspaceId.to_string());
         if !rest.is_empty() {
-            let target = format!("workspaces/{workspaceId}/{rest}");
-            writeArchiveEntryToStorage(storageWriteHost, parsed, entry, &target)?;
-            fileCount += 1;
+            plan.items.push(SnapshotFileCopyItem {
+                sourceEntry: entry.clone(),
+                targetPath: format!("workspaces/{workspaceId}/{rest}"),
+            });
+            plan.importedWorkspaceFiles += 1;
         }
     }
-    Ok((workspaceIds.len() as i32, fileCount))
+    for entry in parsed.archive.entries.keys() {
+        if !entryMatchesCopyPrefix(entry, ENTRY_FILES_PREFIX) {
+            continue;
+        }
+        let relative = entry
+            .strip_prefix(ENTRY_FILES_PREFIX)
+            .ok_or_else(|| format!("快照资源路径前缀不匹配：{entry}"))?;
+        validateRelativePath(relative)?;
+        plan.items.push(SnapshotFileCopyItem {
+            sourceEntry: entry.clone(),
+            targetPath: format!(
+                "{}/{relative}",
+                RUNTIME_IMPORTED_OPERIT1_FILES_DIR.trim_end_matches('/')
+            ),
+        });
+        plan.importedFiles += 1;
+    }
+    for entry in parsed.archive.entries.keys() {
+        if !entryMatchesCopyPrefix(entry, ENTRY_EXTERNAL_FILES_PREFIX) {
+            continue;
+        }
+        let relative = entry
+            .strip_prefix(ENTRY_EXTERNAL_FILES_PREFIX)
+            .ok_or_else(|| format!("快照资源路径前缀不匹配：{entry}"))?;
+        validateRelativePath(relative)?;
+        plan.items.push(SnapshotFileCopyItem {
+            sourceEntry: entry.clone(),
+            targetPath: format!(
+                "{}/{relative}",
+                RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR.trim_end_matches('/')
+            ),
+        });
+        plan.importedExternalFiles += 1;
+    }
+    Ok(plan)
+}
+
+/// Returns whether an archive entry belongs to one non-workspace copy prefix.
+fn entryMatchesCopyPrefix(entry: &str, sourcePrefix: &str) -> bool {
+    entry.starts_with(sourcePrefix)
+        && !isDataStoreEntry(entry)
+        && !(sourcePrefix == ENTRY_FILES_PREFIX && entry.starts_with(ENTRY_WORKSPACE_FILES_PREFIX))
 }
 
 #[allow(non_snake_case)]
@@ -3002,13 +3337,58 @@ fn writeArchiveEntryToStorage(
         },
     );
     match copyResult {
-        Ok(()) => session.commit().map_err(|error| error.to_string()),
+        Ok(()) => session.commitFast().map_err(|error| error.to_string()),
         Err(error) => {
             session.discard().map_err(|discardError| {
                 format!("{error}; failed to discard incomplete storage entry: {discardError}")
             })?;
             Err(error)
         }
+    }
+}
+
+/// Streams one already-open archive entry into a host-owned runtime storage session.
+fn writeArchiveReaderToStorage(
+    storageWriteHost: &dyn RuntimeStorageWriteHost,
+    reader: &mut dyn Read,
+    storagePath: &str,
+    buffer: &mut [u8],
+) -> Result<(), String> {
+    let mut session = storageWriteHost
+        .createWriteSession(storagePath)
+        .map_err(|error| error.to_string())?;
+    let copyResult = copyArchiveReaderToStorageSession(
+        reader,
+        &mut RuntimeStorageSessionWriter {
+            session: session.as_mut(),
+        },
+        buffer,
+    );
+    match copyResult {
+        Ok(()) => session.commitFast().map_err(|error| error.to_string()),
+        Err(error) => {
+            session.discard().map_err(|discardError| {
+                format!("{error}; failed to discard incomplete storage entry: {discardError}")
+            })?;
+            Err(error)
+        }
+    }
+}
+
+/// Copies one open archive reader into a storage session using the supplied reusable buffer.
+fn copyArchiveReaderToStorageSession(
+    reader: &mut dyn Read,
+    writer: &mut RuntimeStorageSessionWriter<'_>,
+    buffer: &mut [u8],
+) -> Result<(), String> {
+    loop {
+        let count = reader.read(buffer).map_err(|error| error.to_string())?;
+        if count == 0 {
+            return Ok(());
+        }
+        writer
+            .write_all(&buffer[..count])
+            .map_err(|error| error.to_string())?;
     }
 }
 

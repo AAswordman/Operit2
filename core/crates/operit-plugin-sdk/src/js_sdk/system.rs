@@ -236,13 +236,11 @@ pub enum SystemTerminalHostHiddenExecOptionsTimeoutMs {
     Variant2(String),
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// Configures a reusable hidden command executor and its command interpreter.
+/// Configures a reusable hidden command executor.
 pub struct SystemTerminalHostHiddenExecOptions {
     /// Selects the hidden login context reused across related commands.
     #[serde(rename = "executorKey")]
     pub executor_key: Option<String>,
-    /// Selects the command interpreter used by the hidden executor.
-    pub r#type: TerminalCreateType,
     /// Sets the maximum command execution time in milliseconds.
     #[serde(rename = "timeoutMs")]
     pub timeout_ms: Option<SystemTerminalHostHiddenExecOptionsTimeoutMs>,
@@ -445,12 +443,14 @@ pub trait SystemHost: Send + Sync {
     ///Get device location
     ///@param highAccuracy - Whether to use high accuracy mode (default: false)
     ///@param timeout - Timeout in seconds (default: 10)
+    ///@param includeAddress - Whether to resolve a reverse-geocoded address (default: true)
     ///@returns Promise resolving to location data
     ///
     fn getLocation(
         &self,
         highAccuracy: Option<bool>,
         timeout: Option<f64>,
+        includeAddress: Option<bool>,
     ) -> JsFuture<LocationData>;
 }
 ///
@@ -558,16 +558,10 @@ pub trait SystemTerminalHost: Send + Sync {
     ///
     fn info(&self) -> JsFuture<TerminalInfoResultData>;
     ///
-    ///Create or get a terminal session.
-    ///@param sessionName The name for the session.
-    ///@param type Terminal type. Windows supports powershell and bash; Linux supports linux; Android supports bash and shell.
+    ///Creates an interactive session in the host-registered primary terminal.
     ///@returns Promise resolving to the session creation result.
     ///
-    fn create(
-        &self,
-        sessionName: String,
-        r#type: TerminalCreateType,
-    ) -> JsFuture<TerminalSessionCreationResultData>;
+    fn create(&self) -> JsFuture<TerminalSessionCreationResultData>;
     ///
     ///Execute a command in a terminal session.
     ///@param sessionId The ID of the session.
@@ -605,7 +599,7 @@ pub trait SystemTerminalHost: Send + Sync {
     fn hiddenExec(
         &self,
         command: String,
-        options: SystemTerminalHostHiddenExecOptions,
+        options: Option<SystemTerminalHostHiddenExecOptions>,
     ) -> JsFuture<HiddenTerminalCommandResultData>;
     ///
     ///Close a terminal session.

@@ -45,15 +45,16 @@ impl ToolPkgAppLifecycleHookBridge {
         let mut nextHooks = activeContainers
             .iter()
             .flat_map(|container| {
-                container.appLifecycleHooks.iter().map(|hook| {
-                    ToolPkgAppLifecycleHookRegistration {
+                container
+                    .appLifecycleHooks
+                    .iter()
+                    .map(|hook| ToolPkgAppLifecycleHookRegistration {
                         containerPackageName: container.packageName.clone(),
                         hookId: hook.id.clone(),
                         event: hook.event.clone(),
                         functionName: hook.function.clone(),
                         functionSource: hook.functionSource.clone(),
-                    }
-                })
+                    })
             })
             .collect::<Vec<_>>();
         nextHooks.sort_by(|left, right| {
@@ -88,7 +89,12 @@ impl ToolPkgAppLifecycleHookBridge {
                 .iter()
                 .filter(|hook| hook.event == replayEvent.eventName)
             {
-                runAppLifecycleHook(runtime, hook, &replayEvent.eventName, replayEvent.payload.clone());
+                runAppLifecycleHook(
+                    runtime,
+                    hook,
+                    &replayEvent.eventName,
+                    replayEvent.payload.clone(),
+                );
             }
         }
     }

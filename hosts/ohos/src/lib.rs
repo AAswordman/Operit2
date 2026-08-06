@@ -48,15 +48,16 @@ pub fn createRuntimeHostManager(
     screenshotCapturer: OhosScreenshotCapturer,
     textRecognizer: OhosTextRecognizer,
     systemController: OhosSystemController,
+    managedRuntimeHost: Arc<dyn operit_host_api::ManagedRuntimeHost>,
 ) -> HostManager {
-    let managedRuntimeHost = Arc::new(OhosManagedRuntimeHost::new(workspaceRoot.clone()));
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
         runtimeRoot.clone(),
     ));
-    let runtimeStorageWriteHost = Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
-        runtimeRoot.clone(),
-        workspaceRoot.clone(),
-    ));
+    let runtimeStorageWriteHost =
+        Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
+            runtimeRoot.clone(),
+            workspaceRoot.clone(),
+        ));
     let runtimeStorageHost = Arc::new(OhosRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let systemOperationHost = Arc::new(OhosSystemOperationHost::fromOwnerCallbacks(

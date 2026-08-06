@@ -44,11 +44,12 @@ impl operit_host_api::SystemOperationHost for FlutterSystemOperationBridge {
             Duration::from_secs(60),
         )
         .map_err(operit_host_api::HostError::new)?;
-        let result: serde_json::Value = serde_json::from_str(&response.resultJson).map_err(|error| {
-            operit_host_api::HostError::new(format!(
-                "system notification response JSON decode failed: {error}"
-            ))
-        })?;
+        let result: serde_json::Value =
+            serde_json::from_str(&response.resultJson).map_err(|error| {
+                operit_host_api::HostError::new(format!(
+                    "system notification response JSON decode failed: {error}"
+                ))
+            })?;
         if result.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
             return Ok(());
         }
@@ -414,6 +415,10 @@ pub(crate) fn create_local_core(
     composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
     terminalHost: Arc<NativeTerminalHost>,
 ) -> Result<LocalCoreProxy, String> {
+    let managedRuntimeHost = Arc::new(NativeManagedRuntimeHost::new(
+        terminalHost.clone(),
+        workspace_root.clone(),
+    ));
     let systemLanguageCode = Arc::new(systemLanguageCode);
     let mut context = create_platform_runtime_host_manager(
         runtime_root,
@@ -487,6 +492,7 @@ pub(crate) fn create_local_core(
                 ))
             })
         }),
+        managedRuntimeHost,
     );
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);
@@ -647,8 +653,13 @@ pub(crate) fn create_local_core(
     composeDslWebViewHost: Option<Arc<dyn operit_host_api::ComposeDslWebViewHost>>,
     terminalHost: Arc<NativeTerminalHost>,
 ) -> Result<LocalCoreProxy, String> {
-    let mut context =
-        create_platform_runtime_host_manager(runtime_root, workspace_root, webVisitHost);
+    let managedRuntimeHost = Arc::new(NativeManagedRuntimeHost::new(terminalHost.clone()));
+    let mut context = create_platform_runtime_host_manager(
+        runtime_root,
+        workspace_root,
+        webVisitHost,
+        managedRuntimeHost,
+    );
     context.systemOperationHost = Some(Arc::new(FlutterSystemOperationBridge::new()));
     if let Some(host) = browserAutomationHost {
         context = context.withBrowserAutomationHost(host);

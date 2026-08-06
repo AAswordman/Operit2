@@ -79,6 +79,11 @@ class ArtifactVersionListDialog extends StatelessWidget {
                   final version = versions[index];
                   final isLatest = version.versionId == latestVersionId ||
                       (latestVersionId.isEmpty && index == 0);
+                  final compatibility = resolveMarketAppVersionCompatibility(
+                    appVersion: currentAppVersion,
+                    minAppVersion: version.minAppVer,
+                    maxAppVersion: version.maxAppVer,
+                  );
 
                   return ListTile(
                     contentPadding:
@@ -139,11 +144,21 @@ class ArtifactVersionListDialog extends StatelessWidget {
                               color: colorScheme.outline,
                             ),
                           ),
+                        if (compatibility != null)
+                          Text(
+                            compatibility.message,
+                            style: textTheme.labelSmall?.copyWith(
+                              color: colorScheme.error,
+                            ),
+                          ),
                       ],
                     ),
-                    onTap: () {
-                      Navigator.of(context).pop(version);
-                    },
+                    enabled: compatibility == null,
+                    onTap: compatibility == null
+                        ? () {
+                            Navigator.of(context).pop(version);
+                          }
+                        : null,
                   );
                 },
               ),

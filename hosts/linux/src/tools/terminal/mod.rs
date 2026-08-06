@@ -20,6 +20,9 @@ const PTY_OUTPUT_LIMIT: usize = 1024 * 1024;
 const PTY_PROMPT_MARKER_PREFIX: &[u8] = b"\x1b]133;OperitPrompt=";
 const PTY_PROMPT_MARKER_END: u8 = 7;
 const COMMAND_CANCEL_SETTLE_TIMEOUT_MS: u64 = 3000;
+const PLATFORM: &str = "linux";
+const TERMINAL: &str = "native";
+const PRIMARY_TERMINAL_TYPE: &str = "bash";
 
 #[derive(Clone, Default)]
 pub struct LinuxTerminalHost {
@@ -72,10 +75,12 @@ impl LinuxTerminalHost {
 impl TerminalHost for LinuxTerminalHost {
     fn terminalInfo(&self) -> HostResult<TerminalInfo> {
         Ok(TerminalInfo {
-            platform: "linux".to_string(),
-            defaultType: "linux".to_string(),
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
+            terminalType: PRIMARY_TERMINAL_TYPE.to_string(),
             types: vec![TerminalTypeInfo {
-                terminalType: "linux".to_string(),
+                terminal: TERMINAL.to_string(),
+                terminalType: PRIMARY_TERMINAL_TYPE.to_string(),
                 available: true,
                 description: "Linux bash terminal".to_string(),
             }],
@@ -85,12 +90,14 @@ impl TerminalHost for LinuxTerminalHost {
     fn startPtySession(
         &self,
         sessionName: &str,
+        terminal: &str,
         terminalType: &str,
         workingDir: &str,
         rows: u16,
         cols: u16,
     ) -> HostResult<String> {
         let normalizedSessionName = nonBlank(sessionName, "session_name")?;
+        requireNativeTerminal(terminal)?;
         let normalizedTerminalType = normalizeTerminalType(terminalType)?;
         let workDir = nonBlank(workingDir, "working_directory")?;
         let session = createPtySession(
@@ -194,6 +201,8 @@ impl TerminalHost for LinuxTerminalHost {
             entries.push(TerminalSessionListEntry {
                 sessionId: sessionId.clone(),
                 sessionName: session.sessionName.clone(),
+                platform: PLATFORM.to_string(),
+                terminal: TERMINAL.to_string(),
                 terminalType: session.terminalType.clone(),
                 sessionKind: "pty".to_string(),
                 workingDir: session.workingDir.clone(),
@@ -203,13 +212,9 @@ impl TerminalHost for LinuxTerminalHost {
         Ok(entries)
     }
 
-    fn createOrGetSession(
-        &self,
-        sessionName: &str,
-        terminalType: &str,
-    ) -> HostResult<TerminalSessionInfo> {
+    fn createOrGetSession(&self, sessionName: &str) -> HostResult<TerminalSessionInfo> {
         let normalizedSessionName = nonBlank(sessionName, "session_name")?;
-        let normalizedTerminalType = normalizeTerminalType(terminalType)?;
+        let normalizedTerminalType = PRIMARY_TERMINAL_TYPE.to_string();
         let sessionKey = sessionKey(&normalizedTerminalType, &normalizedSessionName);
         {
             let mut state = self.lockState()?;
@@ -218,6 +223,8 @@ impl TerminalHost for LinuxTerminalHost {
                     return Ok(TerminalSessionInfo {
                         sessionId,
                         sessionName: normalizedSessionName,
+                        platform: PLATFORM.to_string(),
+                        terminal: TERMINAL.to_string(),
                         terminalType: normalizedTerminalType,
                         isNewSession: false,
                     });
@@ -241,6 +248,8 @@ impl TerminalHost for LinuxTerminalHost {
         Ok(TerminalSessionInfo {
             sessionId,
             sessionName: normalizedSessionName,
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
             terminalType: normalizedTerminalType,
             isNewSession: true,
         })
@@ -293,6 +302,8 @@ impl TerminalHost for LinuxTerminalHost {
             output: result.output,
             exitCode: result.exitCode,
             sessionId: normalizedSessionId,
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
             terminalType,
             timedOut: result.timedOut,
         })
@@ -301,12 +312,11 @@ impl TerminalHost for LinuxTerminalHost {
     fn executeHiddenCommand(
         &self,
         command: &str,
-        terminalType: &str,
         executorKey: &str,
         timeoutMs: u64,
     ) -> HostResult<HiddenTerminalCommandOutput> {
         let normalizedCommand = nonBlank(command, "command")?;
-        let normalizedTerminalType = normalizeTerminalType(terminalType)?;
+        let normalizedTerminalType = PRIMARY_TERMINAL_TYPE.to_string();
         let normalizedExecutorKey = match executorKey.trim() {
             "" => "default".to_string(),
             value => value.to_string(),
@@ -324,6 +334,8 @@ impl TerminalHost for LinuxTerminalHost {
             output: output.output,
             exitCode: output.exitCode,
             executorKey: normalizedExecutorKey,
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
             terminalType: normalizedTerminalType,
             timedOut: output.timedOut,
         })
@@ -390,6 +402,8 @@ impl TerminalHost for LinuxTerminalHost {
             .unwrap_or(0);
         Ok(TerminalScreenOutput {
             sessionId: normalizedSessionId,
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
             terminalType: session.terminalType.clone(),
             rows,
             cols,
@@ -1176,9 +1190,19 @@ fn toHostError(error: impl std::fmt::Display) -> HostError {
 #[allow(non_snake_case)]
 fn normalizeTerminalType(terminalType: &str) -> HostResult<String> {
     match terminalType.trim() {
-        "linux" => Ok("linux".to_string()),
+        PRIMARY_TERMINAL_TYPE => Ok(PRIMARY_TERMINAL_TYPE.to_string()),
         value => Err(HostError::new(format!(
             "Unsupported terminal type for linux host: {value}"
+        ))),
+    }
+}
+
+/// Validates the terminal implementation owned by the Linux PTY host.
+fn requireNativeTerminal(terminal: &str) -> HostResult<()> {
+    match terminal.trim() {
+        TERMINAL => Ok(()),
+        value => Err(HostError::new(format!(
+            "Unsupported terminal implementation for Linux PTY host: {value}"
         ))),
     }
 }
@@ -1349,7 +1373,7 @@ mod tests {
     fn linux_command_block_completes_in_pty() {
         let host = LinuxTerminalHost::new();
         let session = host
-            .createOrGetSession("linux_terminal_marker", "linux")
+            .createOrGetSession("linux_terminal_marker")
             .expect("create terminal session");
         let result = host
             .executeInSession(
@@ -1368,7 +1392,7 @@ mod tests {
     fn linux_screen_records_prompt_command_output_prompt() {
         let host = LinuxTerminalHost::new();
         let session = host
-            .createOrGetSession("linux_terminal_screen", "linux")
+            .createOrGetSession("linux_terminal_screen")
             .expect("create terminal session");
         let workingDir = std::env::current_dir().unwrap().display().to_string();
         let prompt = format!("{workingDir} $ ");
@@ -1403,12 +1427,13 @@ mod tests {
     fn visible_linux_sessions_are_listed_as_pty() {
         let host = LinuxTerminalHost::new();
         let created = host
-            .createOrGetSession("linux_visible_ai", "linux")
+            .createOrGetSession("linux_visible_ai")
             .expect("create visible terminal session");
         let manual = host
             .startPtySession(
                 "linux_visible_manual",
-                "linux",
+                TERMINAL,
+                PRIMARY_TERMINAL_TYPE,
                 &std::env::current_dir().unwrap().display().to_string(),
                 24,
                 80,
@@ -1426,16 +1451,16 @@ mod tests {
             .expect("manual terminal listed");
 
         assert_eq!(createdEntry.sessionKind, "pty");
-        assert_eq!(createdEntry.terminalType, "linux");
+        assert_eq!(createdEntry.terminalType, PRIMARY_TERMINAL_TYPE);
         assert_eq!(manualEntry.sessionKind, "pty");
-        assert_eq!(manualEntry.terminalType, "linux");
+        assert_eq!(manualEntry.terminalType, PRIMARY_TERMINAL_TYPE);
     }
 
     #[test]
     fn linux_pty_session_preserves_working_directory() {
         let host = LinuxTerminalHost::new();
         let session = host
-            .createOrGetSession("linux_terminal_cwd", "linux")
+            .createOrGetSession("linux_terminal_cwd")
             .expect("create terminal session");
 
         let cdResult = host

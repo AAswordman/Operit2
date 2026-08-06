@@ -464,6 +464,7 @@ class _ToolResultRenderState {
   final List<FileDiff> fileDiffs;
 }
 
+/// Renders thinking content with the established chat disclosure design.
 class _ThinkPanel extends StatefulWidget {
   const _ThinkPanel({
     required this.text,

@@ -855,6 +855,17 @@ class AppLocalizationsEn extends AppLocalizations {
       'Manage default workspaces, terminal sessions, browser mode, scripts, and web automation.';
 
   @override
+  String get settingsCategoryGlobalBehaviorTitle => 'Global Behavior Settings';
+
+  @override
+  String get settingsCategoryGlobalBehaviorSubtitle =>
+      'Input processing and interaction';
+
+  @override
+  String get settingsCategoryGlobalBehaviorDescription =>
+      'Configure input and interaction behavior that does not vary by character card.';
+
+  @override
   String get settingsCategoryAppearanceTitle => 'Appearance & Interaction';
 
   @override
@@ -883,6 +894,34 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsCategoryAccessLinksDescription =>
       'Connect another device, sync data, or allow browsers to access this device.';
+
+  @override
+  String get settingsCategoryGroupAssistant => 'AI & Creation';
+
+  @override
+  String get settingsCategoryGroupWorkspace => 'Workspace & Automation';
+
+  @override
+  String get settingsCategoryGroupExperience => 'Display & Interaction';
+
+  @override
+  String get settingsCategoryGroupSystem => 'Data & System';
+
+  @override
+  String get settingsGlobalBehaviorChatInputSection => 'Chat input';
+
+  @override
+  String get settingsGlobalBehaviorLongPastedTextAsAttachment =>
+      'Convert long pasted text to a file';
+
+  @override
+  String get settingsGlobalBehaviorLongPastedTextThreshold =>
+      'Conversion threshold';
+
+  @override
+  String settingsGlobalBehaviorLongPastedTextThresholdValue(int count) {
+    return '$count characters';
+  }
 
   @override
   String get settingsComingSoon =>
@@ -1829,6 +1868,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsToolsMcpStartupTimeoutSeconds => 'Wait seconds';
 
   @override
+  String get settingsToolsToolPkgPreHookTimeout => 'ToolPkg pre-hook timeout';
+
+  @override
+  String settingsToolsToolPkgPreHookDescription(int seconds) {
+    return 'One ToolPkg pre-hook chain has $seconds seconds in total.';
+  }
+
+  @override
+  String get settingsToolsToolPkgPreHookTimeoutSeconds => 'Total seconds';
+
+  @override
   String get settingsWorkspaceCurrentDesign => 'Current workspace structure';
 
   @override
@@ -2257,19 +2307,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsAppearanceInputFloating => 'Floating input';
 
   @override
-  String get settingsAppearanceLongPastedTextAsAttachment =>
-      'Convert long pasted text to a file';
-
-  @override
-  String get settingsAppearanceLongPastedTextThreshold =>
-      'Conversion threshold';
-
-  @override
-  String settingsAppearanceLongPastedTextThresholdValue(int count) {
-    return '$count characters';
-  }
-
-  @override
   String get settingsAppearanceColorSection => 'Theme color';
 
   @override
@@ -2579,6 +2616,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsAppearanceShowAvatars => 'Show message avatars';
+
+  @override
+  String get settingsAppearanceMessageDisplaySection => 'Message display';
 
   @override
   String get settingsAppearanceShowThinkingProcess => 'Show thinking process';
@@ -2931,6 +2971,34 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsDataSnapshotRestoreConfirmAction => 'Restore';
+
+  @override
+  String get settingsDataImportOperit1Snapshot => 'Import from Operit1';
+
+  @override
+  String get settingsDataOperit1SnapshotImported =>
+      'Operit1 snapshot imported.';
+
+  @override
+  String settingsDataOperit1SnapshotImportError(String error) {
+    return 'Operit1 snapshot import failed: $error';
+  }
+
+  @override
+  String settingsDataOperit1SnapshotImportConfirmMessage(
+    String fileName,
+    int formatVersion,
+    String chatModelId,
+    int chatCount,
+    int messageCount,
+    int fileCount,
+    int byteCount,
+  ) {
+    return 'Import this Operit1 snapshot into the current Runtime.\nFile: $fileName\nFormat version: $formatVersion\nChat model: $chatModelId\nChats: $chatCount; messages: $messageCount\nResource files: $fileCount\nSnapshot size: $byteCount bytes';
+  }
+
+  @override
+  String get settingsDataOperit1SnapshotImportAction => 'Import';
 
   @override
   String get settingsDataAdvancedBackupOptions => 'Advanced options';

@@ -511,6 +511,30 @@ impl ChatHistoryManager {
     ) -> ChatHistoryManagerResult<ChatImportResult> {
         let archive: OperitChatArchive = serde_json::from_str(&jsonString)
             .map_err(|error| ChatHistoryManagerError::IllegalArgument(error.to_string()))?;
+        self.importChatArchive(archive, |_, _, _| {})
+    }
+
+    /// Imports one validated chat archive and reports each persisted chat.
+    pub fn importChatArchiveWithProgress<F>(
+        &self,
+        archive: OperitChatArchive,
+        onChatPersisted: F,
+    ) -> ChatHistoryManagerResult<ChatImportResult>
+    where
+        F: FnMut(usize, usize, usize),
+    {
+        self.importChatArchive(archive, onChatPersisted)
+    }
+
+    /// Validates and imports a chat archive while invoking its persistence callback.
+    fn importChatArchive<F>(
+        &self,
+        archive: OperitChatArchive,
+        mut onChatPersisted: F,
+    ) -> ChatHistoryManagerResult<ChatImportResult>
+    where
+        F: FnMut(usize, usize, usize),
+    {
         if archive.archiveType != ARCHIVE_TYPE {
             return Err(ChatHistoryManagerError::IllegalArgument(format!(
                 "invalid archiveType: {}",
@@ -535,9 +559,14 @@ impl ChatHistoryManager {
             updatedCount: 0,
             skippedCount: 0,
         };
+        let totalChatCount = archive.chats.len();
+        let mut processedChatCount = 0;
         for archivedChat in archive.chats {
+            let messageCount = archivedChat.messages.len();
+            processedChatCount += 1;
             if archivedChat.messages.is_empty() {
                 counters.skippedCount += 1;
+                onChatPersisted(processedChatCount, totalChatCount, messageCount);
                 continue;
             }
             if existingIds.contains(&archivedChat.id) {
@@ -547,6 +576,7 @@ impl ChatHistoryManager {
                 counters.newCount += 1;
             }
             self.saveArchivedChat(archivedChat)?;
+            onChatPersisted(processedChatCount, totalChatCount, messageCount);
         }
         Ok(ChatImportResult {
             new: counters.newCount,

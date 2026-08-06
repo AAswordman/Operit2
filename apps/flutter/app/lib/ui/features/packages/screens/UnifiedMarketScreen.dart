@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/AnimatedLazyIndexedStack.dart';
@@ -673,6 +674,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
       _busyEntryIds.add(item.id);
     });
     try {
+      ensureMarketEntryVersionSupported(entry: item);
       if (item.type == 'skill') {
         await _installSkill(item);
       } else if (item.type == 'mcp') {
@@ -797,11 +799,24 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
       _errorMessage = null;
     });
     try {
+      ClientLogger.i('request=getMyEntries', tag: 'MarketManage');
       final mine = await _market.getMyEntries();
+      ClientLogger.i(
+        'response=getMyEntries entries=${mine.entries.length}',
+        tag: 'MarketManage',
+      );
+      ClientLogger.i(
+        'request=getNotifications limit=50 offset=0 since=<null>',
+        tag: 'MarketManage',
+      );
       final notifications = await _market.getNotifications(
         limit: 50,
         offset: 0,
         since: null,
+      );
+      ClientLogger.i(
+        'response=getNotifications items=${notifications.items.length}',
+        tag: 'MarketManage',
       );
       if (!mounted) return;
       setState(() {
@@ -811,6 +826,12 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
       });
     } catch (error, stackTrace) {
       debugPrint('Failed to load market account data: $error\n$stackTrace');
+      ClientLogger.e(
+        'loadMine failed',
+        tag: 'MarketManage',
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (!mounted) return;
       setState(() {
         _errorMessage = error.toString();
@@ -897,6 +918,7 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
                     '',
                 lockedDisplayName: detail.title,
                 canEditEntry: canEditEntry,
+                initialEntry: detail,
               ),
             );
           },
@@ -907,6 +929,128 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
       }
     } catch (error, stackTrace) {
       debugPrint('Failed to open managed version publish: $error\n$stackTrace');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _openingEntryId = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _reviseManagedEntry(
+    core_proxy.MarketPublisherEntrySummary entry,
+  ) async {
+    const logTag = 'MarketManage';
+    final revisionAvailableAt = entry.revisionAvailableAt?.trim();
+    ClientLogger.i(
+      'revision_gate click entryId=${entry.id} stateCode=${entry.stateCode} '
+      'revisionAvailableAt=${revisionAvailableAt?.isNotEmpty == true ? revisionAvailableAt : '<null>'} '
+      'updatedAt=${entry.updatedAt}',
+      tag: logTag,
+    );
+    if (entry.stateCode != 'changes_requested') {
+      ClientLogger.i(
+        'revision_gate decision=private_state entryId=${entry.id} stateCode=${entry.stateCode}',
+        tag: logTag,
+      );
+      _showPrivateEntrySummary(entry);
+      return;
+    }
+    final revisionRemaining = _revisionCooldownRemaining(
+      entry.revisionAvailableAt,
+    );
+    if (revisionRemaining != null) {
+      ClientLogger.i(
+        'revision_gate decision=blocked entryId=${entry.id} '
+        'reason=active_revisionAvailableAt remainingSeconds=${revisionRemaining.inSeconds}',
+        tag: logTag,
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '被打回后的修改版提交仍在冷却中，还需等待 ${_formatRevisionCooldown(revisionRemaining)}。',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    final revisionDecisionReason =
+        revisionAvailableAt == null || revisionAvailableAt.isEmpty
+        ? 'missing_revisionAvailableAt'
+        : DateTime.tryParse(revisionAvailableAt) == null
+        ? 'invalid_revisionAvailableAt'
+        : 'expired_revisionAvailableAt';
+    ClientLogger.i(
+      'revision_gate decision=allowed entryId=${entry.id} '
+      'reason=$revisionDecisionReason next=getMyEntryDetail',
+      tag: logTag,
+    );
+    setState(() {
+      _openingEntryId = entry.id;
+    });
+    try {
+      ClientLogger.i(
+        'request=getMyEntryDetail entryId=${entry.id} flow=revision',
+        tag: logTag,
+      );
+      final detail = await _market.getMyEntryDetail(entryId: entry.id);
+      ClientLogger.i(
+        'response=getMyEntryDetail entryId=${entry.id} type=${detail.type}',
+        tag: logTag,
+      );
+      if (!mounted) return;
+      final canEditEntry = entry.relation == 'owner';
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) {
+            if (detail.type == 'skill' || detail.type == 'mcp') {
+              return RepoMarketPublishScreen(
+                clients: widget.clients,
+                type: detail.type,
+                publishContext: RepoMarketPublishContext(
+                  entry: detail,
+                  canEditEntry: canEditEntry,
+                ),
+              );
+            }
+            final artifact = detail.artifact;
+            return ArtifactPublishScreen(
+              clients: widget.clients,
+              publishContext: ArtifactPublishClusterContext(
+                entryId: detail.id,
+                projectId: artifact?.projectId ?? '',
+                runtimePackageId:
+                    artifact?.runtimePackageId ??
+                    detail.latestVersion?.runtimePackageId ??
+                    '',
+                lockedDisplayName: detail.title,
+                canEditEntry: canEditEntry,
+                initialEntry: detail,
+              ),
+            );
+          },
+        ),
+      );
+      if (mounted) {
+        await _loadMine();
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Failed to open revision publish: $error\n$stackTrace');
+      ClientLogger.e(
+        'revision_gate getMyEntryDetail failed entryId=${entry.id}',
+        tag: logTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -934,31 +1078,45 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
             .map(_marketReasonLabel)
             .where((reason) => reason.trim().isNotEmpty)
             .join('\n');
+        final reviewDetail = entry.reviewDetail?.trim() ?? '';
         return AlertDialog(
           title: Text(entry.title),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text('状态：$stateLabel'),
-              const SizedBox(height: 8),
-              Text('关系：${_marketRelationLabel(entry.relation)}'),
-              if ((entry.categoryId ?? '').trim().isNotEmpty) ...<Widget>[
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text('状态：$stateLabel'),
                 const SizedBox(height: 8),
-                Text('分类：${entry.categoryId}'),
+                Text('关系：${_marketRelationLabel(entry.relation)}'),
+                if ((entry.categoryId ?? '').trim().isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 8),
+                  Text('分类：${entry.categoryId}'),
+                ],
+                if (reasons.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Text(
+                    '审核原因',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(reasons),
+                ],
+                if (reviewDetail.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Text(
+                    '审核说明',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  SelectableText(reviewDetail),
+                ],
               ],
-              if (reasons.isNotEmpty) ...<Widget>[
-                const SizedBox(height: 12),
-                Text(
-                  '审核原因',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                Text(reasons),
-              ],
-            ],
+            ),
           ),
           actions: <Widget>[
             TextButton(
@@ -1025,6 +1183,7 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
                       opening: _openingEntryId == entry.id,
                       onOpen: () => _openManagedEntry(entry),
                       onPublishVersion: () => _publishManagedVersion(entry),
+                      onSubmitRevision: () => _reviseManagedEntry(entry),
                     ),
                     const SizedBox(height: 10),
                   ],
@@ -1058,12 +1217,14 @@ class _MarketManageEntryTile extends StatelessWidget {
     required this.opening,
     required this.onOpen,
     required this.onPublishVersion,
+    required this.onSubmitRevision,
   });
 
   final core_proxy.MarketPublisherEntrySummary entry;
   final bool opening;
   final VoidCallback onOpen;
   final VoidCallback onPublishVersion;
+  final VoidCallback onSubmitRevision;
 
   @override
   Widget build(BuildContext context) {
@@ -1072,12 +1233,14 @@ class _MarketManageEntryTile extends StatelessWidget {
         .map(_marketReasonLabel)
         .where((reason) => reason.trim().isNotEmpty)
         .toList(growable: false);
+    final reviewDetail = entry.reviewDetail?.trim() ?? '';
     final isPendingListing = entry.listingState == 'pending_listing';
     final stateLabel = isPendingListing
         ? '待上架'
         : _marketStateLabel(entry.stateCode);
     final canPublishVersion =
         entry.stateCode == 'approved' && !isPendingListing;
+    final canSubmitRevision = entry.stateCode == 'changes_requested';
     return OperitGlassSurface(
       color: colorScheme.surface,
       layer: OperitGlassSurfaceLayer.card,
@@ -1106,6 +1269,15 @@ class _MarketManageEntryTile extends StatelessWidget {
                   style: TextStyle(color: colorScheme.error),
                 ),
               ],
+              if (reviewDetail.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 4),
+                Text(
+                  reviewDetail,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
+                ),
+              ],
               const SizedBox(height: 4),
               Text('更新于 ${formatMarketDate(entry.updatedAt)}'),
             ],
@@ -1117,12 +1289,50 @@ class _MarketManageEntryTile extends StatelessWidget {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : TextButton(
-                onPressed: canPublishVersion ? onPublishVersion : onOpen,
-                child: Text(canPublishVersion ? '发布新版本' : '查看状态'),
+                onPressed: canSubmitRevision
+                    ? onSubmitRevision
+                    : canPublishVersion
+                    ? onPublishVersion
+                    : onOpen,
+                child: Text(
+                  canSubmitRevision
+                      ? '修改后提交新版本'
+                      : canPublishVersion
+                      ? '发布新版本'
+                      : '查看状态',
+                ),
               ),
       ),
     );
   }
+}
+
+Duration? _revisionCooldownRemaining(String? availableAt) {
+  final raw = availableAt?.trim();
+  if (raw == null || raw.isEmpty) {
+    return null;
+  }
+  final available = DateTime.tryParse(raw)?.toUtc();
+  if (available == null) {
+    return null;
+  }
+  final remaining = available.difference(DateTime.now().toUtc());
+  return remaining.isNegative ? null : remaining;
+}
+
+String _formatRevisionCooldown(Duration remaining) {
+  final totalMinutes = remaining.inSeconds <= 0
+      ? 1
+      : ((remaining.inSeconds + 59) ~/ 60).clamp(1, 24 * 60).toInt();
+  final hours = totalMinutes ~/ 60;
+  final minutes = totalMinutes % 60;
+  if (hours > 0 && minutes > 0) {
+    return '$hours小时$minutes分钟';
+  }
+  if (hours > 0) {
+    return '$hours小时';
+  }
+  return '$minutes分钟';
 }
 
 class _MarketNotificationTile extends StatelessWidget {

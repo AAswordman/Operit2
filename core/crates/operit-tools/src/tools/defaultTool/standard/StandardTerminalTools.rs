@@ -7,14 +7,15 @@ use operit_host_api::{
 
 use operit_tools::tools::ToolResultDataClasses::{
     HiddenTerminalCommandResultData, JsOptional, StringResultData, TerminalCommandResultData,
-    TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData,
-    TerminalSessionScreenResultData, TerminalStreamEventData, TerminalType, TerminalTypeInfoData,
-    ToolResultData,
+    TerminalImplementation, TerminalInfoResultData, TerminalSessionCloseResultData,
+    TerminalSessionCreationResultData, TerminalSessionScreenResultData, TerminalStreamEventData,
+    TerminalType, TerminalTypeInfoData, ToolResultData,
 };
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
 };
+use uuid::Uuid;
 
 const TERMINAL_SESSION_TIMEOUT_MS: u64 = 1800000;
 const HIDDEN_TERMINAL_TIMEOUT_MS: u64 = 120000;
@@ -67,13 +68,12 @@ impl StandardTerminalTools {
     }
 
     #[allow(non_snake_case)]
-    /// Creates or reuses an interactive terminal session.
+    /// Creates an interactive session in the host-registered primary terminal.
     pub fn createOrGetSession(&self, tool: &AITool) -> ToolResult {
-        let sessionName = parameterValue(tool, "session_name");
-        let terminalType = parameterValue(tool, "type");
+        let sessionName = primaryTerminalSessionName();
         match self
             .host()
-            .and_then(|host| host.createOrGetSession(&sessionName, &terminalType))
+            .and_then(|host| host.createOrGetSession(&sessionName))
         {
             Ok(data) => toolSuccessData(
                 tool,
@@ -118,38 +118,39 @@ impl StandardTerminalTools {
         let sessionId = parameterValue(tool, "session_id");
         let command = parameterValue(tool, "command");
         let timeoutMs = timeoutParameterValue(tool, "timeout_ms", TERMINAL_SESSION_TIMEOUT_MS);
-        let startData = TerminalStreamEventData {
-            r#type: "start".to_string(),
-            command: command.clone(),
-            sessionId: sessionId.clone(),
-            chunk: JsOptional::Null,
-            chunkIndex: JsOptional::Value(0),
-            receivedChars: JsOptional::Value(0),
-        };
-        let start = ToolResult {
-            toolName: tool.name.clone(),
-            success: true,
-            result: ToolResultData::TerminalStreamEventData(startData),
-            error: Some(String::new()),
-        };
         match self
             .host()
             .and_then(|host| host.executeInSession(&sessionId, &command, timeoutMs))
         {
-            Ok(data) => vec![
-                start,
-                toolSuccessData(
-                    tool,
-                    ToolResultData::TerminalCommandResultData(terminalCommandResultData(&data)),
-                ),
-            ],
-            Err(error) => vec![
-                start,
-                toolError(
-                    tool,
-                    format!("Error executing terminal command: {}", error.message),
-                ),
-            ],
+            Ok(data) => {
+                let start = ToolResult {
+                    toolName: tool.name.clone(),
+                    success: true,
+                    result: ToolResultData::TerminalStreamEventData(TerminalStreamEventData {
+                        r#type: "start".to_string(),
+                        command: command.clone(),
+                        sessionId: sessionId.clone(),
+                        platform: data.platform.clone(),
+                        terminal: terminalImplementation(&data.terminal),
+                        terminalType: terminalType(&data.terminalType),
+                        chunk: JsOptional::Null,
+                        chunkIndex: JsOptional::Value(0),
+                        receivedChars: JsOptional::Value(0),
+                    }),
+                    error: Some(String::new()),
+                };
+                vec![
+                    start,
+                    toolSuccessData(
+                        tool,
+                        ToolResultData::TerminalCommandResultData(terminalCommandResultData(&data)),
+                    ),
+                ]
+            }
+            Err(error) => vec![toolError(
+                tool,
+                format!("Error executing terminal command: {}", error.message),
+            )],
         }
     }
 
@@ -157,12 +158,12 @@ impl StandardTerminalTools {
     /// Executes a hidden host command outside an interactive session.
     pub fn executeHiddenCommand(&self, tool: &AITool) -> ToolResult {
         let command = parameterValue(tool, "command");
-        let terminalType = parameterValue(tool, "type");
         let executorKey = stringParameterValue(tool, "executor_key", "default");
         let timeoutMs = timeoutParameterValue(tool, "timeout_ms", HIDDEN_TERMINAL_TIMEOUT_MS);
-        match self.host().and_then(|host| {
-            host.executeHiddenCommand(&command, &terminalType, &executorKey, timeoutMs)
-        }) {
+        match self
+            .host()
+            .and_then(|host| host.executeHiddenCommand(&command, &executorKey, timeoutMs))
+        {
             Ok(data) => {
                 if data.exitCode == 0 || data.timedOut {
                     toolSuccessData(
@@ -321,18 +322,8 @@ fn validateTerminalTool(operation: TerminalToolOperation, tool: &AITool) -> Tool
             if parameterValue(tool, "command").is_empty() {
                 return invalid("Command parameter is required");
             }
-            if parameterValue(tool, "type").is_empty() {
-                return invalid("type is required.");
-            }
         }
-        TerminalToolOperation::CreateSession => {
-            if parameterValue(tool, "session_name").is_empty() {
-                return invalid("session_name is required.");
-            }
-            if parameterValue(tool, "type").is_empty() {
-                return invalid("type is required.");
-            }
-        }
+        TerminalToolOperation::CreateSession => {}
         TerminalToolOperation::InputInSession => {
             if parameterValue(tool, "session_id").is_empty() {
                 return invalid("session_id is required.");
@@ -373,6 +364,13 @@ fn terminalType(value: &str) -> TerminalType {
     TerminalType::try_from(value).expect("host returned an invalid terminal type")
 }
 
+/// Converts the host terminal implementation literal into the SDK terminal enum.
+#[allow(non_snake_case)]
+fn terminalImplementation(value: &str) -> TerminalImplementation {
+    TerminalImplementation::try_from(value)
+        .expect("host returned an invalid terminal implementation")
+}
+
 #[allow(non_snake_case)]
 fn terminalCommandResultData(data: &TerminalCommandOutput) -> TerminalCommandResultData {
     TerminalCommandResultData {
@@ -380,6 +378,8 @@ fn terminalCommandResultData(data: &TerminalCommandOutput) -> TerminalCommandRes
         output: data.output.clone(),
         exitCode: data.exitCode,
         sessionId: data.sessionId.clone(),
+        platform: data.platform.clone(),
+        terminal: terminalImplementation(&data.terminal),
         terminalType: terminalType(&data.terminalType),
         timedOut: data.timedOut,
     }
@@ -394,6 +394,8 @@ fn hiddenTerminalCommandResultData(
         output: data.output.clone(),
         exitCode: data.exitCode,
         executorKey: data.executorKey.clone(),
+        platform: data.platform.clone(),
+        terminal: terminalImplementation(&data.terminal),
         terminalType: terminalType(&data.terminalType),
         timedOut: data.timedOut,
     }
@@ -406,6 +408,8 @@ fn terminalSessionCreationResultData(
     TerminalSessionCreationResultData {
         sessionId: data.sessionId.clone(),
         sessionName: data.sessionName.clone(),
+        platform: data.platform.clone(),
+        terminal: terminalImplementation(&data.terminal),
         terminalType: terminalType(&data.terminalType),
         isNewSession: data.isNewSession,
     }
@@ -424,6 +428,8 @@ fn terminalSessionCloseResultData(data: &TerminalCloseOutput) -> TerminalSession
 fn terminalSessionScreenResultData(data: &TerminalScreenOutput) -> TerminalSessionScreenResultData {
     TerminalSessionScreenResultData {
         sessionId: data.sessionId.clone(),
+        platform: data.platform.clone(),
+        terminal: terminalImplementation(&data.terminal),
         terminalType: terminalType(&data.terminalType),
         rows: data.rows,
         cols: data.cols,
@@ -438,6 +444,7 @@ fn terminalInfoResultData(data: &TerminalInfo) -> TerminalInfoResultData {
         .types
         .iter()
         .map(|info| TerminalTypeInfoData {
+            terminal: terminalImplementation(&info.terminal),
             terminalType: terminalType(&info.terminalType),
             available: info.available,
             description: info.description.clone(),
@@ -445,9 +452,15 @@ fn terminalInfoResultData(data: &TerminalInfo) -> TerminalInfoResultData {
         .collect::<Vec<_>>();
     TerminalInfoResultData {
         platform: data.platform.clone(),
-        defaultType: terminalType(&data.defaultType),
+        terminal: terminalImplementation(&data.terminal),
+        terminalType: terminalType(&data.terminalType),
         types,
     }
+}
+
+/// Allocates an opaque name for a plugin-created primary terminal session.
+fn primaryTerminalSessionName() -> String {
+    format!("plugin-terminal-{}", Uuid::new_v4())
 }
 
 #[allow(non_snake_case)]

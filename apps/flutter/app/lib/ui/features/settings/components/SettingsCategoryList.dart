@@ -16,21 +16,76 @@ class SettingsCategoryList extends StatelessWidget {
   final SettingsCategory? selectedCategory;
   final ValueChanged<SettingsCategory> onCategorySelected;
 
+  /// Builds the categorized settings navigation list.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final groups = <_SettingsCategoryGroup>[
+      _SettingsCategoryGroup(
+        title: l10n.settingsCategoryGroupAssistant,
+        categories: const <SettingsCategory>[
+          SettingsCategory.model,
+          SettingsCategory.localModels,
+          SettingsCategory.tts,
+          SettingsCategory.characters,
+        ],
+      ),
+      _SettingsCategoryGroup(
+        title: l10n.settingsCategoryGroupWorkspace,
+        categories: const <SettingsCategory>[
+          SettingsCategory.tools,
+          SettingsCategory.workspace,
+        ],
+      ),
+      _SettingsCategoryGroup(
+        title: l10n.settingsCategoryGroupExperience,
+        categories: const <SettingsCategory>[
+          SettingsCategory.globalBehavior,
+          SettingsCategory.appearance,
+        ],
+      ),
+      _SettingsCategoryGroup(
+        title: l10n.settingsCategoryGroupSystem,
+        categories: const <SettingsCategory>[
+          SettingsCategory.data,
+          SettingsCategory.accessLinks,
+          SettingsCategory.about,
+        ],
+      ),
+    ];
+    final theme = Theme.of(context);
     return ListView(
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 16),
       children: <Widget>[
-        for (final category in SettingsCategory.values)
-          SettingsCategoryTile(
-            spec: SettingsCategorySpec.of(category, l10n),
-            selected: selectedCategory == category,
-            onTap: () => onCategorySelected(category),
+        for (final groupEntry in groups.asMap().entries) ...<Widget>[
+          Padding(
+            padding: EdgeInsets.fromLTRB(8, groupEntry.key == 0 ? 2 : 12, 8, 6),
+            child: Text(
+              groupEntry.value.title,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.6,
+              ),
+            ),
           ),
+          for (final category in groupEntry.value.categories)
+            SettingsCategoryTile(
+              spec: SettingsCategorySpec.of(category, l10n),
+              selected: selectedCategory == category,
+              onTap: () => onCategorySelected(category),
+            ),
+        ],
       ],
     );
   }
+}
+
+class _SettingsCategoryGroup {
+  const _SettingsCategoryGroup({required this.title, required this.categories});
+
+  final String title;
+  final List<SettingsCategory> categories;
 }
 
 class SettingsCategoryTile extends StatelessWidget {
@@ -45,6 +100,7 @@ class SettingsCategoryTile extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
 
+  /// Builds a selectable tile for one settings category.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);

@@ -360,6 +360,10 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       if (version == null || !mounted) return;
       setState(() => _installing = true);
       try {
+        ensureMarketAppVersionSupported(
+          minAppVersion: version.minAppVer,
+          maxAppVersion: version.maxAppVer,
+        );
         final result = await runCoreMarketInstall(
           clients: widget.clients,
           type: entry.type,
@@ -389,6 +393,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
 
     setState(() => _installing = true);
     try {
+      ensureMarketEntryVersionSupported(entry: entry);
       if (entry.type == 'skill') {
         final repoUrl = entry.source?.url.trim() ?? '';
         if (repoUrl.isEmpty) throw StateError('技能缺少仓库地址');
@@ -503,6 +508,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
                   '',
               lockedDisplayName: entry.title,
               canEditEntry: canEditEntry,
+              initialEntry: entry,
             ),
           ),
         ),

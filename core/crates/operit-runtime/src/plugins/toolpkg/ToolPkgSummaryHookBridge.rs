@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use serde_json::Value;
 
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use crate::plugins::toolpkg::ToolPkgPreHookTimeout::ToolPkgPreHookTimeout;
 use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_SUMMARY_GENERATE;
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::{
     decodeToolPkgHookResult, ToolPkgPromptHookRegistration,
@@ -75,7 +76,19 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
         let mut mutation = SummaryHookMutation::default();
         let mut changed = false;
         let manager = self.runtime.package_manager();
+        let budget = ToolPkgPreHookTimeout::fromPreferences();
         for hook in snapshot {
+            let Some(timeoutMillis) = budget.remainingTimeoutMillis() else {
+                ChainLogger::error(
+                    PLUGIN_CHAIN,
+                    "plugin.toolpkg.summary.timeout",
+                    &[
+                        ("stage", context.stage.clone()),
+                        ("phase", "before_hook".to_string()),
+                    ],
+                );
+                break;
+            };
             ChainLogger::info(
                 PLUGIN_CHAIN,
                 "plugin.toolpkg.summary.run.start",
@@ -86,7 +99,7 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
                     ("function", hook.functionName.clone()),
                 ],
             );
-            let result = match manager.runToolPkgMainHook(
+            let raw = manager.runToolPkgMainHookWithTimeoutMillis(
                 &hook.containerPackageName,
                 &hook.functionName,
                 TOOLPKG_EVENT_SUMMARY_GENERATE,
@@ -97,7 +110,21 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
                 None,
                 None,
                 None,
-            ) {
+                timeoutMillis,
+            );
+            if budget.hasExpired() {
+                ChainLogger::error(
+                    PLUGIN_CHAIN,
+                    "plugin.toolpkg.summary.timeout",
+                    &[
+                        ("stage", context.stage.clone()),
+                        ("package", hook.containerPackageName.clone()),
+                        ("hookId", hook.hookId.clone()),
+                    ],
+                );
+                break;
+            }
+            let result = match raw {
                 Ok(raw) => decodeToolPkgHookResult(raw),
                 Err(error) => {
                     ChainLogger::error(

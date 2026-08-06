@@ -28,6 +28,7 @@ impl ApiPreferences {
     pub const DEFAULT_DISABLE_STREAM_OUTPUT: bool = false;
     pub const DEFAULT_DISABLE_USER_PREFERENCE_DESCRIPTION: bool = false;
     pub const DEFAULT_MCP_STARTUP_TIMEOUT_SECONDS: i32 = 10;
+    pub const DEFAULT_TOOLPKG_PRE_HOOK_TIMEOUT_SECONDS: i32 = 10;
     pub const DEFAULT_TOOL_PROMPT_VISIBILITY_JSON: &'static str = "{}";
     pub const DEFAULT_FEATURE_TOGGLES_JSON: &'static str = "{}";
 
@@ -486,6 +487,18 @@ impl ApiPreferences {
         })
     }
 
+    /// Observes the total timeout for one ToolPkg pre-hook dispatch chain in seconds.
+    #[allow(non_snake_case)]
+    pub fn toolPkgPreHookTimeoutSecondsFlow(&self) -> Flow<i32> {
+        self.apiDataStore.dataFlow().map(|preferences| {
+            preferences
+                .get(&stringPreferencesKey("toolpkg_pre_hook_timeout_seconds"))
+                .and_then(|value| value.parse::<i32>().ok())
+                .unwrap_or(Self::DEFAULT_TOOLPKG_PRE_HOOK_TIMEOUT_SECONDS)
+                .clamp(1, 60)
+        })
+    }
+
     /// Saves the thinking-mode toggle.
     pub fn saveEnableThinkingMode(&self, isEnabled: bool) -> Result<(), PreferencesDataStoreError> {
         self.apiDataStore.edit(|preferences| {
@@ -676,6 +689,20 @@ impl ApiPreferences {
         })
     }
 
+    /// Saves the total timeout for one ToolPkg pre-hook dispatch chain in seconds.
+    #[allow(non_snake_case)]
+    pub fn saveToolPkgPreHookTimeoutSeconds(
+        &self,
+        seconds: i32,
+    ) -> Result<(), PreferencesDataStoreError> {
+        self.apiDataStore.edit(|preferences| {
+            preferences.set(
+                &stringPreferencesKey("toolpkg_pre_hook_timeout_seconds"),
+                seconds.clamp(1, 60).to_string(),
+            );
+        })
+    }
+
     /// Reads the MCP startup timeout in seconds.
     pub fn getMcpStartupTimeoutSeconds(&self) -> Result<i32, PreferencesDataStoreError> {
         let preferences = self.apiDataStore.data()?;
@@ -684,6 +711,17 @@ impl ApiPreferences {
             .and_then(|value| value.parse::<i32>().ok())
             .unwrap_or(Self::DEFAULT_MCP_STARTUP_TIMEOUT_SECONDS)
             .clamp(1, 10))
+    }
+
+    /// Reads the total timeout for one ToolPkg pre-hook dispatch chain in seconds.
+    #[allow(non_snake_case)]
+    pub fn getToolPkgPreHookTimeoutSeconds(&self) -> Result<i32, PreferencesDataStoreError> {
+        let preferences = self.apiDataStore.data()?;
+        Ok(preferences
+            .get(&stringPreferencesKey("toolpkg_pre_hook_timeout_seconds"))
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or(Self::DEFAULT_TOOLPKG_PRE_HOOK_TIMEOUT_SECONDS)
+            .clamp(1, 60))
     }
 
     /// Updates thinking settings in one edit transaction.

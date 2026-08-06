@@ -31,6 +31,8 @@ enum _AiSetupPage {
   remote,
 }
 
+const String _operit1SnapshotImportLogTag = 'Operit1SnapshotImport';
+
 void registerOnboardingStartupRoute(StartupRouteRegistry registry) {
   registry.register(const OnboardingStartupRouteStrategy());
 }
@@ -976,6 +978,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   Future<void> _pickOperit1Snapshot() async {
     final previousSession = _operit1SnapshotSession;
     SnapshotImportSession? stagedSession;
+    ClientLogger.i(
+      'snapshot selection started',
+      tag: _operit1SnapshotImportLogTag,
+    );
     setState(() {
       _readingOperit1Snapshot = true;
       _setupError = null;
@@ -992,11 +998,21 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       if (file == null) {
         return;
       }
-      final session = await SnapshotImportUploader(
-        widget.clients,
-      ).stage(file);
+      ClientLogger.i(
+        'snapshot selected name=${file.name} bytes=${file.byteLength}',
+        tag: _operit1SnapshotImportLogTag,
+      );
+      final session = await SnapshotImportUploader(widget.clients).stage(file);
       stagedSession = session;
+      ClientLogger.i(
+        'snapshot upload completed bytes=${session.byteLength}; inspection started',
+        tag: _operit1SnapshotImportLogTag,
+      );
       final snapshot = await session.completeOperit1();
+      ClientLogger.i(
+        'snapshot inspection completed format=${snapshot.formatVersion} configs=${snapshot.modelConfig.configs.length} chats=${snapshot.chatCount} messages=${snapshot.messageCount}',
+        tag: _operit1SnapshotImportLogTag,
+      );
       if (!mounted) {
         await session.discard();
         return;
@@ -1006,7 +1022,13 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         _operit1SnapshotSession = session;
         _operit1SnapshotFileName = file.name;
       });
-    } catch (error) {
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'snapshot selection, upload, or inspection failed',
+        tag: _operit1SnapshotImportLogTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
       final session = stagedSession;
       if (session != null) {
         await session.discard();
@@ -1040,11 +1062,25 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _setupError = null;
     });
     try {
+      ClientLogger.i(
+        'snapshot import started bytes=${session.byteLength}',
+        tag: _operit1SnapshotImportLogTag,
+      );
       _subscribeOperit1ImportProgress();
-      await session.commitOperit1();
+      final result = await session.commitOperit1();
+      ClientLogger.i(
+        'snapshot import completed chats=${result.importedChats} messages=${result.importedMessages} memories=${result.importedMemories} files=${result.importedFiles + result.importedExternalFiles + result.importedWorkspaceFiles}',
+        tag: _operit1SnapshotImportLogTag,
+      );
       await session.discard();
       await widget.onComplete();
-    } catch (error) {
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'snapshot import failed',
+        tag: _operit1SnapshotImportLogTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (!mounted) {
         return;
       }

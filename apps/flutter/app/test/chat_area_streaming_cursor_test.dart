@@ -208,7 +208,7 @@ void main() {
       find.byKey(const ValueKey<String>('structured-parts')),
       findsOneWidget,
     );
-    expect(find.byType(DetailedToolDisplay), findsOneWidget);
+    expect(find.byType(CompactToolDisplay), findsOneWidget);
   });
 }
 

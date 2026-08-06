@@ -3,8 +3,9 @@ use crate::javascript::TestJsToolsHost::expect_js_output;
 use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorageHost};
 use operit_plugin_sdk::execution_result::JsExecutionErrorKind;
 use operit_plugin_sdk::javascript::{
-    JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolNameResolutionRequest,
-    JsToolPkgIpcRequest, JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult,
+    JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolCallResultData,
+    JsToolNameResolutionRequest, JsToolPkgIpcRequest, JsToolPkgResourceRequest,
+    JsToolPkgWasmRequest, JsToolPkgWasmResult,
 };
 use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
 use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
@@ -13,18 +14,42 @@ use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeSto
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-struct TestPluginConfigExecutionHost;
+#[derive(Default)]
+struct TestPluginConfigExecutionHost {
+    toolPkgTextResourceReads: AtomicUsize,
+}
 
 crate::impl_rejecting_js_tools_host!(TestPluginConfigExecutionHost);
 
 impl JsExecutionHost for TestPluginConfigExecutionHost {
-    /// Rejects unexpected tool execution.
-    fn execute_tool_call(&self, _request: JsToolCallRequest) -> JsToolCallResult {
-        panic!("Tool execution is not part of the plugin config test")
+    /// Executes the System sleep call used by the JavaScript worker regression test.
+    fn execute_tool_call(&self, request: JsToolCallRequest) -> JsToolCallResult {
+        if request.tool_name != "sleep" {
+            panic!(
+                "Unexpected tool execution in JavaScript engine test: {}",
+                request.tool_name
+            );
+        }
+        let requestedMs = request
+            .parameters
+            .get("duration_ms")
+            .and_then(Value::as_u64)
+            .expect("System.sleep must forward duration_ms to the host");
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::sleep(Duration::from_millis(requestedMs));
+        JsToolCallResult {
+            success: true,
+            data: JsToolCallResultData::Value(serde_json::json!({
+                "requestedMs": requestedMs,
+                "sleptMs": requestedMs,
+            })),
+            error: None,
+        }
     }
 
     /// Returns the language used by the plugin config test.
@@ -42,13 +67,15 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         OperitPaths::pluginConfigDir(plugin_id).map(|path| path.to_string_lossy().to_string())
     }
 
-    /// Rejects unexpected ToolPkg text resource access.
+    /// Records direct ToolPkg text resource reads rejected by this test host.
     fn read_toolpkg_text_resource(
         &self,
         _package_name_or_subpackage_id: &str,
         _resource_path: &str,
     ) -> Result<String, String> {
-        panic!("ToolPkg text resources are not part of the plugin config test")
+        self.toolPkgTextResourceReads
+            .fetch_add(1, Ordering::Relaxed);
+        Err("ToolPkg text resources are not part of this test host".to_string())
     }
 
     /// Rejects unexpected ToolPkg resource materialization.
@@ -158,6 +185,49 @@ fn synchronous_timeout_interrupts_quickjs_worker() {
         .expect("worker must accept execution after an interrupt");
 
     assert_eq!(output.as_deref(), Some("\"ready\""));
+    engine.destroy();
+}
+
+/// Verifies a host System sleep call returns control to the JavaScript worker for later calls.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn system_sleep_host_call_releases_quickjs_worker() {
+    ensure_test_runtime_root();
+    let engine = super::JsEngine::new(Arc::new(TestPluginConfigExecutionHost::default()));
+    let params = testParams();
+
+    let sleepOutput = expect_js_output(
+        engine.execute_script_function_with_timeout_millis(
+            "exports.sleep = function() { return Tools.System.sleep(37); };",
+            "sleep",
+            &params,
+            &BTreeMap::new(),
+            None,
+            true,
+            250,
+            None,
+        ),
+        "System.sleep host call",
+    );
+    let sleepPayload = serde_json::from_str::<Value>(&sleepOutput)
+        .expect("System.sleep host result must serialize as JSON");
+    assert_eq!(sleepPayload["requestedMs"], 37);
+    assert_eq!(sleepPayload["sleptMs"], 37);
+
+    let nextOutput = engine
+        .execute_script_function(
+            "exports.next = function() { return 'ready'; };",
+            "next",
+            &params,
+            &BTreeMap::new(),
+            None,
+            true,
+            2,
+            None,
+        )
+        .expect("worker must accept execution after a System.sleep host call");
+
+    assert_eq!(nextOutput.as_deref(), Some("\"ready\""));
     engine.destroy();
 }
 
@@ -596,7 +666,12 @@ fn compose_dsl_default_export_can_capture_later_lexical_constants() {
     );
 
     let raw = expect_js_output(
-        engine.execute_compose_dsl_script(script, &params, &BTreeMap::new()),
+        engine.execute_compose_dsl_script(
+            script,
+            &params,
+            &BTreeMap::new(),
+            Arc::new(BTreeMap::new()),
+        ),
         "compose lexical initialization render result",
     );
     let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
@@ -606,6 +681,66 @@ fn compose_dsl_default_export_can_capture_later_lexical_constants() {
     assert_eq!(parsed["tree"]["props"]["reasonFontSize"], 11);
     assert_eq!(parsed["tree"]["props"]["iconSize"], 22);
     assert_eq!(parsed["tree"]["props"]["chevronSize"], 16);
+}
+
+/// Ensures Compose render and actions resolve package modules from the page snapshot without host reentry.
+#[test]
+fn compose_dsl_resource_snapshot_avoids_host_reentry_for_render_and_action() {
+    ensure_test_runtime_root();
+    let executionHost = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = super::JsEngine::new(executionHost.clone());
+    let script = r#"
+        const shared = require("../shared");
+        exports.default = function(ctx) {
+            return ctx.h('Button', {
+                label: shared.label,
+                onClick: function() {
+                    return require("../shared").label;
+                }
+            }, []);
+        };
+    "#;
+    let mut params = testParams();
+    params.insert(
+        "__operit_ui_package_name".to_string(),
+        Value::String("compose_snapshot_test".to_string()),
+    );
+    params.insert(
+        "__operit_script_screen".to_string(),
+        Value::String("dist/ui/index.ui.js".to_string()),
+    );
+    params.insert(
+        "routeInstanceId".to_string(),
+        Value::String("compose_snapshot_route".to_string()),
+    );
+    let textResources = Arc::new(BTreeMap::from([(
+        "dist/shared.js".to_string(),
+        "module.exports = { label: 'resource-snapshot' };".to_string(),
+    )]));
+
+    let raw = expect_js_output(
+        engine.execute_compose_dsl_script(script, &params, &BTreeMap::new(), textResources),
+        "compose resource snapshot render result",
+    );
+    let rendered = serde_json::from_str::<Value>(&raw).expect("compose render json");
+    assert_eq!(rendered["tree"]["props"]["label"], "resource-snapshot");
+    let actionId = rendered["tree"]["props"]["onClick"]["__actionId"]
+        .as_str()
+        .expect("compose snapshot action id");
+
+    let actionRaw = expect_js_output(
+        engine.execute_compose_dsl_action(actionId, None, &params, &BTreeMap::new(), None),
+        "compose resource snapshot action result",
+    );
+    let action = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
+    assert_eq!(action["actionResult"], "resource-snapshot");
+    assert_eq!(
+        executionHost
+            .toolPkgTextResourceReads
+            .load(Ordering::Relaxed),
+        0,
+        "Compose module reads must not call the manager-backed host while its mutex is held",
+    );
 }
 
 #[test]
@@ -633,7 +768,12 @@ fn compose_dsl_action_uses_rendered_runtime() {
         Value::String("compose_route".to_string()),
     );
     let raw = expect_js_output(
-        engine.execute_compose_dsl_script(script, &params, &BTreeMap::new()),
+        engine.execute_compose_dsl_script(
+            script,
+            &params,
+            &BTreeMap::new(),
+            Arc::new(BTreeMap::new()),
+        ),
         "compose render result",
     );
     let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
@@ -673,7 +813,12 @@ fn compose_dsl_action_updates_runtime_options_state_store() {
         Value::String("compose_route".to_string()),
     );
     let raw = expect_js_output(
-        engine.execute_compose_dsl_script(script, &params, &BTreeMap::new()),
+        engine.execute_compose_dsl_script(
+            script,
+            &params,
+            &BTreeMap::new(),
+            Arc::new(BTreeMap::new()),
+        ),
         "compose render result",
     );
     let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
@@ -725,7 +870,12 @@ fn compose_dsl_action_can_access_bootstrap_globals() {
         Value::String("compose_route".to_string()),
     );
     let raw = expect_js_output(
-        engine.execute_compose_dsl_script(script, &params, &BTreeMap::new()),
+        engine.execute_compose_dsl_script(
+            script,
+            &params,
+            &BTreeMap::new(),
+            Arc::new(BTreeMap::new()),
+        ),
         "compose render result",
     );
     let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
@@ -1033,7 +1183,7 @@ fn native_interface_reads_env_override_for_call() {
 #[test]
 fn native_interface_resolves_plugin_config_dir() {
     ensure_test_runtime_root();
-    let mut state = JsEngineState::new(Some(Arc::new(TestPluginConfigExecutionHost)));
+    let mut state = JsEngineState::new(Some(Arc::new(TestPluginConfigExecutionHost::default())));
     let script = r#"
         exports.config_dir = function(_params) {
             return getPluginConfigDir('plugin:name');

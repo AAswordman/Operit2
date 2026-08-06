@@ -25,6 +25,7 @@ class ChatInputSubmitDecision {
     required this.text,
     required this.message,
     required this.clearInput,
+    required this.timedOut,
   });
 
   /// Parses the JSON decision returned by the Core ToolPkg chat input bridge.
@@ -36,6 +37,7 @@ class ChatInputSubmitDecision {
       clearInput: json['clearInput'] == null
           ? false
           : json['clearInput'] as bool,
+      timedOut: json['timedOut'] as bool,
     );
   }
 
@@ -43,6 +45,7 @@ class ChatInputSubmitDecision {
   final String? text;
   final String? message;
   final bool clearInput;
+  final bool timedOut;
 }
 
 sealed class ChatRuntimeSurface {

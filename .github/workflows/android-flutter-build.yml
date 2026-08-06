@@ -7,7 +7,66 @@ permissions:
   contents: read
 
 jobs:
+  build-android-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Android runtime build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bison \
+            build-essential \
+            bzip2 \
+            ca-certificates \
+            curl \
+            diffutils \
+            flex \
+            gawk \
+            gzip \
+            patch \
+            pkg-config \
+            tar \
+            unzip \
+            xz-utils
+
+      - name: Fetch Android runtime sources
+        shell: pwsh
+        run: pwsh -NoProfile -File tools/android-runtime/fetch_sources.ps1
+
+      - name: Fetch Android NDK
+        run: bash tools/android-runtime/fetch_ndk_wsl.sh
+
+      - name: Build Android terminal runtime
+        run: |
+          export ANDROID_NDK_HOME="$HOME/.cache/operit-android-runtime/android-ndk-r29-beta4"
+          bash tools/android-runtime/build_android_tools_wsl.sh
+          bash tools/android-runtime/build_alpine_rootfs_wsl.sh
+
+      - name: Upload Android terminal runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-android-runtime-${{ github.sha }}
+          path: |
+            apps/flutter/app/android/app/src/main/jniLibs/*/libbash.so
+            apps/flutter/app/android/app/src/main/jniLibs/*/liboperit_busybox.so
+            apps/flutter/app/android/app/src/main/jniLibs/*/liboperit_loader.so
+            apps/flutter/app/android/app/src/main/jniLibs/*/liboperit_proot.so
+            apps/flutter/app/android/app/src/main/assets/android-runtime/*/rootfs.tar.gz.bin
+            apps/flutter/app/android/app/src/main/assets/android-runtime/*/rootfs.tar.gz.bin.sha256
+          if-no-files-found: error
+          retention-days: 1
+
   build-android:
+    needs: build-android-runtime
     runs-on: windows-2025
     timeout-minutes: 90
     env:
@@ -23,6 +82,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download Android terminal runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: operit2-android-runtime-${{ github.sha }}
+          path: apps/flutter/app/android/app/src/main
 
       - name: Install bootstrap Flutter
         uses: subosito/flutter-action@v2

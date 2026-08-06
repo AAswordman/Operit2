@@ -40,6 +40,7 @@ class ArtifactPublishClusterContext {
     required this.runtimePackageId,
     required this.lockedDisplayName,
     this.canEditEntry = false,
+    this.initialEntry,
   });
 
   final String entryId;
@@ -47,6 +48,7 @@ class ArtifactPublishClusterContext {
   final String runtimePackageId;
   final String lockedDisplayName;
   final bool canEditEntry;
+  final core_proxy.MarketEntrySummary? initialEntry;
 }
 
 class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
@@ -129,7 +131,9 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
       setState(() {
         _categories = manifest.categories;
         _selectedCategoryId =
-            _selectedCategoryId ?? _defaultCategoryId(manifest.categories);
+            _selectedCategoryId ??
+            _publishContext?.initialEntry?.categoryId ??
+            _defaultCategoryId(manifest.categories);
         _sources = sources;
         if (sources.isEmpty) {
           _selectedSource = null;
@@ -152,20 +156,31 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
   }
 
   void _selectSource(core_proxy.PublishablePackageSource source) {
-    final lockedDisplayName = _publishContext?.lockedDisplayName.trim();
+    final context = _publishContext;
+    final initialEntry = context?.initialEntry;
+    final lockedDisplayName = context?.lockedDisplayName.trim();
     setState(() {
       _selectedSource = source;
-      _displayNameController.text = lockedDisplayName?.isNotEmpty == true
+      _displayNameController.text =
+          initialEntry?.title.trim().isNotEmpty == true
+          ? initialEntry!.title
+          : lockedDisplayName?.isNotEmpty == true
           ? lockedDisplayName!
           : source.displayName;
-      _descriptionController.text = source.description;
-      if (_detailController.text.trim().isEmpty) {
-        _detailController.text = source.description;
-      }
+      _descriptionController.text =
+          initialEntry?.description.trim().isNotEmpty == true
+          ? initialEntry!.description
+          : source.description;
+      _detailController.text = initialEntry?.detail.trim().isNotEmpty == true
+          ? initialEntry!.detail
+          : source.description;
       _versionController.text =
           source.inferredVersion?.trim().isNotEmpty == true
           ? source.inferredVersion!.trim()
           : '1.0.0';
+      _minVersionController.text = initialEntry?.latestVersion?.minAppVer ?? '';
+      _maxVersionController.text = initialEntry?.latestVersion?.maxAppVer ?? '';
+      _allowPublicUpdates = initialEntry?.allowPublicUpdates ?? true;
     });
   }
 
@@ -419,6 +434,8 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
     final publishContext = _publishContext;
     final isContinuationMode = publishContext != null;
     final lockedDisplayName = publishContext?.lockedDisplayName.trim() ?? '';
+    final isDisplayNameLocked =
+        lockedDisplayName.isNotEmpty && !(publishContext?.canEditEntry ?? true);
     final githubReleaseCatalog = _githubReleaseCatalog;
     final selectedGitHubRelease = _findGitHubRelease(
       githubReleaseCatalog?.releases ?? const <_GitHubReleaseInfo>[],
@@ -643,13 +660,11 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
               const SizedBox(height: 12),
               TextField(
                 controller: _displayNameController,
-                enabled: !_publishing && lockedDisplayName.isEmpty,
+                enabled: !_publishing && !isDisplayNameLocked,
                 decoration: InputDecoration(
                   labelText: '显示名称',
                   border: const OutlineInputBorder(),
-                  helperText: lockedDisplayName.isEmpty
-                      ? null
-                      : '基于版本发布时，名字沿用来源版本。',
+                  helperText: !isDisplayNameLocked ? null : '基于版本发布时，名字沿用来源版本。',
                 ),
               ),
               const SizedBox(height: 12),
@@ -1258,7 +1273,8 @@ Future<_PublishResult> _publishArtifact({
   }
 
   final resolvedDisplayName =
-      publishContext?.lockedDisplayName.trim().isNotEmpty == true
+      publishContext?.lockedDisplayName.trim().isNotEmpty == true &&
+          publishContext?.canEditEntry != true
       ? publishContext!.lockedDisplayName.trim()
       : trimmedDisplayName;
   final projectId = publishContext?.projectId.trim().isNotEmpty == true
@@ -1630,7 +1646,7 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
       ghReleaseTag: releaseTag,
       assetName: assetName,
       sha256: sha256,
-      entryTitle: null,
+      entryTitle: canPatchEntry ? title : null,
       entryDescription: canPatchEntry ? description : null,
       entryDetail: canPatchEntry ? detail : null,
       entryCategoryId: canPatchEntry ? categoryId : null,

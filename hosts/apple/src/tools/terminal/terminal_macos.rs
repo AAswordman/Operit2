@@ -5,6 +5,10 @@ use operit_host_api::{
 };
 use operit_host_native_common::NativePtyTerminalHost;
 
+const PLATFORM: &str = "macos";
+const TERMINAL: &str = "native";
+const TERMINAL_TYPE: &str = "bash";
+
 #[derive(Clone, Default)]
 pub struct AppleTerminalHost {
     inner: NativePtyTerminalHost,
@@ -18,22 +22,13 @@ impl AppleTerminalHost {
         }
     }
 
-    /// Resolves the public macOS terminal type to the shared POSIX PTY type.
-    fn nativeTerminalType(terminalType: &str) -> HostResult<&'static str> {
-        match terminalType.trim() {
-            "macos" => Ok("posix"),
-            value => Err(HostError::new(format!(
-                "Unsupported terminal type for macos host: {value}"
+    /// Resolves the public macOS terminal type to the shared PTY shell type.
+    fn nativeTerminalType(terminal: &str, terminalType: &str) -> HostResult<&'static str> {
+        match (terminal.trim(), terminalType.trim()) {
+            (TERMINAL, TERMINAL_TYPE) => Ok(TERMINAL_TYPE),
+            (implementation, value) => Err(HostError::new(format!(
+                "Unsupported terminal implementation and type for macos host: {implementation}/{value}"
             ))),
-        }
-    }
-
-    /// Rewrites the shared POSIX PTY type back to the public macOS type.
-    fn rewriteType(value: String) -> String {
-        if value == "posix" {
-            "macos".to_string()
-        } else {
-            value
         }
     }
 }
@@ -41,10 +36,12 @@ impl AppleTerminalHost {
 impl TerminalHost for AppleTerminalHost {
     fn terminalInfo(&self) -> HostResult<TerminalInfo> {
         Ok(TerminalInfo {
-            platform: "macos".to_string(),
-            defaultType: "macos".to_string(),
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
+            terminalType: TERMINAL_TYPE.to_string(),
             types: vec![TerminalTypeInfo {
-                terminalType: "macos".to_string(),
+                terminal: TERMINAL.to_string(),
+                terminalType: TERMINAL_TYPE.to_string(),
                 available: true,
                 description: "macOS bash terminal".to_string(),
             }],
@@ -54,6 +51,7 @@ impl TerminalHost for AppleTerminalHost {
     fn startPtySession(
         &self,
         sessionName: &str,
+        terminal: &str,
         terminalType: &str,
         workingDir: &str,
         rows: u16,
@@ -61,7 +59,8 @@ impl TerminalHost for AppleTerminalHost {
     ) -> HostResult<String> {
         self.inner.startPtySession(
             sessionName,
-            Self::nativeTerminalType(terminalType)?,
+            TERMINAL,
+            Self::nativeTerminalType(terminal, terminalType)?,
             workingDir,
             rows,
             cols,
@@ -93,24 +92,20 @@ impl TerminalHost for AppleTerminalHost {
             entries
                 .into_iter()
                 .map(|mut entry| {
-                    entry.terminalType = Self::rewriteType(entry.terminalType);
+                    entry.platform = PLATFORM.to_string();
+                    entry.terminal = TERMINAL.to_string();
                     entry
                 })
                 .collect()
         })
     }
 
-    fn createOrGetSession(
-        &self,
-        sessionName: &str,
-        terminalType: &str,
-    ) -> HostResult<TerminalSessionInfo> {
-        self.inner
-            .createOrGetSession(sessionName, Self::nativeTerminalType(terminalType)?)
-            .map(|mut info| {
-                info.terminalType = Self::rewriteType(info.terminalType);
-                info
-            })
+    fn createOrGetSession(&self, sessionName: &str) -> HostResult<TerminalSessionInfo> {
+        self.inner.createOrGetSession(sessionName).map(|mut info| {
+            info.platform = PLATFORM.to_string();
+            info.terminal = TERMINAL.to_string();
+            info
+        })
     }
 
     fn executeInSession(
@@ -122,7 +117,8 @@ impl TerminalHost for AppleTerminalHost {
         self.inner
             .executeInSession(sessionId, command, timeoutMs)
             .map(|mut output| {
-                output.terminalType = Self::rewriteType(output.terminalType);
+                output.platform = PLATFORM.to_string();
+                output.terminal = TERMINAL.to_string();
                 output
             })
     }
@@ -130,19 +126,14 @@ impl TerminalHost for AppleTerminalHost {
     fn executeHiddenCommand(
         &self,
         command: &str,
-        terminalType: &str,
         executorKey: &str,
         timeoutMs: u64,
     ) -> HostResult<HiddenTerminalCommandOutput> {
         self.inner
-            .executeHiddenCommand(
-                command,
-                Self::nativeTerminalType(terminalType)?,
-                executorKey,
-                timeoutMs,
-            )
+            .executeHiddenCommand(command, executorKey, timeoutMs)
             .map(|mut output| {
-                output.terminalType = Self::rewriteType(output.terminalType);
+                output.platform = PLATFORM.to_string();
+                output.terminal = TERMINAL.to_string();
                 output
             })
     }
@@ -162,7 +153,8 @@ impl TerminalHost for AppleTerminalHost {
 
     fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
         self.inner.getSessionScreen(sessionId).map(|mut output| {
-            output.terminalType = Self::rewriteType(output.terminalType);
+            output.platform = PLATFORM.to_string();
+            output.terminal = TERMINAL.to_string();
             output
         })
     }

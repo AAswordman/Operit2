@@ -11,7 +11,9 @@ use wasm_bindgen::JsValue;
 
 use crate::common::{bytes_to_js, call_terminal, js_i64, js_usize};
 
-const LINUX_VM_TERMINAL_TYPE: &str = "linux-vm";
+const PLATFORM: &str = "web-linux-vm";
+const TERMINAL: &str = "v86";
+const SHELL_TERMINAL_TYPE: &str = "shell";
 
 #[derive(Clone)]
 struct WebTerminalSession {
@@ -42,12 +44,15 @@ impl TerminalHost for WebTerminalHost {
     /// Describes the Linux VM terminal available in browser builds.
     fn terminalInfo(&self) -> HostResult<TerminalInfo> {
         Ok(TerminalInfo {
-            platform: "web-linux-vm".to_string(),
-            defaultType: LINUX_VM_TERMINAL_TYPE.to_string(),
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
+            terminalType: SHELL_TERMINAL_TYPE.to_string(),
             types: vec![TerminalTypeInfo {
-                terminalType: LINUX_VM_TERMINAL_TYPE.to_string(),
+                terminal: TERMINAL.to_string(),
+                terminalType: SHELL_TERMINAL_TYPE.to_string(),
                 available: true,
-                description: "Browser-local Buildroot VM with BusyBox, Node, and Python".to_string(),
+                description: "Browser-local Buildroot VM with BusyBox, Node, and Python"
+                    .to_string(),
             }],
         })
     }
@@ -56,13 +61,14 @@ impl TerminalHost for WebTerminalHost {
     fn startPtySession(
         &self,
         sessionName: &str,
+        terminal: &str,
         terminalType: &str,
         workingDir: &str,
         rows: u16,
         cols: u16,
     ) -> HostResult<String> {
         let normalizedSessionName = requiredText(sessionName, "session_name")?;
-        requireLinuxVmTerminalType(terminalType)?;
+        requireLinuxVmTerminalType(terminal, terminalType)?;
         let normalizedWorkingDir = requiredText(workingDir, "working_directory")?;
         if normalizedWorkingDir != "/" {
             return Err(HostError::new(
@@ -83,7 +89,7 @@ impl TerminalHost for WebTerminalHost {
         )?;
         let session = WebTerminalSession {
             sessionName: normalizedSessionName,
-            terminalType: LINUX_VM_TERMINAL_TYPE.to_string(),
+            terminalType: SHELL_TERMINAL_TYPE.to_string(),
             workingDir: normalizedWorkingDir,
             rows,
             cols,
@@ -168,6 +174,8 @@ impl TerminalHost for WebTerminalHost {
                 active.push(TerminalSessionListEntry {
                     sessionId,
                     sessionName: session.sessionName,
+                    platform: PLATFORM.to_string(),
+                    terminal: TERMINAL.to_string(),
                     terminalType: session.terminalType,
                     sessionKind: "linux-vm".to_string(),
                     workingDir: session.workingDir,
@@ -179,18 +187,15 @@ impl TerminalHost for WebTerminalHost {
     }
 
     /// Returns a named Linux VM terminal session or starts it at the guest root.
-    fn createOrGetSession(
-        &self,
-        sessionName: &str,
-        terminalType: &str,
-    ) -> HostResult<TerminalSessionInfo> {
-        requireLinuxVmTerminalType(terminalType)?;
+    fn createOrGetSession(&self, sessionName: &str) -> HostResult<TerminalSessionInfo> {
         let normalizedSessionName = requiredText(sessionName, "session_name")?;
         let existing = TERMINAL_SESSIONS.with(|sessions| {
             sessions.borrow().iter().find_map(|(sessionId, session)| {
                 (session.sessionName == normalizedSessionName).then(|| TerminalSessionInfo {
                     sessionId: sessionId.clone(),
                     sessionName: session.sessionName.clone(),
+                    platform: PLATFORM.to_string(),
+                    terminal: TERMINAL.to_string(),
                     terminalType: session.terminalType.clone(),
                     isNewSession: false,
                 })
@@ -200,11 +205,20 @@ impl TerminalHost for WebTerminalHost {
             return Ok(session);
         }
         let sessionId =
-            self.startPtySession(&normalizedSessionName, LINUX_VM_TERMINAL_TYPE, "/", 24, 80)?;
+            self.startPtySession(
+                &normalizedSessionName,
+                TERMINAL,
+                SHELL_TERMINAL_TYPE,
+                "/",
+                24,
+                80,
+            )?;
         Ok(TerminalSessionInfo {
             sessionId,
             sessionName: normalizedSessionName,
-            terminalType: LINUX_VM_TERMINAL_TYPE.to_string(),
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
+            terminalType: SHELL_TERMINAL_TYPE.to_string(),
             isNewSession: true,
         })
     }
@@ -225,7 +239,6 @@ impl TerminalHost for WebTerminalHost {
     fn executeHiddenCommand(
         &self,
         _command: &str,
-        _terminalType: &str,
         _executorKey: &str,
         _timeoutMs: u64,
     ) -> HostResult<HiddenTerminalCommandOutput> {
@@ -317,12 +330,12 @@ fn removeTerminalSession(sessionId: &str) -> HostResult<()> {
 }
 
 /// Validates the only terminal type implemented by the browser-local Linux guest.
-fn requireLinuxVmTerminalType(terminalType: &str) -> HostResult<()> {
-    if terminalType.trim() == LINUX_VM_TERMINAL_TYPE {
+fn requireLinuxVmTerminalType(terminal: &str, terminalType: &str) -> HostResult<()> {
+    if terminal.trim() == TERMINAL && terminalType.trim() == SHELL_TERMINAL_TYPE {
         Ok(())
     } else {
         Err(HostError::new(format!(
-            "browser-local Linux VM terminal type must be {LINUX_VM_TERMINAL_TYPE}: {terminalType}"
+            "browser-local Linux VM terminal implementation and type must be {TERMINAL}/{SHELL_TERMINAL_TYPE}: {terminal}/{terminalType}"
         )))
     }
 }

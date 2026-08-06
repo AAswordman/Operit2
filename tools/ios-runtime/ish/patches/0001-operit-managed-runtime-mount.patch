@@ -1,0 +1,102 @@
+diff --git a/app/LinuxInterop.h b/app/LinuxInterop.h
+--- a/app/LinuxInterop.h
++++ b/app/LinuxInterop.h
+@@ -66,5 +66,6 @@ void linux_sethostname(const char *hostname);
+ ssize_t linux_read_file(const char *path, char *buf, size_t size);
+ ssize_t linux_write_file(const char *path, const char *buf, size_t size);
+ int linux_remove_directory(const char *path);
++int linux_make_directory(const char *path);
+ 
+ #endif /* LinuxInterop_h */
+diff --git a/app/LinuxInterop.c b/app/LinuxInterop.c
+--- a/app/LinuxInterop.c
++++ b/app/LinuxInterop.c
+@@ -8,6 +8,7 @@
+ #include "LinuxInterop.h"
+ #include <Block.h>
+ #include <linux/start_kernel.h>
++#include <linux/init.h>
+ #include <linux/slab.h>
+ #include <linux/kernel.h>
+ #include <linux/notifier.h>
+@@ -185,3 +186,8 @@ ssize_t linux_write_file(const char *path, const char *buf, size_t size) {
+ int linux_remove_directory(const char *path) {
+     return init_rmdir(path);
+ }
++
++// Creates one Linux directory from the iOS host bridge.
++int linux_make_directory(const char *path) {
++    return init_mkdir(path, 0755);
++}
+diff --git a/app/iOSFS.h b/app/iOSFS.h
+--- a/app/iOSFS.h
++++ b/app/iOSFS.h
+@@ -9,3 +9,4 @@ extern const struct fs_ops iosfs_unsafe;
+ 
+ void iosfs_init(void);
+ void iosfs_clear_all_bookmarks(void); // for recovery
++int iosfs_mount_app_directory(const char *directory, const char *mount_point);
+diff --git a/app/iOSFS.m b/app/iOSFS.m
+--- a/app/iOSFS.m
++++ b/app/iOSFS.m
+@@ -102,6 +102,7 @@ static NSURL *url_for_mount(struct mount *mount) {
+ 
+ static NSString *const kMountBookmarks = @"iOS Mount Bookmarks";
+ #define BOOKMARK_PATH_ENCODING NSISOLatin1StringEncoding
++static NSString *const kOperitAppDirectoryPrefix = @"operit-app:";
+ // To avoid locking issues, only access from the main thread
+ static NSMutableDictionary<NSString *, NSData *> *ios_mount_bookmarks;
+ static bool mount_from_bookmarks = false; // This is a hack because I am bad at parameter passing
+@@ -129,7 +130,19 @@ void iosfs_clear_all_bookmarks(void) {
+ 
+ static int iosfs_mount(struct mount *mount) {
+     NSURL *url = nil;
+-    if (mount_from_bookmarks) {
++    BOOL appDirectory = NO;
++    if (strncmp(mount->source, kOperitAppDirectoryPrefix.UTF8String,
++                strlen(kOperitAppDirectoryPrefix.UTF8String)) == 0) {
++        NSString *path = [NSString stringWithUTF8String:
++            mount->source + strlen(kOperitAppDirectoryPrefix.UTF8String)];
++        BOOL isDirectory = NO;
++        if (path == nil || ![NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&isDirectory] || !isDirectory)
++            return _ENOENT;
++        url = [NSURL fileURLWithPath:path isDirectory:YES];
++        appDirectory = YES;
++    }
++
++    if (url == nil && mount_from_bookmarks) {
+         NSString *bookmarkName = [NSString stringWithCString:mount->source encoding:BOOKMARK_PATH_ENCODING];
+         url = [NSURL URLByResolvingBookmarkData:ios_mount_bookmarks[bookmarkName]
+                                         options:0
+@@ -158,7 +170,7 @@ static int iosfs_mount(struct mount *mount) {
+         mount->fs = &iosfs_unsafe;
+     }
+ 
+-    if (!mount_from_bookmarks) {
++    if (!mount_from_bookmarks && !appDirectory) {
+         NSData *bookmark = [url bookmarkDataWithOptions:0 includingResourceValuesForKeys:nil relativeToURL:nil error:nil];
+         NSString *path = [NSString stringWithCString:mount->point encoding:BOOKMARK_PATH_ENCODING];
+         if (bookmark != nil) {
+@@ -535,3 +547,22 @@ const struct fd_ops iosfs_fdops = {
+     .getflags = realfs_getflags,
+     .setflags = realfs_setflags,
+ };
++
++// Mounts one App-owned directory without invoking the document picker.
++int iosfs_mount_app_directory(const char *directory, const char *mount_point) {
++    if (directory == NULL || mount_point == NULL || directory[0] != '/' || mount_point[0] != '/')
++        return _EINVAL;
++    NSString *source = [NSString stringWithFormat:@"%@%s", kOperitAppDirectoryPrefix, directory];
++    lock(&mounts_lock);
++    struct mount *mount;
++    list_for_each_entry(&mounts, mount, mounts) {
++        if (strcmp(mount->point, mount_point) == 0) {
++            int result = strcmp(mount->source, directory) == 0 ? 0 : _EBUSY;
++            unlock(&mounts_lock);
++            return result;
++        }
++    }
++    int result = do_mount(&iosfs, source.UTF8String, mount_point, "", 0);
++    unlock(&mounts_lock);
++    return result;
++}

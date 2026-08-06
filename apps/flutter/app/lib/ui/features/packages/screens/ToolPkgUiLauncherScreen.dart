@@ -7,7 +7,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../../../core/concurrency/AppWorkers.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/AdaptiveSidePanel.dart';
@@ -124,6 +123,13 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       _loading = true;
       _error = null;
     });
+    final renderStopwatch = Stopwatch()..start();
+    debugPrint(
+      'ToolPkg compose_dsl render start: '
+      'package=${widget.plugin.packageName}, '
+      'module=$uiModuleId, '
+      'context=$executionContextKey',
+    );
     try {
       final previousExecutionContext = _activeExecutionContext;
       if (previousExecutionContext != null &&
@@ -172,13 +178,18 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
         ),
         envOverrides: const <String, String>{},
       );
+      renderStopwatch.stop();
+      debugPrint(
+        'ToolPkg compose_dsl render finish: '
+        'package=${widget.plugin.packageName}, '
+        'module=$uiModuleId, '
+        'elapsedMs=${renderStopwatch.elapsedMilliseconds}, '
+        'resultChars=${raw?.length ?? 0}',
+      );
       if (!_isCurrentRouteLoad(routeLoadGeneration)) {
         return;
       }
-      final result = await AppWorkers.run(
-        () => _ComposeDslRenderResult.parse(raw),
-        debugName: 'compose-dsl-render-parse',
-      );
+      final result = _ComposeDslRenderResult.parse(raw);
       if (!_isCurrentRouteLoad(routeLoadGeneration)) {
         return;
       }
@@ -187,9 +198,16 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
         _loading = false;
       });
     } catch (error, stackTrace) {
+      renderStopwatch.stop();
       if (!_isCurrentRouteLoad(routeLoadGeneration)) {
         return;
       }
+      debugPrint(
+        'ToolPkg compose_dsl render failure: '
+        'package=${widget.plugin.packageName}, '
+        'module=$uiModuleId, '
+        'elapsedMs=${renderStopwatch.elapsedMilliseconds}',
+      );
       _printComposeError('render', error, stackTrace);
       setState(() {
         _error = error.toString();
@@ -269,6 +287,14 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       routeInstanceId: routeInstanceId,
     );
     Object? latestActionResult;
+    final actionStopwatch = Stopwatch()..start();
+    debugPrint(
+      'ToolPkg compose_dsl action start: '
+      'package=${widget.plugin.packageName}, '
+      'module=$uiModuleId, '
+      'action=$actionId, '
+      'context=$executionContextKey',
+    );
     try {
       final events = await _packageManager
           .dispatchToolPkgComposeDslActionEvents(
@@ -283,15 +309,28 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
             ),
             envOverrides: const <String, String>{},
           );
+      actionStopwatch.stop();
+      debugPrint(
+        'ToolPkg compose_dsl action events received: '
+        'package=${widget.plugin.packageName}, '
+        'module=$uiModuleId, '
+        'action=$actionId, '
+        'elapsedMs=${actionStopwatch.elapsedMilliseconds}, '
+        'eventCount=${events.length}',
+      );
       for (final event in events) {
         if (!mounted) {
           return latestActionResult;
         }
-        final parsedEvent = await AppWorkers.run(
-          () => _ParsedComposeDslActionEvent.parse(event),
-          debugName: 'compose-dsl-action-event-parse',
-        );
+        final parsedEvent = _ParsedComposeDslActionEvent.parse(event);
         final phase = parsedEvent.phase;
+        debugPrint(
+          'ToolPkg compose_dsl action event: '
+          'package=${widget.plugin.packageName}, '
+          'module=$uiModuleId, '
+          'action=$actionId, '
+          'phase=${phase ?? '<missing>'}',
+        );
         if (phase == 'intermediate' || phase == 'final') {
           latestActionResult = parsedEvent.actionResult;
           final result = parsedEvent.renderResult;
@@ -323,9 +362,17 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       }
       return latestActionResult;
     } catch (error, stackTrace) {
+      actionStopwatch.stop();
       if (!mounted) {
         return latestActionResult;
       }
+      debugPrint(
+        'ToolPkg compose_dsl action failure: '
+        'package=${widget.plugin.packageName}, '
+        'module=$uiModuleId, '
+        'action=$actionId, '
+        'elapsedMs=${actionStopwatch.elapsedMilliseconds}',
+      );
       _printComposeError('action:$actionId', error, stackTrace);
       setState(() {
         _error = error.toString();

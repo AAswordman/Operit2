@@ -696,6 +696,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
       attachmentCount: 0,
     );
     if (decision != null) {
+      final timeoutMessage = decision.message;
+      if (decision.timedOut && timeoutMessage != null) {
+        _showLocalToast(timeoutMessage);
+      }
       if (decision.action == 'block') {
         if (cancelCurrentConversation) {
           await _viewModel.clearPendingQueueAutoDequeueSuppression(queueChatId);
@@ -1119,6 +1123,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
       return;
     }
     if (decision != null) {
+      final timeoutMessage = decision.message;
+      if (decision.timedOut && timeoutMessage != null) {
+        _showLocalToast(timeoutMessage);
+      }
       if (decision.action == 'block' || decision.action == 'consume') {
         if (decision.action == 'consume' && decision.clearInput) {
           _messageController.clear();

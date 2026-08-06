@@ -9,6 +9,8 @@ class WorkspaceTerminalSessionInfo {
   const WorkspaceTerminalSessionInfo({
     required this.sessionId,
     required this.sessionName,
+    required this.platform,
+    required this.terminal,
     required this.terminalType,
     required this.sessionKind,
     required this.workingDir,
@@ -21,6 +23,8 @@ class WorkspaceTerminalSessionInfo {
     return WorkspaceTerminalSessionInfo(
       sessionId: info.sessionId,
       sessionName: info.sessionName,
+      platform: info.platform,
+      terminal: info.terminal,
       terminalType: info.terminalType,
       sessionKind: info.sessionKind,
       workingDir: info.workingDir,
@@ -30,6 +34,8 @@ class WorkspaceTerminalSessionInfo {
 
   final String sessionId;
   final String sessionName;
+  final String platform;
+  final String terminal;
   final String terminalType;
   final String sessionKind;
   final String workingDir;
@@ -43,6 +49,8 @@ class WorkspaceTerminalSessionInfo {
 class WorkspaceTerminalScreen {
   const WorkspaceTerminalScreen({
     required this.sessionId,
+    required this.platform,
+    required this.terminal,
     required this.terminalType,
     required this.rows,
     required this.cols,
@@ -55,6 +63,8 @@ class WorkspaceTerminalScreen {
   ) {
     return WorkspaceTerminalScreen(
       sessionId: screen.sessionId,
+      platform: screen.platform,
+      terminal: screen.terminal,
       terminalType: screen.terminalType,
       rows: screen.rows,
       cols: screen.cols,
@@ -64,6 +74,8 @@ class WorkspaceTerminalScreen {
   }
 
   final String sessionId;
+  final String platform;
+  final String terminal;
   final String terminalType;
   final int rows;
   final int cols;
@@ -111,6 +123,7 @@ class WorkspaceTerminalSessions {
   /// Starts a typed PTY session.
   Future<String> startPtySession({
     required String sessionName,
+    required String terminal,
     required String terminalType,
     required String workingDirectory,
     required int rows,
@@ -118,6 +131,7 @@ class WorkspaceTerminalSessions {
   }) {
     return _terminal.startTerminalPty(
       sessionName: sessionName,
+      terminal: terminal,
       terminalType: terminalType,
       workingDir: workingDirectory,
       rows: rows,

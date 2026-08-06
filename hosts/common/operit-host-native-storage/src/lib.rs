@@ -24,6 +24,22 @@ struct NativeRuntimeStorageWriteSession {
     file: Option<fs::File>,
 }
 
+impl NativeRuntimeStorageWriteSession {
+    /// Closes and atomically renames one staged runtime storage file.
+    fn commitInternal(&mut self, sync: bool) -> HostResult<()> {
+        let file = self
+            .file
+            .take()
+            .ok_or_else(|| HostError::new("Runtime storage write session is closed"))?;
+        if sync {
+            file.sync_all()?;
+        }
+        drop(file);
+        fs::rename(&self.temporaryPath, &self.targetPath)?;
+        Ok(())
+    }
+}
+
 impl RuntimeStorageWriteSession for NativeRuntimeStorageWriteSession {
     /// Appends one chunk to the private staging file.
     fn writeChunk(&mut self, chunk: &[u8]) -> HostResult<()> {
@@ -37,14 +53,12 @@ impl RuntimeStorageWriteSession for NativeRuntimeStorageWriteSession {
 
     /// Flushes the staged file and atomically publishes it at the requested path.
     fn commit(mut self: Box<Self>) -> HostResult<()> {
-        let file = self
-            .file
-            .take()
-            .ok_or_else(|| HostError::new("Runtime storage write session is closed"))?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&self.temporaryPath, &self.targetPath)?;
-        Ok(())
+        self.commitInternal(true)
+    }
+
+    /// Atomically publishes the staged file without forcing a device flush.
+    fn commitFast(mut self: Box<Self>) -> HostResult<()> {
+        self.commitInternal(false)
     }
 
     /// Removes the private staging file without modifying the published target.

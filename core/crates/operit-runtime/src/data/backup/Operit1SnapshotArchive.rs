@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -21,7 +21,7 @@ const KEY_FUNCTION_CONFIG_MAPPING: &str = "function_config_mapping";
 const MAX_ARCHIVE_ENTRY_COUNT: usize = 100_000;
 const MAX_DATASTORE_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
-
+const ARCHIVE_ENTRY_COPY_BUFFER_BYTES: usize = 256 * 1024;
 
 /// Describes one validated file entry stored by an Operit1 snapshot archive.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -194,8 +194,45 @@ impl Operit1SnapshotArchive {
         }
         let mut archive = Self::openZip(self.source.clone())?;
         let mut entry = archive.by_name(name).map_err(|error| error.to_string())?;
-        io::copy(&mut entry, writer).map_err(|error| error.to_string())?;
+        copyArchiveReaderToWriter(&mut entry, writer)?;
         Ok(())
+    }
+
+    /// Copies multiple named entries through one open ZIP directory.
+    pub(crate) fn copyEntriesTo<F>(&self, names: &[String], mut copyEntry: F) -> Result<(), String>
+    where
+        F: FnMut(usize, &str, &mut dyn Read) -> Result<(), String>,
+    {
+        let mut archive = Self::openZip(self.source.clone())?;
+        for (index, name) in names.iter().enumerate() {
+            if !self.hasEntry(name) {
+                return Err(format!(
+                    "Operit1 snapshot is missing required entry: {name}"
+                ));
+            }
+            let mut entry = archive.by_name(name).map_err(|error| error.to_string())?;
+            copyEntry(index, name, &mut entry)?;
+        }
+        Ok(())
+    }
+}
+
+/// Copies one archive reader into a writer with a bounded transfer buffer.
+fn copyArchiveReaderToWriter<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+) -> Result<(), String> {
+    let mut buffer = vec![0; ARCHIVE_ENTRY_COPY_BUFFER_BYTES];
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .map_err(|error| error.to_string())?;
+        if count == 0 {
+            return Ok(());
+        }
+        writer
+            .write_all(&buffer[..count])
+            .map_err(|error| error.to_string())?;
     }
 }
 

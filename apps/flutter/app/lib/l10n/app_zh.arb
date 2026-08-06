@@ -414,6 +414,9 @@
   "settingsCategoryWorkspaceTitle": "工作区与浏览器",
   "settingsCategoryWorkspaceSubtitle": "文件、终端、浏览器",
   "settingsCategoryWorkspaceDescription": "管理默认工作区、终端会话、浏览器模式、脚本和网页自动化。",
+  "settingsCategoryGlobalBehaviorTitle": "全局行为设置",
+  "settingsCategoryGlobalBehaviorSubtitle": "输入处理与交互",
+  "settingsCategoryGlobalBehaviorDescription": "设置不随角色卡变化的输入与交互行为。",
   "settingsCategoryAppearanceTitle": "外观与交互",
   "settingsCategoryAppearanceSubtitle": "主题、语言",
   "settingsCategoryAppearanceDescription": "调整客户端主题和当前本地化显示。",
@@ -423,6 +426,21 @@
   "settingsCategoryAccessLinksTitle": "设备与访问",
   "settingsCategoryAccessLinksSubtitle": "连接、同步、访问",
   "settingsCategoryAccessLinksDescription": "连接另一台设备，同步数据，或允许浏览器访问这台设备。",
+  "settingsCategoryGroupAssistant": "AI 与创作",
+  "settingsCategoryGroupWorkspace": "工作与自动化",
+  "settingsCategoryGroupExperience": "显示与交互",
+  "settingsCategoryGroupSystem": "数据与系统",
+  "settingsGlobalBehaviorChatInputSection": "聊天输入",
+  "settingsGlobalBehaviorLongPastedTextAsAttachment": "将超长粘贴文本转为文件",
+  "settingsGlobalBehaviorLongPastedTextThreshold": "转换阈值",
+  "settingsGlobalBehaviorLongPastedTextThresholdValue": "{count} 个字符",
+  "@settingsGlobalBehaviorLongPastedTextThresholdValue": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsComingSoon": "这个区域会继续接入现有 runtime 能力。当前优先完成模型、角色和工具设置。",
   "settingsAdvanced": "高级设置",
   "settingsActive": "当前",
@@ -886,6 +904,16 @@
   "settingsToolsNoToolsInGroup": "当前没有工具。",
   "settingsToolsMcpStartupTimeout": "MCP 启动超时",
   "settingsToolsMcpStartupTimeoutSeconds": "等待秒数",
+  "settingsToolsToolPkgPreHookTimeout": "ToolPkg 前置 Hook 超时",
+  "settingsToolsToolPkgPreHookDescription": "每条 ToolPkg 前置 Hook 链总计最多执行 {seconds} 秒。",
+  "@settingsToolsToolPkgPreHookDescription": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsToolsToolPkgPreHookTimeoutSeconds": "总秒数",
   "settingsWorkspaceCurrentDesign": "当前工作区结构",
   "settingsWorkspaceCurrentDesignDescription": "工作区跟随聊天绑定；终端会话和浏览器会话作为全局会话在工作区里扁平展示。",
   "settingsWorkspaceOpenChat": "回到聊天工作区",
@@ -1154,16 +1182,6 @@
   "settingsAppearanceInputStyleClassic": "经典",
   "settingsAppearanceInputStyleAgent": "Agent",
   "settingsAppearanceInputFloating": "悬浮输入框",
-  "settingsAppearanceLongPastedTextAsAttachment": "将超长粘贴文本转为文件",
-  "settingsAppearanceLongPastedTextThreshold": "转换阈值",
-  "settingsAppearanceLongPastedTextThresholdValue": "{count} 个字符",
-  "@settingsAppearanceLongPastedTextThresholdValue": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
   "settingsAppearanceColorSection": "主题色",
   "settingsAppearanceColorDescription": "选择一个简单的颜色预设。系统栏和当前应用外壳会自动跟随主题，不再单独配置。",
   "settingsAppearanceColorDefault": "默认",
@@ -1265,6 +1283,7 @@
   "settingsAppearanceWideLayout": "使用更宽的聊天布局",
   "settingsAppearanceRoundedMessages": "消息卡片圆角",
   "settingsAppearanceShowAvatars": "显示消息头像",
+  "settingsAppearanceMessageDisplaySection": "消息显示",
   "settingsAppearanceShowThinkingProcess": "显示思考过程",
   "settingsAppearanceShowRoleName": "显示角色名",
   "settingsAppearanceShowUserName": "显示用户名",
@@ -1482,6 +1501,43 @@
     }
   },
   "settingsDataSnapshotRestoreConfirmAction": "确认恢复",
+  "settingsDataImportOperit1Snapshot": "从 Operit1 导入",
+  "settingsDataOperit1SnapshotImported": "Operit1 快照导入完成。",
+  "settingsDataOperit1SnapshotImportError": "Operit1 快照导入失败：{error}",
+  "@settingsDataOperit1SnapshotImportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataOperit1SnapshotImportConfirmMessage": "将导入 Operit1 快照到当前 Runtime。\n文件：{fileName}\n格式版本：{formatVersion}\n聊天模型：{chatModelId}\n聊天：{chatCount} 个，消息：{messageCount} 条\n资源文件：{fileCount} 个\n快照大小：{byteCount} 字节",
+  "@settingsDataOperit1SnapshotImportConfirmMessage": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      },
+      "formatVersion": {
+        "type": "int"
+      },
+      "chatModelId": {
+        "type": "String"
+      },
+      "chatCount": {
+        "type": "int"
+      },
+      "messageCount": {
+        "type": "int"
+      },
+      "fileCount": {
+        "type": "int"
+      },
+      "byteCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataOperit1SnapshotImportAction": "开始导入",
   "settingsDataAdvancedBackupOptions": "高级选项",
   "settingsDataAdvancedBackupOptionsDescription": "单项 JSON 导出与恢复"
 }

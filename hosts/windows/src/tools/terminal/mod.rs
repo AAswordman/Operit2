@@ -22,6 +22,9 @@ const PTY_OUTPUT_LIMIT: usize = 1024 * 1024;
 const PTY_PROMPT_MARKER_PREFIX: &[u8] = b"\x1b]133;OperitPrompt=";
 const PTY_PROMPT_MARKER_END: u8 = 7;
 const COMMAND_CANCEL_SETTLE_TIMEOUT_MS: u64 = 3000;
+const PLATFORM: &str = "windows";
+const TERMINAL: &str = "native";
+const PRIMARY_TERMINAL_TYPE: &str = "powershell";
 
 #[derive(Clone, Default)]
 pub struct WindowsTerminalHost {
@@ -81,11 +84,13 @@ impl WindowsTerminalHost {
 impl TerminalHost for WindowsTerminalHost {
     fn terminalInfo(&self) -> HostResult<TerminalInfo> {
         Ok(TerminalInfo {
-            platform: "windows".to_string(),
-            defaultType: "powershell".to_string(),
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
+            terminalType: PRIMARY_TERMINAL_TYPE.to_string(),
             types: vec![
                 TerminalTypeInfo {
-                    terminalType: "powershell".to_string(),
+                    terminal: TERMINAL.to_string(),
+                    terminalType: PRIMARY_TERMINAL_TYPE.to_string(),
                     available: commandStarts(
                         "powershell.exe",
                         &["-NoProfile", "-Command", "$PSVersionTable.PSVersion"],
@@ -93,6 +98,7 @@ impl TerminalHost for WindowsTerminalHost {
                     description: "Windows PowerShell terminal".to_string(),
                 },
                 TerminalTypeInfo {
+                    terminal: TERMINAL.to_string(),
                     terminalType: "bash".to_string(),
                     available: gitBashExecutable().is_ok(),
                     description: "Windows Git Bash terminal".to_string(),
@@ -104,12 +110,14 @@ impl TerminalHost for WindowsTerminalHost {
     fn startPtySession(
         &self,
         sessionName: &str,
+        terminal: &str,
         terminalType: &str,
         workingDir: &str,
         rows: u16,
         cols: u16,
     ) -> HostResult<String> {
         let normalizedSessionName = nonBlank(sessionName, "session_name")?;
+        requireNativeTerminal(terminal)?;
         let (normalizedTerminalType, kind) = normalizeTerminalType(terminalType)?;
         let workDir = nonBlank(workingDir, "working_directory")?;
         let session = createPtySession(
@@ -214,6 +222,8 @@ impl TerminalHost for WindowsTerminalHost {
             entries.push(TerminalSessionListEntry {
                 sessionId: sessionId.clone(),
                 sessionName: session.sessionName.clone(),
+                platform: PLATFORM.to_string(),
+                terminal: TERMINAL.to_string(),
                 terminalType: session.terminalType.clone(),
                 sessionKind: "pty".to_string(),
                 workingDir: session.workingDir.clone(),
@@ -223,13 +233,10 @@ impl TerminalHost for WindowsTerminalHost {
         Ok(entries)
     }
 
-    fn createOrGetSession(
-        &self,
-        sessionName: &str,
-        terminalType: &str,
-    ) -> HostResult<TerminalSessionInfo> {
+    fn createOrGetSession(&self, sessionName: &str) -> HostResult<TerminalSessionInfo> {
         let normalizedSessionName = nonBlank(sessionName, "session_name")?;
-        let (normalizedTerminalType, kind) = normalizeTerminalType(terminalType)?;
+        let normalizedTerminalType = PRIMARY_TERMINAL_TYPE.to_string();
+        let kind = TerminalKind::PowerShell;
         let key = sessionKey(&normalizedTerminalType, &normalizedSessionName);
         {
             let mut state = self.lockState()?;
@@ -238,6 +245,8 @@ impl TerminalHost for WindowsTerminalHost {
                     return Ok(TerminalSessionInfo {
                         sessionId,
                         sessionName: normalizedSessionName,
+                        platform: PLATFORM.to_string(),
+                        terminal: TERMINAL.to_string(),
                         terminalType: normalizedTerminalType,
                         isNewSession: false,
                     });
@@ -262,6 +271,8 @@ impl TerminalHost for WindowsTerminalHost {
         Ok(TerminalSessionInfo {
             sessionId,
             sessionName: normalizedSessionName,
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
             terminalType: normalizedTerminalType,
             isNewSession: true,
         })
@@ -319,6 +330,8 @@ impl TerminalHost for WindowsTerminalHost {
             output: result.output,
             exitCode: result.exitCode,
             sessionId: normalizedSessionId,
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
             terminalType,
             timedOut: result.timedOut,
         })
@@ -327,12 +340,12 @@ impl TerminalHost for WindowsTerminalHost {
     fn executeHiddenCommand(
         &self,
         command: &str,
-        terminalType: &str,
         executorKey: &str,
         timeoutMs: u64,
     ) -> HostResult<HiddenTerminalCommandOutput> {
         let normalizedCommand = nonBlank(command, "command")?;
-        let (normalizedTerminalType, kind) = normalizeTerminalType(terminalType)?;
+        let normalizedTerminalType = PRIMARY_TERMINAL_TYPE.to_string();
+        let kind = TerminalKind::PowerShell;
         let normalizedExecutorKey = match executorKey.trim() {
             "" => "default".to_string(),
             value => value.to_string(),
@@ -351,6 +364,8 @@ impl TerminalHost for WindowsTerminalHost {
             output: output.output,
             exitCode: output.exitCode,
             executorKey: normalizedExecutorKey,
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
             terminalType: normalizedTerminalType,
             timedOut: output.timedOut,
         })
@@ -417,6 +432,8 @@ impl TerminalHost for WindowsTerminalHost {
             .unwrap_or(0);
         Ok(TerminalScreenOutput {
             sessionId: normalizedSessionId,
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
             terminalType: session.terminalType.clone(),
             rows,
             cols,
@@ -1444,6 +1461,16 @@ fn normalizeTerminalType(terminalType: &str) -> HostResult<(String, TerminalKind
     }
 }
 
+/// Validates the terminal implementation owned by the Windows PTY host.
+fn requireNativeTerminal(terminal: &str) -> HostResult<()> {
+    match terminal.trim() {
+        TERMINAL => Ok(()),
+        value => Err(HostError::new(format!(
+            "Unsupported terminal implementation for Windows PTY host: {value}"
+        ))),
+    }
+}
+
 #[allow(non_snake_case)]
 fn sessionKey(terminalType: &str, name: &str) -> String {
     format!("{terminalType}:{name}")
@@ -1485,7 +1512,7 @@ mod tests {
     fn powershell_command_block_completes() {
         let host = WindowsTerminalHost::new();
         let session = host
-            .createOrGetSession("terminal_powershell_marker", "powershell")
+            .createOrGetSession("terminal_powershell_marker")
             .expect("create terminal session");
         let result = host
             .executeInSession(&session.sessionId, "Write-Output hello", 3000)
@@ -1500,7 +1527,7 @@ mod tests {
     fn powershell_parse_error_returns_without_timeout() {
         let host = WindowsTerminalHost::new();
         let session = host
-            .createOrGetSession("terminal_powershell_parse_error", "powershell")
+            .createOrGetSession("terminal_powershell_parse_error")
             .expect("create terminal session");
         let result = host
             .executeInSession(&session.sessionId, "date /t && time /t", 3000)
@@ -1516,7 +1543,7 @@ mod tests {
     fn powershell_screen_records_prompt_command_output_prompt() {
         let host = WindowsTerminalHost::new();
         let session = host
-            .createOrGetSession("terminal_powershell_screen", "powershell")
+            .createOrGetSession("terminal_powershell_screen")
             .expect("create terminal session");
         let command = "Write-Output hello";
         let prompt = format!("PS {}> ", std::env::current_dir().unwrap().display());
@@ -1546,21 +1573,28 @@ mod tests {
     fn windows_default_terminal_is_powershell() {
         let host = WindowsTerminalHost::new();
         let info = host.terminalInfo().expect("terminal info");
-        assert_eq!(info.defaultType, "powershell");
+        assert_eq!(info.terminalType, "powershell");
+        assert_eq!(info.terminal, "native");
     }
 
     /// Verifies that Windows Git Bash sessions execute through the typed host path.
     #[test]
     fn git_bash_command_block_completes() {
         let host = WindowsTerminalHost::new();
-        let session = host
-            .createOrGetSession("terminal_git_bash_marker", "bash")
+        let sessionId = host
+            .startPtySession(
+                "terminal_git_bash_marker",
+                TERMINAL,
+                "bash",
+                &std::env::current_dir().unwrap().display().to_string(),
+                24,
+                80,
+            )
             .expect("create Git Bash terminal session");
         let result = host
-            .executeInSession(&session.sessionId, "printf git-bash-ok", 3000)
+            .executeInSession(&sessionId, "printf git-bash-ok", 3000)
             .expect("execute Git Bash terminal command");
 
-        assert_eq!(session.terminalType, "bash");
         assert_eq!(result.terminalType, "bash");
         assert!(!result.timedOut);
         assert_eq!(result.exitCode, 0);
@@ -1571,11 +1605,12 @@ mod tests {
     fn visible_powershell_sessions_are_listed_as_pty() {
         let host = WindowsTerminalHost::new();
         let created = host
-            .createOrGetSession("terminal_visible_ai", "powershell")
+            .createOrGetSession("terminal_visible_ai")
             .expect("create visible terminal session");
         let manual = host
             .startPtySession(
                 "terminal_visible_manual",
+                TERMINAL,
                 "powershell",
                 &std::env::current_dir().unwrap().display().to_string(),
                 24,

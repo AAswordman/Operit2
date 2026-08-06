@@ -141,7 +141,7 @@ pub struct ToolPkgHookInvocation {
     pub runtimeKind: Option<String>,
     pub envOverrides: BTreeMap<String, String>,
     pub timestampMs: i64,
-    pub timeoutSec: u64,
+    pub timeoutMillis: u64,
     pub dispatchIntermediateOnMain: bool,
     pub onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }

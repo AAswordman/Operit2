@@ -837,6 +837,15 @@ class AppLocalizationsZh extends AppLocalizations {
       '管理默认工作区、终端会话、浏览器模式、脚本和网页自动化。';
 
   @override
+  String get settingsCategoryGlobalBehaviorTitle => '全局行为设置';
+
+  @override
+  String get settingsCategoryGlobalBehaviorSubtitle => '输入处理与交互';
+
+  @override
+  String get settingsCategoryGlobalBehaviorDescription => '设置不随角色卡变化的输入与交互行为。';
+
+  @override
   String get settingsCategoryAppearanceTitle => '外观与交互';
 
   @override
@@ -863,6 +872,32 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get settingsCategoryAccessLinksDescription =>
       '连接另一台设备，同步数据，或允许浏览器访问这台设备。';
+
+  @override
+  String get settingsCategoryGroupAssistant => 'AI 与创作';
+
+  @override
+  String get settingsCategoryGroupWorkspace => '工作与自动化';
+
+  @override
+  String get settingsCategoryGroupExperience => '显示与交互';
+
+  @override
+  String get settingsCategoryGroupSystem => '数据与系统';
+
+  @override
+  String get settingsGlobalBehaviorChatInputSection => '聊天输入';
+
+  @override
+  String get settingsGlobalBehaviorLongPastedTextAsAttachment => '将超长粘贴文本转为文件';
+
+  @override
+  String get settingsGlobalBehaviorLongPastedTextThreshold => '转换阈值';
+
+  @override
+  String settingsGlobalBehaviorLongPastedTextThresholdValue(int count) {
+    return '$count 个字符';
+  }
 
   @override
   String get settingsComingSoon => '这个区域会继续接入现有 runtime 能力。当前优先完成模型、角色和工具设置。';
@@ -1759,6 +1794,17 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsToolsMcpStartupTimeoutSeconds => '等待秒数';
 
   @override
+  String get settingsToolsToolPkgPreHookTimeout => 'ToolPkg 前置 Hook 超时';
+
+  @override
+  String settingsToolsToolPkgPreHookDescription(int seconds) {
+    return '每条 ToolPkg 前置 Hook 链总计最多执行 $seconds 秒。';
+  }
+
+  @override
+  String get settingsToolsToolPkgPreHookTimeoutSeconds => '总秒数';
+
+  @override
   String get settingsWorkspaceCurrentDesign => '当前工作区结构';
 
   @override
@@ -2171,17 +2217,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsAppearanceInputFloating => '悬浮输入框';
 
   @override
-  String get settingsAppearanceLongPastedTextAsAttachment => '将超长粘贴文本转为文件';
-
-  @override
-  String get settingsAppearanceLongPastedTextThreshold => '转换阈值';
-
-  @override
-  String settingsAppearanceLongPastedTextThresholdValue(int count) {
-    return '$count 个字符';
-  }
-
-  @override
   String get settingsAppearanceColorSection => '主题色';
 
   @override
@@ -2485,6 +2520,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsAppearanceShowAvatars => '显示消息头像';
+
+  @override
+  String get settingsAppearanceMessageDisplaySection => '消息显示';
 
   @override
   String get settingsAppearanceShowThinkingProcess => '显示思考过程';
@@ -2826,6 +2864,33 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsDataSnapshotRestoreConfirmAction => '确认恢复';
+
+  @override
+  String get settingsDataImportOperit1Snapshot => '从 Operit1 导入';
+
+  @override
+  String get settingsDataOperit1SnapshotImported => 'Operit1 快照导入完成。';
+
+  @override
+  String settingsDataOperit1SnapshotImportError(String error) {
+    return 'Operit1 快照导入失败：$error';
+  }
+
+  @override
+  String settingsDataOperit1SnapshotImportConfirmMessage(
+    String fileName,
+    int formatVersion,
+    String chatModelId,
+    int chatCount,
+    int messageCount,
+    int fileCount,
+    int byteCount,
+  ) {
+    return '将导入 Operit1 快照到当前 Runtime。\n文件：$fileName\n格式版本：$formatVersion\n聊天模型：$chatModelId\n聊天：$chatCount 个，消息：$messageCount 条\n资源文件：$fileCount 个\n快照大小：$byteCount 字节';
+  }
+
+  @override
+  String get settingsDataOperit1SnapshotImportAction => '开始导入';
 
   @override
   String get settingsDataAdvancedBackupOptions => '高级选项';

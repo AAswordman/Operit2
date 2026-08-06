@@ -27,6 +27,10 @@ const PTY_OUTPUT_LIMIT: usize = 1024 * 1024;
 const PTY_PROMPT_MARKER_PREFIX: &[u8] = b"\x1b]133;OperitPrompt=";
 const PTY_PROMPT_MARKER_END: u8 = 7;
 const COMMAND_CANCEL_SETTLE_TIMEOUT_MS: u64 = 3000;
+const PLATFORM: &str = "android";
+const PROOT_TERMINAL: &str = "proot";
+const ANDROID_SYSTEM_TERMINAL: &str = "android-system";
+const PRIMARY_TERMINAL_TYPE: &str = "bash";
 type RawFd = i32;
 #[cfg(target_os = "android")]
 type AndroidPid = libc::pid_t;
@@ -105,16 +109,18 @@ impl AndroidTerminalHost {
         Self::default()
     }
 
+    /// Starts an Android PTY session for one exact terminal implementation and type.
     pub fn startPtySession(
         &self,
         sessionName: &str,
+        terminal: &str,
         terminalType: &str,
         workingDir: &str,
         rows: u16,
         cols: u16,
     ) -> HostResult<String> {
         let normalizedSessionName = nonBlank(sessionName, "session_name")?;
-        let normalizedTerminalType = normalizeAndroidTerminalType(terminalType)?;
+        let normalizedTerminalType = requireAndroidTerminal(terminal, terminalType)?;
         let workDir = nonBlank(workingDir, "working_directory")?;
         let session = createAndroidPtySession(
             normalizedSessionName,
@@ -199,15 +205,18 @@ impl AndroidTerminalHost {
 impl TerminalHost for AndroidTerminalHost {
     fn terminalInfo(&self) -> HostResult<TerminalInfo> {
         Ok(TerminalInfo {
-            platform: "android".to_string(),
-            defaultType: "bash".to_string(),
+            platform: PLATFORM.to_string(),
+            terminal: PROOT_TERMINAL.to_string(),
+            terminalType: PRIMARY_TERMINAL_TYPE.to_string(),
             types: vec![
                 TerminalTypeInfo {
-                    terminalType: "bash".to_string(),
+                    terminal: PROOT_TERMINAL.to_string(),
+                    terminalType: PRIMARY_TERMINAL_TYPE.to_string(),
                     available: true,
                     description: "Android proot Linux bash terminal".to_string(),
                 },
                 TerminalTypeInfo {
+                    terminal: ANDROID_SYSTEM_TERMINAL.to_string(),
                     terminalType: "shell".to_string(),
                     available: true,
                     description: "Android system shell terminal".to_string(),
@@ -219,6 +228,7 @@ impl TerminalHost for AndroidTerminalHost {
     fn startPtySession(
         &self,
         sessionName: &str,
+        terminal: &str,
         terminalType: &str,
         workingDir: &str,
         rows: u16,
@@ -227,6 +237,7 @@ impl TerminalHost for AndroidTerminalHost {
         AndroidTerminalHost::startPtySession(
             self,
             sessionName,
+            terminal,
             terminalType,
             workingDir,
             rows,
@@ -269,6 +280,8 @@ impl TerminalHost for AndroidTerminalHost {
             entries.push(TerminalSessionListEntry {
                 sessionId: sessionId.clone(),
                 sessionName: session.sessionName.clone(),
+                platform: PLATFORM.to_string(),
+                terminal: androidTerminalName(&session.terminalType)?.to_string(),
                 terminalType: session.terminalType.clone(),
                 sessionKind: "pty".to_string(),
                 workingDir: session.workingDir.clone(),
@@ -278,13 +291,9 @@ impl TerminalHost for AndroidTerminalHost {
         Ok(entries)
     }
 
-    fn createOrGetSession(
-        &self,
-        sessionName: &str,
-        terminalType: &str,
-    ) -> HostResult<TerminalSessionInfo> {
+    fn createOrGetSession(&self, sessionName: &str) -> HostResult<TerminalSessionInfo> {
         let normalizedSessionName = nonBlank(sessionName, "session_name")?;
-        let normalizedTerminalType = normalizeAndroidTerminalType(terminalType)?;
+        let normalizedTerminalType = PRIMARY_TERMINAL_TYPE.to_string();
         let key = sessionKey(&normalizedTerminalType, &normalizedSessionName);
         {
             let mut state = self.lockState()?;
@@ -293,6 +302,8 @@ impl TerminalHost for AndroidTerminalHost {
                     return Ok(TerminalSessionInfo {
                         sessionId,
                         sessionName: normalizedSessionName,
+                        platform: PLATFORM.to_string(),
+                        terminal: PROOT_TERMINAL.to_string(),
                         terminalType: normalizedTerminalType,
                         isNewSession: false,
                     });
@@ -316,6 +327,8 @@ impl TerminalHost for AndroidTerminalHost {
         Ok(TerminalSessionInfo {
             sessionId,
             sessionName: normalizedSessionName,
+            platform: PLATFORM.to_string(),
+            terminal: PROOT_TERMINAL.to_string(),
             terminalType: normalizedTerminalType,
             isNewSession: true,
         })
@@ -367,6 +380,8 @@ impl TerminalHost for AndroidTerminalHost {
             output: result.output,
             exitCode: result.exitCode,
             sessionId: normalizedSessionId,
+            platform: PLATFORM.to_string(),
+            terminal: androidTerminalName(&terminalType)?.to_string(),
             terminalType,
             timedOut: result.timedOut,
         })
@@ -375,12 +390,11 @@ impl TerminalHost for AndroidTerminalHost {
     fn executeHiddenCommand(
         &self,
         command: &str,
-        terminalType: &str,
         executorKey: &str,
         timeoutMs: u64,
     ) -> HostResult<HiddenTerminalCommandOutput> {
         let normalizedCommand = nonBlank(command, "command")?;
-        let normalizedTerminalType = normalizeAndroidTerminalType(terminalType)?;
+        let normalizedTerminalType = PRIMARY_TERMINAL_TYPE.to_string();
         let normalizedExecutorKey = match executorKey.trim() {
             "" => "default".to_string(),
             value => value.to_string(),
@@ -394,6 +408,8 @@ impl TerminalHost for AndroidTerminalHost {
             output: output.output,
             exitCode: output.exitCode,
             executorKey: normalizedExecutorKey,
+            platform: PLATFORM.to_string(),
+            terminal: PROOT_TERMINAL.to_string(),
             terminalType: normalizedTerminalType,
             timedOut: output.timedOut,
         })
@@ -466,6 +482,8 @@ impl TerminalHost for AndroidTerminalHost {
             .unwrap_or(0);
         Ok(TerminalScreenOutput {
             sessionId: normalizedSessionId,
+            platform: PLATFORM.to_string(),
+            terminal: androidTerminalName(&session.terminalType)?.to_string(),
             terminalType: session.terminalType.clone(),
             rows,
             cols,
@@ -1371,6 +1389,30 @@ fn normalizeAndroidTerminalType(terminalType: &str) -> HostResult<String> {
         "shell" => Ok("shell".to_string()),
         value => Err(HostError::new(format!(
             "Unsupported terminal type for android host: {value}"
+        ))),
+    }
+}
+
+/// Validates one Android terminal implementation and shell-type pair.
+fn requireAndroidTerminal(terminal: &str, terminalType: &str) -> HostResult<String> {
+    let normalizedTerminalType = normalizeAndroidTerminalType(terminalType)?;
+    match (terminal.trim(), normalizedTerminalType.as_str()) {
+        (PROOT_TERMINAL, "bash") | (ANDROID_SYSTEM_TERMINAL, "shell") => {
+            Ok(normalizedTerminalType)
+        }
+        (implementation, terminalType) => Err(HostError::new(format!(
+            "Unsupported Android terminal implementation and type: {implementation}/{terminalType}"
+        ))),
+    }
+}
+
+/// Returns the Android terminal implementation registered for one shell semantic type.
+fn androidTerminalName(terminalType: &str) -> HostResult<&'static str> {
+    match terminalType {
+        "bash" => Ok(PROOT_TERMINAL),
+        "shell" => Ok(ANDROID_SYSTEM_TERMINAL),
+        value => Err(HostError::new(format!(
+            "Unsupported Android terminal type: {value}"
         ))),
     }
 }

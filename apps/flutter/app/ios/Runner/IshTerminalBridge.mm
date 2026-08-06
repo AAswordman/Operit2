@@ -6,11 +6,14 @@
 
 extern "C" {
 #import "LinuxInterop.h"
+#include "iOSFS.h"
+#include "kernel/errno.h"
 #include "tools/fakefs.h"
 }
 
 static const NSUInteger ORTIshOutputCapacity = 1024 * 1024;
 static const NSTimeInterval ORTIshStartTimeout = 30.0;
+static NSString *const ORTIshRuntimeMountRoot = @"/mnt/operit-mcp";
 
 @interface ORTIshTerminalSession : NSObject
 @property(nonatomic, copy) NSString *sessionId;
@@ -221,6 +224,54 @@ static BOOL ORTIshEnsureKernel(NSString **errorOut) {
   return prepared;
 }
 
+/// Validates one iSH mount point reserved for an App-owned MCP runtime directory.
+static BOOL ORTIshIsRuntimeMountPoint(NSString *mountPoint) {
+  NSString *prefix = [ORTIshRuntimeMountRoot stringByAppendingString:@"/"];
+  if (![mountPoint hasPrefix:prefix]) return NO;
+  NSString *suffix = [mountPoint substringFromIndex:prefix.length];
+  if (suffix.length != 64) return NO;
+  NSCharacterSet *hex = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"];
+  for (NSUInteger index = 0; index < suffix.length; index++) {
+    if (![hex characterIsMember:[suffix characterAtIndex:index]]) return NO;
+  }
+  return YES;
+}
+
+/// Creates one required iSH runtime mount directory and accepts an existing directory.
+static BOOL ORTIshEnsureRuntimeMountDirectory(NSString *path, NSString **errorOut) {
+  int result = linux_make_directory(path.fileSystemRepresentation);
+  if (result == 0 || result == _EEXIST) return YES;
+  *errorOut = [NSString stringWithFormat:@"iSH runtime mount directory failed: %@ (%d)", path, result];
+  return NO;
+}
+
+/// Mounts an App-owned plugin parent directory into the iSH Linux filesystem.
+static BOOL ORTIshMountRuntimeDirectory(NSString *hostDirectory, NSString *mountPoint,
+                                        NSString **errorOut) {
+  if (!ORTIshEnsureKernel(errorOut)) return NO;
+  if (![hostDirectory hasPrefix:@"/"] || !ORTIshIsRuntimeMountPoint(mountPoint)) {
+    *errorOut = @"iSH runtime mount request is invalid";
+    return NO;
+  }
+  BOOL isDirectory = NO;
+  if (![[NSFileManager defaultManager] fileExistsAtPath:hostDirectory isDirectory:&isDirectory] || !isDirectory) {
+    *errorOut = [NSString stringWithFormat:@"iSH runtime directory does not exist: %@", hostDirectory];
+    return NO;
+  }
+  if (!ORTIshEnsureRuntimeMountDirectory(@"/mnt", errorOut)
+      || !ORTIshEnsureRuntimeMountDirectory(ORTIshRuntimeMountRoot, errorOut)
+      || !ORTIshEnsureRuntimeMountDirectory(mountPoint, errorOut)) {
+    return NO;
+  }
+  int result = iosfs_mount_app_directory(hostDirectory.fileSystemRepresentation,
+                                         mountPoint.fileSystemRepresentation);
+  if (result != 0) {
+    *errorOut = [NSString stringWithFormat:@"iSH runtime mount failed: %@ (%d)", mountPoint, result];
+    return NO;
+  }
+  return YES;
+}
+
 /// Starts an interactive Alpine shell and waits until iSH has attached its PTY.
 static ORTIshTerminalSession *ORTIshStartSession(NSString *sessionName, NSString *workingDir,
                                                  NSInteger rows, NSInteger cols, NSString **errorOut) {
@@ -378,6 +429,13 @@ static NSDictionary *ORTIshExecute(ORTIshTerminalSession *session, NSString *com
 /// Handles one typed iSH terminal bridge command.
 static NSDictionary *ORTIshHandleCommand(NSString *command, NSDictionary *request) {
   NSString *error = nil;
+  if ([command isEqualToString:@"managedRuntimeMount"]) {
+    NSString *hostDirectory = ORTIshRequiredString(request, @"hostDirectory", &error);
+    NSString *mountPoint = ORTIshRequiredString(request, @"mountPoint", &error);
+    if (error != nil) return ORTIshError(error);
+    return ORTIshMountRuntimeDirectory(hostDirectory, mountPoint, &error)
+        ? ORTIshResult(@{}) : ORTIshError(error);
+  }
   if ([command isEqualToString:@"terminalStart"]) {
     NSString *sessionName = ORTIshRequiredString(request, @"sessionName", &error);
     NSString *terminalType = ORTIshRequiredString(request, @"terminalType", &error);
@@ -436,7 +494,13 @@ static NSDictionary *ORTIshHandleCommand(NSString *command, NSDictionary *reques
     NSArray<ORTIshTerminalSession *> *sessions = ORTIshSessions.allValues;
     [ORTIshStateLock unlock];
     NSMutableArray *entries = [NSMutableArray arrayWithCapacity:sessions.count];
-    for (ORTIshTerminalSession *session in sessions) [entries addObject:ORTIshSessionEntry(session)];
+    for (ORTIshTerminalSession *session in sessions) {
+      BOOL closed = NO;
+      @synchronized (session) {
+        closed = session.closed;
+      }
+      if (!closed) [entries addObject:ORTIshSessionEntry(session)];
+    }
     return ORTIshResult(@{ @"sessions" : entries });
   }
   if ([command isEqualToString:@"terminalCreateOrGet"]) {

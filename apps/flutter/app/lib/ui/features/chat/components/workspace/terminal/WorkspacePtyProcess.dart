@@ -31,22 +31,24 @@ abstract class WorkspacePtyProcess {
 /// Starts a new workspace PTY session and attaches to its output stream.
 Future<WorkspacePtyProcess> startWorkspacePty({
   required String sessionName,
+  required String terminal,
   required String terminalType,
   required String workingDirectory,
   required int rows,
   required int columns,
 }) async {
-  final terminal = const GeneratedCoreProxyClients(
+  final terminalService = const GeneratedCoreProxyClients(
     ProxyCoreRuntimeBridge(),
   ).servicesRuntimeTerminalService;
-  final sessionId = await terminal.startTerminalPty(
+  final sessionId = await terminalService.startTerminalPty(
     sessionName: sessionName,
+    terminal: terminal,
     terminalType: terminalType,
     workingDir: workingDirectory,
     rows: rows,
     cols: columns,
   );
-  return _BridgeWorkspacePtyProcess(terminal, sessionId);
+  return _BridgeWorkspacePtyProcess(terminalService, sessionId);
 }
 
 /// Attaches to an existing workspace PTY session.

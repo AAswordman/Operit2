@@ -252,6 +252,12 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
         }
 
         function captureMarketOrigin(encoded, key) {
+            // Marketplace publishing appends this marker to a main module. Runtime hooks can
+            // evaluate that module repeatedly after registration, so marker calls there must
+            // not mutate registration capture state or interrupt the hook.
+            if (!registrationOnly) {
+                return;
+            }
             if (!Array.isArray(encoded)) {
                 throw new Error('ToolPkg marketplace origin payload must be an array');
             }
@@ -566,4 +572,33 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
     })();
     "#
     .replace("__OPERIT_TOOLPKG_REGISTRATION_ONLY__", registrationOnly)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::buildToolPkgRegistrationBridgeScript;
+    use rquickjs::{Context, Runtime};
+
+    /// Verifies runtime marketplace markers can be evaluated repeatedly without capture side effects.
+    #[test]
+    fn runtime_marketplace_marker_is_repeatable_noop() {
+        let runtime = Runtime::new().expect("QuickJS runtime should start");
+        let context = Context::full(&runtime).expect("QuickJS context should start");
+
+        context.with(|context| {
+            context
+                .eval::<(), _>(buildToolPkgRegistrationBridgeScript(false))
+                .expect("runtime bridge should evaluate");
+            context
+                .eval::<(), _>("ToolPkg._m([], 0); ToolPkg._m([], 0);")
+                .expect("runtime marker calls should not throw");
+            let capturedOrigin = context
+                .eval::<String, _>(
+                    "String(globalThis.__operitToolPkgRegistrationCapture.marketOrigin)",
+                )
+                .expect("runtime capture should be readable");
+
+            assert_eq!(capturedOrigin, "null");
+        });
+    }
 }

@@ -43,6 +43,8 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
       ),
       mcpStartupTimeoutSeconds: await widget.clients.preferencesApiPreferences
           .getMcpStartupTimeoutSeconds(),
+      toolPkgPreHookTimeoutSeconds: await widget.clients.preferencesApiPreferences
+          .getToolPkgPreHookTimeoutSeconds(),
     );
   }
 
@@ -79,6 +81,23 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
     await widget.clients.preferencesApiPreferences.saveMcpStartupTimeoutSeconds(
       seconds: seconds,
     );
+    _reload();
+  }
+
+  /// Edits the total deadline shared by one ToolPkg pre-hook chain.
+  Future<void> _editToolPkgPreHookTimeout(_ToolSettingsData data) async {
+    final l10n = AppLocalizations.of(context)!;
+    final seconds = await _NumberInputDialog.show(
+      context: context,
+      title: l10n.settingsToolsToolPkgPreHookTimeout,
+      label: l10n.settingsToolsToolPkgPreHookTimeoutSeconds,
+      initialValue: data.toolPkgPreHookTimeoutSeconds,
+    );
+    if (seconds == null) {
+      return;
+    }
+    await widget.clients.preferencesApiPreferences
+        .saveToolPkgPreHookTimeoutSeconds(seconds: seconds);
     _reload();
   }
 
@@ -145,6 +164,22 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
                     child: Text(l10n.edit),
                   ),
                 ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  visualDensity: VisualDensity.compact,
+                  leading: const Icon(Icons.timer_outlined),
+                  title: Text(l10n.settingsToolsToolPkgPreHookTimeout),
+                  subtitle: Text(
+                    l10n.settingsToolsToolPkgPreHookDescription(
+                      data.toolPkgPreHookTimeoutSeconds,
+                    ),
+                  ),
+                  trailing: TextButton(
+                    onPressed: () => _editToolPkgPreHookTimeout(data),
+                    child: Text(l10n.edit),
+                  ),
+                ),
                 const Divider(height: 24),
                 _AdvancedHostSummary(host: data.host),
               ],
@@ -162,12 +197,14 @@ class _ToolSettingsData {
     required this.host,
     required this.hostRequirements,
     required this.mcpStartupTimeoutSeconds,
+    required this.toolPkgPreHookTimeoutSeconds,
   });
 
   final core_proxy.AiPermissionMode permissionMode;
   final core_proxy.RuntimeHostDescriptor host;
   final List<_HostRequirement> hostRequirements;
   final int mcpStartupTimeoutSeconds;
+  final int toolPkgPreHookTimeoutSeconds;
 }
 
 enum _PermissionMode {

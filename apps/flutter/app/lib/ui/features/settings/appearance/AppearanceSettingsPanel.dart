@@ -77,7 +77,6 @@ class AppearanceSettingsPanel extends StatelessWidget {
                 );
               },
             ),
-            const _LongPastedTextInputSettingsControl(),
           ],
         ),
         _SectionCard(
@@ -484,6 +483,11 @@ class AppearanceSettingsPanel extends StatelessWidget {
                 );
               },
             ),
+          ],
+        ),
+        _SectionCard(
+          title: l10n.settingsAppearanceMessageDisplaySection,
+          children: <Widget>[
             _SettingSwitch(
               title: l10n.settingsAppearanceShowThinkingProcess,
               value: snapshot.showThinkingProcess,
@@ -2004,121 +2008,6 @@ class _InputStyleSelector extends StatelessWidget {
   }
 }
 
-class _LongPastedTextInputSettingsControl extends StatefulWidget {
-  /// Creates the controls for long pasted text conversion preferences.
-  const _LongPastedTextInputSettingsControl();
-
-  /// Creates the mutable state for the long-paste preference controls.
-  @override
-  State<_LongPastedTextInputSettingsControl> createState() =>
-      _LongPastedTextInputSettingsControlState();
-}
-
-class _LongPastedTextInputSettingsControlState
-    extends State<_LongPastedTextInputSettingsControl> {
-  final UserPreferencesManager _preferences = const UserPreferencesManager();
-
-  /// Starts loading persisted long-paste preferences for the settings controls.
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_loadSettings());
-  }
-
-  /// Loads the persisted long-paste preferences into the shared settings value.
-  Future<void> _loadSettings() async {
-    try {
-      await _preferences.loadLongPastedTextInputSettings();
-    } catch (error, stackTrace) {
-      debugPrint(
-        'Unable to load long pasted text preferences: $error\n$stackTrace',
-      );
-    }
-  }
-
-  /// Persists one complete long-paste preference value.
-  Future<void> _saveSettings({
-    required bool enabled,
-    required int threshold,
-  }) async {
-    try {
-      await _preferences.saveLongPastedTextInputSettings(
-        enabled: enabled,
-        threshold: threshold,
-      );
-    } catch (error, stackTrace) {
-      debugPrint(
-        'Unable to save long pasted text preferences: $error\n$stackTrace',
-      );
-    }
-  }
-
-  /// Builds the switch and threshold slider for long pasted text conversion.
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return ValueListenableBuilder<LongPastedTextInputSettings>(
-      valueListenable: UserPreferencesManager.longPastedTextInputSettings,
-      builder: (context, settings, _) {
-        return Column(
-          children: <Widget>[
-            _SettingSwitch(
-              title: l10n.settingsAppearanceLongPastedTextAsAttachment,
-              value: settings.enabled,
-              onChanged: (enabled) {
-                UserPreferencesManager.longPastedTextInputSettings.value =
-                    LongPastedTextInputSettings(
-                      enabled: enabled,
-                      threshold: settings.threshold,
-                    );
-                unawaited(
-                  _saveSettings(
-                    enabled: enabled,
-                    threshold: settings.threshold,
-                  ),
-                );
-              },
-            ),
-            _ValueSlider(
-              label: l10n.settingsAppearanceLongPastedTextThreshold,
-              value: settings.threshold.toDouble(),
-              min: UserPreferencesManager.longPastedTextInputMinimumThreshold
-                  .toDouble(),
-              max: UserPreferencesManager.longPastedTextInputMaximumThreshold
-                  .toDouble(),
-              divisions:
-                  (UserPreferencesManager.longPastedTextInputMaximumThreshold -
-                      UserPreferencesManager
-                          .longPastedTextInputMinimumThreshold) ~/
-                  UserPreferencesManager.longPastedTextInputThresholdStep,
-              valueText: l10n.settingsAppearanceLongPastedTextThresholdValue(
-                settings.threshold,
-              ),
-              onChanged: (value) {
-                final threshold = value.round();
-                UserPreferencesManager.longPastedTextInputSettings.value =
-                    LongPastedTextInputSettings(
-                      enabled: settings.enabled,
-                      threshold: threshold,
-                    );
-              },
-              onChangeEnd: (value) {
-                final threshold = value.round();
-                unawaited(
-                  _saveSettings(
-                    enabled: settings.enabled,
-                    threshold: threshold,
-                  ),
-                );
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
 /// Validates and returns the stored input style value.
 String _inputStyleValue(String value) {
   return switch (value) {
@@ -3353,7 +3242,6 @@ class _ValueSlider extends StatelessWidget {
     required this.max,
     required this.divisions,
     required this.onChanged,
-    this.onChangeEnd,
     this.valueText,
   });
 
@@ -3364,8 +3252,8 @@ class _ValueSlider extends StatelessWidget {
   final int divisions;
   final String? valueText;
   final ValueChanged<double> onChanged;
-  final ValueChanged<double>? onChangeEnd;
 
+  /// Builds a labeled slider for an appearance preference.
   @override
   Widget build(BuildContext context) {
     final text = valueText ?? value.toStringAsFixed(2);
@@ -3391,7 +3279,6 @@ class _ValueSlider extends StatelessWidget {
             divisions: divisions,
             label: text,
             onChanged: onChanged,
-            onChangeEnd: onChangeEnd,
           ),
         ],
       ),

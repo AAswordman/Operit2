@@ -260,6 +260,9 @@ pub fn attr_value(text: &str, attr_name: &str) -> Option<String> {
                     while cursor < bytes.len() && bytes[cursor] != quote {
                         cursor += 1;
                     }
+                    if cursor == bytes.len() {
+                        return None;
+                    }
                     return Some(text[value_start..cursor].to_string());
                 }
             }
@@ -276,6 +279,9 @@ pub fn tag_body<'a>(tag: &'a str, tag_name: &str) -> Option<&'a str> {
     let close_start = tag
         .to_ascii_lowercase()
         .rfind(&close.to_ascii_lowercase())?;
+    if close_start < open_end {
+        return None;
+    }
     Some(&tag[open_end..close_start])
 }
 
@@ -399,4 +405,18 @@ fn is_tag_boundary(byte: u8) -> bool {
 
 fn is_attr_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{attr_value, tag_body};
+
+    /// Verifies malformed parameter markup cannot produce an invalid slice range.
+    #[test]
+    fn malformed_parameter_markup_has_no_attribute_or_body() {
+        let markup = r#"<param name="various_search</param>"#;
+
+        assert_eq!(attr_value(markup, "name"), None);
+        assert_eq!(tag_body(markup, "param"), None);
+    }
 }

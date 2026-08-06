@@ -33,14 +33,15 @@ impl ToolPkgChatMessageHookBridge {
         let mut hooks = activeContainers
             .iter()
             .flat_map(|runtime| {
-                runtime.chatMessageHooks.iter().map(|hook| {
-                    ToolPkgChatMessageHookRegistration {
+                runtime
+                    .chatMessageHooks
+                    .iter()
+                    .map(|hook| ToolPkgChatMessageHookRegistration {
                         containerPackageName: runtime.packageName.clone(),
                         hookId: hook.id.clone(),
                         functionName: hook.function.clone(),
                         functionSource: hook.functionSource.clone(),
-                    }
-                })
+                    })
             })
             .collect::<Vec<_>>();
         hooks.sort_by(|left, right| {

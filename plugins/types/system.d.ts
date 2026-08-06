@@ -1,6 +1,6 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
-import type { AppListData, AppOperationData, AppUsageTimeResultData, BluetoothBleNotificationData, BluetoothBleServicesData, BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData, DeviceInfoResultData, HiddenTerminalCommandResultData, LocationData, MusicPlaybackResultData, NotificationData, SleepResultData, SystemSettingData, TerminalCommandResultData, TerminalCreateType, TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData, TerminalSessionScreenResultData, TerminalStreamEventData } from "./results";
+import type { AppListData, AppOperationData, AppUsageTimeResultData, BluetoothBleNotificationData, BluetoothBleServicesData, BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData, DeviceInfoResultData, HiddenTerminalCommandResultData, LocationData, MusicPlaybackResultData, NotificationData, SleepResultData, SystemSettingData, TerminalCommandResultData, TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData, TerminalSessionScreenResultData, TerminalStreamEventData } from "./results";
 
 /**
  * Provides device settings, application control, notifications, usage, and location services.
@@ -284,17 +284,13 @@ export namespace System {
   export type TerminalHostHiddenExecOptionsTimeoutMs = number | string;
 
   /**
-   * Configures a reusable hidden command executor and its command interpreter.
+   * Configures a reusable hidden command executor.
    */
   export interface TerminalHostHiddenExecOptions {
     /**
      * Selects the hidden login context reused across related commands.
      */
     executorKey?: string;
-    /**
-     * Selects the command interpreter used by the hidden executor.
-     */
-    type: TerminalCreateType;
     /**
      * Sets the maximum command execution time in milliseconds.
      */
@@ -424,9 +420,10 @@ export namespace System {
    * Get device location
    * @param highAccuracy - Whether to use high accuracy mode (default: false)
    * @param timeout - Timeout in seconds (default: 10)
+   * @param includeAddress - Whether to resolve a reverse-geocoded address (default: true)
    * @returns Promise resolving to location data
    */
-  function getLocation(highAccuracy?: boolean, timeout?: number): Promise<LocationData>;
+  function getLocation(highAccuracy?: boolean, timeout?: number, includeAddress?: boolean): Promise<LocationData>;
   /**
    * Get device notifications
    * @param limit - Maximum number of notifications to return (default: 10)
@@ -593,12 +590,10 @@ export namespace System {
      */
     function close(sessionId: string): Promise<TerminalSessionCloseResultData>;
     /**
-     * Create or get a terminal session.
-     * @param sessionName The name for the session.
-     * @param type Terminal type. Windows supports powershell and bash; Linux supports linux; Android supports bash and shell.
+     * Creates an interactive session in the host-registered primary terminal.
      * @returns Promise resolving to the session creation result.
      */
-    function create(sessionName: string, type: TerminalCreateType): Promise<TerminalSessionCreationResultData>;
+    function create(): Promise<TerminalSessionCreationResultData>;
     /**
      * Execute a command in a terminal session.
      * @param sessionId The ID of the session.
@@ -623,7 +618,7 @@ export namespace System {
      * @param options Hidden executor options.
      * @returns Promise resolving to the hidden command execution result. On timeout, the current command is cancelled, the hidden executor session is kept, and the returned result has `timedOut === true`.
      */
-    function hiddenExec(command: string, options: System.TerminalHostHiddenExecOptions): Promise<HiddenTerminalCommandResultData>;
+    function hiddenExec(command: string, options?: System.TerminalHostHiddenExecOptions): Promise<HiddenTerminalCommandResultData>;
     /**
      * Get terminal environment information for the current platform.
      */

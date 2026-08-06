@@ -8,8 +8,7 @@ import '../../../../../core/proxy/generated/CoreProxyModels.g.dart'
 import '../../../../common/markdown/MarkdownNodeGrouper.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../common/markdown/StreamMarkdownRendererState.dart';
-import 'ToolDisplayComponents.dart';
-import 'ToolResultDisplay.dart';
+import 'CustomXmlRenderer.dart';
 
 class StructuredMessagePartRenderer extends StatefulWidget {
   const StructuredMessagePartRenderer({
@@ -21,6 +20,8 @@ class StructuredMessagePartRenderer extends StatefulWidget {
     this.rendererId,
     this.onLinkClick,
     this.onReady,
+    this.initialThinkingExpanded = false,
+    this.allowExpandedThinkingFullHeight = false,
   });
 
   final List<core_proxy.MessagePart> parts;
@@ -30,6 +31,8 @@ class StructuredMessagePartRenderer extends StatefulWidget {
   final String? rendererId;
   final void Function(String url)? onLinkClick;
   final VoidCallback? onReady;
+  final bool initialThinkingExpanded;
+  final bool allowExpandedThinkingFullHeight;
 
   /// Creates readiness-tracking state for static Markdown parts.
   @override
@@ -98,40 +101,23 @@ class _StructuredMessagePartRendererState
           onContentReady: () => _markPartReady(part.partId),
         );
       case core_proxy.MessagePartKind.thinking:
-        return _ThinkingPart(
-          content: part.content,
-          textColor: widget.textColor,
-          visible: widget.showThinkingProcess,
-        );
       case core_proxy.MessagePartKind.toolCall:
-        final display = normalizeStructuredToolDisplay(
-          part.toolName!,
-          part.attributes,
-        );
-        return DetailedToolDisplay(
-          toolName: display.toolName,
-          params: display.params,
-          textColor: widget.textColor,
-          isStreaming: false,
-        );
       case core_proxy.MessagePartKind.toolResult:
-        return ToolResultDisplay(
-          toolName: part.toolName!,
-          result: part.content,
-          isSuccess: part.attributes['status'] == 'success',
-          isStreaming: false,
-        );
       case core_proxy.MessagePartKind.status:
-        return StreamMarkdownRenderer(
-          content: part.content,
-          isStreaming: false,
-          textColor: widget.textColor.withValues(alpha: 0.7),
-          backgroundColor: widget.backgroundColor,
-          rendererId: '${widget.rendererId ?? 'message'}-${part.partId}',
-          onLinkClick: widget.onLinkClick,
-          onContentReady: () => _markPartReady(part.partId),
-        );
+        return _renderStructuredXmlPart(part);
     }
+  }
+
+  /// Renders one non-Markdown part through the original XML renderer.
+  Widget _renderStructuredXmlPart(core_proxy.MessagePart part) {
+    return CustomXmlRenderer(
+      xmlContent: _structuredPartMarkup(part),
+      isStreaming: false,
+      textColor: widget.textColor,
+      showThinkingProcess: widget.showThinkingProcess,
+      initialThinkingExpanded: widget.initialThinkingExpanded,
+      allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
+    );
   }
 
   /// Restarts readiness tracking for the current static Markdown parts.
@@ -280,6 +266,9 @@ class _StreamingStructuredMessageRendererState
                 rendererId: widget.rendererId,
                 onLinkClick: widget.onLinkClick,
                 onReady: _markStructuredReady,
+                initialThinkingExpanded: widget.initialThinkingExpanded,
+                allowExpandedThinkingFullHeight:
+                    widget.allowExpandedThinkingFullHeight,
               ),
             ),
           ),
@@ -305,53 +294,102 @@ Map<String, String> _markdownContentByPartId(
 ) {
   return <String, String>{
     for (final part in parts)
-      if (part.kind == core_proxy.MessagePartKind.markdown ||
-          part.kind == core_proxy.MessagePartKind.status)
+      if (part.kind == core_proxy.MessagePartKind.markdown)
         part.partId: part.content,
   };
 }
 
-class _ThinkingPart extends StatefulWidget {
-  const _ThinkingPart({
-    required this.content,
-    required this.textColor,
-    required this.visible,
-  });
-
-  final String content;
-  final Color textColor;
-  final bool visible;
-
-  /// Creates mutable state for the thinking disclosure.
-  @override
-  State<_ThinkingPart> createState() => _ThinkingPartState();
+/// Serializes one canonical non-Markdown part for the established XML renderer.
+String _structuredPartMarkup(core_proxy.MessagePart part) {
+  final markup = StringBuffer();
+  switch (part.kind) {
+    case core_proxy.MessagePartKind.markdown:
+      throw StateError('Markdown parts must use the Markdown renderer.');
+    case core_proxy.MessagePartKind.thinking:
+      markup
+        ..write('<think>')
+        ..write(part.content)
+        ..write('</think>');
+      break;
+    case core_proxy.MessagePartKind.toolCall:
+      final toolName = part.toolName;
+      final toolCallId = part.toolCallId;
+      if (toolName == null || toolCallId == null) {
+        throw StateError('Tool-call parts require a name and call id.');
+      }
+      markup
+        ..write('<tool name="')
+        ..write(_escapeProtocolAttribute(toolName))
+        ..write('" call_id="')
+        ..write(_escapeProtocolAttribute(toolCallId))
+        ..write('">');
+      final parameterNames = part.attributes.keys.toList(growable: false)
+        ..sort();
+      for (final name in parameterNames) {
+        markup
+          ..write('<param name="')
+          ..write(_escapeProtocolAttribute(name))
+          ..write('">')
+          ..write(part.attributes[name]!)
+          ..write('</param>');
+      }
+      markup.write('</tool>');
+      break;
+    case core_proxy.MessagePartKind.toolResult:
+      final toolName = part.toolName;
+      if (toolName == null) {
+        throw StateError('Tool-result parts require a tool name.');
+      }
+      markup
+        ..write('<tool_result name="')
+        ..write(_escapeProtocolAttribute(toolName))
+        ..write('"');
+      final toolCallId = part.toolCallId;
+      if (toolCallId != null) {
+        markup
+          ..write(' call_id="')
+          ..write(_escapeProtocolAttribute(toolCallId))
+          ..write('"');
+      }
+      _writeProtocolAttributes(markup, part.attributes);
+      markup
+        ..write('><content>')
+        ..write(part.content)
+        ..write('</content></tool_result>');
+      break;
+    case core_proxy.MessagePartKind.status:
+      markup.write('<status');
+      _writeProtocolAttributes(markup, part.attributes);
+      markup
+        ..write('>')
+        ..write(part.content)
+        ..write('</status>');
+      break;
+  }
+  return markup.toString();
 }
 
-class _ThinkingPartState extends State<_ThinkingPart> {
-  /// Builds the independent thinking-message disclosure.
-  @override
-  Widget build(BuildContext context) {
-    if (!widget.visible) {
-      return const SizedBox.shrink();
-    }
-    return ExpansionTile(
-      tilePadding: EdgeInsets.zero,
-      childrenPadding: const EdgeInsets.only(bottom: 8),
-      title: Text(
-        'Thinking',
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: widget.textColor.withValues(alpha: 0.75),
-        ),
-      ),
-      children: <Widget>[
-        StreamMarkdownRenderer(
-          content: widget.content,
-          isStreaming: false,
-          textColor: widget.textColor.withValues(alpha: 0.85),
-          backgroundColor: Colors.transparent,
-          selectionRoot: false,
-        ),
-      ],
-    );
+/// Writes sorted XML-like attributes for a structured message part.
+void _writeProtocolAttributes(
+  StringBuffer markup,
+  Map<String, String> attributes,
+) {
+  final names = attributes.keys.toList(growable: false)..sort();
+  for (final name in names) {
+    markup
+      ..write(' ')
+      ..write(name)
+      ..write('="')
+      ..write(_escapeProtocolAttribute(attributes[name]!))
+      ..write('"');
   }
+}
+
+/// Escapes one XML-like attribute value before structured markup rendering.
+String _escapeProtocolAttribute(String value) {
+  return value
+      .replaceAll('&', '&amp;')
+      .replaceAll('"', '&quot;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;');
 }

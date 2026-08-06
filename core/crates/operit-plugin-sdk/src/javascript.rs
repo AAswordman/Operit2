@@ -294,6 +294,18 @@ pub trait JsExecutionEngine: Send + Sync {
         timeout_sec: u64,
     ) -> JsExecutionResult<Option<String>>;
 
+    /// Executes a named JavaScript function with an exact millisecond timeout for ToolPkg runtime hooks.
+    fn execute_script_function_with_timeout_millis(
+        &self,
+        script: &str,
+        function_name: &str,
+        params: &BTreeMap<String, Value>,
+        env_overrides: &BTreeMap<String, String>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        dispatch_intermediate_on_main: bool,
+        timeout_millis: u64,
+    ) -> JsExecutionResult<Option<String>>;
+
     /// Executes a ToolPkg registration function and returns captured declarations.
     fn execute_toolpkg_main_registration_function_with_text_resources(
         &self,
@@ -303,12 +315,13 @@ pub trait JsExecutionEngine: Send + Sync {
         text_resources: Option<Arc<BTreeMap<String, String>>>,
     ) -> JsExecutionResult<ToolPkgMainRegistrationCapture>;
 
-    /// Executes one Compose DSL render script.
+    /// Executes one Compose DSL render script with its immutable package text resources.
     fn execute_compose_dsl_script(
         &self,
         script: &str,
         runtime_options: &BTreeMap<String, Value>,
         env_overrides: &BTreeMap<String, String>,
+        text_resources: Arc<BTreeMap<String, String>>,
     ) -> JsExecutionResult<Option<String>>;
 
     /// Dispatches one Compose DSL action and emits intermediate render events.

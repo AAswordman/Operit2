@@ -360,14 +360,11 @@ fn execute_workspace_shell_command(
         .terminalHost
         .clone()
         .ok_or_else(|| "TerminalHost is not registered for this runtime.".to_string())?;
-    let terminalInfo = terminalHost
-        .terminalInfo()
-        .map_err(|error| format!("failed to read terminal info: {}", error.message))?;
     let vfs = vfsForWorkspace(context)?;
     let workingDir = workspace_command_working_dir(&vfs, workspacePath, &command.workingDir)?;
     let sessionName = workspace_command_session_name(workspacePath, command);
     let session = terminalHost
-        .createOrGetSession(&sessionName, &terminalInfo.defaultType)
+        .createOrGetSession(&sessionName)
         .map_err(|error| {
             format!(
                 "failed to create workspace terminal session: {}",

@@ -509,7 +509,12 @@ macro_rules! impl_rejecting_js_tools_host {
             }
 
             /// Rejects location reads in this test host.
-            fn getLocation(&self, _highAccuracy: Option<bool>, _timeout: Option<f64>) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::LocationData> {
+            fn getLocation(
+                &self,
+                _highAccuracy: Option<bool>,
+                _timeout: Option<f64>,
+                _includeAddress: Option<bool>,
+            ) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::LocationData> {
                 $crate::javascript::TestJsToolsHost::rejecting_js_future("System.getLocation is not part of this test")
             }
         }
@@ -623,7 +628,7 @@ macro_rules! impl_rejecting_js_tools_host {
             }
 
             /// Rejects terminal creation in this test host.
-            fn create(&self, _sessionName: String, _type: operit_plugin_sdk::js_sdk::results::TerminalCreateType) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::TerminalSessionCreationResultData> {
+            fn create(&self) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::TerminalSessionCreationResultData> {
                 $crate::javascript::TestJsToolsHost::rejecting_js_future("Terminal.create is not part of this test")
             }
 
@@ -638,7 +643,7 @@ macro_rules! impl_rejecting_js_tools_host {
             }
 
             /// Rejects hidden terminal command execution in this test host.
-            fn hiddenExec(&self, _command: String, _options: operit_plugin_sdk::js_sdk::system::SystemTerminalHostHiddenExecOptions) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::HiddenTerminalCommandResultData> {
+            fn hiddenExec(&self, _command: String, _options: Option<operit_plugin_sdk::js_sdk::system::SystemTerminalHostHiddenExecOptions>) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::HiddenTerminalCommandResultData> {
                 $crate::javascript::TestJsToolsHost::rejecting_js_future("Terminal.hiddenExec is not part of this test")
             }
 

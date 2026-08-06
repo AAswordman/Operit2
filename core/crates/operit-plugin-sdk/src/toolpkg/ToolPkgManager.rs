@@ -668,14 +668,14 @@ impl ToolPkgHookDispatcher for ToolPkgManager {
         let contextKey = resolveToolPkgExecutionContextKey(&runtime.packageName, &params);
         let engine = self.getToolPkgExecutionEngine(&contextKey, &runtime.packageName);
         engine
-            .execute_script_function(
+            .execute_script_function_with_timeout_millis(
                 &script,
                 &invocation.functionName,
                 &params,
                 &invocation.envOverrides,
                 invocation.onIntermediateResult,
                 invocation.dispatchIntermediateOnMain,
-                invocation.timeoutSec,
+                invocation.timeoutMillis,
             )
             .map_err(|error| error.to_string())
     }
@@ -865,6 +865,20 @@ mod tests {
             Ok(None)
         }
 
+        /// Returns no script result for exact-deadline registry tests.
+        fn execute_script_function_with_timeout_millis(
+            &self,
+            _script: &str,
+            _function_name: &str,
+            _params: &BTreeMap<String, Value>,
+            _env_overrides: &BTreeMap<String, String>,
+            _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+            _dispatch_intermediate_on_main: bool,
+            _timeout_millis: u64,
+        ) -> JsExecutionResult<Option<String>> {
+            Ok(None)
+        }
+
         /// Returns an empty ToolPkg registration capture for registry tests.
         fn execute_toolpkg_main_registration_function_with_text_resources(
             &self,
@@ -882,6 +896,7 @@ mod tests {
             _script: &str,
             _runtime_options: &BTreeMap<String, Value>,
             _env_overrides: &BTreeMap<String, String>,
+            _text_resources: Arc<BTreeMap<String, String>>,
         ) -> JsExecutionResult<Option<String>> {
             Ok(None)
         }

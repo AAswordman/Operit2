@@ -110,6 +110,8 @@ enum JsEngineRequest {
         script: String,
         functionName: String,
         params: BTreeMap<String, Value>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
+        useComposeDslTextResources: bool,
         envOverrides: BTreeMap<String, String>,
         on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
         dispatchIntermediateOnMain: bool,
@@ -259,6 +261,7 @@ struct JsEngineState {
     #[cfg(target_arch = "wasm32")]
     context: WasmQuickJsContext,
     executionHost: Option<Arc<dyn JsExecutionHost>>,
+    composeDslTextResources: Option<Arc<ToolPkgTextResources>>,
     jsEnvironmentInitialized: bool,
 }
 
@@ -292,6 +295,73 @@ impl JsEngine {
         executionListener: Option<JsExecutionListenerRef>,
     ) -> JsExecutionResult<Option<String>> {
         let safeTimeoutSec = timeoutSec.max(1);
+        self.execute_script_function_with_timeout(
+            script,
+            functionName,
+            params,
+            envOverrides,
+            on_intermediate_result,
+            dispatchIntermediateOnMain,
+            Duration::from_secs(safeTimeoutSec),
+            safeTimeoutSec,
+            executionListener,
+            None,
+            false,
+        )
+    }
+
+    /// Executes a named JavaScript function with an exact millisecond deadline.
+    #[allow(non_snake_case)]
+    pub fn execute_script_function_with_timeout_millis(
+        &self,
+        script: &str,
+        functionName: &str,
+        params: &BTreeMap<String, Value>,
+        envOverrides: &BTreeMap<String, String>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        dispatchIntermediateOnMain: bool,
+        timeoutMillis: u64,
+        executionListener: Option<JsExecutionListenerRef>,
+    ) -> JsExecutionResult<Option<String>> {
+        if timeoutMillis == 0 {
+            let reason = "Script execution timed out after 0 milliseconds";
+            if let Some(listener) = executionListener.as_ref() {
+                listener.on_failed("", reason);
+            }
+            return Err(JsExecutionError::timeout(reason));
+        }
+        let timeoutSec = (timeoutMillis - 1) / 1_000 + 1;
+        self.execute_script_function_with_timeout(
+            script,
+            functionName,
+            params,
+            envOverrides,
+            on_intermediate_result,
+            dispatchIntermediateOnMain,
+            Duration::from_millis(timeoutMillis),
+            timeoutSec,
+            executionListener,
+            None,
+            false,
+        )
+    }
+
+    /// Executes JavaScript with the supplied native deadline and whole-second script metadata.
+    #[allow(non_snake_case)]
+    fn execute_script_function_with_timeout(
+        &self,
+        script: &str,
+        functionName: &str,
+        params: &BTreeMap<String, Value>,
+        envOverrides: &BTreeMap<String, String>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        dispatchIntermediateOnMain: bool,
+        timeout: Duration,
+        timeoutSec: u64,
+        executionListener: Option<JsExecutionListenerRef>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
+        useComposeDslTextResources: bool,
+    ) -> JsExecutionResult<Option<String>> {
         #[cfg(target_arch = "wasm32")]
         {
             return self.worker.execute_script_function(
@@ -301,8 +371,10 @@ impl JsEngine {
                 envOverrides,
                 on_intermediate_result,
                 dispatchIntermediateOnMain,
-                safeTimeoutSec,
+                timeoutSec,
                 executionListener,
+                textResources,
+                useComposeDslTextResources,
             );
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -315,17 +387,18 @@ impl JsEngine {
                 return Err(JsExecutionError::worker_unavailable(reason));
             }
             let (response, receiver) = mpsc::channel();
-            let timeout = Duration::from_secs(safeTimeoutSec);
             let interrupt = Arc::new(JsExecutionInterrupt::new(timeout));
             let request = JsEngineRequest::ExecuteScript {
                 script: script.to_string(),
                 functionName: functionName.to_string(),
                 params: params.clone(),
+                textResources,
+                useComposeDslTextResources,
                 envOverrides: envOverrides.clone(),
                 on_intermediate_result,
                 dispatchIntermediateOnMain,
                 executionListener: executionListener.clone(),
-                timeoutSec: safeTimeoutSec,
+                timeoutSec,
                 interrupt: interrupt.clone(),
                 response,
             };
@@ -349,8 +422,10 @@ impl JsEngine {
                 Ok(value) => value,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     interrupt.interrupt();
-                    let reason =
-                        format!("Script execution timed out after {safeTimeoutSec} seconds");
+                    let reason = format!(
+                        "Script execution timed out after {} milliseconds",
+                        timeout.as_millis()
+                    );
                     if let Some(listener) = executionListener.as_ref() {
                         listener.on_failed("", &reason);
                     }
@@ -496,16 +571,15 @@ impl JsEngine {
         script: &str,
         runtimeOptions: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
+        textResources: Arc<ToolPkgTextResources>,
     ) -> JsExecutionResult<Option<String>> {
-        self.execute_script_function(
+        self.executeComposeDslFunction(
             &buildComposeDslRuntimeWrappedScript(script),
             "__operit_render_compose_dsl",
             runtimeOptions,
             envOverrides,
             None,
-            true,
-            TOOLPKG_SCRIPT_TIMEOUT_SECONDS,
-            None,
+            Some(textResources),
         )
     }
 
@@ -532,14 +606,12 @@ impl JsEngine {
         if let Some(payload) = payload {
             params.insert("__action_payload".to_string(), payload);
         }
-        self.execute_script_function(
+        self.executeComposeDslFunction(
             "",
             "__operit_dispatch_compose_dsl_action",
             &params,
             envOverrides,
             on_intermediate_result,
-            true,
-            TOOLPKG_SCRIPT_TIMEOUT_SECONDS,
             None,
         )
     }
@@ -550,15 +622,39 @@ impl JsEngine {
         runtimeOptions: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
     ) -> JsExecutionResult<Option<String>> {
-        self.execute_script_function(
+        self.executeComposeDslFunction(
             "",
             "__operit_rerender_compose_dsl",
             runtimeOptions,
             envOverrides,
             None,
+            None,
+        )
+    }
+
+    /// Executes a Compose DSL operation with the resource snapshot owned by its page runtime.
+    #[allow(non_snake_case)]
+    fn executeComposeDslFunction(
+        &self,
+        script: &str,
+        functionName: &str,
+        params: &BTreeMap<String, Value>,
+        envOverrides: &BTreeMap<String, String>,
+        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
+    ) -> JsExecutionResult<Option<String>> {
+        self.execute_script_function_with_timeout(
+            script,
+            functionName,
+            params,
+            envOverrides,
+            onIntermediateResult,
             true,
+            Duration::from_secs(TOOLPKG_SCRIPT_TIMEOUT_SECONDS),
             TOOLPKG_SCRIPT_TIMEOUT_SECONDS,
             None,
+            textResources,
+            true,
         )
     }
 
@@ -734,6 +830,8 @@ impl JsEngineWorker {
                             script,
                             functionName,
                             params,
+                            textResources,
+                            useComposeDslTextResources,
                             envOverrides,
                             on_intermediate_result,
                             dispatchIntermediateOnMain,
@@ -742,6 +840,24 @@ impl JsEngineWorker {
                             interrupt,
                             response,
                         } => {
+                            let composeResourceCount = match textResources.as_ref() {
+                                Some(resources) => resources.len(),
+                                None => state
+                                    .composeDslTextResources
+                                    .as_ref()
+                                    .map(|resources| resources.len())
+                                    .unwrap_or(0),
+                            };
+                            let executionStarted = Instant::now();
+                            if useComposeDslTextResources {
+                                AppLogger::d(
+                                    TAG,
+                                    &format!(
+                                        "compose-request-start function={} resourceEntries={}",
+                                        functionName, composeResourceCount
+                                    ),
+                                );
+                            }
                             let output = executeWithInterrupt(
                                 &mut state,
                                 &workerControl,
@@ -749,7 +865,7 @@ impl JsEngineWorker {
                                 timeoutSec,
                                 "Script execution",
                                 |state| {
-                                    state.execute_script_function_on_current_thread(
+                                    state.executeScriptFunctionForRequest(
                                         &script,
                                         &functionName,
                                         &params,
@@ -758,9 +874,23 @@ impl JsEngineWorker {
                                         dispatchIntermediateOnMain,
                                         timeoutSec,
                                         executionListener,
+                                        textResources,
+                                        useComposeDslTextResources,
                                     )
                                 },
                             );
+                            if useComposeDslTextResources {
+                                AppLogger::d(
+                                    TAG,
+                                    &format!(
+                                        "compose-request-finish function={} resourceEntries={} elapsedMs={} success={}",
+                                        functionName,
+                                        composeResourceCount,
+                                        executionStarted.elapsed().as_millis(),
+                                        output.is_ok()
+                                    ),
+                                );
+                            }
                             if let Err(error) = response.send(output) {
                                 AppLogger::e(
                                     TAG,
@@ -863,22 +993,26 @@ impl JsEngineWorker {
         dispatchIntermediateOnMain: bool,
         timeoutSec: u64,
         executionListener: Option<JsExecutionListenerRef>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
+        useComposeDslTextResources: bool,
     ) -> JsExecutionResult<Option<String>> {
         WASM_JS_ENGINE_STATES.with(|states| {
-            states
-                .borrow_mut()
+            let mut states = states.borrow_mut();
+            let state = states
                 .get_mut(&self.stateId)
-                .expect("wasm JsEngine state must exist")
-                .execute_script_function_on_current_thread(
-                    script,
-                    functionName,
-                    params,
-                    envOverrides,
-                    on_intermediate_result,
-                    dispatchIntermediateOnMain,
-                    timeoutSec,
-                    executionListener,
-                )
+                .expect("wasm JsEngine state must exist");
+            state.executeScriptFunctionForRequest(
+                script,
+                functionName,
+                params,
+                envOverrides,
+                on_intermediate_result,
+                dispatchIntermediateOnMain,
+                timeoutSec,
+                executionListener,
+                textResources,
+                useComposeDslTextResources,
+            )
         })
     }
 
@@ -917,6 +1051,7 @@ impl JsEngineState {
                 runtime,
                 context,
                 executionHost,
+                composeDslTextResources: None,
                 jsEnvironmentInitialized: false,
             };
             state
@@ -930,6 +1065,7 @@ impl JsEngineState {
             let mut state = Self {
                 context,
                 executionHost,
+                composeDslTextResources: None,
                 jsEnvironmentInitialized: false,
             };
             state
@@ -952,6 +1088,55 @@ impl JsEngineState {
     #[allow(non_snake_case)]
     fn clearExecutionInterrupt(&self) {
         self.runtime.set_interrupt_handler(None);
+    }
+
+    /// Runs one request with the page-owned Compose DSL resource snapshot when requested.
+    #[allow(non_snake_case)]
+    fn executeScriptFunctionForRequest(
+        &mut self,
+        script: &str,
+        functionName: &str,
+        params: &BTreeMap<String, Value>,
+        envOverrides: &BTreeMap<String, String>,
+        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        dispatchIntermediateOnMain: bool,
+        timeoutSec: u64,
+        executionListener: Option<JsExecutionListenerRef>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
+        useComposeDslTextResources: bool,
+    ) -> JsExecutionResult<Option<String>> {
+        if !useComposeDslTextResources {
+            return self.execute_script_function_on_current_thread(
+                script,
+                functionName,
+                params,
+                envOverrides,
+                onIntermediateResult,
+                dispatchIntermediateOnMain,
+                timeoutSec,
+                executionListener,
+            );
+        }
+        if let Some(textResources) = textResources {
+            self.composeDslTextResources = Some(textResources);
+        }
+        let textResources = self.composeDslTextResources.clone().ok_or_else(|| {
+            JsExecutionError::invalid_request(
+                "Compose DSL action requires a rendered page resource snapshot",
+            )
+        })?;
+        executeWithToolPkgTextResources(textResources, || {
+            self.execute_script_function_on_current_thread(
+                script,
+                functionName,
+                params,
+                envOverrides,
+                onIntermediateResult,
+                dispatchIntermediateOnMain,
+                timeoutSec,
+                executionListener,
+            )
+        })
     }
 
     #[allow(non_snake_case)]
@@ -1072,64 +1257,67 @@ impl JsEngineState {
         CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
             *resources.borrow_mut() = textResources;
         });
-
-        let mut registrationParams = params.clone();
-        registrationParams.insert("__operit_registration_mode".to_string(), Value::Bool(true));
-        let explicitLanguage = registrationParams
-            .get("__operit_package_lang")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        if explicitLanguage.is_empty() {
-            let language = self
-                .resolveCurrentPackageLanguage()
+        let registrationResult = (|| {
+            let mut registrationParams = params.clone();
+            registrationParams.insert("__operit_registration_mode".to_string(), Value::Bool(true));
+            let explicitLanguage = registrationParams
+                .get("__operit_package_lang")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if explicitLanguage.is_empty() {
+                let language = self
+                    .resolveCurrentPackageLanguage()
+                    .map_err(JsExecutionError::runtime)?;
+                registrationParams
+                    .insert("__operit_package_lang".to_string(), Value::String(language));
+            }
+            let paramsJson = serde_json::to_string(&registrationParams)
+                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
+            let scriptJson = serde_json::to_string(script)
+                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
+            let functionNameJson = serde_json::to_string(functionName)
+                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
+            let callId = format!(
+                "operit_registration_{}",
+                Uuid::new_v4().to_string().replace('-', "")
+            );
+            let callIdJson = serde_json::to_string(&callId)
+                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
+            clearNativeExecutionSession(&callId);
+            let executionScript = format!(
+                "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, 60, 10000);"
+            );
+            self.evalJavaScriptVoid(&executionScript)
                 .map_err(JsExecutionError::runtime)?;
-            registrationParams.insert("__operit_package_lang".to_string(), Value::String(language));
-        }
-        let paramsJson = serde_json::to_string(&registrationParams)
-            .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
-        let scriptJson = serde_json::to_string(script)
-            .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
-        let functionNameJson = serde_json::to_string(functionName)
-            .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
-        let callId = format!(
-            "operit_registration_{}",
-            Uuid::new_v4().to_string().replace('-', "")
-        );
-        let callIdJson = serde_json::to_string(&callId)
-            .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
-        clearNativeExecutionSession(&callId);
-        let executionScript = format!(
-            "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, 60, 10000);"
-        );
-        if let Err(error) = self.evalJavaScriptVoid(&executionScript) {
-            CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
-                *resources.borrow_mut() = None;
-            });
-            return Err(JsExecutionError::runtime(error));
-        }
-        self.runJavaScriptJobs();
-        let output = readNativeExecutionSession(&callId).ok_or_else(|| {
-            JsExecutionError::runtime("ToolPkg registration JavaScript did not complete")
-        });
+            self.runJavaScriptJobs();
+            let output = readNativeExecutionSession(&callId).ok_or_else(|| {
+                JsExecutionError::runtime("ToolPkg registration JavaScript did not complete")
+            })?;
+            clearNativeExecutionSession(&callId);
+            ensureRegistrationExecutionSucceeded(&output).map_err(JsExecutionError::runtime)?;
+
+            let captureScript = r#"
+            (function() {
+                return JSON.stringify(globalThis.__operitToolPkgRegistrationCapture);
+            })()
+            "#;
+            let captureJson = self
+                .evalJavaScriptString(captureScript)
+                .map_err(JsExecutionError::runtime)?;
+            serde_json::from_str::<ToolPkgMainRegistrationCapture>(&captureJson)
+                .map_err(|error| JsExecutionError::protocol(error.to_string()))
+        })();
         CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
             *resources.borrow_mut() = None;
         });
-        let output = output?;
-        clearNativeExecutionSession(&callId);
-        ensureRegistrationExecutionSucceeded(&output).map_err(JsExecutionError::runtime)?;
-
-        let captureScript = r#"
-        (function() {
-            return JSON.stringify(globalThis.__operitToolPkgRegistrationCapture);
-        })()
-        "#;
-        let captureJson = self
-            .evalJavaScriptString(captureScript)
+        // Registration temporarily installs a restricted bridge. Restore the runtime bridge
+        // before any hook can evaluate a package main module again.
+        let runtimeBridge = buildToolPkgRegistrationBridgeScript(false);
+        self.evalJavaScriptVoid(&runtimeBridge)
             .map_err(JsExecutionError::runtime)?;
-        serde_json::from_str::<ToolPkgMainRegistrationCapture>(&captureJson)
-            .map_err(|error| JsExecutionError::protocol(error.to_string()))
+        registrationResult
     }
 
     #[allow(non_snake_case)]
@@ -1900,6 +2088,21 @@ fn clearThreadLocalCallState() {
     });
 }
 
+/// Executes one operation while exposing its immutable ToolPkg text resources to native module reads.
+#[allow(non_snake_case)]
+fn executeWithToolPkgTextResources<T>(
+    textResources: Arc<ToolPkgTextResources>,
+    operation: impl FnOnce() -> JsExecutionResult<T>,
+) -> JsExecutionResult<T> {
+    let previousResources =
+        CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| resources.replace(Some(textResources)));
+    let output = operation();
+    CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
+        *resources.borrow_mut() = previousResources;
+    });
+    output
+}
+
 #[allow(non_snake_case)]
 fn hashText(value: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -2025,6 +2228,31 @@ impl JsExecutionEngine for JsEngine {
         )
     }
 
+    /// Executes a named JavaScript function through this engine with an exact millisecond deadline.
+    #[allow(non_snake_case)]
+    fn execute_script_function_with_timeout_millis(
+        &self,
+        script: &str,
+        functionName: &str,
+        params: &BTreeMap<String, Value>,
+        envOverrides: &BTreeMap<String, String>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        dispatchIntermediateOnMain: bool,
+        timeoutMillis: u64,
+    ) -> JsExecutionResult<Option<String>> {
+        JsEngine::execute_script_function_with_timeout_millis(
+            self,
+            script,
+            functionName,
+            params,
+            envOverrides,
+            on_intermediate_result,
+            dispatchIntermediateOnMain,
+            timeoutMillis,
+            None,
+        )
+    }
+
     /// Executes a ToolPkg registration function through this engine.
     #[allow(non_snake_case)]
     fn execute_toolpkg_main_registration_function_with_text_resources(
@@ -2050,8 +2278,15 @@ impl JsExecutionEngine for JsEngine {
         script: &str,
         runtimeOptions: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
+        textResources: Arc<BTreeMap<String, String>>,
     ) -> JsExecutionResult<Option<String>> {
-        JsEngine::execute_compose_dsl_script(self, script, runtimeOptions, envOverrides)
+        JsEngine::execute_compose_dsl_script(
+            self,
+            script,
+            runtimeOptions,
+            envOverrides,
+            textResources,
+        )
     }
 
     /// Dispatches one Compose DSL action through this engine.

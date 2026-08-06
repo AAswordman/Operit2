@@ -4,10 +4,147 @@ import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 
-const String currentAppVersion = '2.0.0';
+const String currentAppVersion = '2.0.0+5';
 final Uri coreMarketAuthCompletionRedirectUri = Uri.parse(
   'https://api.operit.app/oauth/github/complete',
 );
+
+/// Identifies the compatibility bound that rejects one marketplace version.
+enum MarketAppVersionCompatibilityKind { belowMinimum, aboveMaximum }
+
+/// Describes why a marketplace entry cannot run on the current client build.
+class MarketAppVersionCompatibility {
+  const MarketAppVersionCompatibility({
+    required this.kind,
+    required this.currentAppVersion,
+    required this.requiredAppVersion,
+  });
+
+  final MarketAppVersionCompatibilityKind kind;
+  final String currentAppVersion;
+  final String requiredAppVersion;
+
+  /// Returns a user-facing explanation for the rejected compatibility bound.
+  String get message => switch (kind) {
+    MarketAppVersionCompatibilityKind.belowMinimum =>
+      '客户端版本过低：当前版本 $currentAppVersion，'
+          '该资源要求至少为 $requiredAppVersion。请更新客户端后再下载。',
+    MarketAppVersionCompatibilityKind.aboveMaximum =>
+      '客户端版本过高：当前版本 $currentAppVersion，'
+          '该资源最高支持到 $requiredAppVersion。请使用受支持的客户端版本。',
+  };
+}
+
+/// Returns the violated marketplace client-version bound, when one exists.
+MarketAppVersionCompatibility? resolveMarketAppVersionCompatibility({
+  required String appVersion,
+  required String minAppVersion,
+  required String? maxAppVersion,
+}) {
+  final current = _MarketAppVersion.parse(appVersion);
+  final minimumValue = minAppVersion.trim();
+  if (minimumValue.isNotEmpty) {
+    final minimum = _MarketAppVersion.parse(minimumValue);
+    if (current.compareTo(minimum) < 0) {
+      return MarketAppVersionCompatibility(
+        kind: MarketAppVersionCompatibilityKind.belowMinimum,
+        currentAppVersion: current.toString(),
+        requiredAppVersion: minimum.toString(),
+      );
+    }
+  }
+  final maximumValue = maxAppVersion?.trim() ?? '';
+  if (maximumValue.isNotEmpty) {
+    final maximum = _MarketAppVersion.parse(maximumValue);
+    if (current.compareTo(maximum) > 0) {
+      return MarketAppVersionCompatibility(
+        kind: MarketAppVersionCompatibilityKind.aboveMaximum,
+        currentAppVersion: current.toString(),
+        requiredAppVersion: maximum.toString(),
+      );
+    }
+  }
+  return null;
+}
+
+/// Rejects one market entry version when the current client cannot support it.
+void ensureMarketAppVersionSupported({
+  required String minAppVersion,
+  required String? maxAppVersion,
+}) {
+  final compatibility = resolveMarketAppVersionCompatibility(
+    appVersion: currentAppVersion,
+    minAppVersion: minAppVersion,
+    maxAppVersion: maxAppVersion,
+  );
+  if (compatibility != null) {
+    throw StateError(compatibility.message);
+  }
+}
+
+/// Rejects one market entry's selected version when the current client cannot support it.
+void ensureMarketEntryVersionSupported({
+  required MarketEntrySummary entry,
+  String? versionId,
+}) {
+  final normalizedVersionId = versionId?.trim();
+  final version = switch (normalizedVersionId) {
+    null || '' => entry.latestVersion,
+    final selectedVersionId => entry.versions
+        .where((candidate) => candidate.id == selectedVersionId)
+        .firstOrNull,
+  };
+  if (version == null) {
+    throw StateError('市场条目缺少要安装的版本信息。');
+  }
+  ensureMarketAppVersionSupported(
+    minAppVersion: version.minAppVer,
+    maxAppVersion: version.maxAppVer,
+  );
+}
+
+/// Parses and compares the app-version format used by marketplace metadata.
+class _MarketAppVersion implements Comparable<_MarketAppVersion> {
+  const _MarketAppVersion({
+    required this.major,
+    required this.minor,
+    required this.patch,
+    required this.build,
+  });
+
+  factory _MarketAppVersion.parse(String value) {
+    final match = RegExp(r'^(\d+)\.(\d+)\.(\d+)(?:\+(\d+))?$')
+        .firstMatch(value.trim());
+    if (match == null) {
+      throw FormatException('版本号必须使用 x.y.z 或 x.y.z+n 格式：$value');
+    }
+    return _MarketAppVersion(
+      major: int.parse(match.group(1)!),
+      minor: int.parse(match.group(2)!),
+      patch: int.parse(match.group(3)!),
+      build: int.parse(match.group(4) ?? '0'),
+    );
+  }
+
+  final int major;
+  final int minor;
+  final int patch;
+  final int build;
+
+  @override
+  int compareTo(_MarketAppVersion other) {
+    final majorOrder = major.compareTo(other.major);
+    if (majorOrder != 0) return majorOrder;
+    final minorOrder = minor.compareTo(other.minor);
+    if (minorOrder != 0) return minorOrder;
+    final patchOrder = patch.compareTo(other.patch);
+    if (patchOrder != 0) return patchOrder;
+    return build.compareTo(other.build);
+  }
+
+  @override
+  String toString() => build == 0 ? '$major.$minor.$patch' : '$major.$minor.$patch+$build';
+}
 
 String firstNonBlank(Iterable<String> values) {
   for (final value in values) {
@@ -48,6 +185,7 @@ Future<String> runCoreMarketInstall({
           'market',
           'install',
           entryId,
+          currentAppVersion,
           if (versionId?.trim().isNotEmpty == true) versionId!.trim(),
         ],
       },

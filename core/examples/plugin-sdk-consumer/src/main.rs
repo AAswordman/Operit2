@@ -33,6 +33,20 @@ impl JsExecutionEngine for ExampleExecutionEngine {
         Ok(Some(format!("executed:{function_name}")))
     }
 
+    /// Executes one JavaScript function with an exact millisecond deadline in the example runtime.
+    fn execute_script_function_with_timeout_millis(
+        &self,
+        _script: &str,
+        function_name: &str,
+        _params: &BTreeMap<String, Value>,
+        _env_overrides: &BTreeMap<String, String>,
+        _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        _dispatch_intermediate_on_main: bool,
+        _timeout_millis: u64,
+    ) -> JsExecutionResult<Option<String>> {
+        Ok(Some(format!("executed:{function_name}")))
+    }
+
     /// Captures ToolPkg declarations produced by a registration function.
     fn execute_toolpkg_main_registration_function_with_text_resources(
         &self,
@@ -50,6 +64,7 @@ impl JsExecutionEngine for ExampleExecutionEngine {
         _script: &str,
         _runtime_options: &BTreeMap<String, Value>,
         _env_overrides: &BTreeMap<String, String>,
+        _text_resources: Arc<BTreeMap<String, String>>,
     ) -> JsExecutionResult<Option<String>> {
         Ok(Some(r#"{"tree":{"type":"Text"}}"#.to_string()))
     }

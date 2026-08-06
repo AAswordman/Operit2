@@ -483,6 +483,24 @@ mod tests {
                 .map(str::to_string))
         }
 
+        /// Returns the dispatched event name for exact-deadline hook tests.
+        #[allow(non_snake_case)]
+        fn execute_script_function_with_timeout_millis(
+            &self,
+            _script: &str,
+            _functionName: &str,
+            params: &BTreeMap<String, Value>,
+            _envOverrides: &BTreeMap<String, String>,
+            _onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+            _dispatchIntermediateOnMain: bool,
+            _timeoutMillis: u64,
+        ) -> JsExecutionResult<Option<String>> {
+            Ok(params
+                .get("event")
+                .and_then(Value::as_str)
+                .map(str::to_string))
+        }
+
         /// Returns an empty registration capture for tests.
         #[allow(non_snake_case)]
         fn execute_toolpkg_main_registration_function_with_text_resources(
@@ -502,6 +520,7 @@ mod tests {
             script: &str,
             _runtimeOptions: &BTreeMap<String, Value>,
             _envOverrides: &BTreeMap<String, String>,
+            _textResources: Arc<BTreeMap<String, String>>,
         ) -> JsExecutionResult<Option<String>> {
             Ok(Some(script.to_string()))
         }
@@ -653,7 +672,7 @@ mod tests {
                     runtimeKind: None,
                     envOverrides: BTreeMap::new(),
                     timestampMs: 1,
-                    timeoutSec: 10,
+                    timeoutMillis: 10_000,
                     dispatchIntermediateOnMain: true,
                     onIntermediateResult: None,
                 },

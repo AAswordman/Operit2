@@ -323,16 +323,18 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     if (!mounted) {
       return;
     }
-    final terminalType = await _selectTerminalType(terminalInfo);
-    if (terminalType == null) {
+    final terminal = await _selectTerminalType(terminalInfo);
+    if (terminal == null) {
       return;
     }
     final workingDirectory = await _manualTerminalWorkingDirectory(
-      terminalType,
+      terminal.terminal,
+      terminal.terminalType,
     );
     final sessionId = await _terminalSessions.startPtySession(
       sessionName: _nextManualTerminalSessionName(),
-      terminalType: terminalType,
+      terminal: terminal.terminal,
+      terminalType: terminal.terminalType,
       workingDirectory: workingDirectory,
       rows: 24,
       columns: 80,
@@ -346,11 +348,11 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     _openTerminalSessionTab(session);
   }
 
-  /// Prompts the user to choose one terminal type exposed by the active host.
-  Future<String?> _selectTerminalType(
+  /// Prompts the user to choose one terminal implementation exposed by the active host.
+  Future<core_proxy.RuntimeTerminalTypeInfo?> _selectTerminalType(
     core_proxy.RuntimeTerminalInfo terminalInfo,
   ) {
-    return showDialog<String>(
+    return showDialog<core_proxy.RuntimeTerminalTypeInfo>(
       context: context,
       builder: (context) {
         final theme = Theme.of(context);
@@ -369,8 +371,16 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
                     ),
                   )
                 : RadioGroup<String>(
-                    groupValue: terminalInfo.defaultType,
-                    onChanged: (value) => Navigator.of(context).pop(value),
+                    groupValue:
+                        '${terminalInfo.terminal}\u0000${terminalInfo.terminalType}',
+                    onChanged: (value) {
+                      final selected = availableTypes.firstWhere(
+                        (item) =>
+                            '${item.terminal}\u0000${item.terminalType}' ==
+                            value,
+                      );
+                      Navigator.of(context).pop(selected);
+                    },
                     child: ListView.separated(
                       shrinkWrap: true,
                       itemCount: terminalInfo.types.length,
@@ -381,14 +391,15 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
                         return ListTile(
                           enabled: item.available,
                           leading: Radio<String>(
-                            value: item.terminalType,
+                            value: '${item.terminal}\u0000${item.terminalType}',
                             enabled: item.available,
                           ),
-                          title: Text(item.terminalType),
+                          title: Text(
+                            '${item.terminal} / ${item.terminalType}',
+                          ),
                           subtitle: Text(item.description),
                           onTap: item.available
-                              ? () =>
-                                    Navigator.of(context).pop(item.terminalType)
+                              ? () => Navigator.of(context).pop(item)
                               : null,
                         );
                       },
@@ -407,8 +418,11 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }
 
   /// Resolves the initial directory supported by the selected terminal host.
-  Future<String> _manualTerminalWorkingDirectory(String terminalType) async {
-    if (terminalType == 'linux-vm') {
+  Future<String> _manualTerminalWorkingDirectory(
+    String terminal,
+    String terminalType,
+  ) async {
+    if (terminal == 'v86') {
       return '/';
     }
     if (!widget.hasBoundWorkspace) {

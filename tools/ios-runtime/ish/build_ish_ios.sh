@@ -17,6 +17,10 @@ python3 "$script_dir/fetch_sources.py"
 test -d "$source_dir"
 test -f "$rootfs_path"
 
+for patch_path in "$script_dir"/patches/*.patch; do
+    /usr/bin/patch -d "$source_dir" -p1 -i "$patch_path"
+done
+
 # Builds one pinned iSH static target into the Runner-owned products directory.
 build_target() {
     local project="$1"

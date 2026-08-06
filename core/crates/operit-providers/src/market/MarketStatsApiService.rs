@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use operit_host_api::{HttpHost, HttpRequestData, HttpResponseData};
+use operit_util::AppLogger::AppLogger;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -10,6 +12,7 @@ const MARKET_V2_STATIC_URL: &str = "https://static.operit.app/market/v2";
 const GITHUB_API_BASE_URL: &str = "https://api.github.com";
 const USER_AGENT: &str = "Operit-Market-Stats";
 const TIMEOUT_SECONDS: u64 = 15;
+const MARKET_API_LOG_TAG: &str = "MarketStatsApiService";
 
 // ---- v2 Public Models ----
 
@@ -313,6 +316,14 @@ pub struct MarketPublisherEntrySummary {
     pub updated_at: String,
     #[serde(rename = "reasonCodes", default)]
     pub reason_codes: Vec<String>,
+    #[serde(rename = "reviewDetail", default)]
+    pub review_detail: Option<String>,
+    #[serde(rename = "reviewDetailUpdatedAt", default)]
+    pub review_detail_updated_at: Option<String>,
+    /// Server-computed time at which a returned revision may be submitted.
+    /// Older shards omit this field, so it remains optional for compatibility.
+    #[serde(rename = "revisionAvailableAt", default)]
+    pub revision_available_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -324,6 +335,15 @@ pub struct MarketMyEntriesResponse {
     pub entries: Vec<MarketPublisherEntrySummary>,
     #[serde(rename = "generatedAt", default)]
     pub generated_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// Authenticated full entry data used to prepare a revision after review changes.
+pub struct MarketMyEntryDetailResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub item: MarketEntrySummary,
 }
 
 // ---- Publish ----
@@ -737,6 +757,25 @@ impl MarketStatsApiService {
         self.decode_url("GET", url.as_str(), Vec::new(), Vec::new(), true)
     }
 
+    /// Loads full data for one entry submitted by the authenticated publisher.
+    pub fn get_my_entry_detail(&self, entry_id: &str) -> Result<MarketEntrySummary, String> {
+        let entry_id = entry_id.trim();
+        if entry_id.is_empty() {
+            return Err("entry id is empty".to_string());
+        }
+        let response: MarketMyEntryDetailResponse = self.decode_v2(
+            "GET",
+            &["my", "entries", entry_id, "detail"],
+            Vec::new(),
+            Vec::new(),
+            true,
+        )?;
+        if response.item.id.trim().is_empty() {
+            return Err("market entry detail not found".to_string());
+        }
+        Ok(response.item)
+    }
+
     // ── Publish ────────────────────────────────────────────
 
     /// Publishes a marketplace artifact entry.
@@ -1130,23 +1169,69 @@ impl MarketStatsApiService {
         body: Vec<u8>,
         follow_redirects: bool,
     ) -> Result<HttpResponseData, String> {
+        let is_market_request =
+            url.starts_with(MARKET_V2_BASE_URL) || url.starts_with(MARKET_V2_STATIC_URL);
+        let request_started_at = Instant::now();
+        if is_market_request {
+            AppLogger::d(
+                MARKET_API_LOG_TAG,
+                &format!(
+                    "HTTP {} url={} bodyBytes={} followRedirects={}",
+                    method,
+                    url,
+                    body.len(),
+                    follow_redirects
+                ),
+            );
+        }
         headers.push(("User-Agent".to_string(), USER_AGENT.to_string()));
-        self.http_host
-            .executeHttpRequest(HttpRequestData {
-                url: url.to_string(),
-                method: method.to_string(),
-                headers,
-                body,
-                formFields: Vec::new(),
-                fileParts: Vec::new(),
-                connectTimeoutSeconds: TIMEOUT_SECONDS,
-                readTimeoutSeconds: TIMEOUT_SECONDS,
-                followRedirects: follow_redirects,
-                ignoreSsl: false,
-                proxyHost: String::new(),
-                proxyPort: 0,
-            })
-            .map_err(|e| e.to_string())
+        let response = self.http_host.executeHttpRequest(HttpRequestData {
+            url: url.to_string(),
+            method: method.to_string(),
+            headers,
+            body,
+            formFields: Vec::new(),
+            fileParts: Vec::new(),
+            connectTimeoutSeconds: TIMEOUT_SECONDS,
+            readTimeoutSeconds: TIMEOUT_SECONDS,
+            followRedirects: follow_redirects,
+            ignoreSsl: false,
+            proxyHost: String::new(),
+            proxyPort: 0,
+        });
+        match response {
+            Ok(response) => {
+                if is_market_request {
+                    AppLogger::d(
+                        MARKET_API_LOG_TAG,
+                        &format!(
+                            "HTTP RESP {} status={} elapsedMs={} url={} responseBytes={}",
+                            method,
+                            response.statusCode,
+                            request_started_at.elapsed().as_millis(),
+                            url,
+                            response.body.len()
+                        ),
+                    );
+                }
+                Ok(response)
+            }
+            Err(error) => {
+                if is_market_request {
+                    AppLogger::w(
+                        MARKET_API_LOG_TAG,
+                        &format!(
+                            "HTTP FAIL {} elapsedMs={} url={} error={}",
+                            method,
+                            request_started_at.elapsed().as_millis(),
+                            url,
+                            error
+                        ),
+                    );
+                }
+                Err(error.to_string())
+            }
+        }
     }
 }
 

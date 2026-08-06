@@ -19,7 +19,7 @@ type TerminalInputParams = TerminalSessionParams & {
     control?: string;
 };
 
-type TerminalCommandType = "powershell" | "bash" | "linux" | "shell";
+type TerminalCommandType = "powershell" | "bash" | "shell";
 
 type PersistedTerminalOutput = {
     command: string;
@@ -256,47 +256,6 @@ const superAdmin = (function () {
     const DEFAULT_FOREGROUND_TIMEOUT_MS = 15000;
     const DEFAULT_WAIT_TIMEOUT_MS = 300000;
     const MIN_TIMEOUT_MS = 3000;
-    const DEFAULT_TERMINAL_SESSION_NAME = "super_admin_default_session";
-    const BACKGROUND_TERMINAL_SESSION_PREFIX = "super_admin_background";
-
-    /**
-     * Builds a terminal session suffix from the current chat ID.
-     */
-    function getCurrentChatSessionSuffix(): string {
-        const chatId = getChatId();
-        if (chatId === undefined) {
-            return "";
-        }
-        const normalizedChatId = chatId.trim();
-        if (!normalizedChatId) {
-            return "";
-        }
-        return normalizedChatId.replace(/[^a-zA-Z0-9._-]+/g, "_");
-    }
-
-    /**
-     * Builds the default terminal session name for the current chat.
-     */
-    function getDefaultTerminalSessionName(type: TerminalCommandType): string {
-        const chatSuffix = getCurrentChatSessionSuffix();
-        const baseName = `${DEFAULT_TERMINAL_SESSION_NAME}_${type}`;
-        return chatSuffix
-            ? `${baseName}_${chatSuffix}`
-            : baseName;
-    }
-
-    /**
-     * Builds a unique background terminal session name for the current chat.
-     */
-    function getBackgroundTerminalSessionName(type: TerminalCommandType): string {
-        const chatSuffix = getCurrentChatSessionSuffix();
-        const basePrefix = `${BACKGROUND_TERMINAL_SESSION_PREFIX}_${type}`;
-        const prefix = chatSuffix
-            ? `${basePrefix}_${chatSuffix}`
-            : basePrefix;
-        return `${prefix}_${Date.now()}`;
-    }
-
     /**
      * Saves oversized terminal output to a temporary file and returns its summary.
      */
@@ -356,7 +315,7 @@ const superAdmin = (function () {
                 }
             }
             if (isBackground) {
-                const session = await Tools.System.terminal.create(getBackgroundTerminalSessionName(type), type);
+                const session = await Tools.System.terminal.create();
                 const sessionId = session.sessionId;
                 /**
                  * Runs the background terminal command inside the created session.
@@ -378,7 +337,7 @@ const superAdmin = (function () {
                     terminalEnvironment
                 };
             }
-            const session = await Tools.System.terminal.create(getDefaultTerminalSessionName(type), type);
+            const session = await Tools.System.terminal.create();
             const sessionId = session.sessionId;
             const result = await Tools.System.terminal.exec(sessionId, command, timeout);
             const timedOut = result.timedOut === true;
@@ -417,16 +376,7 @@ const superAdmin = (function () {
      * Executes a command through the shared terminal implementation for Bash tools.
      */
     async function bash(params: TerminalParams) {
-        const terminalEnvironment = await Tools.System.terminal.info();
-        switch (terminalEnvironment.platform) {
-            case "windows":
-            case "android":
-                return runTerminalCommand(params, "bash");
-            case "linux":
-                return runTerminalCommand(params, "linux");
-            default:
-                throw new Error(`不支持的平台: ${terminalEnvironment.platform}`);
-        }
+        return runTerminalCommand(params, "bash");
     }
 
     /**

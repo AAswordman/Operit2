@@ -124,12 +124,12 @@ export interface UIActionResultData {
 /**
  * Identifies the command interpreter backing a terminal session.
  */
-export type TerminalType = "powershell" | "bash" | "linux" | "shell";
+export type TerminalType = "powershell" | "bash" | "shell";
 
 /**
- * Selects the command interpreter requested when creating a terminal session.
+ * Identifies the concrete terminal implementation selected by a host.
  */
-export type TerminalCreateType = TerminalType;
+export type TerminalImplementation = "native" | "proot" | "android-system" | "adb" | "shell" | "ish" | "qemu-vroot" | "v86";
 
 /**
  * Reports the start or an incremental chunk of a streamed chat-message response.
@@ -891,7 +891,7 @@ export interface CharacterCardListResultData {
 }
 
 /**
- * Reports the runtime platform, default terminal type, and available interpreters.
+ * Reports the primary terminal identity and available terminal implementations.
  */
 export interface TerminalInfoResultData {
   /**
@@ -899,23 +899,31 @@ export interface TerminalInfoResultData {
    */
   platform: string;
   /**
-   * Default terminal type for this platform
+   * Primary terminal implementation selected by the host
    */
-  defaultType: TerminalType;
+  terminal: TerminalImplementation;
+  /**
+   * Primary shell semantics selected by the host
+   */
+  terminalType: TerminalType;
   /**
    * Terminal types known to this host
    */
   types: TerminalTypeInfoData[];
   /**
-   * Formats the platform, default terminal, and availability of each known terminal type.
+   * Formats the primary terminal identity and availability of each known terminal implementation.
    */
   toString(): string;
 }
 
 /**
- * Reports whether one terminal interpreter is available and describes its purpose.
+ * Reports one available terminal implementation and its shell semantics.
  */
 export interface TerminalTypeInfoData {
+  /**
+   * Terminal implementation id supported by a terminal host
+   */
+  terminal: TerminalImplementation;
   /**
    * Terminal type id supported by a terminal host
    */
@@ -951,6 +959,14 @@ export interface TerminalCommandResultData {
    */
   sessionId: string;
   /**
+   * Host platform that executed the command
+   */
+  platform: string;
+  /**
+   * Terminal implementation that executed the command
+   */
+  terminal: TerminalImplementation;
+  /**
    * Actual terminal type used for execution
    */
   terminalType: TerminalType;
@@ -980,6 +996,18 @@ export interface TerminalStreamEventData {
    * ID of the terminal session used for execution
    */
   sessionId: string;
+  /**
+   * Host platform that owns the terminal session
+   */
+  platform: string;
+  /**
+   * Terminal implementation that owns the terminal session
+   */
+  terminal: TerminalImplementation;
+  /**
+   * Shell semantics used by the terminal session
+   */
+  terminalType: TerminalType;
   /**
    * Incremental output chunk for "chunk" events
    */
@@ -1019,6 +1047,14 @@ export interface HiddenTerminalCommandResultData {
    */
   executorKey: string;
   /**
+   * Host platform that executed the command
+   */
+  platform: string;
+  /**
+   * Terminal implementation that executed the command
+   */
+  terminal: TerminalImplementation;
+  /**
    * Actual terminal type used for execution
    */
   terminalType: TerminalType;
@@ -1044,6 +1080,14 @@ export interface TerminalSessionCreationResultData {
    * Name of the session
    */
   sessionName: string;
+  /**
+   * Host platform that created the terminal session
+   */
+  platform: string;
+  /**
+   * Terminal implementation that created the terminal session
+   */
+  terminal: TerminalImplementation;
   /**
    * Actual terminal type for the session
    */
@@ -1084,6 +1128,14 @@ export interface TerminalSessionScreenResultData {
    * ID of the session
    */
   sessionId: string;
+  /**
+   * Host platform that owns the terminal session
+   */
+  platform: string;
+  /**
+   * Terminal implementation that owns the terminal session
+   */
+  terminal: TerminalImplementation;
   /**
    * Actual terminal type for the session
    */

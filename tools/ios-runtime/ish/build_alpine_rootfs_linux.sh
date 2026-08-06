@@ -15,6 +15,14 @@ root_sha256="776b16416894e5a8bec220b8d4726c46bb993289e8e48fdac54a519396e40a93"
 repository_base="https://dl-cdn.alpinelinux.org/alpine/v3.19"
 repository_arch="x86"
 host_arch="x86_64"
+uv_version="0.12.1"
+uv_archive="uv-i686-unknown-linux-musl.tar.gz"
+uv_url="https://github.com/astral-sh/uv/releases/download/$uv_version/$uv_archive"
+uv_sha256="be4d42582284456dae2ff4bf622c4169d1e6b8d1cd0e516658d6ba01f2a57dfa"
+pnpm_version="10.12.1"
+pnpm_archive="pnpm-$pnpm_version.tgz"
+pnpm_url="https://registry.npmjs.org/pnpm/-/$pnpm_archive"
+pnpm_sha256="889bac470ec93ccc3764488a19d6ba8f9c648ad5e50a9a6e4be3768a5de387a3"
 
 packages=(
     bash
@@ -32,7 +40,7 @@ download_checked() {
     local sha256="$3"
 
     mkdir -p "$(dirname "$output")"
-    curl -fL --retry 3 --retry-all-errors -o "$output" "$url"
+    curl --http1.1 --noproxy '*' -fL --retry 3 --retry-all-errors -o "$output" "$url"
     printf '%s  %s\n' "$sha256" "$output" | sha256sum -c -
 }
 
@@ -41,7 +49,7 @@ apk_index_record() {
     local package_name="$1"
     local index_path="$downloads_dir/APKINDEX-main-$host_arch.tar.gz"
 
-    curl -fL --retry 3 --retry-all-errors \
+    curl --http1.1 --noproxy '*' -fL --retry 3 --retry-all-errors \
         -o "$index_path" \
         "$repository_base/main/$host_arch/APKINDEX.tar.gz"
     tar -xzO -f "$index_path" APKINDEX | awk -v package_name="$package_name" '
@@ -75,7 +83,7 @@ install_apk_static() {
 
     archive_name="apk-tools-static-$version.apk"
     archive_path="$downloads_dir/$archive_name"
-    curl -fL --retry 3 --retry-all-errors \
+    curl --http1.1 --noproxy '*' -fL --retry 3 --retry-all-errors \
         -o "$archive_path" \
         "$repository_base/main/$host_arch/$archive_name"
 
@@ -85,8 +93,42 @@ install_apk_static() {
     chmod 755 "$apk_static_dir/sbin/apk.static"
 }
 
+# Installs the i686-musl uv and uvx binaries supported by the iSH CPU runtime.
+install_uv() {
+    local archive_path="$downloads_dir/$uv_archive"
+    local extract_dir="$work_dir/uv"
+
+    download_checked "$uv_url" "$archive_path" "$uv_sha256"
+    rm -rf "$extract_dir"
+    mkdir -p "$extract_dir"
+    tar -xzf "$archive_path" -C "$extract_dir"
+    install -m 755 "$extract_dir/${uv_archive%.tar.gz}/uv" "$root_dir/usr/bin/uv"
+    install -m 755 "$extract_dir/${uv_archive%.tar.gz}/uvx" "$root_dir/usr/bin/uvx"
+}
+
+# Installs the Node-compatible pnpm distribution without requiring an x86 Alpine package.
+install_pnpm() {
+    local archive_path="$downloads_dir/$pnpm_archive"
+    local pnpm_directory="$root_dir/usr/lib/node_modules/pnpm"
+
+    download_checked "$pnpm_url" "$archive_path" "$pnpm_sha256"
+    rm -rf "$pnpm_directory"
+    mkdir -p "$pnpm_directory"
+    tar -xzf "$archive_path" -C "$pnpm_directory" --strip-components=1
+    cat > "$root_dir/usr/bin/pnpm" <<'EOF'
+#!/bin/sh
+exec /usr/bin/node /usr/lib/node_modules/pnpm/bin/pnpm.cjs "$@"
+EOF
+    chmod 755 "$root_dir/usr/bin/pnpm"
+}
+
 # Writes the shared Alpine user environment into the iSH rootfs.
 write_rootfs_config() {
+    cat > "$root_dir/etc/apk/repositories" <<EOF
+$repository_base/main
+$repository_base/community
+EOF
+
     mkdir -p \
         "$root_dir/dev" \
         "$root_dir/proc" \
@@ -119,15 +161,18 @@ build_rootfs() {
     tar -xzf "$root_archive" -C "$root_dir"
     write_rootfs_config
 
-    "$apk_static_dir/sbin/apk.static" \
+    env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+        "$apk_static_dir/sbin/apk.static" \
         --root "$root_dir" \
         --arch "$repository_arch" \
-        --usermode \
         --keys-dir "$root_dir/etc/apk/keys" \
         --repositories-file "$root_dir/etc/apk/repositories" \
         --no-cache \
         --no-scripts \
+        --initdb \
         add "${packages[@]}"
+    install_uv
+    install_pnpm
 
     rm -rf "$root_dir/var/cache/apk"
     mkdir -p "$root_dir/var/cache/apk"

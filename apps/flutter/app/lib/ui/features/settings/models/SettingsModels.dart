@@ -11,6 +11,7 @@ enum SettingsCategory {
   characters,
   tools,
   workspace,
+  globalBehavior,
   appearance,
   data,
   accessLinks,
@@ -30,6 +31,7 @@ class SettingsCategorySpec {
   final String description;
   final IconData icon;
 
+  /// Resolves the localized presentation specification for a category.
   static SettingsCategorySpec of(
     SettingsCategory category,
     AppLocalizations l10n,
@@ -70,6 +72,12 @@ class SettingsCategorySpec {
         subtitle: l10n.settingsCategoryWorkspaceSubtitle,
         description: l10n.settingsCategoryWorkspaceDescription,
         icon: Icons.folder_outlined,
+      ),
+      SettingsCategory.globalBehavior => SettingsCategorySpec(
+        title: l10n.settingsCategoryGlobalBehaviorTitle,
+        subtitle: l10n.settingsCategoryGlobalBehaviorSubtitle,
+        description: l10n.settingsCategoryGlobalBehaviorDescription,
+        icon: Icons.tune_outlined,
       ),
       SettingsCategory.appearance => SettingsCategorySpec(
         title: l10n.settingsCategoryAppearanceTitle,

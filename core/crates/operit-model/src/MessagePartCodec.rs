@@ -354,11 +354,19 @@ impl AssistantMarkupStreamState {
             let raw = self.pending[..rawEnd].to_string();
             let sequence = self.parts.len() as i32;
             let partId = MessagePartCodec::partId(sequence);
-            let part = match normalizedTagName.as_str() {
-                "tool" => MessagePartCodec::parseToolCall(partId, sequence, &raw)?,
-                "tool_result" => MessagePartCodec::parseToolResult(partId, sequence, &raw)?,
-                "status" => MessagePartCodec::parseStatus(partId, sequence, &raw)?,
+            let parsedPart = match normalizedTagName.as_str() {
+                "tool" => MessagePartCodec::parseToolCall(partId, sequence, &raw),
+                "tool_result" => MessagePartCodec::parseToolResult(partId, sequence, &raw),
+                "status" => MessagePartCodec::parseStatus(partId, sequence, &raw),
                 _ => unreachable!("semantic tag classification must match its parser"),
+            };
+            let part = match parsedPart {
+                Ok(part) => part,
+                Err(_) => {
+                    self.appendMarkdownContent(&raw);
+                    self.pending = self.pending[rawEnd..].to_string();
+                    continue;
+                }
             };
             self.parts.push(part);
             self.pending = self.pending[rawEnd..].to_string();
@@ -651,6 +659,18 @@ mod tests {
         assert_eq!(parts[0].content, "Before");
         assert_eq!(parts[1].kind, MessagePartKind::Markdown);
         assert_eq!(parts[1].content, "<think>partial reasoning</thi");
+    }
+
+    /// Verifies malformed complete tool markup remains visible assistant text.
+    #[test]
+    fn parses_malformed_tool_parameter_as_markdown() {
+        let content = "Before<tool name=\"search\"><param name=\"various_search</param></tool>After";
+        let parts = MessagePartCodec::parseAssistantMarkup(content)
+            .expect("malformed tool markup must remain representable");
+
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].kind, MessagePartKind::Markdown);
+        assert_eq!(parts[0].content, content);
     }
 
     /// Verifies that visible text excludes internal thinking and tool protocol payloads.

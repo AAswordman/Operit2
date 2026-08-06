@@ -414,6 +414,9 @@
   "settingsCategoryWorkspaceTitle": "Workspace & Browser",
   "settingsCategoryWorkspaceSubtitle": "Files, terminal, browser",
   "settingsCategoryWorkspaceDescription": "Manage default workspaces, terminal sessions, browser mode, scripts, and web automation.",
+  "settingsCategoryGlobalBehaviorTitle": "Global Behavior Settings",
+  "settingsCategoryGlobalBehaviorSubtitle": "Input processing and interaction",
+  "settingsCategoryGlobalBehaviorDescription": "Configure input and interaction behavior that does not vary by character card.",
   "settingsCategoryAppearanceTitle": "Appearance & Interaction",
   "settingsCategoryAppearanceSubtitle": "Theme and language",
   "settingsCategoryAppearanceDescription": "Adjust the client theme and current localization display.",
@@ -423,6 +426,21 @@
   "settingsCategoryAccessLinksTitle": "Devices & Access",
   "settingsCategoryAccessLinksSubtitle": "Connect, sync, access",
   "settingsCategoryAccessLinksDescription": "Connect another device, sync data, or allow browsers to access this device.",
+  "settingsCategoryGroupAssistant": "AI & Creation",
+  "settingsCategoryGroupWorkspace": "Workspace & Automation",
+  "settingsCategoryGroupExperience": "Display & Interaction",
+  "settingsCategoryGroupSystem": "Data & System",
+  "settingsGlobalBehaviorChatInputSection": "Chat input",
+  "settingsGlobalBehaviorLongPastedTextAsAttachment": "Convert long pasted text to a file",
+  "settingsGlobalBehaviorLongPastedTextThreshold": "Conversion threshold",
+  "settingsGlobalBehaviorLongPastedTextThresholdValue": "{count} characters",
+  "@settingsGlobalBehaviorLongPastedTextThresholdValue": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsComingSoon": "This area will continue connecting existing runtime capabilities. Models, characters, and tools are being completed first.",
   "settingsAdvanced": "Advanced settings",
   "settingsActive": "Active",
@@ -886,6 +904,16 @@
   "settingsToolsNoToolsInGroup": "No tools in this group.",
   "settingsToolsMcpStartupTimeout": "MCP startup timeout",
   "settingsToolsMcpStartupTimeoutSeconds": "Wait seconds",
+  "settingsToolsToolPkgPreHookTimeout": "ToolPkg pre-hook timeout",
+  "settingsToolsToolPkgPreHookDescription": "One ToolPkg pre-hook chain has {seconds} seconds in total.",
+  "@settingsToolsToolPkgPreHookDescription": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsToolsToolPkgPreHookTimeoutSeconds": "Total seconds",
   "settingsWorkspaceCurrentDesign": "Current workspace structure",
   "settingsWorkspaceCurrentDesignDescription": "Workspaces are bound to chats. Terminal sessions and browser sessions are global sessions shown flat inside the workspace.",
   "settingsWorkspaceOpenChat": "Return to chat workspace",
@@ -1154,16 +1182,6 @@
   "settingsAppearanceInputStyleClassic": "Classic",
   "settingsAppearanceInputStyleAgent": "Agent",
   "settingsAppearanceInputFloating": "Floating input",
-  "settingsAppearanceLongPastedTextAsAttachment": "Convert long pasted text to a file",
-  "settingsAppearanceLongPastedTextThreshold": "Conversion threshold",
-  "settingsAppearanceLongPastedTextThresholdValue": "{count} characters",
-  "@settingsAppearanceLongPastedTextThresholdValue": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
   "settingsAppearanceColorSection": "Theme color",
   "settingsAppearanceColorDescription": "Choose a simple color preset. System bars and current app chrome follow the theme automatically.",
   "settingsAppearanceColorDefault": "Default",
@@ -1265,6 +1283,7 @@
   "settingsAppearanceWideLayout": "Use wider chat layout",
   "settingsAppearanceRoundedMessages": "Rounded message cards",
   "settingsAppearanceShowAvatars": "Show message avatars",
+  "settingsAppearanceMessageDisplaySection": "Message display",
   "settingsAppearanceShowThinkingProcess": "Show thinking process",
   "settingsAppearanceShowRoleName": "Show role name",
   "settingsAppearanceShowUserName": "Show user name",
@@ -1482,6 +1501,43 @@
     }
   },
   "settingsDataSnapshotRestoreConfirmAction": "Restore",
+  "settingsDataImportOperit1Snapshot": "Import from Operit1",
+  "settingsDataOperit1SnapshotImported": "Operit1 snapshot imported.",
+  "settingsDataOperit1SnapshotImportError": "Operit1 snapshot import failed: {error}",
+  "@settingsDataOperit1SnapshotImportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataOperit1SnapshotImportConfirmMessage": "Import this Operit1 snapshot into the current Runtime.\nFile: {fileName}\nFormat version: {formatVersion}\nChat model: {chatModelId}\nChats: {chatCount}; messages: {messageCount}\nResource files: {fileCount}\nSnapshot size: {byteCount} bytes",
+  "@settingsDataOperit1SnapshotImportConfirmMessage": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      },
+      "formatVersion": {
+        "type": "int"
+      },
+      "chatModelId": {
+        "type": "String"
+      },
+      "chatCount": {
+        "type": "int"
+      },
+      "messageCount": {
+        "type": "int"
+      },
+      "fileCount": {
+        "type": "int"
+      },
+      "byteCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataOperit1SnapshotImportAction": "Import",
   "settingsDataAdvancedBackupOptions": "Advanced options",
   "settingsDataAdvancedBackupOptionsDescription": "Single-item JSON export and restore"
 }

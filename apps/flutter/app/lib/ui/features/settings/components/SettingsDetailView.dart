@@ -7,6 +7,7 @@ import '../access_links/AccessLinksSettingsPanel.dart';
 import '../about/AboutOperitScreen.dart';
 import '../characters/CharacterSettingsPanel.dart';
 import '../data/DataSettingsPanel.dart';
+import '../global_behavior/GlobalBehaviorSettingsPanel.dart';
 import '../model/ModelSettingsPanel.dart';
 import '../local_models/LocalModelSettingsPanel.dart';
 import '../models/SettingsModels.dart';
@@ -33,6 +34,7 @@ class SettingsDetailView extends StatelessWidget {
       SettingsCategory.characters => const CharacterSettingsPanel(),
       SettingsCategory.tools => const ToolSettingsPanel(),
       SettingsCategory.workspace => const WorkspaceSettingsPanel(),
+      SettingsCategory.globalBehavior => const GlobalBehaviorSettingsPanel(),
       SettingsCategory.appearance => const AppearanceSettingsPanel(),
       SettingsCategory.data => const DataSettingsPanel(),
       SettingsCategory.accessLinks => const AccessLinksSettingsPanel(),

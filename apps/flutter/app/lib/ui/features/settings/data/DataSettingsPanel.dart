@@ -1,11 +1,14 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/link/CoreLinkProtocol.dart';
+import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 import '../../../../core/runtime/RuntimeConnectionManager.dart';
@@ -20,6 +23,8 @@ const XTypeGroup _rawSnapshotFileTypeGroup = XTypeGroup(
   label: 'Operit snapshot',
   extensions: <String>['opsnapshot', 'zip'],
 );
+
+const String _operit1SnapshotImportLogTag = 'Operit1SnapshotImport';
 
 class DataSettingsPanel extends StatefulWidget {
   const DataSettingsPanel({super.key, GeneratedCoreProxyClients? clients})
@@ -36,11 +41,48 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
   Future<_DataSettingsData>? _future;
   bool _busy = false;
   int? _lastSnapshotBytes;
+  StreamSubscription<Operit1SnapshotImportProgress>?
+  _operit1ImportProgressSubscription;
+  Operit1SnapshotImportProgress? _operit1ImportProgress;
 
   @override
   void initState() {
     super.initState();
     _future = _load();
+  }
+
+  /// Stops observing import progress when the settings panel is removed.
+  @override
+  void dispose() {
+    _operit1ImportProgressSubscription?.cancel();
+    super.dispose();
+  }
+
+  /// Observes Runtime stages for the active Operit1 snapshot import.
+  void _subscribeOperit1ImportProgress() {
+    if (_operit1ImportProgressSubscription != null) {
+      return;
+    }
+    _operit1ImportProgressSubscription = widget
+        .clients
+        .servicesSnapshotImportManager
+        .operit1SnapshotImportProgressFlowChanges()
+        .listen(
+          (progress) {
+            if (!mounted) {
+              return;
+            }
+            setState(() => _operit1ImportProgress = progress);
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            ClientLogger.e(
+              'settings snapshot progress observation failed',
+              tag: _operit1SnapshotImportLogTag,
+              error: error,
+              stackTrace: stackTrace,
+            );
+          },
+        );
   }
 
   Future<_DataSettingsData> _load() async {
@@ -239,9 +281,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     SnapshotImportSession? stagedSession;
     late final RawSnapshotManifest manifest;
     try {
-      stagedSession = await SnapshotImportUploader(
-        widget.clients,
-      ).stage(file);
+      stagedSession = await SnapshotImportUploader(widget.clients).stage(file);
       manifest = await stagedSession.completeRaw();
     } catch (error) {
       final session = stagedSession;
@@ -292,6 +332,117 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l10n.settingsDataSnapshotImportError('$error'))),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  /// Selects, previews, confirms, and imports a complete Operit1 snapshot.
+  Future<void> _importOperit1Snapshot() async {
+    final l10n = AppLocalizations.of(context)!;
+    final file = await SnapshotImportFile.pick();
+    if (file == null) {
+      return;
+    }
+    ClientLogger.i(
+      'settings snapshot selected name=${file.name} bytes=${file.byteLength}',
+      tag: _operit1SnapshotImportLogTag,
+    );
+    setState(() => _busy = true);
+    SnapshotImportSession? stagedSession;
+    late final Operit1SnapshotPreview preview;
+    try {
+      stagedSession = await SnapshotImportUploader(widget.clients).stage(file);
+      ClientLogger.i(
+        'settings snapshot upload completed bytes=${stagedSession.byteLength}; inspection started',
+        tag: _operit1SnapshotImportLogTag,
+      );
+      preview = await stagedSession.completeOperit1();
+      ClientLogger.i(
+        'settings snapshot inspection completed format=${preview.formatVersion} configs=${preview.modelConfig.configs.length} chats=${preview.chatCount} messages=${preview.messageCount}',
+        tag: _operit1SnapshotImportLogTag,
+      );
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'settings snapshot selection, upload, or inspection failed',
+        tag: _operit1SnapshotImportLogTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      final session = stagedSession;
+      if (session != null) {
+        await session.discard();
+      }
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.settingsDataOperit1SnapshotImportError('$error')),
+        ),
+      );
+      return;
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+    final session = stagedSession;
+    if (!mounted) {
+      await session.discard();
+      return;
+    }
+    final confirmed = await _Operit1SnapshotImportDialog.show(
+      context: context,
+      fileName: file.name,
+      preview: preview,
+      byteCount: session.byteLength,
+    );
+    if (confirmed != true) {
+      await session.discard();
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _operit1ImportProgress = null;
+    });
+    try {
+      ClientLogger.i(
+        'settings snapshot import started bytes=${session.byteLength}',
+        tag: _operit1SnapshotImportLogTag,
+      );
+      _subscribeOperit1ImportProgress();
+      final result = await session.commitOperit1();
+      ClientLogger.i(
+        'settings snapshot import completed chats=${result.importedChats} messages=${result.importedMessages} memories=${result.importedMemories} files=${result.importedFiles + result.importedExternalFiles + result.importedWorkspaceFiles}',
+        tag: _operit1SnapshotImportLogTag,
+      );
+      await session.discard();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.settingsDataOperit1SnapshotImported)),
+      );
+      _reload();
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'settings snapshot import failed',
+        tag: _operit1SnapshotImportLogTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      await session.discard();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.settingsDataOperit1SnapshotImportError('$error')),
+        ),
       );
     } finally {
       if (mounted) {
@@ -569,6 +720,8 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
                   lastSnapshotBytes: _lastSnapshotBytes,
                   onExport: _busy ? null : _exportRawSnapshot,
                   onImport: _busy ? null : _importRawSnapshot,
+                  onImportOperit1: _busy ? null : _importOperit1Snapshot,
+                  operit1ImportProgress: _operit1ImportProgress,
                 ),
                 const Divider(height: 20),
                 Theme(
@@ -578,6 +731,8 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
                   child: ExpansionTile(
                     tilePadding: EdgeInsets.zero,
                     childrenPadding: EdgeInsets.zero,
+                    shape: const Border(),
+                    collapsedShape: const Border(),
                     leading: Icon(
                       Icons.tune_outlined,
                       color: colorScheme.primary,
@@ -764,11 +919,15 @@ class _SnapshotBackupLine extends StatelessWidget {
     required this.lastSnapshotBytes,
     required this.onExport,
     required this.onImport,
+    required this.onImportOperit1,
+    required this.operit1ImportProgress,
   });
 
   final int? lastSnapshotBytes;
   final VoidCallback? onExport;
   final VoidCallback? onImport;
+  final VoidCallback? onImportOperit1;
+  final Operit1SnapshotImportProgress? operit1ImportProgress;
 
   @override
   Widget build(BuildContext context) {
@@ -810,8 +969,19 @@ class _SnapshotBackupLine extends StatelessWidget {
                 icon: const Icon(Icons.restore_outlined),
                 label: Text(l10n.settingsDataImportRawSnapshot),
               ),
+              FilledButton.tonalIcon(
+                onPressed: onImportOperit1,
+                icon: const Icon(Icons.move_to_inbox_outlined),
+                label: Text(l10n.settingsDataImportOperit1Snapshot),
+              ),
             ],
           ),
+          if (operit1ImportProgress != null) ...<Widget>[
+            const SizedBox(height: 16),
+            _Operit1SnapshotImportProgressPanel(
+              progress: operit1ImportProgress!,
+            ),
+          ],
         ],
       ),
     );
@@ -1288,6 +1458,133 @@ class _RawSnapshotRestoreDialog extends StatelessWidget {
         FilledButton(
           onPressed: () => Navigator.of(context).pop(true),
           child: Text(l10n.settingsDataSnapshotRestoreConfirmAction),
+        ),
+      ],
+    );
+  }
+}
+
+class _Operit1SnapshotImportDialog extends StatelessWidget {
+  const _Operit1SnapshotImportDialog({
+    required this.fileName,
+    required this.preview,
+    required this.byteCount,
+  });
+
+  final String fileName;
+  final Operit1SnapshotPreview preview;
+  final int byteCount;
+
+  /// Shows the pre-import summary for an Operit1 snapshot.
+  static Future<bool?> show({
+    required BuildContext context,
+    required String fileName,
+    required Operit1SnapshotPreview preview,
+    required int byteCount,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => _Operit1SnapshotImportDialog(
+        fileName: fileName,
+        preview: preview,
+        byteCount: byteCount,
+      ),
+    );
+  }
+
+  /// Builds the Operit1 import confirmation dialog.
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return AlertDialog(
+      title: Text(l10n.settingsDataImportOperit1Snapshot),
+      content: SizedBox(
+        width: 560,
+        child: Text(
+          l10n.settingsDataOperit1SnapshotImportConfirmMessage(
+            fileName,
+            preview.formatVersion,
+            preview.modelConfig.chatModelId ?? '-',
+            preview.chatCount,
+            preview.messageCount,
+            preview.importedFileCount + preview.importedExternalFileCount,
+            byteCount,
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: Text(l10n.settingsDataOperit1SnapshotImportAction),
+        ),
+      ],
+    );
+  }
+}
+
+class _Operit1SnapshotImportProgressPanel extends StatelessWidget {
+  const _Operit1SnapshotImportProgressPanel({required this.progress});
+
+  final Operit1SnapshotImportProgress progress;
+
+  /// Builds the active Operit1 import stage and its completion percentage.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final value = progress.progress.clamp(0.0, 1.0).toDouble();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                progress.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.labelLarge?.copyWith(
+                  color: colorScheme.onSurface,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              '${(value * 100).round()}%',
+              style: textTheme.labelMedium?.copyWith(
+                color: colorScheme.primary,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(999),
+          child: LinearProgressIndicator(
+            value: value,
+            minHeight: 6,
+            backgroundColor: colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.72,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          progress.detail,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: textTheme.bodySmall?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+            height: 1.35,
+          ),
         ),
       ],
     );

@@ -20,10 +20,147 @@ const PTY_OUTPUT_LIMIT: usize = 1024 * 1024;
 const PTY_PROMPT_MARKER_PREFIX: &[u8] = b"\x1b]133;OperitPrompt=";
 const PTY_PROMPT_MARKER_END: u8 = 7;
 const COMMAND_CANCEL_SETTLE_TIMEOUT_MS: u64 = 3000;
+const PLATFORM: &str = "posix";
+const TERMINAL: &str = "native";
+const PRIMARY_TERMINAL_TYPE: &str = "bash";
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct NativePtyTerminalHost {
     state: Arc<Mutex<TerminalState>>,
+    commandSpec: Arc<PtyCommandSpec>,
+}
+
+#[derive(Clone)]
+struct PtyCommandSpec {
+    program: String,
+    args: Vec<String>,
+    terminalType: String,
+    description: String,
+    commandProtocol: PtyCommandProtocol,
+    processWorkingDirectory: PtyProcessWorkingDirectory,
+    initialWorkingDirectory: PtyInitialWorkingDirectory,
+    environment: Vec<(String, String)>,
+    sessionWorkingDirectoryEnvironment: PtySessionWorkingDirectoryEnvironment,
+}
+
+/// Describes an explicitly configured interactive POSIX shell process.
+#[derive(Clone)]
+pub struct NativePtyShellCommand {
+    pub program: String,
+    pub arguments: Vec<String>,
+    pub description: String,
+    pub processWorkingDirectory: String,
+    pub defaultSessionWorkingDirectory: String,
+    pub environment: Vec<(String, String)>,
+    pub sessionWorkingDirectoryEnvironment: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PtyCommandProtocol {
+    BashPromptCommand,
+    ExplicitMarker,
+}
+
+#[derive(Clone)]
+enum PtyProcessWorkingDirectory {
+    Session,
+    Fixed(String),
+}
+
+#[derive(Clone)]
+enum PtyInitialWorkingDirectory {
+    ProcessCurrent,
+    Fixed(String),
+}
+
+#[derive(Clone)]
+enum PtySessionWorkingDirectoryEnvironment {
+    None,
+    Name(String),
+}
+
+impl Default for NativePtyTerminalHost {
+    /// Creates the shared POSIX host configured for its native bash terminal.
+    fn default() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(TerminalState::default())),
+            commandSpec: Arc::new(PtyCommandSpec::nativeBash()),
+        }
+    }
+}
+
+impl PtyCommandSpec {
+    /// Builds the default interactive bash command configuration.
+    fn nativeBash() -> Self {
+        Self {
+            program: "bash".to_string(),
+            args: vec![
+                "--noprofile".to_string(),
+                "--norc".to_string(),
+                "-i".to_string(),
+            ],
+            terminalType: PRIMARY_TERMINAL_TYPE.to_string(),
+            description: "POSIX bash terminal".to_string(),
+            commandProtocol: PtyCommandProtocol::BashPromptCommand,
+            processWorkingDirectory: PtyProcessWorkingDirectory::Session,
+            initialWorkingDirectory: PtyInitialWorkingDirectory::ProcessCurrent,
+            environment: Vec::new(),
+            sessionWorkingDirectoryEnvironment: PtySessionWorkingDirectoryEnvironment::None,
+        }
+    }
+
+    /// Builds the privileged system POSIX sh command configuration.
+    fn systemShell() -> Self {
+        Self {
+            program: "/bin/sh".to_string(),
+            args: vec!["-i".to_string()],
+            terminalType: "shell".to_string(),
+            description: "Privileged system /bin/sh terminal".to_string(),
+            commandProtocol: PtyCommandProtocol::ExplicitMarker,
+            processWorkingDirectory: PtyProcessWorkingDirectory::Session,
+            initialWorkingDirectory: PtyInitialWorkingDirectory::ProcessCurrent,
+            environment: Vec::new(),
+            sessionWorkingDirectoryEnvironment: PtySessionWorkingDirectoryEnvironment::None,
+        }
+    }
+
+    /// Builds an explicitly configured POSIX shell command specification.
+    fn customShell(command: NativePtyShellCommand) -> HostResult<Self> {
+        let program = nonBlank(&command.program, "program")?;
+        let description = nonBlank(&command.description, "description")?;
+        let processWorkingDirectory = nonBlank(
+            &command.processWorkingDirectory,
+            "process_working_directory",
+        )?;
+        let defaultSessionWorkingDirectory = nonBlank(
+            &command.defaultSessionWorkingDirectory,
+            "default_session_working_directory",
+        )?;
+        let sessionWorkingDirectoryEnvironment = nonBlank(
+            &command.sessionWorkingDirectoryEnvironment,
+            "session_working_directory_environment",
+        )?;
+        if !program.starts_with('/') {
+            return Err(HostError::new(format!(
+                "Custom POSIX shell program must be absolute: {program}"
+            )));
+        }
+        Ok(Self {
+            program,
+            args: command.arguments,
+            terminalType: "shell".to_string(),
+            description,
+            commandProtocol: PtyCommandProtocol::ExplicitMarker,
+            processWorkingDirectory: PtyProcessWorkingDirectory::Fixed(processWorkingDirectory),
+            initialWorkingDirectory: PtyInitialWorkingDirectory::Fixed(
+                defaultSessionWorkingDirectory,
+            ),
+            environment: command.environment,
+            sessionWorkingDirectoryEnvironment: PtySessionWorkingDirectoryEnvironment::Name(
+                sessionWorkingDirectoryEnvironment,
+            ),
+        })
+    }
 }
 
 #[derive(Default)]
@@ -45,6 +182,7 @@ struct PtySession {
     screenOutput: Arc<Mutex<VecDeque<u8>>>,
     commandRunning: bool,
     exitCode: Option<i32>,
+    commandProtocol: PtyCommandProtocol,
 }
 
 type PtyCommandOutput = Arc<(Mutex<VecDeque<u8>>, Condvar)>;
@@ -64,20 +202,72 @@ impl Drop for PtySession {
 }
 
 impl NativePtyTerminalHost {
+    /// Creates the shared POSIX host configured for its native bash terminal.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates a host that starts the actual system /bin/sh process in a PTY.
+    pub fn systemShell() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(TerminalState::default())),
+            commandSpec: Arc::new(PtyCommandSpec::systemShell()),
+        }
+    }
+
+    /// Creates a host that starts one explicitly configured POSIX shell process in a PTY.
+    pub fn customShell(command: NativePtyShellCommand) -> HostResult<Self> {
+        Ok(Self {
+            state: Arc::new(Mutex::new(TerminalState::default())),
+            commandSpec: Arc::new(PtyCommandSpec::customShell(command)?),
+        })
+    }
+
+    /// Verifies that this host can start and close its configured PTY shell.
+    pub fn probe(&self, workingDir: &str) -> HostResult<()> {
+        let sessionId = self.startPtySession(
+            "operit-terminal-capability-probe",
+            TERMINAL,
+            &self.commandSpec.terminalType,
+            workingDir,
+            1,
+            1,
+        )?;
+        self.closePtySession(&sessionId)
+    }
+
+    /// Validates the shell type configured for this native PTY host.
+    fn normalizeTerminalType(&self, terminalType: &str) -> HostResult<String> {
+        match terminalType.trim() {
+            value if value == self.commandSpec.terminalType => Ok(value.to_string()),
+            value => Err(HostError::new(format!(
+                "Unsupported terminal type for shared POSIX PTY host: {value}"
+            ))),
+        }
+    }
+
+    /// Returns the working directory used for automatically created terminal sessions.
+    fn initialWorkingDirectory(&self) -> HostResult<String> {
+        match &self.commandSpec.initialWorkingDirectory {
+            PtyInitialWorkingDirectory::ProcessCurrent => {
+                Ok(std::env::current_dir()?.display().to_string())
+            }
+            PtyInitialWorkingDirectory::Fixed(directory) => Ok(directory.clone()),
+        }
     }
 }
 
 impl TerminalHost for NativePtyTerminalHost {
     fn terminalInfo(&self) -> HostResult<TerminalInfo> {
         Ok(TerminalInfo {
-            platform: "posix".to_string(),
-            defaultType: "posix".to_string(),
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
+            terminalType: self.commandSpec.terminalType.clone(),
             types: vec![TerminalTypeInfo {
-                terminalType: "posix".to_string(),
+                terminal: TERMINAL.to_string(),
+                terminalType: self.commandSpec.terminalType.clone(),
                 available: true,
-                description: "POSIX bash terminal".to_string(),
+                description: self.commandSpec.description.clone(),
             }],
         })
     }
@@ -85,13 +275,15 @@ impl TerminalHost for NativePtyTerminalHost {
     fn startPtySession(
         &self,
         sessionName: &str,
+        terminal: &str,
         terminalType: &str,
         workingDir: &str,
         rows: u16,
         cols: u16,
     ) -> HostResult<String> {
         let normalizedSessionName = nonBlank(sessionName, "session_name")?;
-        let normalizedTerminalType = normalizeTerminalType(terminalType)?;
+        requireNativeTerminal(terminal)?;
+        let normalizedTerminalType = self.normalizeTerminalType(terminalType)?;
         let workDir = nonBlank(workingDir, "working_directory")?;
         let session = createPtySession(
             normalizedSessionName,
@@ -99,6 +291,7 @@ impl TerminalHost for NativePtyTerminalHost {
             workDir,
             rows,
             cols,
+            self.commandSpec.as_ref(),
         )?;
         let sessionId = nextSessionId();
         let mut state = self.lockState()?;
@@ -194,6 +387,8 @@ impl TerminalHost for NativePtyTerminalHost {
             entries.push(TerminalSessionListEntry {
                 sessionId: sessionId.clone(),
                 sessionName: session.sessionName.clone(),
+                platform: PLATFORM.to_string(),
+                terminal: TERMINAL.to_string(),
                 terminalType: session.terminalType.clone(),
                 sessionKind: "pty".to_string(),
                 workingDir: session.workingDir.clone(),
@@ -203,13 +398,9 @@ impl TerminalHost for NativePtyTerminalHost {
         Ok(entries)
     }
 
-    fn createOrGetSession(
-        &self,
-        sessionName: &str,
-        terminalType: &str,
-    ) -> HostResult<TerminalSessionInfo> {
+    fn createOrGetSession(&self, sessionName: &str) -> HostResult<TerminalSessionInfo> {
         let normalizedSessionName = nonBlank(sessionName, "session_name")?;
-        let normalizedTerminalType = normalizeTerminalType(terminalType)?;
+        let normalizedTerminalType = self.commandSpec.terminalType.clone();
         let sessionKey = sessionKey(&normalizedTerminalType, &normalizedSessionName);
         {
             let mut state = self.lockState()?;
@@ -218,6 +409,8 @@ impl TerminalHost for NativePtyTerminalHost {
                     return Ok(TerminalSessionInfo {
                         sessionId,
                         sessionName: normalizedSessionName,
+                        platform: PLATFORM.to_string(),
+                        terminal: TERMINAL.to_string(),
                         terminalType: normalizedTerminalType,
                         isNewSession: false,
                     });
@@ -226,13 +419,14 @@ impl TerminalHost for NativePtyTerminalHost {
             }
         }
 
-        let workingDir = std::env::current_dir()?.display().to_string();
+        let workingDir = self.initialWorkingDirectory()?;
         let session = createPtySession(
             normalizedSessionName.clone(),
             normalizedTerminalType.clone(),
             workingDir,
             24,
             80,
+            self.commandSpec.as_ref(),
         )?;
         let sessionId = nextSessionId();
         let mut state = self.lockState()?;
@@ -241,6 +435,8 @@ impl TerminalHost for NativePtyTerminalHost {
         Ok(TerminalSessionInfo {
             sessionId,
             sessionName: normalizedSessionName,
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
             terminalType: normalizedTerminalType,
             isNewSession: true,
         })
@@ -254,7 +450,7 @@ impl TerminalHost for NativePtyTerminalHost {
     ) -> HostResult<TerminalCommandOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let normalizedCommand = nonBlank(command, "command")?;
-        let (terminalType, commandOutput) = {
+        let (terminalType, commandOutput, commandProtocol, commandEcho) = {
             let mut state = self.lockState()?;
             let session = state
                 .ptySessions
@@ -264,17 +460,24 @@ impl TerminalHost for NativePtyTerminalHost {
                 })?;
             session.commandRunning = true;
             clearPtyCommandOutput(&session.commandOutput)?;
-            let commandInput = format!("{normalizedCommand}\r");
+            let commandInput = ptyCommandInput(&normalizedCommand, session.commandProtocol);
+            let commandEcho = commandInput.trim_end().to_string();
             let mut writer = session
                 .writer
                 .lock()
                 .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
             writer.write_all(commandInput.as_bytes())?;
             writer.flush()?;
-            (session.terminalType.clone(), session.commandOutput.clone())
+            (
+                session.terminalType.clone(),
+                session.commandOutput.clone(),
+                session.commandProtocol,
+                commandEcho,
+            )
         };
 
-        let result = executePtyCommandInSession(commandOutput, &normalizedCommand, timeoutMs)?;
+        let result =
+            executePtyCommandInSession(commandOutput, &commandEcho, timeoutMs, commandProtocol)?;
         {
             let mut state = self.lockState()?;
             if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
@@ -293,6 +496,8 @@ impl TerminalHost for NativePtyTerminalHost {
             output: result.output,
             exitCode: result.exitCode,
             sessionId: normalizedSessionId,
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
             terminalType,
             timedOut: result.timedOut,
         })
@@ -301,12 +506,11 @@ impl TerminalHost for NativePtyTerminalHost {
     fn executeHiddenCommand(
         &self,
         command: &str,
-        terminalType: &str,
         executorKey: &str,
         timeoutMs: u64,
     ) -> HostResult<HiddenTerminalCommandOutput> {
         let normalizedCommand = nonBlank(command, "command")?;
-        let normalizedTerminalType = normalizeTerminalType(terminalType)?;
+        let normalizedTerminalType = self.commandSpec.terminalType.clone();
         let normalizedExecutorKey = match executorKey.trim() {
             "" => "default".to_string(),
             value => value.to_string(),
@@ -324,6 +528,8 @@ impl TerminalHost for NativePtyTerminalHost {
             output: output.output,
             exitCode: output.exitCode,
             executorKey: normalizedExecutorKey,
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
             terminalType: normalizedTerminalType,
             timedOut: output.timedOut,
         })
@@ -390,6 +596,8 @@ impl TerminalHost for NativePtyTerminalHost {
             .unwrap_or(0);
         Ok(TerminalScreenOutput {
             sessionId: normalizedSessionId,
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
             terminalType: session.terminalType.clone(),
             rows,
             cols,
@@ -426,13 +634,14 @@ fn hiddenPtySessionId(
         }
     }
 
-    let workingDir = std::env::current_dir()?.display().to_string();
+    let workingDir = host.initialWorkingDirectory()?;
     let session = createPtySession(
         format!("hidden:{executorLabel}"),
         terminalType.to_string(),
         workingDir,
         24,
         80,
+        host.commandSpec.as_ref(),
     )?;
     let sessionId = nextSessionId();
     let mut state = host.lockState()?;
@@ -457,12 +666,13 @@ fn createPtySession(
     workingDir: String,
     rows: u16,
     cols: u16,
+    commandSpec: &PtyCommandSpec,
 ) -> HostResult<PtySession> {
     let ptySystem = native_pty_system();
     let pair = ptySystem
         .openpty(ptySize(rows, cols))
         .map_err(toHostError)?;
-    let command = posixPtyCommand(&workingDir);
+    let command = posixPtyCommand(&workingDir, commandSpec);
     let mut child = pair.slave.spawn_command(command).map_err(toHostError)?;
     let mut reader = pair.master.try_clone_reader().map_err(toHostError)?;
     let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(toHostError)?));
@@ -493,12 +703,19 @@ fn createPtySession(
             }
         }
     });
+    if commandSpec.commandProtocol == PtyCommandProtocol::ExplicitMarker {
+        writePtyPromptMarker(&writer)?;
+    }
     if let Err(error) = waitForInitialPtyPrompt(commandOutput.clone(), Duration::from_millis(10000))
     {
         let _ = child.kill();
         return Err(error);
     }
     clearPtyCommandOutput(&commandOutput)?;
+    if commandSpec.commandProtocol == PtyCommandProtocol::ExplicitMarker {
+        clearPtyOutput(&output)?;
+        clearPtyOutput(&screenOutput)?;
+    }
     Ok(PtySession {
         sessionName,
         terminalType,
@@ -511,23 +728,70 @@ fn createPtySession(
         screenOutput,
         commandRunning: false,
         exitCode: None,
+        commandProtocol: commandSpec.commandProtocol,
     })
 }
 
-fn posixPtyCommand(workingDir: &str) -> CommandBuilder {
-    let mut command = CommandBuilder::new("bash");
-    command.arg("--noprofile");
-    command.arg("--norc");
-    command.arg("-i");
-    command.cwd(workingDir);
+/// Produces the shell input that emits the command-completion marker for one protocol.
+fn ptyCommandInput(command: &str, commandProtocol: PtyCommandProtocol) -> String {
+    match commandProtocol {
+        PtyCommandProtocol::BashPromptCommand => format!("{command}\r"),
+        PtyCommandProtocol::ExplicitMarker => format!(
+            "{command}; __operit_status=$?; {}\r",
+            ptyPromptMarkerCommand()
+        ),
+    }
+}
+
+/// Returns the POSIX sh command that writes one machine-readable completion marker.
+fn ptyPromptMarkerCommand() -> &'static str {
+    "printf '\\033]133;OperitPrompt=plain:%s:%s\\007' \"$PWD\" \"$__operit_status\""
+}
+
+/// Writes one command-completion marker command into an interactive shell PTY.
+fn writePtyPromptMarker(writer: &Arc<Mutex<Box<dyn Write + Send>>>) -> HostResult<()> {
+    let markerCommand = format!("__operit_status=$?; {}\r", ptyPromptMarkerCommand());
+    let mut writer = writer
+        .lock()
+        .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
+    writer.write_all(markerCommand.as_bytes())?;
+    writer.flush()?;
+    Ok(())
+}
+
+/// Builds an interactive PTY command for one configured POSIX shell.
+fn posixPtyCommand(workingDir: &str, commandSpec: &PtyCommandSpec) -> CommandBuilder {
+    let mut command = CommandBuilder::new(&commandSpec.program);
+    for argument in &commandSpec.args {
+        command.arg(argument);
+    }
+    match &commandSpec.processWorkingDirectory {
+        PtyProcessWorkingDirectory::Session => command.cwd(workingDir),
+        PtyProcessWorkingDirectory::Fixed(directory) => command.cwd(directory),
+    }
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     command.env("LANG", "C.UTF-8");
-    command.env("PS1", "$PWD $ ");
+    for (key, value) in &commandSpec.environment {
+        command.env(key, value);
+    }
+    match &commandSpec.sessionWorkingDirectoryEnvironment {
+        PtySessionWorkingDirectoryEnvironment::None => {}
+        PtySessionWorkingDirectoryEnvironment::Name(key) => command.env(key, workingDir),
+    }
     command.env(
-        "PROMPT_COMMAND",
-        r#"__operit_status=$?; printf '\033]133;OperitPrompt=%s:%s\007' "$(printf '%s' "$PWD" | base64 | tr -d '\n')" "$__operit_status""#,
+        "PS1",
+        match commandSpec.commandProtocol {
+            PtyCommandProtocol::BashPromptCommand => "$PWD $ ",
+            PtyCommandProtocol::ExplicitMarker => "sh$ ",
+        },
     );
+    if commandSpec.commandProtocol == PtyCommandProtocol::BashPromptCommand {
+        command.env(
+            "PROMPT_COMMAND",
+            r#"__operit_status=$?; printf '\033]133;OperitPrompt=%s:%s\007' "$(printf '%s' "$PWD" | base64 | tr -d '\n')" "$__operit_status""#,
+        );
+    }
     command
 }
 
@@ -679,6 +943,7 @@ fn executePtyCommandInSession(
     output: PtyCommandOutput,
     command: &str,
     timeoutMs: u64,
+    commandProtocol: PtyCommandProtocol,
 ) -> HostResult<SessionCommandResult> {
     let deadline = Instant::now() + Duration::from_millis(timeoutMs);
     let mut collected = Vec::new();
@@ -698,7 +963,12 @@ fn executePtyCommandInSession(
                     continue;
                 }
             }
-            let output = ptyCommandOutputText(&collected, command, Some(&marker.workingDir));
+            let output = ptyCommandOutputText(
+                &collected,
+                command,
+                Some(&marker.workingDir),
+                commandProtocol,
+            );
             return Ok(SessionCommandResult {
                 output,
                 exitCode: marker.exitCode,
@@ -707,7 +977,7 @@ fn executePtyCommandInSession(
             });
         }
         if Instant::now() >= deadline {
-            let output = ptyCommandOutputText(&collected, command, None);
+            let output = ptyCommandOutputText(&collected, command, None, commandProtocol);
             return Ok(SessionCommandResult {
                 output,
                 exitCode: -1,
@@ -726,6 +996,11 @@ fn cancelTimedOutPtyCommand(session: &mut PtySession) -> HostResult<Option<Strin
             .lock()
             .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
         writer.write_all(b"\x03")?;
+        if session.commandProtocol == PtyCommandProtocol::ExplicitMarker {
+            writer.write_all(b"\r")?;
+            let markerCommand = format!("__operit_status=$?; {}\r", ptyPromptMarkerCommand());
+            writer.write_all(markerCommand.as_bytes())?;
+        }
         writer.flush()?;
     }
 
@@ -792,14 +1067,22 @@ fn findLastPtyPromptMarker(data: &[u8]) -> HostResult<Option<PtyPromptMarker>> {
     let payloadEnd = payloadStart + relativeEnd;
     let payload = std::str::from_utf8(&data[payloadStart..payloadEnd])
         .map_err(|error| HostError::new(format!("Invalid PTY prompt marker UTF-8: {error}")))?;
-    let (workingDirText, exitCodeText) = payload
-        .split_once(':')
-        .ok_or_else(|| HostError::new(format!("Invalid PTY prompt marker '{payload}'")))?;
-    let workingDirBytes = BASE64_STANDARD
-        .decode(workingDirText.as_bytes())
-        .map_err(|error| HostError::new(format!("Invalid PTY prompt cwd marker: {error}")))?;
-    let workingDir = String::from_utf8(workingDirBytes)
-        .map_err(|error| HostError::new(format!("Invalid PTY prompt cwd UTF-8: {error}")))?;
+    let (workingDir, exitCodeText) = if let Some(plainPayload) = payload.strip_prefix("plain:") {
+        let (workingDir, exitCode) = plainPayload
+            .rsplit_once(':')
+            .ok_or_else(|| HostError::new(format!("Invalid PTY prompt marker '{payload}'")))?;
+        (workingDir.to_string(), exitCode)
+    } else {
+        let (workingDirText, exitCode) = payload
+            .split_once(':')
+            .ok_or_else(|| HostError::new(format!("Invalid PTY prompt marker '{payload}'")))?;
+        let workingDirBytes = BASE64_STANDARD
+            .decode(workingDirText.as_bytes())
+            .map_err(|error| HostError::new(format!("Invalid PTY prompt cwd marker: {error}")))?;
+        let workingDir = String::from_utf8(workingDirBytes)
+            .map_err(|error| HostError::new(format!("Invalid PTY prompt cwd UTF-8: {error}")))?;
+        (workingDir, exitCode)
+    };
     let exitCode = parseExitCode(exitCodeText)?;
     Ok(Some(PtyPromptMarker {
         workingDir,
@@ -818,12 +1101,17 @@ fn rfindBytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 #[allow(non_snake_case)]
-fn ptyCommandOutputText(raw: &[u8], command: &str, workingDir: Option<&str>) -> String {
+fn ptyCommandOutputText(
+    raw: &[u8],
+    command: &str,
+    workingDir: Option<&str>,
+    commandProtocol: PtyCommandProtocol,
+) -> String {
     let visibleBytes = stripPtyPromptMarkers(raw);
     let text = String::from_utf8_lossy(&visibleBytes);
     let clean = renderTerminalText(&text);
     let withoutEcho = dropCommandEcho(clean, command);
-    dropTrailingPtyPrompt(withoutEcho, workingDir)
+    dropTrailingPtyPrompt(withoutEcho, workingDir, commandProtocol)
 }
 
 #[allow(non_snake_case)]
@@ -1150,22 +1438,36 @@ fn dropCommandEcho(value: String, command: &str) -> String {
 }
 
 #[allow(non_snake_case)]
-fn dropTrailingPtyPrompt(value: String, workingDir: Option<&str>) -> String {
-    let Some(workingDir) = workingDir else {
-        return value.trim().to_string();
-    };
-    let prompt = format!("{workingDir} $");
-    let mut lines = value.lines().map(str::to_string).collect::<Vec<_>>();
-    while lines.last().is_some_and(|line| line.trim().is_empty()) {
-        lines.pop();
+fn dropTrailingPtyPrompt(
+    value: String,
+    workingDir: Option<&str>,
+    commandProtocol: PtyCommandProtocol,
+) -> String {
+    match commandProtocol {
+        PtyCommandProtocol::BashPromptCommand => {
+            let Some(workingDir) = workingDir else {
+                return value.trim().to_string();
+            };
+            let prompt = format!("{workingDir} $");
+            let mut lines = value.lines().map(str::to_string).collect::<Vec<_>>();
+            while lines.last().is_some_and(|line| line.trim().is_empty()) {
+                lines.pop();
+            }
+            if lines
+                .last()
+                .is_some_and(|line| line.trim_end() == prompt.as_str())
+            {
+                lines.pop();
+            }
+            lines.join("\n").trim().to_string()
+        }
+        PtyCommandProtocol::ExplicitMarker => value
+            .trim_end()
+            .strip_suffix("sh$")
+            .unwrap_or(value.trim_end())
+            .trim()
+            .to_string(),
     }
-    if lines
-        .last()
-        .is_some_and(|line| line.trim_end() == prompt.as_str())
-    {
-        lines.pop();
-    }
-    lines.join("\n").trim().to_string()
 }
 
 #[allow(non_snake_case)]
@@ -1173,14 +1475,23 @@ fn toHostError(error: impl std::fmt::Display) -> HostError {
     HostError::new(error.to_string())
 }
 
-#[allow(non_snake_case)]
-fn normalizeTerminalType(terminalType: &str) -> HostResult<String> {
-    match terminalType.trim() {
-        "posix" => Ok("posix".to_string()),
+/// Validates the terminal implementation owned by the shared POSIX PTY host.
+fn requireNativeTerminal(terminal: &str) -> HostResult<()> {
+    match terminal.trim() {
+        TERMINAL => Ok(()),
         value => Err(HostError::new(format!(
-            "Unsupported terminal type for shared POSIX PTY host: {value}"
+            "Unsupported terminal implementation for shared POSIX PTY host: {value}"
         ))),
     }
+}
+
+/// Clears one retained PTY output buffer after protocol initialization.
+fn clearPtyOutput(output: &Arc<Mutex<VecDeque<u8>>>) -> HostResult<()> {
+    let mut buffer = output
+        .lock()
+        .map_err(|_| HostError::new("pty output mutex poisoned"))?;
+    buffer.clear();
+    Ok(())
 }
 
 #[allow(non_snake_case)]
@@ -1349,7 +1660,7 @@ mod tests {
     fn linux_command_block_completes_in_pty() {
         let host = NativePtyTerminalHost::new();
         let session = host
-            .createOrGetSession("linux_terminal_marker", "linux")
+            .createOrGetSession("linux_terminal_marker")
             .expect("create terminal session");
         let result = host
             .executeInSession(
@@ -1368,7 +1679,7 @@ mod tests {
     fn linux_screen_records_prompt_command_output_prompt() {
         let host = NativePtyTerminalHost::new();
         let session = host
-            .createOrGetSession("linux_terminal_screen", "linux")
+            .createOrGetSession("linux_terminal_screen")
             .expect("create terminal session");
         let workingDir = std::env::current_dir().unwrap().display().to_string();
         let prompt = format!("{workingDir} $ ");
@@ -1403,12 +1714,13 @@ mod tests {
     fn visible_linux_sessions_are_listed_as_pty() {
         let host = NativePtyTerminalHost::new();
         let created = host
-            .createOrGetSession("linux_visible_ai", "linux")
+            .createOrGetSession("linux_visible_ai")
             .expect("create visible terminal session");
         let manual = host
             .startPtySession(
                 "linux_visible_manual",
-                "linux",
+                TERMINAL,
+                PRIMARY_TERMINAL_TYPE,
                 &std::env::current_dir().unwrap().display().to_string(),
                 24,
                 80,
@@ -1426,16 +1738,16 @@ mod tests {
             .expect("manual terminal listed");
 
         assert_eq!(createdEntry.sessionKind, "pty");
-        assert_eq!(createdEntry.terminalType, "linux");
+        assert_eq!(createdEntry.terminalType, PRIMARY_TERMINAL_TYPE);
         assert_eq!(manualEntry.sessionKind, "pty");
-        assert_eq!(manualEntry.terminalType, "linux");
+        assert_eq!(manualEntry.terminalType, PRIMARY_TERMINAL_TYPE);
     }
 
     #[test]
     fn linux_pty_session_preserves_working_directory() {
         let host = NativePtyTerminalHost::new();
         let session = host
-            .createOrGetSession("linux_terminal_cwd", "linux")
+            .createOrGetSession("linux_terminal_cwd")
             .expect("create terminal session");
 
         let cdResult = host

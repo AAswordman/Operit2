@@ -14,6 +14,7 @@ storage = ["dep:operit-host-native-storage"]
 terminal = ["dep:operit-host-native-terminal"]
 
 [dependencies]
+operit-host-api = { path = "../../../core/crates/operit-host-api" }
 operit-host-native-filesystem = { path = "../operit-host-native-filesystem", optional = true }
 operit-host-native-http = { path = "../operit-host-native-http", optional = true }
 operit-host-native-scheduler = { path = "../operit-host-native-scheduler", optional = true }

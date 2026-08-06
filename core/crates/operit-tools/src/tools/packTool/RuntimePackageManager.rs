@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::runtime_support::{RuntimePluginAsset, ToolRuntimeSupport};
 use crate::tools::condition::ConditionEvaluator::{ConditionEvaluator, ConditionValue};
@@ -29,8 +30,8 @@ use operit_plugin_sdk::toolpkg::ToolPkgPackageService::{
     ToolPkgPackageHost, ToolPkgPackageService,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgParser::{
-    ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgResourceRuntime,
-    ToolPkgMarketOrigin, ToolPkgSourceType, ToolPkgSubpackageRuntime,
+    ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgMarketOrigin,
+    ToolPkgResourceRuntime, ToolPkgSourceType, ToolPkgSubpackageRuntime,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgProtection;
 use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
@@ -266,9 +267,32 @@ impl RuntimePackageManager {
         runtimeOptions: BTreeMap<String, serde_json::Value>,
         envOverrides: BTreeMap<String, String>,
     ) -> Result<Option<String>, String> {
-        self.getToolPkgExecutionEngine(contextKey, containerPackageName)
-            .execute_compose_dsl_script(script, &runtimeOptions, &envOverrides)
-            .map_err(|error| error.to_string())
+        let executionStarted = Instant::now();
+        let textResources = self.composeDslTextResources(containerPackageName)?;
+        AppLogger::d(
+            PACKAGE_MANAGER_LOG_TAG,
+            &format!(
+                "compose-render-start context={} package={} resourceEntries={}",
+                contextKey,
+                containerPackageName,
+                textResources.len()
+            ),
+        );
+        let result = self
+            .getToolPkgExecutionEngine(contextKey, containerPackageName)
+            .execute_compose_dsl_script(script, &runtimeOptions, &envOverrides, textResources)
+            .map_err(|error| error.to_string());
+        AppLogger::d(
+            PACKAGE_MANAGER_LOG_TAG,
+            &format!(
+                "compose-render-finish context={} package={} elapsedMs={} success={}",
+                contextKey,
+                containerPackageName,
+                executionStarted.elapsed().as_millis(),
+                result.is_ok()
+            ),
+        );
+        result
     }
 
     #[allow(non_snake_case)]
@@ -282,6 +306,14 @@ impl RuntimePackageManager {
         runtimeOptions: BTreeMap<String, serde_json::Value>,
         envOverrides: BTreeMap<String, String>,
     ) -> Result<Vec<String>, String> {
+        let executionStarted = Instant::now();
+        AppLogger::d(
+            PACKAGE_MANAGER_LOG_TAG,
+            &format!(
+                "compose-action-start context={} package={} action={}",
+                contextKey, containerPackageName, actionId
+            ),
+        );
         let events = Arc::new(Mutex::new(Vec::<String>::new()));
         let eventCollector = events.clone();
         let finalEvent = self
@@ -302,7 +334,19 @@ impl RuntimePackageManager {
             .lock()
             .expect("compose dsl event collector mutex poisoned")
             .clone();
-        if let Some(event) = finalEvent.map_err(|error| error.to_string())? {
+        let finalEvent = finalEvent.map_err(|error| error.to_string());
+        AppLogger::d(
+            PACKAGE_MANAGER_LOG_TAG,
+            &format!(
+                "compose-action-finish context={} package={} action={} elapsedMs={} success={}",
+                contextKey,
+                containerPackageName,
+                actionId,
+                executionStarted.elapsed().as_millis(),
+                finalEvent.is_ok()
+            ),
+        );
+        if let Some(event) = finalEvent? {
             output.push(event);
         }
         Ok(output)
@@ -621,6 +665,41 @@ impl RuntimePackageManager {
             &runtime.mainEntry,
             |destinationDir| self.extractToolPkgArchive(runtime, destinationDir),
         )
+    }
+
+    /// Collects the UTF-8 ToolPkg entries used by one Compose DSL page without host reentry.
+    #[allow(non_snake_case)]
+    fn composeDslTextResources(
+        &self,
+        containerPackageName: &str,
+    ) -> Result<Arc<BTreeMap<String, String>>, String> {
+        let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
+        let runtime = self
+            .toolPkgManager()
+            .getToolPkgContainerRuntime(&normalizedContainerPackageName)
+            .ok_or_else(|| {
+                format!(
+                    "Compose DSL container package is not registered: {normalizedContainerPackageName}"
+                )
+            })?;
+        let cacheDir = self.ensureToolPkgCache(&runtime).ok_or_else(|| {
+            format!("Compose DSL package cache is unavailable: {normalizedContainerPackageName}")
+        })?;
+        let entryIndex = ToolPkgArchiveParser::buildDirectoryEntryIndex(
+            self.fileSystemHost.as_ref(),
+            &hostPath(&cacheDir),
+        );
+        let mut textResources = BTreeMap::new();
+        for entryName in entryIndex.entryNames {
+            let Some(bytes) = self.readToolPkgResourceBytes(&runtime, &entryName) else {
+                continue;
+            };
+            let Ok(text) = String::from_utf8(bytes) else {
+                continue;
+            };
+            textResources.insert(entryName.to_ascii_lowercase(), text);
+        }
+        Ok(Arc::new(textResources))
     }
 
     #[allow(non_snake_case)]
@@ -3022,6 +3101,37 @@ impl RuntimePackageManager {
         runtimeKind: Option<&str>,
         onIntermediateResult: Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>,
     ) -> Result<Option<String>, String> {
+        self.runToolPkgMainHookWithTimeoutMillis(
+            containerPackageName,
+            functionName,
+            event,
+            eventName,
+            pluginId,
+            inlineFunctionSource,
+            eventPayload,
+            executionContextKey,
+            runtimeKind,
+            onIntermediateResult,
+            60_000,
+        )
+    }
+
+    #[allow(non_snake_case)]
+    /// Runs a main hook exported by a ToolPkg container with one explicit millisecond timeout.
+    pub fn runToolPkgMainHookWithTimeoutMillis(
+        &self,
+        containerPackageName: &str,
+        functionName: &str,
+        event: &str,
+        eventName: Option<&str>,
+        pluginId: Option<&str>,
+        inlineFunctionSource: Option<&str>,
+        eventPayload: serde_json::Value,
+        executionContextKey: Option<&str>,
+        runtimeKind: Option<&str>,
+        onIntermediateResult: Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>,
+        timeoutMillis: u64,
+    ) -> Result<Option<String>, String> {
         self.toolPkgManager().dispatchToolPkgHook(
             &self.getEnabledPackageNames(),
             ToolPkgHookInvocation {
@@ -3036,7 +3146,7 @@ impl RuntimePackageManager {
                 runtimeKind: runtimeKind.map(str::to_string),
                 envOverrides: BTreeMap::new(),
                 timestampMs: operit_host_api::TimeUtils::currentTimeMillis(),
-                timeoutSec: 60,
+                timeoutMillis,
                 dispatchIntermediateOnMain: true,
                 onIntermediateResult,
             },

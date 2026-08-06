@@ -1149,6 +1149,8 @@ pub trait ManagedRuntimeHost: Send + Sync {
 pub struct TerminalSessionInfo {
     pub sessionId: String,
     pub sessionName: String,
+    pub platform: String,
+    pub terminal: String,
     pub terminalType: String,
     pub isNewSession: bool,
 }
@@ -1159,6 +1161,8 @@ pub struct TerminalCommandOutput {
     pub output: String,
     pub exitCode: i32,
     pub sessionId: String,
+    pub platform: String,
+    pub terminal: String,
     pub terminalType: String,
     pub timedOut: bool,
 }
@@ -1169,6 +1173,8 @@ pub struct HiddenTerminalCommandOutput {
     pub output: String,
     pub exitCode: i32,
     pub executorKey: String,
+    pub platform: String,
+    pub terminal: String,
     pub terminalType: String,
     pub timedOut: bool,
 }
@@ -1189,6 +1195,8 @@ pub struct TerminalCloseOutput {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalScreenOutput {
     pub sessionId: String,
+    pub platform: String,
+    pub terminal: String,
     pub terminalType: String,
     pub rows: usize,
     pub cols: usize,
@@ -1200,6 +1208,8 @@ pub struct TerminalScreenOutput {
 pub struct TerminalSessionListEntry {
     pub sessionId: String,
     pub sessionName: String,
+    pub platform: String,
+    pub terminal: String,
     pub terminalType: String,
     pub sessionKind: String,
     pub workingDir: String,
@@ -1208,6 +1218,7 @@ pub struct TerminalSessionListEntry {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalTypeInfo {
+    pub terminal: String,
     pub terminalType: String,
     pub available: bool,
     pub description: String,
@@ -1216,7 +1227,8 @@ pub struct TerminalTypeInfo {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalInfo {
     pub platform: String,
-    pub defaultType: String,
+    pub terminal: String,
+    pub terminalType: String,
     pub types: Vec<TerminalTypeInfo>,
 }
 
@@ -1225,6 +1237,7 @@ pub trait TerminalHost: Send + Sync {
     fn startPtySession(
         &self,
         sessionName: &str,
+        terminal: &str,
         terminalType: &str,
         workingDir: &str,
         rows: u16,
@@ -1236,11 +1249,7 @@ pub trait TerminalHost: Send + Sync {
     fn pollPtyExitCode(&self, sessionId: &str) -> HostResult<Option<i32>>;
     fn closePtySession(&self, sessionId: &str) -> HostResult<()>;
     fn listSessions(&self) -> HostResult<Vec<TerminalSessionListEntry>>;
-    fn createOrGetSession(
-        &self,
-        sessionName: &str,
-        terminalType: &str,
-    ) -> HostResult<TerminalSessionInfo>;
+    fn createOrGetSession(&self, sessionName: &str) -> HostResult<TerminalSessionInfo>;
     fn executeInSession(
         &self,
         sessionId: &str,
@@ -1250,7 +1259,6 @@ pub trait TerminalHost: Send + Sync {
     fn executeHiddenCommand(
         &self,
         command: &str,
-        terminalType: &str,
         executorKey: &str,
         timeoutMs: u64,
     ) -> HostResult<HiddenTerminalCommandOutput>;
@@ -1302,6 +1310,11 @@ pub trait RuntimeStorageWriteSession: Send {
 
     /// Publishes the fully written storage file.
     fn commit(self: Box<Self>) -> HostResult<()>;
+
+    /// Publishes a fully written file without forcing a device flush for each entry.
+    fn commitFast(self: Box<Self>) -> HostResult<()> {
+        self.commit()
+    }
 
     /// Discards the pending storage file without publishing it.
     fn discard(self: Box<Self>) -> HostResult<()>;

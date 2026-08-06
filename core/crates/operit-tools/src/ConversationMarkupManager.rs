@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn package_payload_keeps_nested_type_field_as_text() {
-        let payload = r#"{"command":"Write-Output direct-package-ok","output":"direct-package-ok\n","exitCode":0,"sessionId":"super_admin_default_session","timedOut":false,"terminalEnvironment":{"__type":"TerminalInfoResultData","platform":"windows","defaultType":"powershell","types":[]}}"#;
+        let payload = r#"{"command":"Write-Output direct-package-ok","output":"direct-package-ok\n","exitCode":0,"sessionId":"super_admin_default_session","timedOut":false,"terminalEnvironment":{"__type":"TerminalInfoResultData","platform":"windows","terminal":"native","terminalType":"powershell","types":[]}}"#;
         let result = ToolResult {
             toolName: "super_admin:terminal".to_string(),
             success: true,

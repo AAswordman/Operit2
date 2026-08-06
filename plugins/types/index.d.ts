@@ -40,7 +40,7 @@ import {
     VisitWebResultData as _VisitWebResultData,
     TerminalInfoResultData as _TerminalInfoResultData,
     TerminalType as _TerminalType,
-    TerminalCreateType as _TerminalCreateType,
+    TerminalImplementation as _TerminalImplementation,
     TerminalTypeInfoData as _TerminalTypeInfoData,
     TerminalCommandResultData as _TerminalCommandResultData,
     TerminalStreamEventData as _TerminalStreamEventData,
@@ -180,7 +180,7 @@ declare global {
     type VisitWebResultData = _VisitWebResultData;
     type TerminalInfoResultData = _TerminalInfoResultData;
     type TerminalType = _TerminalType;
-    type TerminalCreateType = _TerminalCreateType;
+    type TerminalImplementation = _TerminalImplementation;
     type TerminalTypeInfoData = _TerminalTypeInfoData;
     type TerminalCommandResultData = _TerminalCommandResultData;
     type TerminalStreamEventData = _TerminalStreamEventData;

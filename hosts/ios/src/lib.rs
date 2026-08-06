@@ -11,8 +11,10 @@ use operit_host_api::HostManager::HostManager;
 use operit_host_api::RuntimeStorageHost;
 
 pub mod bridge;
+mod managed_runtime;
 pub mod terminal;
 
+pub use managed_runtime::IosManagedRuntimeHost;
 pub use operit_host_apple_native::{
     AppleAudioPlaybackHost as IosAudioPlaybackHost, AppleBluetoothHost as IosBluetoothHost,
     AppleFileSystemHost as IosFileSystemHost,
@@ -33,11 +35,13 @@ pub fn createRuntimeHostManager(
     runtimeRoot: PathBuf,
     workspaceRoot: PathBuf,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
+    managedRuntimeHost: Arc<dyn operit_host_api::ManagedRuntimeHost>,
 ) -> HostManager {
-    let runtimeStorageWriteHost = Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
-        runtimeRoot.clone(),
-        workspaceRoot.clone(),
-    ));
+    let runtimeStorageWriteHost =
+        Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
+            runtimeRoot.clone(),
+            workspaceRoot.clone(),
+        ));
     let runtimeStorageHost = Arc::new(IosRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
@@ -52,6 +56,7 @@ pub fn createRuntimeHostManager(
         Arc::new(IosSystemOperationHost::new()),
     );
     hostManager.httpHost = Some(Arc::new(IosHttpHost::new()));
+    hostManager.managedRuntimeHost = Some(managedRuntimeHost);
     hostManager.runtimeStorageHost = Some(runtimeStorageHost);
     hostManager.runtimeSqliteHost = Some(runtimeSqliteHost);
     hostManager = hostManager.withHostSecretStore(hostSecretStore);

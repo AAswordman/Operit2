@@ -24,6 +24,8 @@ use operit_util::stream::Stream::{CollectFuture, Stream};
 pub struct RuntimeTerminalSessionInfo {
     pub sessionId: String,
     pub sessionName: String,
+    pub platform: String,
+    pub terminal: String,
     pub terminalType: String,
     pub sessionKind: String,
     pub workingDir: String,
@@ -34,6 +36,8 @@ pub struct RuntimeTerminalSessionInfo {
 /// Current terminal screen snapshot returned by the host.
 pub struct RuntimeTerminalScreen {
     pub sessionId: String,
+    pub platform: String,
+    pub terminal: String,
     pub terminalType: String,
     pub rows: i32,
     pub cols: i32,
@@ -44,6 +48,7 @@ pub struct RuntimeTerminalScreen {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// Describes one terminal type that may be created by the active host.
 pub struct RuntimeTerminalTypeInfo {
+    pub terminal: String,
     pub terminalType: String,
     pub available: bool,
     pub description: String,
@@ -53,7 +58,8 @@ pub struct RuntimeTerminalTypeInfo {
 /// Describes all terminal types exposed by the active host.
 pub struct RuntimeTerminalInfo {
     pub platform: String,
-    pub defaultType: String,
+    pub terminal: String,
+    pub terminalType: String,
     pub types: Vec<RuntimeTerminalTypeInfo>,
 }
 
@@ -107,6 +113,8 @@ fn runtime_terminal_session_info(session: TerminalSessionListEntry) -> RuntimeTe
     RuntimeTerminalSessionInfo {
         sessionId: session.sessionId,
         sessionName: session.sessionName,
+        platform: session.platform,
+        terminal: session.terminal,
         terminalType: session.terminalType,
         sessionKind: session.sessionKind,
         workingDir: session.workingDir,
@@ -117,6 +125,7 @@ fn runtime_terminal_session_info(session: TerminalSessionListEntry) -> RuntimeTe
 /// Converts one host terminal type descriptor into the Core proxy model.
 fn runtime_terminal_type_info(terminal_type: TerminalTypeInfo) -> RuntimeTerminalTypeInfo {
     RuntimeTerminalTypeInfo {
+        terminal: terminal_type.terminal,
         terminalType: terminal_type.terminalType,
         available: terminal_type.available,
         description: terminal_type.description,
@@ -127,7 +136,8 @@ fn runtime_terminal_type_info(terminal_type: TerminalTypeInfo) -> RuntimeTermina
 fn runtime_terminal_info(info: TerminalInfo) -> RuntimeTerminalInfo {
     RuntimeTerminalInfo {
         platform: info.platform,
-        defaultType: info.defaultType,
+        terminal: info.terminal,
+        terminalType: info.terminalType,
         types: info
             .types
             .into_iter()
@@ -264,7 +274,7 @@ impl RuntimeTerminalService {
     pub fn defaultTerminalType(&self) -> Result<String, String> {
         self.terminalHost
             .terminalInfo()
-            .map(|info| info.defaultType)
+            .map(|info| info.terminalType)
             .map_err(|error| error.message)
     }
 
@@ -282,6 +292,7 @@ impl RuntimeTerminalService {
     pub fn startTerminalPty(
         &self,
         sessionName: String,
+        terminal: String,
         terminalType: String,
         workingDir: String,
         rows: i32,
@@ -292,6 +303,7 @@ impl RuntimeTerminalService {
             .terminalHost
             .startPtySession(
                 &sessionName,
+                &terminal,
                 &terminalType,
                 &resolvedWorkingDir,
                 rows as u16,
@@ -368,6 +380,8 @@ impl RuntimeTerminalService {
             .map_err(|error| error.message)
             .map(|screen| RuntimeTerminalScreen {
                 sessionId: screen.sessionId,
+                platform: screen.platform,
+                terminal: screen.terminal,
                 terminalType: screen.terminalType,
                 rows: screen.rows as i32,
                 cols: screen.cols as i32,

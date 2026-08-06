@@ -71,6 +71,7 @@ fn serializeChatInputHookResult(result: Option<ChatInputHookResult>) -> serde_js
             "text": result.text,
             "message": result.message,
             "clearInput": result.clearInput,
+            "timedOut": result.timedOut,
             "metadata": result.metadata,
         }),
         None => serde_json::Value::Null,

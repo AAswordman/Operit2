@@ -416,7 +416,8 @@ mod tests {
     use super::*;
     use operit_host_api::{
         HostError, HostResult, HttpDownloadControl, HttpDownloadProgressCallback,
-        HttpDownloadRequest, HttpDownloadResult, HttpResponseData,
+        HttpDownloadRequest, HttpDownloadResult, HttpResponseData, HttpStreamChunkCallback,
+        HttpStreamClosedCallback, HttpStreamHost, HttpStreamOpenedCallback,
     };
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
@@ -478,6 +479,25 @@ mod tests {
                 responses: Mutex::new(responses.into()),
                 requests: Mutex::new(Vec::new()),
             }
+        }
+    }
+
+    impl HttpStreamHost for TestHttpHost {
+        /// Rejects byte-stream requests because the broker test only uses buffered HTTP calls.
+        fn openHttpByteStream(
+            &self,
+            _streamId: String,
+            _request: HttpRequestData,
+            _onOpened: HttpStreamOpenedCallback,
+            _onChunk: HttpStreamChunkCallback,
+            _onClosed: HttpStreamClosedCallback,
+        ) -> HostResult<()> {
+            Err(HostError::new("unexpected broker HTTP byte stream request"))
+        }
+
+        /// Rejects byte-stream close requests because no test stream can be opened.
+        fn closeHttpByteStream(&self, _streamId: &str) -> HostResult<()> {
+            Err(HostError::new("unexpected broker HTTP byte stream close"))
         }
     }
 

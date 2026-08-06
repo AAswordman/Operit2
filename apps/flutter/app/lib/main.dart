@@ -148,11 +148,6 @@ void _installClientLogHooks() {
       error: details.exception,
       stackTrace: details.stack,
     );
-    UnhandledErrorReporter.report(
-      source: 'Flutter framework',
-      error: details.exception,
-      stackTrace: details.stack,
-    );
     FlutterError.presentError(details);
   };
 

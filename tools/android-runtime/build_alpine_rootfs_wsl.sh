@@ -192,7 +192,6 @@ build_rootfs_for_abi() {
     "$apk_static_dir/sbin/apk.static" \
         --root "$root_dir" \
         --arch "$alpine_arch" \
-        --usermode \
         --keys-dir "$root_dir/etc/apk/keys" \
         --repositories-file "$root_dir/etc/apk/repositories" \
         --no-cache \
