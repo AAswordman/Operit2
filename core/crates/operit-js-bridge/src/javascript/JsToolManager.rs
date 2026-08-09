@@ -497,6 +497,11 @@ mod tests {
             Err("Compose DSL WebView control is not part of this test".to_string())
         }
 
+        /// Rejects Compose DSL file-picker requests in manager tests.
+        fn open_compose_file_picker(&self, _payload_json: &str) -> Result<String, String> {
+            Err("Compose DSL file picking is not part of this test".to_string())
+        }
+
         /// Reports no imported packages in manager tests.
         fn is_package_imported(&self, _package_name: &str) -> Result<bool, String> {
             Ok(false)

@@ -102,6 +102,11 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         panic!("Compose DSL WebView control is not part of the plugin config test")
     }
 
+    /// Rejects unexpected Compose DSL file-picker requests.
+    fn open_compose_file_picker(&self, _payload_json: &str) -> Result<String, String> {
+        panic!("Compose DSL file picking is not part of the plugin config test")
+    }
+
     /// Rejects unexpected package state access.
     fn is_package_imported(&self, _package_name: &str) -> Result<bool, String> {
         panic!("Package state is not part of the plugin config test")

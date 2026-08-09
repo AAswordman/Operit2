@@ -15,6 +15,7 @@ import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart';
 import '../web_visit/WebVisitBridge.dart';
 import '../web_visit/WebVisitModels.dart';
+import 'ComposeDslFilePickerService.dart';
 import 'ComposeWebViewControllerBridge.dart';
 import 'browser/RuntimeBrowserSessionRegistry.dart';
 
@@ -60,6 +61,7 @@ class RuntimeHostInteractionSubscriber {
         RuntimeHostInteractionKind.browserSession,
         RuntimeHostInteractionKind.webVisit,
         RuntimeHostInteractionKind.composeWebViewController,
+        RuntimeHostInteractionKind.composeFilePicker,
         RuntimeHostInteractionKind.systemCaptureScreenshot,
         RuntimeHostInteractionKind.systemLanguageCode,
         RuntimeHostInteractionKind.systemRecognizeText,
@@ -193,6 +195,9 @@ class RuntimeHostInteractionSubscriber {
         _handleComposeWebViewController(
           _requirePayload(request.composeWebViewController, request.kind),
         ),
+      RuntimeHostInteractionKind.composeFilePicker => _handleComposeFilePicker(
+        _requirePayload(request.composeFilePicker, request.kind),
+      ),
       RuntimeHostInteractionKind.systemCaptureScreenshot =>
         _handleSystemCaptureScreenshot(),
       RuntimeHostInteractionKind.systemLanguageCode =>
@@ -398,6 +403,18 @@ class RuntimeHostInteractionSubscriber {
           RuntimeHostInteractionComposeWebViewControllerResponse(
             result: result,
           ),
+    );
+  }
+
+  /// Opens one Compose DSL file picker through the platform owner.
+  static Future<RuntimeHostInteractionResponse> _handleComposeFilePicker(
+    RuntimeHostInteractionComposeFilePickerPayload payload,
+  ) async {
+    final resultJson = await ComposeDslFilePickerService.open(payload.requestJson);
+    return _response(
+      composeFilePicker: RuntimeHostInteractionComposeFilePickerResponse(
+        resultJson: resultJson,
+      ),
     );
   }
 
@@ -633,6 +650,7 @@ class RuntimeHostInteractionSubscriber {
     RuntimeHostInteractionWebVisitResponse? webVisit,
     RuntimeHostInteractionComposeWebViewControllerResponse?
     composeWebViewController,
+    RuntimeHostInteractionComposeFilePickerResponse? composeFilePicker,
     RuntimeHostInteractionSystemCaptureScreenshotResponse?
     systemCaptureScreenshot,
     RuntimeHostInteractionSystemLanguageCodeResponse? systemLanguageCode,
@@ -654,6 +672,7 @@ class RuntimeHostInteractionSubscriber {
       browserSession: browserSession,
       webVisit: webVisit,
       composeWebViewController: composeWebViewController,
+      composeFilePicker: composeFilePicker,
       systemCaptureScreenshot: systemCaptureScreenshot,
       systemLanguageCode: systemLanguageCode,
       systemRecognizeText: systemRecognizeText,

@@ -1026,6 +1026,11 @@ impl ComposeDslFilePickerRequest {
 
         let mimeTypes = match options.mimeTypes {
             Some(values) => {
+                if values.is_empty() {
+                    return Err(HostError::new(
+                        "Compose DSL mimeTypes must not be empty when provided",
+                    ));
+                }
                 for (index, mimeType) in values.iter().enumerate() {
                     if !isValidComposeDslMimeType(mimeType) {
                         return Err(HostError::new(format!(
@@ -1063,11 +1068,19 @@ fn isValidComposeDslMimeType(value: &str) -> bool {
     let Some((major, minor)) = trimmed.split_once('/') else {
         return false;
     };
-    !major.is_empty()
-        && !minor.is_empty()
-        && !major.chars().any(char::is_whitespace)
-        && !minor.chars().any(char::is_whitespace)
+    value == trimmed
+        && isValidComposeDslMimeToken(major)
+        && isValidComposeDslMimeToken(minor)
         && !minor.contains('/')
+}
+
+/// Verifies one MIME type or subtype token accepted by Android document filtering.
+fn isValidComposeDslMimeToken(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '!' | '#' | '$' | '&' | '^' | '_' | '.' | '+' | '-' | '*')
+        })
 }
 
 pub trait ComposeDslWebViewHost: Send + Sync {
@@ -2357,5 +2370,41 @@ mod tests {
             missing.is_empty(),
             "OpenHarmony onboarding requirements are missing ids: {missing:?}"
         );
+    }
+
+    /// Verifies that omitted options produce the documented persistent document selection request.
+    #[test]
+    fn composeDslFilePickerDefaultsToDocumentSelection() {
+        let request = ComposeDslFilePickerRequest::parse(
+            r#"{"executionContextKey":"compose-route","options":{}}"#,
+        )
+        .expect("default Compose DSL file-picker request must parse");
+
+        assert_eq!(request.picker, ComposeDslFilePickerMode::Document);
+        assert_eq!(request.mimeTypes, vec!["*/*".to_string()]);
+        assert!(!request.allowMultiple);
+        assert!(request.persistPermission);
+    }
+
+    /// Verifies that visual-media requests cannot combine a system source with document MIME filters.
+    #[test]
+    fn composeDslFilePickerRejectsMimeTypesForVisualMedia() {
+        let error = ComposeDslFilePickerRequest::parse(
+            r#"{"executionContextKey":"compose-route","options":{"picker":"image","mimeTypes":["image/png"]}}"#,
+        )
+        .expect_err("visual-media picker MIME filters must be rejected");
+
+        assert!(error.to_string().contains("does not support mimeTypes"));
+    }
+
+    /// Verifies that a directory request cannot claim multi-selection support.
+    #[test]
+    fn composeDslFilePickerRejectsMultipleDirectories() {
+        let error = ComposeDslFilePickerRequest::parse(
+            r#"{"executionContextKey":"compose-route","options":{"picker":"directory","allowMultiple":true}}"#,
+        )
+        .expect_err("directory multi-selection must be rejected");
+
+        assert!(error.to_string().contains("does not support allowMultiple"));
     }
 }

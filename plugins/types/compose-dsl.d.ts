@@ -3588,19 +3588,28 @@ export interface ComposeResolveToolNameRequest {
 }
 
 /**
+ * Selects one source for the host file picker.
+ */
+export type ComposeFilePickerMode = "document" | "image" | "video" | "media" | "directory" | "camera";
+
+/**
  * Selection filters and permission behavior for the host file picker.
  */
 export interface ComposeFilePickerOptions {
   /**
-   * Accepted media types shown by the picker.
+   * Selection source; document selection is used when this field is absent.
+   */
+  picker?: ComposeFilePickerMode;
+  /**
+   * Accepted MIME types for document selection only.
    */
   mimeTypes?: string[];
   /**
-   * Whether the user may select more than one file.
+   * Whether the user may select more than one document or visual-media item.
    */
   allowMultiple?: boolean;
   /**
-   * Whether the host should retain URI access beyond the current session.
+   * Whether the host should retain document or directory URI access beyond the current session.
    */
   persistPermission?: boolean;
 }
@@ -3610,11 +3619,11 @@ export interface ComposeFilePickerOptions {
  */
 export interface ComposePickedFile {
   /**
-   * Platform URI granting access to the selected content.
+   * Stable URI representing the selected document, media item, directory, or capture.
    */
   uri: string;
   /**
-   * Resolved filesystem path when the provider exposes one.
+   * Temporary local path for document, visual-media, and camera results.
    */
   path?: string;
   /**

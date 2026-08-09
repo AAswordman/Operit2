@@ -55,6 +55,7 @@ class ToolApprovalBridge {
             browserSession: null,
             webVisit: null,
             composeWebViewController: null,
+            composeFilePicker: null,
             systemCaptureScreenshot: null,
             systemLanguageCode: null,
             systemRecognizeText: null,

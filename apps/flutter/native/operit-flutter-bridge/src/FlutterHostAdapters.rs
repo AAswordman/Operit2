@@ -4,8 +4,9 @@ use std::time::Duration;
 
 use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerBrowserAutomation, requestOwnerBrowserSession,
-    requestOwnerComposeWebViewController, requestOwnerWebVisit,
+    requestOwnerComposeFilePicker, requestOwnerComposeWebViewController, requestOwnerWebVisit,
     RuntimeHostInteractionBrowserAutomationPayload, RuntimeHostInteractionBrowserSessionPayload,
+    RuntimeHostInteractionComposeFilePickerPayload,
     RuntimeHostInteractionComposeWebViewControllerPayload, RuntimeHostInteractionWebVisitHeader,
     RuntimeHostInteractionWebVisitPayload,
 };
@@ -287,5 +288,23 @@ impl operit_host_api::ComposeDslWebViewHost for FlutterComposeDslWebViewBridge {
         )
         .map_err(operit_host_api::HostError::new)?;
         Ok(response.result)
+    }
+
+    /// Opens one Compose DSL file picker through the Flutter owner surface.
+    fn openFilePicker(
+        &self,
+        request: operit_host_api::ComposeDslFilePickerRequest,
+    ) -> operit_host_api::HostResult<String> {
+        let requestJson = serde_json::to_string(&request).map_err(|error| {
+            operit_host_api::HostError::new(format!(
+                "Compose DSL file picker request encode failed: {error}"
+            ))
+        })?;
+        let response = requestOwnerComposeFilePicker(
+            RuntimeHostInteractionComposeFilePickerPayload { requestJson },
+            Duration::from_secs(600),
+        )
+        .map_err(operit_host_api::HostError::new)?;
+        Ok(response.resultJson)
     }
 }

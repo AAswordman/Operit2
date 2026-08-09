@@ -2798,20 +2798,44 @@ pub struct ComposeResolveToolNameRequest {
     /// Whether an imported package binding should win over a local definition.
     pub preferImported: Option<bool>,
 }
+/// Selects one source for the host file picker.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ComposeFilePickerMode {
+    /// Opens the document picker with MIME filtering.
+    #[serde(rename = "document")]
+    Document,
+    /// Opens the system visual-media picker for images.
+    #[serde(rename = "image")]
+    Image,
+    /// Opens the system visual-media picker for videos.
+    #[serde(rename = "video")]
+    Video,
+    /// Opens the system visual-media picker for images and videos.
+    #[serde(rename = "media")]
+    Media,
+    /// Opens the directory picker.
+    #[serde(rename = "directory")]
+    Directory,
+    /// Opens the device camera for one JPEG capture.
+    #[serde(rename = "camera")]
+    Camera,
+}
 /// Selection filters and permission behavior for the host file picker.
 pub struct ComposeFilePickerOptions {
-    /// Accepted media types shown by the picker.
+    /// Selection source; document selection is used when this field is absent.
+    pub picker: Option<ComposeFilePickerMode>,
+    /// Accepted MIME types for document selection only.
     pub mimeTypes: Option<Vec<String>>,
-    /// Whether the user may select more than one file.
+    /// Whether the user may select more than one document or visual-media item.
     pub allowMultiple: Option<bool>,
-    /// Whether the host should retain URI access beyond the current session.
+    /// Whether the host should retain document or directory URI access beyond the current session.
     pub persistPermission: Option<bool>,
 }
 /// File metadata returned by the host picker.
 pub struct ComposePickedFile {
-    /// Platform URI granting access to the selected content.
+    /// Stable URI representing the selected document, media item, directory, or capture.
     pub uri: String,
-    /// Resolved filesystem path when the provider exposes one.
+    /// Temporary local path for document, visual-media, and camera results.
     pub path: Option<String>,
     /// Display name reported by the content provider.
     pub name: Option<String>,
