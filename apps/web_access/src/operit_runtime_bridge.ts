@@ -4512,7 +4512,7 @@ self.onmessage = (event) => {
 
   async function bridge() {
     if (!bridgePromise) {
-      const wasmModulePath = isModelInstallWorker()
+      const wasmModulePath = isModelInstallWorker() || isRuntimeWorker()
         ? "./operit_flutter_bridge_worker.js"
         : "./operit_flutter_bridge.js";
       const wasmModule = importRuntimeScript(wasmModulePath) as Promise<WasmBridgeModule>;
