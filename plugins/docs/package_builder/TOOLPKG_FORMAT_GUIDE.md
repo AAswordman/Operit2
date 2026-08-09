@@ -1157,22 +1157,15 @@ Native 路由 ID 命名规则：`native.<Screen对象名的snake_case>`，例如
 
 ```javascript
 const images = await ctx.openFilePicker({
-    picker: 'image',
+    picker: 'photo',
     allowMultiple: true
-});
-
-const directory = await ctx.openFilePicker({
-    picker: 'directory',
-    persistPermission: true
 });
 ```
 
-- `document`：支持 `mimeTypes`、`allowMultiple`、`persistPermission`；未设置 `mimeTypes` 时接受全部文档。
-- `image`、`video`、`media`：使用系统视觉媒体选择器，支持 `allowMultiple`，不接受 `mimeTypes` 或 `persistPermission`。
-- `directory`：支持 `persistPermission`，返回 URI，不返回本地路径。
-- `camera`：拍摄一张 JPEG 图片。
+- `document`：接受任意文件，支持 `allowMultiple`。
+- `photo`、`video`、`media`：分别限制为图片、视频、图片与视频，支持 `allowMultiple`。
 
-不适用于该 `picker` 的选项会直接报错。Android 的视觉媒体模式要求 Android 13 或更高版本；Linux、macOS 和 Windows 支持文档、视觉媒体和目录选择，但不支持相机；Web、iOS 和 Fuchsia 当前不支持该 API。文档、视觉媒体和相机结果提供应用临时目录下的 `path`；目录只提供 `uri`。
+该 API 通过 Flutter `file_selector` 在 Android、iOS、Linux、macOS、Windows、Web 和 OpenHarmony 使用各平台的文件选择器。不适用于该 `picker` 的选项会直接报错。结果提供平台文件路径或浏览器对象 URL。
 
 兼容说明：
 

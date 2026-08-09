@@ -936,26 +936,9 @@ pub trait BrowserSessionHost: Send + Sync {
 #[serde(rename_all = "lowercase")]
 pub enum ComposeDslFilePickerMode {
     Document,
-    Image,
+    Photo,
     Video,
     Media,
-    Directory,
-    Camera,
-}
-
-impl ComposeDslFilePickerMode {
-    /// Returns whether this picker can return more than one selected item.
-    pub fn supportsMultiple(&self) -> bool {
-        matches!(
-            self,
-            Self::Document | Self::Image | Self::Video | Self::Media
-        )
-    }
-
-    /// Returns whether this picker exposes persistable URI permissions.
-    pub fn supportsPersistPermission(&self) -> bool {
-        matches!(self, Self::Document | Self::Directory)
-    }
 }
 
 /// Compose DSL options that describe one file-picker request.
@@ -963,9 +946,7 @@ impl ComposeDslFilePickerMode {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ComposeDslFilePickerOptions {
     pub picker: Option<ComposeDslFilePickerMode>,
-    pub mimeTypes: Option<Vec<String>>,
     pub allowMultiple: Option<bool>,
-    pub persistPermission: Option<bool>,
 }
 
 /// A fully validated file-picker request issued by a Compose DSL screen.
@@ -975,9 +956,7 @@ pub struct ComposeDslFilePickerRequest {
     pub routeInstanceId: String,
     pub executionContextKey: String,
     pub picker: ComposeDslFilePickerMode,
-    pub mimeTypes: Vec<String>,
     pub allowMultiple: bool,
-    pub persistPermission: bool,
 }
 
 impl ComposeDslFilePickerRequest {
@@ -1005,82 +984,14 @@ impl ComposeDslFilePickerRequest {
 
         let options = raw.options;
         let picker = options.picker.unwrap_or(ComposeDslFilePickerMode::Document);
-        if options.mimeTypes.is_some() && picker != ComposeDslFilePickerMode::Document {
-            return Err(HostError::new(format!(
-                "Compose DSL picker {:?} does not support mimeTypes",
-                picker
-            )));
-        }
-        if options.allowMultiple.unwrap_or(false) && !picker.supportsMultiple() {
-            return Err(HostError::new(format!(
-                "Compose DSL picker {:?} does not support allowMultiple",
-                picker
-            )));
-        }
-        if options.persistPermission.is_some() && !picker.supportsPersistPermission() {
-            return Err(HostError::new(format!(
-                "Compose DSL picker {:?} does not support persistPermission",
-                picker
-            )));
-        }
-
-        let mimeTypes = match options.mimeTypes {
-            Some(values) => {
-                if values.is_empty() {
-                    return Err(HostError::new(
-                        "Compose DSL mimeTypes must not be empty when provided",
-                    ));
-                }
-                for (index, mimeType) in values.iter().enumerate() {
-                    if !isValidComposeDslMimeType(mimeType) {
-                        return Err(HostError::new(format!(
-                            "Compose DSL mimeTypes[{index}] must be a MIME type",
-                        )));
-                    }
-                }
-                values
-            }
-            None => vec!["*/*".to_string()],
-        };
 
         Ok(Self {
             routeInstanceId: raw.routeInstanceId.trim().to_string(),
             executionContextKey: executionContextKey.to_string(),
-            mimeTypes: if picker == ComposeDslFilePickerMode::Document {
-                mimeTypes
-            } else {
-                Vec::new()
-            },
             allowMultiple: options.allowMultiple.unwrap_or(false),
-            persistPermission: if picker.supportsPersistPermission() {
-                options.persistPermission.unwrap_or(true)
-            } else {
-                false
-            },
             picker,
         })
     }
-}
-
-/// Verifies the strict MIME syntax accepted by the document picker.
-fn isValidComposeDslMimeType(value: &str) -> bool {
-    let trimmed = value.trim();
-    let Some((major, minor)) = trimmed.split_once('/') else {
-        return false;
-    };
-    value == trimmed
-        && isValidComposeDslMimeToken(major)
-        && isValidComposeDslMimeToken(minor)
-        && !minor.contains('/')
-}
-
-/// Verifies one MIME type or subtype token accepted by Android document filtering.
-fn isValidComposeDslMimeToken(value: &str) -> bool {
-    !value.is_empty()
-        && value.chars().all(|character| {
-            character.is_ascii_alphanumeric()
-                || matches!(character, '!' | '#' | '$' | '&' | '^' | '_' | '.' | '+' | '-' | '*')
-        })
 }
 
 pub trait ComposeDslWebViewHost: Send + Sync {
@@ -2372,7 +2283,7 @@ mod tests {
         );
     }
 
-    /// Verifies that omitted options produce the documented persistent document selection request.
+    /// Verifies that omitted options produce the documented document selection request.
     #[test]
     fn composeDslFilePickerDefaultsToDocumentSelection() {
         let request = ComposeDslFilePickerRequest::parse(
@@ -2381,30 +2292,29 @@ mod tests {
         .expect("default Compose DSL file-picker request must parse");
 
         assert_eq!(request.picker, ComposeDslFilePickerMode::Document);
-        assert_eq!(request.mimeTypes, vec!["*/*".to_string()]);
         assert!(!request.allowMultiple);
-        assert!(request.persistPermission);
     }
 
-    /// Verifies that visual-media requests cannot combine a system source with document MIME filters.
+    /// Verifies that the unpublished MIME-only option is rejected by the cross-platform contract.
     #[test]
-    fn composeDslFilePickerRejectsMimeTypesForVisualMedia() {
+    fn composeDslFilePickerRejectsMimeTypes() {
         let error = ComposeDslFilePickerRequest::parse(
-            r#"{"executionContextKey":"compose-route","options":{"picker":"image","mimeTypes":["image/png"]}}"#,
+            r#"{"executionContextKey":"compose-route","options":{"mimeTypes":["image/png"]}}"#,
         )
-        .expect_err("visual-media picker MIME filters must be rejected");
+        .expect_err("MIME-only filter must be rejected");
 
-        assert!(error.to_string().contains("does not support mimeTypes"));
+        assert!(error.to_string().contains("mimeTypes"));
     }
 
-    /// Verifies that a directory request cannot claim multi-selection support.
+    /// Verifies that visual-media requests retain their multi-selection flag.
     #[test]
-    fn composeDslFilePickerRejectsMultipleDirectories() {
-        let error = ComposeDslFilePickerRequest::parse(
-            r#"{"executionContextKey":"compose-route","options":{"picker":"directory","allowMultiple":true}}"#,
+    fn composeDslFilePickerAllowsMultipleVisualMedia() {
+        let request = ComposeDslFilePickerRequest::parse(
+            r#"{"executionContextKey":"compose-route","options":{"picker":"media","allowMultiple":true}}"#,
         )
-        .expect_err("directory multi-selection must be rejected");
+        .expect("visual-media multi-selection must parse");
 
-        assert!(error.to_string().contains("does not support allowMultiple"));
+        assert_eq!(request.picker, ComposeDslFilePickerMode::Media);
+        assert!(request.allowMultiple);
     }
 }

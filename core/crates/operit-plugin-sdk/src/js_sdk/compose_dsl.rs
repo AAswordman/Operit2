@@ -2801,48 +2801,38 @@ pub struct ComposeResolveToolNameRequest {
 /// Selects one source for the host file picker.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ComposeFilePickerMode {
-    /// Opens the document picker with MIME filtering.
+    /// Opens the platform document picker.
     #[serde(rename = "document")]
     Document,
-    /// Opens the system visual-media picker for images.
-    #[serde(rename = "image")]
-    Image,
-    /// Opens the system visual-media picker for videos.
+    /// Opens the platform photo selector.
+    #[serde(rename = "photo")]
+    Photo,
+    /// Opens the platform video selector.
     #[serde(rename = "video")]
     Video,
-    /// Opens the system visual-media picker for images and videos.
+    /// Opens the platform photo and video selector.
     #[serde(rename = "media")]
     Media,
-    /// Opens the directory picker.
-    #[serde(rename = "directory")]
-    Directory,
-    /// Opens the device camera for one JPEG capture.
-    #[serde(rename = "camera")]
-    Camera,
 }
-/// Selection filters and permission behavior for the host file picker.
+/// Selection behavior for the host file picker.
 pub struct ComposeFilePickerOptions {
     /// Selection source; document selection is used when this field is absent.
     pub picker: Option<ComposeFilePickerMode>,
-    /// Accepted MIME types for document selection only.
-    pub mimeTypes: Option<Vec<String>>,
     /// Whether the user may select more than one document or visual-media item.
     pub allowMultiple: Option<bool>,
-    /// Whether the host should retain document or directory URI access beyond the current session.
-    pub persistPermission: Option<bool>,
 }
 /// File metadata returned by the host picker.
 pub struct ComposePickedFile {
-    /// Stable URI representing the selected document, media item, directory, or capture.
+    /// URI representing the selected document or media item.
     pub uri: String,
-    /// Temporary local path for document, visual-media, and camera results.
-    pub path: Option<String>,
+    /// Platform file path or browser object URL for the selected item.
+    pub path: String,
     /// Display name reported by the content provider.
     pub name: Option<String>,
     /// Media type reported for the selected file.
     pub mimeType: Option<String>,
-    /// File size in bytes when reported by the provider.
-    pub size: JsOptional<f64>,
+    /// File size in bytes.
+    pub size: f64,
 }
 /// Outcome of a host file-picker request.
 pub struct ComposeFilePickerResult {

@@ -3,116 +3,44 @@
 import 'dart:convert';
 
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 
-/// Routes validated Compose DSL picker requests to the current platform owner.
+/// Opens Compose DSL file-picker requests through Flutter's platform selector.
 class ComposeDslFilePickerService {
   ComposeDslFilePickerService._();
-
-  static const MethodChannel _androidChannel = MethodChannel(
-    'operit/compose_dsl_file_picker',
-  );
 
   /// Opens one picker request serialized by the Rust Compose DSL host boundary.
   static Future<String> open(String requestJson) async {
     final request = _ComposeDslFilePickerRequest.fromJson(requestJson);
-    if (kIsWeb) {
-      throw UnsupportedError('Compose DSL file picking is unavailable on web');
-    }
-    return switch (defaultTargetPlatform) {
-      TargetPlatform.android => _openAndroid(request),
-      TargetPlatform.linux ||
-      TargetPlatform.macOS ||
-      TargetPlatform.windows => _openDesktop(request),
-      TargetPlatform.iOS => throw UnsupportedError(
-        'Compose DSL file picking is unavailable on iOS',
-      ),
-      TargetPlatform.fuchsia => throw UnsupportedError(
-        'Compose DSL file picking is unavailable on Fuchsia',
-      ),
+    final typeGroups = _typeGroupsFor(request);
+    final files = request.allowMultiple
+        ? await openFiles(acceptedTypeGroups: typeGroups)
+        : await _openSingleFile(typeGroups);
+    final picked = await Future.wait(files.map(_PickedFile.fromXFile));
+    return _encodeResult(cancelled: files.isEmpty, files: picked);
+  }
+
+  /// Builds the platform-neutral file-selector filter for one validated picker mode.
+  static List<XTypeGroup> _typeGroupsFor(
+    _ComposeDslFilePickerRequest request,
+  ) {
+    return switch (request.picker) {
+      _ComposeDslFilePickerMode.document => const <XTypeGroup>[],
+      _ComposeDslFilePickerMode.photo => <XTypeGroup>[
+          _photoTypeGroup,
+        ],
+      _ComposeDslFilePickerMode.video => <XTypeGroup>[
+          _videoTypeGroup,
+        ],
+      _ComposeDslFilePickerMode.media => <XTypeGroup>[
+          _mediaTypeGroup,
+        ],
     };
   }
 
-  /// Sends one fully normalized request to the Android activity owner.
-  static Future<String> _openAndroid(
-    _ComposeDslFilePickerRequest request,
-  ) async {
-    final result = await _androidChannel.invokeMethod<String>(
-      'open',
-      request.toJson(),
-    );
-    if (result == null) {
-      throw StateError('Android Compose DSL file picker returned no result');
-    }
-    return result;
-  }
-
-  /// Opens a document, visual-media, or directory picker provided by file_selector.
-  static Future<String> _openDesktop(
-    _ComposeDslFilePickerRequest request,
-  ) async {
-    switch (request.picker) {
-      case _ComposeDslFilePickerMode.document:
-        return _openDesktopFiles(request, request.mimeTypes);
-      case _ComposeDslFilePickerMode.image:
-        return _openDesktopFiles(request, const <String>['image/*']);
-      case _ComposeDslFilePickerMode.video:
-        return _openDesktopFiles(request, const <String>['video/*']);
-      case _ComposeDslFilePickerMode.media:
-        return _openDesktopFiles(
-          request,
-          const <String>['image/*', 'video/*'],
-        );
-      case _ComposeDslFilePickerMode.directory:
-        return _openDesktopDirectory();
-      case _ComposeDslFilePickerMode.camera:
-        throw UnsupportedError('Compose DSL camera capture requires Android');
-    }
-  }
-
-  /// Opens the desktop file-selector dialog and serializes its selected files.
-  static Future<String> _openDesktopFiles(
-    _ComposeDslFilePickerRequest request,
-    List<String> mimeTypes,
-  ) async {
-    final groups = mimeTypes.length == 1 && mimeTypes.single == '*/*'
-        ? const <XTypeGroup>[]
-        : <XTypeGroup>[
-            XTypeGroup(label: 'Files', mimeTypes: mimeTypes),
-          ];
-    final files = request.allowMultiple
-        ? await openFiles(acceptedTypeGroups: groups)
-        : await _openSingleDesktopFile(groups);
-    if (files.isEmpty) {
-      return _encodeResult(cancelled: true, files: const <_PickedFile>[]);
-    }
-    final picked = await Future.wait(
-      files.map(_PickedFile.fromXFile),
-    );
-    return _encodeResult(cancelled: false, files: picked);
-  }
-
-  /// Opens the desktop single-file selector and normalizes its nullable result to a list.
-  static Future<List<XFile>> _openSingleDesktopFile(
-    List<XTypeGroup> groups,
-  ) async {
-    final file = await openFile(acceptedTypeGroups: groups);
+  /// Opens the single-file selector and normalizes a cancellation to an empty list.
+  static Future<List<XFile>> _openSingleFile(List<XTypeGroup> typeGroups) async {
+    final file = await openFile(acceptedTypeGroups: typeGroups);
     return file == null ? const <XFile>[] : <XFile>[file];
-  }
-
-  /// Opens the desktop directory selector and returns its URI-only result.
-  static Future<String> _openDesktopDirectory() async {
-    final directory = await getDirectoryPath();
-    if (directory == null) {
-      return _encodeResult(cancelled: true, files: const <_PickedFile>[]);
-    }
-    return _encodeResult(
-      cancelled: false,
-      files: <_PickedFile>[
-        _PickedFile(uri: Uri.directory(directory).toString()),
-      ],
-    );
   }
 
   /// Serializes the host-independent picker result returned to Compose DSL JavaScript.
@@ -127,29 +55,71 @@ class ComposeDslFilePickerService {
   }
 }
 
-/// Enumerates the normalized picker modes sent by the Rust host boundary.
-enum _ComposeDslFilePickerMode {
-  document,
-  image,
-  video,
-  media,
-  directory,
-  camera,
-}
+/// Enumerates the cross-platform picker modes accepted by the Rust host boundary.
+enum _ComposeDslFilePickerMode { document, photo, video, media }
+
+const XTypeGroup _photoTypeGroup = XTypeGroup(
+  label: 'Photos',
+  extensions: <String>[
+    'jpg',
+    'jpeg',
+    'png',
+    'gif',
+    'webp',
+    'heic',
+    'heif',
+    'bmp',
+    'tif',
+    'tiff',
+  ],
+  mimeTypes: <String>['image/*'],
+  uniformTypeIdentifiers: <String>['public.image'],
+  webWildCards: <String>['image/*'],
+);
+
+const XTypeGroup _videoTypeGroup = XTypeGroup(
+  label: 'Videos',
+  extensions: <String>['mp4', 'mov', 'm4v', 'avi', 'mkv', 'webm', '3gp'],
+  mimeTypes: <String>['video/*'],
+  uniformTypeIdentifiers: <String>['public.movie'],
+  webWildCards: <String>['video/*'],
+);
+
+const XTypeGroup _mediaTypeGroup = XTypeGroup(
+  label: 'Photos and videos',
+  extensions: <String>[
+    'jpg',
+    'jpeg',
+    'png',
+    'gif',
+    'webp',
+    'heic',
+    'heif',
+    'bmp',
+    'tif',
+    'tiff',
+    'mp4',
+    'mov',
+    'm4v',
+    'avi',
+    'mkv',
+    'webm',
+    '3gp',
+  ],
+  mimeTypes: <String>['image/*', 'video/*'],
+  uniformTypeIdentifiers: <String>['public.image', 'public.movie'],
+  webWildCards: <String>['image/*', 'video/*'],
+);
 
 /// Stores the fully validated, platform-neutral picker request.
 class _ComposeDslFilePickerRequest {
   const _ComposeDslFilePickerRequest({
     required this.picker,
-    required this.mimeTypes,
     required this.allowMultiple,
-    required this.persistPermission,
   });
 
   final _ComposeDslFilePickerMode picker;
-  final List<String> mimeTypes;
   final bool allowMultiple;
-  final bool persistPermission;
 
   /// Decodes the request generated by the Rust Compose DSL host API.
   factory _ComposeDslFilePickerRequest.fromJson(String rawJson) {
@@ -163,45 +133,23 @@ class _ComposeDslFilePickerRequest {
     }
     final picker = switch (pickerToken) {
       'document' => _ComposeDslFilePickerMode.document,
-      'image' => _ComposeDslFilePickerMode.image,
+      'photo' => _ComposeDslFilePickerMode.photo,
       'video' => _ComposeDslFilePickerMode.video,
       'media' => _ComposeDslFilePickerMode.media,
-      'directory' => _ComposeDslFilePickerMode.directory,
-      'camera' => _ComposeDslFilePickerMode.camera,
       _ => throw FormatException(
         'Unsupported Compose DSL file picker mode: $pickerToken',
       ),
     };
-    final rawMimeTypes = decoded['mimeTypes'];
-    if (rawMimeTypes is! List<Object?> ||
-        rawMimeTypes.any((mimeType) => mimeType is! String)) {
-      throw const FormatException(
-        'Compose DSL file picker mimeTypes must be a string array',
-      );
-    }
     final allowMultiple = decoded['allowMultiple'];
-    final persistPermission = decoded['persistPermission'];
-    if (allowMultiple is! bool || persistPermission is! bool) {
+    if (allowMultiple is! bool) {
       throw const FormatException(
-        'Compose DSL file picker booleans are missing or invalid',
+        'Compose DSL file picker allowMultiple is missing or invalid',
       );
     }
     return _ComposeDslFilePickerRequest(
       picker: picker,
-      mimeTypes: rawMimeTypes.cast<String>(),
       allowMultiple: allowMultiple,
-      persistPermission: persistPermission,
     );
-  }
-
-  /// Converts the request to the MethodChannel structure consumed by Android.
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      'picker': picker.name,
-      'mimeTypes': mimeTypes,
-      'allowMultiple': allowMultiple,
-      'persistPermission': persistPermission,
-    };
   }
 }
 
@@ -209,23 +157,26 @@ class _ComposeDslFilePickerRequest {
 class _PickedFile {
   const _PickedFile({
     required this.uri,
-    this.path,
-    this.name,
-    this.mimeType,
-    this.size,
+    required this.path,
+    required this.name,
+    required this.mimeType,
+    required this.size,
   });
 
   final String uri;
-  final String? path;
-  final String? name;
+  final String path;
+  final String name;
   final String? mimeType;
-  final int? size;
+  final int size;
 
-  /// Builds one result entry from a desktop file_selector result.
+  /// Builds one public result entry from a file_selector result.
   static Future<_PickedFile> fromXFile(XFile file) async {
     final path = file.path;
+    final parsedPath = Uri.tryParse(path);
     return _PickedFile(
-      uri: Uri.file(path).toString(),
+      uri: parsedPath?.scheme == 'blob'
+          ? parsedPath.toString()
+          : Uri.file(path).toString(),
       path: path,
       name: file.name,
       mimeType: file.mimeType,

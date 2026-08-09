@@ -55,15 +55,6 @@
             android:exported="false"
             android:process=":crash"
             android:theme="@style/NormalTheme" />
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.compose_dsl_file_picker"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/compose_dsl_file_picker_paths" />
-        </provider>
         <activity
             android:name=".core.tools.system.ScreenCaptureActivity"
             android:exported="false"

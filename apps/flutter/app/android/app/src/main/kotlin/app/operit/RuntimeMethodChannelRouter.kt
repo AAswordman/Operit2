@@ -13,7 +13,6 @@ class RuntimeMethodChannelRouter(
     private val ownerSystemChannel = ownerSystem
     private val androidPlatformChannel = AndroidPlatformChannel(activity, runtimeHost)
     private val snapshotImportInputChannel = SnapshotImportInputChannel(activity)
-    private val composeDslFilePickerChannel = ComposeDslFilePickerChannel(activity)
     private var runtimeChannel: MethodChannel? = null
 
     fun configure(messenger: BinaryMessenger) {
@@ -36,13 +35,11 @@ class RuntimeMethodChannelRouter(
             }
         }
         snapshotImportInputChannel.attach(messenger)
-        composeDslFilePickerChannel.attach(messenger)
     }
 
     fun clear() {
         coreLinkChannel.clear()
         snapshotImportInputChannel.clear()
-        composeDslFilePickerChannel.clear()
         runtimeChannel?.setMethodCallHandler(null)
         runtimeChannel = null
     }
@@ -60,11 +57,8 @@ class RuntimeMethodChannelRouter(
         return androidPlatformChannel.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 
-    /** Delivers one Android picker result to the channel that owns its selection. */
+    /** Delivers one Android document picker result to the snapshot input channel. */
     fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean {
-        if (composeDslFilePickerChannel.onActivityResult(requestCode, resultCode, data)) {
-            return true
-        }
         return snapshotImportInputChannel.onActivityResult(requestCode, resultCode, data)
     }
 }
