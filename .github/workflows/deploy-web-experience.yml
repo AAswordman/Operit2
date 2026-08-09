@@ -61,8 +61,16 @@ jobs:
         run: printf 'web.operit.app\n' > apps/web_access/build/bundle/CNAME
 
       - name: Publish to gh-pages branch
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: apps/web_access/build/bundle
+        run: |
+          staging_dir="$RUNNER_TEMP/operit-gh-pages"
+          rm -rf "$staging_dir"
+          mkdir -p "$staging_dir"
+          cp -a apps/web_access/build/bundle/. "$staging_dir/"
+          git checkout -B gh-pages "$GITHUB_SHA"
+          git rm -rf .
+          cp -a "$staging_dir/." .
+          git add --all
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "deploy: $GITHUB_SHA"
+          git push origin HEAD:gh-pages --force
