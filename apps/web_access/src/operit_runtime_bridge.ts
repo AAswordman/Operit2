@@ -550,6 +550,52 @@ interface RuntimeWorkerPendingRequest {
   reject(error: Error): void;
 }
 
+interface RuntimeWorkerPendingCommand {
+  operation: RuntimeWorkerCoreRequest["operation"];
+  payload: Uint8Array | string;
+}
+
+interface RuntimeWorkerLeaderRequest {
+  type: "coreRequest";
+  clientId: string;
+  clientRequestId: number;
+  operation: RuntimeWorkerCoreRequest["operation"];
+  payload: Uint8Array | string;
+}
+
+interface RuntimeWorkerLeaderRequestRoute {
+  clientId: string;
+  clientRequestId: number;
+  operation: RuntimeWorkerCoreRequest["operation"];
+  payload: Uint8Array | string;
+  disconnected: boolean;
+}
+
+interface RuntimeWorkerLeaderHostCallRoute {
+  clientId: string;
+  control: SharedArrayBuffer;
+}
+
+interface RuntimeWorkerLeaderMessage {
+  type?: string;
+  id?: number;
+  clientId?: string;
+  clientRequestId?: number;
+  operation?: RuntimeWorkerCoreRequest["operation"];
+  payload?: Uint8Array | string | SharedArrayBuffer;
+  response?: Uint8Array;
+  event?: Uint8Array;
+  message?: unknown;
+  module?: string;
+  method?: string;
+  args?: unknown[];
+  control?: SharedArrayBuffer;
+}
+
+interface RuntimeWorkerLockManager {
+  request(name: string, options: { mode: "exclusive" }, callback: () => Promise<void>): Promise<void>;
+}
+
 interface ModelInstallWorkerStorageChange {
   key: string;
   bytes: Uint8Array | null;
@@ -4966,29 +5012,230 @@ self.onmessage = (event) => {
     return { handled: true, response: MessagePack.encode([0, null]) };
   }
 
-  /** Installs the main-thread proxy that owns one local runtime worker. */
+  /** Installs an origin-wide coordinator with exactly one lock-owning Dedicated Worker. */
   function installRuntimeWorkerProxy(): void {
-    const worker = new Worker(new URL("./operit_runtime_worker.js", import.meta.url), {
-      type: "module",
-    });
+    const clientId = crypto.randomUUID();
+    const coordinator = new BroadcastChannel("operit-runtime-coordinator");
+    const locks = (navigator as Navigator & { locks?: RuntimeWorkerLockManager }).locks;
+    if (locks === undefined) {
+      throw new Error("Web Locks API is unavailable for the Web runtime");
+    }
+    let runtimeWorker: Worker | null = null;
+    let releaseLeadership: (() => void) | null = null;
+    let closed = false;
     let nextRequestId = 0;
+    let nextRuntimeRequestId = 0;
     const pendingRequests = new Map<number, RuntimeWorkerPendingRequest>();
+    const pendingCommands = new Map<number, RuntimeWorkerPendingCommand>();
     const watchCallbacks = new Map<number, (event: Uint8Array) => void>();
     const watchSubscriptions = new Map<string, number>();
     const hostPayloads = new Map<number, Uint8Array>();
+    const leaderRequests = new Map<number, RuntimeWorkerLeaderRequestRoute>();
+    const leaderRequestIds = new Map<string, Map<number, number>>();
+    const leaderWatchRequestIds = new Map<string, Map<string, number>>();
+    const leaderHostCalls = new Map<number, RuntimeWorkerLeaderHostCallRoute>();
+    const disconnectedHostPayloads = new Map<number, Uint8Array>();
 
-    worker.addEventListener("message", event => {
-      const message = event.data as {
-        type?: string;
-        id?: number;
-        response?: unknown;
-        message?: unknown;
-        event?: unknown;
+    coordinator.addEventListener("message", event => handleCoordinatorMessage(event.data));
+    runtimeGlobal.addEventListener("pagehide", disconnectRuntimeWorker);
+    void locks.request("operit-runtime-owner", { mode: "exclusive" }, runRuntimeLeadership).catch(rejectRuntimeRequests);
+
+    /** Holds the origin-wide lock for this page while its Dedicated Worker owns OPFS handles. */
+    async function runRuntimeLeadership(): Promise<void> {
+      const worker = new Worker(new URL("./operit_runtime_worker.js", import.meta.url), {
+        type: "module",
+        name: "operit-runtime-storage",
+      });
+      runtimeWorker = worker;
+      worker.addEventListener("message", handleRuntimeWorkerMessage);
+      coordinator.postMessage({ type: "leaderReady" });
+      forwardPendingRequests();
+      await new Promise<void>(resolve => {
+        releaseLeadership = resolve;
+      });
+      worker.terminate();
+      runtimeWorker = null;
+      releaseLeadership = null;
+    }
+
+    /** Routes one cross-page coordination message received from a different browser page. */
+    function handleCoordinatorMessage(value: unknown): void {
+      if (typeof value !== "object" || value === null) {
+        return;
+      }
+      if (isLeaderCoreRequest(value)) {
+        if (runtimeWorker !== null) {
+          forwardLeaderRequest(value);
+        }
+        return;
+      }
+      const message = value as RuntimeWorkerLeaderMessage;
+      if (message.type === "clientDisconnect" && typeof message.clientId === "string") {
+        if (runtimeWorker !== null) {
+          disconnectLeaderClient(message.clientId);
+        }
+        return;
+      }
+      if (message.type === "leaderReady") {
+        forwardPendingRequests();
+        return;
+      }
+      if (message.clientId !== clientId) {
+        return;
+      }
+      handleClientRuntimeMessage(message);
+    }
+
+    /** Sends one page-local Core request to the active owner or to the origin coordinator. */
+    function forwardPendingRequest(id: number, command: RuntimeWorkerPendingCommand): void {
+      const request: RuntimeWorkerLeaderRequest = {
+        type: "coreRequest",
+        clientId,
+        clientRequestId: id,
+        operation: command.operation,
+        payload: command.payload,
       };
+      if (runtimeWorker !== null) {
+        forwardLeaderRequest(request);
+        return;
+      }
+      coordinator.postMessage(request);
+    }
+
+    /** Replays outstanding page-local requests after this page or another page acquires the lock. */
+    function forwardPendingRequests(): void {
+      for (const [id, command] of pendingCommands) {
+        forwardPendingRequest(id, command);
+      }
+    }
+
+    /** Registers one globally routed request and dispatches it through the owner worker. */
+    function forwardLeaderRequest(request: RuntimeWorkerLeaderRequest): void {
+      const routedRequests = leaderRequestIdsFor(request.clientId);
+      if (routedRequests.has(request.clientRequestId)) {
+        return;
+      }
+      const worker = runtimeWorker;
+      if (worker === null) {
+        throw new Error("runtime owner worker is unavailable");
+      }
+      const id = ++nextRuntimeRequestId;
+      routedRequests.set(request.clientRequestId, id);
+      leaderRequests.set(id, {
+        clientId: request.clientId,
+        clientRequestId: request.clientRequestId,
+        operation: request.operation,
+        payload: request.payload,
+        disconnected: false,
+      });
+      worker.postMessage({ ...request, id });
+    }
+
+    /** Handles a result, event, or synchronous host message produced by the owner worker. */
+    function handleRuntimeWorkerMessage(event: MessageEvent<unknown>): void {
+      const message = event.data as RuntimeWorkerLeaderMessage;
+      if (message.type === "hostCall") {
+        forwardLeaderHostCall(message);
+        return;
+      }
+      if (message.type === "hostPayload") {
+        forwardLeaderHostPayload(message);
+        return;
+      }
+      if (message.type === "coreResult" || message.type === "coreError" || message.type === "coreWatchEvent") {
+        forwardLeaderRuntimeReply(message);
+      }
+    }
+
+    /** Routes one owner-worker reply to the page that issued its original Core request. */
+    function forwardLeaderRuntimeReply(message: RuntimeWorkerLeaderMessage): void {
+      if (typeof message.id !== "number") {
+        throw new Error("runtime worker reply is missing its request identifier");
+      }
+      const route = leaderRequests.get(message.id);
+      if (route === undefined) {
+        return;
+      }
+      if (message.type === "coreResult" && route.operation === "watchStream") {
+        const subscriptionId = watchSubscriptionId(message.response);
+        if (route.disconnected) {
+          if (subscriptionId !== null) {
+            closeDisconnectedWatch(route.clientId, subscriptionId);
+          }
+          forgetLeaderRequest(message.id, route);
+          return;
+        }
+        if (subscriptionId !== null) {
+          leaderWatchRequestIdsFor(route.clientId).set(subscriptionId, message.id);
+        }
+        deliverCoordinatorMessage(route.clientId, { ...message, id: route.clientRequestId });
+        return;
+      }
+      if (message.type === "coreResult" && route.operation === "closeWatchStream" && typeof route.payload === "string") {
+        const watchRequests = leaderWatchRequestIds.get(route.clientId);
+        const watchRequestId = watchRequests?.get(route.payload);
+        if (watchRequestId !== undefined) {
+          const watchRoute = leaderRequests.get(watchRequestId);
+          if (watchRoute !== undefined) {
+            forgetLeaderRequest(watchRequestId, watchRoute);
+          }
+          watchRequests?.delete(route.payload);
+          if (watchRequests?.size === 0) {
+            leaderWatchRequestIds.delete(route.clientId);
+          }
+        }
+      }
+      if (!route.disconnected) {
+        deliverCoordinatorMessage(route.clientId, { ...message, id: route.clientRequestId });
+      }
+      if (message.type !== "coreWatchEvent") {
+        forgetLeaderRequest(message.id, route);
+      }
+    }
+
+    /** Routes one synchronous Host call to the page that initiated its Core operation. */
+    function forwardLeaderHostCall(message: RuntimeWorkerLeaderMessage): void {
+      if (typeof message.id !== "number" || typeof message.clientId !== "string" || !(message.control instanceof SharedArrayBuffer)) {
+        throw new Error("runtime worker host call is invalid");
+      }
+      if (leaderClientHasDisconnectedRoute(message.clientId)) {
+        respondToDisconnectedHostCall(message.id, message.control);
+        return;
+      }
+      leaderHostCalls.set(message.id, { clientId: message.clientId, control: message.control });
+      deliverCoordinatorMessage(message.clientId, message);
+    }
+
+    /** Routes the second synchronous Host payload phase to the page that prepared its response. */
+    function forwardLeaderHostPayload(message: RuntimeWorkerLeaderMessage): void {
+      if (typeof message.id !== "number" || typeof message.clientId !== "string" || !(message.payload instanceof SharedArrayBuffer)) {
+        throw new Error("runtime worker host payload is invalid");
+      }
+      const disconnectedPayload = disconnectedHostPayloads.get(message.id);
+      if (disconnectedPayload !== undefined) {
+        completeDisconnectedHostPayload(message.id, message.payload, message.control, disconnectedPayload);
+        return;
+      }
+      leaderHostCalls.delete(message.id);
+      deliverCoordinatorMessage(message.clientId, message);
+    }
+
+    /** Delivers a coordinator message locally or through BroadcastChannel to its target page. */
+    function deliverCoordinatorMessage(targetClientId: string, message: RuntimeWorkerLeaderMessage): void {
+      if (targetClientId === clientId) {
+        handleClientRuntimeMessage(message);
+        return;
+      }
+      coordinator.postMessage(message);
+    }
+
+    /** Handles a result, Watch event, or synchronous Host phase delivered to this browser page. */
+    function handleClientRuntimeMessage(message: RuntimeWorkerLeaderMessage): void {
       if (message.type === "coreResult" && typeof message.id === "number" && message.response instanceof Uint8Array) {
         const pending = pendingRequests.get(message.id);
         if (pending !== undefined) {
           pendingRequests.delete(message.id);
+          pendingCommands.delete(message.id);
           pending.resolve(Uint8Array.from(message.response));
         }
         return;
@@ -4997,6 +5244,7 @@ self.onmessage = (event) => {
         const pending = pendingRequests.get(message.id);
         if (pending !== undefined) {
           pendingRequests.delete(message.id);
+          pendingCommands.delete(message.id);
           watchCallbacks.delete(message.id);
           pending.reject(new Error(String(message.message)));
         }
@@ -5013,23 +5261,26 @@ self.onmessage = (event) => {
       if (message.type === "hostPayload") {
         handleRuntimeWorkerHostPayload(message as RuntimeWorkerHostPayload, hostPayloads);
       }
-    });
+    }
 
-    /** Sends one Core command to the local runtime worker and retains its request identity. */
+    /** Sends one Core command through the origin-wide runtime owner and retains its request identity. */
     function request(
       operation: RuntimeWorkerCoreRequest["operation"],
       payload: Uint8Array | string,
       onWatchEvent?: (event: Uint8Array) => void,
     ): Promise<{ id: number; response: Uint8Array }> {
+      if (closed) {
+        return Promise.reject(new Error("runtime page coordinator is closed"));
+      }
       const id = ++nextRequestId;
       const response = new Promise<Uint8Array>((resolve, reject) => {
         pendingRequests.set(id, { resolve, reject });
       });
+      pendingCommands.set(id, { operation, payload });
       if (onWatchEvent !== undefined) {
         watchCallbacks.set(id, onWatchEvent);
       }
-      const message: RuntimeWorkerCoreRequest = { type: "coreRequest", id, operation, payload };
-      worker.postMessage(message);
+      forwardPendingRequest(id, { operation, payload });
       return response.then(value => ({ id, response: value }));
     }
 
@@ -5039,7 +5290,171 @@ self.onmessage = (event) => {
       if (requestId !== undefined) {
         watchSubscriptions.delete(subscriptionId);
         watchCallbacks.delete(requestId);
+        pendingCommands.delete(requestId);
       }
+    }
+
+    /** Releases this page's client routes and, when applicable, its origin-wide ownership lock. */
+    function disconnectRuntimeWorker(event: PageTransitionEvent): void {
+      if (event.persisted || closed) {
+        return;
+      }
+      closed = true;
+      if (runtimeWorker !== null) {
+        disconnectLeaderClient(clientId);
+      } else {
+        coordinator.postMessage({ type: "clientDisconnect", clientId });
+      }
+      coordinator.close();
+      releaseLeadership?.();
+    }
+
+    /** Cancels routes and synchronous Host phases belonging to a closed browser page. */
+    function disconnectLeaderClient(disconnectedClientId: string): void {
+      const watches = leaderWatchRequestIds.get(disconnectedClientId);
+      if (watches !== undefined) {
+        for (const [subscriptionId, requestId] of watches) {
+          const route = leaderRequests.get(requestId);
+          if (route !== undefined) {
+            forgetLeaderRequest(requestId, route);
+          }
+          closeDisconnectedWatch(disconnectedClientId, subscriptionId);
+        }
+        leaderWatchRequestIds.delete(disconnectedClientId);
+      }
+      for (const [requestId, route] of leaderRequests) {
+        if (route.clientId !== disconnectedClientId) {
+          continue;
+        }
+        route.disconnected = true;
+      }
+      for (const [hostCallId, route] of leaderHostCalls) {
+        if (route.clientId === disconnectedClientId) {
+          leaderHostCalls.delete(hostCallId);
+          respondToDisconnectedHostCall(hostCallId, route.control);
+        }
+      }
+    }
+
+    /** Reports whether a queued Core operation still belongs to a disconnected page. */
+    function leaderClientHasDisconnectedRoute(disconnectedClientId: string): boolean {
+      for (const route of leaderRequests.values()) {
+        if (route.clientId === disconnectedClientId && route.disconnected) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /** Closes one Watch belonging to a page that has already disconnected. */
+    function closeDisconnectedWatch(disconnectedClientId: string, subscriptionId: string): void {
+      const worker = runtimeWorker;
+      if (worker === null) {
+        throw new Error("runtime owner worker is unavailable while closing a disconnected Watch");
+      }
+      worker.postMessage({
+        type: "coreRequest",
+        id: ++nextRuntimeRequestId,
+        operation: "closeWatchStream",
+        payload: subscriptionId,
+        clientId: disconnectedClientId,
+      });
+    }
+
+    /** Wakes a blocked Dedicated Worker with a concrete disconnected-page Host error. */
+    function respondToDisconnectedHostCall(id: number, controlBuffer: SharedArrayBuffer): void {
+      const payload = MessagePack.encode([1, "web host page disconnected"]);
+      disconnectedHostPayloads.set(id, payload);
+      const control = new Int32Array(controlBuffer);
+      Atomics.store(control, 1, payload.byteLength);
+      Atomics.store(control, 0, 1);
+      Atomics.notify(control, 0);
+    }
+
+    /** Completes the Dedicated Worker's second Host payload phase after page disconnection. */
+    function completeDisconnectedHostPayload(
+      id: number,
+      payloadBuffer: SharedArrayBuffer,
+      controlBuffer: SharedArrayBuffer | undefined,
+      payload: Uint8Array,
+    ): void {
+      if (!(controlBuffer instanceof SharedArrayBuffer)) {
+        throw new Error("runtime worker disconnected host payload is missing its control buffer");
+      }
+      const destination = new Uint8Array(payloadBuffer);
+      if (destination.byteLength !== payload.byteLength) {
+        throw new Error("runtime worker disconnected host payload length is invalid");
+      }
+      destination.set(payload);
+      disconnectedHostPayloads.delete(id);
+      const control = new Int32Array(controlBuffer);
+      Atomics.store(control, 0, 2);
+      Atomics.notify(control, 0);
+    }
+
+    /** Returns the globally routed request map for one client page. */
+    function leaderRequestIdsFor(targetClientId: string): Map<number, number> {
+      let requests = leaderRequestIds.get(targetClientId);
+      if (requests === undefined) {
+        requests = new Map<number, number>();
+        leaderRequestIds.set(targetClientId, requests);
+      }
+      return requests;
+    }
+
+    /** Returns the active Watch map for one client page. */
+    function leaderWatchRequestIdsFor(targetClientId: string): Map<string, number> {
+      let watches = leaderWatchRequestIds.get(targetClientId);
+      if (watches === undefined) {
+        watches = new Map<string, number>();
+        leaderWatchRequestIds.set(targetClientId, watches);
+      }
+      return watches;
+    }
+
+    /** Removes one terminal request from the owner routing tables. */
+    function forgetLeaderRequest(runtimeRequestId: number, route: RuntimeWorkerLeaderRequestRoute): void {
+      leaderRequests.delete(runtimeRequestId);
+      const requests = leaderRequestIds.get(route.clientId);
+      requests?.delete(route.clientRequestId);
+      if (requests?.size === 0) {
+        leaderRequestIds.delete(route.clientId);
+      }
+    }
+
+    /** Rejects local requests when acquiring or maintaining the Web Lock fails. */
+    function rejectRuntimeRequests(error: unknown): void {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      for (const pending of pendingRequests.values()) {
+        pending.reject(failure);
+      }
+      pendingRequests.clear();
+      pendingCommands.clear();
+      watchCallbacks.clear();
+    }
+
+    /** Validates a Core request transported between browser pages. */
+    function isLeaderCoreRequest(value: unknown): value is RuntimeWorkerLeaderRequest {
+      if (typeof value !== "object" || value === null) {
+        return false;
+      }
+      const request = value as Partial<RuntimeWorkerLeaderRequest>;
+      return request.type === "coreRequest" &&
+        typeof request.clientId === "string" &&
+        typeof request.clientRequestId === "number" &&
+        typeof request.operation === "string" &&
+        (request.payload instanceof Uint8Array || typeof request.payload === "string");
+    }
+
+    /** Decodes a successful Watch subscription response emitted by the Core protocol. */
+    function watchSubscriptionId(response: Uint8Array | undefined): string | null {
+      if (response === undefined) {
+        return null;
+      }
+      const decoded = MessagePack.decode(response);
+      return Array.isArray(decoded) && decoded.length === 2 && decoded[0] === 0 && typeof decoded[1] === "string"
+        ? decoded[1]
+        : null;
     }
 
     runtimeGlobal.__operitRuntime = {
@@ -5063,9 +5478,9 @@ self.onmessage = (event) => {
         onEvent: (event: Uint8Array) => void,
       ): Promise<Uint8Array> {
         const result = await request("watchStream", requestBytes, onEvent);
-        const decoded = MessagePack.decode(result.response);
-        if (Array.isArray(decoded) && decoded.length === 2 && decoded[0] === 0 && typeof decoded[1] === "string") {
-          watchSubscriptions.set(decoded[1], result.id);
+        const subscriptionId = watchSubscriptionId(result.response);
+        if (subscriptionId !== null) {
+          watchSubscriptions.set(subscriptionId, result.id);
         }
         return result.response;
       },

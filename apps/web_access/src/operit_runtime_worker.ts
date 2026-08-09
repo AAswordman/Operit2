@@ -27,6 +27,7 @@ interface WorkerSyncAccessHandle {
   write(buffer: Uint8Array, options?: { at?: number }): number;
   truncate(size: number): void;
   flush(): void;
+  close(): void;
 }
 
 interface WorkerFileHandle {
@@ -97,6 +98,7 @@ interface WorkerCoreRequest {
   id: number;
   operation: WorkerCoreOperation;
   payload: Uint8Array | string;
+  clientId?: string;
 }
 
 interface WorkerHostCall {
@@ -106,6 +108,7 @@ interface WorkerHostCall {
   method: string;
   args: unknown[];
   control: SharedArrayBuffer;
+  clientId?: string;
 }
 
 interface WorkerHostPayload {
@@ -113,6 +116,7 @@ interface WorkerHostPayload {
   id: number;
   payload: SharedArrayBuffer;
   control: SharedArrayBuffer;
+  clientId?: string;
 }
 
 type WorkerInboundMessage = WorkerCoreRequest | WorkerHostPayload;
@@ -142,8 +146,11 @@ const textDecoder = new TextDecoder();
 
 let runtimeStorage: RuntimeWorkerStorage | null = null;
 let archiveStaging: RuntimeWorkerArchiveStaging | null = null;
+let runtimeStorageInitialization: Promise<void> | null = null;
 let nextHostCallId = 0;
 const mainHostModules = new Map<string, object>();
+let activeHostClientId: string | null = null;
+let runtimeOperationQueue: Promise<void> = Promise.resolve();
 
 workerGlobal.__OPERIT_RUNTIME_WORKER__ = true;
 workerGlobal.__operitRuntimeWorkerEnsureStorage = initializeRuntimeWorkerStorage;
@@ -175,10 +182,23 @@ function handleWorkerMessage(event: MessageEvent<unknown>): void {
     return;
   }
   if (isWorkerCoreRequest(message)) {
-    void workerReady.then(() => executeCoreRequest(message), error => {
-      postWorkerMessage({ type: "coreError", id: message.id, message: errorMessage(error) });
-    });
+    enqueueCoreRequest(message);
   }
+}
+
+/** Serializes Core calls so synchronous host callbacks retain their originating page. */
+function enqueueCoreRequest(message: WorkerCoreRequest): void {
+  const execute = async (): Promise<void> => {
+    try {
+      await workerReady;
+      await executeCoreRequest(message);
+    } catch (error) {
+      postWorkerMessage(
+        { type: "coreError", id: message.id, message: errorMessage(error), clientId: message.clientId },
+      );
+    }
+  };
+  runtimeOperationQueue = runtimeOperationQueue.then(execute, execute);
 }
 
 /** Validates one Core command received from the browser UI thread. */
@@ -207,6 +227,8 @@ function isWorkerHostPayload(value: unknown): value is WorkerHostPayload {
 
 /** Dispatches one Core request to the worker-owned WebAssembly runtime. */
 async function executeCoreRequest(message: WorkerCoreRequest): Promise<void> {
+  const previousClientId = activeHostClientId;
+  activeHostClientId = message.clientId ?? null;
   try {
     const runtime = workerGlobal.__operitRuntime;
     if (runtime === undefined) {
@@ -214,9 +236,16 @@ async function executeCoreRequest(message: WorkerCoreRequest): Promise<void> {
     }
     const result = await invokeRuntimeOperation(runtime, message);
     const response = Uint8Array.from(result);
-    postWorkerMessage({ type: "coreResult", id: message.id, response }, [response.buffer]);
+    postWorkerMessage(
+      { type: "coreResult", id: message.id, response, clientId: message.clientId },
+      [response.buffer],
+    );
   } catch (error) {
-    postWorkerMessage({ type: "coreError", id: message.id, message: errorMessage(error) });
+    postWorkerMessage(
+      { type: "coreError", id: message.id, message: errorMessage(error), clientId: message.clientId },
+    );
+  } finally {
+    activeHostClientId = previousClientId;
   }
 }
 
@@ -244,7 +273,7 @@ function invokeRuntimeOperation(
     return runtime.watchStream(requireBytesPayload(message), event => {
       const copiedEvent = Uint8Array.from(event);
       postWorkerMessage(
-        { type: "coreWatchEvent", id: message.id, event: copiedEvent },
+        { type: "coreWatchEvent", id: message.id, event: copiedEvent, clientId: message.clientId },
         [copiedEvent.buffer],
       );
     });
@@ -333,7 +362,15 @@ function callMainHost(module: string, method: string, args: unknown[]): unknown 
   const id = ++nextHostCallId;
   const controlBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
   const control = new Int32Array(controlBuffer);
-  postWorkerMessage({ type: "hostCall", id, module, method, args, control: controlBuffer });
+  postWorkerMessage({
+    type: "hostCall",
+    id,
+    module,
+    method,
+    args,
+    control: controlBuffer,
+    clientId: activeHostClientId ?? undefined,
+  });
   Atomics.wait(control, controlStateIndex, 0);
   if (Atomics.load(control, controlStateIndex) !== controlReady) {
     throw new Error("main-thread host did not provide response metadata");
@@ -344,7 +381,13 @@ function callMainHost(module: string, method: string, args: unknown[]): unknown 
   }
   const payloadBuffer = new SharedArrayBuffer(payloadLength);
   Atomics.store(control, controlStateIndex, 0);
-  postWorkerMessage({ type: "hostPayload", id, payload: payloadBuffer, control: controlBuffer });
+  postWorkerMessage({
+    type: "hostPayload",
+    id,
+    payload: payloadBuffer,
+    control: controlBuffer,
+    clientId: activeHostClientId ?? undefined,
+  });
   Atomics.wait(control, controlStateIndex, 0);
   if (Atomics.load(control, controlStateIndex) !== controlPayloadReady) {
     throw new Error("main-thread host did not provide response payload");
@@ -392,10 +435,36 @@ async function initializeRuntimeWorkerStorage(): Promise<void> {
   if (runtimeStorage !== null && archiveStaging !== null) {
     return;
   }
+  const activeInitialization = runtimeStorageInitialization;
+  if (activeInitialization !== null) {
+    return activeInitialization;
+  }
+  const initialization = initializeRuntimeWorkerStorageOnce();
+  runtimeStorageInitialization = initialization;
+  try {
+    await initialization;
+  } finally {
+    if (runtimeStorageInitialization === initialization) {
+      runtimeStorageInitialization = null;
+    }
+  }
+}
+
+/** Opens and publishes the worker-owned OPFS stores as one all-or-nothing operation. */
+async function initializeRuntimeWorkerStorageOnce(): Promise<void> {
   const root = await runtimeOpfsRoot();
-  runtimeStorage = await RuntimeWorkerStorage.open(root);
-  archiveStaging = await RuntimeWorkerArchiveStaging.open(root);
-  await runtimeStorage.migrateLegacyEntries();
+  const storage = await RuntimeWorkerStorage.open(root);
+  let staging: RuntimeWorkerArchiveStaging | null = null;
+  try {
+    staging = await RuntimeWorkerArchiveStaging.open(root);
+    await storage.migrateLegacyEntries();
+    runtimeStorage = storage;
+    archiveStaging = staging;
+  } catch (error) {
+    staging?.close();
+    storage.close();
+    throw error;
+  }
 }
 
 /** Returns the OPFS root available only to the dedicated runtime worker. */
@@ -507,10 +576,24 @@ class RuntimeWorkerStorage {
 
   /** Opens the persistent runtime OPFS files and validates the existing metadata index. */
   static async open(root: WorkerDirectoryHandle): Promise<RuntimeWorkerStorage> {
-    const data = await openSyncAccessHandle(root, runtimeStorageDataFileName);
-    const index = await openSyncAccessHandle(root, runtimeStorageIndexFileName);
-    const loaded = readRuntimeStorageIndex(index, data.getSize());
-    return new RuntimeWorkerStorage(data, index, loaded.records, loaded.migrated);
+    let data: WorkerSyncAccessHandle | null = null;
+    let index: WorkerSyncAccessHandle | null = null;
+    try {
+      data = await openSyncAccessHandle(root, runtimeStorageDataFileName);
+      index = await openSyncAccessHandle(root, runtimeStorageIndexFileName);
+      const loaded = readRuntimeStorageIndex(index, data.getSize());
+      return new RuntimeWorkerStorage(data, index, loaded.records, loaded.migrated);
+    } catch (error) {
+      index?.close();
+      data?.close();
+      throw error;
+    }
+  }
+
+  /** Releases the worker-owned OPFS access handles after an unsuccessful initialization. */
+  close(): void {
+    this.index.close();
+    this.data.close();
   }
 
   /** Migrates legacy IndexedDB entries without retaining their contents in a browser-wide map. */
@@ -699,9 +782,19 @@ class RuntimeWorkerArchiveStaging {
   /** Opens the temporary OPFS archive container and removes stale abandoned contents. */
   static async open(root: WorkerDirectoryHandle): Promise<RuntimeWorkerArchiveStaging> {
     const data = await openSyncAccessHandle(root, archiveStagingDataFileName);
-    data.truncate(0);
-    data.flush();
-    return new RuntimeWorkerArchiveStaging(data);
+    try {
+      data.truncate(0);
+      data.flush();
+      return new RuntimeWorkerArchiveStaging(data);
+    } catch (error) {
+      data.close();
+      throw error;
+    }
+  }
+
+  /** Releases the temporary archive OPFS handle after an unsuccessful initialization. */
+  close(): void {
+    this.data.close();
   }
 
   /** Reserves one exact archive range under an opaque runtime-owned identifier. */
@@ -881,7 +974,10 @@ function validateArchiveId(archiveId: string): void {
 }
 
 /** Posts one structured message to the browser UI thread. */
-function postWorkerMessage(message: object, transferables: Transferable[] = []): void {
+function postWorkerMessage(
+  message: object,
+  transferables: Transferable[] = [],
+): void {
   const post = workerGlobal.postMessage as unknown as (
     payload: object,
     transfers: Transferable[],
