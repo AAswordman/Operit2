@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Instant;
 
-use operit_host_api::{HttpHost, HttpRequestData, HttpResponseData};
+use operit_host_api::{HttpHost, HttpRequestData, HttpResponseData, TimeUtils::currentTimeMillis};
 use operit_util::AppLogger::AppLogger;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -1171,7 +1170,7 @@ impl MarketStatsApiService {
     ) -> Result<HttpResponseData, String> {
         let is_market_request =
             url.starts_with(MARKET_V2_BASE_URL) || url.starts_with(MARKET_V2_STATIC_URL);
-        let request_started_at = Instant::now();
+        let requestStartedAtMillis = currentTimeMillis();
         if is_market_request {
             AppLogger::d(
                 MARKET_API_LOG_TAG,
@@ -1208,7 +1207,7 @@ impl MarketStatsApiService {
                             "HTTP RESP {} status={} elapsedMs={} url={} responseBytes={}",
                             method,
                             response.statusCode,
-                            request_started_at.elapsed().as_millis(),
+                            currentTimeMillis() - requestStartedAtMillis,
                             url,
                             response.body.len()
                         ),
@@ -1223,7 +1222,7 @@ impl MarketStatsApiService {
                         &format!(
                             "HTTP FAIL {} elapsedMs={} url={} error={}",
                             method,
-                            request_started_at.elapsed().as_millis(),
+                            currentTimeMillis() - requestStartedAtMillis,
                             url,
                             error
                         ),

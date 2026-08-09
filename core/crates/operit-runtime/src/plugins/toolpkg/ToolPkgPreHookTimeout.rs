@@ -1,10 +1,9 @@
-use std::time::{Duration, Instant};
-
 use crate::data::preferences::ApiPreferences::ApiPreferences;
+use operit_host_api::TimeUtils::currentTimeMillis;
 
 /// Tracks the single total deadline shared by one ToolPkg pre-hook dispatch chain.
 pub struct ToolPkgPreHookTimeout {
-    deadline: Instant,
+    deadlineMillis: i64,
 }
 
 impl ToolPkgPreHookTimeout {
@@ -18,19 +17,22 @@ impl ToolPkgPreHookTimeout {
 
     /// Creates a deadline with the supplied whole-second duration.
     pub fn fromSeconds(seconds: i32) -> Self {
-        let duration = Duration::from_secs(seconds.clamp(1, 60) as u64);
+        let durationMillis = i64::from(seconds.clamp(1, 60)) * 1000;
         Self {
-            deadline: Instant::now() + duration,
+            deadlineMillis: currentTimeMillis() + durationMillis,
         }
     }
 
     /// Returns the timeout milliseconds derived from the remaining shared deadline.
     #[allow(non_snake_case)]
     pub fn remainingTimeoutMillis(&self) -> Option<u64> {
-        let remaining = self.deadline.checked_duration_since(Instant::now())?;
-        let millis = u64::try_from(remaining.as_millis())
+        let remainingMillis = self.deadlineMillis - currentTimeMillis();
+        if remainingMillis <= 0 {
+            return None;
+        }
+        let millis = u64::try_from(remainingMillis)
             .expect("ToolPkg pre-hook remaining timeout must fit into u64 milliseconds");
-        Some(millis.max(1))
+        Some(millis)
     }
 
     /// Identifies the timeout error emitted by the JavaScript hook executor.
@@ -42,7 +44,7 @@ impl ToolPkgPreHookTimeout {
     /// Reports whether the shared pre-hook deadline has elapsed.
     #[allow(non_snake_case)]
     pub fn hasExpired(&self) -> bool {
-        Instant::now() >= self.deadline
+        currentTimeMillis() >= self.deadlineMillis
     }
 }
 

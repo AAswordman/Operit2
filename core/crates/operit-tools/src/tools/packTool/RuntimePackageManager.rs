@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use crate::runtime_support::{RuntimePluginAsset, ToolRuntimeSupport};
 use crate::tools::condition::ConditionEvaluator::{ConditionEvaluator, ConditionValue};
@@ -13,7 +12,7 @@ use crate::tools::skill::SkillManager::SkillManager;
 use crate::tools::ToolJsRuntime::{JsExecutionEngine, JsExecutionProvider};
 use crate::tools::ToolResultDataClasses::stringResultData;
 use crate::ConversationMarkupManager::ToolResult;
-use operit_host_api::{FileSystemHost, HostManager::HostManager};
+use operit_host_api::{FileSystemHost, HostManager::HostManager, TimeUtils::currentTimeMillis};
 use operit_plugin_sdk::javascript::{JsToolPkgWasmRequest, JsToolPkgWasmResult};
 use operit_plugin_sdk::package::{LocalizedText, PublishablePackageSource, ToolPackage};
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::{ToolPkgHookDispatcher, ToolPkgHookInvocation};
@@ -267,7 +266,7 @@ impl RuntimePackageManager {
         runtimeOptions: BTreeMap<String, serde_json::Value>,
         envOverrides: BTreeMap<String, String>,
     ) -> Result<Option<String>, String> {
-        let executionStarted = Instant::now();
+        let executionStartedMillis = currentTimeMillis();
         let textResources = self.composeDslTextResources(containerPackageName)?;
         AppLogger::d(
             PACKAGE_MANAGER_LOG_TAG,
@@ -288,7 +287,7 @@ impl RuntimePackageManager {
                 "compose-render-finish context={} package={} elapsedMs={} success={}",
                 contextKey,
                 containerPackageName,
-                executionStarted.elapsed().as_millis(),
+                currentTimeMillis() - executionStartedMillis,
                 result.is_ok()
             ),
         );
@@ -306,7 +305,7 @@ impl RuntimePackageManager {
         runtimeOptions: BTreeMap<String, serde_json::Value>,
         envOverrides: BTreeMap<String, String>,
     ) -> Result<Vec<String>, String> {
-        let executionStarted = Instant::now();
+        let executionStartedMillis = currentTimeMillis();
         AppLogger::d(
             PACKAGE_MANAGER_LOG_TAG,
             &format!(
@@ -342,7 +341,7 @@ impl RuntimePackageManager {
                 contextKey,
                 containerPackageName,
                 actionId,
-                executionStarted.elapsed().as_millis(),
+                currentTimeMillis() - executionStartedMillis,
                 finalEvent.is_ok()
             ),
         );

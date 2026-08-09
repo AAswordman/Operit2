@@ -107,6 +107,7 @@ apps/web_access/web/operit_flutter_bridge.js
 apps/web_access/web/operit_flutter_bridge_bg.wasm
 apps/web_access/web/operit_flutter_bridge_worker.js
 apps/web_access/web/operit_runtime_bridge.js
+apps/web_access/web/operit_runtime_worker.js
 apps/web_access/web/operit_model_install_worker.js
 apps/web_access/web/v86_runtime_worker.js
 apps/web_access/web/operit_flutter_bridge*.d
