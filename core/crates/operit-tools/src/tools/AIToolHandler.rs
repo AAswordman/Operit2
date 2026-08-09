@@ -1417,6 +1417,18 @@ impl JsExecutionHost for AIToolHandler {
             .map_err(|error| error.to_string())
     }
 
+    /// Decodes and forwards one Compose DSL file-picker request to the registered host owner.
+    fn open_compose_file_picker(&self, payload_json: &str) -> Result<String, String> {
+        let request = operit_host_api::ComposeDslFilePickerRequest::parse(payload_json)
+            .map_err(|error| error.to_string())?;
+        self.getContext()
+            .composeDslWebViewHost
+            .as_ref()
+            .ok_or_else(|| "ComposeDslWebViewHost is not registered".to_string())?
+            .openFilePicker(request)
+            .map_err(|error| error.to_string())
+    }
+
     /// Returns whether one package is imported.
     fn is_package_imported(&self, package_name: &str) -> Result<bool, String> {
         Ok(self

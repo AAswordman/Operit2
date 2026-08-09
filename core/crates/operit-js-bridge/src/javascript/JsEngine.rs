@@ -1473,6 +1473,18 @@ impl JsEngineState {
                     )
                     .map_err(|error| error.to_string())?;
 
+                let composeFilePickerCommand =
+                    QuickJsFunction::new(ctx.clone(), |payloadJson: String| {
+                        nativeComposeFilePickerCommandString(payloadJson)
+                    })
+                    .map_err(|error| error.to_string())?;
+                globals
+                    .set(
+                        "__operitNativeComposeFilePickerCommand",
+                        composeFilePickerCommand,
+                    )
+                    .map_err(|error| error.to_string())?;
+
                 let setCallResult =
                     QuickJsFunction::new(ctx.clone(), |callId: String, result: String| {
                         nativeSetCallResultStrings(callId, result)
@@ -1785,6 +1797,21 @@ impl JsEngineState {
                 .set_property(
                     "__operitNativeComposeWebViewControllerCommand",
                     composeWebViewControllerCommand,
+                )
+                .map_err(|error| error.to_string())?;
+
+            let composeFilePickerCommand = self
+                .context
+                .wrap_callback(|_, _, args| {
+                    Ok(WasmQuickJsValue::String(nativeComposeFilePickerCommandString(
+                        wasmQuickJsArgString(args, 0),
+                    )))
+                })
+                .map_err(|error| error.to_string())?;
+            globals
+                .set_property(
+                    "__operitNativeComposeFilePickerCommand",
+                    composeFilePickerCommand,
                 )
                 .map_err(|error| error.to_string())?;
 
@@ -2446,6 +2473,14 @@ fn nativeCallToolPkgWasmStrings(
 fn nativeComposeWebViewControllerCommandString(payloadJson: String) -> String {
     currentExecutionHost()
         .and_then(|host| host.handle_compose_webview_controller_command(&payloadJson))
+        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
+}
+
+/// Runs one Compose DSL file-picker request through the current execution host.
+#[allow(non_snake_case)]
+fn nativeComposeFilePickerCommandString(payloadJson: String) -> String {
+    currentExecutionHost()
+        .and_then(|host| host.open_compose_file_picker(&payloadJson))
         .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
 }
 

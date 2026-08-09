@@ -144,6 +144,9 @@ pub trait JsExecutionHost: crate::js_sdk::JsToolsHost + Send + Sync {
         payload_json: &str,
     ) -> Result<String, String>;
 
+    /// Opens one Compose DSL file picker through the embedding application's host UI.
+    fn open_compose_file_picker(&self, payload_json: &str) -> Result<String, String>;
+
     /// Returns whether one package is currently imported.
     fn is_package_imported(&self, package_name: &str) -> Result<bool, String>;
 

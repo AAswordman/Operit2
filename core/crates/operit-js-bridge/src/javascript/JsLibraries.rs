@@ -294,6 +294,9 @@ pub fn buildRuntimeBootstrapScript() -> String {
             composeWebViewControllerCommand: function(payloadJson) {{
                 return __operitNativeComposeWebViewControllerCommand(String(payloadJson || '{{}}'));
             }},
+            composeFilePickerCommand: function(payloadJson) {{
+                return __operitNativeComposeFilePickerCommand(String(payloadJson || '{{}}'));
+            }},
             composeWebViewControllerCommandSuspend: function(payloadJson, callbackId) {{
                 var normalizedCallbackId = String(callbackId || '').trim();
                 if (!normalizedCallbackId) {{

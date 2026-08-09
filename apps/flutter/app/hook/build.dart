@@ -133,6 +133,13 @@ void main(List<String> args) async {
           webBuildDir.uri.resolve('operit_flutter_bridge_worker.js'),
         ),
       );
+      await _writeWorkerMessagePackModule(
+        File.fromUri(webSourceDir.uri.resolve('msgpack.min.js')),
+        <File>[
+          File.fromUri(webBuildDir.uri.resolve('operit_messagepack.js')),
+          File.fromUri(webSourceDir.uri.resolve('operit_messagepack.js')),
+        ],
+      );
 
       await _run(_command('npm'), [
         'install',
@@ -547,6 +554,30 @@ Future<void> _writeWorkerWasmBridgeModule(
   await workerBridgeModule.writeAsString(workerContents, flush: true);
 }
 
+/// Writes an ESM wrapper that exposes the UMD MessagePack runtime to module workers.
+Future<void> _writeWorkerMessagePackModule(
+  File sourceModule,
+  List<File> workerModules,
+) async {
+  final sourceContents = await sourceModule.readAsString();
+  if (!sourceContents.startsWith('!function')) {
+    throw StateError(
+      'MessagePack source does not use the expected UMD wrapper: '
+      '${sourceModule.path}',
+    );
+  }
+  final workerContents = '''const module = { exports: {} };
+const exports = module.exports;
+$sourceContents
+const MessagePack = module.exports;
+export { MessagePack };
+''';
+  for (final workerModule in workerModules) {
+    await workerModule.parent.create(recursive: true);
+    await workerModule.writeAsString(workerContents, flush: true);
+  }
+}
+
 /// Copies one generated browser runtime directory into the Flutter Web source tree.
 Future<void> _syncGeneratedWebRuntimeDirectory(
   Directory source,
@@ -659,6 +690,7 @@ Future<void> _invalidateWebRuntimeArtifacts(
 const Set<String> _webRuntimeArtifactNames = <String>{
   'operit_flutter_bridge.js',
   'operit_flutter_bridge_worker.js',
+  'operit_messagepack.js',
   'operit_flutter_bridge_bg.wasm',
   'operit_flutter_bridge_bg.wasm.d.ts',
   'operit_flutter_bridge.d.ts',

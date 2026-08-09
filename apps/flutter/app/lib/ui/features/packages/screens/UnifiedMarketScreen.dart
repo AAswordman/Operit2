@@ -313,6 +313,8 @@ class _MarketListPaneState extends State<_MarketListPane> {
   int _featuredPrefetchGeneration = 0;
   bool _featuredPrefetching = false;
   int _marketRequestGeneration = 0;
+  bool _refreshing = false;
+  int _refreshGeneration = 0;
 
   GeneratedProvidersMarketStatsApiServiceCoreProxy get _market =>
       widget.clients.providersMarketStatsApiService;
@@ -395,15 +397,25 @@ class _MarketListPaneState extends State<_MarketListPane> {
     if (!mounted) {
       return;
     }
-    _searchGeneration += 1;
-    _featuredPrefetchGeneration += 1;
-    _featuredPrefetching = false;
+    final refreshGeneration = ++_refreshGeneration;
     setState(() {
+      _refreshing = true;
+      _searchGeneration += 1;
+      _featuredPrefetchGeneration += 1;
+      _featuredPrefetching = false;
       _searchCorpus = null;
       _page = 1;
       _totalPages = 1;
     });
-    await _loadFirstPage();
+    try {
+      await _loadFirstPage();
+    } finally {
+      if (mounted && refreshGeneration == _refreshGeneration) {
+        setState(() {
+          _refreshing = false;
+        });
+      }
+    }
   }
 
   /// Loads the next ordinary market page when featured filtering is inactive.
@@ -608,7 +620,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
     final error = _errorMessage;
     Widget content;
     if (_loading && _items.isEmpty) {
-      content = _buildRefreshableStatus(const M3LoadingPane());
+      content = const M3LoadingPane();
     } else if (error != null && _items.isEmpty) {
       content = _buildRefreshableStatus(
         EmptyState(
@@ -644,7 +656,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
           )
           .toList(growable: false);
       content = MarketBrowseList(
-        isLoading: _loading || _searchLoading,
+        isLoading: !_refreshing && (_loading || _searchLoading),
         isLoadingMore: _loadingMore || _featuredPrefetching,
         hasMore: _hasMore && rawQuery.isEmpty && !widget.featuredOnly,
         isEmpty: displayed.isEmpty,
@@ -683,7 +695,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
     );
   }
 
-  /// Wraps non-list states in a scrollable surface that supports pull refresh.
+  /// Wraps an error state in a scrollable surface that supports pull refresh.
   Widget _buildRefreshableStatus(Widget child) {
     return LayoutBuilder(
       builder: (context, constraints) {

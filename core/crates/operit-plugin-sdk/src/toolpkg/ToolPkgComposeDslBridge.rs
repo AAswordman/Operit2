@@ -622,6 +622,37 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                     createWebViewController: function(key) {
                         return createWebViewController(key);
                     },
+                    openFilePicker: function(options) {
+                        if (typeof Promise !== 'function') {
+                            throw new Error('Promise is required for openFilePicker');
+                        }
+                        return Promise.resolve().then(function() {
+                            if (
+                                typeof NativeInterface === 'undefined' ||
+                                !NativeInterface ||
+                                typeof NativeInterface.composeFilePickerCommand !== 'function'
+                            ) {
+                                throw createUserFacingError(
+                                    'NativeInterface.composeFilePickerCommand is unavailable'
+                                );
+                            }
+                            return unwrapNativeResult(
+                                NativeInterface.composeFilePickerCommand(
+                                    JSON.stringify({
+                                        routeInstanceId: runtime.routeInstanceId || '',
+                                        executionContextKey: runtime.executionContextKey || '',
+                                        options: normalizeSerializableValue(
+                                            options && typeof options === 'object'
+                                                ? options
+                                                : {},
+                                            runtime,
+                                            []
+                                        )
+                                    })
+                                )
+                            );
+                        });
+                    },
                     getModuleSpec: function() {
                         return runtime.moduleSpec;
                     },

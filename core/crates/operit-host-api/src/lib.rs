@@ -931,8 +931,154 @@ pub trait BrowserSessionHost: Send + Sync {
     fn closeBrowserSession(&self, sessionId: &str) -> HostResult<BrowserSessionCommandResult>;
 }
 
+/// Selects the single source used by a Compose DSL file-picker request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ComposeDslFilePickerMode {
+    Document,
+    Image,
+    Video,
+    Media,
+    Directory,
+    Camera,
+}
+
+impl ComposeDslFilePickerMode {
+    /// Returns whether this picker can return more than one selected item.
+    pub fn supportsMultiple(&self) -> bool {
+        matches!(
+            self,
+            Self::Document | Self::Image | Self::Video | Self::Media
+        )
+    }
+
+    /// Returns whether this picker exposes persistable URI permissions.
+    pub fn supportsPersistPermission(&self) -> bool {
+        matches!(self, Self::Document | Self::Directory)
+    }
+}
+
+/// Compose DSL options that describe one file-picker request.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComposeDslFilePickerOptions {
+    pub picker: Option<ComposeDslFilePickerMode>,
+    pub mimeTypes: Option<Vec<String>>,
+    pub allowMultiple: Option<bool>,
+    pub persistPermission: Option<bool>,
+}
+
+/// A fully validated file-picker request issued by a Compose DSL screen.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComposeDslFilePickerRequest {
+    pub routeInstanceId: String,
+    pub executionContextKey: String,
+    pub picker: ComposeDslFilePickerMode,
+    pub mimeTypes: Vec<String>,
+    pub allowMultiple: bool,
+    pub persistPermission: bool,
+}
+
+impl ComposeDslFilePickerRequest {
+    /// Decodes and validates the JSON payload supplied by the Compose DSL JavaScript bridge.
+    pub fn parse(payloadJson: &str) -> HostResult<Self> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct RawRequest {
+            #[serde(default)]
+            routeInstanceId: String,
+            executionContextKey: String,
+            #[serde(default)]
+            options: ComposeDslFilePickerOptions,
+        }
+
+        let raw: RawRequest = serde_json::from_str(payloadJson).map_err(|error| {
+            HostError::new(format!("Compose DSL file picker request decode failed: {error}"))
+        })?;
+        let executionContextKey = raw.executionContextKey.trim();
+        if executionContextKey.is_empty() {
+            return Err(HostError::new(
+                "Compose DSL file picker executionContextKey is required",
+            ));
+        }
+
+        let options = raw.options;
+        let picker = options.picker.unwrap_or(ComposeDslFilePickerMode::Document);
+        if options.mimeTypes.is_some() && picker != ComposeDslFilePickerMode::Document {
+            return Err(HostError::new(format!(
+                "Compose DSL picker {:?} does not support mimeTypes",
+                picker
+            )));
+        }
+        if options.allowMultiple.unwrap_or(false) && !picker.supportsMultiple() {
+            return Err(HostError::new(format!(
+                "Compose DSL picker {:?} does not support allowMultiple",
+                picker
+            )));
+        }
+        if options.persistPermission.is_some() && !picker.supportsPersistPermission() {
+            return Err(HostError::new(format!(
+                "Compose DSL picker {:?} does not support persistPermission",
+                picker
+            )));
+        }
+
+        let mimeTypes = match options.mimeTypes {
+            Some(values) => {
+                for (index, mimeType) in values.iter().enumerate() {
+                    if !isValidComposeDslMimeType(mimeType) {
+                        return Err(HostError::new(format!(
+                            "Compose DSL mimeTypes[{index}] must be a MIME type",
+                        )));
+                    }
+                }
+                values
+            }
+            None => vec!["*/*".to_string()],
+        };
+
+        Ok(Self {
+            routeInstanceId: raw.routeInstanceId.trim().to_string(),
+            executionContextKey: executionContextKey.to_string(),
+            mimeTypes: if picker == ComposeDslFilePickerMode::Document {
+                mimeTypes
+            } else {
+                Vec::new()
+            },
+            allowMultiple: options.allowMultiple.unwrap_or(false),
+            persistPermission: if picker.supportsPersistPermission() {
+                options.persistPermission.unwrap_or(true)
+            } else {
+                false
+            },
+            picker,
+        })
+    }
+}
+
+/// Verifies the strict MIME syntax accepted by the document picker.
+fn isValidComposeDslMimeType(value: &str) -> bool {
+    let trimmed = value.trim();
+    let Some((major, minor)) = trimmed.split_once('/') else {
+        return false;
+    };
+    !major.is_empty()
+        && !minor.is_empty()
+        && !major.chars().any(char::is_whitespace)
+        && !minor.chars().any(char::is_whitespace)
+        && !minor.contains('/')
+}
+
 pub trait ComposeDslWebViewHost: Send + Sync {
+    /// Executes one imperative WebView controller command for a Compose DSL screen.
     fn handleControllerCommand(&self, payloadJson: &str) -> HostResult<String>;
+
+    /// Opens one validated Compose DSL file picker through the platform owner.
+    fn openFilePicker(
+        &self,
+        request: ComposeDslFilePickerRequest,
+    ) -> HostResult<String>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

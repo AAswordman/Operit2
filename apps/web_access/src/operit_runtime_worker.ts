@@ -1,3 +1,5 @@
+import { MessagePack } from "./operit_messagepack.js";
+
 export {};
 
 type WorkerCoreOperation =
@@ -123,11 +125,6 @@ interface WorkerRuntimeGlobals {
   __operitRuntimeWorkerStorage?: WorkerRuntimeStorageBridge;
   __operitRuntimeWorkerArchiveStaging?: WorkerArchiveStagingBridge;
 }
-
-declare const MessagePack: {
-  encode(value: unknown): Uint8Array;
-  decode(bytes: Uint8Array): unknown;
-};
 
 const workerGlobal = globalThis as typeof globalThis & WorkerRuntimeGlobals;
 const controlStateIndex = 0;
@@ -846,7 +843,12 @@ function isValidStorageRecord(value: Partial<WorkerStorageRecord>, dataSize: num
 /** Opens the legacy IndexedDB object store used before OPFS runtime ownership. */
 function openLegacyStorageDatabase(): Promise<IDBDatabase> {
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("operit2.host.storage", 1);
+    const request = indexedDB.open("operit2.host.storage", 2);
+    request.onupgradeneeded = (): void => {
+      if (!request.result.objectStoreNames.contains("entries")) {
+        request.result.createObjectStore("entries");
+      }
+    };
     request.onsuccess = (): void => resolve(request.result);
     request.onerror = (): void => reject(request.error || new Error("legacy storage open failed"));
   });
