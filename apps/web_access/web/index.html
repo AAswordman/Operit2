@@ -136,7 +136,6 @@
   </style>
   <script>
     (() => {
-      const originalConsoleError = console.error.bind(console);
       let latestOperitWebError = "";
 
       /** Converts one JavaScript value into readable diagnostic text. */
@@ -152,11 +151,6 @@
         } catch (_) {
           return String(value);
         }
-      }
-
-      /** Joins console.error arguments into one diagnostic block. */
-      function formatOperitConsoleError(args) {
-        return args.map(formatOperitWebErrorValue).join("\n");
       }
 
       /** Builds a diagnostic block for browser error events. */
@@ -266,7 +260,7 @@
           } catch (error) {
             copyButton.disabled = false;
             copyButton.textContent = "Copy failed";
-            originalConsoleError("Operit Web error details copy failed:", error);
+            console.error("Operit Web error details copy failed:", error);
           }
         });
 
@@ -287,17 +281,10 @@
         showOperitWebError("Unhandled promise rejection", formatOperitPromiseRejection(event));
       }
 
-      /** Handles console.error calls and opens the Web error surface. */
-      function handleOperitConsoleError(...args) {
-        originalConsoleError(...args);
-        showOperitWebError("Console error", formatOperitConsoleError(args));
-      }
-
       /** Installs Web error listeners before Flutter starts. */
       function installOperitWebErrorSurface() {
         window.addEventListener("error", handleOperitBrowserError, true);
         window.addEventListener("unhandledrejection", handleOperitPromiseRejection);
-        console.error = handleOperitConsoleError;
         window.__operitShowWebError = showOperitWebError;
       }
 

@@ -17,12 +17,13 @@ use operit_util::AppLogger::AppLogger;
 use operit_util::RuntimeStorageLayout::DATA_MEMORY_SHARED_DIR_PATH;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use uuid::Uuid;
 
 use crate::data::archive::ArchiveSource::ArchiveSource;
 use crate::data::backup::Operit1LmdbReader::visitLmdbRecords;
 use crate::data::backup::Operit1SnapshotArchive::{
     isDataStoreEntry as isArchiveDataStoreEntry, validateRelativePath, Operit1PreferenceValue,
-    Operit1SnapshotArchive,
+    Operit1SnapshotArchive, Operit1SnapshotEntry,
 };
 
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
@@ -1860,6 +1861,7 @@ fn buildOperit2PromptTags(parsed: &ParsedOperit1Snapshot) -> Result<Vec<PromptTa
     Ok(tags)
 }
 
+/// Builds Operit2 character cards from an Operit1 character-card datastore.
 #[allow(non_snake_case)]
 fn buildOperit2CharacterCards(
     parsed: &ParsedOperit1Snapshot,
@@ -1879,6 +1881,7 @@ fn buildOperit2CharacterCards(
         .map(collectOperit1LegacyPromptTagIds)
         .transpose()?
         .unwrap_or_default();
+    let avatarUris = buildOperit1CharacterCardAvatarUris(&parsed.archive.entries, fileImportPlan)?;
     let ids = optionalPreferenceStringSet(preferences, "character_card_list")?;
     let mut cards = Vec::new();
     for id in ids {
@@ -1921,13 +1924,7 @@ fn buildOperit2CharacterCards(
                 &format!("character_card_{id}_other_content_voice"),
             )?
             .unwrap_or_default(),
-            avatarUri: optionalPreferenceString(
-                preferences,
-                &format!("character_card_{id}_avatar_uri"),
-            )?
-            .map(|value| fileImportPlan.rewritePath(&value))
-            .transpose()?
-            .filter(|value| !value.trim().is_empty()),
+            avatarUri: avatarUris.get(&id).cloned(),
             attachedTagIds: optionalPreferenceStringSet(
                 preferences,
                 &format!("character_card_{id}_attached_tag_ids"),
@@ -1978,6 +1975,70 @@ fn buildOperit2CharacterCards(
         });
     }
     Ok(cards)
+}
+
+/// Maps Operit1 character-card avatar filenames to their imported virtual paths.
+#[allow(non_snake_case)]
+fn buildOperit1CharacterCardAvatarUris(
+    entries: &BTreeMap<String, Operit1SnapshotEntry>,
+    fileImportPlan: &SnapshotFileImportPlan,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut avatarUris = BTreeMap::new();
+    for entry in entries.keys() {
+        let Some(relative) = entry.strip_prefix(ENTRY_FILES_PREFIX) else {
+            continue;
+        };
+        let Some(filename) = relative.strip_prefix("avatar_") else {
+            continue;
+        };
+        let stem = filename
+            .strip_suffix(".png")
+            .ok_or_else(|| format!("Operit1 角色卡头像文件扩展名无效：{entry}"))?;
+        let (cardId, resourceId) = stem
+            .split_once('_')
+            .ok_or_else(|| format!("Operit1 角色卡头像文件名无效：{entry}"))?;
+        Uuid::parse_str(cardId)
+            .map_err(|error| format!("Operit1 角色卡头像角色 ID 无效：{entry}: {error}"))?;
+        Uuid::parse_str(resourceId)
+            .map_err(|error| format!("Operit1 角色卡头像资源 ID 无效：{entry}: {error}"))?;
+        let avatarUri = fileImportPlan.rewriteInternalFilesRelativePath(relative)?;
+        if avatarUris.insert(cardId.to_string(), avatarUri).is_some() {
+            return Err(format!("Operit1 角色卡存在重复头像文件：{cardId}"));
+        }
+    }
+    Ok(avatarUris)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Maps one validated Operit1 avatar filename to its runtime virtual path.
+    #[test]
+    fn mapsOperit1CharacterCardAvatarFilenameToImportedUri() {
+        let cardId = "666eee2e-ea60-4ff6-9c92-04d396386231";
+        let resourceId = "d96932ce-f70d-4a58-835f-c540e3563f2d";
+        let entry = format!("payload/files/avatar_{cardId}_{resourceId}.png");
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            entry,
+            Operit1SnapshotEntry {
+                uncompressedSize: 82_214,
+                compressedSize: 82_239,
+            },
+        );
+
+        let avatarUris =
+            buildOperit1CharacterCardAvatarUris(&entries, &SnapshotFileImportPlan::new())
+                .expect("Operit1 avatar filename should map to one runtime URI");
+
+        assert_eq!(
+            avatarUris.get(cardId),
+            Some(&format!(
+                "/app/data/imported/operit1/files/avatar_{cardId}_{resourceId}.png"
+            )),
+        );
+    }
 }
 
 #[derive(Clone, Debug)]

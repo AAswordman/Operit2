@@ -8,16 +8,18 @@ import 'package:hooks/hooks.dart';
 const String _webAccessVersionFile = 'web_access_version.json';
 const int _webAccessVersionSchema = 1;
 const String _v86PackageVersion = '0.5.424';
+const String _v86RuntimeAssetBaseUrl =
+    'https://models.operit.app/v86-runtime/i686-buildroot-node20-python312-20260720/';
 
 const List<_V86GuestAsset> _v86GuestAssets = <_V86GuestAsset>[
   _V86GuestAsset(
     relativePath: 'v86/seabios.bin',
-    url: 'https://raw.githubusercontent.com/copy/v86/master/bios/seabios.bin',
+    url: '${_v86RuntimeAssetBaseUrl}seabios.bin',
     sha256: '73e3f359102e3a9982c35fce98eb7cd08f18303ac7f1ba6ebfbe6cdc1c244d98',
   ),
   _V86GuestAsset(
     relativePath: 'v86/vgabios.bin',
-    url: 'https://raw.githubusercontent.com/copy/v86/master/bios/vgabios.bin',
+    url: '${_v86RuntimeAssetBaseUrl}vgabios.bin',
     sha256: 'a4bc0d80cc3ca028c73dafa8fee396b8d054ce87ebd8abfbd31b06b437607880',
   ),
 ];
@@ -107,7 +109,7 @@ void main(List<String> args) async {
     ], workingDirectory: repoRoot.path);
 
     if (shouldBuildWebAssets) {
-      await _invalidateWebRuntimeArtifacts([webBuildDir, webSourceDir]);
+      await _invalidateWebRuntimeArtifacts([webBuildDir]);
       await _run(
         'cargo',
         const ['build', '--release', '--target', 'wasm32-unknown-unknown'],
@@ -156,6 +158,7 @@ void main(List<String> args) async {
       await _compileWebRuntimeBridge(
         depsDir,
         webRuntimeTypescriptConfig,
+        webBuildDir,
         packageRoot,
       );
 
@@ -448,6 +451,7 @@ bool _isGeneratedInputDependency(File file) {
 Future<void> _compileWebRuntimeBridge(
   Directory dependencies,
   File typescriptConfig,
+  Directory outputDirectory,
   Directory workingDirectory,
 ) async {
   final executable = Platform.isWindows ? 'tsc.cmd' : 'tsc';
@@ -460,6 +464,8 @@ Future<void> _compileWebRuntimeBridge(
   await _run(compiler.path, [
     '-p',
     typescriptConfig.path,
+    '--outDir',
+    outputDirectory.path,
   ], workingDirectory: workingDirectory.path);
 }
 
@@ -526,8 +532,7 @@ Future<void> _syncWebRuntimeArtifacts(
       );
     }
     final destinationFile = File.fromUri(destination.uri.resolve(fileName));
-    await destinationFile.parent.create(recursive: true);
-    await sourceFile.copy(destinationFile.path);
+    await _copyWebRuntimeFileIfChanged(sourceFile, destinationFile);
   }
   await _syncGeneratedWebRuntimeDirectory(
     Directory.fromUri(source.uri.resolve('v86/')),
@@ -566,15 +571,15 @@ Future<void> _writeWorkerMessagePackModule(
       '${sourceModule.path}',
     );
   }
-  final workerContents = '''const module = { exports: {} };
+  final workerContents =
+      '''const module = { exports: {} };
 const exports = module.exports;
 $sourceContents
 const MessagePack = module.exports;
 export { MessagePack };
 ''';
   for (final workerModule in workerModules) {
-    await workerModule.parent.create(recursive: true);
-    await workerModule.writeAsString(workerContents, flush: true);
+    await _writeTextFileIfChanged(workerModule, workerContents);
   }
 }
 
@@ -588,19 +593,65 @@ Future<void> _syncGeneratedWebRuntimeDirectory(
       'Generated web runtime directory does not exist: ${source.path}',
     );
   }
-  if (destination.existsSync()) {
-    await destination.delete(recursive: true);
-  }
   await destination.create(recursive: true);
-  await for (final entity in source.list(recursive: true, followLinks: false)) {
-    if (entity is! File) {
-      continue;
-    }
-    final relativePath = _relativePath(source, entity);
-    final target = File(_joinPath(destination.path, relativePath));
-    await target.parent.create(recursive: true);
-    await entity.copy(target.path);
+  final sourceFiles = await _collectFilesByRelativePath(source);
+  final destinationFiles = await _collectFilesByRelativePath(destination);
+  for (final entry in sourceFiles.entries) {
+    final target = File(_joinPath(destination.path, entry.key));
+    await _copyWebRuntimeFileIfChanged(entry.value, target);
   }
+  for (final entry in destinationFiles.entries) {
+    if (!sourceFiles.containsKey(entry.key)) {
+      await entry.value.delete();
+    }
+  }
+}
+
+/// Lists files below one directory using paths relative to that directory.
+Future<Map<String, File>> _collectFilesByRelativePath(
+  Directory directory,
+) async {
+  final files = <String, File>{};
+  await for (final entity in directory.list(
+    recursive: true,
+    followLinks: false,
+  )) {
+    if (entity is File) {
+      files[_relativePath(directory, entity)] = entity;
+    }
+  }
+  return files;
+}
+
+/// Copies one generated Web runtime file only when its contents have changed.
+Future<void> _copyWebRuntimeFileIfChanged(File source, File destination) async {
+  if (destination.existsSync() &&
+      await _filesHaveSameContents(source, destination)) {
+    return;
+  }
+  await destination.parent.create(recursive: true);
+  await source.copy(destination.path);
+}
+
+/// Compares two files by size and SHA-256 content digest.
+Future<bool> _filesHaveSameContents(File first, File second) async {
+  final firstLength = await first.length();
+  if (firstLength != await second.length()) {
+    return false;
+  }
+  final firstDigest = await sha256.bind(first.openRead()).first;
+  final secondDigest = await sha256.bind(second.openRead()).first;
+  return firstDigest == secondDigest;
+}
+
+/// Writes generated text only when its current contents differ.
+Future<void> _writeTextFileIfChanged(File destination, String contents) async {
+  if (destination.existsSync() &&
+      await destination.readAsString() == contents) {
+    return;
+  }
+  await destination.parent.create(recursive: true);
+  await destination.writeAsString(contents, flush: true);
 }
 
 /// Stages the v86 emulator runtime and verified BIOS resources.
@@ -688,6 +739,10 @@ Future<void> _invalidateWebRuntimeArtifacts(
 }
 
 const Set<String> _webRuntimeArtifactNames = <String>{
+  'operit_runtime_bridge.js',
+  'operit_runtime_worker.js',
+  'operit_model_install_worker.js',
+  'v86_runtime_worker.js',
   'operit_flutter_bridge.js',
   'operit_flutter_bridge_worker.js',
   'operit_messagepack.js',
@@ -700,7 +755,6 @@ const Set<String> _webRuntimeArtifactNames = <String>{
 
 const Set<String> _generatedWebRuntimeFileNames = <String>{
   ..._webRuntimeArtifactNames,
-  'operit_runtime_bridge.js',
   'libv86.mjs',
   'v86.wasm',
   'seabios.bin',

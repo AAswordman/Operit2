@@ -11,15 +11,22 @@ from urllib.parse import quote
 
 
 RUNTIME_DIR = Path(__file__).resolve().parents[2] / "apps" / "web_access" / "v86" / "runtime"
+WEB_V86_DIR = Path(__file__).resolve().parents[2] / "apps" / "web_access" / "web" / "v86"
 R2_ACCOUNT_ID = "c667bf70582c5ceceda8d3d183ad8e3b"
 R2_BUCKET = "operit-model-assets"
 R2_PREFIX = "v86-runtime/i686-buildroot-node20-python312-20260720"
 R2_PUBLIC_BASE_URL = f"https://models.operit.app/{R2_PREFIX}/"
 R2_API_BASE_URL = f"https://api.cloudflare.com/client/v4/accounts/{R2_ACCOUNT_ID}/r2/buckets/{R2_BUCKET}/objects"
-RUNTIME_FILES = (
-    ("operit-runtime-manifest.json", "application/json; charset=utf-8"),
-    ("operit-runtime-bzimage.bin", "application/octet-stream"),
-    ("operit-runtime-initrd.cpio.gz", "application/gzip"),
+PUBLICATION_FILES = (
+    (RUNTIME_DIR, "operit-runtime-manifest.json", "application/json; charset=utf-8"),
+    (RUNTIME_DIR, "operit-runtime-bzimage.bin", "application/octet-stream"),
+    (RUNTIME_DIR, "operit-runtime-initrd.cpio.gz", "application/gzip"),
+    (WEB_V86_DIR, "seabios.bin", "application/octet-stream"),
+    (WEB_V86_DIR, "vgabios.bin", "application/octet-stream"),
+)
+V86_BIOS_HASHES = (
+    ("seabios.bin", "73e3f359102e3a9982c35fce98eb7cd08f18303ac7f1ba6ebfbe6cdc1c244d98"),
+    ("vgabios.bin", "a4bc0d80cc3ca028c73dafa8fee396b8d054ce87ebd8abfbd31b06b437607880"),
 )
 
 
@@ -69,20 +76,31 @@ def verify_manifest_file(manifest: dict[str, object], section: str) -> None:
         )
 
 
+# Validates one V86 BIOS resource against its pinned SHA-256 checksum.
+def verify_bios_file(file_name: str, expected_hash: str) -> None:
+    path = WEB_V86_DIR / file_name
+    if not path.is_file():
+        raise RuntimeError(f"V86 BIOS file does not exist: {path}")
+    actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual_hash != expected_hash:
+        raise RuntimeError(f"V86 BIOS file does not match its checksum: {file_name}")
+
+
 # Verifies every file selected for the immutable R2 runtime release.
 def verify_runtime_release() -> None:
     manifest = read_runtime_manifest()
     verify_manifest_file(manifest, "kernel")
     verify_manifest_file(manifest, "initrd")
-    expected_names = {name for name, _ in RUNTIME_FILES}
-    actual_names = {path.name for path in RUNTIME_DIR.iterdir() if path.is_file()}
-    if not expected_names.issubset(actual_names):
-        raise RuntimeError("V86 runtime release is missing a required publication file")
+    for file_name, expected_hash in V86_BIOS_HASHES:
+        verify_bios_file(file_name, expected_hash)
+    for directory, file_name, _ in PUBLICATION_FILES:
+        if not (directory / file_name).is_file():
+            raise RuntimeError(f"V86 runtime release is missing a required publication file: {file_name}")
 
 
 # Uploads one verified runtime file through Cloudflare's R2 object API.
-def publish_runtime_file(file_name: str, content_type: str) -> None:
-    path = RUNTIME_DIR / file_name
+def publish_runtime_file(directory: Path, file_name: str, content_type: str) -> None:
+    path = directory / file_name
     curl = shutil.which("curl.exe" if os.name == "nt" else "curl")
     if curl is None:
         raise RuntimeError("curl is required to publish the V86 runtime")
@@ -127,8 +145,8 @@ def main() -> int:
         return 0
     if not os.environ.get("CLOUDFLARE_API_TOKEN"):
         raise RuntimeError("CLOUDFLARE_API_TOKEN is required to publish the V86 runtime")
-    for file_name, content_type in RUNTIME_FILES:
-        publish_runtime_file(file_name, content_type)
+    for directory, file_name, content_type in PUBLICATION_FILES:
+        publish_runtime_file(directory, file_name, content_type)
     print(f"V86 runtime release published: {R2_PUBLIC_BASE_URL}", flush=True)
     return 0
 
