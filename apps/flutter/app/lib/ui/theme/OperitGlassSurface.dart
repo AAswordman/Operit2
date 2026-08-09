@@ -19,6 +19,7 @@ class OperitGlassSurface extends StatelessWidget {
     this.layer = OperitGlassSurfaceLayer.card,
     this.transparentAlpha,
     this.material = false,
+    this.enableBackdropFilter = true,
     this.clip = true,
   });
 
@@ -30,6 +31,9 @@ class OperitGlassSurface extends StatelessWidget {
   final OperitGlassSurfaceLayer layer;
   final double? transparentAlpha;
   final bool material;
+
+  /// Keeps translucent styling without paying for a per-surface blur pass.
+  final bool enableBackdropFilter;
   final bool clip;
 
   @override
@@ -55,27 +59,30 @@ class OperitGlassSurface extends StatelessWidget {
     }
 
     final style = _styleForLayer(layer);
+    final decoration = BoxDecoration(
+      color: color.withValues(alpha: transparentAlpha ?? style.alpha),
+      borderRadius: borderRadius,
+      border: border,
+      boxShadow: shadows
+          .map(
+            (shadow) => BoxShadow(
+              color: shadow.color.withValues(alpha: 0.08),
+              offset: shadow.offset,
+              blurRadius: shadow.blurRadius,
+              spreadRadius: shadow.spreadRadius,
+            ),
+          )
+          .toList(growable: false),
+    );
+    if (!enableBackdropFilter) {
+      return _clipIfNeeded(
+        DecoratedBox(decoration: decoration, child: content),
+      );
+    }
     return _clipBackdrop(
       BackdropFilter(
         filter: ui.ImageFilter.blur(sigmaX: style.blur, sigmaY: style.blur),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: transparentAlpha ?? style.alpha),
-            borderRadius: borderRadius,
-            border: border,
-            boxShadow: shadows
-                .map(
-                  (shadow) => BoxShadow(
-                    color: shadow.color.withValues(alpha: 0.08),
-                    offset: shadow.offset,
-                    blurRadius: shadow.blurRadius,
-                    spreadRadius: shadow.spreadRadius,
-                  ),
-                )
-                .toList(growable: false),
-          ),
-          child: content,
-        ),
+        child: DecoratedBox(decoration: decoration, child: content),
       ),
     );
   }

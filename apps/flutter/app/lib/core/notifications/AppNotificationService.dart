@@ -2,6 +2,8 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import '../bridge/ProxyCoreRuntimeBridge.dart';
@@ -17,6 +19,7 @@ class AppNotificationService with WidgetsBindingObserver {
   static final AppNotificationService instance = AppNotificationService._();
 
   static const String _logTag = 'AppNotification';
+  static const MethodChannel _runtimeChannel = MethodChannel('operit/runtime');
   static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
     ProxyCoreRuntimeBridge(),
   );
@@ -145,7 +148,7 @@ class AppNotificationService with WidgetsBindingObserver {
     String message, {
     required String? chatId,
   }) async {
-    if (_isForeground) {
+    if (await _isApplicationForeground()) {
       ClientLogger.d(
         'notification suppressed applicationForeground=true',
         tag: _logTag,
@@ -157,6 +160,20 @@ class AppNotificationService with WidgetsBindingObserver {
       message: message,
       chatId: chatId,
     );
+  }
+
+  /// Returns whether the application currently owns the user's foreground window.
+  Future<bool> _isApplicationForeground() async {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+      final isForeground = await _runtimeChannel.invokeMethod<bool>(
+        'applicationIsForeground',
+      );
+      if (isForeground == null) {
+        throw StateError('application foreground response is missing');
+      }
+      return isForeground;
+    }
+    return _isForeground;
   }
 
   /// Removes one consumed non-blocking application notification event.

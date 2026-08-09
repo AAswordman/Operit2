@@ -21,7 +21,14 @@ pub const CHAT_INPUT_SUBMIT_ACTION_ALLOW: &str = "allow";
 pub const CHAT_INPUT_SUBMIT_ACTION_BLOCK: &str = "block";
 pub const CHAT_INPUT_SUBMIT_ACTION_CONSUME: &str = "consume";
 pub const CHAT_INPUT_SUBMIT_ACTION_REPLACE: &str = "replace";
-const TOOLPKG_PRE_HOOK_TIMEOUT_MESSAGE: &str = "ToolPkg 前置 Hook 执行超时，已跳过未完成的 Hook。";
+
+/// Builds the chat-input timeout notice with the exact package and Hook ID.
+fn build_chat_input_timeout_message(hook: &ToolPkgChatInputHookRegistration) -> String {
+    format!(
+        "前置插件「{}:{}」响应超时，已跳过并继续发送",
+        hook.containerPackageName, hook.hookId
+    )
+}
 
 #[derive(Clone, Debug)]
 pub struct ChatInputHookContext {
@@ -115,9 +122,13 @@ impl ToolPkgChatInputHookBridge {
         let manager = runtime.package_manager();
         let budget = ToolPkgPreHookTimeout::fromPreferences();
         let mut timedOut = false;
+        let mut timeoutNoticeMessage: Option<String> = None;
         for hook in activeHooks {
             let Some(timeoutMillis) = budget.remainingTimeoutMillis() else {
                 timedOut = true;
+                if current.eventName == CHAT_INPUT_EVENT_SUBMIT_REQUESTED {
+                    timeoutNoticeMessage = Some(build_chat_input_timeout_message(&hook));
+                }
                 ChainLogger::error(
                     PLUGIN_CHAIN,
                     "plugin.toolpkg.chat_input.timeout",
@@ -151,8 +162,16 @@ impl ToolPkgChatInputHookBridge {
                 None,
                 timeoutMillis,
             );
-            if budget.hasExpired() {
+            let hookTimedOut = raw
+                .as_ref()
+                .err()
+                .map(|error| ToolPkgPreHookTimeout::isTimeoutError(error))
+                .unwrap_or(false);
+            if hookTimedOut || budget.hasExpired() {
                 timedOut = true;
+                if current.eventName == CHAT_INPUT_EVENT_SUBMIT_REQUESTED {
+                    timeoutNoticeMessage = Some(build_chat_input_timeout_message(&hook));
+                }
                 ChainLogger::error(
                     PLUGIN_CHAIN,
                     "plugin.toolpkg.chat_input.timeout",
@@ -240,7 +259,7 @@ impl ToolPkgChatInputHookBridge {
             Some(ChatInputHookResult {
                 action: CHAT_INPUT_SUBMIT_ACTION_ALLOW.to_string(),
                 text: Some(current.text),
-                message: timedOut.then(|| TOOLPKG_PRE_HOOK_TIMEOUT_MESSAGE.to_string()),
+                message: timeoutNoticeMessage,
                 clearInput: false,
                 timedOut,
                 metadata: serde_json::Map::new(),

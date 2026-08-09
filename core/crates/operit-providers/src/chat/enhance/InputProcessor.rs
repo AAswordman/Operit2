@@ -2,16 +2,19 @@ use crate::chat::hooks::ActivePromptHookMetadata::build_active_prompt_hook_metad
 use crate::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Preprocesses user input before it enters the chat pipeline.
 pub struct InputProcessor;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 /// Request data for user-input preprocessing.
 pub struct ProcessUserInputRequest {
     pub input: String,
     pub chat_id: Option<String>,
     pub role_card_id: Option<String>,
+    /// Host callback used to surface a timed-out Prompt Input Hook.
+    pub on_hook_timeout: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 impl InputProcessor {
@@ -33,6 +36,7 @@ impl InputProcessor {
             raw_input: Some(request.input.clone()),
             processed_input: Some(request.input.clone()),
             metadata,
+            on_hook_timeout: request.on_hook_timeout.clone(),
             ..PromptHookContext::default()
         });
 
@@ -48,7 +52,7 @@ impl InputProcessor {
             raw_input: before_context.raw_input.clone(),
             processed_input: Some(processed_input.clone()),
             metadata: before_context.metadata.clone(),
-            ..PromptHookContext::default()
+            ..before_context
         });
 
         after_context.processed_input.unwrap_or(processed_input)

@@ -46,12 +46,70 @@ class _MarketGridGroup<T> {
   final List<T> items;
 }
 
+class _MarketGridRow<T> {
+  const _MarketGridRow.header(this.label)
+    : items = null,
+      start = 0,
+      end = 0,
+      topPadding = 0,
+      bottomPadding = 0;
+
+  const _MarketGridRow.cards({
+    required this.items,
+    required this.start,
+    required this.end,
+    required this.topPadding,
+    required this.bottomPadding,
+  }) : label = null;
+
+  final String? label;
+  final List<T>? items;
+  final int start;
+  final int end;
+  final double topPadding;
+  final double bottomPadding;
+
+  bool get isHeader => label != null;
+
+  int get itemCount => end - start;
+}
+
 String _marketUpdatedDateLabel(String value) {
   final trimmed = value.trim();
   if (trimmed.isEmpty) {
     return '更早';
   }
   return trimmed.length >= 10 ? trimmed.substring(0, 10) : trimmed;
+}
+
+/// Flattens grouped entries into lazily buildable header and card-row slots.
+List<_MarketGridRow<T>> _marketGridRows<T>({
+  required List<_MarketGridGroup<T>> groups,
+  required int columnCount,
+}) {
+  final rows = <_MarketGridRow<T>>[];
+  for (var groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+    final group = groups[groupIndex];
+    final label = group.label;
+    if (label != null) {
+      rows.add(_MarketGridRow<T>.header(label));
+    }
+    for (var start = 0; start < group.items.length; start += columnCount) {
+      final end = start + columnCount < group.items.length
+          ? start + columnCount
+          : group.items.length;
+      rows.add(
+        _MarketGridRow<T>.cards(
+          items: group.items,
+          start: start,
+          end: end,
+          topPadding: label == null && groupIndex == 0 && start == 0 ? 4 : 0,
+          bottomPadding: end < group.items.length ? 8 : 0,
+        ),
+      );
+    }
+  }
+  return rows;
 }
 
 class MarketBrowseList<T> extends StatelessWidget {
@@ -91,6 +149,9 @@ class MarketBrowseList<T> extends StatelessWidget {
     );
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
+        if (notification is! ScrollUpdateNotification) {
+          return false;
+        }
         if (notification.metrics.extentAfter < 360 &&
             hasMore &&
             !isLoadingMore) {
@@ -119,27 +180,10 @@ class MarketBrowseList<T> extends StatelessWidget {
                     ),
                   )
                 else
-                  for (var index = 0; index < groups.length; index += 1) ...[
-                    if (groups[index].label != null)
-                      SliverPadding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        sliver: SliverToBoxAdapter(
-                          child: _MarketDateHeader(text: groups[index].label!),
-                        ),
-                      ),
-                    SliverPadding(
-                      padding: EdgeInsets.fromLTRB(
-                        12,
-                        groups[index].label == null && index == 0 ? 4 : 0,
-                        12,
-                        0,
-                      ),
-                      sliver: _MarketGridSliver<T>(
-                        items: groups[index].items,
-                        itemBuilder: itemBuilder,
-                      ),
-                    ),
-                  ],
+                  _MarketGroupedGridSliver<T>(
+                    groups: groups,
+                    itemBuilder: itemBuilder,
+                  ),
                 if (isLoadingMore)
                   const SliverToBoxAdapter(
                     child: Padding(
@@ -159,30 +203,69 @@ class MarketBrowseList<T> extends StatelessWidget {
   }
 }
 
-class _MarketGridSliver<T> extends StatelessWidget {
-  const _MarketGridSliver({required this.items, required this.itemBuilder});
+class _MarketGroupedGridSliver<T> extends StatelessWidget {
+  const _MarketGroupedGridSliver({
+    required this.groups,
+    required this.itemBuilder,
+  });
 
-  final List<T> items;
+  final List<_MarketGridGroup<T>> groups;
   final Widget Function(T item) itemBuilder;
 
   @override
   Widget build(BuildContext context) {
     return SliverLayoutBuilder(
       builder: (context, constraints) {
-        final columnCount = constraints.crossAxisExtent >= 1280
+        final contentWidth = constraints.crossAxisExtent - 24;
+        final columnCount = contentWidth >= 1280
             ? 3
-            : constraints.crossAxisExtent >= 760
+            : contentWidth >= 760
             ? 2
             : 1;
-        return SliverGrid.builder(
-          itemCount: items.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columnCount,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 8,
-            mainAxisExtent: 104,
-          ),
-          itemBuilder: (context, index) => itemBuilder(items[index]),
+        final rows = _marketGridRows<T>(
+          groups: groups,
+          columnCount: columnCount,
+        );
+        return SliverList.builder(
+          itemCount: rows.length,
+          addAutomaticKeepAlives: false,
+          itemBuilder: (context, index) {
+            final row = rows[index];
+            if (row.isHeader) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: _MarketDateHeader(text: row.label!),
+              );
+            }
+            final children = <Widget>[];
+            for (var itemIndex = 0; itemIndex < columnCount; itemIndex += 1) {
+              if (itemIndex > 0) {
+                children.add(const SizedBox(width: 10));
+              }
+              children.add(
+                Expanded(
+                  child: itemIndex < row.itemCount
+                      ? itemBuilder(row.items![row.start + itemIndex])
+                      : const SizedBox.shrink(),
+                ),
+              );
+            }
+            return Padding(
+              padding: EdgeInsets.fromLTRB(
+                12,
+                row.topPadding,
+                12,
+                row.bottomPadding,
+              ),
+              child: SizedBox(
+                height: 104,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: children,
+                ),
+              ),
+            );
+          },
         );
       },
     );
@@ -230,6 +313,8 @@ class MarketGridCard extends StatelessWidget {
         color: colorScheme.outlineVariant.withValues(alpha: 0.16),
       ),
       material: true,
+      // Avoid one expensive blur layer per card while the grid is scrolling.
+      enableBackdropFilter: false,
       child: InkWell(
         borderRadius: borderRadius,
         onTap: onTap,
@@ -431,6 +516,9 @@ class _MarketCardMetaCount extends StatelessWidget {
 
 /// Truncates descriptions by complete characters without splitting UTF-16.
 String _truncateMarketBrowseDescription(String description) {
+  if (description.length <= 100) {
+    return description;
+  }
   final characters = description.characters;
   if (characters.length > 100) {
     return '${characters.take(100)}...';

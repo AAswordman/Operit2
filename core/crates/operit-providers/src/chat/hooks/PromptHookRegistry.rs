@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use operit_model::PromptTurn::PromptTurn;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 /// Mutable prompt-building context passed through registered prompt hooks.
 pub struct PromptHookContext {
     pub stage: String,
@@ -22,6 +22,8 @@ pub struct PromptHookContext {
     pub model_parameters: Vec<HashMap<String, Value>>,
     pub available_tools: Vec<HashMap<String, Value>>,
     pub metadata: HashMap<String, Value>,
+    /// Host callback used to surface a timed-out Prompt Input Hook in the chat Toast stream.
+    pub on_hook_timeout: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 impl Default for PromptHookContext {
@@ -41,6 +43,7 @@ impl Default for PromptHookContext {
             model_parameters: Vec::new(),
             available_tools: Vec::new(),
             metadata: HashMap::new(),
+            on_hook_timeout: None,
         }
     }
 }

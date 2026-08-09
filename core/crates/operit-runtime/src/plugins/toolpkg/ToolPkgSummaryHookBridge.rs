@@ -112,7 +112,12 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
                 None,
                 timeoutMillis,
             );
-            if budget.hasExpired() {
+            let hookTimedOut = raw
+                .as_ref()
+                .err()
+                .map(|error| ToolPkgPreHookTimeout::isTimeoutError(error))
+                .unwrap_or(false);
+            if hookTimedOut || budget.hasExpired() {
                 ChainLogger::error(
                     PLUGIN_CHAIN,
                     "plugin.toolpkg.summary.timeout",

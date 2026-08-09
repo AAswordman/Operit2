@@ -312,6 +312,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
   int _searchGeneration = 0;
   int _featuredPrefetchGeneration = 0;
   bool _featuredPrefetching = false;
+  int _marketRequestGeneration = 0;
 
   GeneratedProvidersMarketStatsApiServiceCoreProxy get _market =>
       widget.clients.providersMarketStatsApiService;
@@ -348,11 +349,13 @@ class _MarketListPaneState extends State<_MarketListPane> {
 
   /// Loads the first market page and resets the active list state.
   Future<void> _loadFirstPage({bool clearExisting = false}) async {
+    final requestGeneration = ++_marketRequestGeneration;
     _featuredPrefetchGeneration += 1;
     _featuredPrefetching = false;
     setState(() {
       _loading = true;
       _errorMessage = null;
+      _loadingMore = false;
       if (clearExisting) {
         _items = <core_proxy.MarketEntrySummary>[];
         _searchItems = <core_proxy.MarketEntrySummary>[];
@@ -363,7 +366,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
     });
     try {
       final page = await _loadPage(1);
-      if (!mounted) {
+      if (!mounted || requestGeneration != _marketRequestGeneration) {
         return;
       }
       setState(() {
@@ -377,7 +380,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
       await _loadSearchResults();
     } catch (error, stackTrace) {
       debugPrint('Failed to load market: $error\n$stackTrace');
-      if (!mounted) {
+      if (!mounted || requestGeneration != _marketRequestGeneration) {
         return;
       }
       setState(() {
@@ -385,6 +388,22 @@ class _MarketListPaneState extends State<_MarketListPane> {
         _loading = false;
       });
     }
+  }
+
+  /// Refreshes market data while invalidating stale search and prefetch state.
+  Future<void> _refreshMarket() async {
+    if (!mounted) {
+      return;
+    }
+    _searchGeneration += 1;
+    _featuredPrefetchGeneration += 1;
+    _featuredPrefetching = false;
+    setState(() {
+      _searchCorpus = null;
+      _page = 1;
+      _totalPages = 1;
+    });
+    await _loadFirstPage();
   }
 
   /// Loads the next ordinary market page when featured filtering is inactive.
@@ -395,9 +414,10 @@ class _MarketListPaneState extends State<_MarketListPane> {
     setState(() {
       _loadingMore = true;
     });
+    final requestGeneration = _marketRequestGeneration;
     try {
       final page = await _loadPage(_page + 1);
-      if (!mounted) {
+      if (!mounted || requestGeneration != _marketRequestGeneration) {
         return;
       }
       setState(() {
@@ -408,7 +428,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
       });
     } catch (error, stackTrace) {
       debugPrint('Failed to load more market: $error\n$stackTrace');
-      if (!mounted) {
+      if (!mounted || requestGeneration != _marketRequestGeneration) {
         return;
       }
       setState(() {
@@ -588,16 +608,19 @@ class _MarketListPaneState extends State<_MarketListPane> {
     final error = _errorMessage;
     Widget content;
     if (_loading && _items.isEmpty) {
-      content = const M3LoadingPane();
+      content = _buildRefreshableStatus(const M3LoadingPane());
     } else if (error != null && _items.isEmpty) {
-      content = EmptyState(
-        icon: Icons.error_outline,
-        title: '加载失败',
-        message: error,
-        action: TextButton.icon(
-          onPressed: _loadFirstPage,
-          icon: const Icon(Icons.refresh),
-          label: const Text('刷新'),
+      content = _buildRefreshableStatus(
+        EmptyState(
+          icon: Icons.error_outline,
+          title: '加载失败',
+          message: error,
+          scrollable: false,
+          action: TextButton.icon(
+            onPressed: _refreshMarket,
+            icon: const Icon(Icons.refresh),
+            label: const Text('刷新'),
+          ),
         ),
       );
     } else {
@@ -626,11 +649,11 @@ class _MarketListPaneState extends State<_MarketListPane> {
         hasMore: _hasMore && rawQuery.isEmpty && !widget.featuredOnly,
         isEmpty: displayed.isEmpty,
         emptyTitle: rawQuery.isEmpty ? '暂无项目' : '没有匹配结果',
-        onRefresh: _loadFirstPage,
+        onRefresh: _refreshMarket,
         onLoadMore: _loadMore,
         items: displayed,
         groupByUpdatedDate: widget.sortOption == MarketSortOption.updated,
-        updatedAt: (item) => item.publishedAt ?? item.updatedAt,
+        updatedAt: (item) => item.updatedAt,
         itemBuilder: (item) => MarketGridCard(
           title: item.title,
           description: item.description,
@@ -657,6 +680,26 @@ class _MarketListPaneState extends State<_MarketListPane> {
         ),
         Expanded(child: content),
       ],
+    );
+  }
+
+  /// Wraps non-list states in a scrollable surface that supports pull refresh.
+  Widget _buildRefreshableStatus(Widget child) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return RefreshIndicator(
+          onRefresh: _refreshMarket,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: <Widget>[
+              ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Center(child: child),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

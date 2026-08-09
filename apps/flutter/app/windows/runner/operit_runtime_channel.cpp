@@ -72,6 +72,17 @@ bool g_notification_activation_receiver_ready = false;
 
 constexpr UINT kOperitRuntimePlatformTaskMessage = WM_APP + 0x520;
 
+/// Returns whether the current foreground window belongs to this process.
+bool IsOperitApplicationForeground() {
+  const HWND foreground_window = ::GetForegroundWindow();
+  if (foreground_window == nullptr) {
+    return false;
+  }
+  DWORD foreground_process_id = 0;
+  ::GetWindowThreadProcessId(foreground_window, &foreground_process_id);
+  return foreground_process_id == ::GetCurrentProcessId();
+}
+
 /// Decodes one URL query component with application/x-www-form-urlencoded rules.
 bool DecodeNotificationQueryComponent(const std::string& encoded,
                                       std::string* decoded) {
@@ -1201,6 +1212,12 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
             EmitNotificationActivation(activation);
           }
           result->Success();
+          return;
+        }
+        if (method_call.method_name().compare(
+                "applicationIsForeground") == 0) {
+          result->Success(
+              flutter::EncodableValue(IsOperitApplicationForeground()));
           return;
         }
         if (method_call.method_name().compare(

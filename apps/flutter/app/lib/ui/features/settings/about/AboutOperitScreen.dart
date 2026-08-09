@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../common/OperitLogoMark.dart';
+import '../../../theme/OperitGlassSurface.dart';
 
 const String _appVersion = '2.0.0+5';
 final Uri _projectUri = Uri.parse('https://github.com/AAswordman/Operit2');
@@ -173,11 +174,13 @@ class _AboutSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Card(
-      margin: EdgeInsets.zero,
-      elevation: 0,
+    return OperitGlassSurface(
       color: colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(
+        color: colorScheme.outlineVariant.withValues(alpha: 0.18),
+      ),
+      material: true,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(

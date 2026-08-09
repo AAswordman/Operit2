@@ -30,10 +30,13 @@ impl ToolPkgPreHookTimeout {
         let remaining = self.deadline.checked_duration_since(Instant::now())?;
         let millis = u64::try_from(remaining.as_millis())
             .expect("ToolPkg pre-hook remaining timeout must fit into u64 milliseconds");
-        if millis == 0 {
-            return None;
-        }
-        Some(millis)
+        Some(millis.max(1))
+    }
+
+    /// Identifies the timeout error emitted by the JavaScript hook executor.
+    #[allow(non_snake_case)]
+    pub fn isTimeoutError(error: &str) -> bool {
+        error.to_ascii_lowercase().contains("timed out")
     }
 
     /// Reports whether the shared pre-hook deadline has elapsed.

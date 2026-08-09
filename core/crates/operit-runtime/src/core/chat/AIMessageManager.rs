@@ -13,6 +13,7 @@ use operit_model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
 use operit_model::MessagePart::MessagePartKind;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
+use operit_providers::chat::enhance::InputProcessor::{InputProcessor, ProcessUserInputRequest};
 use operit_providers::chat::llmprovider::AIService::{AiServiceError, SharedAiResponseStream};
 use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_providers::chat::EnhancedAIService::{
@@ -34,7 +35,7 @@ pub struct MessageTiming {
     pub startedAtMs: u64,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 pub struct BuildUserMessageContentRequest {
     pub messageText: String,
     pub proxySenderName: Option<String>,
@@ -46,6 +47,8 @@ pub struct BuildUserMessageContentRequest {
     pub enableDirectVideoProcessing: bool,
     pub chatId: Option<String>,
     pub roleCardId: Option<String>,
+    /// Host callback used to surface a timed-out Prompt Input Hook.
+    pub onHookTimeout: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 pub struct SendMessageRequest<'a> {
@@ -129,7 +132,23 @@ impl AIMessageManager {
 
     #[allow(non_snake_case)]
     pub fn buildUserMessageContent(request: BuildUserMessageContentRequest) -> String {
-        let processedMessageText = request.messageText;
+        let promptInputStartTime = messageTimingNow();
+        let originalMessageLength = request.messageText.len();
+        let processedMessageText = InputProcessor::process_user_input(ProcessUserInputRequest {
+            input: request.messageText,
+            chat_id: request.chatId.clone(),
+            role_card_id: request.roleCardId.clone(),
+            on_hook_timeout: request.onHookTimeout.clone(),
+        });
+        logMessageTiming(
+            "buildUserMessageContent.processUserInput",
+            promptInputStartTime,
+            Some(format!(
+                "originalLength={}, processedLength={}",
+                originalMessageLength,
+                processedMessageText.len()
+            )),
+        );
         let proxySenderTag = match request.proxySenderName {
             Some(proxySenderName)
                 if !proxySenderName.trim().is_empty()

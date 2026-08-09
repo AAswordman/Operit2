@@ -3,6 +3,8 @@ import {
   applySettingsPatch,
   createDefaultSettings,
   loadSettings,
+  MAX_INJECTION_TIMEOUT_SECONDS,
+  MIN_INJECTION_TIMEOUT_SECONDS,
   resolveExtraInfoI18n,
   saveSettings,
   type ExtraInfoInjectionSettings,
@@ -176,6 +178,40 @@ function createMemoryConfigSection(
   );
 }
 
+/// Builds the configurable total deadline for one extra-info collection round.
+function createInjectionTimeoutConfigSection(
+  ctx: ComposeDslContext,
+  text: ReturnType<typeof resolveExtraInfoI18n>,
+  value: string,
+  onValueChange: (value: string) => void,
+  onApply: () => void
+): ComposeNode {
+  return ctx.UI.Surface(toggleCardStyle, [
+    ctx.UI.Column(
+      { fillMaxWidth: true, padding: { horizontal: 14, vertical: 12 }, spacing: 10 },
+      [
+        ctx.UI.TextField({
+          label: text.injectionTimeoutFieldLabel,
+          placeholder: text.injectionTimeoutFieldPlaceholder,
+          value,
+          onValueChange,
+          singleLine: true,
+        }),
+        ctx.UI.Text({
+          text: text.injectionTimeoutFieldDescription,
+          style: "bodySmall",
+          color: "onSurfaceVariant",
+        }),
+        ctx.UI.Button({
+          text: text.injectionTimeoutApplyButton,
+          fillMaxWidth: true,
+          onClick: onApply,
+        }),
+      ]
+    ),
+  ]);
+}
+
 function createInjectionItemsCard(
   ctx: ComposeDslContext,
   items: ToggleCardItem[],
@@ -253,6 +289,16 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     "memoryLimitInput",
     String(initial.memoryLimit)
   );
+  const injectionTimeoutSecondsState = useStateValue(
+    ctx,
+    "injectionTimeoutSeconds",
+    initial.injectionTimeoutSeconds
+  );
+  const injectionTimeoutInputState = useStateValue(
+    ctx,
+    "injectionTimeoutInput",
+    String(initial.injectionTimeoutSeconds)
+  );
   const successMessageState = useStateValue(ctx, "successMessage", "");
   const errorMessageState = useStateValue(ctx, "errorMessage", "");
   const hasInitializedState = useStateValue(ctx, "hasInitialized", false);
@@ -273,6 +319,8 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     allowRepeatedMemorySearchState.set(next.allowRepeatedMemorySearch);
     memoryLimitState.set(next.memoryLimit);
     memoryLimitInputState.set(String(next.memoryLimit));
+    injectionTimeoutSecondsState.set(next.injectionTimeoutSeconds);
+    injectionTimeoutInputState.set(String(next.injectionTimeoutSeconds));
   };
 
   const currentSettings = (): ExtraInfoInjectionSettings => ({
@@ -290,6 +338,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     injectMemory: injectMemoryState.value,
     allowRepeatedMemorySearch: allowRepeatedMemorySearchState.value,
     memoryLimit: memoryLimitState.value,
+    injectionTimeoutSeconds: injectionTimeoutSecondsState.value,
   });
 
   const persistSettings = async (
@@ -324,6 +373,23 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     });
   };
 
+  const applyInjectionTimeoutSettings = (): void => {
+    const timeoutSeconds = Number(injectionTimeoutInputState.value.trim());
+
+    if (
+      !Number.isFinite(timeoutSeconds) ||
+      timeoutSeconds < MIN_INJECTION_TIMEOUT_SECONDS ||
+      timeoutSeconds > MAX_INJECTION_TIMEOUT_SECONDS ||
+      !Number.isInteger(timeoutSeconds)
+    ) {
+      successMessageState.set("");
+      errorMessageState.set(`${text.saveErrorPrefix}${text.invalidInjectionTimeoutMessage}`);
+      return;
+    }
+
+    void persistSettings({ injectionTimeoutSeconds: timeoutSeconds });
+  };
+
   const summaryLines = [
     masterEnabledState.value ? text.summaryMasterEnabled : text.summaryMasterDisabled,
     persistInjectedContentState.value
@@ -355,6 +421,10 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
             : text.summaryMemoryRepeatDisabled
         })`
       : text.summaryMemoryDisabled,
+    text.summaryInjectionTimeout.replace(
+      "{seconds}",
+      injectionTimeoutSecondsState.value.toString()
+    ),
     text.summaryRulesHint,
   ];
 
@@ -413,6 +483,15 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
       checked => {
         persistSettings({ persistInjectedContent: checked });
       }
+    ),
+    createInjectionTimeoutConfigSection(
+      ctx,
+      text,
+      injectionTimeoutInputState.value,
+      value => {
+        injectionTimeoutInputState.set(value);
+      },
+      applyInjectionTimeoutSettings
     ),
 
     createSectionTitle(ctx, "bolt", text.itemsSectionTitle),

@@ -468,6 +468,7 @@ impl SystemPromptConfig {
                 model_parameters: Vec::new(),
                 available_tools: Vec::new(),
                 metadata,
+                on_hook_timeout: None,
             });
 
         let base_prompt = before_context

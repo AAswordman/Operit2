@@ -516,6 +516,9 @@ impl ChatServiceCore {
                         return;
                     }
                     CHAT_INPUT_SUBMIT_ACTION_REPLACE | CHAT_INPUT_SUBMIT_ACTION_ALLOW => {
+                        if let Some(message) = decision.message {
+                            self.messageProcessingDelegate.showToast(message);
+                        }
                         if let Some(updatedText) = decision.text {
                             messageText = updatedText;
                         }

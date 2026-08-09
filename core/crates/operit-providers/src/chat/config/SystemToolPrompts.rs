@@ -711,6 +711,7 @@ fn compose_tool_prompt(
         model_parameters: Vec::new(),
         available_tools,
         metadata,
+        on_hook_timeout: None,
     });
     let mut prompt = before_context
         .tool_prompt

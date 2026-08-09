@@ -371,6 +371,7 @@ impl PromptHistoryHookDispatcher for RuntimePromptHistoryHooks {
             model_parameters: Vec::new(),
             available_tools: Vec::new(),
             metadata: btree_to_value_map(&context.metadata),
+            on_hook_timeout: None,
         });
 
         HistoryHookContext {

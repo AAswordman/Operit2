@@ -43,6 +43,11 @@ pub const STREAM_PERSIST_INTERVAL_MS: i64 = 1000;
 /// Maximum text length used when preparing automatic speech previews.
 pub const AUTO_READ_PREVIEW_MAX: usize = 48;
 
+/// Builds the localized host notice for a timed-out ToolPkg pre-send hook.
+fn buildToolPkgHookTimeoutNotice(pluginIdentifier: String) -> String {
+    format!("前置插件「{pluginIdentifier}」响应超时，已跳过并继续发送")
+}
+
 /// Per-chat runtime state for one active or recently active send turn.
 #[derive(Clone, Debug)]
 pub struct ChatRuntime {
@@ -553,6 +558,10 @@ impl MessageProcessingDelegate {
         );
 
         let buildUserMessageStartTime = messageTimingNow();
+        let nonFatalErrorEventFlow = self.nonFatalErrorEventFlow.clone();
+        let onHookTimeout = Arc::new(move |pluginIdentifier: String| {
+            nonFatalErrorEventFlow.set_value(Some(buildToolPkgHookTimeoutNotice(pluginIdentifier)));
+        });
         let finalMessageContent =
             AIMessageManager::buildUserMessageContent(BuildUserMessageContentRequest {
                 messageText: request.messageText,
@@ -565,6 +574,7 @@ impl MessageProcessingDelegate {
                 enableDirectVideoProcessing,
                 chatId: Some(request.chatId.clone()),
                 roleCardId: Some(request.roleCardId),
+                onHookTimeout: Some(onHookTimeout),
             });
         logMessageTiming(
             "delegate.buildUserMessageContent",

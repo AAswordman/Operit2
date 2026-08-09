@@ -1,6 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolveExtraInfoI18n = resolveExtraInfoI18n;
+exports.logExtraInfoInjectionInfo = logExtraInfoInjectionInfo;
+exports.logExtraInfoInjectionError = logExtraInfoInjectionError;
+exports.MIN_INJECTION_TIMEOUT_SECONDS = void 0;
+exports.MAX_INJECTION_TIMEOUT_SECONDS = void 0;
 exports.createDefaultSettings = createDefaultSettings;
 exports.loadSettings = loadSettings;
 exports.applySettingsPatch = applySettingsPatch;
@@ -29,6 +33,12 @@ const LEGACY_ATTACHMENT_ID_PREFIXES = [
 ];
 const NOTIFICATION_FETCH_LIMIT = 5;
 const APP_USAGE_FETCH_LIMIT = 3;
+const LOG_PREFIX = "[message_insert]";
+const MIN_INJECTION_TIMEOUT_SECONDS = 1;
+const MAX_INJECTION_TIMEOUT_SECONDS = 120;
+const DEFAULT_INJECTION_TIMEOUT_SECONDS = 8;
+exports.MIN_INJECTION_TIMEOUT_SECONDS = MIN_INJECTION_TIMEOUT_SECONDS;
+exports.MAX_INJECTION_TIMEOUT_SECONDS = MAX_INJECTION_TIMEOUT_SECONDS;
 // Weather is a pre-send injection path, so the shared Hook deadline bounds its location and HTTP work.
 const WEATHER_INJECTION_STEP_TIMEOUT_SECONDS = 5;
 const ZH_CN_I18N = {
@@ -72,6 +82,11 @@ const ZH_CN_I18N = {
     memoryLimitFieldPlaceholder: "例如 3",
     memoryConfigApplyButton: "保存记忆设置",
     invalidMemoryLimitMessage: "记忆上限必须是大于等于 1 的整数",
+    injectionTimeoutFieldLabel: "注入超时",
+    injectionTimeoutFieldDescription: "整轮额外信息采集的最长等待时间，单位为秒。超时项目会标注 timeout。范围为 1 到 120 秒。",
+    injectionTimeoutFieldPlaceholder: "例如 8",
+    injectionTimeoutApplyButton: "保存超时设置",
+    invalidInjectionTimeoutMessage: "注入超时必须是 1 到 120 之间的整数秒",
     summarySectionTitle: "当前规则",
     summaryMasterEnabled: "额外信息注入：已开启",
     summaryMasterDisabled: "额外信息注入：已关闭",
@@ -99,6 +114,7 @@ const ZH_CN_I18N = {
     summaryMemoryDisabled: "记忆：已关闭",
     summaryMemoryRepeatEnabled: "记忆去重：允许重复命中",
     summaryMemoryRepeatDisabled: "记忆去重：默认排除本会话已命中的记忆",
+    summaryInjectionTimeout: "注入超时：{seconds} 秒",
     summaryRulesHint: "这些设置会直接影响用户消息中显性附件的生成规则。",
     saveErrorPrefix: "保存失败：",
     attachmentTimeTitle: "【当前时间】",
@@ -199,6 +215,11 @@ const EN_US_I18N = {
     memoryLimitFieldPlaceholder: "For example 3",
     memoryConfigApplyButton: "Save memory settings",
     invalidMemoryLimitMessage: "Memory limit must be an integer greater than or equal to 1",
+    injectionTimeoutFieldLabel: "Injection timeout",
+    injectionTimeoutFieldDescription: "Maximum wait for the whole extra-info collection round in seconds. Timed-out items are marked timeout. Range: 1 to 120 seconds.",
+    injectionTimeoutFieldPlaceholder: "For example 8",
+    injectionTimeoutApplyButton: "Save timeout settings",
+    invalidInjectionTimeoutMessage: "Injection timeout must be an integer between 1 and 120 seconds",
     summarySectionTitle: "Current Rules",
     summaryMasterEnabled: "Extra info injection: enabled",
     summaryMasterDisabled: "Extra info injection: disabled",
@@ -226,6 +247,7 @@ const EN_US_I18N = {
     summaryMemoryDisabled: "Memory: disabled",
     summaryMemoryRepeatEnabled: "Memory dedupe: repeated hits are allowed",
     summaryMemoryRepeatDisabled: "Memory dedupe: previously hit memories are excluded in this chat",
+    summaryInjectionTimeout: "Injection timeout: {seconds}s",
     summaryRulesHint: "These settings directly control how visible attachments are generated for user messages.",
     saveErrorPrefix: "Save failed: ",
     attachmentTimeTitle: "[Current Time]",
@@ -300,7 +322,37 @@ const DEFAULT_SETTINGS = {
     injectMemory: false,
     allowRepeatedMemorySearch: false,
     memoryLimit: 3,
+    injectionTimeoutSeconds: DEFAULT_INJECTION_TIMEOUT_SECONDS,
 };
+function formatLogError(error) {
+    return error instanceof Error ? error.message : String(error);
+}
+function logExtraInfoInjectionInfo(event, details = "") {
+    console.info(`${LOG_PREFIX} ${event}${details ? ` ${details}` : ""}`);
+}
+function logExtraInfoInjectionError(event, error, details = "") {
+    console.error(`${LOG_PREFIX} ${event}${details ? ` ${details}` : ""} error=${formatLogError(error)}`);
+}
+function describeEnabledItems(settings) {
+    const items = [
+        settings.injectTime && "time",
+        settings.injectBattery && "battery",
+        settings.injectWeather && "weather",
+        settings.injectLocation && "location",
+        settings.injectCurrentScreenApp && "current_screen_app",
+        settings.injectRecentAppUsage && "recent_app_usage",
+        settings.injectScreenText && "screen_text",
+        settings.injectNotifications && "notifications",
+        settings.injectMemory && "memory",
+    ].filter(item => Boolean(item));
+    return items.join(",");
+}
+function normalizeInjectionTimeoutSeconds(value) {
+    if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < MIN_INJECTION_TIMEOUT_SECONDS || value > MAX_INJECTION_TIMEOUT_SECONDS) {
+        return DEFAULT_INJECTION_TIMEOUT_SECONDS;
+    }
+    return value;
+}
 function normalizeLocale(locale) {
     const value = String(locale || "").trim().toLowerCase();
     if (!value) {
@@ -319,7 +371,9 @@ function resolveExtraInfoI18n(locale) {
     return normalizeLocale(rawLocale) === "en-US" ? EN_US_I18N : ZH_CN_I18N;
 }
 async function useSettingsConfig() {
-    return PluginConfig.use(SETTINGS_CONFIG_NAME, DEFAULT_SETTINGS);
+    const config = await PluginConfig.use(SETTINGS_CONFIG_NAME, DEFAULT_SETTINGS);
+    config.injectionTimeoutSeconds = normalizeInjectionTimeoutSeconds(config.injectionTimeoutSeconds);
+    return config;
 }
 function createDefaultSettings() {
     return { ...DEFAULT_SETTINGS };
@@ -359,6 +413,7 @@ function applySettingsPatch(current, patch) {
         memoryLimit: patch.memoryLimit !== undefined
             ? Math.floor(Number(patch.memoryLimit))
             : current.memoryLimit,
+        injectionTimeoutSeconds: normalizeInjectionTimeoutSeconds(patch.injectionTimeoutSeconds ?? current.injectionTimeoutSeconds),
     };
 }
 async function saveSettings(patch) {
@@ -378,6 +433,8 @@ async function saveSettings(patch) {
     config.injectMemory = next.injectMemory;
     config.allowRepeatedMemorySearch = next.allowRepeatedMemorySearch;
     config.memoryLimit = next.memoryLimit;
+    config.injectionTimeoutSeconds = next.injectionTimeoutSeconds;
+    logExtraInfoInjectionInfo("settings.saved", `master_enabled=${next.masterEnabled} persist=${next.persistInjectedContent} items=${describeEnabledItems(next) || "none"} memory_limit=${next.memoryLimit} injection_timeout_seconds=${next.injectionTimeoutSeconds}`);
     return next;
 }
 async function getExtraInfoInjectionEnabled() {
@@ -496,6 +553,56 @@ function buildErrorContent(title, error) {
         title,
         `${text.errorLabel}: ${message}`,
     ].join("\n");
+}
+function buildTimeoutContent(title) {
+    return [title, "timeout"].join("\n");
+}
+function isTimeoutError(error) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    return /timeout|timed out|超时/i.test(message);
+}
+async function buildOptionalContent(item, title, build, deadlineAt) {
+    const startedAt = Date.now();
+    const remainingMs = Math.max(0, deadlineAt - startedAt);
+    if (remainingMs === 0) {
+        logExtraInfoInjectionInfo("item.timeout", `item=${item} elapsed_ms=${Date.now() - startedAt}`);
+        return buildTimeoutContent(title);
+    }
+    let timeoutId;
+    let timedOut = false;
+    const markTimeout = () => {
+        if (!timedOut) {
+            timedOut = true;
+            logExtraInfoInjectionInfo("item.timeout", `item=${item} elapsed_ms=${Date.now() - startedAt}`);
+        }
+        return buildTimeoutContent(title);
+    };
+    const timeoutPromise = new Promise((resolve) => {
+        timeoutId = setTimeout(() => resolve(markTimeout()), remainingMs);
+    });
+    const contentPromise = Promise.resolve()
+        .then(build)
+        .then((content) => {
+        if (Date.now() >= deadlineAt) {
+            return markTimeout();
+        }
+        logExtraInfoInjectionInfo("item.completed", `item=${item} elapsed_ms=${Date.now() - startedAt} content_length=${content.length}`);
+        return content;
+    }, (error) => {
+        if (Date.now() >= deadlineAt || isTimeoutError(error)) {
+            return markTimeout();
+        }
+        logExtraInfoInjectionError("item.failed", error, `item=${item} elapsed_ms=${Date.now() - startedAt}`);
+        return buildErrorContent(title, error);
+    });
+    try {
+        return await Promise.race([contentPromise, timeoutPromise]);
+    }
+    finally {
+        if (timeoutId !== undefined) {
+            clearTimeout(timeoutId);
+        }
+    }
 }
 async function fetchWeatherPayload(latitude, longitude, locale) {
     const queryLocation = `${latitude.toFixed(4)},${longitude.toFixed(4)}`;
@@ -779,108 +886,61 @@ async function buildMemoryContent(messageText, chatId, activePrompt) {
 }
 async function appendExtraInfoToMessage(messageText, chatId, activePrompt) {
     if (!stripMessageForMemorySearch(messageText)) {
+        logExtraInfoInjectionInfo("append.skipped", "reason=empty_message");
         return null;
     }
     const tags = await buildExtraInfoAttachmentTags(messageText, chatId, activePrompt);
     if (!tags.length) {
+        logExtraInfoInjectionInfo("append.skipped", "reason=no_attachment_tags");
         return null;
     }
-    return `${String(messageText || "").replace(/\s+$/, "")} ${tags.join(" ")}`.trim();
+    const result = `${String(messageText || "").replace(/\s+$/, "")} ${tags.join(" ")}`.trim();
+    logExtraInfoInjectionInfo("append.completed", `attachment_count=${tags.length} result_length=${result.length}`);
+    return result;
 }
 async function buildExtraInfoAttachmentTags(messageText, chatId, activePrompt) {
     const settings = await loadSettings();
     if (!settings.masterEnabled || containsExtraInfoAttachment(messageText)) {
+        logExtraInfoInjectionInfo("attachment_build.skipped", settings.masterEnabled ? "reason=attachment_already_present" : "reason=master_disabled");
         return [];
     }
     const attachmentTimestampMs = Date.now();
-    const contentBlocks = [];
+    const deadlineAt = attachmentTimestampMs + settings.injectionTimeoutSeconds * 1000;
+    logExtraInfoInjectionInfo("attachment_build.started", `items=${describeEnabledItems(settings) || "none"} persist=${settings.persistInjectedContent}`);
+    const contentTasks = [];
     if (settings.injectTime) {
-        contentBlocks.push(buildTimeContent());
+        contentTasks.push(buildOptionalContent("time", resolveExtraInfoI18n().attachmentTimeTitle, buildTimeContent, deadlineAt));
     }
     if (settings.injectBattery) {
-        let content = "";
-        try {
-            content = buildBatteryContent();
-        }
-        catch (error) {
-            content = buildErrorContent(resolveExtraInfoI18n().attachmentBatteryTitle, error);
-        }
-        contentBlocks.push(content);
+        contentTasks.push(buildOptionalContent("battery", resolveExtraInfoI18n().attachmentBatteryTitle, buildBatteryContent, deadlineAt));
     }
     if (settings.injectWeather) {
-        let content = "";
-        try {
-            content = await buildWeatherContent();
-        }
-        catch (error) {
-            content = buildErrorContent(resolveExtraInfoI18n().attachmentWeatherTitle, error);
-        }
-        contentBlocks.push(content);
+        contentTasks.push(buildOptionalContent("weather", resolveExtraInfoI18n().attachmentWeatherTitle, buildWeatherContent, deadlineAt));
     }
     if (settings.injectLocation) {
-        let content = "";
-        try {
-            content = await buildLocationContent();
-        }
-        catch (error) {
-            content = buildErrorContent(resolveExtraInfoI18n().attachmentLocationTitle, error);
-        }
-        contentBlocks.push(content);
+        contentTasks.push(buildOptionalContent("location", resolveExtraInfoI18n().attachmentLocationTitle, buildLocationContent, deadlineAt));
     }
     if (settings.injectCurrentScreenApp) {
-        let content = "";
-        try {
-            content = await buildCurrentScreenAppContent();
-        }
-        catch (error) {
-            content = buildErrorContent(resolveExtraInfoI18n().attachmentCurrentScreenAppTitle, error);
-        }
-        contentBlocks.push(content);
+        contentTasks.push(buildOptionalContent("current_screen_app", resolveExtraInfoI18n().attachmentCurrentScreenAppTitle, buildCurrentScreenAppContent, deadlineAt));
     }
     if (settings.injectRecentAppUsage) {
-        let content = "";
-        try {
-            content = await buildRecentAppUsageContent();
-        }
-        catch (error) {
-            content = buildErrorContent(resolveExtraInfoI18n().attachmentRecentAppUsageTitle, error);
-        }
-        contentBlocks.push(content);
+        contentTasks.push(buildOptionalContent("recent_app_usage", resolveExtraInfoI18n().attachmentRecentAppUsageTitle, buildRecentAppUsageContent, deadlineAt));
     }
     if (settings.injectScreenText) {
-        let content = "";
-        try {
-            content = await buildScreenTextContent();
-        }
-        catch (error) {
-            content = buildErrorContent(resolveExtraInfoI18n().attachmentScreenTextTitle, error);
-        }
-        contentBlocks.push(content);
+        contentTasks.push(buildOptionalContent("screen_text", resolveExtraInfoI18n().attachmentScreenTextTitle, buildScreenTextContent, deadlineAt));
     }
     if (settings.injectNotifications) {
-        let content = "";
-        try {
-            content = await buildNotificationsContent();
-        }
-        catch (error) {
-            content = buildErrorContent(resolveExtraInfoI18n().attachmentNotificationsTitle, error);
-        }
-        contentBlocks.push(content);
+        contentTasks.push(buildOptionalContent("notifications", resolveExtraInfoI18n().attachmentNotificationsTitle, buildNotificationsContent, deadlineAt));
     }
     if (settings.injectMemory) {
-        let content = "";
-        try {
-            content = await buildMemoryContent(messageText, chatId, activePrompt);
-        }
-        catch (error) {
-            content = buildErrorContent(resolveExtraInfoI18n().attachmentMemoryTitle, error);
-        }
-        contentBlocks.push(content);
+        contentTasks.push(buildOptionalContent("memory", resolveExtraInfoI18n().attachmentMemoryTitle, () => buildMemoryContent(messageText, chatId, activePrompt), deadlineAt));
     }
+    const contentBlocks = await Promise.all(contentTasks);
     if (!contentBlocks.length) {
+        logExtraInfoInjectionInfo("attachment_build.skipped", contentTasks.length ? "reason=no_items_completed_before_deadline" : "reason=no_items_enabled");
         return [];
     }
-    return [
-        buildAttachmentTag(COMBINED_ATTACHMENT_ID_PREFIX, buildCombinedAttachmentFileName(attachmentTimestampMs), contentBlocks.join("\n\n")),
-    ];
+    const attachment = buildAttachmentTag(COMBINED_ATTACHMENT_ID_PREFIX, buildCombinedAttachmentFileName(attachmentTimestampMs), contentBlocks.join("\n\n"));
+    logExtraInfoInjectionInfo("attachment_build.completed", `content_blocks=${contentBlocks.length} attachment_length=${attachment.length} elapsed_ms=${Date.now() - attachmentTimestampMs}`);
+    return [attachment];
 }
