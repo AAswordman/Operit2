@@ -36,6 +36,13 @@ diff --git a/app/iOSFS.h b/app/iOSFS.h
  void iosfs_init(void);
  void iosfs_clear_all_bookmarks(void); // for recovery
 +int iosfs_mount_app_directory(const char *directory, const char *mount_point);
+diff --git a/iSH.xcodeproj/project.pbxproj b/iSH.xcodeproj/project.pbxproj
+--- a/iSH.xcodeproj/project.pbxproj
++++ b/iSH.xcodeproj/project.pbxproj
+@@ -140,0 +141 @@
++		3D2A10232D000003003D2A10 /* iOSFS.m in Sources */ = {isa = PBXBuildFile; fileRef = 408A2639236440F8008A4E81 /* iOSFS.m */; };
+@@ -2184,0 +2186 @@
++				3D2A10232D000003003D2A10 /* iOSFS.m in Sources */,
 diff --git a/app/iOSFS.m b/app/iOSFS.m
 --- a/app/iOSFS.m
 +++ b/app/iOSFS.m

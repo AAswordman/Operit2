@@ -44,6 +44,15 @@ verify_static_library() {
     test -f "$build_products_dir/$library_name"
 }
 
+# Verifies that one static library exports a required C symbol.
+verify_static_library_symbol() {
+    local library_name="$1"
+    local symbol_name="$2"
+
+    xcrun --sdk "$sdk_name" nm -gU "$build_products_dir/$library_name" \
+        | awk -v expected="_$symbol_name" '$NF == expected { found = 1 } END { exit !found }'
+}
+
 # Builds one iSH source file into a universal static library.
 build_ish_source_static_library() {
     local source_path="$1"
@@ -94,6 +103,7 @@ verify_static_library liblinux.a
 verify_static_library libiSHLinux.a
 verify_static_library libiSHLinuxUser.a
 verify_static_library libiSHApp.a
+verify_static_library_symbol libiSHApp.a iosfs_mount_app_directory
 verify_static_library libfakefs.a
 verify_static_library libish_emu.a
 verify_static_library libarchive.a
