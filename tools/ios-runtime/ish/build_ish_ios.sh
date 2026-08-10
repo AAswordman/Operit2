@@ -52,6 +52,7 @@ build_target() {
 verify_static_library() {
     local library_name="$1"
 
+    printf 'Verifying iSH static library: %s\n' "$library_name"
     test -f "$build_products_dir/$library_name"
 }
 
@@ -60,6 +61,7 @@ verify_static_library_symbol() {
     local library_name="$1"
     local symbol_name="$2"
 
+    printf 'Verifying iSH static library symbol: %s in %s\n' "$symbol_name" "$library_name"
     xcrun --sdk "$sdk_name" nm -gU "$build_products_dir/$library_name" \
         | awk -v expected="_$symbol_name" '$NF == expected { found = 1 } END { exit !found }'
 }
