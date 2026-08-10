@@ -107,7 +107,7 @@ jobs:
 
       - name: Install iSH build tools
         run: |
-          brew install gnu-sed llvm lld meson ninja
+          brew install llvm lld meson ninja
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
 
@@ -183,12 +183,6 @@ jobs:
       - name: Build Web Access assets
         if: steps.web-build.outputs.needed == 'true'
         run: python3 tools/build_scripts/build_flutter_web_access.py --base-href /
-
-      - name: Build iOS Toybox runtime
-        run: python3 tools/ios-runtime/toybox/build.py
-
-      - name: Build iOS scientific runtime
-        run: python3 tools/ios-runtime/native/build_scientific.py
 
       - name: Build and package unsigned iOS app
         run: python3 tools/build_scripts/build_flutter_ios.py
