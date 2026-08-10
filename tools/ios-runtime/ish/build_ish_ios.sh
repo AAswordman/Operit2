@@ -22,7 +22,6 @@ platform_name="${3:?missing Xcode platform name}"
 architectures="${4:?missing Xcode architectures}"
 build_products_dir="$repo_dir/apps/flutter/app/apple/ish-build/${configuration}-${platform_name}"
 linux_configuration="${configuration}Linux"
-ish_meson_build_dir="$build_products_dir/meson-ish"
 linux_meson_build_dir="$build_products_dir/meson-linux"
 
 python3 "$script_dir/fetch_sources.py"
@@ -106,7 +105,6 @@ build_ish_source_static_library() {
         -output "$build_products_dir/$library_name.a"
 }
 
-build_target "$source_dir/iSH.xcodeproj" libish "$configuration" "$ish_meson_build_dir"
 build_target "$source_dir/iSH.xcodeproj" liblinux "$linux_configuration" "$linux_meson_build_dir"
 build_target "$source_dir/iSH.xcodeproj" libiSHLinux "$linux_configuration" "$linux_meson_build_dir"
 build_target "$source_dir/iSH.xcodeproj" libiSHLinuxUser "$linux_configuration" "$linux_meson_build_dir"
@@ -120,7 +118,6 @@ build_ish_source_static_library "$source_dir/util/fchdir.c" libiSHFchdir
 verify_static_library liblinux.a
 verify_static_library libiSHLinux.a
 verify_static_library libiSHLinuxUser.a
-verify_static_library libish.a
 verify_static_library libiSHApp.a
 verify_static_library_symbol libiSHApp.a iosfs_mount_app_directory
 verify_static_library libfakefs.a
