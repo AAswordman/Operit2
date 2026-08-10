@@ -19,6 +19,7 @@ from common import (
     require_command,
     prepare_web_access_embedded_assets,
     run,
+    staged_non_ohos_flutter_dependencies,
 )
 
 
@@ -65,15 +66,18 @@ def main() -> int:
         generate_dart_proxy_artifacts()
 
     prepare_python_command()
-    flutter_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
+    with staged_non_ohos_flutter_dependencies():
+        flutter_pub_get(env=env)
+        if args.enforce_lockfile:
+            flutter_pub_get(enforce_lockfile=True, env=env)
 
-    command = [flutter, "build", "macos", "--release", "--no-pub"]
-    if args.build_name:
-        command.extend(["--build-name", args.build_name])
-    if args.build_number:
-        command.extend(["--build-number", args.build_number])
-    command.append("-v")
-    run(command, cwd=FLUTTER_APP_DIR, env=env)
+        command = [flutter, "build", "macos", "--release", "--no-pub"]
+        if args.build_name:
+            command.extend(["--build-name", args.build_name])
+        if args.build_number:
+            command.extend(["--build-number", args.build_number])
+        command.append("-v")
+        run(command, cwd=FLUTTER_APP_DIR, env=env)
 
     if not args.skip_package:
         archive_path = package_macos_app(args.archive_path)

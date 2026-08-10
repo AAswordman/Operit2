@@ -12,6 +12,7 @@ from common import (
     host_arch,
     prepare_web_access_embedded_assets,
     run,
+    staged_non_ohos_flutter_dependencies,
 )
 
 
@@ -29,13 +30,16 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     prepare_web_access_embedded_assets()
-    flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
-    command = [flutter_command(), "build", "windows", "--release", "--no-pub"]
-    if args.build_name:
-        command.extend(["--build-name", args.build_name])
-    if args.build_number:
-        command.extend(["--build-number", args.build_number])
-    run(command, cwd=FLUTTER_APP_DIR)
+    with staged_non_ohos_flutter_dependencies():
+        flutter_pub_get()
+        if args.enforce_lockfile:
+            flutter_pub_get(enforce_lockfile=True)
+        command = [flutter_command(), "build", "windows", "--release", "--no-pub"]
+        if args.build_name:
+            command.extend(["--build-name", args.build_name])
+        if args.build_number:
+            command.extend(["--build-number", args.build_number])
+        run(command, cwd=FLUTTER_APP_DIR)
     release_dir = FLUTTER_APP_DIR / "build" / "windows" / "x64" / "runner" / "Release"
     archive_path = args.archive_path or DIST_DIR / f"operit2-app-windows-{host_arch()}.zip"
     compress_zip(release_dir, archive_path)

@@ -8,7 +8,9 @@ import shutil
 import subprocess
 import sys
 import tarfile
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -38,6 +40,14 @@ ANDROID_LOCAL_PROPERTIES = ANDROID_DIR / "local.properties"
 OHOS_FVM_CACHE_DIR = REPO_ROOT / ".ci-tools" / "fvm-ohos"
 OHOS_FLUTTER_REF = "8c403dd30158e63b8efccf988b129093820886c9"
 OHOS_FLUTTER_GIT_URL = "https://gitcode.com/openharmony-sig/flutter_flutter.git"
+OHOS_ONLY_DEPENDENCIES = frozenset(
+    {
+        "file_selector_ohos",
+        "path_provider_ohos",
+        "url_launcher_ohos",
+        "video_player_ohos",
+    }
+)
 _fvm_sdk_prepared = False
 _ohos_fvm_sdk_prepared = False
 
@@ -211,6 +221,66 @@ def prepare_web_access_embedded_assets() -> None:
             "Embedded Web Access asset directories declared in pubspec.yaml are missing: "
             + ", ".join(str(path) for path in missing)
         )
+
+
+def remove_direct_dependencies_from_pubspec(pubspec: Path, dependency_names: frozenset[str]) -> str:
+    """Stages a pubspec without the requested direct dependency declarations."""
+    original = pubspec.read_text(encoding="utf-8")
+    lines = original.splitlines(keepends=True)
+    staged: list[str] = []
+    removed: set[str] = set()
+    inside_dependencies = False
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.rstrip("\r\n") == "dependencies:":
+            inside_dependencies = True
+            staged.append(line)
+            index += 1
+            continue
+        if inside_dependencies and not line.startswith(" ") and line.strip():
+            inside_dependencies = False
+        if (
+            inside_dependencies
+            and line.startswith("  ")
+            and not line.startswith("    ")
+            and line.rstrip("\r\n").endswith(":")
+        ):
+            dependency_name = line.strip().removesuffix(":")
+            if dependency_name in dependency_names:
+                removed.add(dependency_name)
+                index += 1
+                while index < len(lines) and lines[index].startswith("    "):
+                    index += 1
+                continue
+        staged.append(line)
+        index += 1
+    if removed != dependency_names:
+        missing = sorted(dependency_names - removed)
+        unexpected = sorted(removed - dependency_names)
+        raise RuntimeError(
+            "Unexpected direct dependency declarations: "
+            f"missing={missing} unexpected={unexpected}"
+        )
+    with pubspec.open("w", encoding="utf-8", newline="") as output:
+        output.write("".join(staged))
+    return original
+
+
+@contextmanager
+def staged_non_ohos_flutter_dependencies() -> Iterator[None]:
+    """Stages and restores the Flutter dependency view used by non-OpenHarmony targets."""
+    pubspec = FLUTTER_APP_DIR / "pubspec.yaml"
+    pubspec_lock = FLUTTER_APP_DIR / "pubspec.lock"
+    original_pubspec = remove_direct_dependencies_from_pubspec(pubspec, OHOS_ONLY_DEPENDENCIES)
+    original_pubspec_lock = pubspec_lock.read_text(encoding="utf-8")
+    try:
+        yield
+    finally:
+        with pubspec.open("w", encoding="utf-8", newline="") as output:
+            output.write(original_pubspec)
+        with pubspec_lock.open("w", encoding="utf-8", newline="") as output:
+            output.write(original_pubspec_lock)
 
 
 def copy_required_file(source: Path, destination: Path) -> None:
