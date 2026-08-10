@@ -37,7 +37,7 @@ def local_app_archive_path(platform_name: str, architecture: str) -> Path:
     if platform_name == "linux":
         return DIST_DIR / f"operit2-app-linux-{architecture}.tar.gz"
     if platform_name == "macos":
-        return DIST_DIR / f"operit2-app-macos-{architecture}.zip"
+        return DIST_DIR / "operit2-app-macos-universal.zip"
     raise RuntimeError(f"Unsupported local App platform: {platform_name}")
 
 

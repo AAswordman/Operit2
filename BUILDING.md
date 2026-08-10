@@ -261,7 +261,7 @@ Local Apple builds require Xcode, Rust, FVM, Node/npm, and Python 3 on the macOS
 host. Apple outputs include:
 
 ```text
-operit2-app-macos-aarch64.zip
+operit2-app-macos-universal.zip
 operit2-app-ios-arm64.zip
 operit2-cli-macos-x86_64.tar.gz
 operit2-cli-macos-aarch64.tar.gz

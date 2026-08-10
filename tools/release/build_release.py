@@ -1105,7 +1105,7 @@ def build_host_app(build_name, build_number):
                 build_number,
                 "--enforce-lockfile",
                 "--archive-path",
-                DIST_DIR / f"operit2-app-macos-{current_arch}.zip",
+                DIST_DIR / "operit2-app-macos-universal.zip",
             ]
         )
         return

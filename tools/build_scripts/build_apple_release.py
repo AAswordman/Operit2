@@ -7,7 +7,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from common import DIST_DIR, REPO_ROOT, host_arch, run
+from common import DIST_DIR, REPO_ROOT, run
 
 
 BUILD_SCRIPTS_DIR = REPO_ROOT / "tools" / "build_scripts"
@@ -34,7 +34,6 @@ def require_macos_host() -> None:
 
 # Builds the macOS app package and, when selected, the iOS app package.
 def build_apple_apps(build_name: str, build_number: str, dist_dir: Path, include_ios: bool) -> None:
-    current_arch = host_arch()
     run(
         [
             sys.executable,
@@ -45,7 +44,7 @@ def build_apple_apps(build_name: str, build_number: str, dist_dir: Path, include
             build_number,
             "--enforce-lockfile",
             "--archive-path",
-            dist_dir / f"operit2-app-macos-{current_arch}.zip",
+            dist_dir / "operit2-app-macos-universal.zip",
         ],
     )
     if include_ios:

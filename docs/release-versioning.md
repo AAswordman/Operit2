@@ -95,7 +95,7 @@ operit2-app-android-x86_64.apk
 operit2-app-ohos-arm64.hap
 operit2-app-windows-x86_64.zip
 operit2-app-linux-x86_64.tar.gz
-operit2-app-macos-aarch64.zip
+operit2-app-macos-universal.zip
 operit2-app-ios-arm64.zip
 ```
 

@@ -14,7 +14,6 @@ from common import (
     flutter_command,
     flutter_pub_get,
     generate_dart_proxy_artifacts,
-    host_arch,
     prepare_python_command,
     require_command,
     prepare_web_access_embedded_assets,
@@ -27,7 +26,7 @@ from common import (
 def package_macos_app(archive_path: Path | None = None) -> Path:
     app_path = FLUTTER_APP_DIR / "build" / "macos" / "Build" / "Products" / "Release" / "Operit2.app"
     if archive_path is None:
-        archive_path = DIST_DIR / f"operit2-app-macos-{host_arch()}.zip"
+        archive_path = DIST_DIR / "operit2-app-macos-universal.zip"
     if not app_path.is_dir():
         raise RuntimeError(f"macOS app bundle was not produced: {app_path}")
     if archive_path.exists():
