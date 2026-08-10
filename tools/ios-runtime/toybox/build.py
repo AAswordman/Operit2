@@ -257,6 +257,15 @@ def clang_path(sdk: str) -> str:
     return subprocess.check_output(["xcrun", "--sdk", sdk, "--find", "clang"], text=True).strip()
 
 
+def gnu_sed_bin_path() -> Path:
+    """Resolves the GNU sed command directory required by the Toybox build scripts."""
+    prefix = Path(subprocess.check_output(["brew", "--prefix", "gnu-sed"], text=True).strip())
+    command_directory = prefix / "libexec" / "gnubin"
+    if not (command_directory / "sed").is_file():
+        raise RuntimeError(f"GNU sed command is missing: {command_directory / 'sed'}")
+    return command_directory
+
+
 def target_compile_flags(sdk: str, architectures: list[str]) -> list[str]:
     """Builds the common C compiler flags for one device or simulator framework slice."""
     version_flag = (
@@ -295,6 +304,7 @@ def create_framework_slice(source: Path, sdk: str, architectures: list[str], nam
     flags = target_compile_flags(sdk, architectures)
     host_sdk = sdk_path("macosx")
     environment = os.environ.copy()
+    environment["PATH"] = os.pathsep.join([str(gnu_sed_bin_path()), environment["PATH"]])
     environment.update(
         {
             "CC": clang_path(sdk),

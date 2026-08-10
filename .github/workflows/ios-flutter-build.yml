@@ -107,7 +107,7 @@ jobs:
 
       - name: Install iSH build tools
         run: |
-          brew install llvm lld meson ninja
+          brew install gnu-sed llvm lld meson ninja
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
 
