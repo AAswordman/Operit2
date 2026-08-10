@@ -190,6 +190,7 @@ build_rootfs_for_abi() {
     write_rootfs_config "$root_dir" "$release_branch"
 
     "$apk_static_dir/sbin/apk.static" \
+        --usermode \
         --root "$root_dir" \
         --arch "$alpine_arch" \
         --keys-dir "$root_dir/etc/apk/keys" \
