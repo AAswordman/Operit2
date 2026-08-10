@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+
+# Reports the command and source line that caused the iSH build to terminate.
+report_build_failure() {
+    local exit_code="$?"
+
+    printf 'iSH build failed at %s:%s while running: %s\n' \
+        "${BASH_SOURCE[1]}" "${BASH_LINENO[0]}" "$BASH_COMMAND" >&2
+    exit "$exit_code"
+}
+
+trap report_build_failure ERR
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_dir="$(cd "$script_dir/../../.." && pwd)"
