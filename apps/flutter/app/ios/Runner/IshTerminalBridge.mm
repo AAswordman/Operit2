@@ -11,6 +11,11 @@ extern "C" {
 #include "tools/fakefs.h"
 }
 
+#import "TerminalViewController.h"
+
+/// Provides the iSH iOSFS global required by the app-owned directory mount implementation.
+TerminalViewController *currentTerminalViewController = nil;
+
 static const NSUInteger ORTIshOutputCapacity = 1024 * 1024;
 static const NSTimeInterval ORTIshStartTimeout = 30.0;
 static NSString *const ORTIshRuntimeMountRoot = @"/mnt/operit-mcp";
