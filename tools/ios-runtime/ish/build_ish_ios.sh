@@ -108,7 +108,6 @@ build_ish_source_static_library() {
 build_target "$source_dir/iSH.xcodeproj" liblinux "$linux_configuration" "$linux_meson_build_dir"
 build_target "$source_dir/iSH.xcodeproj" libiSHLinux "$linux_configuration" "$linux_meson_build_dir"
 build_target "$source_dir/iSH.xcodeproj" libiSHLinuxUser "$linux_configuration" "$linux_meson_build_dir"
-build_target "$source_dir/iSH.xcodeproj" libiSHApp "$linux_configuration" "$linux_meson_build_dir"
 build_target "$source_dir/iSH.xcodeproj" libfakefs "$linux_configuration" "$linux_meson_build_dir"
 build_target "$source_dir/iSH.xcodeproj" libish_emu "$linux_configuration" "$linux_meson_build_dir"
 build_target "$source_dir/deps/libarchive.xcodeproj" libarchive "$configuration" "$linux_meson_build_dir"
@@ -118,8 +117,7 @@ build_ish_source_static_library "$source_dir/util/fchdir.c" libiSHFchdir
 verify_static_library liblinux.a
 verify_static_library libiSHLinux.a
 verify_static_library libiSHLinuxUser.a
-verify_static_library libiSHApp.a
-verify_static_library_symbol libiSHApp.a iosfs_mount_app_directory
+verify_static_library_symbol libiSHLinux.a linux_mount_app_directory
 verify_static_library libfakefs.a
 verify_static_library libish_emu.a
 verify_static_library libarchive.a

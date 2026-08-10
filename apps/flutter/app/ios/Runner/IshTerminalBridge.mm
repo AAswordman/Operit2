@@ -6,15 +6,9 @@
 
 extern "C" {
 #import "LinuxInterop.h"
-#include "iOSFS.h"
 #include "kernel/errno.h"
 #include "tools/fakefs.h"
 }
-
-#import "TerminalViewController.h"
-
-/// Provides the iSH iOSFS global required by the app-owned directory mount implementation.
-TerminalViewController *currentTerminalViewController = nil;
 
 static const NSUInteger ORTIshOutputCapacity = 1024 * 1024;
 static const NSTimeInterval ORTIshStartTimeout = 30.0;
@@ -268,7 +262,7 @@ static BOOL ORTIshMountRuntimeDirectory(NSString *hostDirectory, NSString *mount
       || !ORTIshEnsureRuntimeMountDirectory(mountPoint, errorOut)) {
     return NO;
   }
-  int result = iosfs_mount_app_directory(hostDirectory.fileSystemRepresentation,
+  int result = linux_mount_app_directory(hostDirectory.fileSystemRepresentation,
                                          mountPoint.fileSystemRepresentation);
   if (result != 0) {
     *errorOut = [NSString stringWithFormat:@"iSH runtime mount failed: %@ (%d)", mountPoint, result];
