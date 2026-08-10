@@ -19,6 +19,12 @@ class ProxyCoreRuntimeBridge extends OperitRuntimeBridge {
     return _coreProxy.call(request);
   }
 
+  /// Executes a control call without joining the serialized runtime queue.
+  @override
+  Future<Object?> callControl(CoreCallRequest request) {
+    return _coreProxy.callControl(request);
+  }
+
   /// Opens a client-owned Link input stream.
   @override
   Future<CorePushSink> push(CorePushRequest request) {

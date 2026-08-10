@@ -81,6 +81,7 @@ interface SqliteQueryRow {
 
 interface RuntimeBridge {
   call(request: Uint8Array): Promise<Uint8Array>;
+  controlCall(request: Uint8Array): Promise<Uint8Array>;
   pushOpen(request: Uint8Array): Promise<Uint8Array>;
   pushItem(item: Uint8Array): Promise<Uint8Array>;
   pushClose(pushId: string): Promise<Uint8Array>;
@@ -445,6 +446,27 @@ interface LinuxVmSession {
   startupText: string;
   lastDownloadProgress: string | null;
   progressVisible: boolean;
+  activeCommand: LinuxVmCommand | null;
+  pendingCommands: LinuxVmCommand[];
+}
+
+interface LinuxVmCommandResult {
+  output: string;
+  exitCode: number;
+  timedOut: boolean;
+  workingDir: string;
+}
+
+interface LinuxVmCommand {
+  readonly token: string;
+  readonly command: string;
+  readonly timeoutHandle: number;
+  readonly resolve: (result: LinuxVmCommandResult) => void;
+  readonly reject: (reason: unknown) => void;
+  collectingOutput: boolean;
+  markerBytes: number[];
+  output: Uint8Array;
+  outputLength: number;
 }
 
 interface ManagedRuntimeRequest {
@@ -461,6 +483,8 @@ interface ManagedRuntimeProcess {
   readonly header: Int32Array;
   readonly output: Uint8Array;
   readonly decoder: TextDecoder;
+  activityVersion: number;
+  activityWaiters: Set<() => void>;
   stdout: string;
   stderr: string;
 }
@@ -471,6 +495,9 @@ interface RuntimeGlobals {
   __operitRuntime?: RuntimeBridge;
   __operitRuntimeWorkerEnsureStorage?: () => Promise<void>;
   __operitRuntimeWorkerStorage?: RuntimeWorkerStorageBridge;
+  __operitRuntimeWorkerArchiveStaging?: RuntimeWorkerArchiveStagingBridge;
+  __operitWorkerHostModules?: WeakSet<object>;
+  __operitMainHostModules?: WeakSet<object>;
   __operitModelInstallWorkerStorageChanges?: () => Promise<ModelInstallWorkerStorageChange[]>;
   __operitModelInstallWorkerSetSecrets?: (secrets: ModelInstallWorkerSecret[]) => void;
   __operitModelInstallWorkerSetDownloads?: (downloads: ModelInstallWorkerDownload[]) => void;
@@ -504,10 +531,18 @@ interface RuntimeWorkerStorageBridge {
   discardWriteSession(sessionId: string): void;
 }
 
+interface RuntimeWorkerArchiveStagingBridge {
+  createArchive(archiveId: string, expectedByteLength: number): void;
+  appendArchive(archiveId: string, content: Uint8Array): void;
+  sealArchive(archiveId: string): number;
+  readArchive(archiveId: string, offset: number, length: number): Uint8Array;
+  removeArchive(archiveId: string): void;
+}
+
 interface RuntimeWorkerCoreRequest {
   type: "coreRequest";
   id: number;
-  operation: "call" | "pushOpen" | "pushItem" | "pushClose" | "watchSnapshot" | "watchStream" | "closeWatchStream";
+  operation: "call" | "controlCall" | "pushOpen" | "pushItem" | "pushClose" | "watchSnapshot" | "watchStream" | "closeWatchStream";
   payload: Uint8Array | string;
 }
 
@@ -592,6 +627,10 @@ interface RuntimeWorkerLeaderMessage {
   control?: SharedArrayBuffer;
 }
 
+interface RuntimeWorkerShutdownComplete {
+  type: "shutdownComplete";
+}
+
 interface RuntimeWorkerLockManager {
   request(name: string, options: { mode: "exclusive" }, callback: () => Promise<void>): Promise<void>;
 }
@@ -667,6 +706,10 @@ interface ModelInstallWorkerError {
 
 (function () {
   const runtimeGlobal = globalThis as typeof globalThis & RuntimeGlobals;
+  const workerHostModules = new WeakSet<object>();
+  const mainHostModules = new WeakSet<object>();
+  runtimeGlobal.__operitWorkerHostModules = workerHostModules;
+  runtimeGlobal.__operitMainHostModules = mainHostModules;
   const browserNavigator = navigator as Navigator & {
     bluetooth?: BluetoothApi;
   };
@@ -675,6 +718,18 @@ interface ModelInstallWorkerError {
   const blobPart = (bytes: Uint8Array): BlobPart => Uint8Array.from(bytes);
   /** Creates an ArrayBuffer-backed byte view for Web Crypto and Fetch. */
   const ownedBytes = (bytes: Uint8Array): Uint8Array<ArrayBuffer> => Uint8Array.from(bytes);
+
+  /** Declares that one host module executes inside the dedicated runtime worker. */
+  function registerWorkerHostModule<T extends object>(module: T): T {
+    workerHostModules.add(module);
+    return module;
+  }
+
+  /** Declares that one host module executes through the browser UI thread. */
+  function registerMainHostModule<T extends object>(module: T): T {
+    mainHostModules.add(module);
+    return module;
+  }
 
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder();
@@ -716,6 +771,7 @@ interface ModelInstallWorkerError {
   let webLocalInferenceState: WebLocalInferenceState | null = null;
   const linuxVmSessions = new Map<string, LinuxVmSession>();
   const linuxVmOutputLimit = 4 * 1024 * 1024;
+  let linuxVmCommandIndex = 0;
   const managedRuntimeProcesses = new Map<string, ManagedRuntimeProcess>();
   const managedRuntimeHeaderLength = 4;
   const managedRuntimeOutputWriteIndex = 0;
@@ -749,6 +805,9 @@ interface ModelInstallWorkerError {
     runtimeGlobal.__operitRuntime = {
       async call(request: Uint8Array): Promise<Uint8Array> {
         return (await runtimePromise).call(request);
+      },
+      async controlCall(request: Uint8Array): Promise<Uint8Array> {
+        return (await runtimePromise).controlCall(request);
       },
       async pushOpen(request: Uint8Array): Promise<Uint8Array> {
         return (await runtimePromise).pushOpen(request);
@@ -1311,6 +1370,12 @@ interface ModelInstallWorkerError {
     return {
       /** Forwards one compact native call through authenticated HTTP Link. */
       async call(request: Uint8Array): Promise<Uint8Array> {
+        return encodeCallResponseAsNative(await postLink("/link/call", {
+          request: nativeCallTupleToLinkRequest(MessagePack.decode(request)),
+        }));
+      },
+      /** Forwards one control call through the same authenticated HTTP Link. */
+      async controlCall(request: Uint8Array): Promise<Uint8Array> {
         return encodeCallResponseAsNative(await postLink("/link/call", {
           request: nativeCallTupleToLinkRequest(MessagePack.decode(request)),
         }));
@@ -3552,12 +3617,29 @@ self.onmessage = (event) => {
       header,
       output,
       decoder: new TextDecoder(),
+      activityVersion: 0,
+      activityWaiters: new Set(),
       stdout: "",
       stderr: "",
     };
+    worker.addEventListener("message", event => {
+      if (event.data?.type !== "activity") {
+        return;
+      }
+      process.activityVersion += 1;
+      for (const resolve of process.activityWaiters) {
+        resolve();
+      }
+      process.activityWaiters.clear();
+    });
     worker.addEventListener("error", event => {
       process.stderr += `[V86 runtime worker failed: ${event.message}]\n`;
       Atomics.store(process.header, managedRuntimeStateIndex, managedRuntimeFailed);
+      process.activityVersion += 1;
+      for (const resolve of process.activityWaiters) {
+        resolve();
+      }
+      process.activityWaiters.clear();
     });
     managedRuntimeProcesses.set(id, process);
     postManagedRuntimeWorkerMessage(worker, {
@@ -3612,8 +3694,35 @@ self.onmessage = (event) => {
     return Atomics.load(process.header, managedRuntimeStateIndex);
   }
 
+  /** Waits for the V86 worker to report output, a lifecycle change, or deadline expiry. */
+  async function waitForManagedRuntimeChange(
+    process: ManagedRuntimeProcess,
+    deadline: number,
+  ): Promise<void> {
+    const remainingMs = Math.ceil(deadline - performance.now());
+    if (remainingMs <= 0) {
+      return;
+    }
+    const observedVersion = process.activityVersion;
+    await new Promise<void>(resolve => {
+      const timer = setTimeout(() => {
+        process.activityWaiters.delete(complete);
+        resolve();
+      }, remainingMs);
+      const complete = (): void => {
+        clearTimeout(timer);
+        process.activityWaiters.delete(complete);
+        resolve();
+      };
+      process.activityWaiters.add(complete);
+      if (process.activityVersion !== observedVersion) {
+        complete();
+      }
+    });
+  }
+
   /** Reads one newline-delimited stdout frame without relying on browser event-loop progress. */
-  function readManagedRuntimeStdoutLine(id: string, timeoutMs: number): string | null {
+  async function readManagedRuntimeStdoutLine(id: string, timeoutMs: number): Promise<string | null> {
     const process = managedRuntimeProcess(id);
     const deadline = performance.now() + Math.max(0, timeoutMs);
     for (;;) {
@@ -3633,6 +3742,7 @@ self.onmessage = (event) => {
       if (state === managedRuntimeStopped || performance.now() >= deadline) {
         return null;
       }
+      await waitForManagedRuntimeChange(process, deadline);
     }
   }
 
@@ -3680,11 +3790,11 @@ self.onmessage = (event) => {
   }
 
   /** Runs one finite guest command and collects all serial output before releasing its worker. */
-  function runManagedRuntimeCommand(request: ManagedRuntimeRequest): {
+  async function runManagedRuntimeCommand(request: ManagedRuntimeRequest): Promise<{
     exitCode: number | null;
     stdout: string;
     stderr: string;
-  } {
+  }> {
     const id = startManagedRuntimeProcess(request);
     const process = managedRuntimeProcess(id);
     const deadline = performance.now() + managedRuntimeCommandTimeoutMs;
@@ -3715,6 +3825,7 @@ self.onmessage = (event) => {
         process.worker.terminate();
         throw new Error("V86 managed runtime command timed out");
       }
+      await waitForManagedRuntimeChange(process, deadline);
     }
   }
 
@@ -3745,6 +3856,229 @@ self.onmessage = (event) => {
     }
     session.output.set(bytes, session.outputLength);
     session.outputLength = requiredLength;
+  }
+
+  /** Appends one command-output byte while enforcing the terminal output limit. */
+  function appendLinuxVmCommandOutput(command: LinuxVmCommand, byte: number): void {
+    const requiredLength = command.outputLength + 1;
+    if (requiredLength > linuxVmOutputLimit) {
+      throw new Error("Linux VM command output exceeded 4 MiB");
+    }
+    if (requiredLength > command.output.length) {
+      const expanded = new Uint8Array(Math.min(
+        linuxVmOutputLimit,
+        Math.max(requiredLength, command.output.length * 2),
+      ));
+      expanded.set(command.output.subarray(0, command.outputLength));
+      command.output = expanded;
+    }
+    command.output[command.outputLength] = byte;
+    command.outputLength = requiredLength;
+  }
+
+  /** Delivers one serial byte to the visible terminal stream and active command capture. */
+  function deliverLinuxVmCommandByte(
+    session: LinuxVmSession,
+    command: LinuxVmCommand,
+    byte: number,
+  ): void {
+    appendLinuxVmOutput(session, Uint8Array.of(byte));
+    if (command.collectingOutput) {
+      appendLinuxVmCommandOutput(command, byte);
+    }
+  }
+
+  /** Parses one exact OSC command lifecycle marker emitted by the guest shell. */
+  function parseLinuxVmCommandMarker(
+    command: LinuxVmCommand,
+    bytes: number[],
+  ): { kind: "start" } | { kind: "end"; exitCode: number; workingDir: string } | null {
+    const marker = textDecoder.decode(Uint8Array.from(bytes));
+    const start = `\x1b]1337;OPERIT_COMMAND_START;${command.token}\x07`;
+    if (marker === start) {
+      return { kind: "start" };
+    }
+    const prefix = `\x1b]1337;OPERIT_COMMAND_END;${command.token};`;
+    if (!marker.startsWith(prefix) || !marker.endsWith("\x07")) {
+      return null;
+    }
+    const fields = marker.slice(prefix.length, -1).split(";");
+    if (fields.length !== 2 || !/^-?\d+$/.test(fields[0]) || fields[1].length === 0) {
+      return null;
+    }
+    const exitCode = Number.parseInt(fields[0], 10);
+    if (!Number.isSafeInteger(exitCode)) {
+      return null;
+    }
+    return {
+      kind: "end",
+      exitCode,
+      workingDir: textDecoder.decode(base64ToBytes(fields[1])),
+    };
+  }
+
+  /** Resolves one active command and starts the next command queued for its terminal session. */
+  function completeLinuxVmCommand(
+    session: LinuxVmSession,
+    command: LinuxVmCommand,
+    result: LinuxVmCommandResult,
+  ): void {
+    if (session.activeCommand !== command) {
+      return;
+    }
+    clearTimeout(command.timeoutHandle);
+    session.activeCommand = null;
+    command.resolve(result);
+    startNextLinuxVmCommand(session);
+  }
+
+  /** Rejects every active or queued command after its Linux VM session becomes unavailable. */
+  function rejectLinuxVmCommands(session: LinuxVmSession, reason: unknown): void {
+    const active = session.activeCommand;
+    if (active !== null) {
+      clearTimeout(active.timeoutHandle);
+      session.activeCommand = null;
+      active.reject(reason);
+    }
+    for (const command of session.pendingCommands) {
+      clearTimeout(command.timeoutHandle);
+      command.reject(reason);
+    }
+    session.pendingCommands = [];
+  }
+
+  /** Returns the complete one-line shell program used to execute one persistent terminal command. */
+  function linuxVmCommandInput(command: LinuxVmCommand): Uint8Array {
+    const encodedCommand = bytesToBase64(textEncoder.encode(command.command));
+    const input = [
+      `printf '\\033]1337;OPERIT_COMMAND_START;${command.token}\\007'`,
+      `eval "$(printf %s ${encodedCommand} | base64 -d)"`,
+      "__operit_status=$?",
+      `printf '\\033]1337;OPERIT_COMMAND_END;${command.token};%s;' \"$__operit_status\"`,
+      "printf %s \"$PWD\" | base64 | tr -d '\\n'",
+      "printf '\\007'\r",
+    ].join("; ");
+    return textEncoder.encode(input);
+  }
+
+  /** Starts the next serialized command once its persistent Linux guest terminal is ready. */
+  function startNextLinuxVmCommand(session: LinuxVmSession): void {
+    if (session.activeCommand !== null || session.state !== "running") {
+      return;
+    }
+    const command = session.pendingCommands.shift();
+    if (command === undefined) {
+      return;
+    }
+    session.activeCommand = command;
+    try {
+      const emulator = session.emulator;
+      if (emulator === null) {
+        throw new Error(`Linux VM terminal emulator is unavailable: ${session.id}`);
+      }
+      emulator.serial_send_bytes(0, linuxVmCommandInput(command));
+    } catch (error) {
+      session.activeCommand = null;
+      clearTimeout(command.timeoutHandle);
+      command.reject(error);
+      startNextLinuxVmCommand(session);
+    }
+  }
+
+  /** Handles one active command protocol byte while retaining ordinary terminal output. */
+  function consumeLinuxVmCommandByte(
+    session: LinuxVmSession,
+    command: LinuxVmCommand,
+    byte: number,
+  ): void {
+    if (command.markerBytes.length === 0 && byte !== 0x1b) {
+      deliverLinuxVmCommandByte(session, command, byte);
+      return;
+    }
+    command.markerBytes.push(byte);
+    if (command.markerBytes.length === 2 && command.markerBytes[1] !== 0x5d) {
+      for (const markerByte of command.markerBytes) {
+        deliverLinuxVmCommandByte(session, command, markerByte);
+      }
+      command.markerBytes = [];
+      return;
+    }
+    if (byte !== 0x07 && command.markerBytes.length < 4096) {
+      return;
+    }
+    const markerBytes = command.markerBytes;
+    command.markerBytes = [];
+    const marker = byte === 0x07 ? parseLinuxVmCommandMarker(command, markerBytes) : null;
+    if (marker === null) {
+      for (const markerByte of markerBytes) {
+        deliverLinuxVmCommandByte(session, command, markerByte);
+      }
+      return;
+    }
+    if (marker.kind === "start") {
+      command.collectingOutput = true;
+      return;
+    }
+    if (command.collectingOutput) {
+      completeLinuxVmCommand(session, command, {
+        output: textDecoder.decode(command.output.subarray(0, command.outputLength)).trim(),
+        exitCode: marker.exitCode,
+        timedOut: false,
+        workingDir: marker.workingDir,
+      });
+      return;
+    }
+    for (const markerByte of markerBytes) {
+      deliverLinuxVmCommandByte(session, command, markerByte);
+    }
+  }
+
+  /** Queues one shell command for execution inside an existing persistent Linux VM terminal. */
+  function executeLinuxVmCommand(
+    sessionId: string,
+    command: string,
+    timeoutMs: number,
+  ): Promise<LinuxVmCommandResult> {
+    const session = linuxVmSession(sessionId);
+    if (typeof command !== "string" || command.trim().length === 0) {
+      throw new Error("Linux VM terminal command must not be blank");
+    }
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
+      throw new Error("Linux VM terminal timeout must be a positive integer");
+    }
+    if (session.state === "failed" || session.state === "closed") {
+      throw new Error(`Linux VM terminal is not running: ${sessionId}`);
+    }
+    return new Promise<LinuxVmCommandResult>((resolve, reject) => {
+      const token = String(++linuxVmCommandIndex);
+      const commandState: LinuxVmCommand = {
+        token,
+        command,
+        timeoutHandle: globalThis.setTimeout(() => {
+          if (session.activeCommand !== commandState) {
+            return;
+          }
+          const output = textDecoder.decode(
+            commandState.output.subarray(0, commandState.outputLength),
+          ).trim();
+          session.emulator?.serial_send_bytes(0, Uint8Array.of(0x03));
+          completeLinuxVmCommand(session, commandState, {
+            output,
+            exitCode: -1,
+            timedOut: true,
+            workingDir: "/",
+          });
+        }, timeoutMs),
+        resolve,
+        reject,
+        collectingOutput: false,
+        markerBytes: [],
+        output: new Uint8Array(4096),
+        outputLength: 0,
+      };
+      session.pendingCommands.push(commandState);
+      startNextLinuxVmCommand(session);
+    });
   }
 
   /** Redraws the single PTY progress line used while the Linux VM starts. */
@@ -3805,6 +4139,7 @@ self.onmessage = (event) => {
     session.state = "running";
     finishLinuxVmProgress(session, "Runtime ready");
     flushLinuxVmInput(session);
+    startNextLinuxVmCommand(session);
   }
 
   /** Marks one Linux VM session as failed and makes the reason visible in its terminal stream. */
@@ -3815,6 +4150,7 @@ self.onmessage = (event) => {
     finishLinuxVmProgress(session, null);
     session.state = "failed";
     session.exitCode = 1;
+    rejectLinuxVmCommands(session, error);
     const message = error instanceof Error ? error.message : String(error);
     const output = textEncoder.encode(`\r\n[Linux VM failed: ${message}]\r\n`);
     if (session.outputLength + output.length <= linuxVmOutputLimit) {
@@ -3868,7 +4204,12 @@ self.onmessage = (event) => {
         if (typeof value === "number" && session.state !== "closed") {
           const byte = value & 0xff;
           finishLinuxVmProgress(session, "Starting Linux");
-          appendLinuxVmOutput(session, Uint8Array.of(byte));
+          const activeCommand = session.activeCommand;
+          if (activeCommand === null) {
+            appendLinuxVmOutput(session, Uint8Array.of(byte));
+          } else {
+            consumeLinuxVmCommandByte(session, activeCommand, byte);
+          }
           if (session.state === "starting") {
             session.startupText = `${session.startupText}${String.fromCharCode(byte)}`.slice(-128);
             if (session.startupText.includes("OPERIT_TERMINAL_READY")) {
@@ -3893,6 +4234,7 @@ self.onmessage = (event) => {
         if (session.state !== "closed" && session.state !== "failed") {
           session.state = "closed";
           session.exitCode = 0;
+          rejectLinuxVmCommands(session, new Error(`Linux VM terminal stopped: ${session.id}`));
         }
       });
       emulator.add_listener("download-error", (value: unknown) => {
@@ -3924,6 +4266,8 @@ self.onmessage = (event) => {
       startupText: "",
       lastDownloadProgress: null,
       progressVisible: false,
+      activeCommand: null,
+      pendingCommands: [],
     };
     linuxVmSessions.set(sessionId, session);
     void startLinuxVm(session);
@@ -3979,6 +4323,7 @@ self.onmessage = (event) => {
   function closeLinuxVmPty(sessionId: string): void {
     const session = linuxVmSession(sessionId);
     session.state = "closed";
+    rejectLinuxVmCommands(session, new Error(`Linux VM terminal closed: ${sessionId}`));
     linuxVmSessions.delete(sessionId);
     if (session.emulator !== null) {
       void session.emulator.destroy().catch((error: unknown) => {
@@ -4020,7 +4365,7 @@ self.onmessage = (event) => {
   installWebLocalInferenceTestApi();
 
   runtimeGlobal.__operitHost = {
-    terminal: {
+    terminal: registerMainHostModule({
       /** Starts one browser-local Linux VM terminal session. */
       startPty(sessionId: string, rows: number, cols: number): void {
         startLinuxVmSession(sessionId, rows, cols);
@@ -4032,6 +4377,14 @@ self.onmessage = (event) => {
       /** Writes raw terminal bytes into one browser-local Linux VM terminal. */
       writePty(sessionId: string, data: Uint8Array): number {
         return writeLinuxVmPty(sessionId, data);
+      },
+      /** Executes one command through the existing browser-local Linux VM terminal shell. */
+      executePtyCommand(
+        sessionId: string,
+        command: string,
+        timeoutMs: number,
+      ): Promise<LinuxVmCommandResult> {
+        return executeLinuxVmCommand(sessionId, command, timeoutMs);
       },
       /** Records terminal dimensions requested for one browser-local Linux VM terminal. */
       resizePty(sessionId: string, rows: number, cols: number): void {
@@ -4045,8 +4398,8 @@ self.onmessage = (event) => {
       closePty(sessionId: string): void {
         closeLinuxVmPty(sessionId);
       },
-    },
-    runtimeStorage: {
+    }),
+    runtimeStorage: registerWorkerHostModule({
       readBytes(path: string): Uint8Array {
         return storageRead(runtimePrefix, path);
       },
@@ -4065,8 +4418,82 @@ self.onmessage = (event) => {
       list(prefix: string): FileStorageEntry[] {
         return storageList(runtimePrefix, prefix);
       },
-    },
-    hostSecretStore: {
+      /** Opens one sequential writer owned by the runtime worker storage host. */
+      createWriteSession(path: string): string {
+        const storage = runtimeGlobal.__operitRuntimeWorkerStorage;
+        if (storage === undefined) {
+          throw new Error("runtime worker OPFS storage is not installed");
+        }
+        return storage.createWriteSession(path);
+      },
+      /** Appends one chunk to a runtime worker storage writer. */
+      writeSessionChunk(sessionId: string, content: Uint8Array): void {
+        const storage = runtimeGlobal.__operitRuntimeWorkerStorage;
+        if (storage === undefined) {
+          throw new Error("runtime worker OPFS storage is not installed");
+        }
+        storage.writeSessionChunk(sessionId, content);
+      },
+      /** Commits one runtime worker storage writer. */
+      commitWriteSession(sessionId: string): void {
+        const storage = runtimeGlobal.__operitRuntimeWorkerStorage;
+        if (storage === undefined) {
+          throw new Error("runtime worker OPFS storage is not installed");
+        }
+        storage.commitWriteSession(sessionId);
+      },
+      /** Discards one runtime worker storage writer. */
+      discardWriteSession(sessionId: string): void {
+        const storage = runtimeGlobal.__operitRuntimeWorkerStorage;
+        if (storage === undefined) {
+          throw new Error("runtime worker OPFS storage is not installed");
+        }
+        storage.discardWriteSession(sessionId);
+      },
+    }),
+    archiveStaging: registerWorkerHostModule({
+      /** Creates one fixed-size archive staging record. */
+      createArchive(archiveId: string, expectedByteLength: number): void {
+        const staging = runtimeGlobal.__operitRuntimeWorkerArchiveStaging;
+        if (staging === undefined) {
+          throw new Error("runtime worker archive staging is not installed");
+        }
+        staging.createArchive(archiveId, expectedByteLength);
+      },
+      /** Appends one byte chunk to an archive staging record. */
+      appendArchive(archiveId: string, content: Uint8Array): void {
+        const staging = runtimeGlobal.__operitRuntimeWorkerArchiveStaging;
+        if (staging === undefined) {
+          throw new Error("runtime worker archive staging is not installed");
+        }
+        staging.appendArchive(archiveId, content);
+      },
+      /** Seals one complete archive staging record. */
+      sealArchive(archiveId: string): number {
+        const staging = runtimeGlobal.__operitRuntimeWorkerArchiveStaging;
+        if (staging === undefined) {
+          throw new Error("runtime worker archive staging is not installed");
+        }
+        return staging.sealArchive(archiveId);
+      },
+      /** Reads one exact byte range from a sealed archive staging record. */
+      readArchive(archiveId: string, offset: number, length: number): Uint8Array {
+        const staging = runtimeGlobal.__operitRuntimeWorkerArchiveStaging;
+        if (staging === undefined) {
+          throw new Error("runtime worker archive staging is not installed");
+        }
+        return staging.readArchive(archiveId, offset, length);
+      },
+      /** Removes one archive staging record. */
+      removeArchive(archiveId: string): void {
+        const staging = runtimeGlobal.__operitRuntimeWorkerArchiveStaging;
+        if (staging === undefined) {
+          throw new Error("runtime worker archive staging is not installed");
+        }
+        staging.removeArchive(archiveId);
+      },
+    }),
+    hostSecretStore: registerMainHostModule({
       // Reads a host-owned secret from browser-local protected storage.
       readSecret(key: string): Uint8Array | null {
         if (isModelInstallWorker()) {
@@ -4094,8 +4521,8 @@ self.onmessage = (event) => {
         }
         localStorage.removeItem(`${secretPrefix}${key}`);
       },
-    },
-    sqlite: {
+    }),
+    sqlite: registerWorkerHostModule({
       open(path: string): string {
         if (!SQLite) {
           throw new Error("sqlite host is not initialized");
@@ -4159,8 +4586,8 @@ self.onmessage = (event) => {
         saveSqliteDatabase(connection);
         sqliteTransactions.delete(id);
       },
-    },
-    fileSystem: {
+    }),
+    fileSystem: registerWorkerHostModule({
       validatePath() {},
       listFiles(path: string) {
         return listFileDirectory(path).map((entry) => ({
@@ -4228,8 +4655,8 @@ self.onmessage = (event) => {
       },
       openFile() {},
       shareFile() {},
-    },
-    webVisit: {
+    }),
+    webVisit: registerMainHostModule({
       visitWeb(request: { url: string }) {
         return {
           url: request.url,
@@ -4240,8 +4667,8 @@ self.onmessage = (event) => {
           imageLinks: [] as string[],
         };
       },
-    },
-    localInference: {
+    }),
+    localInference: registerMainHostModule({
       // Transcribes one local speech request through the installed browser runner.
       transcribeLocalSpeech(requestJson: string): string {
         return localInferenceRunner("transcribeLocalSpeech")(requestJson);
@@ -4250,8 +4677,8 @@ self.onmessage = (event) => {
       synthesizeLocalSpeech(requestJson: string): string {
         return localInferenceRunner("synthesizeLocalSpeech")(requestJson);
       },
-    },
-    http: {
+    }),
+    http: registerMainHostModule({
       executeHttpRequest(request: HttpRequest) {
         const xhr = new XMLHttpRequest();
         xhr.open(request.method, request.url, false);
@@ -4396,8 +4823,8 @@ self.onmessage = (event) => {
           downloadedBytes: bytes.length,
         };
       },
-    },
-    managedRuntime: {
+    }),
+    managedRuntime: registerMainHostModule({
       runtimeWorkspaceDir() {
         return "operit2/workspace";
       },
@@ -4415,15 +4842,15 @@ self.onmessage = (event) => {
       runRuntimeCommand(request: ManagedRuntimeRequest) {
         return runManagedRuntimeCommand(request);
       },
-    },
-    managedRuntimeProcess: {
+    }),
+    managedRuntimeProcess: registerMainHostModule({
       writeLine(id: string, line: string): void {
         writeManagedRuntimeLines(id, [line]);
       },
       writeLines(id: string, lines: string[]): void {
         writeManagedRuntimeLines(id, lines);
       },
-      readStdoutLine(id: string, timeoutMs: number): string | null {
+      readStdoutLine(id: string, timeoutMs: number): Promise<string | null> {
         return readManagedRuntimeStdoutLine(id, timeoutMs);
       },
       drainStderr(id: string): string {
@@ -4435,11 +4862,15 @@ self.onmessage = (event) => {
       kill(id: string): void {
         killManagedRuntimeProcess(id);
       },
-    },
-    musicPlayback,
-    bluetooth,
-    ttsPlayback,
-    systemOperation: {
+    }),
+    musicPlayback: registerMainHostModule(musicPlayback),
+    bluetooth: registerMainHostModule(bluetooth),
+    ttsPlayback: registerMainHostModule(ttsPlayback),
+    systemOperation: registerMainHostModule({
+      /** Returns the locale declared by the browser for runtime language selection. */
+      getSystemLanguageCode() {
+        return { languageCode: navigator.language };
+      },
       toast(message: string): void {
         console.info("[Operit toast]", message);
       },
@@ -4536,7 +4967,7 @@ self.onmessage = (event) => {
           additionalInfo: {},
         };
       },
-    },
+    }),
   };
 
   let bridgePromise: Promise<RuntimeBridge> | null = null;
@@ -5042,12 +5473,16 @@ self.onmessage = (event) => {
 
     /** Holds the origin-wide lock for this page while its Dedicated Worker owns OPFS handles. */
     async function runRuntimeLeadership(): Promise<void> {
+      if (closed) {
+        return;
+      }
       const worker = new Worker(new URL("./operit_runtime_worker.js", import.meta.url), {
         type: "module",
         name: "operit-runtime-storage",
       });
       runtimeWorker = worker;
       worker.addEventListener("message", handleRuntimeWorkerMessage);
+      worker.postMessage({ type: "configure", clientId });
       coordinator.postMessage({ type: "leaderReady" });
       forwardPendingRequests();
       await new Promise<void>(resolve => {
@@ -5056,6 +5491,22 @@ self.onmessage = (event) => {
       worker.terminate();
       runtimeWorker = null;
       releaseLeadership = null;
+    }
+
+    /** Waits for the owner Worker to close every OPFS handle before it is terminated. */
+    function shutdownRuntimeWorker(worker: Worker): Promise<void> {
+      return new Promise<void>(resolve => {
+        const handleMessage = (event: MessageEvent<unknown>): void => {
+          const message = event.data as Partial<RuntimeWorkerShutdownComplete>;
+          if (message.type !== "shutdownComplete") {
+            return;
+          }
+          worker.removeEventListener("message", handleMessage);
+          resolve();
+        };
+        worker.addEventListener("message", handleMessage);
+        worker.postMessage({ type: "shutdown" });
+      });
     }
 
     /** Routes one cross-page coordination message received from a different browser page. */
@@ -5306,7 +5757,18 @@ self.onmessage = (event) => {
         coordinator.postMessage({ type: "clientDisconnect", clientId });
       }
       coordinator.close();
-      releaseLeadership?.();
+      void releaseLeadershipAfterShutdown();
+    }
+
+    /** Closes the owner Worker before releasing the origin-wide Web Lock. */
+    async function releaseLeadershipAfterShutdown(): Promise<void> {
+      const worker = runtimeWorker;
+      const release = releaseLeadership;
+      if (worker === null || release === null) {
+        return;
+      }
+      await shutdownRuntimeWorker(worker);
+      release();
     }
 
     /** Cancels routes and synchronous Host phases belonging to a closed browser page. */
@@ -5461,6 +5923,9 @@ self.onmessage = (event) => {
       async call(requestBytes: Uint8Array): Promise<Uint8Array> {
         return (await request("call", requestBytes)).response;
       },
+      async controlCall(requestBytes: Uint8Array): Promise<Uint8Array> {
+        return (await request("controlCall", requestBytes)).response;
+      },
       async pushOpen(requestBytes: Uint8Array): Promise<Uint8Array> {
         return (await request("pushOpen", requestBytes)).response;
       },
@@ -5505,10 +5970,7 @@ self.onmessage = (event) => {
       if (typeof method !== "function") {
         throw new Error(`web host method is not available: ${message.module}.${message.method}`);
       }
-      const value = method.apply(module, message.args);
-      if (value instanceof Promise) {
-        throw new Error(`web host method returned an asynchronous Promise: ${message.module}.${message.method}`);
-      }
+      const value = await method.apply(module, message.args);
       encoded = MessagePack.encode([0, value === undefined ? null : value]);
     } catch (error) {
       encoded = MessagePack.encode([1, runtimeWorkerErrorMessage(error)]);
@@ -5564,6 +6026,9 @@ self.onmessage = (event) => {
           return downloadCall.response;
         }
       }
+      return (await bridge()).call(request);
+    },
+    async controlCall(request: Uint8Array): Promise<Uint8Array> {
       return (await bridge()).call(request);
     },
     async pushOpen(request: Uint8Array): Promise<Uint8Array> {

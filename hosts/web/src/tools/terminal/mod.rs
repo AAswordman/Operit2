@@ -9,7 +9,10 @@ use operit_host_api::{
 };
 use wasm_bindgen::JsValue;
 
-use crate::common::{bytes_to_js, call_terminal, js_i64, js_usize};
+use crate::common::{
+    bytes_to_js, call_terminal, js_i64, js_usize, read_bool_property,
+    read_i32_property, read_string_property,
+};
 
 const PLATFORM: &str = "web-linux-vm";
 const TERMINAL: &str = "v86";
@@ -223,16 +226,44 @@ impl TerminalHost for WebTerminalHost {
         })
     }
 
-    /// Rejects synchronous command execution because guest output is asynchronous.
+    /// Executes one shell command through the existing browser-local Linux VM terminal.
     fn executeInSession(
         &self,
-        _sessionId: &str,
-        _command: &str,
-        _timeoutMs: u64,
+        sessionId: &str,
+        command: &str,
+        timeoutMs: u64,
     ) -> HostResult<TerminalCommandOutput> {
-        Err(HostError::new(
-            "browser-local Linux VM terminals are interactive; use PTY input and output streams",
-        ))
+        ensureTerminalSession(sessionId)?;
+        let result = call_terminal(
+            "executePtyCommand",
+            &[
+                JsValue::from_str(sessionId),
+                JsValue::from_str(command),
+                JsValue::from_f64(timeoutMs as f64),
+            ],
+        )?;
+        let output = read_string_property(&result, "output")?;
+        let exitCode = read_i32_property(&result, "exitCode")?;
+        let timedOut = read_bool_property(&result, "timedOut")?;
+        let workingDir = read_string_property(&result, "workingDir")?;
+        if !timedOut {
+            TERMINAL_SESSIONS.with(|sessions| -> HostResult<()> {
+                let mut sessions = sessions.borrow_mut();
+                let session = terminalSession(&mut sessions, sessionId)?;
+                session.workingDir = workingDir;
+                Ok(())
+            })?;
+        }
+        Ok(TerminalCommandOutput {
+            command: command.to_string(),
+            output,
+            exitCode,
+            sessionId: sessionId.to_string(),
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
+            terminalType: SHELL_TERMINAL_TYPE.to_string(),
+            timedOut,
+        })
     }
 
     /// Rejects hidden command execution because the Linux guest exposes interactive sessions only.

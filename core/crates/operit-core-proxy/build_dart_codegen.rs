@@ -301,7 +301,7 @@ fn render_dart_reverse_stream_method(
 }
 
 fn render_dart_call_method(
-    _object: &SourceObject,
+    object: &SourceObject,
     method: &SourceMethod,
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
@@ -318,10 +318,18 @@ fn render_dart_call_method(
     output.push_str(&format!(
         "  Future<{return_type}> {method_name}({params}) async {{\n"
     ));
-    if return_type == "void" {
-        output.push_str("    await bridge.call(\n");
+    let bridge_method = if control_call_registry()
+        .iter()
+        .any(|(schema_key, method_name)| *schema_key == object.schema_key && *method_name == method.name)
+    {
+        "callControl"
     } else {
-        output.push_str("    final value = await bridge.call(\n");
+        "call"
+    };
+    if return_type == "void" {
+        output.push_str(&format!("    await bridge.{bridge_method}(\n"));
+    } else {
+        output.push_str(&format!("    final value = await bridge.{bridge_method}(\n"));
     }
     output.push_str("      CoreCallRequest(\n");
     output.push_str("        requestId: _coreProxyRequestId(),\n");
@@ -338,6 +346,14 @@ fn render_dart_call_method(
     }
     output.push_str("  }\n\n");
     output
+}
+
+/// Returns the generated Core methods that must bypass serialized runtime work.
+fn control_call_registry() -> &'static [(&'static str, &'static str)] {
+    &[(
+        "services.runtimeHostInteractionService",
+        "respondOwnerHostInteraction",
+    )]
 }
 
 fn render_dart_factory_method(

@@ -12,6 +12,7 @@ import '../../../theme/OperitTheme.dart';
 import '../viewmodel/ChatViewModel.dart';
 import 'ChatLayoutMetrics.dart';
 import 'MessageContextMenu.dart';
+import 'MessageCopyPreview.dart';
 import 'ChatScrollNavigator.dart';
 import 'style/bubble/BubbleStyleChatMessage.dart';
 import 'style/bubble/BubbleSurface.dart';
@@ -51,6 +52,7 @@ class ChatArea extends StatefulWidget {
     required this.onToggleMultiSelectMode,
     required this.onToggleMessageSelection,
     required this.onRefreshRequested,
+    this.splitMarkdownContent,
     this.isMultiSelectMode = false,
     this.selectedMessageIndices = const <int>{},
   });
@@ -84,6 +86,7 @@ class ChatArea extends StatefulWidget {
   final ValueChanged<int> onToggleMultiSelectMode;
   final ValueChanged<int> onToggleMessageSelection;
   final Future<void> Function() onRefreshRequested;
+  final MarkdownCopySplitter? splitMarkdownContent;
   final bool isMultiSelectMode;
   final Set<int> selectedMessageIndices;
 
@@ -550,6 +553,7 @@ class _ChatAreaState extends State<ChatArea> {
             onPlayVoice: widget.onPlayVoice,
             onToggleMultiSelectMode: widget.onToggleMultiSelectMode,
             onRefresh: widget.onRefreshRequested,
+            splitMarkdownContent: widget.splitMarkdownContent,
             child: messageContent,
           );
     _messageRowCache[message.timestamp] = _CachedMessageRow(

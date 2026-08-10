@@ -13,6 +13,8 @@ class ToolApprovalBridge {
   /// Creates a bridge for tool approval requests.
   const ToolApprovalBridge();
 
+  static const int _requestTimeoutMillis = 60 * 1000;
+
   static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
     ProxyCoreRuntimeBridge(),
   );
@@ -24,6 +26,7 @@ class ToolApprovalBridge {
   /// Returns the current pending permission request.
   Future<ToolApprovalRequest?> currentPermissionRequest() async {
     _ensureSubscription();
+    _removeExpiredRequests(DateTime.now().millisecondsSinceEpoch);
     if (_requests.isEmpty) {
       return null;
     }
@@ -46,35 +49,39 @@ class ToolApprovalBridge {
     if (requestId == null) {
       throw StateError('permission request is missing request id');
     }
-    await _clients.servicesRuntimeHostInteractionService
-        .respondOwnerHostInteraction(
-          requestId: requestId,
-          response: RuntimeHostInteractionResponse(
-            error: null,
-            browserAutomation: null,
-            browserSession: null,
-            webVisit: null,
-            composeWebViewController: null,
-            composeFilePicker: null,
-            systemCaptureScreenshot: null,
-            systemLanguageCode: null,
-            systemRecognizeText: null,
-            systemOperation: null,
-            fileOpen: null,
-            fileShare: null,
-            audioPlay: null,
-            musicPlayback: null,
-            bluetooth: null,
-            ttsSynthesis: null,
-            ttsPlayback: null,
-            localInference: null,
-            toolPermission: RuntimeHostInteractionToolPermissionResponse(
-              result: _resultName(result),
+    try {
+      await _clients.servicesRuntimeHostInteractionService
+          .respondOwnerHostInteraction(
+            requestId: requestId,
+            response: RuntimeHostInteractionResponse(
+              error: null,
+              browserAutomation: null,
+              browserSession: null,
+              webVisit: null,
+              composeWebViewController: null,
+              composeFilePicker: null,
+              systemCaptureScreenshot: null,
+              systemLanguageCode: null,
+              systemRecognizeText: null,
+              systemOperation: null,
+              fileOpen: null,
+              fileShare: null,
+              audioPlay: null,
+              musicPlayback: null,
+              bluetooth: null,
+              ttsSynthesis: null,
+              ttsPlayback: null,
+              localInference: null,
+              toolPermission: RuntimeHostInteractionToolPermissionResponse(
+                result: _resultName(result),
+              ),
             ),
-          ),
-        );
-    _requests.remove(requestId);
-    _requestedAtMillis.remove(requestId);
+          );
+    } catch (_) {
+      _removeRequest(requestId);
+      rethrow;
+    }
+    _removeRequest(requestId);
   }
 
   /// Ensures the permission request event subscription is active.
@@ -131,6 +138,27 @@ class ToolApprovalBridge {
         ),
       );
     }
+  }
+
+  /// Removes approval requests whose broker deadline has elapsed.
+  static void _removeExpiredRequests(int nowMillis) {
+    final expiredIds = _requests.entries
+        .where(
+          (entry) =>
+              nowMillis - entry.value.requestedAtMillis >=
+              _requestTimeoutMillis,
+        )
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final requestId in expiredIds) {
+      _removeRequest(requestId);
+    }
+  }
+
+  /// Removes one approval request from the local presentation state.
+  static void _removeRequest(String requestId) {
+    _requests.remove(requestId);
+    _requestedAtMillis.remove(requestId);
   }
 }
 

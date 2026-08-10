@@ -23,6 +23,7 @@ class ToolApprovalHost extends StatefulWidget {
 }
 
 class _ToolApprovalHostState extends State<ToolApprovalHost> {
+  static const int _requestTimeoutMillis = 60 * 1000;
   Timer? _pollTimer;
   Timer? _clockTimer;
   ToolApprovalRequest? _request;
@@ -36,9 +37,17 @@ class _ToolApprovalHostState extends State<ToolApprovalHost> {
       (_) => _pollRequest(),
     );
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted && _request != null) {
-        setState(() {});
+      final request = _request;
+      if (!mounted || request == null) {
+        return;
       }
+      if (_isExpired(request)) {
+        setState(() {
+          _request = null;
+        });
+        return;
+      }
+      setState(() {});
     });
     _pollRequest();
   }
@@ -85,7 +94,16 @@ class _ToolApprovalHostState extends State<ToolApprovalHost> {
     if (request == null) {
       return;
     }
-    await widget.bridge.respondPermissionRequest(request, result);
+    try {
+      await widget.bridge.respondPermissionRequest(request, result);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _request = null;
+        });
+      }
+      return;
+    }
     if (mounted) {
       setState(() {
         _request = null;
@@ -97,6 +115,12 @@ class _ToolApprovalHostState extends State<ToolApprovalHost> {
     return a?.remoteRequestId == b?.remoteRequestId &&
         a?.requestedAtMillis == b?.requestedAtMillis &&
         a?.tool.name == b?.tool.name;
+  }
+
+  /// Returns whether one visible approval request has passed its broker deadline.
+  bool _isExpired(ToolApprovalRequest request) {
+    return DateTime.now().millisecondsSinceEpoch - request.requestedAtMillis >=
+        _requestTimeoutMillis;
   }
 
   @override

@@ -4,6 +4,7 @@ export {};
 
 type WorkerCoreOperation =
   | "call"
+  | "controlCall"
   | "pushOpen"
   | "pushItem"
   | "pushClose"
@@ -13,6 +14,7 @@ type WorkerCoreOperation =
 
 interface WorkerRuntimeBridge {
   call(request: Uint8Array): Promise<Uint8Array>;
+  controlCall(request: Uint8Array): Promise<Uint8Array>;
   pushOpen(request: Uint8Array): Promise<Uint8Array>;
   pushItem(item: Uint8Array): Promise<Uint8Array>;
   pushClose(pushId: string): Promise<Uint8Array>;
@@ -50,6 +52,11 @@ interface WorkerStorageRecord {
 interface WorkerStorageIndex {
   migrated: boolean;
   records: Array<[string, WorkerStorageRecord]>;
+}
+
+interface WorkerStorageNamespaceMigration {
+  sourcePrefix: string;
+  targetPrefix: string;
 }
 
 interface WorkerRuntimeStorageBridge {
@@ -101,6 +108,18 @@ interface WorkerCoreRequest {
   clientId?: string;
 }
 
+type WorkerCoreOperationHandler = (
+  runtime: WorkerRuntimeBridge,
+  message: WorkerCoreRequest,
+) => Promise<Uint8Array>;
+
+type WorkerCoreOperationExecution = "serialized" | "parallel";
+
+interface WorkerCoreOperationRegistration {
+  execution: WorkerCoreOperationExecution;
+  invoke: WorkerCoreOperationHandler;
+}
+
 interface WorkerHostCall {
   type: "hostCall";
   id: number;
@@ -119,7 +138,21 @@ interface WorkerHostPayload {
   clientId?: string;
 }
 
-type WorkerInboundMessage = WorkerCoreRequest | WorkerHostPayload;
+interface WorkerConfiguration {
+  type: "configure";
+  clientId: string;
+}
+
+interface WorkerShutdownRequest {
+  type: "shutdown";
+}
+
+type WorkerInboundMessage = WorkerCoreRequest | WorkerHostPayload | WorkerConfiguration | WorkerShutdownRequest;
+
+interface WorkerInboundMessageRegistration {
+  validate(value: unknown): value is WorkerInboundMessage;
+  handle(message: WorkerInboundMessage): void;
+}
 
 interface WorkerRuntimeGlobals {
   __OPERIT_RUNTIME_WORKER__?: boolean;
@@ -128,6 +161,8 @@ interface WorkerRuntimeGlobals {
   __operitRuntimeWorkerEnsureStorage?: () => Promise<void>;
   __operitRuntimeWorkerStorage?: WorkerRuntimeStorageBridge;
   __operitRuntimeWorkerArchiveStaging?: WorkerArchiveStagingBridge;
+  __operitWorkerHostModules?: WeakSet<object>;
+  __operitMainHostModules?: WeakSet<object>;
 }
 
 const workerGlobal = globalThis as typeof globalThis & WorkerRuntimeGlobals;
@@ -139,8 +174,13 @@ const runtimeStorageDataFileName = "operit_runtime_storage.data";
 const runtimeStorageIndexFileName = "operit_runtime_storage.index";
 const archiveStagingDataFileName = "operit_archive_staging.data";
 const runtimeStoragePrefix = "operit2.runtime.";
+const fileStoragePrefix = "operit2.files.";
 const legacySqlitePrefix = "operit2.sqlite.";
-const runtimeStoragePrefixes = [runtimeStoragePrefix, "operit2.files.", legacySqlitePrefix];
+const workerStorageNamespaceMigrations: readonly WorkerStorageNamespaceMigration[] = [
+  { sourcePrefix: runtimeStoragePrefix, targetPrefix: runtimeStoragePrefix },
+  { sourcePrefix: fileStoragePrefix, targetPrefix: fileStoragePrefix },
+  { sourcePrefix: legacySqlitePrefix, targetPrefix: runtimeStoragePrefix },
+];
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -149,13 +189,18 @@ let archiveStaging: RuntimeWorkerArchiveStaging | null = null;
 let runtimeStorageInitialization: Promise<void> | null = null;
 let nextHostCallId = 0;
 const mainHostModules = new Map<string, object>();
+const workerInboundMessageRegistrations = new Map<string, WorkerInboundMessageRegistration>();
 let activeHostClientId: string | null = null;
 let runtimeOperationQueue: Promise<void> = Promise.resolve();
+const runtimeParallelOperations = new Set<Promise<void>>();
+let shutdownRequested = false;
+let shutdownPromise: Promise<void> | null = null;
 
 workerGlobal.__OPERIT_RUNTIME_WORKER__ = true;
 workerGlobal.__operitRuntimeWorkerEnsureStorage = initializeRuntimeWorkerStorage;
 workerGlobal.__operitRuntimeWorkerStorage = runtimeStorageBridge();
 workerGlobal.__operitRuntimeWorkerArchiveStaging = archiveStagingBridge();
+registerWorkerInboundMessages();
 const workerReady = initializeRuntimeWorker();
 workerGlobal.addEventListener("message", handleWorkerMessage);
 
@@ -177,17 +222,69 @@ function importWorkerScript(path: string): Promise<void> {
 /** Handles a Core command or a completed main-thread host payload. */
 function handleWorkerMessage(event: MessageEvent<unknown>): void {
   const message = event.data;
-  if (isWorkerHostPayload(message)) {
-    receiveMainHostPayload(message);
+  if (typeof message !== "object" || message === null) {
     return;
   }
-  if (isWorkerCoreRequest(message)) {
-    enqueueCoreRequest(message);
+  const type = Reflect.get(message, "type");
+  if (typeof type !== "string") {
+    return;
   }
+  const registration = workerInboundMessageRegistrations.get(type);
+  if (registration === undefined || !registration.validate(message)) {
+    return;
+  }
+  registration.handle(message);
+}
+
+/** Registers every inbound worker protocol message with its validator and handler. */
+function registerWorkerInboundMessages(): void {
+  registerWorkerInboundMessage("configure", isWorkerConfiguration, configureWorker);
+  registerWorkerInboundMessage("shutdown", isWorkerShutdownRequest, requestWorkerShutdown);
+  registerWorkerInboundMessage("hostPayload", isWorkerHostPayload, receiveMainHostPayload);
+  registerWorkerInboundMessage("coreRequest", isWorkerCoreRequest, enqueueCoreRequest);
+}
+
+/** Adds one typed message contract to the inbound worker protocol registry. */
+function registerWorkerInboundMessage<T extends WorkerInboundMessage>(
+  type: T["type"],
+  validate: (value: unknown) => value is T,
+  handle: (message: T) => void,
+): void {
+  if (workerInboundMessageRegistrations.has(type)) {
+    throw new Error(`worker inbound message is registered more than once: ${type}`);
+  }
+  workerInboundMessageRegistrations.set(type, {
+    validate,
+    handle: (message: WorkerInboundMessage): void => handle(message as T),
+  });
+}
+
+/** Validates the owner identity sent before this worker can process runtime requests. */
+function isWorkerConfiguration(value: unknown): value is WorkerConfiguration {
+  return typeof value === "object" && value !== null &&
+    (value as Partial<WorkerConfiguration>).type === "configure" &&
+    typeof (value as Partial<WorkerConfiguration>).clientId === "string";
+}
+
+/** Stores the browser page identity used by worker-owned background operations. */
+function configureWorker(message: WorkerConfiguration): void {
+  if (activeHostClientId !== null && activeHostClientId !== message.clientId) {
+    throw new Error("runtime worker owner identity cannot change");
+  }
+  activeHostClientId = message.clientId;
 }
 
 /** Serializes Core calls so synchronous host callbacks retain their originating page. */
 function enqueueCoreRequest(message: WorkerCoreRequest): void {
+  if (shutdownRequested) {
+    postWorkerMessage({
+      type: "coreError",
+      id: message.id,
+      message: "runtime worker is shutting down",
+      clientId: message.clientId,
+    });
+    return;
+  }
   const execute = async (): Promise<void> => {
     try {
       await workerReady;
@@ -198,7 +295,41 @@ function enqueueCoreRequest(message: WorkerCoreRequest): void {
       );
     }
   };
+  const registration = workerCoreOperationRegistrations.get(message.operation);
+  if (registration?.execution === "parallel") {
+    const operation = execute();
+    runtimeParallelOperations.add(operation);
+    void operation.finally(() => runtimeParallelOperations.delete(operation));
+    return;
+  }
   runtimeOperationQueue = runtimeOperationQueue.then(execute, execute);
+}
+
+/** Validates the lifecycle message that asks this worker to release its OPFS handles. */
+function isWorkerShutdownRequest(value: unknown): value is WorkerShutdownRequest {
+  return typeof value === "object" && value !== null && (value as Partial<WorkerShutdownRequest>).type === "shutdown";
+}
+
+/** Closes the runtime worker stores only after initialization and queued Core work have settled. */
+function requestWorkerShutdown(): void {
+  if (shutdownPromise !== null) {
+    return;
+  }
+  shutdownRequested = true;
+  shutdownPromise = (async () => {
+    try {
+      await workerReady;
+    } catch {
+      // Initialization failure still requires the handles opened before the failure to be released.
+    }
+    await runtimeOperationQueue;
+    await Promise.all(runtimeParallelOperations);
+    archiveStaging?.close();
+    runtimeStorage?.close();
+    archiveStaging = null;
+    runtimeStorage = null;
+    postWorkerMessage({ type: "shutdownComplete" });
+  })();
 }
 
 /** Validates one Core command received from the browser UI thread. */
@@ -254,32 +385,29 @@ function invokeRuntimeOperation(
   runtime: WorkerRuntimeBridge,
   message: WorkerCoreRequest,
 ): Promise<Uint8Array> {
-  if (message.operation === "call") {
-    return runtime.call(requireBytesPayload(message));
+  const registration = workerCoreOperationRegistrations.get(message.operation);
+  if (registration === undefined) {
+    throw new Error(`worker Core operation is not registered: ${message.operation}`);
   }
-  if (message.operation === "pushOpen") {
-    return runtime.pushOpen(requireBytesPayload(message));
-  }
-  if (message.operation === "pushItem") {
-    return runtime.pushItem(requireBytesPayload(message));
-  }
-  if (message.operation === "pushClose") {
-    return runtime.pushClose(requireStringPayload(message));
-  }
-  if (message.operation === "watchSnapshot") {
-    return runtime.watchSnapshot(requireBytesPayload(message));
-  }
-  if (message.operation === "watchStream") {
-    return runtime.watchStream(requireBytesPayload(message), event => {
-      const copiedEvent = Uint8Array.from(event);
-      postWorkerMessage(
-        { type: "coreWatchEvent", id: message.id, event: copiedEvent, clientId: message.clientId },
-        [copiedEvent.buffer],
-      );
-    });
-  }
-  return runtime.closeWatchStream(requireStringPayload(message));
+  return registration.invoke(runtime, message);
 }
+
+const workerCoreOperationRegistrations = new Map<WorkerCoreOperation, WorkerCoreOperationRegistration>([
+  ["call", { execution: "serialized", invoke: (runtime, message) => runtime.call(requireBytesPayload(message)) }],
+  ["controlCall", { execution: "parallel", invoke: (runtime, message) => runtime.controlCall(requireBytesPayload(message)) }],
+  ["pushOpen", { execution: "serialized", invoke: (runtime, message) => runtime.pushOpen(requireBytesPayload(message)) }],
+  ["pushItem", { execution: "serialized", invoke: (runtime, message) => runtime.pushItem(requireBytesPayload(message)) }],
+  ["pushClose", { execution: "serialized", invoke: (runtime, message) => runtime.pushClose(requireStringPayload(message)) }],
+  ["watchSnapshot", { execution: "serialized", invoke: (runtime, message) => runtime.watchSnapshot(requireBytesPayload(message)) }],
+  ["watchStream", { execution: "serialized", invoke: (runtime, message) => runtime.watchStream(requireBytesPayload(message), event => {
+    const copiedEvent = Uint8Array.from(event);
+    postWorkerMessage(
+      { type: "coreWatchEvent", id: message.id, event: copiedEvent, clientId: message.clientId },
+      [copiedEvent.buffer],
+    );
+  }) }],
+  ["closeWatchStream", { execution: "serialized", invoke: (runtime, message) => runtime.closeWatchStream(requireStringPayload(message)) }],
+]);
 
 /** Returns the binary payload required by a binary Core Link operation. */
 function requireBytesPayload(message: WorkerCoreRequest): Uint8Array {
@@ -303,38 +431,31 @@ function installWorkerHostProxy(): void {
   if (localHost === undefined) {
     throw new Error("worker runtime did not install a local host bridge");
   }
+  const workerHostModules = workerGlobal.__operitWorkerHostModules;
+  if (workerHostModules === undefined) {
+    throw new Error("worker runtime did not install its host module registry");
+  }
+  const mainHostModuleRegistry = workerGlobal.__operitMainHostModules;
+  if (mainHostModuleRegistry === undefined) {
+    throw new Error("worker runtime did not install its main host module registry");
+  }
   const localModules = localHost as Record<string, object>;
-  const directModules = new Set(["archiveStaging", "fileSystem", "runtimeStorage", "sqlite"]);
   workerGlobal.__operitHost = new Proxy(localModules, {
     get(target, property): unknown {
       if (typeof property !== "string") {
         return Reflect.get(target, property);
       }
-      if (property === "archiveStaging") {
-        return workerArchiveModule();
+      const module = Reflect.get(target, property) as object | undefined;
+      if (module === undefined) {
+        throw new Error(`worker host module is not registered: ${property}`);
       }
-      if (property === "runtimeStorage") {
-        const storage = target[property];
-        return {
-          ...storage,
-          createWriteSession(path: string): string {
-            return requiredRuntimeStorage().createWriteSession(storageKey(runtimeStoragePrefix, path));
-          },
-          writeSessionChunk(sessionId: string, content: Uint8Array): void {
-            requiredRuntimeStorage().writeSessionChunk(sessionId, content);
-          },
-          commitWriteSession(sessionId: string): void {
-            requiredRuntimeStorage().commitWriteSession(sessionId);
-          },
-          discardWriteSession(sessionId: string): void {
-            requiredRuntimeStorage().discardWriteSession(sessionId);
-          },
-        };
+      if (workerHostModules.has(module)) {
+        return module;
       }
-      if (directModules.has(property)) {
-        return target[property];
+      if (mainHostModuleRegistry.has(module)) {
+        return mainHostModule(property);
       }
-      return mainHostModule(property);
+      throw new Error(`worker host module has no execution owner: ${property}`);
     },
   });
 }
@@ -359,6 +480,9 @@ function mainHostModule(module: string): object {
 
 /** Calls one UI-thread host method while blocking only this dedicated runtime worker. */
 function callMainHost(module: string, method: string, args: unknown[]): unknown {
+  if (activeHostClientId === null) {
+    throw new Error("runtime worker host call has no client identity");
+  }
   const id = ++nextHostCallId;
   const controlBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
   const control = new Int32Array(controlBuffer);
@@ -369,7 +493,7 @@ function callMainHost(module: string, method: string, args: unknown[]): unknown 
     method,
     args,
     control: controlBuffer,
-    clientId: activeHostClientId ?? undefined,
+    clientId: activeHostClientId,
   });
   Atomics.wait(control, controlStateIndex, 0);
   if (Atomics.load(control, controlStateIndex) !== controlReady) {
@@ -386,13 +510,14 @@ function callMainHost(module: string, method: string, args: unknown[]): unknown 
     id,
     payload: payloadBuffer,
     control: controlBuffer,
-    clientId: activeHostClientId ?? undefined,
+    clientId: activeHostClientId,
   });
   Atomics.wait(control, controlStateIndex, 0);
   if (Atomics.load(control, controlStateIndex) !== controlPayloadReady) {
     throw new Error("main-thread host did not provide response payload");
   }
-  const envelope = MessagePack.decode(new Uint8Array(payloadBuffer));
+  const encoded = Uint8Array.from(new Uint8Array(payloadBuffer));
+  const envelope = MessagePack.decode(encoded);
   if (!Array.isArray(envelope) || envelope.length !== 2 || typeof envelope[0] !== "number") {
     throw new Error("main-thread host response is invalid");
   }
@@ -409,26 +534,6 @@ function receiveMainHostPayload(message: WorkerHostPayload): void {
   Atomics.notify(control, controlStateIndex);
 }
 
-/** Creates the worker-local archive host object consumed by the Rust Web host. */
-function workerArchiveModule(): object {
-  return {
-    createArchive(archiveId: string, expectedByteLength: number): void {
-      requiredArchiveStaging().create(archiveId, expectedByteLength);
-    },
-    appendArchive(archiveId: string, content: Uint8Array): void {
-      requiredArchiveStaging().append(archiveId, content);
-    },
-    sealArchive(archiveId: string): number {
-      return requiredArchiveStaging().seal(archiveId);
-    },
-    readArchive(archiveId: string, offset: number, length: number): Uint8Array {
-      return requiredArchiveStaging().read(archiveId, offset, length);
-    },
-    removeArchive(archiveId: string): void {
-      requiredArchiveStaging().remove(archiveId);
-    },
-  };
-}
 
 /** Initializes OPFS-backed runtime storage and discards stale temporary archive bytes. */
 async function initializeRuntimeWorkerStorage(): Promise<void> {
@@ -611,10 +716,8 @@ class RuntimeWorkerStorage {
           return;
         }
         const itemKey = String(cursor.key);
-        if (runtimeStoragePrefixes.some(prefix => itemKey.startsWith(prefix))) {
-          const targetKey = itemKey.startsWith(legacySqlitePrefix)
-            ? `${runtimeStoragePrefix}${itemKey.slice(legacySqlitePrefix.length)}`
-            : itemKey;
+        const targetKey = migratedWorkerStorageKey(itemKey);
+        if (targetKey !== null) {
           this.writeRecord(targetKey, new Uint8Array(cursor.value), false);
         }
         cursor.continue();
@@ -771,6 +874,16 @@ class RuntimeWorkerStorage {
     writeExact(this.index, serialized, 0);
     this.index.flush();
   }
+}
+
+/** Resolves one legacy storage key through the registered namespace migrations. */
+function migratedWorkerStorageKey(itemKey: string): string | null {
+  for (const migration of workerStorageNamespaceMigrations) {
+    if (itemKey.startsWith(migration.sourcePrefix)) {
+      return `${migration.targetPrefix}${itemKey.slice(migration.sourcePrefix.length)}`;
+    }
+  }
+  return null;
 }
 
 /** Owns temporary append-only archive bytes for the lifetime of the runtime worker. */

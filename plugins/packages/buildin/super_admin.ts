@@ -244,6 +244,37 @@ type PersistedTerminalOutput = {
                     ]
                 }
             ]
+        },
+        {
+            "id": "web",
+            "condition": "platform.web",
+            "inheritTools": true,
+            "tools": [
+                {
+                    "name": "shell",
+                    "description": { "zh": "在浏览器本地 Linux 虚拟机 Shell 终端会话中执行命令并收集输出结果。会话按当前对话维护，上下文连贯。强烈建议每次都显式传 timeoutMs，避免命令卡住。前台未传 timeoutMs 时默认15秒；background=true 时不使用默认超时。命令超时时会取消当前执行中的命令并保留终端会话。", "en": "Execute commands in a browser-local Linux VM shell session and collect output. The session is maintained per chat and preserves context. Strongly recommend explicitly passing timeoutMs every time to avoid hangs. Foreground mode defaults to 15s when timeoutMs is omitted; background=true does not use the default timeout. When a command times out, the current command is cancelled and the terminal session is kept." },
+                    "parameters": [
+                        {
+                            "name": "command",
+                            "description": { "zh": "要执行的 Shell 命令", "en": "Shell command to execute." },
+                            "type": "string",
+                            "required": true
+                        },
+                        {
+                            "name": "background",
+                            "description": { "zh": "是否在后台运行命令,\"true\" 表示后台执行并立即返回,适合启动服务器等长时间运行的任务（AI 不会收到该命令的输出结果）,\"false\" 或未提供则前台执行并等待并返回命令结果", "en": "Run command in background. 'true' runs the command in the background and returns immediately, suitable for long-running servers. 'false' or omitted waits for and returns the command result." },
+                            "type": "string",
+                            "required": false
+                        },
+                        {
+                            "name": "timeoutMs",
+                            "description": { "zh": "可选超时（毫秒，最低3000ms）。强烈建议显式传入；未传时前台默认15000ms，background=true时不使用默认超时。", "en": "Optional timeout in milliseconds (minimum 3000ms). Strongly recommended; foreground defaults to 15000ms when omitted, and background=true does not use a default." },
+                            "type": "string",
+                            "required": false
+                        }
+                    ]
+                }
+            ]
         }
     ]
 }*/
@@ -256,6 +287,23 @@ const superAdmin = (function () {
     const DEFAULT_FOREGROUND_TIMEOUT_MS = 15000;
     const DEFAULT_WAIT_TIMEOUT_MS = 300000;
     const MIN_TIMEOUT_MS = 3000;
+    const DEFAULT_TERMINAL_SESSION_PREFIX = "super_admin_default_session";
+    const BACKGROUND_TERMINAL_SESSION_PREFIX = "super_admin_background";
+
+    /**
+     * Returns the stable foreground terminal session name for the current chat.
+     */
+    function getDefaultTerminalSessionName(): string {
+        return `${DEFAULT_TERMINAL_SESSION_PREFIX}_${getChatId()}`;
+    }
+
+    /**
+     * Returns a distinct terminal session name for a background command.
+     */
+    function getBackgroundTerminalSessionName(): string {
+        return `${BACKGROUND_TERMINAL_SESSION_PREFIX}_${getChatId()}_${Date.now()}`;
+    }
+
     /**
      * Saves oversized terminal output to a temporary file and returns its summary.
      */
@@ -315,7 +363,7 @@ const superAdmin = (function () {
                 }
             }
             if (isBackground) {
-                const session = await Tools.System.terminal.create();
+                const session = await Tools.System.terminal.create(getBackgroundTerminalSessionName());
                 const sessionId = session.sessionId;
                 /**
                  * Runs the background terminal command inside the created session.
@@ -337,7 +385,7 @@ const superAdmin = (function () {
                     terminalEnvironment
                 };
             }
-            const session = await Tools.System.terminal.create();
+            const session = await Tools.System.terminal.create(getDefaultTerminalSessionName());
             const sessionId = session.sessionId;
             const result = await Tools.System.terminal.exec(sessionId, command, timeout);
             const timedOut = result.timedOut === true;

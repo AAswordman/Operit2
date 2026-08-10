@@ -20,6 +20,15 @@ class WebWasmCoreProxy extends CoreProxy {
     return decodeNativeCoreResult(responseBytes);
   }
 
+  /// Executes one control call through the parallel web runtime lane.
+  @override
+  Future<Object?> callControl(CoreCallRequest request) async {
+    final responseBytes = await _invokeBytes('controlCall', <JSAny?>[
+      encodeNativeCoreCallRequest(request).toJS,
+    ]);
+    return decodeNativeCoreResult(responseBytes);
+  }
+
   /// Opens a client-owned Link input stream through the web runtime carrier.
   @override
   Future<CorePushSink> push(CorePushRequest request) async {

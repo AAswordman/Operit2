@@ -330,6 +330,7 @@ class ChatScreenContent extends StatelessWidget {
       onCreateBranch: onCreateBranch,
       onReplyToMessage: onReplyToMessage,
       onPlayVoice: (message) => _playVoice(context, message),
+      splitMarkdownContent: viewModel.splitMarkdownContent,
       onToggleMultiSelectMode: onToggleMultiSelectMode,
       onToggleMessageSelection: onToggleMessageSelection,
       onRefreshRequested: onRefreshRequested,
@@ -404,7 +405,7 @@ class ChatScreenContent extends StatelessWidget {
     final selectedMessages = selectedMessageIndices.toList()..sort();
     final text = selectedMessages
         .map((index) => messages[index])
-        .map((message) => cleanMessageContent(message.displayText))
+        .map((message) => cleanMessageContent(message.copySourceText))
         .join('\n\n');
     await Clipboard.setData(ClipboardData(text: text));
   }

@@ -294,7 +294,8 @@ Map<String, String> _markdownContentByPartId(
 ) {
   return <String, String>{
     for (final part in parts)
-      if (part.kind == core_proxy.MessagePartKind.markdown)
+      if (part.kind == core_proxy.MessagePartKind.markdown &&
+          part.content.trim().isNotEmpty)
         part.partId: part.content,
   };
 }

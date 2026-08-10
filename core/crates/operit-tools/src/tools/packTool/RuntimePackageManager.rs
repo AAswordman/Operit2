@@ -12,7 +12,10 @@ use crate::tools::skill::SkillManager::SkillManager;
 use crate::tools::ToolJsRuntime::{JsExecutionEngine, JsExecutionProvider};
 use crate::tools::ToolResultDataClasses::stringResultData;
 use crate::ConversationMarkupManager::ToolResult;
-use operit_host_api::{FileSystemHost, HostManager::HostManager, TimeUtils::currentTimeMillis};
+use operit_host_api::{
+    FileSystemHost, HostEnvironmentDescriptor, HostManager::HostManager, HostPlatform,
+    TimeUtils::currentTimeMillis,
+};
 use operit_plugin_sdk::javascript::{JsToolPkgWasmRequest, JsToolPkgWasmResult};
 use operit_plugin_sdk::package::{LocalizedText, PublishablePackageSource, ToolPackage};
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::{ToolPkgHookDispatcher, ToolPkgHookInvocation};
@@ -100,14 +103,16 @@ impl ToolPkgAssetSource for RuntimeToolPkgAssetSource {
 }
 
 /// Resolves package states from the runtime capability snapshot.
-#[derive(Clone, Copy)]
-struct RuntimePackageStateResolver;
+#[derive(Clone)]
+struct RuntimePackageStateResolver {
+    hostEnvironment: HostEnvironmentDescriptor,
+}
 
 impl PackageStateResolver for RuntimePackageStateResolver {
     /// Returns the first conditional state matching the current runtime capabilities.
     #[allow(non_snake_case)]
     fn resolvePackageStateId(&self, package: &ToolPackage) -> Option<String> {
-        let capabilities = buildConditionCapabilitiesSnapshot();
+        let capabilities = buildConditionCapabilitiesSnapshot(&self.hostEnvironment);
         package
             .states
             .iter()
@@ -208,7 +213,9 @@ impl RuntimePackageManager {
                     runtimeSupport: runtimeDependencies.shared_runtime_support(),
                 }),
                 fileSystemHost.clone(),
-                Arc::new(RuntimePackageStateResolver),
+                Arc::new(RuntimePackageStateResolver {
+                    hostEnvironment: context.hostEnvironment.clone(),
+                }),
             ),
             cachedMcpTools: BTreeMap::new(),
             externalPackageScanCache: BTreeMap::new(),
@@ -3758,9 +3765,11 @@ impl ToolPkgPackageHost for RuntimePackageManager {
 }
 
 #[allow(non_snake_case)]
+/// Formats the host-provided Unix clock for package prompt metadata.
 fn currentUseTime() -> String {
-    chrono::Local::now()
-        .naive_local()
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(currentTimeMillis())
+        .expect("host time must be a valid chrono timestamp")
+        .naive_utc()
         .format("%Y-%m-%dT%H:%M:%S%.f")
         .to_string()
 }
@@ -3881,9 +3890,21 @@ fn packageSourceFileName(sourcePath: &str) -> String {
         .to_string()
 }
 
+/// Builds conditional package capabilities from the active Host environment.
 #[allow(non_snake_case)]
-fn buildConditionCapabilitiesSnapshot() -> BTreeMap<String, ConditionValue> {
-    let platformName = std::env::consts::OS;
+fn buildConditionCapabilitiesSnapshot(
+    hostEnvironment: &HostEnvironmentDescriptor,
+) -> BTreeMap<String, ConditionValue> {
+    let platformName = match &hostEnvironment.platform {
+        HostPlatform::Android => "android",
+        HostPlatform::Ohos => "ohos",
+        HostPlatform::Windows => "windows",
+        HostPlatform::Linux => "linux",
+        HostPlatform::Macos => "macos",
+        HostPlatform::Ios => "ios",
+        HostPlatform::Web => "web",
+        HostPlatform::Other => "other",
+    };
     BTreeMap::from([
         (
             "platform.name".to_string(),
@@ -3904,6 +3925,10 @@ fn buildConditionCapabilitiesSnapshot() -> BTreeMap<String, ConditionValue> {
         (
             "platform.macos".to_string(),
             ConditionValue::Bool(platformName == "macos"),
+        ),
+        (
+            "platform.web".to_string(),
+            ConditionValue::Bool(platformName == "web"),
         ),
         (
             "ui.virtual_display".to_string(),

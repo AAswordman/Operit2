@@ -590,10 +590,11 @@ export namespace System {
      */
     function close(sessionId: string): Promise<TerminalSessionCloseResultData>;
     /**
-     * Creates an interactive session in the host-registered primary terminal.
+     * Creates or returns an interactive terminal session with the supplied name.
+     * @param sessionName Stable name used to identify the terminal session.
      * @returns Promise resolving to the session creation result.
      */
-    function create(): Promise<TerminalSessionCreationResultData>;
+    function create(sessionName: string): Promise<TerminalSessionCreationResultData>;
     /**
      * Execute a command in a terminal session.
      * @param sessionId The ID of the session.

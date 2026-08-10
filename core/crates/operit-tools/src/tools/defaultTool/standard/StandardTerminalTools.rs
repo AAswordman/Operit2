@@ -15,8 +15,6 @@ use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
 };
-use uuid::Uuid;
-
 const TERMINAL_SESSION_TIMEOUT_MS: u64 = 1800000;
 const HIDDEN_TERMINAL_TIMEOUT_MS: u64 = 120000;
 
@@ -68,9 +66,9 @@ impl StandardTerminalTools {
     }
 
     #[allow(non_snake_case)]
-    /// Creates an interactive session in the host-registered primary terminal.
+    /// Creates or returns an interactive terminal session with the requested name.
     pub fn createOrGetSession(&self, tool: &AITool) -> ToolResult {
-        let sessionName = primaryTerminalSessionName();
+        let sessionName = parameterValue(tool, "session_name");
         match self
             .host()
             .and_then(|host| host.createOrGetSession(&sessionName))
@@ -456,11 +454,6 @@ fn terminalInfoResultData(data: &TerminalInfo) -> TerminalInfoResultData {
         terminalType: terminalType(&data.terminalType),
         types,
     }
-}
-
-/// Allocates an opaque name for a plugin-created primary terminal session.
-fn primaryTerminalSessionName() -> String {
-    format!("plugin-terminal-{}", Uuid::new_v4())
 }
 
 #[allow(non_snake_case)]

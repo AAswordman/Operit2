@@ -153,12 +153,37 @@ mod tests {
     use operit_host_api::{
         HostError, HostResult, HttpDownloadControl, HttpDownloadProgressCallback,
         HttpDownloadRequest, HttpDownloadResult, HttpHost, HttpResponseData,
+        HttpStreamChunkCallback, HttpStreamClosedCallback, HttpStreamHost,
+        HttpStreamOpenedCallback,
     };
     use operit_model::SttConfig::{SttHttpHeader, SttProviderType};
     use std::sync::{Arc, Mutex};
 
     struct CapturingHttpHost {
         request: Arc<Mutex<Option<HttpRequestData>>>,
+    }
+
+    impl HttpStreamHost for CapturingHttpHost {
+        /// Rejects byte streams because STT tests only exercise buffered multipart requests.
+        fn openHttpByteStream(
+            &self,
+            _streamId: String,
+            _request: HttpRequestData,
+            _onOpened: HttpStreamOpenedCallback,
+            _onChunk: HttpStreamChunkCallback,
+            _onClosed: HttpStreamClosedCallback,
+        ) -> HostResult<()> {
+            Err(HostError::new(
+                "STT test HTTP byte streams are not configured",
+            ))
+        }
+
+        /// Rejects byte-stream close requests because no STT test stream can be opened.
+        fn closeHttpByteStream(&self, _streamId: &str) -> HostResult<()> {
+            Err(HostError::new(
+                "STT test HTTP byte stream close is not configured",
+            ))
+        }
     }
 
     impl HttpHost for CapturingHttpHost {

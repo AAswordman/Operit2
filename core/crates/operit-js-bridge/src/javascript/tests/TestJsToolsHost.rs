@@ -628,7 +628,7 @@ macro_rules! impl_rejecting_js_tools_host {
             }
 
             /// Rejects terminal creation in this test host.
-            fn create(&self) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::TerminalSessionCreationResultData> {
+            fn create(&self, _sessionName: String) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::TerminalSessionCreationResultData> {
                 $crate::javascript::TestJsToolsHost::rejecting_js_future("Terminal.create is not part of this test")
             }
 

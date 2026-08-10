@@ -4,11 +4,11 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../../common/interactions/MessagePressShield.dart';
 import '../../../../util/ChatMarkupRegex.dart';
 import '../viewmodel/ChatViewModel.dart';
+import 'MessageCopyPreview.dart';
 
 typedef MessageIndexAction = Future<void> Function(int index);
 typedef MessageIndexBoolAction = Future<bool> Function(int index);
@@ -27,6 +27,7 @@ class MessageContextMenu extends StatefulWidget {
     required this.index,
     required this.message,
     required this.onToggleFavoriteMessage,
+    this.splitMarkdownContent,
     required this.child,
     this.onDeleteMessage,
     this.onDeleteMessagesFrom,
@@ -45,6 +46,7 @@ class MessageContextMenu extends StatefulWidget {
   final int index;
   final ChatUiMessage message;
   final MessageFavoriteAction onToggleFavoriteMessage;
+  final MarkdownCopySplitter? splitMarkdownContent;
   final MessageIndexAction? onDeleteMessage;
   final MessageIndexBoolAction? onDeleteMessagesFrom;
   final MessageVariantAction? onDeleteMessageVariant;
@@ -307,8 +309,14 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
   Future<void> _handleAction(_MessageMenuAction action) async {
     switch (action) {
       case _MessageMenuAction.copy:
-        await Clipboard.setData(
-          ClipboardData(text: cleanMessageContent(widget.message.displayText)),
+        await showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          useSafeArea: true,
+          builder: (context) => MessageCopyPreviewSheet(
+            markdownText: cleanMessageContent(widget.message.copySourceText),
+            splitMarkdownContent: widget.splitMarkdownContent,
+          ),
         );
         break;
       case _MessageMenuAction.editAndResend:

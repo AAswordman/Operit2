@@ -354,6 +354,11 @@ class ChatViewModel {
     });
   }
 
+  /// Splits Markdown with the runtime surface that owns this chat.
+  Future<List<ChatResponseStreamEvent>> splitMarkdownContent(String content) {
+    return _chat.splitMarkdownContent(content: content);
+  }
+
   Stream<String?> watchToastEvent() {
     return _chat.toastEventFlowChanges();
   }
@@ -852,6 +857,22 @@ class ChatUiMessage {
         .join();
   }
 
+  /// Returns the current Markdown source visible in the transcript for copying.
+  String get copySourceText {
+    final stream = contentStream;
+    if (stream is _ReplayTextStream<ChatResponseStreamEvent>) {
+      return stream.cachedEvents
+          .whereType<ChatResponseStreamEvent>()
+          .where(
+            (event) =>
+                event.eventType == 'chunk' && event.parentBlockId == null,
+          )
+          .map((event) => event.value ?? '')
+          .join();
+    }
+    return displayText;
+  }
+
   /// Reconstructs the complete assistant protocol markup from semantic parts.
   String get assistantProtocolMarkup {
     final orderedParts = parts.toList(growable: false)
@@ -1055,6 +1076,9 @@ class _ReplayTextStream<T> extends Stream<T> {
   final List<T> _cache = <T>[];
   final StreamController<T> _liveController = StreamController<T>.broadcast();
   bool _closed = false;
+
+  /// Exposes the replayed event snapshot without subscribing to live output.
+  List<T> get cachedEvents => List<T>.unmodifiable(_cache);
 
   /// Appends one event to the replay cache and live subscribers.
   void add(T chunk) {

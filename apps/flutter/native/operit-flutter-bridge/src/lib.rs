@@ -553,13 +553,22 @@ fn install_permission_requester(core: &mut LocalCoreProxy) {
                 },
                 Duration::from_millis(PERMISSION_REQUEST_TIMEOUT_MS),
             )
-            .await
-            .expect("permission request failed");
+            .await;
+            let response = match response {
+                Ok(response) => response,
+                Err(error) => {
+                    eprintln!("tool permission request failed: {error}");
+                    return PermissionRequestResult::DENY;
+                }
+            };
             match response.result.as_str() {
                 "allow" => PermissionRequestResult::ALLOW,
                 "allow_session" => PermissionRequestResult::ALLOW_SESSION,
                 "deny" => PermissionRequestResult::DENY,
-                other => panic!("unknown permission response result: {other}"),
+                other => {
+                    eprintln!("unknown tool permission response result: {other}");
+                    PermissionRequestResult::DENY
+                }
             }
         });
 }

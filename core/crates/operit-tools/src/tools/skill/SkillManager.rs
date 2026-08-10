@@ -668,9 +668,14 @@ fn walkDirectory(
 }
 
 #[allow(non_snake_case)]
+/// Formats the host-provided Unix clock for skill prompt metadata.
 fn currentUseTime() -> String {
-    chrono::Local::now()
-        .naive_local()
+    let timestampMillis = currentTimeMillis()
+        .try_into()
+        .expect("host time must fit into chrono timestamp milliseconds");
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(timestampMillis)
+        .expect("host time must be a valid chrono timestamp")
+        .naive_utc()
         .format("%Y-%m-%dT%H:%M:%S%.f")
         .to_string()
 }

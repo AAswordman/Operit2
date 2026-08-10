@@ -1387,10 +1387,37 @@ pub use MarketStatsApiService as MarketStatsApiServiceModule;
 mod tests {
     use super::MarketStatsApiService;
     use operit_host_api::HostManager::setDefaultHttpHost;
-    use operit_host_api::{HostError, HostResult, HttpHost, HttpRequestData, HttpResponseData};
+    use operit_host_api::{
+        HostError, HostResult, HttpHost, HttpRequestData, HttpResponseData,
+        HttpStreamChunkCallback, HttpStreamClosedCallback, HttpStreamHost,
+        HttpStreamOpenedCallback,
+    };
     use std::sync::Arc;
 
     struct ReqwestTestHttpHost;
+
+    impl HttpStreamHost for ReqwestTestHttpHost {
+        /// Rejects byte streams because market tests only exercise buffered requests.
+        fn openHttpByteStream(
+            &self,
+            _streamId: String,
+            _request: HttpRequestData,
+            _onOpened: HttpStreamOpenedCallback,
+            _onChunk: HttpStreamChunkCallback,
+            _onClosed: HttpStreamClosedCallback,
+        ) -> HostResult<()> {
+            Err(HostError::new(
+                "market test HTTP byte streams are not configured",
+            ))
+        }
+
+        /// Rejects byte-stream close requests because no market test stream can be opened.
+        fn closeHttpByteStream(&self, _streamId: &str) -> HostResult<()> {
+            Err(HostError::new(
+                "market test HTTP byte stream close is not configured",
+            ))
+        }
+    }
 
     impl HttpHost for ReqwestTestHttpHost {
         /// Executes one test HTTP request through reqwest.

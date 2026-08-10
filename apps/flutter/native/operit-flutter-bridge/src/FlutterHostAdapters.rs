@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use operit_runtime::services::RuntimeHostInteractionService::{
-    requestOwnerBrowserAutomation, requestOwnerBrowserSession,
-    requestOwnerComposeFilePicker, requestOwnerComposeWebViewController, requestOwnerWebVisit,
+    requestOwnerBrowserAutomation, requestOwnerBrowserSession, requestOwnerComposeFilePicker,
+    requestOwnerComposeWebViewController, requestOwnerWebVisit,
     RuntimeHostInteractionBrowserAutomationPayload, RuntimeHostInteractionBrowserSessionPayload,
     RuntimeHostInteractionComposeFilePickerPayload,
     RuntimeHostInteractionComposeWebViewControllerPayload, RuntimeHostInteractionWebVisitHeader,

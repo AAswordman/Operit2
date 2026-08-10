@@ -214,6 +214,7 @@ function consumeRuntimeByte(byte: number): void {
   for (const outputByte of lineBytes) {
     appendOutputByte(outputByte);
   }
+  notifyRuntimeActivity();
 }
 
 /** Sends all precomputed deployment frames after the guest agent is listening. */
@@ -355,4 +356,10 @@ function setRuntimeState(state: number): void {
   }
   Atomics.store(header, runtimeStateIndex, state);
   Atomics.notify(header, outputWriteIndex);
+  notifyRuntimeActivity();
+}
+
+/** Notifies the browser page that serial output or lifecycle state changed. */
+function notifyRuntimeActivity(): void {
+  workerGlobal.postMessage({ type: "activity" });
 }
