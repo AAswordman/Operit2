@@ -21,7 +21,9 @@ sdk_name="${2:?missing Xcode SDK name}"
 platform_name="${3:?missing Xcode platform name}"
 architectures="${4:?missing Xcode architectures}"
 build_products_dir="$repo_dir/apps/flutter/app/apple/ish-build/${configuration}-${platform_name}"
-ish_configuration="${configuration}Linux"
+linux_configuration="${configuration}Linux"
+ish_meson_build_dir="$build_products_dir/meson-ish"
+linux_meson_build_dir="$build_products_dir/meson-linux"
 
 python3 "$script_dir/fetch_sources.py"
 
@@ -36,13 +38,17 @@ done
 build_target() {
     local project="$1"
     local target="$2"
+    local target_configuration="$3"
+    local meson_build_dir="$4"
+
     xcodebuild \
         -project "$project" \
         -target "$target" \
-        -configuration "$configuration" \
+        -configuration "$target_configuration" \
         -sdk "$sdk_name" \
         ARCHS="$architectures" \
         CONFIGURATION_BUILD_DIR="$build_products_dir" \
+        MESON_BUILD_DIR="$meson_build_dir" \
         CODE_SIGNING_ALLOWED=NO \
         CODE_SIGNING_REQUIRED=NO \
         build
@@ -100,16 +106,14 @@ build_ish_source_static_library() {
         -output "$build_products_dir/$library_name.a"
 }
 
-configuration="$ish_configuration"
-build_target "$source_dir/iSH.xcodeproj" liblinux
-build_target "$source_dir/iSH.xcodeproj" libiSHLinux
-build_target "$source_dir/iSH.xcodeproj" libiSHLinuxUser
-build_target "$source_dir/iSH.xcodeproj" libish
-build_target "$source_dir/iSH.xcodeproj" libiSHApp
-build_target "$source_dir/iSH.xcodeproj" libfakefs
-build_target "$source_dir/iSH.xcodeproj" libish_emu
-configuration="${1:?missing Xcode configuration}"
-build_target "$source_dir/deps/libarchive.xcodeproj" libarchive
+build_target "$source_dir/iSH.xcodeproj" libish "$configuration" "$ish_meson_build_dir"
+build_target "$source_dir/iSH.xcodeproj" liblinux "$linux_configuration" "$linux_meson_build_dir"
+build_target "$source_dir/iSH.xcodeproj" libiSHLinux "$linux_configuration" "$linux_meson_build_dir"
+build_target "$source_dir/iSH.xcodeproj" libiSHLinuxUser "$linux_configuration" "$linux_meson_build_dir"
+build_target "$source_dir/iSH.xcodeproj" libiSHApp "$linux_configuration" "$linux_meson_build_dir"
+build_target "$source_dir/iSH.xcodeproj" libfakefs "$linux_configuration" "$linux_meson_build_dir"
+build_target "$source_dir/iSH.xcodeproj" libish_emu "$linux_configuration" "$linux_meson_build_dir"
+build_target "$source_dir/deps/libarchive.xcodeproj" libarchive "$configuration" "$linux_meson_build_dir"
 build_ish_source_static_library "$source_dir/tools/fakefs.c" libiSHFakefs
 build_ish_source_static_library "$source_dir/util/fchdir.c" libiSHFchdir
 
