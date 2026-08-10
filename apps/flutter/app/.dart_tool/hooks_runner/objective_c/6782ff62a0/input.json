@@ -1,0 +1,12 @@
+{
+  "assets": {},
+  "config": {
+    "build_asset_types": [],
+    "linking_enabled": true
+  },
+  "out_dir_shared": "/home/runner/work/Operit2/Operit2/apps/flutter/app/.dart_tool/hooks_runner/shared/objective_c/build/",
+  "out_file": "/home/runner/work/Operit2/Operit2/apps/flutter/app/.dart_tool/hooks_runner/objective_c/6782ff62a0/output.json",
+  "package_name": "objective_c",
+  "package_root": "/home/runner/.pub-cache/hosted/pub.dev/objective_c-9.4.1/",
+  "user_defines": {}
+}

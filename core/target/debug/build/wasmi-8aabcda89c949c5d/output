@@ -1,0 +1,9 @@
+cargo::rerun-if-changed=build.rs
+cargo::rerun-if-env-changed=OPT_LEVEL
+cargo::rerun-if-env-changed=CARGO_CFG_TARGET_ARCH
+cargo::rerun-if-env-changed=CARGO_CFG_TARGET_FEATURE
+cargo::rustc-check-cfg=cfg(wasmi_opt_size)
+cargo::rustc-check-cfg=cfg(wasmi_opt_speed)
+cargo::rustc-check-cfg=cfg(wasmi_has_tail_calls)
+cargo::rustc-check-cfg=cfg(wasmi_use_tail_calls)
+cargo::rustc-cfg=wasmi_has_tail_calls

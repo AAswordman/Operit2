@@ -1,0 +1,10 @@
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/plugins/buildin
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/plugins/external
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/../../../plugins/skills/external
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/../../../plugins/skills/external/PackageBuilder/skill.include.json
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/plugins/docs/package_builder/SCRIPT_DEV_GUIDE.md
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/plugins/docs/package_builder/TOOLPKG_FORMAT_GUIDE.md
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/plugins/types
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/plugins/packages/buildin
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/plugins/packages/external

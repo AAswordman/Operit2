@@ -1,0 +1,37 @@
+#[derive(Clone, Copy)]
+pub struct WorkspaceTemplateAsset {
+    pub path: &'static str,
+    pub bytes: &'static [u8],
+}
+
+pub static WORKSPACE_TEMPLATE_ASSETS: &[WorkspaceTemplateAsset] = &[
+    WorkspaceTemplateAsset { path: "go/README.md", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/go/README.md") },
+    WorkspaceTemplateAsset { path: "go/gitignore", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/go/gitignore") },
+    WorkspaceTemplateAsset { path: "go/go.mod", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/go/go.mod") },
+    WorkspaceTemplateAsset { path: "go/main.go", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/go/main.go") },
+    WorkspaceTemplateAsset { path: "java/README.md", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/java/README.md") },
+    WorkspaceTemplateAsset { path: "java/build.gradle.kts", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/java/build.gradle.kts") },
+    WorkspaceTemplateAsset { path: "java/gitignore", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/java/gitignore") },
+    WorkspaceTemplateAsset { path: "java/settings.gradle.kts", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/java/settings.gradle.kts") },
+    WorkspaceTemplateAsset { path: "java/src/main/java/com/operit/app/Calculator.java", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/java/src/main/java/com/operit/app/Calculator.java") },
+    WorkspaceTemplateAsset { path: "java/src/main/java/com/operit/app/Main.java", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/java/src/main/java/com/operit/app/Main.java") },
+    WorkspaceTemplateAsset { path: "java/src/main/resources/application.properties", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/java/src/main/resources/application.properties") },
+    WorkspaceTemplateAsset { path: "java/src/test/java/com/operit/app/CalculatorTest.java", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/java/src/test/java/com/operit/app/CalculatorTest.java") },
+    WorkspaceTemplateAsset { path: "node/README.md", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/node/README.md") },
+    WorkspaceTemplateAsset { path: "node/gitignore", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/node/gitignore") },
+    WorkspaceTemplateAsset { path: "node/index.js", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/node/index.js") },
+    WorkspaceTemplateAsset { path: "node/package.json", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/node/package.json") },
+    WorkspaceTemplateAsset { path: "office/README.md", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/office/README.md") },
+    WorkspaceTemplateAsset { path: "office/gitignore", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/office/gitignore") },
+    WorkspaceTemplateAsset { path: "python/README.md", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/python/README.md") },
+    WorkspaceTemplateAsset { path: "python/gitignore", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/python/gitignore") },
+    WorkspaceTemplateAsset { path: "python/main.py", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/python/main.py") },
+    WorkspaceTemplateAsset { path: "python/requirements.txt", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/python/requirements.txt") },
+    WorkspaceTemplateAsset { path: "typescript/README.md", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/typescript/README.md") },
+    WorkspaceTemplateAsset { path: "typescript/gitignore", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/typescript/gitignore") },
+    WorkspaceTemplateAsset { path: "typescript/package.json", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/typescript/package.json") },
+    WorkspaceTemplateAsset { path: "typescript/src/index.ts", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/typescript/src/index.ts") },
+    WorkspaceTemplateAsset { path: "typescript/tsconfig.json", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/typescript/tsconfig.json") },
+    WorkspaceTemplateAsset { path: "web/gitignore", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/web/gitignore") },
+    WorkspaceTemplateAsset { path: "web/index.html", bytes: include_bytes!("/home/runner/work/Operit2/Operit2/core/crates/operit-runtime/assets/workspace_templates/web/index.html") },
+];

@@ -1,0 +1,12 @@
+/home/runner/work/Operit2/Operit2/apps/flutter/native/operit-flutter-bridge/target/wasm32-unknown-unknown/release/deps/operit_core_proxy-2b27acf282568808.d: /home/runner/work/Operit2/Operit2/core/crates/operit-core-proxy/src/lib.rs /home/runner/work/Operit2/Operit2/core/crates/operit-core-proxy/src/RuntimeCoreRouter.rs /home/runner/work/Operit2/Operit2/core/crates/operit-core-proxy/src/RuntimeRemoteLinkService.rs /home/runner/work/Operit2/Operit2/apps/flutter/native/operit-flutter-bridge/target/wasm32-unknown-unknown/release/build/operit-core-proxy-ce17940862b56b6e/out/generated_core_dispatch.rs
+
+/home/runner/work/Operit2/Operit2/apps/flutter/native/operit-flutter-bridge/target/wasm32-unknown-unknown/release/deps/liboperit_core_proxy-2b27acf282568808.rlib: /home/runner/work/Operit2/Operit2/core/crates/operit-core-proxy/src/lib.rs /home/runner/work/Operit2/Operit2/core/crates/operit-core-proxy/src/RuntimeCoreRouter.rs /home/runner/work/Operit2/Operit2/core/crates/operit-core-proxy/src/RuntimeRemoteLinkService.rs /home/runner/work/Operit2/Operit2/apps/flutter/native/operit-flutter-bridge/target/wasm32-unknown-unknown/release/build/operit-core-proxy-ce17940862b56b6e/out/generated_core_dispatch.rs
+
+/home/runner/work/Operit2/Operit2/apps/flutter/native/operit-flutter-bridge/target/wasm32-unknown-unknown/release/deps/liboperit_core_proxy-2b27acf282568808.rmeta: /home/runner/work/Operit2/Operit2/core/crates/operit-core-proxy/src/lib.rs /home/runner/work/Operit2/Operit2/core/crates/operit-core-proxy/src/RuntimeCoreRouter.rs /home/runner/work/Operit2/Operit2/core/crates/operit-core-proxy/src/RuntimeRemoteLinkService.rs /home/runner/work/Operit2/Operit2/apps/flutter/native/operit-flutter-bridge/target/wasm32-unknown-unknown/release/build/operit-core-proxy-ce17940862b56b6e/out/generated_core_dispatch.rs
+
+/home/runner/work/Operit2/Operit2/core/crates/operit-core-proxy/src/lib.rs:
+/home/runner/work/Operit2/Operit2/core/crates/operit-core-proxy/src/RuntimeCoreRouter.rs:
+/home/runner/work/Operit2/Operit2/core/crates/operit-core-proxy/src/RuntimeRemoteLinkService.rs:
+/home/runner/work/Operit2/Operit2/apps/flutter/native/operit-flutter-bridge/target/wasm32-unknown-unknown/release/build/operit-core-proxy-ce17940862b56b6e/out/generated_core_dispatch.rs:
+
+# env-dep:OUT_DIR=/home/runner/work/Operit2/Operit2/apps/flutter/native/operit-flutter-bridge/target/wasm32-unknown-unknown/release/build/operit-core-proxy-ce17940862b56b6e/out
