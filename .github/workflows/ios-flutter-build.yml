@@ -217,16 +217,6 @@ jobs:
             apps/flutter/app/assets/web_access
           key: ${{ steps.web-build-cache.outputs.cache-primary-key }}
 
-      - name: Build and package unsigned iOS app
-        run: python3 tools/build_scripts/build_flutter_ios.py
-
-      - name: Save TypeScript compiler
-        if: steps.typescript-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: .ci-tools/typescript
-          key: ${{ runner.os }}-typescript-${{ env.TYPESCRIPT_VERSION }}
-
       - name: Upload unsigned iOS app artifact
         uses: actions/upload-artifact@v4
         with:
