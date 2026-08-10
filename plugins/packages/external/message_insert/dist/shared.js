@@ -1,10 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.resolveExtraInfoI18n = resolveExtraInfoI18n;
+exports.MAX_INJECTION_TIMEOUT_SECONDS = exports.MIN_INJECTION_TIMEOUT_SECONDS = void 0;
 exports.logExtraInfoInjectionInfo = logExtraInfoInjectionInfo;
 exports.logExtraInfoInjectionError = logExtraInfoInjectionError;
-exports.MIN_INJECTION_TIMEOUT_SECONDS = void 0;
-exports.MAX_INJECTION_TIMEOUT_SECONDS = void 0;
+exports.resolveExtraInfoI18n = resolveExtraInfoI18n;
 exports.createDefaultSettings = createDefaultSettings;
 exports.loadSettings = loadSettings;
 exports.applySettingsPatch = applySettingsPatch;
@@ -34,11 +33,9 @@ const LEGACY_ATTACHMENT_ID_PREFIXES = [
 const NOTIFICATION_FETCH_LIMIT = 5;
 const APP_USAGE_FETCH_LIMIT = 3;
 const LOG_PREFIX = "[message_insert]";
-const MIN_INJECTION_TIMEOUT_SECONDS = 1;
-const MAX_INJECTION_TIMEOUT_SECONDS = 120;
+exports.MIN_INJECTION_TIMEOUT_SECONDS = 1;
+exports.MAX_INJECTION_TIMEOUT_SECONDS = 120;
 const DEFAULT_INJECTION_TIMEOUT_SECONDS = 8;
-exports.MIN_INJECTION_TIMEOUT_SECONDS = MIN_INJECTION_TIMEOUT_SECONDS;
-exports.MAX_INJECTION_TIMEOUT_SECONDS = MAX_INJECTION_TIMEOUT_SECONDS;
 // Weather is a pre-send injection path, so the shared Hook deadline bounds its location and HTTP work.
 const WEATHER_INJECTION_STEP_TIMEOUT_SECONDS = 5;
 const ZH_CN_I18N = {
@@ -324,15 +321,19 @@ const DEFAULT_SETTINGS = {
     memoryLimit: 3,
     injectionTimeoutSeconds: DEFAULT_INJECTION_TIMEOUT_SECONDS,
 };
+// Keep diagnostics useful without persisting message or collected device data to application logs.
 function formatLogError(error) {
     return error instanceof Error ? error.message : String(error);
 }
+/// Logs a non-sensitive message-injection lifecycle event.
 function logExtraInfoInjectionInfo(event, details = "") {
     console.info(`${LOG_PREFIX} ${event}${details ? ` ${details}` : ""}`);
 }
+/// Logs a non-sensitive message-injection failure.
 function logExtraInfoInjectionError(event, error, details = "") {
     console.error(`${LOG_PREFIX} ${event}${details ? ` ${details}` : ""} error=${formatLogError(error)}`);
 }
+/// Describes enabled injection items for lifecycle diagnostics.
 function describeEnabledItems(settings) {
     const items = [
         settings.injectTime && "time",
@@ -344,11 +345,16 @@ function describeEnabledItems(settings) {
         settings.injectScreenText && "screen_text",
         settings.injectNotifications && "notifications",
         settings.injectMemory && "memory",
-    ].filter(item => Boolean(item));
+    ].filter((item) => Boolean(item));
     return items.join(",");
 }
+/// Normalizes the persisted injection deadline to the supported whole-second range.
 function normalizeInjectionTimeoutSeconds(value) {
-    if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < MIN_INJECTION_TIMEOUT_SECONDS || value > MAX_INJECTION_TIMEOUT_SECONDS) {
+    if (typeof value !== "number" ||
+        !Number.isFinite(value) ||
+        !Number.isInteger(value) ||
+        value < exports.MIN_INJECTION_TIMEOUT_SECONDS ||
+        value > exports.MAX_INJECTION_TIMEOUT_SECONDS) {
         return DEFAULT_INJECTION_TIMEOUT_SECONDS;
     }
     return value;
@@ -554,13 +560,16 @@ function buildErrorContent(title, error) {
         `${text.errorLabel}: ${message}`,
     ].join("\n");
 }
+// Keep the attachment shape visible when a provider misses the shared deadline without exposing partial data.
 function buildTimeoutContent(title) {
     return [title, "timeout"].join("\n");
 }
+/// Identifies timeout failures returned by host providers.
 function isTimeoutError(error) {
     const message = error instanceof Error ? error.message : String(error || "");
     return /timeout|timed out|超时/i.test(message);
 }
+/// Collects one optional injection item against the shared absolute deadline.
 async function buildOptionalContent(item, title, build, deadlineAt) {
     const startedAt = Date.now();
     const remainingMs = Math.max(0, deadlineAt - startedAt);
@@ -580,6 +589,8 @@ async function buildOptionalContent(item, title, build, deadlineAt) {
     const timeoutPromise = new Promise((resolve) => {
         timeoutId = setTimeout(() => resolve(markTimeout()), remainingMs);
     });
+    // Attach rejection handling before racing so a provider that finishes after the deadline cannot
+    // create an unhandled rejection while its result is intentionally discarded.
     const contentPromise = Promise.resolve()
         .then(build)
         .then((content) => {

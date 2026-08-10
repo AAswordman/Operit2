@@ -112,6 +112,7 @@ function createMemoryConfigSection(ctx, text, enabled, allowRepeatedMemorySearch
         }),
     ]);
 }
+/// Builds the configurable total deadline for one extra-info collection round.
 function createInjectionTimeoutConfigSection(ctx, text, value, onValueChange, onApply) {
     return ctx.UI.Surface(toggleCardStyle, [
         ctx.UI.Column({ fillMaxWidth: true, padding: { horizontal: 14, vertical: 12 }, spacing: 10 }, [
@@ -234,7 +235,10 @@ function Screen(ctx) {
     };
     const applyInjectionTimeoutSettings = () => {
         const timeoutSeconds = Number(injectionTimeoutInputState.value.trim());
-        if (!Number.isFinite(timeoutSeconds) || timeoutSeconds < shared_1.MIN_INJECTION_TIMEOUT_SECONDS || timeoutSeconds > shared_1.MAX_INJECTION_TIMEOUT_SECONDS || !Number.isInteger(timeoutSeconds)) {
+        if (!Number.isFinite(timeoutSeconds) ||
+            timeoutSeconds < shared_1.MIN_INJECTION_TIMEOUT_SECONDS ||
+            timeoutSeconds > shared_1.MAX_INJECTION_TIMEOUT_SECONDS ||
+            !Number.isInteger(timeoutSeconds)) {
             successMessageState.set("");
             errorMessageState.set(`${text.saveErrorPrefix}${text.invalidInjectionTimeoutMessage}`);
             return;

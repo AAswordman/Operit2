@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 #[cfg(target_os = "android")]
 use operit_host_api::HostManager::HostManager;
+#[cfg(target_os = "android")]
+use operit_host_api::RuntimeStorageHost;
 
 mod audio_playback;
 mod bluetooth;
