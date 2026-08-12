@@ -884,7 +884,7 @@ impl RuntimeHostInteractionService {
             message,
             activation,
         })
-            .map_err(|error| error.message)
+        .map_err(|error| error.message)
     }
 
     /// Responds to a pending owner-host interaction request.

@@ -347,6 +347,24 @@ fn render_constructed_dispatch(object: &SourceObject, mode: DispatchMode) -> Str
     if object_uses_arc_mutex_instance(&object.access) {
         let lock = "            let mut object = object.lock().expect(\"core proxy object mutex poisoned\");\n";
         return match mode {
+            DispatchMode::Call
+                if object
+                    .methods
+                    .iter()
+                    .any(|method| method.is_async && method.call_protocol().is_some()) =>
+            {
+                let async_methods = object
+                    .methods
+                    .iter()
+                    .filter(|method| method.is_async && method.call_protocol().is_some())
+                    .map(|method| format!("{:?}", method.name))
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                format!(
+                    "            if matches!(request.methodName.as_str(), {async_methods}) {{\n                let mut object = object.lock().expect(\"core proxy object mutex poisoned\").clone();\n                generated_dispatch_{}_call(&mut object, request).await\n            }} else {{\n{}            generated_dispatch_{}_call_sync(&mut object, request)\n            }}\n",
+                    object.dispatch_name, lock, object.dispatch_name
+                )
+            }
             DispatchMode::Call => format!(
                 "{}            generated_dispatch_{}_call_sync(&mut object, request)\n",
                 lock, object.dispatch_name

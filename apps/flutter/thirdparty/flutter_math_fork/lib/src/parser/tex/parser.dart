@@ -533,8 +533,13 @@ class TexParser {
       RegExp(r'^[-+]? *(?:$|\d+|\d+\.\d*|\.\d*) *[a-z]{0,2} *$');
   static final _parseMeasurementRegex =
       RegExp(r'([-+]?) *(\d+(?:\.\d*)?|\.\d+) *([a-z]{2})');
+  static final _parseGlueMeasurementRegex = RegExp(
+      r'^([-+]?) *(\d+(?:\.\d*)?|\.\d+) *([a-z]{2})'
+      r'(?: *plus *([-+]?) *(\d+(?:\.\d*)?|\.\d+) *([a-z]{2}))?'
+      r'(?: *minus *([-+]?) *(\d+(?:\.\d*)?|\.\d+) *([a-z]{2}))? *$');
 
-  Measurement? parseArgSize({required bool optional}) {
+  /// Parses a dimension argument and optionally consumes TeX glue components.
+  Measurement? parseArgSize({required bool optional, bool allowGlue = false}) {
     currArgParsingContext.newArgument(optional: optional);
     final i = currArgParsingContext.currArgNum;
     final consumeSpaces =
@@ -559,7 +564,10 @@ class TexParser {
       // This means default width for genfrac, and 0pt for above
       return null;
     }
-    final match = _parseMeasurementRegex.firstMatch(res.text);
+    final match = (allowGlue
+            ? _parseGlueMeasurementRegex
+            : _parseMeasurementRegex)
+        .firstMatch(res.text);
     if (match == null) {
       throw ParseException("Invalid size: '${res.text}'", res);
     }
@@ -567,6 +575,16 @@ class TexParser {
     final unit = match[3]!.parseUnit();
     if (unit == null) {
       throw ParseException("Invalid unit: '${match[3]}'", res);
+    }
+    if (allowGlue) {
+      final stretchUnit = match[6];
+      final shrinkUnit = match[9];
+      if (stretchUnit != null && stretchUnit.parseUnit() == null) {
+        throw ParseException("Invalid unit: '$stretchUnit'", res);
+      }
+      if (shrinkUnit != null && shrinkUnit.parseUnit() == null) {
+        throw ParseException("Invalid unit: '$shrinkUnit'", res);
+      }
     }
     final size =
         Measurement(value: double.parse(match[1]! + match[2]!), unit: unit);

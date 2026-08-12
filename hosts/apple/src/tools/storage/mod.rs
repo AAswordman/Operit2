@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
@@ -128,6 +128,20 @@ impl RuntimeStorageHost for AppleRuntimeStorageHost {
             fs::create_dir_all(parent)?;
         }
         fs::write(path, content)?;
+        Ok(())
+    }
+
+    /// Appends bytes to an Apple runtime storage file.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        let path = self.resolve(path)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        file.write_all(content)?;
         Ok(())
     }
 

@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::ptr::null_mut;
 use std::slice;
@@ -123,6 +123,20 @@ impl RuntimeStorageHost for WindowsRuntimeStorageHost {
             fs::create_dir_all(parent)?;
         }
         fs::write(path, content)?;
+        Ok(())
+    }
+
+    /// Appends bytes to a Windows runtime storage file.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        let path = self.resolve(path)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        file.write_all(content)?;
         Ok(())
     }
 

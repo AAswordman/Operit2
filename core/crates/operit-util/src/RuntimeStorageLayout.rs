@@ -5,13 +5,13 @@ pub const CONFIG_PREFERENCES_DIR_PATH: &str = "runtime/config/preferences";
 pub const DATA_MEMORY_CHARACTERS_DIR_PATH: &str = "runtime/data/memory/characters";
 pub const DATA_MEMORY_SHARED_DIR_PATH: &str = "runtime/data/memory/shared";
 pub const RUNTIME_USER_ASSETS_DIR_PATH: &str = "runtime/data/user_assets";
+pub const RUNTIME_CHARACTER_AVATARS_DIR_PATH: &str = "runtime/data/user_assets/character_avatars";
 pub const RUNTIME_THEME_ASSETS_DIR_PATH: &str = "runtime/data/user_assets/theme";
 pub const RUNTIME_SHARE_IMAGE_DIR_PATH: &str = "runtime/temp/share_image";
 pub const RUNTIME_WORKSPACE_VIDEO_DIR_PATH: &str = "runtime/temp/workspace_video";
 pub const RUNTIME_COMPOSE_DSL_WEBVIEW_FILES_DIR_PATH: &str =
     "runtime/temp/compose_dsl_webview_files";
-pub const RUNTIME_LINK_ACCESS_WEB_ASSETS_DIR_PATH: &str =
-    "runtime/link_access/web_access_bundle";
+pub const RUNTIME_LINK_ACCESS_WEB_ASSETS_DIR_PATH: &str = "runtime/link_access/web_access_bundle";
 pub const RUNTIME_CLIENT_LOG_PATH: &str = "runtime/logs/client.log";
 pub const RUNTIME_SHARE_IMAGE_EXPORTS_DIR_PATH: &str = "runtime/exports/share_image";
 

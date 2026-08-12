@@ -6,6 +6,7 @@ pub mod chromium_browser;
 pub mod tools;
 
 pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as AppleHostRuntimeEventSchedulerHost;
+pub use operit_host_native_common::NativeHostJavaScriptRuntimeHost as AppleHostJavaScriptRuntimeHost;
 pub use operit_host_native_common::NativeHostRuntimeTaskSchedulerHost as AppleHostRuntimeTaskSchedulerHost;
 pub use tools::audio::{AppleAudioPlaybackHost, AppleMusicCommand};
 pub use tools::bluetooth::AppleBluetoothHost;

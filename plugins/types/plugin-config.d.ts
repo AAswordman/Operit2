@@ -26,8 +26,8 @@ type PluginConfigDefaults = Record<string, any>;
  * ```
  *
  * Assigning a property updates the in-memory config and schedules persistence
- * to the plugin config directory. Plugin authors do not need to call a separate
- * save method or use `Tools.Files` for normal config reads and writes.
+ * to the plugin config directory. Call {@link PluginConfigApi.flush} when an
+ * operation must not complete until those writes are durable.
  */
 interface PluginConfigApi {
     /**
@@ -54,6 +54,9 @@ interface PluginConfigApi {
      * directly. Property assignments are persisted by the runtime.
      */
     use<TConfig extends PluginConfigDefaults>(name: string, defaults: TConfig): Promise<TConfig>;
+
+    /** Wait for all writes already scheduled on one config object. */
+    flush(config: PluginConfigDefaults): Promise<void>;
 }
 
 /**

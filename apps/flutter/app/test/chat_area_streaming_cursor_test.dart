@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
@@ -210,11 +211,77 @@ void main() {
     );
     expect(find.byType(CompactToolDisplay), findsOneWidget);
   });
+
+  testWidgets('hides the scroll navigator after the scroll view detaches', (
+    tester,
+  ) async {
+    final scrollController = ScrollController();
+    final autoScrollToBottom = ValueNotifier<bool>(true);
+    addTearDown(() {
+      scrollController.dispose();
+      autoScrollToBottom.dispose();
+    });
+
+    await tester.pumpWidget(
+      _chatArea(
+        message: _aiMessage(
+          parts: const <MessagePart>[
+            MessagePart(
+              partId: 'part-0',
+              sequence: 0,
+              kind: MessagePartKind.markdown,
+              content: 'response',
+              toolCallId: null,
+              toolName: null,
+              attributes: <String, String>{},
+            ),
+          ],
+          completedAt: 1,
+        ),
+        isLoading: false,
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+      ),
+    );
+
+    final scrollableContext = tester.element(find.byType(Scrollable).first);
+    final metrics = FixedScrollMetrics(
+      minScrollExtent: 0,
+      maxScrollExtent: 100,
+      pixels: 20,
+      viewportDimension: 100,
+      axisDirection: AxisDirection.down,
+      devicePixelRatio: 1,
+    );
+    UserScrollNotification(
+      metrics: metrics,
+      context: scrollableContext,
+      direction: ScrollDirection.forward,
+    ).dispatch(scrollableContext);
+    UserScrollNotification(
+      metrics: metrics,
+      context: scrollableContext,
+      direction: ScrollDirection.idle,
+    ).dispatch(scrollableContext);
+
+    await tester.pumpWidget(
+      _chatArea(
+        isLoading: false,
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+      ),
+    );
+    expect(scrollController.hasClients, isFalse);
+
+    await tester.pump(const Duration(milliseconds: 1201));
+
+    expect(tester.takeException(), isNull);
+  });
 }
 
 /// Builds a minimal themed transcript around one active AI message.
 Widget _chatArea({
-  required ChatUiMessage message,
+  ChatUiMessage? message,
   required ScrollController scrollController,
   required ValueNotifier<bool> autoScrollToBottom,
   bool isLoading = true,
@@ -224,7 +291,9 @@ Widget _chatArea({
     hostInteractionHostsEnabled: false,
     child: Scaffold(
       body: ChatArea(
-        messages: <ChatUiMessage>[message],
+        messages: message == null
+            ? const <ChatUiMessage>[]
+            : <ChatUiMessage>[message],
         isLoading: isLoading,
         errorMessage: null,
         scrollController: scrollController,

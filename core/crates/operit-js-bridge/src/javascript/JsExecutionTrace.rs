@@ -1,5 +1,5 @@
+use operit_host_api::TimeUtils::currentTimeMillisU128;
 use serde_json::{json, Value};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Listener for observable events emitted by JavaScript execution.
 pub trait JsExecutionListener {
@@ -204,8 +204,5 @@ fn truncateText(text: &str, maxLength: usize) -> String {
 }
 
 fn nowMillis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time must be after unix epoch")
-        .as_millis()
+    currentTimeMillisU128()
 }

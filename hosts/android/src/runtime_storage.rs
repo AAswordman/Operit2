@@ -55,6 +55,11 @@ impl RuntimeStorageHost for AndroidRuntimeStorageHost {
         self.inner.writeBytes(path, content)
     }
 
+    /// Appends bytes to Android runtime storage.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        self.inner.appendBytes(path, content)
+    }
+
     /// Deletes an entry from Android runtime storage.
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
         self.inner.delete(path, recursive)

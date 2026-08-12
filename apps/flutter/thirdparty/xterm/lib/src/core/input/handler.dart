@@ -116,7 +116,7 @@ class KeytabInputHandler implements TerminalInputHandler {
       alt: event.alt,
       shift: event.shift,
       newLineMode: event.state.lineFeedMode,
-      appCursorKeys: event.state.appKeypadMode,
+      appCursorKeys: event.state.cursorKeysMode,
       appKeyPad: event.state.appKeypadMode,
       appScreen: event.altBuffer,
       macos: event.platform == TerminalTargetPlatform.macos,

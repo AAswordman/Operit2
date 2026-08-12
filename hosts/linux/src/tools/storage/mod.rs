@@ -246,6 +246,17 @@ impl RuntimeStorageHost for LinuxRuntimeStorageHost {
         Ok(())
     }
 
+    /// Appends bytes to a Linux runtime storage file.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        let path = self.resolve(path)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        file.write_all(content)?;
+        Ok(())
+    }
+
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
         let path = self.resolve(path)?;
         if !path.exists() {

@@ -2,6 +2,7 @@ use crate::stream::HotStream::{
     mutable_shared_stream, share, MutableSharedStreamImpl, SharedStream, StreamStart,
 };
 use crate::stream::Stream::{CollectFuture, Stream};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TextStreamEvent {
@@ -105,6 +106,7 @@ impl<S> RevisableTextStream for DelegatingRevisableTextStream<S> where S: Stream
 pub struct DelegatingRevisableSharedTextStream {
     pub upstream: MutableSharedStreamImpl<String>,
     pub event_channel: MutableSharedStreamImpl<TextStreamEvent>,
+    terminalFailure: Arc<Mutex<Option<String>>>,
 }
 
 impl DelegatingRevisableSharedTextStream {
@@ -115,7 +117,24 @@ impl DelegatingRevisableSharedTextStream {
         Self {
             upstream,
             event_channel,
+            terminalFailure: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Records the terminal failure that stopped this shared text stream.
+    pub fn set_terminal_failure(&self, error: String) {
+        *self
+            .terminalFailure
+            .lock()
+            .expect("shared text stream terminal failure mutex poisoned") = Some(error);
+    }
+
+    /// Returns the terminal failure recorded for this shared text stream.
+    pub fn terminal_failure(&self) -> Option<String> {
+        self.terminalFailure
+            .lock()
+            .expect("shared text stream terminal failure mutex poisoned")
+            .clone()
     }
 }
 

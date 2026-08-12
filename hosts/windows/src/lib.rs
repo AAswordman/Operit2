@@ -8,6 +8,7 @@ pub mod tools;
 
 pub use host_runtime_event::WindowsHostRuntimeEventHost;
 pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as WindowsHostRuntimeEventSchedulerHost;
+pub use operit_host_native_common::NativeHostJavaScriptRuntimeHost as WindowsHostJavaScriptRuntimeHost;
 pub use operit_host_native_common::NativeHostRuntimeTaskSchedulerHost as WindowsHostRuntimeTaskSchedulerHost;
 pub use tools::audio::WindowsAudioPlaybackHost;
 pub use tools::bluetooth::WindowsBluetoothHost;
@@ -54,6 +55,7 @@ pub fn createRuntimeHostManager(
     .withTtsPlaybackHost(Arc::new(WindowsTtsPlaybackHost::new()))
     .withHostRuntimeEventHost(Arc::new(WindowsHostRuntimeEventHost::new()))
     .withHostRuntimeEventSchedulerHost(Arc::new(WindowsHostRuntimeEventSchedulerHost::new()))
+    .withHostJavaScriptRuntimeHost(Arc::new(WindowsHostJavaScriptRuntimeHost::new()))
     .withHostRuntimeTaskSchedulerHost(Arc::new(WindowsHostRuntimeTaskSchedulerHost::new()))
 }
 use std::path::PathBuf;

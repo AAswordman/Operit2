@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/bridge/OperitRuntimeBridge.dart';
+import '../../../../core/host/FileSaveService.dart';
 import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
@@ -519,23 +520,20 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
   Future<void> _exportJson() async {
     final suggestedName =
         'operit-memory-${DateTime.now().millisecondsSinceEpoch}.json';
-    final location = await getSaveLocation(
-      acceptedTypeGroups: const <XTypeGroup>[_memoryJsonFileTypeGroup],
-      suggestedName: suggestedName,
-    );
-    if (location == null) {
-      return;
-    }
     setState(() => _busy = true);
     try {
       final jsonText = await _repository.exportMemoriesToJson();
-      await XFile.fromData(
-        Uint8List.fromList(utf8.encode(jsonText)),
+      final savedPath = await FileSaveService.saveBytes(
+        bytes: Uint8List.fromList(utf8.encode(jsonText)),
         name: suggestedName,
         mimeType: 'application/json',
-      ).saveTo(location.path);
+        acceptedTypeGroups: const <XTypeGroup>[_memoryJsonFileTypeGroup],
+      );
+      if (savedPath == null) {
+        return;
+      }
       if (mounted) {
-        _showSnack('已导出到 ${location.path}');
+        _showSnack('已导出到 $savedPath');
       }
     } catch (error) {
       if (mounted) {

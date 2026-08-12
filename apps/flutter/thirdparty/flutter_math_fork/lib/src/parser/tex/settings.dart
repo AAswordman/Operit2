@@ -45,7 +45,8 @@ enum Strict {
 
 /// Settings for [TexParser]
 class TexParserSettings {
-  final bool displayMode; // TODO
+  /// Whether to parse the input as display math. Default false.
+  final bool displayMode;
   final bool throwOnError; // TODO
 
   /// Extra macros

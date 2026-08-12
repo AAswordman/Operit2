@@ -97,15 +97,15 @@
     expose('__operitCleanupCallSession', cleanupCallSession);
     expose('__operitBuildRuntimeContext', buildRuntimeContext);
 
-    windowRef.__operitGetActiveModuleExports = function() {
+    expose('__operitGetActiveModuleExports', function() {
         if (
-            windowRef.__operitActiveModule &&
-            typeof windowRef.__operitActiveModule === 'object' &&
-            windowRef.__operitActiveModule.exports
+            root.__operitActiveModule &&
+            typeof root.__operitActiveModule === 'object' &&
+            root.__operitActiveModule.exports
         ) {
-            return windowRef.__operitActiveModule.exports;
+            return root.__operitActiveModule.exports;
         }
-        var exportsRef = windowRef.__operitActiveModuleExports;
+        var exportsRef = root.__operitActiveModuleExports;
         return exportsRef && typeof exportsRef === 'object' ? exportsRef : exportsRef || null;
-    };
+    });
 })();

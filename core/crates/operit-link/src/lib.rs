@@ -12,15 +12,12 @@ pub use client::{
 };
 pub use codec::{decodeLink, encodeLink, CoreLinkCodecError};
 #[cfg(not(target_arch = "wasm32"))]
-pub use http::{
-    CoreLinkHttpDispatcher, CoreLinkWsPayload, CoreLinkWsResponse,
-};
+pub use http::{CoreLinkHttpDispatcher, CoreLinkWsPayload, CoreLinkWsResponse};
 pub use http_protocol::{
-    LinkCallEnvelope,
-    LinkPushCloseEnvelope, LinkPushCloseResponse, LinkPushItemResponse, LinkPushOpenEnvelope,
-    LinkPushOpenResponse, LinkWatchChannelCloseEnvelope, LinkWatchChannelCloseResponse,
-    LinkWatchChannelEnvelope, LinkWatchChannelEvent, LinkWatchChannelOpenEnvelope,
-    LinkWatchChannelOpenResponse, LinkWatchEnvelope,
+    LinkCallEnvelope, LinkPushCloseEnvelope, LinkPushCloseResponse, LinkPushItemResponse,
+    LinkPushOpenEnvelope, LinkPushOpenResponse, LinkWatchChannelCloseEnvelope,
+    LinkWatchChannelCloseResponse, LinkWatchChannelEnvelope, LinkWatchChannelEvent,
+    LinkWatchChannelOpenEnvelope, LinkWatchChannelOpenResponse, LinkWatchEnvelope,
 };
 pub use protocol::{
     fromCoreValue, toCoreValue, CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind,

@@ -20,12 +20,13 @@ class ModelSettingsPanel extends StatefulWidget {
 
   final GeneratedCoreProxyClients clients;
 
+  /// Creates the state object that owns model settings loading.
   @override
-  State<ModelSettingsPanel> createState() => _ModelSettingsPanelState();
+  ModelSettingsPanelState createState() => ModelSettingsPanelState();
 }
 
-class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
-  Future<_ModelSettingsData>? _future;
+class ModelSettingsPanelState extends State<ModelSettingsPanel> {
+  Future<ModelSettingsData>? _future;
   String? _testingModelKey;
   final Set<String> _expandedProviderIds = <String>{};
   bool _providerExpansionInitialized = false;
@@ -33,10 +34,11 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _future = load();
   }
 
-  Future<_ModelSettingsData> _load() async {
+  /// Loads the complete model settings snapshot from the runtime.
+  Future<ModelSettingsData> load() async {
     final modelManager = widget.clients.preferencesModelConfigManager;
     final functionManager = widget.clients.preferencesFunctionalConfigManager;
     final apiPreferences = widget.clients.preferencesApiPreferences;
@@ -45,7 +47,7 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     final chatBinding = await functionManager.getModelBindingForFunction(
       functionType: core_proxy.FunctionType.chat,
     );
-    final data = _ModelSettingsData(
+    final data = ModelSettingsData(
       providers: await modelManager.getProviderProfiles(),
       summaries: await modelManager.getAllModelSummaries(),
       chatBinding: chatBinding,
@@ -72,9 +74,12 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
     return data;
   }
 
+  /// Returns the load operation started when the panel was initialized.
+  Future<ModelSettingsData> get loadFuture => _future!;
+
   void _reload() {
     setState(() {
-      _future = _load();
+      _future = load();
     });
   }
 
@@ -96,7 +101,7 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
 
   Future<void> _selectFunctionModel(
     core_proxy.FunctionType functionType,
-    _ModelSettingsData data,
+    ModelSettingsData data,
   ) async {
     final l10n = AppLocalizations.of(context)!;
     final selected = await _FunctionModelSelectorDialog.show(
@@ -534,7 +539,7 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return FutureBuilder<_ModelSettingsData>(
+    return FutureBuilder<ModelSettingsData>(
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -602,8 +607,9 @@ class _ModelSettingsPanelState extends State<ModelSettingsPanel> {
   }
 }
 
-class _ModelSettingsData {
-  const _ModelSettingsData({
+class ModelSettingsData {
+  /// Creates an immutable model settings snapshot.
+  const ModelSettingsData({
     required this.providers,
     required this.summaries,
     required this.chatBinding,
@@ -622,6 +628,7 @@ class _ModelSettingsData {
   final int maxImageHistoryUserTurns;
   final int maxMediaHistoryUserTurns;
 
+  /// Finds the model summary assigned to the provided function binding.
   core_proxy.ProviderModelSummary? summaryForBinding(
     core_proxy.FunctionModelBinding binding,
   ) {

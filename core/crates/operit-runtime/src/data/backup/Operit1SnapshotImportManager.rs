@@ -21,6 +21,9 @@ use uuid::Uuid;
 
 use crate::data::archive::ArchiveSource::ArchiveSource;
 use crate::data::backup::Operit1LmdbReader::visitLmdbRecords;
+use crate::data::backup::Operit1RoomSchemaMigration::{
+    prepareOperit1RoomImport, Operit1ToOperit2ChatArchiveBridge,
+};
 use crate::data::backup::Operit1SnapshotArchive::{
     isDataStoreEntry as isArchiveDataStoreEntry, validateRelativePath, Operit1PreferenceValue,
     Operit1SnapshotArchive, Operit1SnapshotEntry,
@@ -48,8 +51,8 @@ use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::ModelCatalog::ModelCatalog;
 use operit_model::ModelConfigData::{
-    ApiProviderType, ModelCapabilities, ModelCatalogKey, ModelConfigDefaults, ModelContextSpec,
-    ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderProfile,
+    ApiProviderType, ModelCapabilities, ModelConfigDefaults, ModelContextSpec, ModelProfile,
+    ModelRequestSpec, ModelSummarySettings, ProviderProfile,
 };
 use operit_model::ModelParameter::{CustomParameterData, ModelParameter, ParameterCategory};
 use operit_model::OperitChatArchive::{
@@ -76,6 +79,8 @@ const ENTRY_SPEECH_SERVICES: &str =
     "payload/files/datastore/speech_services_preferences.preferences_pb";
 const ENTRY_USER_PREFERENCES: &str = "payload/files/datastore/user_preferences.preferences_pb";
 const ENTRY_DATABASE: &str = "payload/databases/app_database";
+const ENTRY_DATABASE_WAL: &str = "payload/databases/app_database-wal";
+const ENTRY_DATABASE_SHM: &str = "payload/databases/app_database-shm";
 const ENTRY_OBJECTBOX_DEFAULT_DATA: &str = "payload/files/objectbox/data.mdb";
 const ENTRY_DATASTORE_PREFIX: &str = "payload/files/datastore/";
 const ENTRY_FILES_PREFIX: &str = "payload/files/";
@@ -85,6 +90,10 @@ const KEY_CONFIG_LIST: &str = "config_list";
 const KEY_FUNCTION_CONFIG_MAPPING: &str = "function_config_mapping";
 const SQLITE_INSPECTION_STORAGE_PATH: &str =
     "runtime/temp/clean_on_exit/operit1_snapshot_import.sqlite";
+const SQLITE_INSPECTION_WAL_STORAGE_PATH: &str =
+    "runtime/temp/clean_on_exit/operit1_snapshot_import.sqlite-wal";
+const SQLITE_INSPECTION_SHM_STORAGE_PATH: &str =
+    "runtime/temp/clean_on_exit/operit1_snapshot_import.sqlite-shm";
 const OBJECTBOX_IMPORT_STORAGE_PATH: &str =
     "runtime/temp/clean_on_exit/operit1_snapshot_objectbox.mdb";
 const OPERIT1_DEFAULT_PROFILE_ID: &str = "default";
@@ -96,6 +105,7 @@ const RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR: &str = "runtime/imported/oper
 const OPERIT1_INTERNAL_FILES_PREFIX: &str = "/data/user/0/com.ai.assistance.operit/files/";
 const OPERIT1_DATA_DATA_FILES_PREFIX: &str = "/data/data/com.ai.assistance.operit/files/";
 const OPERIT1_EXTERNAL_DOWNLOAD_PREFIX: &str = "/storage/emulated/0/Download/Operit/";
+const OPERIT1_DEFAULT_AI_AVATAR_URI: &str = "file:///android_asset/operit.png";
 const OPERIT1_OBJECTBOX_KEY_MEMORY: [u8; 4] = [0x18, 0x00, 0x00, 0x10];
 const OPERIT1_OBJECTBOX_KEY_LINK: [u8; 4] = [0x18, 0x00, 0x00, 0x14];
 const OPERIT1_OBJECTBOX_KEY_TAG: [u8; 4] = [0x18, 0x00, 0x00, 0x1c];
@@ -708,22 +718,8 @@ impl Operit1SnapshotImportManager {
         parsed: &ParsedOperit1Snapshot,
         fileImportPlan: &SnapshotFileImportPlan,
     ) -> Result<(i32, i32), String> {
-        self.stageArchiveEntry(parsed, ENTRY_DATABASE, SQLITE_INSPECTION_STORAGE_PATH)?;
-        let result = (|| {
-            let mut connection = self
-                .sqliteHost
-                .openSqliteDatabase(SQLITE_INSPECTION_STORAGE_PATH)
-                .map_err(|error| error.to_string())?;
-            let hasChatTables = sqliteTableExists(connection.as_mut(), "chats")?
-                && sqliteTableExists(connection.as_mut(), "messages")?;
-            let (totalChatCount, totalMessageCount) = if hasChatTables {
-                (
-                    queryCount(connection.as_mut(), "SELECT COUNT(*) FROM chats")?,
-                    queryCount(connection.as_mut(), "SELECT COUNT(*) FROM messages")?,
-                )
-            } else {
-                (0, 0)
-            };
+        self.withStagedOperit1ChatDatabase(parsed, |connection, archiveBridge| {
+            let (totalChatCount, totalMessageCount) = operit1ChatDatabaseCounts(connection)?;
             let mut parsedMessageCount = 0usize;
             let mut parsedMessageProgressThrottle = Operit1SnapshotProgressThrottle::new();
             let mut onMessageParsed = |parsedChatCount: usize| {
@@ -744,8 +740,9 @@ impl Operit1SnapshotImportManager {
                     );
                 }
             };
-            let archive = buildChatArchiveFromOperit1Database(
-                connection.as_mut(),
+            let archive = buildChatArchiveFromOperit1ToOperit2DatabaseBridge(
+                archiveBridge,
+                connection,
                 fileImportPlan,
                 &mut onMessageParsed,
             )?;
@@ -796,11 +793,7 @@ impl Operit1SnapshotImportManager {
                 );
             }
             Ok((chatCount, messageCount))
-        })();
-        self.storageHost
-            .delete(SQLITE_INSPECTION_STORAGE_PATH, false)
-            .map_err(|error| error.to_string())?;
-        result
+        })
     }
 
     #[allow(non_snake_case)]
@@ -881,21 +874,24 @@ impl Operit1SnapshotImportManager {
             let mut totalLinkCount = 0;
             for (profileIndex, profileId) in profiles.into_iter().enumerate() {
                 let entry = operit1ObjectBoxEntryForProfile(&profileId);
-                self.stageArchiveEntry(parsed, &entry, OBJECTBOX_IMPORT_STORAGE_PATH)?;
                 let entryLength = parsed
                     .archive
                     .entries
                     .get(&entry)
                     .ok_or_else(|| format!("Operit1 记忆库条目不存在：{entry}"))?
                     .uncompressedSize;
-                let exportData = buildMemoryExportDataFromOperit1ObjectBox(
-                    self.storageHost.as_ref(),
+                let exportData = self.withStagedArchiveEntry(
+                    parsed,
+                    &entry,
                     OBJECTBOX_IMPORT_STORAGE_PATH,
-                    entryLength,
+                    || {
+                        buildMemoryExportDataFromOperit1ObjectBox(
+                            self.storageHost.as_ref(),
+                            OBJECTBOX_IMPORT_STORAGE_PATH,
+                            entryLength,
+                        )
+                    },
                 )?;
-                self.storageHost
-                    .delete(OBJECTBOX_IMPORT_STORAGE_PATH, false)
-                    .map_err(|error| error.to_string())?;
                 totalMemoryCount += exportData.memories.len() as i32;
                 totalLinkCount += exportData.links.len() as i32;
                 let storeId = operit1SharedMemoryStoreId(&profileId);
@@ -940,43 +936,70 @@ impl Operit1SnapshotImportManager {
         result
     }
 
-    /// Copies one archive entry into an owner-relative runtime storage object.
-    fn stageArchiveEntry(
+    /// Stages one snapshot entry for an operation and removes it after that operation completes.
+    fn withStagedArchiveEntry<T>(
         &self,
         parsed: &ParsedOperit1Snapshot,
         entryName: &str,
         storagePath: &str,
-    ) -> Result<(), String> {
+        operation: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
         writeArchiveEntryToStorage(
             self.storageWriteHost.as_ref(),
             parsed,
             entryName,
             storagePath,
+        )?;
+        let result = operation();
+        self.storageHost
+            .delete(storagePath, false)
+            .map_err(|error| error.to_string())?;
+        result
+    }
+
+    /// Stages, normalizes, opens, and removes the Operit1 chat database for one operation.
+    fn withStagedOperit1ChatDatabase<T>(
+        &self,
+        parsed: &ParsedOperit1Snapshot,
+        operation: impl FnOnce(
+            &mut dyn RuntimeSqliteConnection,
+            Operit1ToOperit2ChatArchiveBridge,
+        ) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.withStagedArchiveEntry(
+            parsed,
+            ENTRY_DATABASE,
+            SQLITE_INSPECTION_STORAGE_PATH,
+            || {
+                self.withStagedArchiveEntry(
+                    parsed,
+                    ENTRY_DATABASE_WAL,
+                    SQLITE_INSPECTION_WAL_STORAGE_PATH,
+                    || {
+                        self.withStagedArchiveEntry(
+                            parsed,
+                            ENTRY_DATABASE_SHM,
+                            SQLITE_INSPECTION_SHM_STORAGE_PATH,
+                            || {
+                                let mut connection = self
+                                    .sqliteHost
+                                    .openSqliteDatabase(SQLITE_INSPECTION_STORAGE_PATH)
+                                    .map_err(|error| error.to_string())?;
+                                let archiveBridge = prepareOperit1RoomImport(connection.as_mut())?;
+                                operation(connection.as_mut(), archiveBridge)
+                            },
+                        )
+                    },
+                )
+            },
         )
     }
 
     /// Counts chat and message rows through the runtime owner's SQLite host.
     fn databaseCounts(&self, parsed: &ParsedOperit1Snapshot) -> Result<(i32, i32), String> {
-        self.stageArchiveEntry(parsed, ENTRY_DATABASE, SQLITE_INSPECTION_STORAGE_PATH)?;
-        let result = (|| {
-            let mut connection = self
-                .sqliteHost
-                .openSqliteDatabase(SQLITE_INSPECTION_STORAGE_PATH)
-                .map_err(|error| error.to_string())?;
-            if !sqliteTableExists(connection.as_mut(), "chats")?
-                || !sqliteTableExists(connection.as_mut(), "messages")?
-            {
-                return Ok((0, 0));
-            }
-            Ok((
-                queryCount(connection.as_mut(), "SELECT COUNT(*) FROM chats")?,
-                queryCount(connection.as_mut(), "SELECT COUNT(*) FROM messages")?,
-            ))
-        })();
-        self.storageHost
-            .delete(SQLITE_INSPECTION_STORAGE_PATH, false)
-            .map_err(|error| error.to_string())?;
-        result
+        self.withStagedOperit1ChatDatabase(parsed, |connection, _| {
+            operit1ChatDatabaseCounts(connection)
+        })
     }
 }
 
@@ -1326,12 +1349,6 @@ fn buildModelProfile(
     config: &Operit1ModelConfig,
 ) -> Result<ModelProfile, String> {
     let mut model = ModelProfile::new(modelId.to_string());
-    if ModelCatalog::model(providerTypeId, modelId).is_ok() {
-        model.catalogKey = Some(ModelCatalogKey {
-            providerTypeId: providerTypeId.to_string(),
-            modelId: modelId.to_string(),
-        });
-    }
     model.contextOverride = Some(ModelContextSpec {
         maxContextLength: config.maxContextLength,
         enableMaxContextMode: config.enableMaxContextMode,
@@ -1557,8 +1574,8 @@ impl SnapshotFileImportPlan {
     /// Creates a file import plan using stable virtual file-system destinations.
     fn new() -> Self {
         Self {
-            importedFilesRoot: "/app/data/imported/operit1/files".to_string(),
-            importedExternalFilesRoot: "/app/data/imported/operit1/external_files".to_string(),
+            importedFilesRoot: RUNTIME_IMPORTED_OPERIT1_FILES_DIR.to_string(),
+            importedExternalFilesRoot: RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR.to_string(),
         }
     }
 
@@ -1881,8 +1898,13 @@ fn buildOperit2CharacterCards(
         .map(collectOperit1LegacyPromptTagIds)
         .transpose()?
         .unwrap_or_default();
-    let avatarUris = buildOperit1CharacterCardAvatarUris(&parsed.archive.entries, fileImportPlan)?;
     let ids = optionalPreferenceStringSet(preferences, "character_card_list")?;
+    let userPreferences = parsed
+        .archive
+        .datastorePreferences
+        .get(ENTRY_USER_PREFERENCES)
+        .ok_or_else(|| "Operit1 快照缺少用户偏好，无法读取角色头像绑定".to_string())?;
+    let avatarUris = buildOperit1CharacterCardAvatarUris(userPreferences, &ids, fileImportPlan)?;
     let mut cards = Vec::new();
     for id in ids {
         let name = requiredPreferenceString(
@@ -1977,34 +1999,28 @@ fn buildOperit2CharacterCards(
     Ok(cards)
 }
 
-/// Maps Operit1 character-card avatar filenames to their imported virtual paths.
+/// Maps Operit1 character-theme avatar bindings to imported virtual paths.
 #[allow(non_snake_case)]
 fn buildOperit1CharacterCardAvatarUris(
-    entries: &BTreeMap<String, Operit1SnapshotEntry>,
+    userPreferences: &HashMap<String, Operit1PreferenceValue>,
+    cardIds: &[String],
     fileImportPlan: &SnapshotFileImportPlan,
 ) -> Result<BTreeMap<String, String>, String> {
     let mut avatarUris = BTreeMap::new();
-    for entry in entries.keys() {
-        let Some(relative) = entry.strip_prefix(ENTRY_FILES_PREFIX) else {
+    for cardId in cardIds {
+        let key = format!("character_card_theme_{cardId}_custom_ai_avatar_uri");
+        let Some(value) = optionalPreferenceString(userPreferences, &key)? else {
             continue;
         };
-        let Some(filename) = relative.strip_prefix("avatar_") else {
+        if value.trim().is_empty() {
             continue;
-        };
-        let stem = filename
-            .strip_suffix(".png")
-            .ok_or_else(|| format!("Operit1 角色卡头像文件扩展名无效：{entry}"))?;
-        let (cardId, resourceId) = stem
-            .split_once('_')
-            .ok_or_else(|| format!("Operit1 角色卡头像文件名无效：{entry}"))?;
-        Uuid::parse_str(cardId)
-            .map_err(|error| format!("Operit1 角色卡头像角色 ID 无效：{entry}: {error}"))?;
-        Uuid::parse_str(resourceId)
-            .map_err(|error| format!("Operit1 角色卡头像资源 ID 无效：{entry}: {error}"))?;
-        let avatarUri = fileImportPlan.rewriteInternalFilesRelativePath(relative)?;
-        if avatarUris.insert(cardId.to_string(), avatarUri).is_some() {
-            return Err(format!("Operit1 角色卡存在重复头像文件：{cardId}"));
         }
+        if cardId == CharacterCardManager::DEFAULT_CHARACTER_CARD_ID
+            && value.trim() == OPERIT1_DEFAULT_AI_AVATAR_URI
+        {
+            continue;
+        }
+        avatarUris.insert(cardId.clone(), fileImportPlan.rewritePath(&value)?);
     }
     Ok(avatarUris)
 }
@@ -2013,31 +2029,100 @@ fn buildOperit1CharacterCardAvatarUris(
 mod tests {
     use super::*;
 
-    /// Maps one validated Operit1 avatar filename to its runtime virtual path.
+    /// Leaves cards without an explicit theme avatar URI unassigned.
     #[test]
-    fn mapsOperit1CharacterCardAvatarFilenameToImportedUri() {
+    fn leaves_operit1_character_card_avatar_unassigned_without_explicit_uri() {
         let cardId = "666eee2e-ea60-4ff6-9c92-04d396386231";
-        let resourceId = "d96932ce-f70d-4a58-835f-c540e3563f2d";
-        let entry = format!("payload/files/avatar_{cardId}_{resourceId}.png");
-        let mut entries = BTreeMap::new();
-        entries.insert(
-            entry,
-            Operit1SnapshotEntry {
-                uncompressedSize: 82_214,
-                compressedSize: 82_239,
-            },
-        );
+        let cardIds = vec![cardId.to_string()];
 
-        let avatarUris =
-            buildOperit1CharacterCardAvatarUris(&entries, &SnapshotFileImportPlan::new())
-                .expect("Operit1 avatar filename should map to one runtime URI");
+        let avatarUris = buildOperit1CharacterCardAvatarUris(
+            &HashMap::new(),
+            &cardIds,
+            &SnapshotFileImportPlan::new(),
+        )
+        .expect("Operit1 cards without avatar URIs should be accepted");
+
+        assert!(avatarUris.is_empty());
+    }
+
+    /// Uses the character-theme URI when an Operit1 card has multiple avatar resources.
+    #[test]
+    fn uses_operit1_character_card_avatar_uri_with_multiple_avatar_files() {
+        let cardId = "4a08d0b6-83d7-4b09-bbaa-e9cad156b198";
+        let currentResourceId = "d96932ce-f70d-4a58-835f-c540e3563f2d";
+        let cardIds = vec![cardId.to_string()];
+        let mut preferences = HashMap::new();
+        preferences.insert(
+            format!("character_card_theme_{cardId}_custom_ai_avatar_uri"),
+            Operit1PreferenceValue::String(format!(
+                "file:///data/user/0/com.ai.assistance.operit/files/avatar_{cardId}_{currentResourceId}.png"
+            )),
+        );
+        let avatarUris = buildOperit1CharacterCardAvatarUris(
+            &preferences,
+            &cardIds,
+            &SnapshotFileImportPlan::new(),
+        )
+        .expect("Operit1 avatar URI should identify the active avatar resource");
 
         assert_eq!(
             avatarUris.get(cardId),
             Some(&format!(
-                "/app/data/imported/operit1/files/avatar_{cardId}_{resourceId}.png"
+                "runtime/imported/operit1/files/avatar_{cardId}_{currentResourceId}.png"
             )),
         );
+    }
+
+    /// Keeps one explicitly shared Operit1 avatar URI attached to both character cards.
+    #[test]
+    fn preserves_shared_operit1_character_card_avatar_uri() {
+        let sourceCardId = "666eee2e-ea60-4ff6-9c92-04d396386231";
+        let copyCardId = "cfd9ae03-3e3c-4833-8dbb-14c06ed51daf";
+        let resourceId = "d96932ce-f70d-4a58-835f-c540e3563f2d";
+        let sourceUri = format!(
+            "file:///data/user/0/com.ai.assistance.operit/files/avatar_{sourceCardId}_{resourceId}.png"
+        );
+        let cardIds = vec![sourceCardId.to_string(), copyCardId.to_string()];
+        let mut preferences = HashMap::new();
+        for cardId in &cardIds {
+            preferences.insert(
+                format!("character_card_theme_{cardId}_custom_ai_avatar_uri"),
+                Operit1PreferenceValue::String(sourceUri.clone()),
+            );
+        }
+
+        let avatarUris = buildOperit1CharacterCardAvatarUris(
+            &preferences,
+            &cardIds,
+            &SnapshotFileImportPlan::new(),
+        )
+        .expect("shared Operit1 avatar URIs should be imported for every bound card");
+        let expectedUri =
+            format!("runtime/imported/operit1/files/avatar_{sourceCardId}_{resourceId}.png");
+
+        assert_eq!(avatarUris.get(sourceCardId), Some(&expectedUri));
+        assert_eq!(avatarUris.get(copyCardId), Some(&expectedUri));
+    }
+
+    /// Leaves Operit1's built-in default avatar unassigned for the Operit2 default avatar component.
+    #[test]
+    fn leaves_operit1_builtin_default_avatar_unassigned() {
+        let cardId = CharacterCardManager::DEFAULT_CHARACTER_CARD_ID;
+        let cardIds = vec![cardId.to_string()];
+        let mut preferences = HashMap::new();
+        preferences.insert(
+            format!("character_card_theme_{cardId}_custom_ai_avatar_uri"),
+            Operit1PreferenceValue::String(OPERIT1_DEFAULT_AI_AVATAR_URI.to_string()),
+        );
+
+        let avatarUris = buildOperit1CharacterCardAvatarUris(
+            &preferences,
+            &cardIds,
+            &SnapshotFileImportPlan::new(),
+        )
+        .expect("Operit1's built-in avatar should map to Operit2's default avatar component");
+
+        assert!(avatarUris.is_empty());
     }
 }
 
@@ -2669,8 +2754,9 @@ fn parseOperit1PromptTagType(value: Option<&str>) -> Result<TagType, String> {
 }
 
 #[allow(non_snake_case)]
-/// Builds a chat archive from the Operit1 SQLite database.
-fn buildChatArchiveFromOperit1Database<F>(
+/// Builds a chat archive through one explicit Operit1-to-Operit2 database bridge.
+fn buildChatArchiveFromOperit1ToOperit2DatabaseBridge<F>(
+    bridge: Operit1ToOperit2ChatArchiveBridge,
     connection: &mut dyn RuntimeSqliteConnection,
     fileImportPlan: &SnapshotFileImportPlan,
     onMessageParsed: &mut F,
@@ -2678,14 +2764,24 @@ fn buildChatArchiveFromOperit1Database<F>(
 where
     F: FnMut(usize),
 {
-    if !sqliteTableExists(connection, "chats")? || !sqliteTableExists(connection, "messages")? {
-        return Ok(OperitChatArchive {
-            archiveType: ARCHIVE_TYPE.to_string(),
-            formatVersion: CURRENT_FORMAT_VERSION,
-            exportedAt: currentTimeMillis(),
-            chats: Vec::new(),
-        });
+    match bridge {
+        Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV24
+        | Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV24 => {
+            buildChatArchiveFromOperit1RoomDatabase(connection, fileImportPlan, onMessageParsed)
+        }
     }
+}
+
+/// Builds a chat archive through an Operit1 Room chat database bridge.
+fn buildChatArchiveFromOperit1RoomDatabase<F>(
+    connection: &mut dyn RuntimeSqliteConnection,
+    fileImportPlan: &SnapshotFileImportPlan,
+    onMessageParsed: &mut F,
+) -> Result<OperitChatArchive, String>
+where
+    F: FnMut(usize),
+{
+    requireOperit1ChatTables(connection)?;
     let chatRows = connection
         .query(
             r#"
@@ -2722,9 +2818,6 @@ where
     for (chatIndex, chat) in chatRows.into_iter().enumerate() {
         let mut onMessageForChat = || onMessageParsed(chatIndex + 1);
         let messages = readOperit1Messages(connection, &chat.id, &mut onMessageForChat)?;
-        if messages.is_empty() {
-            continue;
-        }
         chats.push(OperitArchivedChat {
             id: chat.id,
             title: chat.title,
@@ -2846,6 +2939,29 @@ fn sqliteTableExists(
         .first()
         .ok_or_else(|| "SQLite table existence query returned no row".to_string())?;
     Ok(sqliteRowI64(row, 0, "sqlite_master.exists")? != 0)
+}
+
+/// Returns chat and message counts from a complete Operit1 Room chat database.
+fn operit1ChatDatabaseCounts(
+    connection: &mut dyn RuntimeSqliteConnection,
+) -> Result<(i32, i32), String> {
+    requireOperit1ChatTables(connection)?;
+    Ok((
+        queryCount(connection, "SELECT COUNT(*) FROM chats")?,
+        queryCount(connection, "SELECT COUNT(*) FROM messages")?,
+    ))
+}
+
+/// Verifies the tables required by every supported Operit1 Room chat schema.
+fn requireOperit1ChatTables(connection: &mut dyn RuntimeSqliteConnection) -> Result<(), String> {
+    for tableName in ["chats", "messages"] {
+        if !sqliteTableExists(connection, tableName)? {
+            return Err(format!(
+                "Operit1 Room chat database is missing required table: {tableName}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[allow(non_snake_case)]

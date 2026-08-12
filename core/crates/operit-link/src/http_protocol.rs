@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    CoreCallRequest, CoreEvent, CorePushRequest, CoreWatchRequest,
-};
+use crate::{CoreCallRequest, CoreEvent, CorePushRequest, CoreWatchRequest};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LinkCallEnvelope {

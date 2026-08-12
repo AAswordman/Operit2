@@ -16,7 +16,9 @@ use operit_host_api::{
     FileSystemHost, HostEnvironmentDescriptor, HostManager::HostManager, HostPlatform,
     TimeUtils::currentTimeMillis,
 };
-use operit_plugin_sdk::javascript::{JsToolPkgWasmRequest, JsToolPkgWasmResult};
+use operit_plugin_sdk::javascript::{
+    JsToolPkgWasmRequest, JsToolPkgWasmResult, ToolPkgExecutionContext,
+};
 use operit_plugin_sdk::package::{LocalizedText, PublishablePackageSource, ToolPackage};
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::{ToolPkgHookDispatcher, ToolPkgHookInvocation};
 use operit_plugin_sdk::toolpkg::ToolPkgLoader::ToolPkgLoader;
@@ -63,11 +65,21 @@ struct RuntimeToolPkgExecutionEngineFactory {
 }
 
 impl ToolPkgExecutionEngineFactory for RuntimeToolPkgExecutionEngineFactory {
-    /// Creates one ToolPkg engine bound to the current host context.
+    /// Creates one JavaScript engine without a ToolPkg package environment.
     #[allow(non_snake_case)]
-    fn createToolPkgExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
+    fn createExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
         self.jsExecutionProvider
             .create_execution_engine(Arc::new(self.toolHandler.clone()))
+    }
+
+    /// Creates one ToolPkg engine bound to the current host context.
+    #[allow(non_snake_case)]
+    fn createToolPkgExecutionEngine(
+        &self,
+        context: ToolPkgExecutionContext,
+    ) -> Arc<dyn JsExecutionEngine> {
+        self.jsExecutionProvider
+            .create_toolpkg_execution_engine(Arc::new(self.toolHandler.clone()), context)
     }
 }
 
@@ -263,9 +275,8 @@ impl RuntimePackageManager {
             .getToolPkgExecutionEngine(contextKey, containerPackageName)
     }
 
-    #[allow(non_snake_case)]
-    /// Executes a Compose DSL render script through the ToolPkg engine for a context.
-    pub fn executeToolPkgComposeDslScript(
+    /// Executes a Compose DSL render through the host-owned asynchronous JavaScript boundary.
+    pub async fn executeToolPkgComposeDslScript(
         &self,
         contextKey: &str,
         containerPackageName: &str,
@@ -274,7 +285,7 @@ impl RuntimePackageManager {
         envOverrides: BTreeMap<String, String>,
     ) -> Result<Option<String>, String> {
         let executionStartedMillis = currentTimeMillis();
-        let textResources = self.composeDslTextResources(containerPackageName)?;
+        let textResources = self.toolPkgTextResources(containerPackageName)?;
         AppLogger::d(
             PACKAGE_MANAGER_LOG_TAG,
             &format!(
@@ -286,7 +297,13 @@ impl RuntimePackageManager {
         );
         let result = self
             .getToolPkgExecutionEngine(contextKey, containerPackageName)
-            .execute_compose_dsl_script(script, &runtimeOptions, &envOverrides, textResources)
+            .execute_compose_dsl_script_async(
+                script.to_string(),
+                runtimeOptions,
+                envOverrides,
+                textResources,
+            )
+            .await
             .map_err(|error| error.to_string());
         AppLogger::d(
             PACKAGE_MANAGER_LOG_TAG,
@@ -301,9 +318,8 @@ impl RuntimePackageManager {
         result
     }
 
-    #[allow(non_snake_case)]
-    /// Dispatches a Compose DSL action through the ToolPkg engine for a context.
-    pub fn dispatchToolPkgComposeDslActionEvents(
+    /// Dispatches a Compose DSL action through the host-owned asynchronous JavaScript boundary.
+    pub async fn dispatchToolPkgComposeDslActionEvents(
         &self,
         contextKey: &str,
         containerPackageName: &str,
@@ -324,18 +340,23 @@ impl RuntimePackageManager {
         let eventCollector = events.clone();
         let finalEvent = self
             .getToolPkgExecutionEngine(contextKey, containerPackageName)
-            .dispatch_compose_dsl_action(
-                actionId,
+            .dispatch_compose_dsl_action_result_async(
+                actionId.to_string(),
                 payload,
-                &runtimeOptions,
-                &envOverrides,
+                runtimeOptions,
+                envOverrides,
                 Some(Arc::new(move |event| {
                     eventCollector
                         .lock()
                         .expect("compose dsl event collector mutex poisoned")
-                        .push(event);
+                        .push(buildComposeDslActionEvent(
+                            "intermediate",
+                            None,
+                            Some(&event),
+                        ));
                 })),
-            );
+            )
+            .await;
         let mut output = events
             .lock()
             .expect("compose dsl event collector mutex poisoned")
@@ -353,8 +374,9 @@ impl RuntimePackageManager {
             ),
         );
         if let Some(event) = finalEvent? {
-            output.push(event);
+            output.push(buildComposeDslActionEvent("final", None, Some(&event)));
         }
+        output.push(buildComposeDslActionEvent("complete", None, None));
         Ok(output)
     }
 
@@ -673,9 +695,9 @@ impl RuntimePackageManager {
         )
     }
 
-    /// Collects the UTF-8 ToolPkg entries used by one Compose DSL page without host reentry.
+    /// Collects immutable UTF-8 ToolPkg entries for module resolution without host reentry.
     #[allow(non_snake_case)]
-    fn composeDslTextResources(
+    pub fn toolPkgTextResources(
         &self,
         containerPackageName: &str,
     ) -> Result<Arc<BTreeMap<String, String>>, String> {
@@ -685,11 +707,11 @@ impl RuntimePackageManager {
             .getToolPkgContainerRuntime(&normalizedContainerPackageName)
             .ok_or_else(|| {
                 format!(
-                    "Compose DSL container package is not registered: {normalizedContainerPackageName}"
+                    "ToolPkg container package is not registered: {normalizedContainerPackageName}"
                 )
             })?;
         let cacheDir = self.ensureToolPkgCache(&runtime).ok_or_else(|| {
-            format!("Compose DSL package cache is unavailable: {normalizedContainerPackageName}")
+            format!("ToolPkg package cache is unavailable: {normalizedContainerPackageName}")
         })?;
         let entryIndex = ToolPkgArchiveParser::buildDirectoryEntryIndex(
             self.fileSystemHost.as_ref(),
@@ -2947,6 +2969,14 @@ impl RuntimePackageManager {
         )
     }
 
+    /// Returns the registered main script for runtime-owned ToolPkg IPC dispatch.
+    #[allow(non_snake_case)]
+    pub fn getRegisteredToolPkgMainScript(&self, containerPackageName: &str) -> Option<String> {
+        let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
+        self.toolPkgManager()
+            .getRegisteredToolPkgMainScript(&normalizedContainerPackageName)
+    }
+
     #[allow(non_snake_case)]
     pub(crate) fn readToolPkgResourceBytes(
         &self,
@@ -3598,7 +3628,7 @@ impl RuntimePackageManager {
         let registrationEngine = ToolPkgRegistrationEngineGuard {
             engine: self
                 .toolPkgExecutionEngineFactory
-                .createToolPkgExecutionEngine(),
+                .createExecutionEngine(),
         };
         operation(registrationEngine.engine.as_ref())
     }
@@ -3949,4 +3979,26 @@ fn buildConditionCapabilitiesSnapshot(
 #[allow(non_snake_case)]
 fn logPackageManagerError(message: impl AsRef<str>) {
     AppLogger::e(PACKAGE_MANAGER_LOG_TAG, message.as_ref());
+}
+
+/// Builds one serialized Compose DSL action event envelope.
+fn buildComposeDslActionEvent(phase: &str, error: Option<&str>, result: Option<&str>) -> String {
+    let mut object = serde_json::Map::new();
+    object.insert(
+        "phase".to_string(),
+        serde_json::Value::String(phase.to_string()),
+    );
+    if let Some(error) = error {
+        object.insert(
+            "error".to_string(),
+            serde_json::Value::String(error.to_string()),
+        );
+    }
+    if let Some(result) = result {
+        object.insert(
+            "result".to_string(),
+            serde_json::Value::String(result.to_string()),
+        );
+    }
+    serde_json::Value::Object(object).to_string()
 }

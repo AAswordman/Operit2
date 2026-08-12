@@ -119,7 +119,9 @@ impl RawSnapshotBackupManager {
                 .createWriteSession(&path)
                 .map_err(|error| error.to_string())?;
             if let Err(error) = copySnapshotEntryToStorage(&mut file, writer.as_mut()) {
-                let discardResult = writer.discard().map_err(|discardError| discardError.to_string());
+                let discardResult = writer
+                    .discard()
+                    .map_err(|discardError| discardError.to_string());
                 return match discardResult {
                     Ok(()) => Err(error),
                     Err(discardError) => Err(format!(
@@ -153,8 +155,9 @@ impl RawSnapshotBackupManager {
             if entry.isDirectory {
                 files.extend(self.collectFileEntries(&entry.path)?);
             } else {
-                let byteLength = u64::try_from(entry.size)
-                    .map_err(|_| format!("runtime storage file has invalid size: {}", entry.path))?;
+                let byteLength = u64::try_from(entry.size).map_err(|_| {
+                    format!("runtime storage file has invalid size: {}", entry.path)
+                })?;
                 files.push((entry.path.clone(), byteLength));
             }
         }
@@ -174,7 +177,9 @@ impl RawSnapshotBackupManager {
         while offset < byteLength {
             let remaining = byteLength - offset;
             let requestLength = usize::try_from(remaining.min(STORAGE_WRITE_CHUNK_BYTES as u64))
-                .map_err(|_| "runtime storage range length does not fit this platform".to_string())?;
+                .map_err(|_| {
+                    "runtime storage range length does not fit this platform".to_string()
+                })?;
             let chunk = self
                 .storageHost
                 .readBytesRange(path, offset, requestLength)
@@ -186,9 +191,10 @@ impl RawSnapshotBackupManager {
             }
             zip.write_all(&chunk).map_err(|error| error.to_string())?;
             offset = offset
-                .checked_add(u64::try_from(chunk.len()).map_err(|_| {
-                    "runtime storage chunk length does not fit u64".to_string()
-                })?)
+                .checked_add(
+                    u64::try_from(chunk.len())
+                        .map_err(|_| "runtime storage chunk length does not fit u64".to_string())?,
+                )
                 .ok_or_else(|| "runtime storage offset overflowed".to_string())?;
         }
         Ok(())
@@ -202,7 +208,9 @@ fn copySnapshotEntryToStorage(
 ) -> Result<(), String> {
     let mut buffer = [0u8; STORAGE_WRITE_CHUNK_BYTES];
     loop {
-        let count = source.read(&mut buffer).map_err(|error| error.to_string())?;
+        let count = source
+            .read(&mut buffer)
+            .map_err(|error| error.to_string())?;
         if count == 0 {
             return Ok(());
         }

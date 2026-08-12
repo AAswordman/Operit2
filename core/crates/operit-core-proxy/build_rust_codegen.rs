@@ -24,18 +24,13 @@ pub(crate) fn render_generated(
     output.push_str(&render_reverse_stream_dispatch(objects));
     output.push_str(&render_generated_error_details(objects, error_types));
     for object in objects {
-        if object_uses_arc_mutex_instance(&object.access)
-            && object
-                .methods
-                .iter()
-                .any(|method| method.is_async && method.call_protocol().is_some())
+        if object.has_call_dispatch()
+            && (!object_uses_arc_mutex_instance(&object.access)
+                || object
+                    .methods
+                    .iter()
+                    .any(|method| method.is_async && method.call_protocol().is_some()))
         {
-            panic!(
-                "Arc<Mutex<Self>> core proxy object exposes async call methods: {}",
-                object.schema_key
-            );
-        }
-        if object.has_call_dispatch() && !object_uses_arc_mutex_instance(&object.access) {
             output.push_str(&render_object_call_dispatch(object, error_types));
             output.push('\n');
         }
@@ -57,23 +52,42 @@ pub(crate) fn render_generated(
 /// Renders runtime-owned opening logic for every generated reverse-stream method.
 fn render_reverse_stream_dispatch(objects: &[SourceObject]) -> String {
     let mut output = String::new();
-    output.push_str("/// Returns whether one push request targets a schema-declared reverse stream.\n");
-    let patterns = objects.iter().flat_map(|object| object.methods.iter().filter(|method| method.reverse_stream_protocol().is_some()).map(move |method| format!("({:?}, {:?})", object.schema_key, method.name))).collect::<Vec<_>>().join(" | ");
+    output.push_str(
+        "/// Returns whether one push request targets a schema-declared reverse stream.\n",
+    );
+    let patterns = objects
+        .iter()
+        .flat_map(|object| {
+            object
+                .methods
+                .iter()
+                .filter(|method| method.reverse_stream_protocol().is_some())
+                .map(move |method| format!("({:?}, {:?})", object.schema_key, method.name))
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
     output.push_str("fn generated_is_reverse_stream_request(request: &operit_link::CorePushRequest) -> bool {\n");
     if patterns.is_empty() {
         output.push_str("    false\n");
     } else {
-        output.push_str("    matches!((request.targetPath.key().as_str(), request.methodName.as_str()), ");
+        output.push_str(
+            "    matches!((request.targetPath.key().as_str(), request.methodName.as_str()), ",
+        );
         output.push_str(&patterns);
         output.push_str(")\n");
     }
     output.push_str("}\n\n");
-    output.push_str("/// Opens one schema-declared reverse stream without exposing Link details to services.\n");
+    output.push_str(
+        "/// Opens one schema-declared reverse stream without exposing Link details to services.\n",
+    );
     output.push_str("fn generated_open_reverse_stream(proxy: &LocalCoreProxy, request: operit_link::CorePushRequest) -> Result<CoreReverseStreamSession, operit_link::CoreLinkError> {\n");
-    output.push_str("    match (request.targetPath.key().as_str(), request.methodName.as_str()) {\n");
+    output
+        .push_str("    match (request.targetPath.key().as_str(), request.methodName.as_str()) {\n");
     for object in objects {
         for method in &object.methods {
-            let Some(reverse) = method.reverse_stream_protocol() else { continue; };
+            let Some(reverse) = method.reverse_stream_protocol() else {
+                continue;
+            };
             let construct_object = match object.access {
                 ObjectAccess::ContextRefGetInstanceConstruct => format!(
                     "                let object = Ok::<{}, operit_link::CoreLinkError>({}::getInstance(&hostManager));\n",
@@ -88,9 +102,32 @@ fn render_reverse_stream_dispatch(objects: &[SourceObject]) -> String {
                     object.schema_key
                 ),
             };
-            let normal_args = method.args.iter().filter(|arg| arg.name != reverse.argument_name).collect::<Vec<_>>();
-            let decode_args = normal_args.iter().map(|arg| format!("            let {}: {} = decode_core_arg(&mut __core_args, {:?})?;\n", arg.name, arg.ty, arg.name)).collect::<String>();
-            let call_args = method.args.iter().map(|arg| if arg.name == reverse.argument_name { "input".to_string() } else { arg.name.clone() }).collect::<Vec<_>>().join(", ");
+            let normal_args = method
+                .args
+                .iter()
+                .filter(|arg| arg.name != reverse.argument_name)
+                .collect::<Vec<_>>();
+            let decode_args = normal_args
+                .iter()
+                .map(|arg| {
+                    format!(
+                        "            let {}: {} = decode_core_arg(&mut __core_args, {:?})?;\n",
+                        arg.name, arg.ty, arg.name
+                    )
+                })
+                .collect::<String>();
+            let call_args = method
+                .args
+                .iter()
+                .map(|arg| {
+                    if arg.name == reverse.argument_name {
+                        "input".to_string()
+                    } else {
+                        arg.name.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             output.push_str(&format!("        ({:?}, {:?}) => {{\n            let mut __core_args = object_args(request.args)?;\n{}            let (sender, input) = operit_util::stream::ReverseStream::ReverseStream::<{}>::channel();\n            let (completionSender, completionReceiver) = tokio::sync::oneshot::channel();\n            let hostManager = proxy.hostManager.clone();\n            operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost().as_ref(), \"core-proxy-reverse-stream\", Box::new(move || Box::pin(async move {{\n{}                let result = match object {{\n                    Ok(object) => object.{}({}).await.map_err(|error| operit_link::CoreLinkError::internal(error.to_string())),\n                    Err(error) => Err(error),\n                }};\n                let _ = completionSender.send(result);\n            }}))).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n            Ok(CoreReverseStreamSession::new(sender, completionReceiver))\n        }}\n", object.schema_key, method.name, decode_args, reverse.item_type, construct_object, method.name, call_args));
         }
     }
@@ -107,7 +144,9 @@ fn render_local_control_path_matcher(objects: &[SourceObject]) -> String {
         .collect::<Vec<_>>()
         .join(" | ");
     let mut output = String::new();
-    output.push_str("/// Returns whether a generated object is handled by the local runtime control plane.\n");
+    output.push_str(
+        "/// Returns whether a generated object is handled by the local runtime control plane.\n",
+    );
     output.push_str(
         "pub(crate) fn generated_is_local_runtime_control_path(target_path: &operit_link::CoreObjectPath) -> bool {\n",
     );

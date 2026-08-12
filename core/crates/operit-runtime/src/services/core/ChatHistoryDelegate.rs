@@ -1031,6 +1031,24 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Removes the provisional assistant message for a failed response.
+    pub fn discardFailedAssistantMessage(&mut self, chatId: String, timestamp: i64) {
+        self.chatHistoryManager
+            .deleteMessage(chatId.clone(), timestamp)
+            .expect("ChatHistoryManager.deleteMessage must remove failed assistant message");
+        if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
+            chat.messages
+                .retain(|message| message.timestamp != timestamp);
+        }
+        self.emitChatHistoriesState();
+        if self.currentChatId.as_ref() == Some(&chatId) {
+            self.chatHistory
+                .retain(|message| message.timestamp != timestamp);
+            self.emitChatHistoryState();
+        }
+    }
+
+    #[allow(non_snake_case)]
     /// Deletes a message from a chat by timestamp.
     pub fn deleteMessageByTimestamp(&mut self, chatId: String, timestamp: i64) -> bool {
         if let Some(chat) = self.chatHistories.iter_mut().find(|chat| chat.id == chatId) {
@@ -1389,17 +1407,18 @@ impl ChatHistoryDelegate {
             return;
         }
 
-        let didUpdateVisibleMessage = self.upsertCurrentChatMessageInMemory(message.clone());
-        let isVisibleNewMessage = !self.currentChatWindow.hasNewerDisplayHistory
-            && self
-                .chatHistory
-                .iter()
-                .any(|existing| existing.timestamp == message.timestamp);
+        self.chatHistory = self.chatHistoryFlow.value();
+        let didUpdateVisibleMessage = self
+            .chatHistory
+            .iter()
+            .any(|existing| existing.timestamp == message.timestamp);
+        let isVisibleNewMessage =
+            !didUpdateVisibleMessage && !self.currentChatWindow.hasNewerDisplayHistory;
 
         if didUpdateVisibleMessage {
             let persistedMessage = message.clone();
             self.chatHistoryManager
-                .updateMessage(targetChatId.clone(), message)
+                .updateMessage(targetChatId.clone(), message.clone())
                 .expect("ChatHistoryManager.updateMessage must succeed");
             ToolPkgChatMessageHookBridge::dispatchMessagePersisted(
                 &targetChatId,
@@ -1418,7 +1437,7 @@ impl ChatHistoryDelegate {
         } else if isVisibleNewMessage {
             let persistedMessage = message.clone();
             self.chatHistoryManager
-                .addMessage(targetChatId.clone(), message)
+                .addMessage(targetChatId.clone(), message.clone())
                 .expect("ChatHistoryManager.addMessage must succeed");
             ToolPkgChatMessageHookBridge::dispatchMessagePersisted(
                 &targetChatId,
@@ -1434,11 +1453,10 @@ impl ChatHistoryDelegate {
                     ("messageChars", messageChars),
                 ],
             );
-            self.refreshCurrentChatDisplayFlags(targetChatId.clone(), self.chatHistory.clone());
         } else {
             let persistedMessage = message.clone();
             self.chatHistoryManager
-                .updateMessage(targetChatId.clone(), message)
+                .updateMessage(targetChatId.clone(), message.clone())
                 .expect("ChatHistoryManager.updateMessage must succeed");
             ToolPkgChatMessageHookBridge::dispatchMessagePersisted(
                 &targetChatId,
@@ -1454,6 +1472,10 @@ impl ChatHistoryDelegate {
                     ("messageChars", messageChars),
                 ],
             );
+        }
+        self.upsertCurrentChatMessageInMemory(message);
+        if isVisibleNewMessage {
+            self.refreshCurrentChatDisplayFlags(targetChatId, self.chatHistory.clone());
         }
     }
 

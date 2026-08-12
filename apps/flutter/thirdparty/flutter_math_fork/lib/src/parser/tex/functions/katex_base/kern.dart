@@ -30,8 +30,14 @@ const _kernEntries = {
     handler: _kernHandler,
   ),
 };
+
+/// Builds an explicit TeX spacing node from a dimension or math glue argument.
 GreenNode _kernHandler(TexParser parser, FunctionContext context) {
-  final size = parser.parseArgSize(optional: false) ?? Measurement.zero;
+  final size = parser.parseArgSize(
+        optional: false,
+        allowGlue: context.funcName == '\\mskip',
+      ) ??
+      Measurement.zero;
 
   final mathFunction = (context.funcName[1] == 'm');
   final muUnit = (size.unit == Unit.mu);

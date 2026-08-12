@@ -163,15 +163,11 @@ pub fn run_market_command(
         "my" => print_my_entries(core),
         "publish" => run_publish(core, &args[1..]),
         "install" => {
-            let entry_id = args
-                .get(1)
-                .ok_or_else(|| {
-                    "usage: operit2 market install <entryId> <clientAppVersion> [versionId]"
-                        .to_string()
-                })?;
+            let entry_id = args.get(1).ok_or_else(|| {
+                "usage: operit2 market install <entryId> <clientAppVersion> [versionId]".to_string()
+            })?;
             let client_app_version = args.get(2).ok_or_else(|| {
-                "usage: operit2 market install <entryId> <clientAppVersion> [versionId]"
-                    .to_string()
+                "usage: operit2 market install <entryId> <clientAppVersion> [versionId]".to_string()
             })?;
             let version_id = args.get(3).map(String::as_str);
             install_entry(core, entry_id, client_app_version, version_id)
@@ -1126,6 +1122,17 @@ mod tests {
                 .lock()
                 .map_err(|error| HostError::new(error.to_string()))?;
             files.insert(path.to_string(), content.to_vec());
+            Ok(())
+        }
+
+        /// Appends bytes to one market-command test storage entry.
+        fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+            self.files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?
+                .entry(path.to_string())
+                .or_default()
+                .extend_from_slice(content);
             Ok(())
         }
 

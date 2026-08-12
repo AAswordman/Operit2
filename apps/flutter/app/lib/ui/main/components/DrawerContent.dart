@@ -9,6 +9,7 @@ import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/link/CoreLinkProtocol.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../common/CharacterAvatar.dart';
 import '../../features/chat/viewmodel/ChatSwitchRenderCoordinator.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../screens/ScreenRouteRegistry.dart';
@@ -28,6 +29,7 @@ class DrawerContent extends StatefulWidget {
     required this.appearance,
     required this.histories,
     required this.characterGroupNamesById,
+    required this.characterCardAvatarUrisByName,
     required this.currentChatId,
     required this.errorMessage,
     required this.loading,
@@ -42,6 +44,7 @@ class DrawerContent extends StatefulWidget {
   final NavigationDrawerAppearance appearance;
   final List<core_proxy.ChatHistoryListItem> histories;
   final Map<String, String> characterGroupNamesById;
+  final Map<String, String> characterCardAvatarUrisByName;
   final String? currentChatId;
   final String? errorMessage;
   final bool loading;
@@ -308,10 +311,12 @@ class _DrawerContentState extends State<DrawerContent> {
     await _deleteConversation(history);
   }
 
+  /// Shows conversation actions enabled within the current character section.
   Future<void> _showConversationActionDialog(
     core_proxy.ChatHistoryListItem history,
   ) async {
-    final index = _histories.indexWhere((item) => item.id == history.id);
+    final canMoveUp = _canMoveConversationRelative(history, -1);
+    final canMoveDown = _canMoveConversationRelative(history, 1);
     final action = await showDialog<ConversationAction>(
       context: context,
       useRootNavigator: true,
@@ -319,8 +324,8 @@ class _DrawerContentState extends State<DrawerContent> {
         return ConversationActionDialog(
           history: history,
           canOpenInWindow: operitSupportsDesktopMultiWindow,
-          canMoveUp: index > 0,
-          canMoveDown: index >= 0 && index < _histories.length - 1,
+          canMoveUp: canMoveUp,
+          canMoveDown: canMoveDown,
         );
       },
     );
@@ -436,15 +441,14 @@ class _DrawerContentState extends State<DrawerContent> {
     }
   }
 
+  /// Moves a conversation by one position within its character section.
   Future<void> _moveConversationRelative(
     core_proxy.ChatHistoryListItem history,
     int delta,
   ) async {
     final currentIndex = _histories.indexWhere((item) => item.id == history.id);
     final targetIndex = currentIndex + delta;
-    if (currentIndex < 0 ||
-        targetIndex < 0 ||
-        targetIndex >= _histories.length) {
+    if (!_canMoveConversationRelative(history, delta)) {
       return;
     }
     final reordered = List<core_proxy.ChatHistoryListItem>.of(_histories);
@@ -458,11 +462,12 @@ class _DrawerContentState extends State<DrawerContent> {
     );
   }
 
+  /// Moves a conversation to another position within its character section.
   Future<void> _moveConversationTo(
     core_proxy.ChatHistoryListItem moved,
     core_proxy.ChatHistoryListItem target,
   ) async {
-    if (moved.id == target.id) {
+    if (moved.id == target.id || !_isInSameCharacterSection(moved, target)) {
       return;
     }
     final reordered = List<core_proxy.ChatHistoryListItem>.of(_histories);
@@ -480,6 +485,27 @@ class _DrawerContentState extends State<DrawerContent> {
       target.group,
       optimistic: true,
     );
+  }
+
+  /// Determines whether the conversation can move without leaving its character section.
+  bool _canMoveConversationRelative(
+    core_proxy.ChatHistoryListItem history,
+    int delta,
+  ) {
+    final currentIndex = _histories.indexWhere((item) => item.id == history.id);
+    final targetIndex = currentIndex + delta;
+    return currentIndex >= 0 &&
+        targetIndex >= 0 &&
+        targetIndex < _histories.length &&
+        _isInSameCharacterSection(history, _histories[targetIndex]);
+  }
+
+  /// Returns whether two conversations belong to the same character section.
+  bool _isInSameCharacterSection(
+    core_proxy.ChatHistoryListItem first,
+    core_proxy.ChatHistoryListItem second,
+  ) {
+    return _characterSectionKey(first) == _characterSectionKey(second);
   }
 
   Future<void> _updateConversationOrder(
@@ -566,6 +592,7 @@ class _DrawerContentState extends State<DrawerContent> {
             key: sectionKey,
             label: _bindingLabel(history),
             kind: _bindingKind(history),
+            avatarUri: _characterAvatarUri(history),
             groups: <_HistoryGroupSection>[
               _HistoryGroupSection(
                 key: groupKey,
@@ -639,6 +666,7 @@ class _DrawerContentState extends State<DrawerContent> {
           key: section.key,
           label: section.label,
           kind: section.kind,
+          avatarUri: section.avatarUri,
           groups: plannedGroups,
         ),
       );
@@ -650,6 +678,7 @@ class _DrawerContentState extends State<DrawerContent> {
     );
   }
 
+  /// Builds the key used to place a conversation in a character section.
   String _characterSectionKey(core_proxy.ChatHistoryListItem history) {
     final characterGroupId = history.characterGroupId?.trim();
     if (characterGroupId != null && characterGroupId.isNotEmpty) {
@@ -680,6 +709,15 @@ class _DrawerContentState extends State<DrawerContent> {
     }
     final name = history.characterCardName?.trim();
     return name == null || name.isEmpty ? '未绑定' : name;
+  }
+
+  /// Resolves the runtime avatar path for a character-card history section.
+  String? _characterAvatarUri(core_proxy.ChatHistoryListItem history) {
+    if (_bindingKind(history) != _HistoryBindingKind.characterCard) {
+      return null;
+    }
+    final name = history.characterCardName!.trim();
+    return widget.characterCardAvatarUrisByName[name];
   }
 
   String _groupSectionKey(
@@ -910,6 +948,7 @@ class _DrawerContentState extends State<DrawerContent> {
                           _CharacterSectionHeader(
                             label: section.label,
                             kind: section.kind,
+                            avatarUri: section.avatarUri,
                             count: section.historyCount,
                             expanded: !_collapsedCharacterSections.contains(
                               section.key,
@@ -964,6 +1003,8 @@ class _DrawerContentState extends State<DrawerContent> {
                             },
                             onMoveTo: (moved) =>
                                 _moveConversationTo(moved, history),
+                            canAcceptDrop: (moved) =>
+                                _isInSameCharacterSection(moved, history),
                           ),
                       };
                     }, childCount: historyEntries.length),
@@ -1074,12 +1115,14 @@ class _CharacterHistorySection {
     required this.key,
     required this.label,
     required this.kind,
+    required this.avatarUri,
     required this.groups,
   });
 
   final String key;
   final String label;
   final _HistoryBindingKind kind;
+  final String? avatarUri;
   final List<_HistoryGroupSection> groups;
 
   int get historyCount {
@@ -1161,6 +1204,7 @@ class _CharacterSectionHeader extends StatelessWidget {
   const _CharacterSectionHeader({
     required this.label,
     required this.kind,
+    required this.avatarUri,
     required this.count,
     required this.expanded,
     required this.appearance,
@@ -1169,12 +1213,11 @@ class _CharacterSectionHeader extends StatelessWidget {
 
   final String label;
   final _HistoryBindingKind kind;
+  final String? avatarUri;
   final int count;
   final bool expanded;
   final NavigationDrawerAppearance appearance;
   final VoidCallback onToggleExpanded;
-
-  static const String _operitAvatarAsset = 'assets/images/operit_avatar.png';
 
   @override
   Widget build(BuildContext context) {
@@ -1199,17 +1242,11 @@ class _CharacterSectionHeader extends StatelessWidget {
                 color: avatarContainerColor,
               ),
               alignment: Alignment.center,
-              child:
-                  kind == _HistoryBindingKind.characterCard && label == 'Operit'
+              child: kind == _HistoryBindingKind.characterCard
                   ? ClipOval(
-                      child: ColoredBox(
-                        color: Colors.white,
-                        child: Image.asset(
-                          _operitAvatarAsset,
-                          width: 20,
-                          height: 20,
-                          fit: BoxFit.contain,
-                        ),
+                      child: CharacterAvatarImage(
+                        avatarUri: avatarUri,
+                        fit: BoxFit.cover,
                       ),
                     )
                   : Icon(

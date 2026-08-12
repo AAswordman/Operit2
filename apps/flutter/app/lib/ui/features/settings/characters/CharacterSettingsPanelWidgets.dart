@@ -103,8 +103,9 @@ class _AdvancedSettingsGroup extends StatelessWidget {
   }
 }
 
-class _CharacterSettingsData {
-  const _CharacterSettingsData({
+class CharacterSettingsData {
+  /// Creates an immutable character settings snapshot.
+  const CharacterSettingsData({
     required this.cards,
     required this.groups,
     required this.sharedMemoryStores,
@@ -127,10 +128,10 @@ class _CharacterSettingsData {
   final List<core_proxy.PromptTag> tags;
   final List<core_proxy.ProviderModelSummary> modelSummaries;
   final List<core_proxy.TtsConfig> ttsConfigs;
-  final List<_ToolAccessOption> builtinToolOptions;
-  final List<_ToolAccessOption> packageToolOptions;
-  final List<_ToolAccessOption> skillToolOptions;
-  final List<_ToolAccessOption> mcpToolOptions;
+  final List<ToolAccessOption> builtinToolOptions;
+  final List<ToolAccessOption> packageToolOptions;
+  final List<ToolAccessOption> skillToolOptions;
+  final List<ToolAccessOption> mcpToolOptions;
   final String? activeCardId;
   final String? activeGroupId;
   final bool enableMemoryAutoUpdate;
@@ -144,13 +145,17 @@ class _ActivePromptSelection {
   final String? groupId;
 }
 
-_ActivePromptSelection _activePromptSelection(core_proxy.ActivePrompt? activePrompt) {
+_ActivePromptSelection _activePromptSelection(
+  core_proxy.ActivePrompt? activePrompt,
+) {
   String? cardId;
   String? groupId;
   if (activePrompt != null) {
-    if (activePrompt.tag == 'CharacterCard' && activePrompt.id.trim().isNotEmpty) {
+    if (activePrompt.tag == 'CharacterCard' &&
+        activePrompt.id.trim().isNotEmpty) {
       cardId = activePrompt.id.trim();
-    } else if (activePrompt.tag == 'CharacterGroup' && activePrompt.id.trim().isNotEmpty) {
+    } else if (activePrompt.tag == 'CharacterGroup' &&
+        activePrompt.id.trim().isNotEmpty) {
       groupId = activePrompt.id.trim();
     }
   }
@@ -184,9 +189,8 @@ class _CharacterCardTile extends StatelessWidget {
     final tagNames = _tagNamesFor(tags, card.attachedTagIds);
     return _SettingsEntityTile(
       leading: _SettingsListAvatar(
-        imagePath: avatarUri,
-        placeholder: Image.asset(
-          _SettingsListAvatar.operitAvatarAsset,
+        avatar: CharacterAvatarImage(
+          avatarUri: avatarUri,
           fit: BoxFit.cover,
         ),
         active: active,
@@ -249,8 +253,9 @@ class _CharacterGroupTile extends StatelessWidget {
         .join(', ');
     return _SettingsEntityTile(
       leading: _SettingsListAvatar(
-        imagePath: avatarUri,
-        placeholder: const Center(child: Icon(Icons.groups_outlined, size: 18)),
+        avatar: avatarUri != null && avatarUri!.isNotEmpty
+            ? CharacterAvatarImage(avatarUri: avatarUri, fit: BoxFit.cover)
+            : const Center(child: Icon(Icons.groups_outlined, size: 18)),
         active: active,
       ),
       title: Text(group.name),
@@ -275,21 +280,16 @@ class _CharacterGroupTile extends StatelessWidget {
 
 class _SettingsListAvatar extends StatelessWidget {
   const _SettingsListAvatar({
-    required this.imagePath,
-    required this.placeholder,
+    required this.avatar,
     required this.active,
   });
 
-  static const String operitAvatarAsset = 'assets/images/operit_avatar.png';
-
-  final String? imagePath;
-  final Widget placeholder;
+  final Widget avatar;
   final bool active;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final path = imagePath;
     return SizedBox(
       width: 32,
       height: 32,
@@ -303,14 +303,10 @@ class _SettingsListAvatar extends StatelessWidget {
                 shape: BoxShape.circle,
               ),
               child: ClipOval(
-                child: path != null && path.isNotEmpty
-                    ? Image.file(File(path), fit: BoxFit.cover)
-                    : IconTheme(
-                        data: IconThemeData(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                        child: placeholder,
-                      ),
+                child: IconTheme(
+                  data: IconThemeData(color: colorScheme.onSurfaceVariant),
+                  child: avatar,
+                ),
               ),
             ),
           ),

@@ -1151,6 +1151,7 @@ impl MessageProcessingDelegate {
         let completionStreamingSnapshotPersistAt = workerStreamingSnapshotPersistAt.clone();
         let completionFirstResponseElapsed = workerFirstResponseElapsed.clone();
         let completionEventCollector = workerEventCollector.clone();
+        let completionResponseStream = workerResponseStream.clone();
         let mut responseUpstream = workerResponseStream.upstream.clone();
         defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeAsyncTask(
@@ -1242,6 +1243,41 @@ impl MessageProcessingDelegate {
                                 .expect("workspace tool hook handler mutex poisoned")
                                 .removeToolHook(session.hookId());
                             session.close();
+                        }
+                        if let Some(error) = completionResponseStream.terminal_failure() {
+                            ChainLogger::error(
+                                RECEIVE_CHAIN,
+                                "receive.stream.failed",
+                                &[
+                                    ("chatId", completionChatId.clone()),
+                                    ("error", error.clone()),
+                                ],
+                            );
+                            if completionTurnOptions.persistTurn {
+                                let failedMessageTimestamp = completionAiMessage
+                                    .lock()
+                                    .expect("worker AI message mutex poisoned")
+                                    .timestamp;
+                                completionChatHistoryDelegate
+                                    .lock()
+                                    .expect("worker chat history mutex poisoned")
+                                    .discardFailedAssistantMessage(
+                                        completionChatId.clone(),
+                                        failedMessageTimestamp,
+                                    );
+                            }
+                            let mut delegate = completionMessageProcessingDelegate
+                                .lock()
+                                .expect("worker message processing delegate mutex poisoned");
+                            delegate.cleanupRuntimeAfterSend(
+                                completionChatId.clone(),
+                                completionTurnOptions.clone(),
+                            );
+                            delegate.setInputProcessingStateForChat(
+                                completionChatId.clone(),
+                                InputProcessingState::Error { message: error },
+                            );
+                            return;
                         }
                         for event in completionEventCollector.replay_cache() {
                             match event.event_type {

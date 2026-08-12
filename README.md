@@ -184,3 +184,10 @@ operit2 cli web close
 cargo check --manifest-path apps/cli/Cargo.toml
 cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- cli version
 ```
+
+## 参与贡献
+
+贡献流程、DCO 签署要求、许可证和 Pull Request 检查项见
+[CONTRIBUTING.md](CONTRIBUTING.md)。
+
+项目的商业化边界也在 [CONTRIBUTING.md](CONTRIBUTING.md) 中说明。

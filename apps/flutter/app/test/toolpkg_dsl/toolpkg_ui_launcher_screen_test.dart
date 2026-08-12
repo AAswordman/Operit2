@@ -21,11 +21,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Demo ToolPkg'), findsOneWidget);
-    expect(find.text('Main route'), findsOneWidget);
+    expect(find.text('Main route'), findsNothing);
     expect(find.text('Counter: 0'), findsOneWidget);
     expect(find.text('Increment'), findsOneWidget);
     expect(find.byType(Card), findsOneWidget);
     expect(find.byType(CustomPaint), findsAtLeastNWidgets(1));
+    expect(tester.widget<AppBar>(find.byType(AppBar)).actions, isNull);
 
     final scriptCall = bridge.calls.singleWhere(
       (request) => request.methodName == 'getToolPkgComposeDslScript',
@@ -62,7 +63,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Module ToolPkg'), findsOneWidget);
-    expect(find.text('Toolbox module'), findsOneWidget);
+    expect(find.text('Toolbox module'), findsNothing);
+    expect(tester.widget<AppBar>(find.byType(AppBar)).actions, isNull);
 
     final scriptCall = bridge.calls.singleWhere(
       (request) => request.methodName == 'getToolPkgComposeDslScript',

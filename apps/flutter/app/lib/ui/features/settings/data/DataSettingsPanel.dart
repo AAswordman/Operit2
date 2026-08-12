@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/logging/ClientLogger.dart';
+import '../../../../core/host/FileSaveService.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 import '../../../../core/runtime/RuntimeConnectionManager.dart';
@@ -229,25 +230,23 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     }
   }
 
+  /// Exports the raw snapshot to a user-selected file.
   Future<void> _exportRawSnapshot() async {
     final l10n = AppLocalizations.of(context)!;
     final suggestedName = _rawSnapshotSuggestedName();
-    final location = await getSaveLocation(
-      acceptedTypeGroups: const <XTypeGroup>[_rawSnapshotFileTypeGroup],
-      suggestedName: suggestedName,
-    );
-    if (location == null) {
-      return;
-    }
     setState(() => _busy = true);
     try {
       final bytes = await widget.clients.servicesSnapshotImportManager
           .exportRawSnapshot();
-      await XFile.fromData(
-        Uint8List.fromList(bytes),
+      final savedPath = await FileSaveService.saveBytes(
+        bytes: Uint8List.fromList(bytes),
         name: suggestedName,
         mimeType: 'application/zip',
-      ).saveTo(location.path);
+        acceptedTypeGroups: const <XTypeGroup>[_rawSnapshotFileTypeGroup],
+      );
+      if (savedPath == null) {
+        return;
+      }
       if (!mounted) {
         return;
       }
@@ -256,7 +255,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
       });
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(l10n.savedTo(location.path))));
+      ).showSnackBar(SnackBar(content: Text(l10n.savedTo(savedPath))));
     } catch (error) {
       if (!mounted) {
         return;

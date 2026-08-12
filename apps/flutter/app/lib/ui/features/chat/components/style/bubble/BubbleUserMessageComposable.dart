@@ -5,6 +5,7 @@ import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../../util/ChatMarkupRegex.dart';
+import '../../../../../common/CharacterAvatar.dart';
 import '../../../../../theme/OperitTheme.dart';
 import '../../../../../theme/OperitThemeAssets.dart';
 import '../../attachments/AttachmentViewerDialog.dart';
@@ -589,18 +590,32 @@ class _MessageAvatar extends StatelessWidget {
     final square = avatarShape == UserPreferencesManager.AVATAR_SHAPE_SQUARE;
     final avatarImagePath = imagePath;
     final icon = isProxySender ? Icons.assistant : Icons.person;
-    final tint = isProxySender ? colorScheme.secondary : colorScheme.primary;
+    final backgroundColor = isProxySender
+        ? colorScheme.secondaryContainer
+        : colorScheme.primaryContainer;
+    final tint = isProxySender
+        ? colorScheme.onSecondaryContainer
+        : colorScheme.onPrimaryContainer;
     return Container(
       width: 32,
       height: 32,
       decoration: BoxDecoration(
+        color: backgroundColor,
         shape: square ? BoxShape.rectangle : BoxShape.circle,
         borderRadius: square ? BorderRadius.circular(cornerRadius) : null,
       ),
       clipBehavior: Clip.antiAlias,
-      child: avatarImagePath != null && avatarImagePath.isNotEmpty
-          ? ThemeAssetImage(storagePath: avatarImagePath, fit: BoxFit.cover)
-          : Icon(icon, color: tint, size: 22),
+      child: isProxySender
+          ? CharacterAvatarImage(
+              avatarUri: avatarImagePath,
+              fit: BoxFit.cover,
+            )
+          : avatarImagePath != null && avatarImagePath.isNotEmpty
+              ? ThemeAssetImage(
+                  storagePath: avatarImagePath,
+                  fit: BoxFit.cover,
+                )
+              : Icon(icon, color: tint, size: 22),
     );
   }
 }

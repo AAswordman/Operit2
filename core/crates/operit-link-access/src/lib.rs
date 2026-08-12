@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
-use std::sync::Mutex as StdMutex;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 
 use async_trait::async_trait;
 #[cfg(not(target_arch = "wasm32"))]
@@ -34,9 +34,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::oneshot;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -46,20 +46,20 @@ use operit_host_api::HostManager::defaultHttpHost;
 #[cfg(not(target_arch = "wasm32"))]
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_host_api::{HttpRequestData, RuntimeStorageHost, TimeUtils::currentTimeMillis};
-use operit_link::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError,
-    CoreLinkPushSession, CorePushItem, CorePushRequest, CoreValue, CoreWatchRequest,
-};
 use operit_link::CoreLinkClient;
 #[cfg(not(target_arch = "wasm32"))]
 use operit_link::CoreLinkTransportClient;
-use operit_store::PreferencesDataStore::{
-    emptyPreferences, stringPreferencesKey, Preferences, PreferencesDataStore,
+use operit_link::{
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError,
+    CoreLinkPushSession, CorePushItem, CorePushRequest, CoreValue, CoreWatchRequest,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use operit_runtime::services::RuntimeHostInteractionService::{
     publishOwnerWebAccessPairing, withRuntimeHostInteractionOrigin,
     RuntimeHostInteractionRequestOrigin, RuntimeHostInteractionWebAccessPairingPayload,
+};
+use operit_store::PreferencesDataStore::{
+    emptyPreferences, stringPreferencesKey, Preferences, PreferencesDataStore,
 };
 
 #[cfg(test)]
@@ -199,7 +199,11 @@ impl LinkAccessStore {
         let store = self.dataStore(LINK_ACCESS_IDENTITY_PATH);
         let preferences = self.readPreferences(&store)?;
         if !preferences.entries().is_empty() {
-            return readPreferenceRecord(&preferences, LINK_ACCESS_RECORD_KEY, LINK_ACCESS_IDENTITY_PATH);
+            return readPreferenceRecord(
+                &preferences,
+                LINK_ACCESS_RECORD_KEY,
+                LINK_ACCESS_IDENTITY_PATH,
+            );
         }
         let identity = LinkAccessIdentity {
             deviceId: format!("core-{}", Uuid::new_v4()),
@@ -281,7 +285,11 @@ impl LinkAccessStore {
         pairingId: String,
         record: PendingOutboundPairingRecord,
     ) -> Result<(), String> {
-        self.writeMapRecord(LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH, &pairingId, &record)
+        self.writeMapRecord(
+            LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH,
+            &pairingId,
+            &record,
+        )
     }
 
     /// Removes one pending outbound pairing after it has completed or been cancelled.
@@ -316,7 +324,9 @@ impl LinkAccessStore {
 
     /// Reads the active Link Access host configuration for this runtime.
     pub fn hostConfig(&self) -> Result<LinkAccessHostConfig, String> {
-        hostConfigFromPreferences(&self.readPreferences(&self.dataStore(LINK_ACCESS_HOST_CONFIG_PATH))?)
+        hostConfigFromPreferences(
+            &self.readPreferences(&self.dataStore(LINK_ACCESS_HOST_CONFIG_PATH))?,
+        )
     }
 
     /// Initializes and returns this runtime's Link auto-sync configuration.
@@ -338,15 +348,14 @@ impl LinkAccessStore {
     /// Reads this runtime's Link auto-sync configuration.
     #[allow(non_snake_case)]
     pub fn autoSyncConfig(&self) -> Result<LinkAccessAutoSyncConfig, String> {
-        autoSyncConfigFromPreferences(&self.readPreferences(&self.dataStore(LINK_ACCESS_AUTO_SYNC_PATH))?)
+        autoSyncConfigFromPreferences(
+            &self.readPreferences(&self.dataStore(LINK_ACCESS_AUTO_SYNC_PATH))?,
+        )
     }
 
     /// Persists this runtime's Link auto-sync configuration.
     #[allow(non_snake_case)]
-    pub fn saveAutoSyncConfig(
-        &self,
-        config: LinkAccessAutoSyncConfig,
-    ) -> Result<(), String> {
+    pub fn saveAutoSyncConfig(&self, config: LinkAccessAutoSyncConfig) -> Result<(), String> {
         writeAutoSyncConfigPreferences(&self.dataStore(LINK_ACCESS_AUTO_SYNC_PATH), &config)
     }
 
@@ -369,7 +378,9 @@ impl LinkAccessStore {
     /// Reads this runtime's Link request routing configuration.
     #[allow(non_snake_case)]
     pub fn routingConfig(&self) -> Result<LinkAccessRoutingConfig, String> {
-        routingConfigFromPreferences(&self.readPreferences(&self.dataStore(LINK_ACCESS_ROUTING_PATH))?)
+        routingConfigFromPreferences(
+            &self.readPreferences(&self.dataStore(LINK_ACCESS_ROUTING_PATH))?,
+        )
     }
 
     /// Persists this runtime's Link request routing configuration.
@@ -406,7 +417,12 @@ impl LinkAccessStore {
     }
 
     /// Writes one keyed record into a Link Access datastore.
-    fn writeMapRecord<T: Serialize>(&self, path: &str, name: &str, value: &T) -> Result<(), String> {
+    fn writeMapRecord<T: Serialize>(
+        &self,
+        path: &str,
+        name: &str,
+        value: &T,
+    ) -> Result<(), String> {
         let encoded = serde_json::to_string(value).map_err(|error| error.to_string())?;
         self.dataStore(path)
             .edit(|preferences| {
@@ -467,11 +483,7 @@ fn requiredBoolPreference(
 }
 
 /// Reads one required integer preference string.
-fn requiredI64Preference(
-    preferences: &Preferences,
-    key: &str,
-    path: &str,
-) -> Result<i64, String> {
+fn requiredI64Preference(preferences: &Preferences, key: &str, path: &str) -> Result<i64, String> {
     requiredPreference(preferences, key, path)?
         .parse::<i64>()
         .map_err(|error| error.to_string())
@@ -485,7 +497,11 @@ fn hostConfigFromPreferences(preferences: &Preferences) -> Result<LinkAccessHost
             LINK_ACCESS_BIND_ADDRESS_KEY,
             LINK_ACCESS_HOST_CONFIG_PATH,
         )?,
-        token: requiredPreference(preferences, LINK_ACCESS_TOKEN_KEY, LINK_ACCESS_HOST_CONFIG_PATH)?,
+        token: requiredPreference(
+            preferences,
+            LINK_ACCESS_TOKEN_KEY,
+            LINK_ACCESS_HOST_CONFIG_PATH,
+        )?,
         webAccessEnabled: requiredBoolPreference(
             preferences,
             LINK_ACCESS_WEB_ACCESS_ENABLED_KEY,
@@ -1461,9 +1477,7 @@ impl PairedRemoteSession {
             if channel.channelId != channelId {
                 return Err("paired watch channel changed while opening subscription".to_string());
             }
-            channel
-                .subscriptions
-                .insert(subscriptionId.clone(), sender);
+            channel.subscriptions.insert(subscriptionId.clone(), sender);
         }
         let body = operit_link::encodeLink(&RemoteWatchChannelOpenEnvelope {
             channelId: channelId.clone(),
@@ -1471,16 +1485,14 @@ impl PairedRemoteSession {
             request,
         })
         .map_err(|error| error.to_string())?;
-        let openResult = self.signedRemotePost("watch/channel/open", body).and_then(|bytes| {
-            operit_link::decodeLink::<RemoteWatchChannelOpenResponse>(&bytes)
-                .map_err(|error| error.to_string())
-        });
+        let openResult = self
+            .signedRemotePost("watch/channel/open", body)
+            .and_then(|bytes| {
+                operit_link::decodeLink::<RemoteWatchChannelOpenResponse>(&bytes)
+                    .map_err(|error| error.to_string())
+            });
         if let Err(error) = openResult {
-            close_paired_watch_subscription(
-                &self.watchChannel,
-                &channelId,
-                &subscriptionId,
-            )?;
+            close_paired_watch_subscription(&self.watchChannel, &channelId, &subscriptionId)?;
             return Err(error);
         }
         let closeSession = self.clone();
@@ -1492,12 +1504,8 @@ impl PairedRemoteSession {
             })
             .expect("watch close envelope must encode");
             let _ = closeSession.signedRemotePost("watch/channel/close", body);
-            close_paired_watch_subscription(
-                &watchChannel,
-                &channelId,
-                &subscriptionId,
-            )
-            .expect("paired watch subscription must close");
+            close_paired_watch_subscription(&watchChannel, &channelId, &subscriptionId)
+                .expect("paired watch subscription must close");
         }))
     }
 
@@ -1597,8 +1605,7 @@ impl PairedRemoteSession {
                 .watchChannel
                 .lock()
                 .map_err(|lockError| format!("paired watch channel lock poisoned: {lockError}"))?;
-            if guard.as_ref().map(|channel| channel.channelId.as_str())
-                == Some(channelId.as_str())
+            if guard.as_ref().map(|channel| channel.channelId.as_str()) == Some(channelId.as_str())
             {
                 let _ = guard.take();
             }
@@ -2235,17 +2242,14 @@ async fn handle_ws_envelope(
                     ),
                 ));
             }
-            match withRuntimeHostInteractionOrigin(
-                verified.origin(),
-                push.session.send(item.args),
-            )
-            .await
+            match withRuntimeHostInteractionOrigin(verified.origin(), push.session.send(item.args))
+                .await
             {
                 Ok(()) => {
                     push.nextSequence += 1;
                     RemoteWsResponse::PushAccepted(RemotePushAccepted {
-                    pushId: item.pushId,
-                    sequence: item.sequence,
+                        pushId: item.pushId,
+                        sequence: item.sequence,
                     })
                 }
                 Err(error) => RemoteWsResponse::Error(error),

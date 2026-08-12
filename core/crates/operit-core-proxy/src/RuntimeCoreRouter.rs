@@ -51,11 +51,9 @@ impl RuntimeCoreRouter {
         request: CorePushRequest,
     ) -> Result<RuntimeCorePushTarget, CoreLinkError> {
         match self.resolveTarget(&request.targetPath).await? {
-            RuntimeCoreTarget::Local => {
-                Ok(RuntimeCorePushTarget::LocalReverseStream {
-                    session: Arc::new(Mutex::new(self.localCore.openReverseStream(request)?)),
-                })
-            }
+            RuntimeCoreTarget::Local => Ok(RuntimeCorePushTarget::LocalReverseStream {
+                session: Arc::new(Mutex::new(self.localCore.openReverseStream(request)?)),
+            }),
             RuntimeCoreTarget::Remote(session) => {
                 let remotePushId = session
                     .pushOpen(request)
@@ -98,7 +96,9 @@ impl RuntimeCoreRouter {
     #[allow(non_snake_case)]
     pub async fn closePush(&self, target: RuntimeCorePushTarget) -> Result<(), CoreLinkError> {
         match target {
-            RuntimeCorePushTarget::LocalReverseStream { session } => session.lock().await.close().await,
+            RuntimeCorePushTarget::LocalReverseStream { session } => {
+                session.lock().await.close().await
+            }
             RuntimeCorePushTarget::Remote {
                 session,
                 remotePushId,

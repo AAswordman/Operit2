@@ -9,9 +9,9 @@ use operit_local_models::LocalModelRegistryStore::LocalModelRegistryStore;
 use operit_model::ModelCatalog::ModelCatalog;
 use operit_model::ModelConfigData::{
     default_deepseek_provider, local_model_provider, ApiProviderType, AvailableProviderModel,
-    AvailableProviderModelSource, ModelCapabilities, ModelCatalogKey, ModelConfigDefaults,
-    ModelContextSpec, ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderModelSummary,
-    ProviderProfile, ResolvedModelConfig,
+    AvailableProviderModelSource, ModelCapabilities, ModelConfigDefaults, ModelContextSpec,
+    ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderModelSummary, ProviderProfile,
+    ResolvedModelConfig,
 };
 use operit_model::ModelParameter::ModelParameter;
 use operit_providers::chat::llmprovider::ModelConfigConnectionTester::{
@@ -39,11 +39,6 @@ pub enum ModelConfigError {
     ModelNotFound(String),
     #[error("model already exists: {providerId}:{modelId}")]
     ModelAlreadyExists { providerId: String, modelId: String },
-    #[error("catalog model not found: {providerTypeId}:{modelId}")]
-    CatalogModelNotFound {
-        providerTypeId: String,
-        modelId: String,
-    },
     #[error("missing model context: {0}")]
     MissingModelContext(String),
     #[error("missing model capabilities: {0}")]
@@ -339,27 +334,12 @@ impl ModelConfigManager {
         modelId: String,
     ) -> Result<String, ModelConfigError> {
         let provider = self.getProviderProfile(providerId)?;
-        let availableModel = self.findAvailableProviderModel(&provider, &modelId)?;
+        let availableModel = Self::completeAvailableProviderModel(
+            self.findAvailableProviderModel(&provider, &modelId)?,
+        );
         self.updateProviderInternalResult(providerId, |mut provider| {
             Self::assertProviderModelDoesNotExist(&provider, &modelId)?;
-            let mut model = ModelProfile::new(modelId.clone());
-            match availableModel.source {
-                AvailableProviderModelSource::Catalog => {
-                    model.catalogKey = Some(ModelCatalogKey {
-                        providerTypeId: provider.providerTypeId.clone(),
-                        modelId: modelId.clone(),
-                    });
-                }
-                AvailableProviderModelSource::Remote | AvailableProviderModelSource::Local => {
-                    let availableModel =
-                        Self::completeAvailableProviderModel(availableModel.clone());
-                    model.pricingOverride = availableModel.pricing.clone();
-                    model.contextOverride = availableModel.context.clone();
-                    model.capabilitiesOverride = availableModel.capabilities.clone();
-                    model.builtinToolsOverride = Some(availableModel.builtinTools.clone());
-                    model.requestOverride = availableModel.request.clone();
-                }
-            }
+            let model = Self::modelProfileFromAvailable(&availableModel);
             provider.models.push(model);
             Ok(provider)
         })?;
@@ -528,43 +508,11 @@ impl ModelConfigManager {
         provider: &ProviderProfile,
         model: &ModelProfile,
     ) -> Result<ResolvedModelConfig, ModelConfigError> {
-        let catalogModel = Self::catalogModelForProfile(provider, model)?;
-
-        let pricing = match &model.pricingOverride {
-            Some(pricing) => Some(pricing.clone()),
-            None => match &catalogModel {
-                Some(entry) => entry.pricing.clone(),
-                None => None,
-            },
-        };
-        let context = match &model.contextOverride {
-            Some(context) => context.clone(),
-            None => match &catalogModel {
-                Some(entry) => entry.context.clone().unwrap_or_default(),
-                None => ModelContextSpec::default(),
-            },
-        };
-        let capabilities = match &model.capabilitiesOverride {
-            Some(capabilities) => capabilities.clone(),
-            None => match &catalogModel {
-                Some(entry) => entry.capabilities.clone().unwrap_or_default(),
-                None => ModelCapabilities::default(),
-            },
-        };
-        let builtinTools = match &model.builtinToolsOverride {
-            Some(builtinTools) => builtinTools.clone(),
-            None => match &catalogModel {
-                Some(entry) => entry.builtinTools.clone(),
-                None => Vec::new(),
-            },
-        };
-        let request = match &model.requestOverride {
-            Some(request) => request.clone(),
-            None => match &catalogModel {
-                Some(entry) => entry.request.clone().unwrap_or_default(),
-                None => ModelRequestSpec::default(),
-            },
-        };
+        let pricing = model.pricingOverride.clone();
+        let context = model.contextOverride.clone().unwrap_or_default();
+        let capabilities = model.capabilitiesOverride.clone().unwrap_or_default();
+        let builtinTools = model.builtinToolsOverride.clone().unwrap_or_default();
+        let request = model.requestOverride.clone().unwrap_or_default();
 
         Ok(ResolvedModelConfig {
             providerId: provider.id.clone(),
@@ -590,6 +538,17 @@ impl ModelConfigManager {
             summary: model.summary.clone(),
             localRuntime: model.localRuntime.clone(),
         })
+    }
+
+    /// Builds an independent model profile from selected availability metadata.
+    fn modelProfileFromAvailable(availableModel: &AvailableProviderModel) -> ModelProfile {
+        let mut model = ModelProfile::new(availableModel.modelId.clone());
+        model.pricingOverride = availableModel.pricing.clone();
+        model.contextOverride = availableModel.context.clone();
+        model.capabilitiesOverride = availableModel.capabilities.clone();
+        model.builtinToolsOverride = Some(availableModel.builtinTools.clone());
+        model.requestOverride = availableModel.request.clone();
+        model
     }
 
     /// Reads provider ids from the preferences object.
@@ -796,23 +755,6 @@ impl ModelConfigManager {
     }
 
     fn completeAvailableProviderModel(mut model: AvailableProviderModel) -> AvailableProviderModel {
-        if let Some(catalogModel) = ModelCatalog::modelByTerminalId(&model.modelId) {
-            if model.pricing.is_none() {
-                model.pricing = catalogModel.pricing;
-            }
-            if model.context.is_none() {
-                model.context = catalogModel.context;
-            }
-            if model.capabilities.is_none() {
-                model.capabilities = catalogModel.capabilities;
-            }
-            if model.builtinTools.is_empty() {
-                model.builtinTools = catalogModel.builtinTools;
-            }
-            if model.request.is_none() {
-                model.request = catalogModel.request;
-            }
-        }
         if model.context.is_none() {
             model.context = Some(ModelContextSpec::default());
         }
@@ -847,21 +789,6 @@ impl ModelConfigManager {
             model.requestOverride = Some(ModelRequestSpec::default());
         }
         model
-    }
-
-    fn catalogModelForProfile(
-        provider: &ProviderProfile,
-        model: &ModelProfile,
-    ) -> Result<Option<operit_model::ModelConfigData::ModelCatalogEntry>, ModelConfigError> {
-        match &model.catalogKey {
-            Some(key) => ModelCatalog::model(&key.providerTypeId, &key.modelId)
-                .map(Some)
-                .map_err(|_| ModelConfigError::CatalogModelNotFound {
-                    providerTypeId: key.providerTypeId.clone(),
-                    modelId: key.modelId.clone(),
-                }),
-            None => Ok(ModelCatalog::model(&provider.providerTypeId, &model.id).ok()),
-        }
     }
 
     fn assertProviderExists(&self, providerId: &str) -> Result<(), ModelConfigError> {
@@ -1129,6 +1056,20 @@ mod tests {
                 fs::create_dir_all(parent)?;
             }
             fs::write(path, content)?;
+            Ok(())
+        }
+
+        /// Appends bytes to the temporary runtime root.
+        fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+            let path = self.resolve(path)?;
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut file = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)?;
+            std::io::Write::write_all(&mut file, content)?;
             Ok(())
         }
 

@@ -17,7 +17,6 @@ use crate::ToolExecutionManager::{
 pub struct PackageToolExecutor {
     toolPackage: ToolPackage,
     packageExecutor: Arc<dyn JsPackageExecutor>,
-    executionHandler: AIToolHandler,
 }
 
 impl PackageToolExecutor {
@@ -27,18 +26,16 @@ impl PackageToolExecutor {
         packageManager: Arc<Mutex<RuntimePackageManager>>,
         toolHandler: AIToolHandler,
     ) -> Self {
-        let executionHandler = toolHandler.withIsolatedNestedExecutionAuthorization();
         let packageRuntime = Arc::new(PackageManagerJsRuntime::new(
             packageManager,
-            executionHandler.clone(),
+            toolHandler.clone(),
         ));
         let runtimeDependencies = toolHandler.runtimeDependencies();
         Self {
             toolPackage,
             packageExecutor: runtimeDependencies
                 .js_execution_provider()
-                .create_package_executor(packageRuntime, Arc::new(executionHandler.clone())),
-            executionHandler,
+                .create_package_executor(packageRuntime, Arc::new(toolHandler)),
         }
     }
 
@@ -81,9 +78,6 @@ impl PackageToolExecutor {
         };
 
         let request = packageToolCallRequest(tool);
-        let _authorization = self
-            .executionHandler
-            .enterPackageNestedExecutionAuthorization();
         let result = self
             .packageExecutor
             .execute_package_tool(&packageTool.script, &request);
@@ -178,9 +172,6 @@ impl ToolExecutor for PackageToolExecutor {
         };
 
         let request = packageToolCallRequest(tool);
-        let _authorization = self
-            .executionHandler
-            .enterPackageNestedExecutionAuthorization();
         let result = self
             .packageExecutor
             .execute_package_tool(&packageTool.script, &request);

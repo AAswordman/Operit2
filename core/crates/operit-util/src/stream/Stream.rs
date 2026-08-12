@@ -343,6 +343,19 @@ mod tests {
             });
             Ok(())
         }
+
+        /// Completes one test runtime turn immediately.
+        fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture {
+            Box::pin(async { Ok(()) })
+        }
+
+        /// Completes one test delay immediately.
+        fn waitForHostRuntimeDelay(
+            &self,
+            _delay_ms: u64,
+        ) -> operit_host_api::HostRuntimeTurnFuture {
+            Box::pin(async { Ok(()) })
+        }
     }
 
     /// Installs the stream test scheduler once for this process.

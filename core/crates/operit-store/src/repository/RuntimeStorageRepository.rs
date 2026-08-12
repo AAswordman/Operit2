@@ -49,6 +49,14 @@ impl RuntimeStorageRepository {
     }
 
     #[allow(non_snake_case)]
+    /// Appends UTF-8 text content to runtime storage.
+    pub fn appendText(&self, path: String, content: String) -> Result<(), String> {
+        defaultRuntimeStorageHost()
+            .appendBytes(&path, content.as_bytes())
+            .map_err(|error| error.message)
+    }
+
+    #[allow(non_snake_case)]
     /// Decodes base64 content and writes the bytes to runtime storage.
     pub fn writeBase64(&self, path: String, base64Content: String) -> Result<(), String> {
         let bytes = STANDARD
@@ -75,6 +83,12 @@ impl RuntimeStorageRepository {
     /// Returns the runtime storage path for browser download metadata.
     pub fn webSessionBrowserDownloadsPath(&self) -> String {
         OperitPaths::RUNTIME_WEBSESSION_BROWSER_DOWNLOADS_PATH.to_string()
+    }
+
+    #[allow(non_snake_case)]
+    /// Returns the runtime storage directory for character avatar assets.
+    pub fn characterAvatarsDirPath(&self) -> String {
+        OperitPaths::RUNTIME_CHARACTER_AVATARS_DIR_PATH.to_string()
     }
 
     #[allow(non_snake_case)]

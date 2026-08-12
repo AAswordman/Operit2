@@ -34,10 +34,12 @@ use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::PendingQueueMessageItem::PendingQueueMessageItem;
 use operit_model::PromptFunctionType::PromptFunctionType;
-use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_store::repository::ChatHistoryManager::ChatImportResult;
-use operit_store::PreferencesDataStore::{combine3, combine4, combine5, MutableStateFlow, StateFlow};
+use operit_store::PreferencesDataStore::{
+    combine3, combine4, combine5, MutableStateFlow, StateFlow,
+};
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
@@ -333,8 +335,7 @@ impl ChatServiceCore {
             return;
         }
         queueState.wasBlocked = true;
-        self.pendingQueueStateFlow()
-            .set_value(queueStateByChatId);
+        self.pendingQueueStateFlow().set_value(queueStateByChatId);
     }
 
     fn initializeDelegates(&mut self) {
@@ -598,8 +599,7 @@ impl ChatServiceCore {
         });
         queueState.isExpanded = true;
         queueState.wasBlocked = true;
-        self.pendingQueueStateFlow()
-            .set_value(queueStateByChatId);
+        self.pendingQueueStateFlow().set_value(queueStateByChatId);
     }
 
     /// Deletes one queued message from a specific chat.
@@ -610,8 +610,7 @@ impl ChatServiceCore {
             return;
         };
         queueState.messages.retain(|item| item.id != messageId);
-        self.pendingQueueStateFlow()
-            .set_value(queueStateByChatId);
+        self.pendingQueueStateFlow().set_value(queueStateByChatId);
     }
 
     /// Removes one queued message for editing or explicit user delivery.
@@ -622,8 +621,7 @@ impl ChatServiceCore {
         messageId: i64,
         suppressNextAutoDequeue: bool,
     ) -> Option<PendingQueueMessageItem> {
-        let shouldSuppressAutoDequeue =
-            suppressNextAutoDequeue && self.isChatQueueBlocked(&chatId);
+        let shouldSuppressAutoDequeue = suppressNextAutoDequeue && self.isChatQueueBlocked(&chatId);
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId.get_mut(&chatId)?;
         let messageIndex = queueState
@@ -634,8 +632,7 @@ impl ChatServiceCore {
         if shouldSuppressAutoDequeue && !queueState.messages.is_empty() {
             queueState.suppressNextAutoDequeue = true;
         }
-        self.pendingQueueStateFlow()
-            .set_value(queueStateByChatId);
+        self.pendingQueueStateFlow().set_value(queueStateByChatId);
         Some(message)
     }
 
@@ -650,8 +647,7 @@ impl ChatServiceCore {
             return;
         }
         queueState.suppressNextAutoDequeue = false;
-        self.pendingQueueStateFlow()
-            .set_value(queueStateByChatId);
+        self.pendingQueueStateFlow().set_value(queueStateByChatId);
     }
 
     /// Atomically removes the next queued message after a chat becomes ready.
@@ -671,28 +667,21 @@ impl ChatServiceCore {
         queueState.wasBlocked = false;
         if queueState.suppressNextAutoDequeue {
             queueState.suppressNextAutoDequeue = false;
-            self.pendingQueueStateFlow()
-                .set_value(queueStateByChatId);
+            self.pendingQueueStateFlow().set_value(queueStateByChatId);
             return None;
         }
         let Some(message) = queueState.messages.first().cloned() else {
-            self.pendingQueueStateFlow()
-                .set_value(queueStateByChatId);
+            self.pendingQueueStateFlow().set_value(queueStateByChatId);
             return None;
         };
         queueState.messages.remove(0);
-        self.pendingQueueStateFlow()
-            .set_value(queueStateByChatId);
+        self.pendingQueueStateFlow().set_value(queueStateByChatId);
         Some(message)
     }
 
     /// Inserts a rejected queued message back at the front of its chat queue.
     #[allow(non_snake_case)]
-    pub fn restorePendingQueueMessage(
-        &mut self,
-        chatId: String,
-        message: PendingQueueMessageItem,
-    ) {
+    pub fn restorePendingQueueMessage(&mut self, chatId: String, message: PendingQueueMessageItem) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId
             .entry(chatId)
@@ -702,8 +691,7 @@ impl ChatServiceCore {
         }
         queueState.nextMessageId = queueState.nextMessageId.max(message.id + 1);
         queueState.messages.insert(0, message);
-        self.pendingQueueStateFlow()
-            .set_value(queueStateByChatId);
+        self.pendingQueueStateFlow().set_value(queueStateByChatId);
     }
 
     /// Updates whether a chat's pending-message queue is expanded in the UI.
@@ -714,8 +702,7 @@ impl ChatServiceCore {
             .entry(chatId)
             .or_insert_with(PendingChatQueueState::new);
         queueState.isExpanded = isExpanded;
-        self.pendingQueueStateFlow()
-            .set_value(queueStateByChatId);
+        self.pendingQueueStateFlow().set_value(queueStateByChatId);
     }
 
     /// Splits markdown content into stable render events for the client.

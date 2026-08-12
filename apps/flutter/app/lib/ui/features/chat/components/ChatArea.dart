@@ -291,11 +291,17 @@ class _ChatAreaState extends State<ChatArea> {
     return false;
   }
 
+  /// Hides the scroll navigator after the active user scroll session settles.
   void _scheduleNavigatorHide() {
     _navigatorHideTimer?.cancel();
     _navigatorHideTimer = Timer(_navigatorHideDelay, () {
-      if (!mounted ||
-          widget.scrollController.position.isScrollingNotifier.value) {
+      _navigatorHideTimer = null;
+      if (!mounted) {
+        return;
+      }
+      final scrollController = widget.scrollController;
+      if (scrollController.hasClients &&
+          scrollController.position.isScrollingNotifier.value) {
         _scheduleNavigatorHide();
         return;
       }

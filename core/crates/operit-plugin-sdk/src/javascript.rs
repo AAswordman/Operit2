@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -105,6 +107,12 @@ pub struct JsToolPkgIpcRequest {
     pub payload: Value,
 }
 
+/// Completes one asynchronous ToolPkg IPC request on the source execution host.
+pub type JsToolPkgIpcCompletion = Box<dyn FnOnce(Result<Value, String>) + Send + 'static>;
+
+/// Represents one locally polled JavaScript execution future.
+pub type JsExecutionFuture<T> = Pin<Box<dyn Future<Output = T> + 'static>>;
+
 /// Defines the fixed Rust execution contract required by package JavaScript.
 pub trait JsExecutionHost: crate::js_sdk::JsToolsHost + Send + Sync {
     /// Executes one validated tool call through the embedding application's tool system.
@@ -165,8 +173,15 @@ pub trait JsExecutionHost: crate::js_sdk::JsToolsHost + Send + Sync {
     /// Resolves one package-aware JavaScript tool name.
     fn resolve_tool_name(&self, request: JsToolNameResolutionRequest) -> Result<String, String>;
 
-    /// Dispatches one ToolPkg IPC request to the selected runtime.
-    fn invoke_toolpkg_ipc(&self, request: JsToolPkgIpcRequest) -> Result<Value, String>;
+    /// Dispatches one ToolPkg IPC request to the selected runtime without blocking the source engine.
+    fn invoke_toolpkg_ipc_async(
+        &self,
+        request: JsToolPkgIpcRequest,
+        completion: JsToolPkgIpcCompletion,
+    ) -> Result<(), String>;
+
+    /// Waits for the host runtime to advance JavaScript work on a later turn.
+    fn wait_for_javascript_runtime_turn(&self) -> operit_host_api::HostRuntimeTurnFuture;
 }
 
 /// Executes package JavaScript through one bound package and host context.
@@ -185,6 +200,13 @@ pub trait JsExecutionProvider: Send + Sync {
     fn create_execution_engine(
         &self,
         execution_host: Arc<dyn JsExecutionHost>,
+    ) -> Arc<dyn JsExecutionEngine>;
+
+    /// Creates one JavaScript engine bound to a ToolPkg package environment.
+    fn create_toolpkg_execution_engine(
+        &self,
+        execution_host: Arc<dyn JsExecutionHost>,
+        context: ToolPkgExecutionContext,
     ) -> Arc<dyn JsExecutionEngine>;
 
     /// Creates one package executor bound to caller-owned runtime contracts.
@@ -283,6 +305,24 @@ pub struct ToolPkgMainRegistrationCapture {
     pub aiProviders: Vec<String>,
 }
 
+/// Resolves UTF-8 module resources for ToolPkg JavaScript execution contexts.
+pub trait ToolPkgTextResourceHost: Send + Sync {
+    /// Reads one UTF-8 resource from a registered ToolPkg container or subpackage.
+    fn read_toolpkg_text_resource(
+        &self,
+        package_name_or_subpackage_id: &str,
+        resource_path: &str,
+    ) -> Result<String, String>;
+}
+
+/// Immutable package environment owned by one ToolPkg JavaScript execution context.
+#[derive(Clone)]
+pub struct ToolPkgExecutionContext {
+    pub context_key: String,
+    pub container_package_name: String,
+    pub text_resource_host: Arc<dyn ToolPkgTextResourceHost>,
+}
+
 /// JavaScript execution handle supplied by the JS bridge crate.
 pub trait JsExecutionEngine: Send + Sync {
     /// Executes a named JavaScript function for ToolPkg runtime hooks.
@@ -309,6 +349,18 @@ pub trait JsExecutionEngine: Send + Sync {
         timeout_millis: u64,
     ) -> JsExecutionResult<Option<String>>;
 
+    /// Executes a named JavaScript function without blocking the caller runtime.
+    fn execute_script_function_async(
+        &self,
+        script: String,
+        function_name: String,
+        params: BTreeMap<String, Value>,
+        env_overrides: BTreeMap<String, String>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        dispatch_intermediate_on_main: bool,
+        timeout_millis: u64,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>>;
+
     /// Executes a ToolPkg registration function and returns captured declarations.
     fn execute_toolpkg_main_registration_function_with_text_resources(
         &self,
@@ -327,6 +379,15 @@ pub trait JsExecutionEngine: Send + Sync {
         text_resources: Arc<BTreeMap<String, String>>,
     ) -> JsExecutionResult<Option<String>>;
 
+    /// Executes one Compose DSL render without blocking the caller runtime.
+    fn execute_compose_dsl_script_async(
+        &self,
+        script: String,
+        runtime_options: BTreeMap<String, Value>,
+        env_overrides: BTreeMap<String, String>,
+        text_resources: Arc<BTreeMap<String, String>>,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>>;
+
     /// Dispatches one Compose DSL action and emits intermediate render events.
     fn dispatch_compose_dsl_action(
         &self,
@@ -336,6 +397,16 @@ pub trait JsExecutionEngine: Send + Sync {
         env_overrides: &BTreeMap<String, String>,
         on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
     ) -> JsExecutionResult<Option<String>>;
+
+    /// Dispatches one Compose DSL action without blocking the caller runtime.
+    fn dispatch_compose_dsl_action_result_async(
+        &self,
+        action_id: String,
+        payload: Option<Value>,
+        runtime_options: BTreeMap<String, Value>,
+        env_overrides: BTreeMap<String, String>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>>;
 
     /// Destroys any engine resources owned by this handle.
     fn destroy(&self);

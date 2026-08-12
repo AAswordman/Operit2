@@ -1,10 +1,11 @@
-use super::JsEngineState;
+use super::JsEngineTests::newTestJsEngineState;
 use crate::javascript::TestJsToolsHost::expect_js_output;
 use std::collections::BTreeMap;
 
 #[test]
 fn plugin_config_proxy_persists_and_reads_values() {
-    let mut state = JsEngineState::new(None);
+    super::JsEngineTests::ensure_test_runtime_root();
+    let mut state = newTestJsEngineState(None);
     let script = r#"
         exports.plugin_config_roundtrip = async function(_params) {
             var files = Object.create(null);
@@ -34,8 +35,7 @@ fn plugin_config_proxy_persists_and_reads_values() {
             var config = await PluginConfig.use('roundtrip', { count: 1, name: 'default' });
             config.count = 42;
             config.name = 'saved';
-            await Promise.resolve();
-            await Promise.resolve();
+            await PluginConfig.flush(config);
 
             var loaded = await PluginConfig.use('roundtrip', { count: 0, name: 'missing' });
             return {

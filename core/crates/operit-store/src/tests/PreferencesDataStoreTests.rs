@@ -1,5 +1,9 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use operit_host_api::{HostError, HostSecretStore, RuntimeStorageEntry, RuntimeStorageHost};
 use serde_json::Value;
@@ -115,6 +119,41 @@ fn derived_state_unsubscribes_from_sources_when_dropped() {
 #[derive(Clone, Default)]
 struct MemoryStorageHost {
     files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    readCount: Arc<AtomicUsize>,
+    writeCount: Arc<AtomicUsize>,
+    blockedWrite: Arc<Mutex<Option<BlockedWrite>>>,
+}
+
+struct BlockedWrite {
+    started: Sender<()>,
+    release: Receiver<()>,
+}
+
+impl MemoryStorageHost {
+    /// Returns how many storage read operations this host has served.
+    fn readCount(&self) -> usize {
+        self.readCount.load(Ordering::SeqCst)
+    }
+
+    /// Returns how many storage write operations this host has served.
+    fn writeCount(&self) -> usize {
+        self.writeCount.load(Ordering::SeqCst)
+    }
+
+    /// Blocks the next storage write until the returned sender is signalled.
+    fn blockNextWrite(&self) -> (Receiver<()>, Sender<()>) {
+        let (startedSender, startedReceiver) = channel();
+        let (releaseSender, releaseReceiver) = channel();
+        let mut blockedWrite = self
+            .blockedWrite
+            .lock()
+            .expect("test blocked write mutex must not be poisoned");
+        *blockedWrite = Some(BlockedWrite {
+            started: startedSender,
+            release: releaseReceiver,
+        });
+        (startedReceiver, releaseSender)
+    }
 }
 
 #[derive(Clone, Default)]
@@ -132,6 +171,7 @@ impl RuntimeStorageHost for MemoryStorageHost {
     }
 
     fn readBytes(&self, path: &str) -> operit_host_api::HostResult<Vec<u8>> {
+        self.readCount.fetch_add(1, Ordering::SeqCst);
         let files = self
             .files
             .lock()
@@ -165,11 +205,39 @@ impl RuntimeStorageHost for MemoryStorageHost {
     }
 
     fn writeBytes(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+        self.writeCount.fetch_add(1, Ordering::SeqCst);
+        let blockedWrite = self
+            .blockedWrite
+            .lock()
+            .map_err(|error| HostError::new(error.to_string()))?
+            .take();
+        if let Some(blockedWrite) = blockedWrite {
+            blockedWrite
+                .started
+                .send(())
+                .map_err(|error| HostError::new(error.to_string()))?;
+            blockedWrite
+                .release
+                .recv()
+                .map_err(|error| HostError::new(error.to_string()))?;
+        }
         let mut files = self
             .files
             .lock()
             .map_err(|error| HostError::new(error.to_string()))?;
         files.insert(path.to_string(), content.to_vec());
+        Ok(())
+    }
+
+    /// Appends bytes to one in-memory preferences storage entry.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+        self.writeCount.fetch_add(1, Ordering::SeqCst);
+        self.files
+            .lock()
+            .map_err(|error| HostError::new(error.to_string()))?
+            .entry(path.to_string())
+            .or_default()
+            .extend_from_slice(content);
         Ok(())
     }
 
@@ -533,4 +601,107 @@ fn stores_with_same_path_share_latest_in_memory_preferences() {
         preferences.get(&stringPreferencesKey("provider_list")),
         Some(&"[\"DEEPSEEK\"]".to_string())
     );
+}
+
+#[test]
+/// Verifies that a later store instance reuses the process-wide preference snapshot.
+fn transient_stores_reuse_cached_preferences_without_another_storage_read() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let storagePath = "runtime/config/preferences/transient_store_cache.preferences.json";
+    let mut preferences = Preferences::default();
+    preferences.set(
+        &stringPreferencesKey("provider_list"),
+        "[\"DEEPSEEK\"]".to_string(),
+    );
+    host.writeBytes(
+        storagePath,
+        &serde_json::to_vec_pretty(&preferences).expect("preferences serialization"),
+    )
+    .expect("preferences write");
+
+    {
+        let store = PreferencesDataStore::newWithStorage(host.clone(), storagePath);
+        assert_eq!(store.data().expect("first preferences read"), preferences);
+    }
+
+    let laterStore = PreferencesDataStore::newWithStorage(host.clone(), storagePath);
+    assert_eq!(
+        laterStore.data().expect("cached preferences read"),
+        preferences
+    );
+    assert_eq!(host.readCount(), 1);
+}
+
+#[test]
+/// Verifies that reads continue from the last committed snapshot while an edit persists.
+fn reads_do_not_wait_for_an_in_progress_preferences_write() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let storagePath = "runtime/config/preferences/read_during_write.preferences.json";
+    let store = PreferencesDataStore::newWithStorage(host.clone(), storagePath);
+    let mut initialPreferences = Preferences::default();
+    initialPreferences.set(&stringPreferencesKey("theme"), "light".to_string());
+    store
+        .replace(initialPreferences.clone())
+        .expect("initial preferences write");
+
+    let (writeStarted, releaseWrite) = host.blockNextWrite();
+    let storeForEdit = store.clone();
+    let edit = thread::spawn(move || {
+        storeForEdit.edit(|preferences| {
+            preferences.set(&stringPreferencesKey("theme"), "dark".to_string());
+        })
+    });
+    writeStarted
+        .recv_timeout(Duration::from_secs(1))
+        .expect("preferences write must start");
+
+    let storeForRead = store.clone();
+    let (readSender, readReceiver) = channel();
+    let read = thread::spawn(move || {
+        let _ = readSender.send(storeForRead.data());
+    });
+    let duringWrite = readReceiver.recv_timeout(Duration::from_millis(100));
+
+    releaseWrite.send(()).expect("preferences write release");
+    edit.join().expect("edit thread join").expect("edit result");
+    read.join().expect("read thread join");
+
+    let preferences = duringWrite
+        .expect("data must not wait for the storage write")
+        .expect("data result");
+    assert_eq!(
+        preferences.get(&stringPreferencesKey("theme")),
+        Some(&"light".to_string())
+    );
+    assert_eq!(
+        store
+            .data()
+            .expect("updated preferences read")
+            .get(&stringPreferencesKey("theme")),
+        Some(&"dark".to_string())
+    );
+}
+
+#[test]
+/// Verifies that an unchanged edit does not persist another preference snapshot.
+fn unchanged_edit_skips_storage_persistence() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let store = PreferencesDataStore::newWithStorage(
+        host.clone(),
+        "runtime/config/preferences/unchanged_edit.preferences.json",
+    );
+
+    store
+        .edit(|preferences| {
+            preferences.set(&stringPreferencesKey("theme"), "light".to_string());
+        })
+        .expect("initial preferences edit");
+    assert_eq!(host.writeCount(), 1);
+
+    store
+        .edit(|preferences| {
+            preferences.set(&stringPreferencesKey("theme"), "light".to_string());
+        })
+        .expect("unchanged preferences edit");
+    assert_eq!(host.writeCount(), 1);
 }

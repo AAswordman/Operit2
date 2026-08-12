@@ -1,6 +1,5 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../../types/compose-dsl";
 import {
-  applySettingsPatch,
   createDefaultSettings,
   loadSettings,
   MAX_INJECTION_TIMEOUT_SECONDS,
@@ -19,17 +18,13 @@ function useStateValue<T>(ctx: ComposeDslContext, key: string, initialValue: T):
 }
 
 async function readSettings(): Promise<ExtraInfoInjectionSettings> {
-  return withContext<ExtraInfoInjectionSettings>("main", {}, function() {
-    return loadSettings();
-  });
+  return loadSettings();
 }
 
 async function saveSettingsInMain(
   patch: Partial<ExtraInfoInjectionSettings>
 ): Promise<ExtraInfoInjectionSettings> {
-  return withContext<ExtraInfoInjectionSettings>("main", { patch }, function() {
-    return saveSettings(patch);
-  });
+  return saveSettings(patch);
 }
 
 function createSectionTitle(ctx: ComposeDslContext, icon: string, title: string): ComposeNode {
@@ -323,35 +318,14 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     injectionTimeoutInputState.set(String(next.injectionTimeoutSeconds));
   };
 
-  const currentSettings = (): ExtraInfoInjectionSettings => ({
-    masterEnabled: masterEnabledState.value,
-    persistInjectedContent: persistInjectedContentState.value,
-    injectTime: injectTimeState.value,
-    injectBattery: injectBatteryState.value,
-    injectWeather: injectWeatherState.value,
-    injectLocation: injectLocationState.value,
-    usePreciseLocation: usePreciseLocationState.value,
-    injectCurrentScreenApp: injectCurrentScreenAppState.value,
-    injectRecentAppUsage: injectRecentAppUsageState.value,
-    injectScreenText: injectScreenTextState.value,
-    injectNotifications: injectNotificationsState.value,
-    injectMemory: injectMemoryState.value,
-    allowRepeatedMemorySearch: allowRepeatedMemorySearchState.value,
-    memoryLimit: memoryLimitState.value,
-    injectionTimeoutSeconds: injectionTimeoutSecondsState.value,
-  });
-
   const persistSettings = async (
     patch: Partial<ExtraInfoInjectionSettings>,
     successMessage = ""
   ): Promise<void> => {
-    const next = applySettingsPatch(currentSettings(), patch);
-    syncSettings(next);
-    errorMessageState.set("");
-    successMessageState.set(successMessage);
-
     try {
       syncSettings(await saveSettingsInMain(patch));
+      errorMessageState.set("");
+      successMessageState.set(successMessage);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error || "unknown");
       successMessageState.set("");

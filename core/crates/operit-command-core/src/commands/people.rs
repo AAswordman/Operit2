@@ -177,13 +177,14 @@ pub fn run_character_command(
                 "openingStatement" => card.openingStatement = value,
                 "otherContentChat" => card.otherContentChat = value,
                 "otherContentVoice" => card.otherContentVoice = value,
+                "avatarUri" => card.avatarUri = nonBlankString(value),
                 "advancedCustomPrompt" => card.advancedCustomPrompt = value,
                 "marks" => card.marks = value,
                 "attachedTagIds" => card.attachedTagIds = parseCsvList(&value),
                 "chatModelBindingMode" => card.chatModelBindingMode = CharacterCardChatModelBindingMode::normalize(Some(&value)),
                 "chatModelId" => card.chatModelId = nonBlankString(value),
                 _ => {
-                    return Err("character fields: name | description | characterSetting | openingStatement | otherContentChat | otherContentVoice | attachedTagIds | advancedCustomPrompt | marks | chatModelBindingMode | chatModelId".to_string())
+                    return Err("character fields: name | description | characterSetting | openingStatement | otherContentChat | otherContentVoice | avatarUri | attachedTagIds | advancedCustomPrompt | marks | chatModelBindingMode | chatModelId".to_string())
                 }
             }
             core.preferences_character_card_manager()

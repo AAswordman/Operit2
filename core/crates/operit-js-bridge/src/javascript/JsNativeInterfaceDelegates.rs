@@ -400,22 +400,34 @@ fn serializeToolResultData(result: &JsToolCallResultData) -> SerializedToolResul
 
 /// Executes one JavaScript tool call through the Rust runtime supplied by the caller.
 #[allow(non_snake_case)]
+pub fn callToolSerialized(
+    toolRuntime: &dyn JsExecutionHost,
+    toolType: &str,
+    toolName: &str,
+    paramsJson: &str,
+) -> (String, bool) {
+    if toolName.trim().is_empty() {
+        return (buildToolErrorJson("Tool name cannot be empty"), true);
+    }
+
+    let parsed = match parseToolCall(toolType, toolName, paramsJson) {
+        Ok(value) => value,
+        Err(error) => return (buildToolErrorJson(&error), true),
+    };
+    let result = toolRuntime.execute_tool_call(parsed);
+    let isError = !result.success;
+    (serializeToolExecutionResult(&result), isError)
+}
+
+/// Executes one synchronous JavaScript tool call and returns its serialized result.
+#[allow(non_snake_case)]
 pub fn callToolSync(
     toolRuntime: &dyn JsExecutionHost,
     toolType: &str,
     toolName: &str,
     paramsJson: &str,
 ) -> String {
-    if toolName.trim().is_empty() {
-        return buildToolErrorJson("Tool name cannot be empty");
-    }
-
-    let parsed = match parseToolCall(toolType, toolName, paramsJson) {
-        Ok(value) => value,
-        Err(error) => return buildToolErrorJson(&error),
-    };
-    let result = toolRuntime.execute_tool_call(parsed);
-    serializeToolExecutionResult(&result)
+    callToolSerialized(toolRuntime, toolType, toolName, paramsJson).0
 }
 
 #[cfg(test)]

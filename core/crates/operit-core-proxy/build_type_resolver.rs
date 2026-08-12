@@ -415,7 +415,11 @@ fn serializable_enum_type(
             };
             SerializableEnumVariant {
                 json_name: serde_rename(&variant.attrs)
-                    .or_else(|| rename_all.as_deref().map(|rule| serde_case_name(&name, rule)))
+                    .or_else(|| {
+                        rename_all
+                            .as_deref()
+                            .map(|rule| serde_case_name(&name, rule))
+                    })
                     .unwrap_or_else(|| name.clone()),
                 fields_are_unit,
                 fields,
@@ -572,7 +576,9 @@ fn identifier_words(name: &str) -> Vec<String> {
             let lower_to_upper = previous.is_ascii_lowercase() && current.is_ascii_uppercase();
             let acronym_to_word = previous.is_ascii_uppercase()
                 && current.is_ascii_uppercase()
-                && next.map(|character| character.is_ascii_lowercase()).unwrap_or(false);
+                && next
+                    .map(|character| character.is_ascii_lowercase())
+                    .unwrap_or(false);
             if lower_to_upper || acronym_to_word {
                 words.push(
                     characters[start..index]

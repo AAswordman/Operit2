@@ -55,10 +55,10 @@ class _CharacterCardEditorDialog extends StatefulWidget {
   final bool disableUserPreferenceDescription;
   final Future<void> Function(bool enabled) onSaveMemoryAutoUpdate;
   final Future<void> Function(bool enabled) onSavePreferenceDescription;
-  final List<_ToolAccessOption> builtinToolOptions;
-  final List<_ToolAccessOption> packageToolOptions;
-  final List<_ToolAccessOption> skillToolOptions;
-  final List<_ToolAccessOption> mcpToolOptions;
+  final List<ToolAccessOption> builtinToolOptions;
+  final List<ToolAccessOption> packageToolOptions;
+  final List<ToolAccessOption> skillToolOptions;
+  final List<ToolAccessOption> mcpToolOptions;
   final List<core_proxy.PromptTag> tags;
 
   static Future<_CharacterCardEditorResult?> show({
@@ -73,10 +73,10 @@ class _CharacterCardEditorDialog extends StatefulWidget {
     required bool disableUserPreferenceDescription,
     required Future<void> Function(bool enabled) onSaveMemoryAutoUpdate,
     required Future<void> Function(bool enabled) onSavePreferenceDescription,
-    required List<_ToolAccessOption> builtinToolOptions,
-    required List<_ToolAccessOption> packageToolOptions,
-    required List<_ToolAccessOption> skillToolOptions,
-    required List<_ToolAccessOption> mcpToolOptions,
+    required List<ToolAccessOption> builtinToolOptions,
+    required List<ToolAccessOption> packageToolOptions,
+    required List<ToolAccessOption> skillToolOptions,
+    required List<ToolAccessOption> mcpToolOptions,
     required List<core_proxy.PromptTag> tags,
   }) {
     return showDialog<_CharacterCardEditorResult>(
@@ -209,24 +209,26 @@ class _CharacterCardEditorDialogState
     }
     if (_memoryBindingMode == _memoryBindingShared &&
         (_sharedMemoryId == null || _sharedMemoryId!.trim().isEmpty)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请选择共享记忆库')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请选择共享记忆库')));
       return;
     }
     if (_memoryBindingMode == _memoryBindingShared &&
-        !widget.sharedMemoryStores.any((store) => store.id == _sharedMemoryId)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('共享记忆库不存在，请重新选择')),
-      );
+        !widget.sharedMemoryStores.any(
+          (store) => store.id == _sharedMemoryId,
+        )) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('共享记忆库不存在，请重新选择')));
       return;
     }
     if (_ttsBindingEnabled &&
         (_ttsConfigId == null ||
             !widget.ttsConfigs.any((config) => config.id == _ttsConfigId))) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请选择 TTS 配置')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请选择 TTS 配置')));
       return;
     }
     final card = widget.card;
@@ -455,9 +457,7 @@ class _CharacterCardEditorDialogState
   Future<void> _selectChatModel() async {
     final selected = await _CharacterModelSelectorDialog.show(
       context: context,
-      title: AppLocalizations.of(
-        context,
-      )!.settingsModelFunctionMappingsSelect(
+      title: AppLocalizations.of(context)!.settingsModelFunctionMappingsSelect(
         AppLocalizations.of(context)!.settingsCharactersChatModelConfig,
       ),
       summaries: widget.modelSummaries,
@@ -522,6 +522,7 @@ class _CharacterCardEditorDialogState
     });
   }
 
+  /// Imports the selected avatar into runtime storage for the edited card.
   Future<void> _pickAvatarImage() async {
     const imageGroup = XTypeGroup(
       label: 'image',
@@ -531,8 +532,12 @@ class _CharacterCardEditorDialogState
     if (file == null) {
       return;
     }
+    final avatarUri = await CharacterAvatarStore().importFile(file);
+    if (!mounted) {
+      return;
+    }
     setState(() {
-      _avatarUri = file.path;
+      _avatarUri = avatarUri;
     });
   }
 
@@ -669,8 +674,10 @@ class _CharacterCardEditorDialogState
                       children: <Widget>[
                         _BindingSwitchSection(
                           title: '聊天模型',
-                          subtitleOff: l10n.settingsCharactersChatModelFollowGlobal,
-                          subtitleOn: l10n.settingsCharactersChatModelFixedConfig,
+                          subtitleOff:
+                              l10n.settingsCharactersChatModelFollowGlobal,
+                          subtitleOn:
+                              l10n.settingsCharactersChatModelFixedConfig,
                           value: _chatModelBindingMode == _chatModelFixedConfig,
                           onChanged: (value) {
                             setState(() {
@@ -750,9 +757,10 @@ class _CharacterCardEditorDialogState
                               )
                             else
                               DropdownButtonFormField<String>(
-                                initialValue: widget.sharedMemoryStores.any(
-                                  (store) => store.id == _sharedMemoryId,
-                                )
+                                initialValue:
+                                    widget.sharedMemoryStores.any(
+                                      (store) => store.id == _sharedMemoryId,
+                                    )
                                     ? _sharedMemoryId
                                     : null,
                                 items: <DropdownMenuItem<String>>[
@@ -797,7 +805,8 @@ class _CharacterCardEditorDialogState
                         ),
                         _BindingSwitchSection(
                           title: l10n.settingsCharactersToolAccess,
-                          subtitleOff: l10n.settingsCharactersToolAccessFollowGlobal,
+                          subtitleOff:
+                              l10n.settingsCharactersToolAccessFollowGlobal,
                           subtitleOn: l10n.settingsCharactersToolAccessCustom,
                           value: _toolAccessConfig.enabled,
                           onChanged: (value) {
@@ -890,12 +899,10 @@ class _CharacterAvatarEditorField extends StatelessWidget {
                   shape: BoxShape.circle,
                 ),
                 child: ClipOval(
-                  child: path == null
-                      ? Icon(
-                          Icons.person_outline,
-                          color: colorScheme.onSurfaceVariant,
-                        )
-                      : Image.file(File(path), fit: BoxFit.cover),
+                child: CharacterAvatarImage(
+                  avatarUri: path,
+                  fit: BoxFit.cover,
+                ),
                 ),
               ),
             ),
@@ -1129,9 +1136,10 @@ class _CharacterModelSelectorDialogState
     }
     return widget.summaries
         .where((summary) {
-          final text = '${summary.modelId} ${summary.providerName} '
-                  '${summary.providerTypeId}'
-              .toLowerCase();
+          final text =
+              '${summary.modelId} ${summary.providerName} '
+                      '${summary.providerTypeId}'
+                  .toLowerCase();
           return text.contains(query);
         })
         .toList(growable: false);
@@ -1439,18 +1447,18 @@ class _CharacterToolAccessDialog extends StatefulWidget {
   });
 
   final core_proxy.CharacterCardToolAccessConfig config;
-  final List<_ToolAccessOption> builtinOptions;
-  final List<_ToolAccessOption> packageOptions;
-  final List<_ToolAccessOption> skillOptions;
-  final List<_ToolAccessOption> mcpOptions;
+  final List<ToolAccessOption> builtinOptions;
+  final List<ToolAccessOption> packageOptions;
+  final List<ToolAccessOption> skillOptions;
+  final List<ToolAccessOption> mcpOptions;
 
   static Future<core_proxy.CharacterCardToolAccessConfig?> show({
     required BuildContext context,
     required core_proxy.CharacterCardToolAccessConfig config,
-    required List<_ToolAccessOption> builtinOptions,
-    required List<_ToolAccessOption> packageOptions,
-    required List<_ToolAccessOption> skillOptions,
-    required List<_ToolAccessOption> mcpOptions,
+    required List<ToolAccessOption> builtinOptions,
+    required List<ToolAccessOption> packageOptions,
+    required List<ToolAccessOption> skillOptions,
+    required List<ToolAccessOption> mcpOptions,
   }) {
     return showDialog<core_proxy.CharacterCardToolAccessConfig>(
       context: context,
@@ -1579,7 +1587,7 @@ class _ToolAccessOptionGroup extends StatelessWidget {
 
   final String title;
   final String emptyText;
-  final List<_ToolAccessOption> options;
+  final List<ToolAccessOption> options;
   final Set<String> selectedKeys;
   final void Function(String key, bool selected) onChanged;
 

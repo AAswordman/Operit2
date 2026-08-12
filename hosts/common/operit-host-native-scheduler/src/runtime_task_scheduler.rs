@@ -1,5 +1,6 @@
 use operit_host_api::{
     HostError, HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost,
+    HostRuntimeTurnFuture,
 };
 use std::sync::OnceLock;
 
@@ -87,5 +88,21 @@ impl HostRuntimeTaskSchedulerHost for NativeHostRuntimeTaskSchedulerHost {
                 .expect("delayed runtime task thread must start");
         });
         Ok(())
+    }
+
+    /// Waits for a later native executor turn without occupying the caller thread.
+    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
+        Box::pin(async {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            Ok(())
+        })
+    }
+
+    /// Waits through the native timer executor for one platform-owned delay.
+    fn waitForHostRuntimeDelay(&self, delayMs: u64) -> HostRuntimeTurnFuture {
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(delayMs)).await;
+            Ok(())
+        })
     }
 }

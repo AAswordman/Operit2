@@ -564,11 +564,6 @@ impl ChatHistoryManager {
         for archivedChat in archive.chats {
             let messageCount = archivedChat.messages.len();
             processedChatCount += 1;
-            if archivedChat.messages.is_empty() {
-                counters.skippedCount += 1;
-                onChatPersisted(processedChatCount, totalChatCount, messageCount);
-                continue;
-            }
             if existingIds.contains(&archivedChat.id) {
                 counters.updatedCount += 1;
             } else {

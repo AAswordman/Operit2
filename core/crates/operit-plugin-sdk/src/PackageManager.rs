@@ -332,7 +332,10 @@ mod tests {
 
     use super::{PackageStateResolver, PluginPackageManager};
     use crate::execution_result::JsExecutionResult;
-    use crate::javascript::{JsExecutionEngine, ToolPkgMainRegistrationCapture};
+    use crate::javascript::{
+        JsExecutionEngine, JsExecutionFuture, ToolPkgExecutionContext,
+        ToolPkgMainRegistrationCapture,
+    };
     use crate::package::{LocalizedText, PackageTool, ToolPackage, ToolPackageState};
     use crate::toolpkg::ToolPkgHooks::{ToolPkgHookDispatcher, ToolPkgHookInvocation};
     use crate::toolpkg::ToolPkgManager::{ToolPkgAssetSource, ToolPkgExecutionEngineFactory};
@@ -501,6 +504,25 @@ mod tests {
                 .map(str::to_string))
         }
 
+        /// Returns the dispatched event asynchronously for package manager tests.
+        fn execute_script_function_async(
+            &self,
+            _script: String,
+            _function_name: String,
+            params: BTreeMap<String, Value>,
+            _env_overrides: BTreeMap<String, String>,
+            _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+            _dispatch_intermediate_on_main: bool,
+            _timeout_millis: u64,
+        ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+            Box::pin(async move {
+                Ok(params
+                    .get("event")
+                    .and_then(Value::as_str)
+                    .map(str::to_string))
+            })
+        }
+
         /// Returns an empty registration capture for tests.
         #[allow(non_snake_case)]
         fn execute_toolpkg_main_registration_function_with_text_resources(
@@ -525,6 +547,17 @@ mod tests {
             Ok(Some(script.to_string()))
         }
 
+        /// Returns the supplied Compose DSL script asynchronously for tests.
+        fn execute_compose_dsl_script_async(
+            &self,
+            script: String,
+            _runtime_options: BTreeMap<String, Value>,
+            _env_overrides: BTreeMap<String, String>,
+            _text_resources: Arc<BTreeMap<String, String>>,
+        ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+            Box::pin(async move { Ok(Some(script)) })
+        }
+
         /// Returns the dispatched action id.
         #[allow(non_snake_case)]
         fn dispatch_compose_dsl_action(
@@ -538,6 +571,18 @@ mod tests {
             Ok(Some(actionId.to_string()))
         }
 
+        /// Returns the dispatched action id asynchronously for tests.
+        fn dispatch_compose_dsl_action_result_async(
+            &self,
+            actionId: String,
+            _payload: Option<Value>,
+            _runtimeOptions: BTreeMap<String, Value>,
+            _envOverrides: BTreeMap<String, String>,
+            _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+            Box::pin(async move { Ok(Some(actionId)) })
+        }
+
         /// Releases no resources for the test engine.
         fn destroy(&self) {}
     }
@@ -546,9 +591,18 @@ mod tests {
     struct TestExecutionEngineFactory;
 
     impl ToolPkgExecutionEngineFactory for TestExecutionEngineFactory {
-        /// Creates one test JavaScript engine.
+        /// Creates one generic test JavaScript engine.
         #[allow(non_snake_case)]
-        fn createToolPkgExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
+        fn createExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
+            Arc::new(TestExecutionEngine)
+        }
+
+        /// Creates one ToolPkg test JavaScript engine.
+        #[allow(non_snake_case)]
+        fn createToolPkgExecutionEngine(
+            &self,
+            _context: ToolPkgExecutionContext,
+        ) -> Arc<dyn JsExecutionEngine> {
             Arc::new(TestExecutionEngine)
         }
     }

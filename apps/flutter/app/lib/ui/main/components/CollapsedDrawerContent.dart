@@ -365,6 +365,7 @@ class ConversationDrawerItem extends StatelessWidget {
     required this.onDelete,
     required this.onLongPress,
     required this.onMoveTo,
+    required this.canAcceptDrop,
     required this.canDetach,
     required this.onDetach,
     this.nested = false,
@@ -379,6 +380,7 @@ class ConversationDrawerItem extends StatelessWidget {
   final VoidCallback onDelete;
   final VoidCallback onLongPress;
   final ValueChanged<core_proxy.ChatHistoryListItem> onMoveTo;
+  final bool Function(core_proxy.ChatHistoryListItem) canAcceptDrop;
   final bool canDetach;
   final VoidCallback onDetach;
   final bool nested;
@@ -390,7 +392,8 @@ class ConversationDrawerItem extends StatelessWidget {
     final itemShape = BorderRadius.circular(12);
     final windowSize = MediaQuery.sizeOf(context);
     return DragTarget<core_proxy.ChatHistoryListItem>(
-      onWillAcceptWithDetails: (details) => details.data.id != history.id,
+      onWillAcceptWithDetails: (details) =>
+          details.data.id != history.id && canAcceptDrop(details.data),
       onAcceptWithDetails: (details) => onMoveTo(details.data),
       builder: (context, candidateData, rejectedData) {
         final dragHovering = candidateData.isNotEmpty;

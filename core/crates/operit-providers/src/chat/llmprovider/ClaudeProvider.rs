@@ -11,6 +11,8 @@ use crate::chat::llmprovider::AIService::{
     SendMessageRequest, TokenCounts,
 };
 use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
@@ -87,7 +89,10 @@ impl ClaudeProvider {
             if self.is_cancelled() {
                 break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            defaultHostRuntimeTaskSchedulerHost()
+                .waitForHostRuntimeDelay(50)
+                .await
+                .expect("provider cancellation polling delay must be provided by the Host");
         }
     }
 
@@ -133,7 +138,7 @@ impl ClaudeProvider {
         }
         let delayMs = super::LlmRetryPolicy::LlmRetryPolicy::nextDelayMs(retryAttempt);
         tokio::select! {
-            _ = tokio::time::sleep(std::time::Duration::from_millis(delayMs as u64)) => Ok(()),
+            _ = defaultHostRuntimeTaskSchedulerHost().waitForHostRuntimeDelay(delayMs as u64) => Ok(()),
             _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
         }
     }

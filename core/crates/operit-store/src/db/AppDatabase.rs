@@ -14,7 +14,7 @@ use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::MessagePartEntity::MessagePartEntity;
 
 /// Current SQLite schema version expected by the runtime.
-pub const DATABASE_VERSION: i32 = 23;
+pub const DATABASE_VERSION: i32 = 24;
 
 #[derive(Debug, Error)]
 /// Error surface for opening and migrating the application database.
@@ -131,6 +131,7 @@ impl AppDatabase {
             20 => MIGRATION_20_21(self)?,
             21 => MIGRATION_21_22(self)?,
             22 => MIGRATION_22_23(self)?,
+            23 => MIGRATION_23_24(self)?,
             version => {
                 return Err(AppDatabaseError::MissingMigration {
                     from: version,
@@ -671,6 +672,43 @@ fn MIGRATION_22_23(database: &AppDatabase) -> Result<(), SqliteStoreError> {
         Ok(())
     })?;
     database.store.setUserVersion(23)
+}
+
+#[allow(non_snake_case)]
+/// Restores canonical visible message parts for structured revisions written before version 24.
+fn MIGRATION_23_24(database: &AppDatabase) -> Result<(), SqliteStoreError> {
+    database.store.transaction(|transaction| {
+        transaction.execute(
+            r#"
+            WITH revisions AS (
+                SELECT chatId, timestamp AS messageTimestamp, 0 AS variantIndex
+                FROM messages
+                UNION ALL
+                SELECT chatId, messageTimestamp, variantIndex
+                FROM message_variants
+            )
+            INSERT INTO message_parts (
+                chatId, messageTimestamp, variantIndex, partId, sequence, kind, content,
+                toolCallId, toolName, attributesJson
+            )
+            SELECT
+                revisions.chatId, revisions.messageTimestamp, revisions.variantIndex,
+                'part--1', -1, 'markdown', '', NULL, NULL, '{}'
+            FROM revisions
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM message_parts
+                WHERE message_parts.chatId = revisions.chatId
+                    AND message_parts.messageTimestamp = revisions.messageTimestamp
+                    AND message_parts.variantIndex = revisions.variantIndex
+                    AND message_parts.kind IN ('markdown', 'status')
+            )
+            "#,
+            sqliteParams![],
+        )?;
+        Ok(())
+    })?;
+    database.store.setUserVersion(24)
 }
 
 /// Stores a parsed legacy sync part together with the operation that owns it.

@@ -30,6 +30,7 @@ use operit_host_macos_native::{
     MacosSystemOperationHost as NativeSystemOperationHost, MacosTerminalHost as NativeTerminalHost,
     MacosWebVisitHost as NativeWebVisitHost,
 };
+use operit_host_native_common::NativeHostJavaScriptRuntimeHost;
 #[cfg(windows)]
 use operit_host_windows_native::{
     WindowsAudioPlaybackHost as NativeAudioPlaybackHost,
@@ -93,6 +94,8 @@ pub(crate) fn create_cli_application() -> OperitApplication {
         .withHostRuntimeEventSchedulerHost(Arc::new(NativeHostRuntimeEventSchedulerHost::new()));
     context = context
         .withHostRuntimeTaskSchedulerHost(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+    context =
+        context.withHostJavaScriptRuntimeHost(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
     context = context.withBrowserAutomationHost(Arc::new(NativeBrowserAutomationHost::new()));
     let commandContext = context.clone();
     OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(

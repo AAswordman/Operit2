@@ -30,7 +30,7 @@ impl JsToolManager {
         executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
     ) -> Self {
         let engines = (0..MAX_CONCURRENT_ENGINES)
-            .map(|_| executionEngineFactory.createToolPkgExecutionEngine())
+            .map(|_| executionEngineFactory.createExecutionEngine())
             .collect::<Vec<_>>();
         Self {
             packageRuntime,
@@ -411,8 +411,9 @@ mod tests {
     };
     use operit_plugin_sdk::javascript::{
         JsExecutionEngine, JsExecutionHost, JsPackageRuntime, JsToolCallRequest, JsToolCallResult,
-        JsToolNameResolutionRequest, JsToolPkgIpcRequest, JsToolPkgResourceRequest,
-        JsToolPkgWasmRequest, JsToolPkgWasmResult,
+        JsToolNameResolutionRequest, JsToolPkgIpcCompletion, JsToolPkgIpcRequest,
+        JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult,
+        ToolPkgExecutionContext,
     };
     use operit_plugin_sdk::package::{PackageTool, ToolPackage};
     use operit_plugin_sdk::toolpkg::ToolPkgLoader::ToolPkgLoader;
@@ -536,8 +537,18 @@ mod tests {
         }
 
         /// Rejects ToolPkg IPC in manager tests.
-        fn invoke_toolpkg_ipc(&self, _request: JsToolPkgIpcRequest) -> Result<Value, String> {
-            Err("ToolPkg IPC is not part of this test".to_string())
+        fn invoke_toolpkg_ipc_async(
+            &self,
+            _request: JsToolPkgIpcRequest,
+            completion: JsToolPkgIpcCompletion,
+        ) -> Result<(), String> {
+            completion(Err("ToolPkg IPC is not part of this test".to_string()));
+            Ok(())
+        }
+
+        /// Completes one JavaScript runtime turn immediately in manager tests.
+        fn wait_for_javascript_runtime_turn(&self) -> operit_host_api::HostRuntimeTurnFuture {
+            Box::pin(async { Ok(()) })
         }
     }
 
@@ -545,10 +556,22 @@ mod tests {
     struct TestExecutionEngineFactory;
 
     impl ToolPkgExecutionEngineFactory for TestExecutionEngineFactory {
-        /// Creates an isolated JavaScript engine for one test context.
+        /// Creates a generic isolated JavaScript engine for manager tests.
         #[allow(non_snake_case)]
-        fn createToolPkgExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
+        fn createExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
             Arc::new(JsEngine::new(Arc::new(TestJsExecutionHost)))
+        }
+
+        /// Creates a ToolPkg JavaScript engine with its bound package context.
+        #[allow(non_snake_case)]
+        fn createToolPkgExecutionEngine(
+            &self,
+            context: ToolPkgExecutionContext,
+        ) -> Arc<dyn JsExecutionEngine> {
+            Arc::new(JsEngine::new_toolpkg_execution_engine(
+                Arc::new(TestJsExecutionHost),
+                context,
+            ))
         }
     }
 

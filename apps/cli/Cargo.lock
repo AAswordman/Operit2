@@ -2306,6 +2306,7 @@ name = "operit-host-native-scheduler"
 version = "0.1.0"
 dependencies = [
  "operit-host-api",
+ "rquickjs",
  "tokio",
 ]
 
@@ -2368,14 +2369,10 @@ dependencies = [
  "operit-plugin-sdk",
  "operit-store",
  "operit-util",
- "quickjs-wasm-rs",
- "rquickjs",
  "serde",
  "serde_json",
  "tokio",
  "uuid",
- "wasm-bindgen",
- "web-sys",
 ]
 
 [[package]]

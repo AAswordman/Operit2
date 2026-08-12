@@ -36,6 +36,7 @@ pub use http::AndroidHttpHost;
 #[cfg(target_os = "android")]
 pub use local_inference::AndroidLocalInferenceHost;
 pub use managed_runtime::AndroidManagedRuntimeHost;
+pub use operit_host_native_common::NativeHostJavaScriptRuntimeHost as AndroidHostJavaScriptRuntimeHost;
 pub use operit_host_native_common::NativeHostRuntimeTaskSchedulerHost as AndroidHostRuntimeTaskSchedulerHost;
 #[cfg(target_os = "android")]
 pub use runtime_event_scheduler::{
@@ -83,5 +84,6 @@ pub fn createRuntimeHostManager(
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withLocalInferenceHost(Arc::new(AndroidLocalInferenceHost::new()))
     .withHostRuntimeEventSchedulerHost(Arc::new(AndroidHostRuntimeEventSchedulerHost::new()))
+    .withHostJavaScriptRuntimeHost(Arc::new(AndroidHostJavaScriptRuntimeHost::new()))
     .withHostRuntimeTaskSchedulerHost(Arc::new(AndroidHostRuntimeTaskSchedulerHost::new()))
 }

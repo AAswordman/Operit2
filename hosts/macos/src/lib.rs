@@ -13,6 +13,7 @@ pub use operit_host_apple_native::{
     AppleFileSystemHost as MacosFileSystemHost,
     AppleHostRuntimeEventHost as MacosHostRuntimeEventHost,
     AppleHostRuntimeEventSchedulerHost as MacosHostRuntimeEventSchedulerHost,
+    AppleHostJavaScriptRuntimeHost as MacosHostJavaScriptRuntimeHost,
     AppleHostRuntimeTaskSchedulerHost as MacosHostRuntimeTaskSchedulerHost,
     AppleHttpHost as MacosHttpHost, AppleLocalInferenceCommand as MacosLocalInferenceCommand,
     AppleLocalInferenceHost as MacosLocalInferenceHost, AppleMusicCommand as MacosMusicCommand,
@@ -59,5 +60,6 @@ pub fn createRuntimeHostManager(
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withHostRuntimeEventHost(Arc::new(MacosHostRuntimeEventHost::new()))
     .withHostRuntimeEventSchedulerHost(Arc::new(MacosHostRuntimeEventSchedulerHost::new()))
+    .withHostJavaScriptRuntimeHost(Arc::new(MacosHostJavaScriptRuntimeHost::new()))
     .withHostRuntimeTaskSchedulerHost(Arc::new(MacosHostRuntimeTaskSchedulerHost::new()))
 }

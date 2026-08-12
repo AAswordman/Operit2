@@ -1488,17 +1488,52 @@ async fn send_chat_message_with_core_result(
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "core has no active chat after send".to_string())?;
-    let messages = core
-        .chat_runtime_holder_main()
-        .chatHistoryFlowSnapshot()
-        .await
-        .map_err(|error| error.to_string())?;
-    let aiMessage = messages
-        .into_iter()
-        .rev()
-        .find(|message| message.sender == "ai" && message.timestamp > beforeLastAiTimestamp)
-        .ok_or_else(|| "core did not produce ai message for current turn".to_string())?;
+    let aiMessage = wait_for_committed_ai_message_with_core(
+        core,
+        &chatId,
+        beforeLastAiTimestamp,
+        Duration::from_secs(30),
+    )
+    .await?;
     Ok(ChatSendResult { chatId, aiMessage })
+}
+
+/// Waits for one proxied chat turn to commit an assistant message or report its exact error.
+async fn wait_for_committed_ai_message_with_core(
+    core: &mut CliCore,
+    chatId: &str,
+    afterTimestampExclusive: i64,
+    timeout: Duration,
+) -> Result<ChatMessage, String> {
+    let startedAt = Instant::now();
+    loop {
+        let state = core
+            .chat_runtime_holder_main()
+            .currentChatInputProcessingState()
+            .await
+            .map_err(|error| error.to_string())?;
+        if let InputProcessingState::Error { message } = state {
+            return Err(message);
+        }
+        let messages = core
+            .chat_runtime_holder_main()
+            .chatHistoryFlowSnapshot()
+            .await
+            .map_err(|error| error.to_string())?;
+        if let Some(message) = messages.into_iter().rev().find(|message| {
+            message.sender == "ai"
+                && message.timestamp > afterTimestampExclusive
+                && message.completedAt > 0
+        }) {
+            return Ok(message);
+        }
+        if startedAt.elapsed() >= timeout {
+            return Err(format!(
+                "timed out waiting for committed ai message: chat={chatId} afterTimestamp={afterTimestampExclusive}"
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 pub(crate) fn build_attachment_info(path: &str) -> Result<AttachmentInfo, String> {

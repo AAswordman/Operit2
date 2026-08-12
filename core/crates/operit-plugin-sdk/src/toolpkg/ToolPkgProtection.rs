@@ -1,15 +1,15 @@
 #![allow(non_snake_case)]
 
-use crate::JsPackageLoader::JsPackageLoader;
 use crate::toolpkg::ToolPkgParser::{ToolPkgArchiveParser, ToolPkgMarketOrigin};
+use crate::JsPackageLoader::JsPackageLoader;
 use chacha20poly1305::{
     aead::{AeadInPlace, KeyInit},
     ChaCha20Poly1305, Key, Nonce, Tag,
 };
+use regex::Regex;
 #[cfg(not(target_arch = "wasm32"))]
 use rquickjs::{CatchResultExt, Context as QuickJsContext, Runtime as QuickJsRuntime};
 use sha2::{Digest, Sha256};
-use regex::Regex;
 use std::collections::BTreeSet;
 use std::io::{Cursor, Read, Write};
 use zip::write::SimpleFileOptions;
@@ -677,10 +677,7 @@ pub fn encodeMarketOriginForMetadata(origin: &ToolPkgMarketOrigin) -> Result<Str
 }
 
 /// Decodes and validates marketplace provenance stored in standalone script metadata.
-pub fn decodeMarketOriginFromMetadata(
-    value: &str,
-    packageId: &str,
-) -> Option<ToolPkgMarketOrigin> {
+pub fn decodeMarketOriginFromMetadata(value: &str, packageId: &str) -> Option<ToolPkgMarketOrigin> {
     let encoded = value.trim().strip_prefix(MARKET_ORIGIN_METADATA_PREFIX)?;
     if encoded.trim().is_empty() {
         return None;
@@ -710,7 +707,9 @@ fn injectScriptMarketOriginIntoMetadata(
     marketOrigin: &ToolPkgMarketOrigin,
 ) -> Result<String, String> {
     let Some((_, body)) = splitLeadingMetadataBlock(source) else {
-        return Err("JavaScript package METADATA block is required for marketplace origin".to_string());
+        return Err(
+            "JavaScript package METADATA block is required for marketplace origin".to_string(),
+        );
     };
     let metadata = JsPackageLoader::extract_metadata(source);
     let mut metadata = JsPackageLoader::parse_metadata_object(&metadata)?;
@@ -725,18 +724,20 @@ fn injectScriptMarketOriginIntoMetadata(
 /// Serializes a market-origin record as the shared ASCII XOR byte payload.
 fn encodeMarketOriginBytes(origin: &ToolPkgMarketOrigin) -> Result<Vec<u8>, String> {
     let payloadJson = serde_json::to_string(origin).map_err(|error| error.to_string())?;
-    let asciiPayload = payloadJson.chars().fold(String::new(), |mut output, character| {
-        if character.is_ascii() {
-            output.push(character);
-        } else {
-            let mut utf16Units = [0u16; 2];
-            for unit in character.encode_utf16(&mut utf16Units) {
-                output.push_str("\\u");
-                output.push_str(&format!("{:04x}", *unit));
+    let asciiPayload = payloadJson
+        .chars()
+        .fold(String::new(), |mut output, character| {
+            if character.is_ascii() {
+                output.push(character);
+            } else {
+                let mut utf16Units = [0u16; 2];
+                for unit in character.encode_utf16(&mut utf16Units) {
+                    output.push_str("\\u");
+                    output.push_str(&format!("{:04x}", *unit));
+                }
             }
-        }
-        output
-    });
+            output
+        });
     Ok(asciiPayload
         .into_bytes()
         .into_iter()
@@ -814,8 +815,9 @@ fn minifyToolPkgArchive(
 ) -> Result<Vec<u8>, String> {
     let mut archive = zip::ZipArchive::new(Cursor::new(sourceBytes)).map_err(|e| e.to_string())?;
     let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
-    let manifestPreview = ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &entryIndex)
-        .ok_or_else(|| "manifest.hjson or manifest.json not found".to_string())?;
+    let manifestPreview =
+        ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &entryIndex)
+            .ok_or_else(|| "manifest.hjson or manifest.json not found".to_string())?;
     let marketOrigin = ToolPkgMarketOrigin {
         market: "Operit".to_string(),
         toolpkgId: manifestPreview.manifest.toolpkgId.clone(),
@@ -948,8 +950,9 @@ fn injectToolPkgMarketOrigin(
 ) -> Result<Vec<u8>, String> {
     let mut archive = zip::ZipArchive::new(Cursor::new(sourceBytes)).map_err(|e| e.to_string())?;
     let entryIndex = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
-    let manifestPreview = ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &entryIndex)
-        .ok_or_else(|| "manifest.hjson or manifest.json not found".to_string())?;
+    let manifestPreview =
+        ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &entryIndex)
+            .ok_or_else(|| "manifest.hjson or manifest.json not found".to_string())?;
     let manifestBasePath = manifestPreview
         .entryName
         .rsplit_once('/')
@@ -987,14 +990,12 @@ fn injectToolPkgMarketOrigin(
                 .read_to_end(&mut original)
                 .map_err(|error| error.to_string())?;
             let data = match ToolPkgArchiveParser::normalizeZipEntryPath(&name).as_deref() {
-                Some(normalizedName) if normalizedName == mainEntry => {
-                    format!(
-                        "{}\n{}\n",
-                        String::from_utf8(original).map_err(|error| error.to_string())?,
-                        marketOriginInvocation
-                    )
-                    .into_bytes()
-                }
+                Some(normalizedName) if normalizedName == mainEntry => format!(
+                    "{}\n{}\n",
+                    String::from_utf8(original).map_err(|error| error.to_string())?,
+                    marketOriginInvocation
+                )
+                .into_bytes(),
                 _ => original,
             };
             writer
@@ -1037,11 +1038,9 @@ fn collectReachableToolPkgEntries(
         if !isJavaScriptEntry(&currentName) {
             continue;
         }
-        let Some(source) = ToolPkgArchiveParser::readZipEntryText(
-            &mut archive,
-            &entryIndex,
-            &currentName,
-        ) else {
+        let Some(source) =
+            ToolPkgArchiveParser::readZipEntryText(&mut archive, &entryIndex, &currentName)
+        else {
             continue;
         };
         for captures in modulePattern.captures_iter(&source) {
@@ -1767,12 +1766,9 @@ exports.generate = function generateUuid(value) {
             version: "1.0.2".to_string(),
             author: vec!["authenticated-publisher".to_string()],
         };
-        let expectedInvocation = buildMarketOriginInvocation(
-            &origin.toolpkgId,
-            &origin.version,
-            &origin.author,
-        )
-        .expect("market origin invocation should be built");
+        let expectedInvocation =
+            buildMarketOriginInvocation(&origin.toolpkgId, &origin.version, &origin.author)
+                .expect("market origin invocation should be built");
 
         let unminified = processArtifactNamedBytesWithMarketOrigin(
             &source,
@@ -1801,8 +1797,8 @@ exports.generate = function generateUuid(value) {
             true,
         )
         .expect("minified ToolPkg processing should succeed");
-        let mut minified =
-            zip::ZipArchive::new(Cursor::new(minified)).expect("minified result should remain a ZIP");
+        let mut minified = zip::ZipArchive::new(Cursor::new(minified))
+            .expect("minified result should remain a ZIP");
         for retained in [
             "manifest.json",
             "main.js",
@@ -1812,10 +1808,16 @@ exports.generate = function generateUuid(value) {
             "assets/site.js",
             "native/core.wasm",
         ] {
-            assert!(minified.by_name(retained).is_ok(), "{retained} should remain");
+            assert!(
+                minified.by_name(retained).is_ok(),
+                "{retained} should remain"
+            );
         }
         for removed in ["src/private.js", "unused.js", "main.js.map"] {
-            assert!(minified.by_name(removed).is_err(), "{removed} should be removed");
+            assert!(
+                minified.by_name(removed).is_err(),
+                "{removed} should be removed"
+            );
         }
         let mut minifiedMain = String::new();
         minified

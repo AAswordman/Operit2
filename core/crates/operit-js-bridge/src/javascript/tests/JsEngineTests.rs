@@ -1,15 +1,23 @@
 use super::JsEngineState;
 use crate::javascript::TestJsToolsHost::expect_js_output;
-use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorageHost};
+use operit_host_api::HostManager::{
+    setDefaultHostJavaScriptRuntimeHost, setDefaultHostRuntimeTaskSchedulerHost,
+};
+use operit_host_api::{
+    HostError, HostJavaScriptRuntimeHost, HostResult, RuntimeStorageEntry, RuntimeStorageHost,
+};
+use operit_host_native_scheduler::{
+    NativeHostJavaScriptRuntimeHost, NativeHostRuntimeTaskSchedulerHost,
+};
 use operit_plugin_sdk::execution_result::JsExecutionErrorKind;
 use operit_plugin_sdk::javascript::{
     JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolCallResultData,
-    JsToolNameResolutionRequest, JsToolPkgIpcRequest, JsToolPkgResourceRequest,
-    JsToolPkgWasmRequest, JsToolPkgWasmResult,
+    JsToolNameResolutionRequest, JsToolPkgIpcCompletion, JsToolPkgIpcRequest,
+    JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult, ToolPkgExecutionContext,
+    ToolPkgTextResourceHost,
 };
 use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
 use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
-use operit_util::OperitPaths;
 use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -17,11 +25,74 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
+use std::sync::Mutex;
+use std::sync::OnceLock;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
+
+/// Returns the native JavaScript Host shared by this test process.
+#[allow(non_snake_case)]
+fn testJavaScriptRuntimeHost() -> Arc<NativeHostJavaScriptRuntimeHost> {
+    static HOST: OnceLock<Arc<NativeHostJavaScriptRuntimeHost>> = OnceLock::new();
+    let host = HOST
+        .get_or_init(|| Arc::new(NativeHostJavaScriptRuntimeHost::new()))
+        .clone();
+    setDefaultHostJavaScriptRuntimeHost(host.clone());
+    setDefaultHostRuntimeTaskSchedulerHost(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+    host
+}
+
+/// Creates one test engine after installing the concrete native Host.
+#[allow(non_snake_case)]
+fn newTestJsEngine(executionHost: Arc<dyn JsExecutionHost>) -> super::JsEngine {
+    testJavaScriptRuntimeHost();
+    super::JsEngine::new(executionHost)
+}
+
+/// Creates one ToolPkg registration engine after installing the concrete native Host.
+#[allow(non_snake_case)]
+fn newTestToolPkgRegistrationEngine() -> super::JsEngine {
+    testJavaScriptRuntimeHost();
+    super::JsEngine::new_toolpkg_registration_engine()
+}
+
+/// Creates one directly accessible JavaScript state through the concrete native Host.
+#[allow(non_snake_case)]
+pub(super) fn newTestJsEngineState(
+    executionHost: Option<Arc<dyn JsExecutionHost>>,
+) -> JsEngineState {
+    let runtime = testJavaScriptRuntimeHost()
+        .createHostJavaScriptRuntime()
+        .expect("test JavaScript runtime must start");
+    JsEngineState::newWithRuntime(runtime, executionHost, None)
+        .expect("test JavaScript state must initialize")
+}
 
 #[derive(Default)]
 struct TestPluginConfigExecutionHost {
     toolPkgTextResourceReads: AtomicUsize,
+    #[cfg(not(target_arch = "wasm32"))]
+    toolPkgIpcThreadName: Arc<Mutex<Option<String>>>,
+}
+
+/// Resolves ToolPkg modules from a fixed test resource map.
+struct StaticToolPkgTextResourceHost {
+    resources: BTreeMap<String, String>,
+}
+
+impl ToolPkgTextResourceHost for StaticToolPkgTextResourceHost {
+    /// Reads one normalized module from the fixed test resource map.
+    fn read_toolpkg_text_resource(
+        &self,
+        _package_name_or_subpackage_id: &str,
+        resource_path: &str,
+    ) -> Result<String, String> {
+        let normalizedPath = resource_path.trim().to_ascii_lowercase();
+        self.resources
+            .get(&normalizedPath)
+            .cloned()
+            .ok_or_else(|| format!("ToolPkg text resource not found: {normalizedPath}"))
+    }
 }
 
 crate::impl_rejecting_js_tools_host!(TestPluginConfigExecutionHost);
@@ -64,7 +135,10 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
 
     /// Resolves plugin configuration through the real runtime path contract.
     fn plugin_config_dir(&self, plugin_id: &str) -> Result<String, String> {
-        OperitPaths::pluginConfigDir(plugin_id).map(|path| path.to_string_lossy().to_string())
+        let safeBaseName = plugin_id.trim().replace(':', "_");
+        Ok(format!(
+            "/app/data/extensions/plugins/configs/{safeBaseName}"
+        ))
     }
 
     /// Records direct ToolPkg text resource reads rejected by this test host.
@@ -137,9 +211,38 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         panic!("Tool name resolution is not part of the plugin config test")
     }
 
-    /// Rejects unexpected ToolPkg IPC.
-    fn invoke_toolpkg_ipc(&self, _request: JsToolPkgIpcRequest) -> Result<Value, String> {
-        panic!("ToolPkg IPC is not part of the plugin config test")
+    /// Handles the asynchronous ToolPkg IPC regression request.
+    fn invoke_toolpkg_ipc_async(
+        &self,
+        request: JsToolPkgIpcRequest,
+        completion: JsToolPkgIpcCompletion,
+    ) -> Result<(), String> {
+        let threadName = self.toolPkgIpcThreadName.clone();
+        std::thread::Builder::new()
+            .name("OperitToolPkgIpc".to_string())
+            .spawn(move || {
+                *threadName
+                    .lock()
+                    .expect("ToolPkg IPC thread-name mutex poisoned") =
+                    std::thread::current().name().map(str::to_string);
+                let valueSource = if request.channel == "operit.context.run" {
+                    request.payload.get("envs")
+                } else {
+                    Some(&request.payload)
+                };
+                let value = valueSource
+                    .and_then(|value| value.get("value"))
+                    .and_then(Value::as_i64)
+                    .expect("ToolPkg IPC test payload must contain an integer value");
+                completion(Ok(serde_json::json!({ "value": value + 1 })))
+            })
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    /// Completes one JavaScript runtime turn immediately in native unit tests.
+    fn wait_for_javascript_runtime_turn(&self) -> operit_host_api::HostRuntimeTurnFuture {
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -157,7 +260,7 @@ fn testParams() -> BTreeMap<String, Value> {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn synchronous_timeout_interrupts_quickjs_worker() {
-    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    let engine = newTestToolPkgRegistrationEngine();
     let params = testParams();
     let started = Instant::now();
     let error = engine
@@ -198,7 +301,7 @@ fn synchronous_timeout_interrupts_quickjs_worker() {
 #[test]
 fn system_sleep_host_call_releases_quickjs_worker() {
     ensure_test_runtime_root();
-    let engine = super::JsEngine::new(Arc::new(TestPluginConfigExecutionHost::default()));
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
     let params = testParams();
 
     let sleepOutput = expect_js_output(
@@ -236,11 +339,83 @@ fn system_sleep_host_call_releases_quickjs_worker() {
     engine.destroy();
 }
 
+/// Verifies a pending tool call cannot block already-ready JavaScript promise work.
+#[test]
+fn async_tool_call_yields_to_ready_javascript_promise() {
+    ensure_test_runtime_root();
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let params = testParams();
+    let started = Instant::now();
+    let output = engine
+        .execute_script_function(
+            r#"
+                exports.race = async function() {
+                    var toolResult = toolCall("sleep", { duration_ms: 150 })
+                        .then(function() { return "tool"; });
+                    var readyResult = Promise.resolve("ready");
+                    return Promise.race([toolResult, readyResult]);
+                };
+            "#,
+            "race",
+            &params,
+            &BTreeMap::new(),
+            None,
+            true,
+            2,
+            None,
+        )
+        .expect("ready JavaScript promise must win the tool-call race");
+
+    assert_eq!(output.as_deref(), Some("\"ready\""));
+    assert!(
+        started.elapsed() < Duration::from_millis(100),
+        "tool execution must not block the QuickJS worker"
+    );
+    engine.destroy();
+}
+
+/// Verifies JavaScript timers race independently from pending Host tool work.
+#[test]
+fn javascript_timer_can_win_race_against_async_tool_call() {
+    ensure_test_runtime_root();
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let params = testParams();
+    let started = Instant::now();
+    let output = engine
+        .execute_script_function(
+            r#"
+                exports.race = async function() {
+                    var toolResult = toolCall("sleep", { duration_ms: 150 })
+                        .then(function() { return "tool"; });
+                    var timeoutResult = new Promise(function(resolve) {
+                        setTimeout(function() { resolve("timeout"); }, 20);
+                    });
+                    return Promise.race([toolResult, timeoutResult]);
+                };
+            "#,
+            "race",
+            &params,
+            &BTreeMap::new(),
+            None,
+            true,
+            2,
+            None,
+        )
+        .expect("JavaScript timer must complete while the Host tool is pending");
+
+    assert_eq!(output.as_deref(), Some("\"timeout\""));
+    assert!(
+        started.elapsed() < Duration::from_millis(100),
+        "timer completion must not wait for tool execution"
+    );
+    engine.destroy();
+}
+
 /// Verifies ToolPkg registration timeout interrupts synchronous code and releases the worker.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn toolpkg_registration_timeout_interrupts_quickjs_worker() {
-    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    let engine = newTestToolPkgRegistrationEngine();
     let params = testParams();
     let error = engine
         .executeToolPkgMainRegistrationWithTimeout(
@@ -335,6 +510,20 @@ impl RuntimeStorageHost for TestRuntimeStorageHost {
         Ok(())
     }
 
+    /// Appends bytes into the test runtime root.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        let path = self.resolve(path)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        std::io::Write::write_all(&mut file, content)?;
+        Ok(())
+    }
+
     /// Deletes an entry from the test runtime root.
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
         let path = self.resolve(path)?;
@@ -385,7 +574,7 @@ impl RuntimeStorageHost for TestRuntimeStorageHost {
 }
 
 /// Registers process-wide test runtime storage roots.
-fn ensure_test_runtime_root() {
+pub(super) fn ensure_test_runtime_root() {
     let root = std::env::temp_dir().join("operit-runtime-js-engine-tests");
     let runtime_root = root.join("runtime");
     let workspace_root = root.join("workspace");
@@ -401,7 +590,7 @@ fn ensure_test_runtime_root() {
 
 #[test]
 fn execute_promise_script_repeatedly_on_same_engine() {
-    let mut state = JsEngineState::new(None);
+    let mut state = newTestJsEngineState(None);
     let script = r#"
         globalThis.__operit_cached_async_echo = globalThis.__operit_cached_async_echo || function(params) {
             return Promise.resolve("ASYNC_ECHO:" + params.text);
@@ -434,7 +623,7 @@ fn execute_promise_script_repeatedly_on_same_engine() {
 
 #[test]
 fn execute_complete_finishes_call_before_return_value() {
-    let mut state = JsEngineState::new(None);
+    let mut state = newTestJsEngineState(None);
     let script = r#"
         exports.complete_first = function(_params) {
             complete("first");
@@ -462,7 +651,7 @@ fn execute_complete_finishes_call_before_return_value() {
 
 #[test]
 fn execute_function_with_active_module_context() {
-    let mut state = JsEngineState::new(None);
+    let mut state = newTestJsEngineState(None);
     let script = r#"
         exports.marker = "root-marker";
         exports.inspect_context = function(_params) {
@@ -494,7 +683,7 @@ fn execute_function_with_active_module_context() {
 
 #[test]
 fn bootstrap_exposes_ui_android_okhttp_api() {
-    let mut state = JsEngineState::new(None);
+    let mut state = newTestJsEngineState(None);
     let script = r#"
         exports.inspect_bootstrap_api = function(_params) {
             return [
@@ -538,7 +727,7 @@ fn bootstrap_exposes_ui_android_okhttp_api() {
 
 #[test]
 fn toolpkg_ipc_local_call_returns_handler_result() {
-    let mut state = JsEngineState::new(None);
+    let mut state = newTestJsEngineState(None);
     let script = r#"
         exports.local_ipc = async function(_params) {
             ToolPkg.ipc.on('test.local', function(payload, meta) {
@@ -572,7 +761,7 @@ fn toolpkg_ipc_local_call_returns_handler_result() {
 
 #[test]
 fn runtime_context_with_context_runs_local_main_runner() {
-    let mut state = JsEngineState::new(None);
+    let mut state = newTestJsEngineState(None);
     let script = r#"
         exports.context_runner = async function(_params) {
             function addOne(value) {
@@ -603,9 +792,115 @@ fn runtime_context_with_context_runs_local_main_runner() {
     );
 }
 
+/// Verifies cross-runtime ToolPkg IPC leaves the source QuickJS worker and resolves by callback.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn toolpkg_ipc_cross_runtime_dispatch_is_asynchronous() {
+    ensure_test_runtime_root();
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestJsEngine(host.clone());
+    let script = r#"
+        exports.remote_ipc = async function(_params) {
+            return await ToolPkg.ipc.call('test.async', { value: 41 });
+        };
+    "#;
+    let mut params = testParams();
+    params.insert(
+        "__operit_ui_package_name".to_string(),
+        Value::String("test.package".to_string()),
+    );
+    params.insert(
+        "__operit_execution_context_key".to_string(),
+        Value::String("toolpkg_compose_dsl:test.package:test".to_string()),
+    );
+    params.insert(
+        "__operit_toolpkg_runtime_kind".to_string(),
+        Value::String("ui".to_string()),
+    );
+
+    let output = engine.execute_script_function(
+        script,
+        "remote_ipc",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        2,
+        None,
+    );
+
+    assert_eq!(
+        expect_js_output(output, "cross-runtime ToolPkg IPC"),
+        "{\"value\":42}"
+    );
+    assert_eq!(
+        host.toolPkgIpcThreadName
+            .lock()
+            .expect("ToolPkg IPC thread-name mutex poisoned")
+            .as_deref(),
+        Some("OperitToolPkgIpc")
+    );
+    engine.destroy();
+}
+
+/// Verifies `withContext` resolves through the asynchronous cross-runtime execution contract.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn runtime_context_cross_runtime_dispatch_is_asynchronous() {
+    ensure_test_runtime_root();
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestJsEngine(host.clone());
+    let script = r#"
+        exports.remote_context = async function(_params) {
+            return await withContext('main', { value: 41 }, function() {
+                return { value: value + 1 };
+            });
+        };
+    "#;
+    let mut params = testParams();
+    params.insert(
+        "__operit_ui_package_name".to_string(),
+        Value::String("test.package".to_string()),
+    );
+    params.insert(
+        "__operit_execution_context_key".to_string(),
+        Value::String("toolpkg_compose_dsl:test.package:test".to_string()),
+    );
+    params.insert(
+        "__operit_toolpkg_runtime_kind".to_string(),
+        Value::String("ui".to_string()),
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("JavaScript async test runtime must start");
+    let output = runtime.block_on(engine.execute_script_function_async(
+        script.to_string(),
+        "remote_context".to_string(),
+        params,
+        BTreeMap::new(),
+        None,
+        true,
+        2_000,
+        None,
+    ));
+
+    assert_eq!(
+        expect_js_output(output, "cross-runtime withContext"),
+        "{\"value\":42}"
+    );
+    assert_eq!(
+        host.toolPkgIpcThreadName
+            .lock()
+            .expect("ToolPkg IPC thread-name mutex poisoned")
+            .as_deref(),
+        Some("OperitToolPkgIpc")
+    );
+    engine.destroy();
+}
+
 #[test]
 fn execute_inline_hook_function_source() {
-    let mut state = JsEngineState::new(None);
+    let mut state = newTestJsEngineState(None);
     let script = r#"
         exports.marker = "inline-root";
     "#;
@@ -643,7 +938,7 @@ fn execute_inline_hook_function_source() {
 /// Verifies Compose rendering waits for the CommonJS module to initialize lexical bindings.
 fn compose_dsl_default_export_can_capture_later_lexical_constants() {
     ensure_test_runtime_root();
-    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    let engine = newTestToolPkgRegistrationEngine();
     let script = r#"
         exports.default = function(ctx) {
             return ctx.h('Text', {
@@ -693,7 +988,7 @@ fn compose_dsl_default_export_can_capture_later_lexical_constants() {
 fn compose_dsl_resource_snapshot_avoids_host_reentry_for_render_and_action() {
     ensure_test_runtime_root();
     let executionHost = Arc::new(TestPluginConfigExecutionHost::default());
-    let engine = super::JsEngine::new(executionHost.clone());
+    let engine = newTestJsEngine(executionHost.clone());
     let script = r#"
         const shared = require("../shared");
         exports.default = function(ctx) {
@@ -750,7 +1045,7 @@ fn compose_dsl_resource_snapshot_avoids_host_reentry_for_render_and_action() {
 
 #[test]
 fn compose_dsl_action_uses_rendered_runtime() {
-    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    let engine = newTestToolPkgRegistrationEngine();
     let script = r#"
         exports.default = function(ctx) {
             var pair = ctx.useState('count', 0);
@@ -796,7 +1091,7 @@ fn compose_dsl_action_uses_rendered_runtime() {
 
 #[test]
 fn compose_dsl_action_updates_runtime_options_state_store() {
-    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    let engine = newTestToolPkgRegistrationEngine();
     let script = r#"
         exports.default = function(ctx) {
             var pair = ctx.useState('enabled', false);
@@ -852,7 +1147,7 @@ fn compose_dsl_action_updates_runtime_options_state_store() {
 
 #[test]
 fn compose_dsl_action_can_access_bootstrap_globals() {
-    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    let engine = newTestToolPkgRegistrationEngine();
     let script = r#"
         exports.default = function(ctx) {
             return ctx.h('Box', {
@@ -900,7 +1195,7 @@ fn compose_dsl_action_can_access_bootstrap_globals() {
 
 #[test]
 fn execute_function_from_module_exports() {
-    let mut state = JsEngineState::new(None);
+    let mut state = newTestJsEngineState(None);
     let script = r#"
         module.exports = {
             module_only: function(params) {
@@ -952,7 +1247,7 @@ fn execute_minified_package_script_with_metadata() {
     assert_eq!(package.tools.len(), 1);
     assert_eq!(package.tools[0].name, "echo");
 
-    let mut state = JsEngineState::new(None);
+    let mut state = newTestJsEngineState(None);
     let mut params = testParams();
     params.insert("text".to_string(), Value::String("metadata".to_string()));
 
@@ -976,7 +1271,7 @@ fn execute_minified_package_script_with_metadata() {
 #[test]
 fn register_thinking_guidance_toolpkg_main() {
     ensure_test_runtime_root();
-    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    let engine = newTestToolPkgRegistrationEngine();
     let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
@@ -1003,7 +1298,8 @@ fn register_thinking_guidance_toolpkg_main() {
 
 #[test]
 fn register_message_insert_toolpkg_main() {
-    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    ensure_test_runtime_root();
+    let engine = newTestToolPkgRegistrationEngine();
     let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
@@ -1012,20 +1308,9 @@ fn register_message_insert_toolpkg_main() {
     let script = std::fs::read_to_string(&scriptPath).expect("message_insert main.js");
     let distRoot = repoRoot.join("plugins/packages/external/message_insert/dist");
     let mut textResources = BTreeMap::new();
-    for entry in std::fs::read_dir(&distRoot).expect("message_insert dist") {
-        let entry = entry.expect("message_insert dist entry");
-        let path = entry.path();
-        if path.is_file() {
-            let name = path
-                .file_name()
-                .expect("dist file name")
-                .to_string_lossy()
-                .to_string();
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                textResources.insert(format!("dist/{name}").to_ascii_lowercase(), text);
-            }
-        }
-    }
+    collect_message_insert_text_resources(&distRoot, &distRoot, &mut textResources);
+    assert!(textResources.contains_key("dist/ui/index.ui.js"));
+    assert!(textResources.contains_key("dist/shared.js"));
     let mut params = testParams();
     params.insert(
         "toolPkgId".to_string(),
@@ -1053,11 +1338,241 @@ fn register_message_insert_toolpkg_main() {
     assert_eq!(capture.promptInputHooks.len(), 1);
     assert_eq!(capture.promptFinalizeHooks.len(), 1);
     assert_eq!(capture.inputMenuTogglePlugins.len(), 1);
+    let inputMenuHook = serde_json::from_str::<Value>(&capture.inputMenuTogglePlugins[0])
+        .expect("message_insert input-menu hook registration");
+    assert_eq!(inputMenuHook["function"], "onInputMenuToggle");
+    assert!(
+        inputMenuHook.get("function_source").is_none(),
+        "main-module hook must be registered by export name rather than a generated module reference"
+    );
+}
+
+/// Verifies that the message-insert shared module can be parsed and required.
+#[test]
+fn execute_message_insert_shared_module_loads() {
+    ensure_test_runtime_root();
+    let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("repo root");
+    let distRoot = repoRoot.join("plugins/packages/external/message_insert/dist");
+    let script = r#"
+        exports.load_shared = function() {
+            var shared = require('./shared');
+            return shared.createDefaultSettings();
+        };
+    "#;
+    let mut textResources = BTreeMap::new();
+    collect_message_insert_text_resources(&distRoot, &distRoot, &mut textResources);
+    let mut params = testParams();
+    params.insert(
+        "toolPkgId".to_string(),
+        Value::String("message_insert".to_string()),
+    );
+    params.insert(
+        "__operit_ui_package_name".to_string(),
+        Value::String("message_insert".to_string()),
+    );
+    params.insert(
+        "__operit_script_screen".to_string(),
+        Value::String("dist/main.js".to_string()),
+    );
+    let mut state = newTestJsEngineState(None);
+    let output = super::executeWithToolPkgTextResources(Arc::new(textResources), || {
+        state.execute_script_function_on_current_thread(
+            &script,
+            "load_shared",
+            &params,
+            &BTreeMap::new(),
+            None,
+            true,
+            60,
+            None,
+        )
+    });
+    let output = output.expect("message_insert shared module should execute");
+    assert!(output.is_some());
+}
+
+/// Verifies the message-insert input-menu hook loads the main entry and its UI dependency chain.
+#[test]
+fn execute_message_insert_input_menu_hook_from_main_entry() {
+    ensure_test_runtime_root();
+    let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("repo root");
+    let distRoot = repoRoot.join("plugins/packages/external/message_insert/dist");
+    let script = format!(
+        "{}\nTools.Files.exists = function(path) {{ return Promise.resolve({{ path: path, exists: false }}); }};",
+        std::fs::read_to_string(distRoot.join("main.js")).expect("message_insert main.js")
+    );
+    let mut textResources = BTreeMap::new();
+    collect_message_insert_text_resources(&distRoot, &distRoot, &mut textResources);
+    let mut params = testParams();
+    params.insert(
+        "toolPkgId".to_string(),
+        Value::String("message_insert".to_string()),
+    );
+    params.insert(
+        "__operit_ui_package_name".to_string(),
+        Value::String("message_insert".to_string()),
+    );
+    params.insert(
+        "__operit_script_screen".to_string(),
+        Value::String("dist/main.js".to_string()),
+    );
+    params.insert(
+        "eventPayload".to_string(),
+        serde_json::json!({ "action": "create" }),
+    );
+    let mut state = newTestJsEngineState(Some(Arc::new(TestPluginConfigExecutionHost::default())));
+    let output = super::executeWithToolPkgTextResources(Arc::new(textResources), || {
+        state.execute_script_function_on_current_thread(
+            &script,
+            "onInputMenuToggle",
+            &params,
+            &BTreeMap::new(),
+            None,
+            true,
+            60,
+            None,
+        )
+    });
+    let raw = expect_js_output(output, "message_insert input menu hook");
+    let definitions =
+        serde_json::from_str::<Value>(&raw).expect("message_insert input menu definitions JSON");
+    assert_eq!(definitions[0]["id"], "message_extra_info_injection");
+}
+
+/// Verifies an IPC-style main runtime request resolves modules from its bound ToolPkg host.
+#[test]
+fn toolpkg_ipc_main_request_uses_bound_resource_host() {
+    ensure_test_runtime_root();
+    let executionHost = Arc::new(TestPluginConfigExecutionHost::default());
+    let script = r#"
+        var shared = require('./shared');
+        exports.dispatch = function() {
+            return shared.value;
+        };
+    "#;
+    let mut params = testParams();
+    params.insert(
+        "__operit_ui_package_name".to_string(),
+        Value::String("message_insert".to_string()),
+    );
+    params.insert(
+        "__operit_script_screen".to_string(),
+        Value::String("dist/main.js".to_string()),
+    );
+    testJavaScriptRuntimeHost();
+    let engine = super::JsEngine::new_toolpkg_execution_engine(
+        executionHost.clone(),
+        ToolPkgExecutionContext {
+            context_key: "toolpkg_main:message_insert".to_string(),
+            container_package_name: "message_insert".to_string(),
+            text_resource_host: Arc::new(StaticToolPkgTextResourceHost {
+                resources: BTreeMap::from([(
+                    "dist/shared.js".to_string(),
+                    "exports.value = 'host-module';".to_string(),
+                )]),
+            }),
+        },
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("JavaScript async test runtime must start");
+    let output = runtime.block_on(engine.execute_script_function_async(
+        script.to_string(),
+        "dispatch".to_string(),
+        params,
+        BTreeMap::new(),
+        None,
+        true,
+        60_000,
+        None,
+    ));
+    assert_eq!(
+        expect_js_output(output, "ToolPkg IPC main request"),
+        "\"host-module\""
+    );
+    assert_eq!(
+        executionHost
+            .toolPkgTextResourceReads
+            .load(Ordering::Relaxed),
+        0,
+        "IPC package module reads must use the context-bound resource host",
+    );
+    engine.destroy();
+}
+
+/// Verifies the real extra-info Compose screen resolves its parent shared module.
+#[test]
+fn render_message_insert_compose_dsl_screen() {
+    ensure_test_runtime_root();
+    let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("repo root");
+    let distRoot = repoRoot.join("plugins/packages/external/message_insert/dist");
+    let script = std::fs::read_to_string(distRoot.join("ui/index.ui.js"))
+        .expect("message_insert compose screen");
+    let mut textResources = BTreeMap::new();
+    collect_message_insert_text_resources(&distRoot, &distRoot, &mut textResources);
+    let mut params = testParams();
+    params.insert(
+        "toolPkgId".to_string(),
+        Value::String("message_insert".to_string()),
+    );
+    params.insert(
+        "__operit_ui_package_name".to_string(),
+        Value::String("message_insert".to_string()),
+    );
+    params.insert(
+        "__operit_script_screen".to_string(),
+        Value::String("dist/ui/index.ui.js".to_string()),
+    );
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let output = engine.execute_compose_dsl_script(
+        &script,
+        &params,
+        &BTreeMap::new(),
+        Arc::new(textResources),
+    );
+    let raw = expect_js_output(output, "message_insert compose render");
+    let rendered = serde_json::from_str::<Value>(&raw).expect("message_insert compose render JSON");
+    assert!(rendered["tree"].is_object());
+    engine.destroy();
+}
+
+/// Collects all message-insert JavaScript resources using package-relative paths.
+fn collect_message_insert_text_resources(
+    root: &Path,
+    directory: &Path,
+    textResources: &mut BTreeMap<String, String>,
+) {
+    for entry in std::fs::read_dir(directory).expect("message_insert dist") {
+        let entry = entry.expect("message_insert dist entry");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_message_insert_text_resources(root, &path, textResources);
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .expect("message_insert relative resource")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            textResources.insert(format!("dist/{relative}").to_ascii_lowercase(), text);
+        }
+    }
 }
 
 #[test]
 fn execute_script_can_require_axios_and_uuid() {
-    let mut state = JsEngineState::new(None);
+    let mut state = newTestJsEngineState(None);
     let script = r#"
         exports.inspect_require = function(_params) {
             var axios = require('axios');
@@ -1086,7 +1601,7 @@ fn execute_script_can_require_axios_and_uuid() {
 
 #[test]
 fn registration_mode_uses_ui_module_placeholder() {
-    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    let engine = newTestToolPkgRegistrationEngine();
     let script = r#"
         var Screen = require('./screens/main.ui.js');
         exports.registerToolPkg = function(_params) {
@@ -1113,7 +1628,8 @@ fn registration_mode_uses_ui_module_placeholder() {
 /// Verifies registration blocks resource and WASM execution before native host access.
 #[test]
 fn registration_mode_blocks_resource_and_wasm_calls() {
-    let engine = super::JsEngine::new_toolpkg_registration_engine();
+    ensure_test_runtime_root();
+    let engine = newTestToolPkgRegistrationEngine();
     let script = r#"
         exports.registerToolPkg = function() {
             var resourceError = '';
@@ -1158,7 +1674,7 @@ fn registration_mode_blocks_resource_and_wasm_calls() {
 fn native_interface_reads_env_override_for_call() {
     ensure_test_runtime_root();
     let key = "OPERIT_JS_NATIVE_ENV_TEST";
-    let mut state = JsEngineState::new(None);
+    let mut state = newTestJsEngineState(None);
     let script = r#"
         exports.read_env = function(_params) {
             return getEnv("OPERIT_JS_NATIVE_ENV_TEST");
@@ -1188,7 +1704,7 @@ fn native_interface_reads_env_override_for_call() {
 #[test]
 fn native_interface_resolves_plugin_config_dir() {
     ensure_test_runtime_root();
-    let mut state = JsEngineState::new(Some(Arc::new(TestPluginConfigExecutionHost::default())));
+    let mut state = newTestJsEngineState(Some(Arc::new(TestPluginConfigExecutionHost::default())));
     let script = r#"
         exports.config_dir = function(_params) {
             return getPluginConfigDir('plugin:name');
@@ -1209,39 +1725,12 @@ fn native_interface_resolves_plugin_config_dir() {
     let output = expect_js_output(output, "config dir execution");
     let path = serde_json::from_str::<String>(&output).expect("serialized config dir");
 
-    let configDir = Path::new(&path);
-    let configDirName = configDir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .expect("plugin config directory name");
-    assert!(configDirName.starts_with("plugin_name-"));
-
-    let configsDir = configDir.parent().expect("plugin configs directory");
-    assert_eq!(
-        configsDir.file_name().and_then(|name| name.to_str()),
-        Some("configs")
-    );
-    let pluginsDir = configsDir.parent().expect("plugins directory");
-    assert_eq!(
-        pluginsDir.file_name().and_then(|name| name.to_str()),
-        Some("plugins")
-    );
-    let extensionsDir = pluginsDir.parent().expect("extensions directory");
-    assert_eq!(
-        extensionsDir.file_name().and_then(|name| name.to_str()),
-        Some("extensions")
-    );
-    let runtimeDir = extensionsDir.parent().expect("runtime directory");
-    assert_eq!(
-        runtimeDir.file_name().and_then(|name| name.to_str()),
-        Some("runtime")
-    );
-    assert!(configDir.is_dir());
+    assert_eq!(path, "/app/data/extensions/plugins/configs/plugin_name");
 }
 
 #[test]
 fn probe_async_function_declaration_inside_iife() {
-    let mut state = JsEngineState::new(None);
+    let mut state = newTestJsEngineState(None);
     let script = r#"
         const SystemTools = (function () {
             async function get_device_info(_params) {

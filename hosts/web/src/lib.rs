@@ -8,11 +8,13 @@ use operit_host_api::HostManager::HostManager;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 
 pub(crate) mod common;
+pub mod javascript_runtime;
 pub mod runtime_event;
 pub mod runtime_event_scheduler;
 pub mod runtime_task_scheduler;
 pub mod tools;
 
+pub use javascript_runtime::WebHostJavaScriptRuntimeHost;
 pub use runtime_event::WebHostRuntimeEventHost;
 pub use runtime_event_scheduler::WebHostRuntimeEventSchedulerHost;
 pub use runtime_task_scheduler::WebHostRuntimeTaskSchedulerHost;
@@ -66,6 +68,8 @@ pub fn createLocalCore(
         .withHostRuntimeEventSchedulerHost(Arc::new(WebHostRuntimeEventSchedulerHost::new()));
     context =
         context.withHostRuntimeTaskSchedulerHost(Arc::new(WebHostRuntimeTaskSchedulerHost::new()));
+    context =
+        context.withHostJavaScriptRuntimeHost(Arc::new(WebHostJavaScriptRuntimeHost::new()));
     context = context.withHostRuntimeEventHost(Arc::new(WebHostRuntimeEventHost::new()));
     Ok(LocalCoreProxy::new(OperitApplication::newWithContext(
         context,

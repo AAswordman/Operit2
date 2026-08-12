@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
-use std::time::Duration;
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+use operit_host_api::HostRuntimeTaskSchedulerHost;
 
 pub struct SlidingWindowRateLimiter {
     pub maxRequestsPerMinute: i32,
@@ -58,7 +59,10 @@ impl SlidingWindowRateLimiter {
             if retryAfterMs <= 0 {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(retryAfterMs as u64)).await;
+            defaultHostRuntimeTaskSchedulerHost()
+                .waitForHostRuntimeDelay(retryAfterMs as u64)
+                .await
+                .expect("rate limiter delay must be provided by the Host");
         }
     }
 }

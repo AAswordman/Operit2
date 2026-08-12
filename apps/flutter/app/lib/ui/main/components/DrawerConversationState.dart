@@ -6,6 +6,7 @@ class DrawerConversationState {
   const DrawerConversationState({
     this.histories = const <core_proxy.ChatHistoryListItem>[],
     this.characterGroupNamesById = const <String, String>{},
+    this.characterCardAvatarUrisByName = const <String, String>{},
     this.currentChatId,
     this.errorMessage,
     this.loading = true,
@@ -13,6 +14,7 @@ class DrawerConversationState {
 
   final List<core_proxy.ChatHistoryListItem> histories;
   final Map<String, String> characterGroupNamesById;
+  final Map<String, String> characterCardAvatarUrisByName;
   final String? currentChatId;
   final String? errorMessage;
   final bool loading;

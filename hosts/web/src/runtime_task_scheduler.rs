@@ -1,5 +1,6 @@
 use operit_host_api::{
     HostError, HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost,
+    HostRuntimeTurnFuture,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -12,6 +13,43 @@ impl WebHostRuntimeTaskSchedulerHost {
     /// Creates the browser runtime task scheduler host.
     pub fn new() -> Self {
         Self
+    }
+}
+
+/// Waits for a browser-owned timer while exposing a scheduler-safe completion future.
+fn waitForBrowserRuntimeDelay(delayMs: u64) -> HostRuntimeTurnFuture {
+    let delayMs: i32 = match delayMs.try_into() {
+        Ok(delayMs) => delayMs,
+        Err(_) => {
+            return Box::pin(async {
+                Err(HostError::new(
+                    "browser runtime delay exceeds i32 milliseconds",
+                ))
+            });
+        }
+    };
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let callback = Closure::once_into_js(move || {
+        let _ = sender.send(());
+    });
+    let function: &js_sys::Function = callback.unchecked_ref();
+    let global = js_sys::global();
+    let scheduleResult = js_sys::Reflect::get(&global, &JsValue::from_str("setTimeout"))
+        .and_then(|value| value.dyn_into::<js_sys::Function>())
+        .and_then(|setTimeout| {
+            setTimeout.call2(&global, function, &JsValue::from_f64(f64::from(delayMs)))
+        });
+    match scheduleResult {
+        Ok(_) => Box::pin(async move {
+            receiver
+                .await
+                .map_err(|_| HostError::new("browser runtime timer was cancelled"))
+        }),
+        Err(error) => Box::pin(async move {
+            Err(HostError::new(format!(
+                "schedule browser runtime timer failed: {error:?}"
+            )))
+        }),
     }
 }
 
@@ -58,5 +96,15 @@ impl HostRuntimeTaskSchedulerHost for WebHostRuntimeTaskSchedulerHost {
                     "schedule delayed browser runtime task failed: {error:?}"
                 ))
             })
+    }
+
+    /// Waits for the browser worker to advance to a later event-loop turn.
+    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
+        waitForBrowserRuntimeDelay(0)
+    }
+
+    /// Waits through the browser timer queue for one platform-owned delay.
+    fn waitForHostRuntimeDelay(&self, delayMs: u64) -> HostRuntimeTurnFuture {
+        waitForBrowserRuntimeDelay(delayMs)
     }
 }

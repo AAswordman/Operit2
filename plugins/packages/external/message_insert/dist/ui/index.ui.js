@@ -7,14 +7,10 @@ function useStateValue(ctx, key, initialValue) {
     return { value: pair[0], set: pair[1] };
 }
 async function readSettings() {
-    return withContext("main", {}, function () {
-        return (0, shared_1.loadSettings)();
-    });
+    return (0, shared_1.loadSettings)();
 }
 async function saveSettingsInMain(patch) {
-    return withContext("main", { patch }, function () {
-        return (0, shared_1.saveSettings)(patch);
-    });
+    return (0, shared_1.saveSettings)(patch);
 }
 function createSectionTitle(ctx, icon, title) {
     return ctx.UI.Row({ verticalAlignment: "center" }, [
@@ -191,30 +187,11 @@ function Screen(ctx) {
         injectionTimeoutSecondsState.set(next.injectionTimeoutSeconds);
         injectionTimeoutInputState.set(String(next.injectionTimeoutSeconds));
     };
-    const currentSettings = () => ({
-        masterEnabled: masterEnabledState.value,
-        persistInjectedContent: persistInjectedContentState.value,
-        injectTime: injectTimeState.value,
-        injectBattery: injectBatteryState.value,
-        injectWeather: injectWeatherState.value,
-        injectLocation: injectLocationState.value,
-        usePreciseLocation: usePreciseLocationState.value,
-        injectCurrentScreenApp: injectCurrentScreenAppState.value,
-        injectRecentAppUsage: injectRecentAppUsageState.value,
-        injectScreenText: injectScreenTextState.value,
-        injectNotifications: injectNotificationsState.value,
-        injectMemory: injectMemoryState.value,
-        allowRepeatedMemorySearch: allowRepeatedMemorySearchState.value,
-        memoryLimit: memoryLimitState.value,
-        injectionTimeoutSeconds: injectionTimeoutSecondsState.value,
-    });
     const persistSettings = async (patch, successMessage = "") => {
-        const next = (0, shared_1.applySettingsPatch)(currentSettings(), patch);
-        syncSettings(next);
-        errorMessageState.set("");
-        successMessageState.set(successMessage);
         try {
             syncSettings(await saveSettingsInMain(patch));
+            errorMessageState.set("");
+            successMessageState.set(successMessage);
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error || "unknown");

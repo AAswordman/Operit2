@@ -1,11 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use operit_host_api::FileSystemHost;
 use serde_json::Value;
 
-use crate::javascript::JsExecutionEngine;
+use crate::javascript::{
+    JsExecutionEngine, ToolPkgExecutionContext, ToolPkgTextResourceHost,
+};
 use crate::package::ToolPackage;
 use crate::toolpkg::ToolPkgHooks::{ToolPkgHookDispatcher, ToolPkgHookInvocation};
 use crate::toolpkg::ToolPkgParser::{
@@ -17,9 +19,16 @@ pub type ToolPkgRuntimeChangeListener = Arc<dyn Fn(Vec<ToolPkgContainerRuntime>)
 
 /// Creates JavaScript engines used to execute ToolPkg hooks and UI scripts.
 pub trait ToolPkgExecutionEngineFactory: Send + Sync {
+    /// Creates one isolated JavaScript engine without a ToolPkg package environment.
+    #[allow(non_snake_case)]
+    fn createExecutionEngine(&self) -> Arc<dyn JsExecutionEngine>;
+
     /// Creates one isolated JavaScript engine for a ToolPkg execution context.
     #[allow(non_snake_case)]
-    fn createToolPkgExecutionEngine(&self) -> Arc<dyn JsExecutionEngine>;
+    fn createToolPkgExecutionEngine(
+        &self,
+        context: ToolPkgExecutionContext,
+    ) -> Arc<dyn JsExecutionEngine>;
 }
 
 /// Resolves embedded ToolPkg archive bytes owned by the embedding application.
@@ -40,8 +49,8 @@ struct ToolPkgExecutionEngineEntry {
 /// Manages loaded ToolPkg runtimes, resources, listeners, and execution engines.
 #[derive(Clone)]
 pub struct ToolPkgManager {
-    containers: BTreeMap<String, ToolPkgContainerRuntime>,
-    subpackageByPackageName: BTreeMap<String, ToolPkgSubpackageRuntime>,
+    containers: Arc<RwLock<BTreeMap<String, ToolPkgContainerRuntime>>>,
+    subpackageByPackageName: Arc<RwLock<BTreeMap<String, ToolPkgSubpackageRuntime>>>,
     runtimeChangeListeners: Arc<Mutex<Vec<ToolPkgRuntimeChangeListener>>>,
     toolPkgExecutionEngines: Arc<Mutex<BTreeMap<String, ToolPkgExecutionEngineEntry>>>,
     executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
@@ -57,8 +66,8 @@ impl ToolPkgManager {
         fileSystemHost: Arc<dyn FileSystemHost>,
     ) -> Self {
         Self {
-            containers: BTreeMap::new(),
-            subpackageByPackageName: BTreeMap::new(),
+            containers: Arc::new(RwLock::new(BTreeMap::new())),
+            subpackageByPackageName: Arc::new(RwLock::new(BTreeMap::new())),
             runtimeChangeListeners: Arc::new(Mutex::new(Vec::new())),
             toolPkgExecutionEngines: Arc::new(Mutex::new(BTreeMap::new())),
             executionEngineFactory,
@@ -80,20 +89,31 @@ impl ToolPkgManager {
     /// Returns whether a package name belongs to a registered ToolPkg container.
     #[allow(non_snake_case)]
     pub fn isToolPkgContainer(&self, packageName: &str) -> bool {
-        self.containers.contains_key(packageName.trim())
+        self.containers
+            .read()
+            .expect("toolpkg container runtime lock poisoned")
+            .contains_key(packageName.trim())
     }
 
     /// Returns whether a package name resolves to a ToolPkg subpackage.
     #[allow(non_snake_case)]
     pub fn hasSubpackage(&self, packageName: &str) -> bool {
         self.subpackageByPackageName
+            .read()
+            .expect("toolpkg subpackage runtime lock poisoned")
             .contains_key(packageName.trim())
     }
 
     /// Returns all registered ToolPkg container runtimes in stable name order.
     #[allow(non_snake_case)]
     pub fn getToolPkgContainerRuntimes(&self) -> Vec<ToolPkgContainerRuntime> {
-        let mut runtimes = self.containers.values().cloned().collect::<Vec<_>>();
+        let mut runtimes = self
+            .containers
+            .read()
+            .expect("toolpkg container runtime lock poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
         runtimes.sort_by(|left, right| left.packageName.cmp(&right.packageName));
         runtimes
     }
@@ -101,13 +121,19 @@ impl ToolPkgManager {
     /// Returns the registered ToolPkg container map keyed by package name.
     #[allow(non_snake_case)]
     pub fn getToolPkgContainerRuntimeMap(&self) -> BTreeMap<String, ToolPkgContainerRuntime> {
-        self.containers.clone()
+        self.containers
+            .read()
+            .expect("toolpkg container runtime lock poisoned")
+            .clone()
     }
 
     /// Returns the registered ToolPkg subpackage map keyed by package name.
     #[allow(non_snake_case)]
     pub fn getToolPkgSubpackageRuntimeMap(&self) -> BTreeMap<String, ToolPkgSubpackageRuntime> {
-        self.subpackageByPackageName.clone()
+        self.subpackageByPackageName
+            .read()
+            .expect("toolpkg subpackage runtime lock poisoned")
+            .clone()
     }
 
     /// Returns one registered ToolPkg container runtime by package name.
@@ -116,7 +142,11 @@ impl ToolPkgManager {
         &self,
         containerPackageName: &str,
     ) -> Option<ToolPkgContainerRuntime> {
-        self.containers.get(containerPackageName.trim()).cloned()
+        self.containers
+            .read()
+            .expect("toolpkg container runtime lock poisoned")
+            .get(containerPackageName.trim())
+            .cloned()
     }
 
     /// Resolves one ToolPkg subpackage runtime by package name.
@@ -126,6 +156,8 @@ impl ToolPkgManager {
         packageName: &str,
     ) -> Option<ToolPkgSubpackageRuntime> {
         self.subpackageByPackageName
+            .read()
+            .expect("toolpkg subpackage runtime lock poisoned")
             .get(packageName.trim())
             .cloned()
     }
@@ -138,8 +170,16 @@ impl ToolPkgManager {
         availablePackages: &BTreeMap<String, ToolPackage>,
     ) -> bool {
         let containerName = loadResult.containerPackage.name.trim();
+        let containers = self
+            .containers
+            .read()
+            .expect("toolpkg container runtime lock poisoned");
+        let subpackages = self
+            .subpackageByPackageName
+            .read()
+            .expect("toolpkg subpackage runtime lock poisoned");
         if containerName.is_empty()
-            || self.containers.contains_key(containerName)
+            || containers.contains_key(containerName)
             || availablePackages.contains_key(containerName)
         {
             return false;
@@ -147,9 +187,9 @@ impl ToolPkgManager {
         for subpackage in &loadResult.subpackagePackages {
             let packageName = subpackage.name.trim();
             if packageName.is_empty()
-                || self.containers.contains_key(packageName)
+                || containers.contains_key(packageName)
                 || availablePackages.contains_key(packageName)
-                || self.subpackageByPackageName.contains_key(packageName)
+                || subpackages.contains_key(packageName)
             {
                 return false;
             }
@@ -162,10 +202,15 @@ impl ToolPkgManager {
     pub fn registerToolPkg(&mut self, loadResult: ToolPkgLoadResult) -> Vec<ToolPackage> {
         let containerName = loadResult.containerPackage.name.clone();
         self.containers
+            .write()
+            .expect("toolpkg container runtime lock poisoned")
             .insert(containerName, loadResult.containerRuntime.clone());
+        let mut subpackages = self
+            .subpackageByPackageName
+            .write()
+            .expect("toolpkg subpackage runtime lock poisoned");
         for runtime in loadResult.containerRuntime.subpackages {
-            self.subpackageByPackageName
-                .insert(runtime.packageName.clone(), runtime);
+            subpackages.insert(runtime.packageName.clone(), runtime);
         }
         loadResult.subpackagePackages
     }
@@ -176,11 +221,19 @@ impl ToolPkgManager {
         &mut self,
         containerPackageName: &str,
     ) -> Option<ToolPkgContainerRuntime> {
-        let runtime = self.containers.remove(containerPackageName.trim())?;
+        let runtime = self
+            .containers
+            .write()
+            .expect("toolpkg container runtime lock poisoned")
+            .remove(containerPackageName.trim())?;
+        let mut subpackages = self
+            .subpackageByPackageName
+            .write()
+            .expect("toolpkg subpackage runtime lock poisoned");
         for subpackage in &runtime.subpackages {
-            self.subpackageByPackageName
-                .remove(subpackage.packageName.trim());
+            subpackages.remove(subpackage.packageName.trim());
         }
+        drop(subpackages);
         self.destroyToolPkgExecutionEngines(&runtime.packageName);
         Some(runtime)
     }
@@ -192,8 +245,14 @@ impl ToolPkgManager {
         containers: BTreeMap<String, ToolPkgContainerRuntime>,
         subpackageByPackageName: BTreeMap<String, ToolPkgSubpackageRuntime>,
     ) {
-        self.containers = containers;
-        self.subpackageByPackageName = subpackageByPackageName;
+        *self
+            .containers
+            .write()
+            .expect("toolpkg container runtime lock poisoned") = containers;
+        *self
+            .subpackageByPackageName
+            .write()
+            .expect("toolpkg subpackage runtime lock poisoned") = subpackageByPackageName;
     }
 
     /// Returns the ToolPkg containers enabled directly or through a subpackage.
@@ -205,6 +264,8 @@ impl ToolPkgManager {
         let enabledPackageNames = BTreeSet::from_iter(enabledPackageNames.iter().cloned());
         let mut runtimes = self
             .containers
+            .read()
+            .expect("toolpkg container runtime lock poisoned")
             .values()
             .filter(|runtime| {
                 enabledPackageNames.contains(&runtime.packageName)
@@ -260,7 +321,7 @@ impl ToolPkgManager {
         enabledPackageNames: &[String],
     ) -> Option<String> {
         let normalizedContainerPackageName = containerPackageName.trim();
-        let runtime = self.containers.get(normalizedContainerPackageName)?;
+        let runtime = self.getToolPkgContainerRuntime(normalizedContainerPackageName)?;
         let enabledPackageNames = BTreeSet::from_iter(enabledPackageNames.iter().cloned());
         let enabled = runtime.packageName.eq(normalizedContainerPackageName)
             && enabledPackageNames.contains(&runtime.packageName)
@@ -271,7 +332,17 @@ impl ToolPkgManager {
         if !enabled || runtime.mainEntry.trim().is_empty() {
             return None;
         }
-        self.readToolPkgResourceText(runtime, &runtime.mainEntry)
+        self.readToolPkgResourceText(&runtime, &runtime.mainEntry)
+    }
+
+    /// Returns the main script of one registered ToolPkg container for runtime IPC dispatch.
+    #[allow(non_snake_case)]
+    pub fn getRegisteredToolPkgMainScript(&self, containerPackageName: &str) -> Option<String> {
+        let runtime = self.getToolPkgContainerRuntime(containerPackageName)?;
+        if runtime.mainEntry.trim().is_empty() {
+            return None;
+        }
+        self.readToolPkgResourceText(&runtime, &runtime.mainEntry)
     }
 
     /// Reads a text resource from an enabled ToolPkg container or subpackage.
@@ -284,10 +355,13 @@ impl ToolPkgManager {
     ) -> Option<String> {
         let normalizedPackageName = packageNameOrSubpackageId.trim();
         let enabledPackageNames = BTreeSet::from_iter(enabledPackageNames.iter().cloned());
-        let runtime = self.containers.get(normalizedPackageName).or_else(|| {
-            let subpackage = self.subpackageByPackageName.get(normalizedPackageName)?;
-            self.containers.get(&subpackage.containerPackageName)
-        })?;
+        let runtime = self
+            .getToolPkgContainerRuntime(normalizedPackageName)
+            .or_else(|| {
+                let subpackage =
+                    self.resolveToolPkgSubpackageRuntimeInternal(normalizedPackageName)?;
+                self.getToolPkgContainerRuntime(&subpackage.containerPackageName)
+            })?;
         let enabled = enabledPackageNames.contains(&runtime.packageName)
             || runtime
                 .subpackages
@@ -296,7 +370,7 @@ impl ToolPkgManager {
         if !enabled {
             return None;
         }
-        self.readToolPkgResourceText(runtime, resourcePath)
+        self.readToolPkgResourceText(&runtime, resourcePath)
     }
 
     /// Returns a cached execution engine or creates one with explicit container ownership.
@@ -327,7 +401,17 @@ impl ToolPkgManager {
             );
             return entry.engine.clone();
         }
-        let engine = self.executionEngineFactory.createToolPkgExecutionEngine();
+        assert!(
+            self.isToolPkgContainer(normalizedContainer),
+            "ToolPkg execution context requires a registered container"
+        );
+        let engine = self.executionEngineFactory.createToolPkgExecutionEngine(
+            ToolPkgExecutionContext {
+                context_key: normalizedKey.to_string(),
+                container_package_name: normalizedContainer.to_string(),
+                text_resource_host: Arc::new(self.clone()),
+            },
+        );
         engines.insert(
             normalizedKey.to_string(),
             ToolPkgExecutionEngineEntry {
@@ -364,7 +448,17 @@ impl ToolPkgManager {
             entry.activeLeases += 1;
             return;
         }
-        let engine = self.executionEngineFactory.createToolPkgExecutionEngine();
+        assert!(
+            self.isToolPkgContainer(normalizedContainer),
+            "ToolPkg execution context requires a registered container"
+        );
+        let engine = self.executionEngineFactory.createToolPkgExecutionEngine(
+            ToolPkgExecutionContext {
+                context_key: normalizedKey.to_string(),
+                container_package_name: normalizedContainer.to_string(),
+                text_resource_host: Arc::new(self.clone()),
+            },
+        );
         engines.insert(
             normalizedKey.to_string(),
             ToolPkgExecutionEngineEntry {
@@ -464,8 +558,14 @@ impl ToolPkgManager {
     /// Removes every registered ToolPkg runtime while preserving listeners.
     #[allow(non_snake_case)]
     pub fn clear(&mut self) {
-        self.containers.clear();
-        self.subpackageByPackageName.clear();
+        self.containers
+            .write()
+            .expect("toolpkg container runtime lock poisoned")
+            .clear();
+        self.subpackageByPackageName
+            .write()
+            .expect("toolpkg subpackage runtime lock poisoned")
+            .clear();
     }
 
     /// Destroys all cached ToolPkg JavaScript execution engines.
@@ -542,6 +642,31 @@ impl ToolPkgManager {
     }
 }
 
+impl ToolPkgTextResourceHost for ToolPkgManager {
+    /// Reads one UTF-8 resource through the registered ToolPkg source host.
+    fn read_toolpkg_text_resource(
+        &self,
+        package_name_or_subpackage_id: &str,
+        resource_path: &str,
+    ) -> Result<String, String> {
+        let normalizedPackageName = package_name_or_subpackage_id.trim();
+        let runtime = self
+            .getToolPkgContainerRuntime(normalizedPackageName)
+            .or_else(|| {
+                let subpackage =
+                    self.resolveToolPkgSubpackageRuntimeInternal(normalizedPackageName)?;
+                self.getToolPkgContainerRuntime(&subpackage.containerPackageName)
+            })
+            .ok_or_else(|| format!("ToolPkg container not found: {normalizedPackageName}"))?;
+        self.readToolPkgResourceText(&runtime, resource_path)
+            .ok_or_else(|| {
+                format!(
+                    "ToolPkg text resource not found: {normalizedPackageName}/{resource_path}"
+                )
+            })
+    }
+}
+
 /// Joins a normalized ToolPkg entry beneath one host-owned source directory.
 fn joinToolPkgSourcePath(sourcePath: &str, entryPath: &str) -> String {
     format!("{}/{}", sourcePath.trim_end_matches(['/', '\\']), entryPath)
@@ -557,9 +682,7 @@ impl ToolPkgHookDispatcher for ToolPkgManager {
     ) -> Result<Option<String>, String> {
         let containerPackageName = invocation.containerPackageName.trim();
         let runtime = self
-            .containers
-            .get(containerPackageName)
-            .cloned()
+            .getToolPkgContainerRuntime(containerPackageName)
             .ok_or_else(|| format!("ToolPkg container not found: {containerPackageName}"))?;
         let script = self
             .getToolPkgMainScriptInternal(&runtime.packageName, enabledPackageNames)
@@ -605,7 +728,7 @@ impl ToolPkgHookDispatcher for ToolPkgManager {
         );
         params.insert(
             "__operit_script_screen".to_string(),
-            Value::String(runtime.mainEntry),
+            Value::String(runtime.mainEntry.clone()),
         );
         if let Some(pluginId) = invocation
             .pluginId
@@ -717,7 +840,9 @@ fn normalizeToolPkgEntryPath(rawPath: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
 
     use super::*;
     use crate::execution_result::JsExecutionResult;
@@ -879,6 +1004,20 @@ mod tests {
             Ok(None)
         }
 
+        /// Returns no script result asynchronously for registry tests.
+        fn execute_script_function_async(
+            &self,
+            _script: String,
+            _function_name: String,
+            _params: BTreeMap<String, Value>,
+            _env_overrides: BTreeMap<String, String>,
+            _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+            _dispatch_intermediate_on_main: bool,
+            _timeout_millis: u64,
+        ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
         /// Returns an empty ToolPkg registration capture for registry tests.
         fn execute_toolpkg_main_registration_function_with_text_resources(
             &self,
@@ -901,6 +1040,17 @@ mod tests {
             Ok(None)
         }
 
+        /// Returns no Compose DSL result asynchronously for registry tests.
+        fn execute_compose_dsl_script_async(
+            &self,
+            _script: String,
+            _runtime_options: BTreeMap<String, Value>,
+            _env_overrides: BTreeMap<String, String>,
+            _text_resources: Arc<BTreeMap<String, String>>,
+        ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
         /// Returns no Compose DSL action result for registry tests.
         fn dispatch_compose_dsl_action(
             &self,
@@ -913,6 +1063,18 @@ mod tests {
             Ok(None)
         }
 
+        /// Returns no Compose DSL action result asynchronously for registry tests.
+        fn dispatch_compose_dsl_action_result_async(
+            &self,
+            _action_id: String,
+            _payload: Option<Value>,
+            _runtime_options: BTreeMap<String, Value>,
+            _env_overrides: BTreeMap<String, String>,
+            _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
         /// Marks this test execution engine as destroyed.
         fn destroy(&self) {
             self.destroyed.store(true, Ordering::Release);
@@ -923,13 +1085,27 @@ mod tests {
     #[derive(Default)]
     struct RecordingExecutionEngineFactory {
         engines: Mutex<Vec<Arc<RecordingExecutionEngine>>>,
+        contexts: Mutex<Vec<ToolPkgExecutionContext>>,
     }
 
     impl ToolPkgExecutionEngineFactory for RecordingExecutionEngineFactory {
-        /// Creates one recording execution engine.
+        /// Creates one generic recording execution engine.
         #[allow(non_snake_case)]
-        fn createToolPkgExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
+        fn createExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
+            Arc::new(RecordingExecutionEngine::default())
+        }
+
+        /// Creates one recording execution engine with its ToolPkg context.
+        #[allow(non_snake_case)]
+        fn createToolPkgExecutionEngine(
+            &self,
+            context: ToolPkgExecutionContext,
+        ) -> Arc<dyn JsExecutionEngine> {
             let engine = Arc::new(RecordingExecutionEngine::default());
+            self.contexts
+                .lock()
+                .expect("recording context factory mutex poisoned")
+                .push(context);
             self.engines
                 .lock()
                 .expect("recording engine factory mutex poisoned")
@@ -949,12 +1125,53 @@ mod tests {
         }
     }
 
+    /// Supplies a minimal ToolPkg archive containing main and shared JavaScript modules.
+    struct SnapshotAssetSource;
+
+    impl ToolPkgAssetSource for SnapshotAssetSource {
+        /// Returns a ToolPkg archive used to verify main-hook resource snapshots.
+        #[allow(non_snake_case)]
+        fn toolPkgAssetBytes(&self, _assetName: &str) -> Option<Vec<u8>> {
+            let mut archiveBytes = Vec::new();
+            let mut archive = zip::ZipWriter::new(std::io::Cursor::new(&mut archiveBytes));
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            archive
+                .start_file("dist/main.js", options)
+                .expect("snapshot test main entry should start");
+            archive
+                .write_all(b"exports.onInputMenuToggle = function() { return []; };")
+                .expect("snapshot test main entry should be written");
+            archive
+                .start_file("dist/shared.js", options)
+                .expect("snapshot test shared entry should start");
+            archive
+                .write_all(b"exports.createDefinition = function() { return {}; };")
+                .expect("snapshot test shared entry should be written");
+            archive
+                .finish()
+                .expect("snapshot test ToolPkg archive should finish");
+            Some(archiveBytes)
+        }
+    }
+
     /// Creates one manager and its recording engine factory.
     fn recordingManager() -> (ToolPkgManager, Arc<RecordingExecutionEngineFactory>) {
         let factory = Arc::new(RecordingExecutionEngineFactory::default());
         let manager = ToolPkgManager::new(
             factory.clone(),
             Arc::new(EmptyAssetSource),
+            Arc::new(RejectingFileSystemHost),
+        );
+        (manager, factory)
+    }
+
+    /// Creates a manager whose ToolPkg archive exposes modules for resource snapshot assertions.
+    fn snapshotRecordingManager() -> (ToolPkgManager, Arc<RecordingExecutionEngineFactory>) {
+        let factory = Arc::new(RecordingExecutionEngineFactory::default());
+        let manager = ToolPkgManager::new(
+            factory.clone(),
+            Arc::new(SnapshotAssetSource),
             Arc::new(RejectingFileSystemHost),
         );
         (manager, factory)
@@ -1024,5 +1241,106 @@ mod tests {
         assert!(manager
             .findToolPkgExecutionEngine("package-b-provider", "package_b")
             .is_some());
+    }
+
+    /// Verifies a cloned IPC runtime view remains usable while its external owner lock is held.
+    #[test]
+    fn clonedRuntimeViewDoesNotAcquireExternalOwnerLock() {
+        let (mut manager, _) = recordingManager();
+        manager.registerToolPkg(ToolPkgLoadResult {
+            containerPackage: ToolPackage {
+                name: "package_a".to_string(),
+                ..ToolPackage::default()
+            },
+            containerRuntime: ToolPkgContainerRuntime {
+                packageName: "package_a".to_string(),
+                mainEntry: "dist/main.js".to_string(),
+                ..ToolPkgContainerRuntime::default()
+            },
+            ..ToolPkgLoadResult::default()
+        });
+        let runtimeView = manager.clone();
+        let externalOwner = Arc::new(Mutex::new(manager));
+        let ownerGuard = externalOwner
+            .lock()
+            .expect("external ToolPkg owner mutex poisoned");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let runtime = runtimeView.getToolPkgContainerRuntime("package_a");
+            sender
+                .send(runtime.map(|value| value.packageName))
+                .expect("runtime view result receiver must remain connected");
+        });
+
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("runtime view must not wait for the external owner lock"),
+            Some("package_a".to_string())
+        );
+        drop(ownerGuard);
+        worker.join().expect("runtime view worker must finish");
+    }
+
+    /// Verifies ToolPkg contexts resolve modules through their bound resource host.
+    #[test]
+    fn createsToolPkgExecutionEngineWithResourceHost() {
+        let (mut manager, factory) = snapshotRecordingManager();
+        manager.registerToolPkg(ToolPkgLoadResult {
+            containerPackage: ToolPackage {
+                name: "snapshot_package".to_string(),
+                ..ToolPackage::default()
+            },
+            containerRuntime: ToolPkgContainerRuntime {
+                packageName: "snapshot_package".to_string(),
+                mainEntry: "dist/main.js".to_string(),
+                sourceType: ToolPkgSourceType::ASSET,
+                sourcePath: "snapshot-package.toolpkg".to_string(),
+                ..ToolPkgContainerRuntime::default()
+            },
+            ..ToolPkgLoadResult::default()
+        });
+
+        manager
+            .dispatchToolPkgHook(
+                &["snapshot_package".to_string()],
+                ToolPkgHookInvocation {
+                    containerPackageName: "snapshot_package".to_string(),
+                    functionName: "onInputMenuToggle".to_string(),
+                    event: "input_menu_toggle".to_string(),
+                    eventName: None,
+                    pluginId: Some("snapshot_hook".to_string()),
+                    inlineFunctionSource: None,
+                    eventPayload: Value::Object(Default::default()),
+                    executionContextKey: None,
+                    runtimeKind: None,
+                    envOverrides: BTreeMap::new(),
+                    timestampMs: 1,
+                    timeoutMillis: 1_000,
+                    dispatchIntermediateOnMain: true,
+                    onIntermediateResult: None,
+                },
+            )
+            .expect("snapshot ToolPkg hook dispatch must succeed");
+
+        let contexts = factory
+            .contexts
+            .lock()
+            .expect("recording context factory mutex poisoned");
+        let context = contexts
+            .first()
+            .expect("ToolPkg hook execution must create a bound context");
+        assert_eq!(context.context_key, "toolpkg_main:snapshot_package");
+        assert_eq!(context.container_package_name, "snapshot_package");
+        assert!(context
+            .text_resource_host
+            .read_toolpkg_text_resource("snapshot_package", "dist/main.js")
+            .expect("bound host must read the main module")
+            .contains("onInputMenuToggle"));
+        assert!(context
+            .text_resource_host
+            .read_toolpkg_text_resource("snapshot_package", "dist/shared.js")
+            .expect("bound host must read the shared module")
+            .contains("createDefinition"));
     }
 }

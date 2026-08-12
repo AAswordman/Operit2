@@ -73,7 +73,7 @@ var PluginConfig = (function() {
     }
 
     function createProxy(name, path, dir, values) {
-        var writeScheduled = false;
+        var pendingWrite = Promise.resolve();
 
         async function writeNow() {
             var mkdirResult = await Tools.Files.mkdir(dir, true);
@@ -87,18 +87,19 @@ var PluginConfig = (function() {
         }
 
         function scheduleWrite() {
-            if (writeScheduled) return;
-            writeScheduled = true;
-            Promise.resolve().then(function() {
-                writeScheduled = false;
-                return writeNow();
-            }).catch(function(error) {
+            pendingWrite = pendingWrite.catch(function(error) {
                 logWriteError(name, path, error);
-            });
+            }).then(writeNow);
+            return pendingWrite;
         }
 
         return new Proxy(values, {
             get: function(target, prop) {
+                if (prop === "__operitPluginConfigFlush") {
+                    return function() {
+                        return pendingWrite;
+                    };
+                }
                 return target[prop];
             },
             set: function(target, prop, value) {
@@ -125,6 +126,16 @@ var PluginConfig = (function() {
             var path = dir + "/" + normalizeFileName(name);
             var values = await loadValues(path, defaults);
             return createProxy(name, path, dir, values);
+        },
+        flush: function(config) {
+            if (!config || typeof config !== "object") {
+                throw new Error("PluginConfig.flush requires a config object");
+            }
+            var flush = config.__operitPluginConfigFlush;
+            if (typeof flush !== "function") {
+                throw new Error("PluginConfig.flush requires a PluginConfig value");
+            }
+            return flush();
         }
     };
 })();

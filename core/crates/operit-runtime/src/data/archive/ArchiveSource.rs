@@ -71,10 +71,7 @@ impl Seek for ArchiveSourceReader {
             ));
         }
         self.position = u64::try_from(next).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "archive seek does not fit u64",
-            )
+            io::Error::new(io::ErrorKind::InvalidInput, "archive seek does not fit u64")
         })?;
         Ok(self.position)
     }

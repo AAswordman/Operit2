@@ -69,6 +69,11 @@ impl RuntimeStorageHost for TestRuntimeStorageHost {
         self.inner.writeBytes(&Self::path(path), content)
     }
 
+    /// Appends bytes to the mapped test path.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        self.inner.appendBytes(&Self::path(path), content)
+    }
+
     /// Deletes an entry at the mapped test path.
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
         self.inner.delete(&Self::path(path), recursive)

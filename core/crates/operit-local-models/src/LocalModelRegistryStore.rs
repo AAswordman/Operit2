@@ -215,6 +215,20 @@ impl RuntimeStorageHost for TestRuntimeStorageHost {
         Ok(())
     }
 
+    /// Appends bytes to a virtual runtime storage path.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        let path = self.resolve(path)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        std::io::Write::write_all(&mut file, content)?;
+        Ok(())
+    }
+
     /// Deletes a virtual runtime storage path.
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
         let path = self.resolve(path)?;

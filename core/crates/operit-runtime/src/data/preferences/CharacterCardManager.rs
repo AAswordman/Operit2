@@ -308,11 +308,11 @@ impl CharacterCardManager {
     /// Returns every character card sorted with the default card first.
     #[allow(non_snake_case)]
     pub fn getAllCharacterCards(&self) -> Result<Vec<CharacterCard>, PreferencesDataStoreError> {
-        let ids = self.characterCardListFlow().first()?;
+        let preferences = self.dataStore.data()?;
+        let ids = Self::readCardList(&preferences);
         Ok(ids
             .into_iter()
-            .map(|id| self.getCharacterCard(&id))
-            .filter_map(Result::ok)
+            .map(|id| self.getCharacterCardFromPreferences(&preferences, &id))
             .collect())
     }
 

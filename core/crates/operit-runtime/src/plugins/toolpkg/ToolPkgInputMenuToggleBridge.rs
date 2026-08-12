@@ -482,13 +482,14 @@ fn loadSpecs(
                 None
             }
         };
-        resolved.extend(parseInputMenuDefinitions(
+        let definitions = parseInputMenuDefinitions(
             value.as_ref(),
             &hook.containerPackageName,
             &hook.functionName,
             &hook.pluginId,
             hook.functionSource.as_deref(),
-        ));
+        );
+        resolved.extend(definitions);
     }
     resolved
 }

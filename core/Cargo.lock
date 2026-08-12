@@ -1690,6 +1690,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-host-native-scheduler"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
 name = "operit-host-native-storage"
 version = "0.1.0"
 dependencies = [
@@ -1708,17 +1717,14 @@ dependencies = [
  "image",
  "md-5",
  "operit-host-api",
+ "operit-host-native-scheduler",
  "operit-plugin-sdk",
  "operit-store",
  "operit-util",
- "quickjs-wasm-rs",
- "rquickjs",
  "serde",
  "serde_json",
  "tokio",
  "uuid",
- "wasm-bindgen",
- "web-sys",
  "zip",
 ]
 
@@ -1874,6 +1880,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rquickjs",
+ "rusqlite",
  "serde",
  "serde_bytes",
  "serde_json",

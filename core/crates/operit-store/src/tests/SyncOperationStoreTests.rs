@@ -62,6 +62,17 @@ impl RuntimeStorageHost for MemoryStorageHost {
         Ok(())
     }
 
+    /// Appends bytes to one in-memory sync-operation storage entry.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+        self.files
+            .lock()
+            .map_err(|error| HostError::new(error.to_string()))?
+            .entry(path.to_string())
+            .or_default()
+            .extend_from_slice(content);
+        Ok(())
+    }
+
     fn delete(&self, path: &str, _recursive: bool) -> operit_host_api::HostResult<()> {
         let mut files = self
             .files

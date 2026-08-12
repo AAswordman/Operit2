@@ -3,13 +3,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use operit_host_api::HostManager::HostManager;
-use operit_util::stream::ReverseStream::ReverseStream;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_host_api::{
     BrowserSessionCommand, BrowserSessionCommandResult, BrowserSessionHost, BrowserSessionInfo,
     BrowserSessionSnapshot,
 };
 use operit_util::stream::HotStream::MutableSharedStreamImpl;
+use operit_util::stream::ReverseStream::ReverseStream;
 use operit_util::stream::Stream::{CollectFuture, Stream};
 use operit_util::AppLogger::AppLogger;
 use serde::{Deserialize, Serialize};
@@ -356,7 +356,9 @@ impl RuntimeBrowserService {
                     return;
                 }
                 if command.action != BROWSER_RUNTIME_INTERACTION_ACTION {
-                    interactionError = Some("browser interaction stream received a non-interaction command".to_string());
+                    interactionError = Some(
+                        "browser interaction stream received a non-interaction command".to_string(),
+                    );
                     return;
                 }
                 if let Err(error) = self.submitBrowserCommand(command) {

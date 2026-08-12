@@ -1,16 +1,17 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::{
-    AudioPlaybackHost, BluetoothHost, BrowserAutomationHost, BrowserSessionHost,
-    ComposeDslWebViewHost, FileSystemHost, HostEnvironmentDescriptor, HostRuntimeEventHost,
-    HostRuntimeEventSchedulerHost, HostRuntimeTaskSchedulerHost, HostSecretStore, HttpHost,
-    LocalInferenceHost, ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost,
-    RuntimeStorageWriteHost,
-    ArchiveStagingHost, SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost,
-    WebVisitHost,
+    ArchiveStagingHost, AudioPlaybackHost, BluetoothHost, BrowserAutomationHost,
+    BrowserSessionHost, ComposeDslWebViewHost, FileSystemHost, HostEnvironmentDescriptor,
+    HostJavaScriptRuntimeHost, HostRuntimeEventHost, HostRuntimeEventSchedulerHost,
+    HostRuntimeTaskSchedulerHost, HostSecretStore, HttpHost, LocalInferenceHost,
+    ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost, RuntimeStorageWriteHost,
+    SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost, WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
+static DEFAULT_JAVASCRIPT_RUNTIME_HOST: OnceLock<Arc<dyn HostJavaScriptRuntimeHost>> =
+    OnceLock::new();
 static DEFAULT_RUNTIME_TASK_SCHEDULER_HOST: OnceLock<Arc<dyn HostRuntimeTaskSchedulerHost>> =
     OnceLock::new();
 
@@ -29,6 +30,21 @@ pub fn defaultHttpHost() -> Arc<dyn HttpHost> {
     DEFAULT_HTTP_HOST
         .get()
         .expect("HTTP host must be configured before using HTTP-backed runtime services")
+        .clone()
+}
+
+/// Registers the JavaScript runtime host shared by execution engines.
+#[allow(non_snake_case)]
+pub fn setDefaultHostJavaScriptRuntimeHost(host: Arc<dyn HostJavaScriptRuntimeHost>) {
+    let _ = DEFAULT_JAVASCRIPT_RUNTIME_HOST.set(host);
+}
+
+/// Returns the JavaScript runtime host configured by runtime initialization.
+#[allow(non_snake_case)]
+pub fn defaultHostJavaScriptRuntimeHost() -> Arc<dyn HostJavaScriptRuntimeHost> {
+    DEFAULT_JAVASCRIPT_RUNTIME_HOST
+        .get()
+        .expect("JavaScript runtime host must be configured before creating execution engines")
         .clone()
 }
 
@@ -72,6 +88,7 @@ pub struct HostManager {
     pub hostRuntimeEventHost: Option<Arc<dyn HostRuntimeEventHost>>,
     pub hostRuntimeEventSchedulerHost: Option<Arc<dyn HostRuntimeEventSchedulerHost>>,
     pub hostRuntimeTaskSchedulerHost: Option<Arc<dyn HostRuntimeTaskSchedulerHost>>,
+    pub hostJavaScriptRuntimeHost: Option<Arc<dyn HostJavaScriptRuntimeHost>>,
     pub hostEnvironment: HostEnvironmentDescriptor,
     pub coreCommandExecutor: Option<CoreCommandExecutor>,
 }
@@ -102,6 +119,7 @@ impl HostManager {
             hostRuntimeEventHost: None,
             hostRuntimeEventSchedulerHost: None,
             hostRuntimeTaskSchedulerHost: None,
+            hostJavaScriptRuntimeHost: None,
             hostEnvironment: HostEnvironmentDescriptor::android(),
             coreCommandExecutor: None,
         }
@@ -134,6 +152,7 @@ impl HostManager {
             hostRuntimeEventHost: None,
             hostRuntimeEventSchedulerHost: None,
             hostRuntimeTaskSchedulerHost: None,
+            hostJavaScriptRuntimeHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -169,6 +188,7 @@ impl HostManager {
             hostRuntimeEventHost: None,
             hostRuntimeEventSchedulerHost: None,
             hostRuntimeTaskSchedulerHost: None,
+            hostJavaScriptRuntimeHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -205,6 +225,7 @@ impl HostManager {
             hostRuntimeEventHost: None,
             hostRuntimeEventSchedulerHost: None,
             hostRuntimeTaskSchedulerHost: None,
+            hostJavaScriptRuntimeHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -245,6 +266,7 @@ impl HostManager {
             hostRuntimeEventHost: None,
             hostRuntimeEventSchedulerHost: None,
             hostRuntimeTaskSchedulerHost: None,
+            hostJavaScriptRuntimeHost: None,
             hostEnvironment,
             coreCommandExecutor: None,
         }
@@ -386,6 +408,16 @@ impl HostManager {
         hostRuntimeTaskSchedulerHost: Arc<dyn HostRuntimeTaskSchedulerHost>,
     ) -> Self {
         self.hostRuntimeTaskSchedulerHost = Some(hostRuntimeTaskSchedulerHost);
+        self
+    }
+
+    /// Adds a host-owned JavaScript runtime and affine state executor.
+    #[allow(non_snake_case)]
+    pub fn withHostJavaScriptRuntimeHost(
+        mut self,
+        hostJavaScriptRuntimeHost: Arc<dyn HostJavaScriptRuntimeHost>,
+    ) -> Self {
+        self.hostJavaScriptRuntimeHost = Some(hostJavaScriptRuntimeHost);
         self
     }
 }

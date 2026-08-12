@@ -4,11 +4,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../../../../../common/CharacterAvatar.dart';
 import '../../../../../common/markdown/MarkdownNodeGrouper.dart';
 import '../../../../../common/markdown/StreamMarkdownRendererState.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../theme/OperitTheme.dart';
-import '../../../../../theme/OperitThemeAssets.dart';
 import '../../part/StructuredMessagePartRenderer.dart';
 import '../../part/ThinkToolsXmlNodeGrouper.dart';
 import '../../../viewmodel/ChatViewModel.dart';
@@ -547,12 +547,9 @@ class _MessageAvatar extends StatelessWidget {
   final double cornerRadius;
   final VoidCallback? onLongPress;
 
-  static const String _operitAvatarAsset = 'assets/images/operit_avatar.png';
-
   @override
   Widget build(BuildContext context) {
     final square = avatarShape == UserPreferencesManager.AVATAR_SHAPE_SQUARE;
-    final avatarImagePath = imagePath;
     return GestureDetector(
       onLongPress: onLongPress,
       child: Container(
@@ -563,9 +560,7 @@ class _MessageAvatar extends StatelessWidget {
           borderRadius: square ? BorderRadius.circular(cornerRadius) : null,
         ),
         clipBehavior: Clip.antiAlias,
-        child: avatarImagePath != null && avatarImagePath.isNotEmpty
-            ? ThemeAssetImage(storagePath: avatarImagePath, fit: BoxFit.cover)
-            : Image.asset(_operitAvatarAsset, fit: BoxFit.cover),
+        child: CharacterAvatarImage(avatarUri: imagePath, fit: BoxFit.cover),
       ),
     );
   }

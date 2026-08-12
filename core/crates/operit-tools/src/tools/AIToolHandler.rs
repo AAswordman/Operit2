@@ -1,14 +1,12 @@
-use std::cell::Cell;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use operit_host_api::HostEnvironmentDescriptor;
 use operit_host_api::HostManager::HostManager;
 use operit_plugin_sdk::javascript::{
     JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolCallResultData,
-    JsToolNameResolutionRequest, JsToolPkgIpcRequest, JsToolPkgResourceRequest,
-    JsToolPkgWasmRequest, JsToolPkgWasmResult,
+    JsToolNameResolutionRequest, JsToolPkgIpcCompletion, JsToolPkgIpcRequest,
+    JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult,
 };
 use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_plugin_sdk::package::ToolPackage;
@@ -36,6 +34,12 @@ use crate::runtime_support::{ToolRuntimeDependencies, ToolRuntimeSupport};
 
 const PACKAGE_PROXY_TOOL_NAME: &str = "package_proxy";
 
+#[derive(Clone, Copy)]
+enum ToolExecutionAccess {
+    AiPermission,
+    Direct,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolRegistrationVisibility {
     PUBLIC,
@@ -45,7 +49,6 @@ pub enum ToolRegistrationVisibility {
 #[derive(Clone)]
 pub struct AIToolHandler {
     inner: Arc<Mutex<AIToolHandlerState>>,
-    nestedExecutionAuthorization: PackageNestedExecutionAuthorizationState,
 }
 
 pub struct AIToolHandlerState {
@@ -58,85 +61,6 @@ pub struct AIToolHandlerState {
     hooks: Vec<Arc<dyn AIToolHook>>,
     toolPermissionSystem: ToolPermissionSystem,
     packageManager: Option<Arc<Mutex<RuntimePackageManager>>>,
-}
-
-thread_local! {
-    static ASYNC_TOOL_EXECUTION_SCOPE_DEPTH: Cell<usize> = const { Cell::new(0) };
-}
-
-/// Marks synchronous nested tool calls as descendants of an approved async invocation.
-struct AsyncToolExecutionScope;
-
-/// Tracks one package executor's nested authorization across worker threads.
-#[derive(Clone)]
-struct PackageNestedExecutionAuthorizationState {
-    depth: Arc<AtomicUsize>,
-}
-
-/// Keeps one package executor's nested authorization active across worker threads.
-pub(crate) struct PackageNestedExecutionAuthorization {
-    depth: Arc<AtomicUsize>,
-}
-
-impl AsyncToolExecutionScope {
-    /// Enters one approved asynchronous tool execution call stack.
-    fn enter() -> Self {
-        ASYNC_TOOL_EXECUTION_SCOPE_DEPTH.with(|depth| depth.set(depth.get() + 1));
-        Self
-    }
-
-    /// Reports whether the current thread is executing an approved async tool stack.
-    fn isActive() -> bool {
-        ASYNC_TOOL_EXECUTION_SCOPE_DEPTH.with(|depth| depth.get() > 0)
-    }
-}
-
-impl Drop for AsyncToolExecutionScope {
-    /// Leaves the approved asynchronous tool execution call stack.
-    fn drop(&mut self) {
-        ASYNC_TOOL_EXECUTION_SCOPE_DEPTH.with(|depth| {
-            let current = depth.get();
-            debug_assert!(current > 0, "async tool execution scope underflow");
-            depth.set(current - 1);
-        });
-    }
-}
-
-impl PackageNestedExecutionAuthorizationState {
-    /// Creates an inactive authorization state for one package executor.
-    fn new() -> Self {
-        Self {
-            depth: Arc::new(AtomicUsize::new(0)),
-        }
-    }
-
-    /// Activates cross-thread authorization for one approved package invocation.
-    fn enter(&self) -> PackageNestedExecutionAuthorization {
-        assert!(
-            AsyncToolExecutionScope::isActive(),
-            "package execution must inherit an approved async tool scope"
-        );
-        self.depth.fetch_add(1, Ordering::AcqRel);
-        PackageNestedExecutionAuthorization {
-            depth: self.depth.clone(),
-        }
-    }
-
-    /// Reports whether one package invocation currently owns authorization.
-    fn isActive(&self) -> bool {
-        self.depth.load(Ordering::Acquire) > 0
-    }
-}
-
-impl Drop for PackageNestedExecutionAuthorization {
-    /// Releases one package-scoped cross-thread authorization grant.
-    fn drop(&mut self) {
-        let previous = self.depth.fetch_sub(1, Ordering::AcqRel);
-        assert!(
-            previous > 0,
-            "package nested execution authorization underflow"
-        );
-    }
 }
 
 impl AIToolHandler {
@@ -184,28 +108,7 @@ impl AIToolHandler {
                 toolPermissionSystem: ToolPermissionSystem::getInstance(),
                 packageManager: None,
             })),
-            nestedExecutionAuthorization: PackageNestedExecutionAuthorizationState::new(),
         }
-    }
-
-    /// Creates a handler sharing tools while owning an isolated package authorization token.
-    pub(crate) fn withIsolatedNestedExecutionAuthorization(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            nestedExecutionAuthorization: PackageNestedExecutionAuthorizationState::new(),
-        }
-    }
-
-    /// Carries the approved async call context into one package's worker threads.
-    pub(crate) fn enterPackageNestedExecutionAuthorization(
-        &self,
-    ) -> PackageNestedExecutionAuthorization {
-        self.nestedExecutionAuthorization.enter()
-    }
-
-    /// Reports whether this call stack or package worker owns nested authorization.
-    fn hasNestedExecutionAuthorization(&self) -> bool {
-        AsyncToolExecutionScope::isActive() || self.nestedExecutionAuthorization.isActive()
     }
 
     /// Removes one registered tool and its visibility metadata.
@@ -718,75 +621,12 @@ impl AIToolHandler {
         }
     }
 
-    /// Rejects interactive permission requests from synchronous execution callers.
-    fn executeAccessPreflight(
-        &self,
-        tool: &AITool,
-        executor: &dyn ToolExecutor,
-    ) -> Result<ToolAccessSpec, ToolResult> {
-        let accessSpec = executor.accessSpec(tool).map_err(|error| ToolResult {
-            toolName: tool.name.clone(),
-            success: false,
-            result: stringResultData(""),
-            error: Some(format!("Tool access declaration failed: {error}")),
-        })?;
-
-        let permissionSystem = self.getToolPermissionSystem();
-        let mode = permissionSystem
-            .getAiPermissionMode()
-            .map_err(|error| ToolResult {
-                toolName: tool.name.clone(),
-                success: false,
-                result: stringResultData(""),
-                error: Some(error.to_string()),
-            })?;
-        if !mode.allowsEffect(accessSpec.effect) {
-            return Err(ToolResult {
-                toolName: tool.name.clone(),
-                success: false,
-                result: stringResultData(""),
-                error: Some(format!(
-                    "AI permission mode {} does not allow {:?} tool execution.",
-                    mode.name(),
-                    accessSpec.effect
-                )),
-            });
-        }
-
-        if let Err(error) = self.checkWorkspaceBoundary(tool, &accessSpec) {
-            return Err(ToolResult {
-                toolName: tool.name.clone(),
-                success: false,
-                result: stringResultData(""),
-                error: Some(error),
-            });
-        }
-
-        if self.hasNestedExecutionAuthorization() {
-            return Ok(accessSpec);
-        }
-
-        if mode == AiPermissionMode::WorkspaceWrite
-            && accessSpec.effect == ToolEffect::WRITE
-            && matches!(accessSpec.boundary, ToolBoundary::None)
-            && tool.name.split_once(':').is_none()
-        {
-            return Err(self.asyncPermissionRequiredResult(tool));
-        }
-
-        if tool.name.split_once(':').is_some() {
-            return Err(self.asyncPermissionRequiredResult(tool));
-        }
-
-        Ok(accessSpec)
-    }
-
     /// Runs access validation and asynchronously obtains every required approval.
     async fn executeAccessPreflightAsync(
         &self,
         tool: &AITool,
         accessSpec: ToolAccessSpec,
-    ) -> Result<(ToolAccessSpec, bool), ToolResult> {
+    ) -> Result<ToolAccessSpec, ToolResult> {
         let permissionSystem = self.getToolPermissionSystem();
         let mode = permissionSystem
             .getAiPermissionMode()
@@ -827,7 +667,6 @@ impl AIToolHandler {
             tool.name.split_once(':').map(|_| tool.clone())
         };
 
-        let mut permitsNestedInteractiveExecution = false;
         if mode == AiPermissionMode::WorkspaceWrite
             && accessSpec.effect == ToolEffect::WRITE
             && matches!(accessSpec.boundary, ToolBoundary::None)
@@ -857,7 +696,6 @@ impl AIToolHandler {
                 true,
                 Some("WorkspaceWrite non-file WRITE approved for this session."),
             );
-            permitsNestedInteractiveExecution = true;
         }
 
         if let Some(packageApprovalTool) = packageApprovalTool {
@@ -885,22 +723,9 @@ impl AIToolHandler {
                 true,
                 Some("PackageTool approved."),
             );
-            permitsNestedInteractiveExecution = true;
         }
 
-        Ok((accessSpec, permitsNestedInteractiveExecution))
-    }
-
-    /// Builds a typed denial for callers that have not migrated to asynchronous execution.
-    fn asyncPermissionRequiredResult(&self, tool: &AITool) -> ToolResult {
-        let error = "Interactive tool permission requires asynchronous tool execution.".to_string();
-        self.notifyToolPermissionChecked(tool, false, Some(&error));
-        ToolResult {
-            toolName: tool.name.clone(),
-            success: false,
-            result: stringResultData(""),
-            error: Some(error),
-        }
+        Ok(accessSpec)
     }
 
     fn checkWorkspaceBoundary(
@@ -961,11 +786,32 @@ impl AIToolHandler {
         Ok(())
     }
 
-    /// Executes a tool through hooks, permissions, limits, and a resolved executor.
+    /// Executes an AI-originated tool through permission checks and a resolved executor.
     #[allow(non_snake_case)]
     pub async fn executeToolSafelyWithResolvedExecutor(
         &mut self,
         tool: &AITool,
+    ) -> Option<Vec<ToolResult>> {
+        self.executeToolWithResolvedExecutor(tool, ToolExecutionAccess::AiPermission)
+            .await
+    }
+
+    /// Executes a non-AI tool directly through a resolved executor.
+    #[allow(non_snake_case)]
+    pub async fn executeToolDirectlyWithResolvedExecutor(
+        &mut self,
+        tool: &AITool,
+    ) -> Option<Vec<ToolResult>> {
+        self.executeToolWithResolvedExecutor(tool, ToolExecutionAccess::Direct)
+            .await
+    }
+
+    /// Executes a streamed tool call according to its caller-owned access policy.
+    #[allow(non_snake_case)]
+    async fn executeToolWithResolvedExecutor(
+        &mut self,
+        tool: &AITool,
+        access: ToolExecutionAccess,
     ) -> Option<Vec<ToolResult>> {
         let parameterSummary = Self::summarizeToolParameters(tool);
         ChainLogger::info(
@@ -1004,31 +850,47 @@ impl AIToolHandler {
         let validationResult = executor.validateParameters(tool);
         let startMs = operit_host_api::TimeUtils::currentTimeMillis();
         let collected = if validationResult.valid {
-            let accessSpec = executor.accessSpec(tool).map_err(|error| ToolResult {
-                toolName: tool.name.clone(),
-                success: false,
-                result: stringResultData(""),
-                error: Some(format!("Tool access declaration failed: {error}")),
-            });
-            match accessSpec {
-                Ok(accessSpec) => match self.executeAccessPreflightAsync(tool, accessSpec).await {
-                    Ok((accessSpec, permitsNestedInteractiveExecution)) => {
-                        ChainLogger::info(
-                            TOOL_CHAIN,
-                            "tool.stream.start",
-                            &[
-                                ("tool", tool.name.clone()),
-                                ("parameters", parameterSummary.clone()),
-                                ("effect", format!("{:?}", accessSpec.effect)),
-                            ],
-                        );
-                        let _executionScope =
-                            permitsNestedInteractiveExecution.then(AsyncToolExecutionScope::enter);
-                        executor.invokeAndStream(tool)
+            match access {
+                ToolExecutionAccess::AiPermission => {
+                    let accessSpec = executor.accessSpec(tool).map_err(|error| ToolResult {
+                        toolName: tool.name.clone(),
+                        success: false,
+                        result: stringResultData(""),
+                        error: Some(format!("Tool access declaration failed: {error}")),
+                    });
+                    match accessSpec {
+                        Ok(accessSpec) => {
+                            match self.executeAccessPreflightAsync(tool, accessSpec).await {
+                                Ok(accessSpec) => {
+                                    ChainLogger::info(
+                                        TOOL_CHAIN,
+                                        "tool.stream.start",
+                                        &[
+                                            ("tool", tool.name.clone()),
+                                            ("parameters", parameterSummary.clone()),
+                                            ("effect", format!("{:?}", accessSpec.effect)),
+                                        ],
+                                    );
+                                    executor.invokeAndStream(tool)
+                                }
+                                Err(errorResult) => vec![errorResult],
+                            }
+                        }
+                        Err(errorResult) => vec![errorResult],
                     }
-                    Err(errorResult) => vec![errorResult],
-                },
-                Err(errorResult) => vec![errorResult],
+                }
+                ToolExecutionAccess::Direct => {
+                    ChainLogger::info(
+                        TOOL_CHAIN,
+                        "tool.stream.start",
+                        &[
+                            ("tool", tool.name.clone()),
+                            ("parameters", parameterSummary.clone()),
+                            ("access", "direct".to_string()),
+                        ],
+                    );
+                    executor.invokeAndStream(tool)
+                }
             }
         } else {
             ChainLogger::warn(
@@ -1128,7 +990,7 @@ impl AIToolHandler {
         Some(collected)
     }
 
-    /// Resolves and executes a tool request through the registered tool chain.
+    /// Resolves and directly executes a non-AI tool request through the registered tool chain.
     #[allow(non_snake_case)]
     pub fn executeTool(&mut self, tool: AITool) -> ToolResult {
         ChainLogger::info(
@@ -1195,26 +1057,12 @@ impl AIToolHandler {
             return validationFailedResult;
         }
 
-        if let Err(accessDeniedResult) = self.executeAccessPreflight(&tool, executor.as_ref()) {
-            self.notifyToolExecutionResult(&tool, &accessDeniedResult);
-            self.notifyToolExecutionFinished(&tool);
-            self.inner
-                .lock()
-                .expect("AIToolHandler mutex poisoned")
-                .availableTools
-                .insert(tool.name.clone(), executor);
-            return accessDeniedResult;
-        }
-
         self.notifyToolExecutionStarted(&tool);
         ChainLogger::info(
             TOOL_CHAIN,
             "tool.execute.start",
             &[("tool", tool.name.clone())],
         );
-        let _inheritedExecutionScope = self
-            .hasNestedExecutionAuthorization()
-            .then(AsyncToolExecutionScope::enter);
         let collected = executor.invokeAndStream(&tool);
         if collected.is_empty() {
             ChainLogger::error(
@@ -1373,7 +1221,24 @@ impl JsExecutionHost for AIToolHandler {
 
     /// Returns the plugin configuration directory.
     fn plugin_config_dir(&self, plugin_id: &str) -> Result<String, String> {
-        OperitPaths::pluginConfigDir(plugin_id).map(|path| path.to_string_lossy().to_string())
+        let configDir = OperitPaths::pluginConfigDir(plugin_id)?;
+        let configDirPath = configDir
+            .to_str()
+            .ok_or_else(|| "Plugin config directory is not valid UTF-8".to_string())?;
+        self.getContext()
+            .fileSystemHost
+            .clone()
+            .ok_or_else(|| "FileSystemHost is required for plugin configuration".to_string())?
+            .makeDirectory(configDirPath, true)
+            .map_err(|error| error.to_string())?;
+        let runtimeRoot = RuntimeStorePaths::default().runtime_dir().to_path_buf();
+        let relativePath = configDir
+            .strip_prefix(runtimeRoot)
+            .map_err(|_| "Plugin configuration directory is outside runtime storage".to_string())?;
+        let relativePath = relativePath
+            .to_str()
+            .ok_or_else(|| "Plugin configuration directory is not valid UTF-8".to_string())?;
+        PathMapper::joinVfsPath("/app/data", relativePath)
     }
 
     /// Reads one ToolPkg text resource.
@@ -1479,12 +1344,82 @@ impl JsExecutionHost for AIToolHandler {
         crate::tools::ToolJsRuntime::resolveJsToolName(self, request)
     }
 
-    /// Invokes one ToolPkg IPC request.
-    fn invoke_toolpkg_ipc(
+    /// Submits one ToolPkg IPC request to the host scheduler.
+    fn invoke_toolpkg_ipc_async(
         &self,
         request: JsToolPkgIpcRequest,
-    ) -> Result<serde_json::Value, String> {
-        crate::tools::ToolJsRuntime::invokeToolPkgIpc(self, request)
+        completion: JsToolPkgIpcCompletion,
+    ) -> Result<(), String> {
+        let packageTarget = request.package_target.clone();
+        let channel = request.channel.clone();
+        let targetContextKey = request.target_context_key.clone().unwrap_or_default();
+        let targetRuntime = request.target_runtime.clone().unwrap_or_default();
+        let toolHandler = self.clone();
+        let scheduler = self
+            .getContext()
+            .hostRuntimeTaskSchedulerHost
+            .clone()
+            .ok_or_else(|| {
+                "HostRuntimeTaskSchedulerHost is required for ToolPkg IPC".to_string()
+            })?;
+        ChainLogger::info(
+            TOOL_CHAIN,
+            "toolpkg.ipc.submit",
+            &[
+                ("package", packageTarget.clone()),
+                ("channel", channel.clone()),
+                ("targetContext", targetContextKey.clone()),
+                ("targetRuntime", targetRuntime.clone()),
+            ],
+        );
+        scheduler
+            .scheduleHostRuntimeAsyncTask(
+                "operit-toolpkg-ipc",
+                Box::new(move || {
+                    Box::pin(async move {
+                        let startedMs = operit_host_api::TimeUtils::currentTimeMillis();
+                        ChainLogger::info(
+                            TOOL_CHAIN,
+                            "toolpkg.ipc.target_start",
+                            &[
+                                ("package", packageTarget.clone()),
+                                ("channel", channel.clone()),
+                                ("targetContext", targetContextKey.clone()),
+                                ("targetRuntime", targetRuntime.clone()),
+                            ],
+                        );
+                        let result =
+                            crate::tools::ToolJsRuntime::invokeToolPkgIpc(&toolHandler, request)
+                                .await;
+                        let elapsedMs = operit_host_api::TimeUtils::currentTimeMillis()
+                            .saturating_sub(startedMs);
+                        let outcome = if result.is_ok() { "success" } else { "error" };
+                        ChainLogger::info(
+                            TOOL_CHAIN,
+                            "toolpkg.ipc.target_finish",
+                            &[
+                                ("package", packageTarget),
+                                ("channel", channel),
+                                ("targetContext", targetContextKey),
+                                ("targetRuntime", targetRuntime),
+                                ("elapsedMs", elapsedMs.to_string()),
+                                ("outcome", outcome.to_string()),
+                            ],
+                        );
+                        completion(result);
+                    })
+                }),
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    /// Waits for the runtime scheduler to advance JavaScript work on a later host turn.
+    fn wait_for_javascript_runtime_turn(&self) -> operit_host_api::HostRuntimeTurnFuture {
+        self.getContext()
+            .hostRuntimeTaskSchedulerHost
+            .as_ref()
+            .expect("HostRuntimeTaskSchedulerHost is required for JavaScript execution")
+            .waitForHostRuntimeTaskTurn()
     }
 }
 
@@ -1566,36 +1501,5 @@ impl ToolExecutor for FnToolExecutor {
 
     fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
         vec![(self.invoke)(tool)]
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{AsyncToolExecutionScope, PackageNestedExecutionAuthorizationState};
-
-    /// Verifies that package authorization crosses threads without leaking across states.
-    #[test]
-    fn package_nested_authorization_is_cross_thread_scoped_and_isolated() {
-        let authorized_state = PackageNestedExecutionAuthorizationState::new();
-        let isolated_state = PackageNestedExecutionAuthorizationState::new();
-        let async_scope = AsyncToolExecutionScope::enter();
-        let authorization = authorized_state.enter();
-        drop(async_scope);
-
-        let worker_authorized_state = authorized_state.clone();
-        let worker_isolated_state = isolated_state.clone();
-        let (authorized_on_worker, isolated_on_worker) = std::thread::spawn(move || {
-            (
-                worker_authorized_state.isActive(),
-                worker_isolated_state.isActive(),
-            )
-        })
-        .join()
-        .expect("authorization test worker must complete");
-
-        assert!(authorized_on_worker);
-        assert!(!isolated_on_worker);
-        drop(authorization);
-        assert!(!authorized_state.isActive());
     }
 }

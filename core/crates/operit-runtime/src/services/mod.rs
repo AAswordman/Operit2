@@ -10,8 +10,6 @@ pub mod LocalProviderService;
 pub mod ProviderRuntimeSupportService;
 #[path = "RuntimeBrowserService.rs"]
 pub mod RuntimeBrowserService;
-#[path = "SnapshotImportManager.rs"]
-pub mod SnapshotImportManager;
 #[path = "RuntimeEventIngressService.rs"]
 pub mod RuntimeEventIngressService;
 #[path = "RuntimeHostInfoService.rs"]
@@ -20,6 +18,8 @@ pub mod RuntimeHostInfoService;
 pub mod RuntimeHostInteractionService;
 #[path = "RuntimeTerminalService.rs"]
 pub mod RuntimeTerminalService;
+#[path = "SnapshotImportManager.rs"]
+pub mod SnapshotImportManager;
 #[path = "SttRecognitionService.rs"]
 pub mod SttRecognitionService;
 #[path = "ToolRuntimeSupportService.rs"]
@@ -38,11 +38,11 @@ pub use LocalModelService::*;
 pub use LocalProviderService::*;
 pub use ProviderRuntimeSupportService::*;
 pub use RuntimeBrowserService::*;
-pub use SnapshotImportManager::*;
 pub use RuntimeEventIngressService::*;
 pub use RuntimeHostInfoService::*;
 pub use RuntimeHostInteractionService::*;
 pub use RuntimeTerminalService::*;
+pub use SnapshotImportManager::*;
 pub use SttRecognitionService::*;
 pub use ToolRuntimeSupportService::*;
 pub use TtsPlaybackService::*;

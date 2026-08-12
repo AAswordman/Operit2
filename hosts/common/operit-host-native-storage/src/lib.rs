@@ -5,8 +5,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use operit_host_api::{
-    HostError, HostResult, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeSqliteTransaction,
-    ArchiveStagingHost, RuntimeStorageEntry, RuntimeStorageHost, RuntimeStorageWriteHost,
+    ArchiveStagingHost, HostError, HostResult, RuntimeSqliteConnection, RuntimeSqliteHost,
+    RuntimeSqliteTransaction, RuntimeStorageEntry, RuntimeStorageHost, RuntimeStorageWriteHost,
     RuntimeStorageWriteSession, SqliteRow, SqliteValue,
 };
 use rusqlite::types::Value;
@@ -171,7 +171,9 @@ impl ArchiveStagingHost for NativeArchiveStagingHost {
         let remainingByteLength = upload
             .expectedByteLength
             .checked_sub(currentByteLength)
-            .ok_or_else(|| HostError::new("Archive staging upload exceeds its declared byte length"))?;
+            .ok_or_else(|| {
+                HostError::new("Archive staging upload exceeds its declared byte length")
+            })?;
         if u64::try_from(chunk.len())
             .map_err(|_| HostError::new("Archive staging chunk length does not fit u64"))?
             > remainingByteLength
@@ -348,6 +350,20 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
             fs::create_dir_all(parent)?;
         }
         fs::write(path, content)?;
+        Ok(())
+    }
+
+    /// Appends bytes to a native runtime storage file.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        let path = self.resolve(path)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        file.write_all(content)?;
         Ok(())
     }
 
@@ -605,14 +621,15 @@ fn fromRusqliteValue(value: Value) -> SqliteValue {
 mod tests {
     use std::fs;
 
-    use operit_host_api::ArchiveStagingHost;
+    use operit_host_api::{ArchiveStagingHost, RuntimeStorageHost};
 
-    use super::NativeArchiveStagingHost;
+    use super::{NativeArchiveStagingHost, NativeRuntimeStorageHost};
 
     /// Verifies that a native staged archive rejects excess bytes and seals only at its declared length.
     #[test]
     fn archive_staging_enforces_declared_length() {
-        let root = std::env::temp_dir().join(format!("operit-archive-test-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("operit-archive-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).expect("temporary archive test root must be created");
         let host = NativeArchiveStagingHost::new(root.clone());
 
@@ -635,5 +652,29 @@ mod tests {
         host.removeArchive("archive")
             .expect("sealed archive must be removed");
         fs::remove_dir_all(root).expect("temporary archive test root must be removed");
+    }
+
+    /// Verifies that native runtime storage appends without rewriting earlier content.
+    #[test]
+    fn runtime_storage_appends_bytes() {
+        let root = std::env::temp_dir().join(format!(
+            "operit-runtime-storage-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let workspace_root = root.join("workspaces");
+        let host = NativeRuntimeStorageHost::new(root.clone(), workspace_root);
+
+        host.appendBytes("runtime/state/client.log", b"first\n")
+            .expect("first log entry must append");
+        host.appendBytes("runtime/state/client.log", b"second\n")
+            .expect("second log entry must append");
+
+        assert_eq!(
+            host.readBytes("runtime/state/client.log")
+                .expect("appended log must be readable"),
+            b"first\nsecond\n"
+        );
+
+        fs::remove_dir_all(root).expect("temporary runtime storage root must be removed");
     }
 }

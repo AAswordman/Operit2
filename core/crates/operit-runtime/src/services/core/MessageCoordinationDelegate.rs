@@ -1,4 +1,3 @@
-use core::time::Duration;
 use std::collections::HashMap;
 
 use serde_json::Value;
@@ -14,6 +13,8 @@ use crate::services::core::MessageProcessingDelegate::{
     RegenerateAiMessageVariantRequest, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_model::ActivePrompt::ActivePrompt;
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::CharacterCard::CharacterCard;
@@ -1161,7 +1162,10 @@ impl MessageCoordinationDelegate {
             {
                 return true;
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            defaultHostRuntimeTaskSchedulerHost()
+                .waitForHostRuntimeDelay(50)
+                .await
+                .expect("turn completion delay must be provided by the Host");
         }
         self.messageProcessingDelegate
             .getTurnCompleteCounter(chatId)

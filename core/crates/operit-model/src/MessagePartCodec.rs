@@ -208,7 +208,6 @@ impl MessagePartCodec {
 }
 
 /// Incrementally converts an assistant response stream into canonical message parts.
-#[derive(Default)]
 pub struct AssistantMarkupStreamState {
     source: String,
     pending: String,
@@ -217,8 +216,25 @@ pub struct AssistantMarkupStreamState {
     activeThinkingCloseTag: Option<String>,
 }
 
+impl Default for AssistantMarkupStreamState {
+    /// Creates an assistant stream state with its canonical empty Markdown part.
+    fn default() -> Self {
+        Self {
+            source: String::new(),
+            pending: String::new(),
+            parts: vec![MessagePart::markdown(
+                "part-0".to_string(),
+                0,
+                String::new(),
+            )],
+            activeThinkingOpenTag: None,
+            activeThinkingCloseTag: None,
+        }
+    }
+}
+
 impl AssistantMarkupStreamState {
-    /// Creates an empty assistant-markup stream state.
+    /// Creates an assistant-markup stream state with a canonical empty message part.
     pub fn new() -> Self {
         Self::default()
     }
@@ -605,11 +621,13 @@ mod tests {
             .finish()
             .expect("complete assistant stream must finish");
 
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0].kind, MessagePartKind::Thinking);
-        assert_eq!(parts[0].content, "reasoning");
-        assert_eq!(parts[1].kind, MessagePartKind::Markdown);
-        assert_eq!(parts[1].content, "Answer");
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0].kind, MessagePartKind::Markdown);
+        assert_eq!(parts[0].content, "");
+        assert_eq!(parts[1].kind, MessagePartKind::Thinking);
+        assert_eq!(parts[1].content, "reasoning");
+        assert_eq!(parts[2].kind, MessagePartKind::Markdown);
+        assert_eq!(parts[2].content, "Answer");
     }
 
     /// Verifies generated tool tag names remain semantic when their names span chunks.
@@ -626,13 +644,28 @@ mod tests {
             .finish()
             .expect("complete assistant stream must finish");
 
-        assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0].kind, MessagePartKind::ToolCall);
-        assert_eq!(parts[0].toolName.as_deref(), Some("read_file"));
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].kind, MessagePartKind::Markdown);
+        assert_eq!(parts[0].content, "");
+        assert_eq!(parts[1].kind, MessagePartKind::ToolCall);
+        assert_eq!(parts[1].toolName.as_deref(), Some("read_file"));
         assert_eq!(
-            parts[0].attributes.get("path").map(String::as_str),
+            parts[1].attributes.get("path").map(String::as_str),
             Some("a.txt")
         );
+    }
+
+    /// Verifies that a response with no provider chunks retains a persistable Markdown part.
+    #[test]
+    fn stream_state_keeps_canonical_part_without_provider_output() {
+        let mut state = AssistantMarkupStreamState::new();
+        let parts = state
+            .finish()
+            .expect("an empty assistant stream must finish");
+
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].kind, MessagePartKind::Markdown);
+        assert_eq!(parts[0].content, "");
     }
 
     /// Verifies unfinished generated tool markup remains literal assistant text.
@@ -664,7 +697,8 @@ mod tests {
     /// Verifies malformed complete tool markup remains visible assistant text.
     #[test]
     fn parses_malformed_tool_parameter_as_markdown() {
-        let content = "Before<tool name=\"search\"><param name=\"various_search</param></tool>After";
+        let content =
+            "Before<tool name=\"search\"><param name=\"various_search</param></tool>After";
         let parts = MessagePartCodec::parseAssistantMarkup(content)
             .expect("malformed tool markup must remain representable");
 

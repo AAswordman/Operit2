@@ -424,7 +424,6 @@ impl CorePushRequest {
         self.args = args;
         self
     }
-
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

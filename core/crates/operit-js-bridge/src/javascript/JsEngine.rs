@@ -2,28 +2,10 @@ use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::atomic::AtomicBool;
-#[cfg(target_arch = "wasm32")]
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
+use std::sync::mpsc;
 use std::sync::Arc;
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::{mpsc, Mutex};
 use std::time::Duration;
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
 
-#[cfg(target_arch = "wasm32")]
-use quickjs_wasm_rs::{
-    JSContextRef as WasmQuickJsContext, JSValue as WasmQuickJsValue,
-    JSValueRef as WasmQuickJsValueRef,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use rquickjs::{
-    CatchResultExt, Context as QuickJsContext, Function as QuickJsFunction,
-    Runtime as QuickJsRuntime,
-};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -33,22 +15,30 @@ use crate::javascript::JsJavaBridgeDelegates::{
 };
 use crate::javascript::JsLibraries::buildRuntimeBootstrapScript;
 use crate::javascript::JsNativeInterfaceDelegates;
+use operit_host_api::HostManager::{
+    defaultHostJavaScriptRuntimeHost, defaultHostRuntimeTaskSchedulerHost,
+};
+use operit_host_api::TimeUtils::currentTimeMillisU128;
+use operit_host_api::{
+    HostError, HostErrorKind, HostJavaScriptExecutionInterrupt, HostJavaScriptInterruptHandler,
+    HostJavaScriptRuntime, HostJavaScriptRuntimeHost, HostJavaScriptRuntimeStateHandle,
+    HostJavaScriptRuntimeStateOutput, HostJavaScriptStringCallback, HostJavaScriptVoidCallback,
+    HostResult,
+};
 use operit_plugin_sdk::execution_result::{
     build_js_execution_error_payload as buildJsExecutionErrorPayload,
     extract_js_execution_error_message as extractJsExecutionErrorMessage, JsExecutionError,
     JsExecutionResult,
 };
 use operit_plugin_sdk::javascript::{
-    JsExecutionEngine, JsExecutionHost, JsToolNameResolutionRequest, JsToolPkgIpcRequest,
-    JsToolPkgResourceRequest, JsToolPkgWasmArg, JsToolPkgWasmRequest,
-    ToolPkgMainRegistrationCapture,
+    JsExecutionEngine, JsExecutionFuture, JsExecutionHost, JsToolNameResolutionRequest,
+    JsToolPkgIpcRequest, JsToolPkgResourceRequest, JsToolPkgWasmArg, JsToolPkgWasmRequest,
+    ToolPkgExecutionContext, ToolPkgMainRegistrationCapture, ToolPkgTextResourceHost,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgComposeDslRuntimeScript::buildComposeDslRuntimeWrappedScript;
 use operit_plugin_sdk::toolpkg::ToolPkgRegistrationBridge::buildToolPkgRegistrationBridgeScript;
 use operit_util::stream::Stream::{CollectFuture, Stream};
 use operit_util::AppLogger::AppLogger;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::mpsc as tokio_mpsc;
 
 const TAG: &str = "OperitQuickJsEngine";
 const TOOLPKG_SCRIPT_TIMEOUT_SECONDS: u64 = 60;
@@ -69,12 +59,8 @@ thread_local! {
     static CURRENT_ENV_OVERRIDES: RefCell<BTreeMap<String, String>> = RefCell::new(BTreeMap::new());
     static CURRENT_CALL_RESULTS: RefCell<BTreeMap<String, String>> = RefCell::new(BTreeMap::new());
     static CURRENT_TOOLPKG_TEXT_RESOURCES: RefCell<Option<Arc<ToolPkgTextResources>>> = RefCell::new(None);
-    #[cfg(target_arch = "wasm32")]
-    static WASM_JS_ENGINE_STATES: RefCell<BTreeMap<usize, JsEngineState>> = RefCell::new(BTreeMap::new());
+    static CURRENT_TOOLPKG_TEXT_RESOURCE_HOST: RefCell<Option<Arc<dyn ToolPkgTextResourceHost>>> = RefCell::new(None);
 }
-
-#[cfg(target_arch = "wasm32")]
-static NEXT_WASM_JS_ENGINE_STATE_ID: AtomicUsize = AtomicUsize::new(1);
 
 #[derive(Clone)]
 pub struct JsEngine {
@@ -92,184 +78,358 @@ pub struct JsComposeDslActionEventStream {
 }
 
 #[derive(Clone)]
-#[cfg(not(target_arch = "wasm32"))]
 struct JsEngineWorker {
-    sender: mpsc::Sender<JsEngineRequest>,
-    control: Arc<JsEngineWorkerControl>,
+    runtimeHost: Arc<dyn HostJavaScriptRuntimeHost>,
+    stateHandle: HostJavaScriptRuntimeStateHandle,
 }
+
+struct JsAsyncCallback {
+    callbackId: String,
+    result: String,
+    isError: bool,
+}
+
+type JsAsyncCallbackSink = Arc<dyn Fn(JsAsyncCallback) + Send + Sync>;
 
 #[derive(Clone)]
-#[cfg(target_arch = "wasm32")]
-struct JsEngineWorker {
-    stateId: usize,
+struct JsCallContext {
+    executionHost: Option<Arc<dyn JsExecutionHost>>,
+    intermediateCallback: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    executionListener: Option<JsExecutionListenerRef>,
+    envOverrides: BTreeMap<String, String>,
+    textResources: Option<Arc<ToolPkgTextResources>>,
+    textResourceHost: Option<Arc<dyn ToolPkgTextResourceHost>>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-enum JsEngineRequest {
-    ExecuteScript {
-        script: String,
-        functionName: String,
-        params: BTreeMap<String, Value>,
-        textResources: Option<Arc<ToolPkgTextResources>>,
-        useComposeDslTextResources: bool,
-        envOverrides: BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
-        dispatchIntermediateOnMain: bool,
-        executionListener: Option<JsExecutionListenerRef>,
-        timeoutSec: u64,
-        interrupt: Arc<JsExecutionInterrupt>,
-        response: mpsc::Sender<JsExecutionResult<Option<String>>>,
-    },
-    ExecuteToolPkgMainRegistration {
-        script: String,
-        functionName: String,
-        params: BTreeMap<String, Value>,
-        textResources: Option<Arc<ToolPkgTextResources>>,
-        timeoutSec: u64,
-        interrupt: Arc<JsExecutionInterrupt>,
-        response: mpsc::Sender<JsExecutionResult<ToolPkgMainRegistrationCapture>>,
-    },
-    Shutdown,
+struct JsPendingScriptExecution {
+    callId: String,
+    context: JsCallContext,
+    deadlineMillis: u128,
+    timeout: Duration,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-impl JsEngineRequest {
-    /// Responds to a queued request after its JavaScript worker was destroyed.
-    fn respondWorkerDestroyed(self) {
-        let reason = "JS execution worker was destroyed";
-        match self {
-            Self::ExecuteScript { response, .. } => {
-                let _ = response.send(Err(JsExecutionError::worker_unavailable(reason)));
-            }
-            Self::ExecuteToolPkgMainRegistration { response, .. } => {
-                let _ = response.send(Err(JsExecutionError::worker_unavailable(reason)));
-            }
-            Self::Shutdown => {}
-        }
+impl Drop for JsPendingScriptExecution {
+    /// Clears the native call session whenever cooperative execution leaves scope.
+    fn drop(&mut self) {
+        clearNativeExecutionSession(&self.callId);
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-struct JsExecutionInterrupt {
-    deadline: Instant,
-    cancelled: AtomicBool,
-    timedOut: AtomicBool,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl JsExecutionInterrupt {
-    /// Creates one execution interrupt with an absolute deadline.
-    fn new(timeout: Duration) -> Self {
-        Self {
-            deadline: Instant::now() + timeout,
-            cancelled: AtomicBool::new(false),
-            timedOut: AtomicBool::new(false),
-        }
-    }
-
-    /// Requests interruption of this exact JavaScript execution.
-    fn interrupt(&self) {
-        self.cancelled.store(true, Ordering::Release);
-    }
-
-    /// Returns whether QuickJS must stop the current execution.
-    fn shouldInterrupt(&self) -> bool {
-        if self.cancelled.load(Ordering::Acquire) {
-            return true;
-        }
-        if Instant::now() >= self.deadline {
-            self.timedOut.store(true, Ordering::Release);
-            return true;
-        }
-        false
-    }
-
-    /// Returns whether the interrupt was caused by the execution deadline.
-    fn didTimeOut(&self) -> bool {
-        self.timedOut.load(Ordering::Acquire)
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-struct JsEngineWorkerControl {
-    destroyed: AtomicBool,
-    activeInterrupt: Mutex<Option<Arc<JsExecutionInterrupt>>>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl JsEngineWorkerControl {
-    /// Creates control state shared by the engine handle and worker thread.
-    fn new() -> Self {
-        Self {
-            destroyed: AtomicBool::new(false),
-            activeInterrupt: Mutex::new(None),
-        }
-    }
-
-    /// Marks one interrupt token as the execution currently owned by the worker.
-    fn beginExecution(&self, interrupt: Arc<JsExecutionInterrupt>) {
-        *self
-            .activeInterrupt
-            .lock()
-            .expect("JavaScript worker interrupt mutex poisoned") = Some(interrupt.clone());
-        if self.destroyed.load(Ordering::Acquire) {
-            interrupt.interrupt();
-        }
-    }
-
-    /// Clears the active token only when it still identifies the completed execution.
-    fn finishExecution(&self, interrupt: &Arc<JsExecutionInterrupt>) {
-        let mut active = self
-            .activeInterrupt
-            .lock()
-            .expect("JavaScript worker interrupt mutex poisoned");
-        if active
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, interrupt))
-        {
-            *active = None;
-        }
-    }
-
-    /// Returns whether this worker has entered terminal destruction.
-    fn isDestroyed(&self) -> bool {
-        self.destroyed.load(Ordering::Acquire)
-    }
-
-    /// Enters terminal destruction and interrupts the execution currently in QuickJS.
-    fn destroy(&self) -> bool {
-        if self.destroyed.swap(true, Ordering::AcqRel) {
-            return false;
-        }
-        if let Some(interrupt) = self
-            .activeInterrupt
-            .lock()
-            .expect("JavaScript worker interrupt mutex poisoned")
-            .as_ref()
-        {
-            interrupt.interrupt();
-        }
-        true
-    }
+enum JsScriptExecutionPoll {
+    Pending,
+    Complete(Option<String>),
 }
 
 struct JsEngineState {
-    #[cfg(not(target_arch = "wasm32"))]
-    runtime: QuickJsRuntime,
-    #[cfg(not(target_arch = "wasm32"))]
-    context: QuickJsContext,
-    #[cfg(target_arch = "wasm32")]
-    context: WasmQuickJsContext,
+    runtime: Box<dyn HostJavaScriptRuntime>,
+    asyncCallbackSender: mpsc::Sender<JsAsyncCallback>,
+    asyncCallbackReceiver: mpsc::Receiver<JsAsyncCallback>,
     executionHost: Option<Arc<dyn JsExecutionHost>>,
+    toolPkgContext: Option<ToolPkgExecutionContext>,
     composeDslTextResources: Option<Arc<ToolPkgTextResources>>,
     jsEnvironmentInitialized: bool,
+}
+
+impl JsEngineWorker {
+    /// Creates one host-owned JavaScript runtime state.
+    fn new(
+        executionHost: Option<Arc<dyn JsExecutionHost>>,
+        toolPkgContext: Option<ToolPkgExecutionContext>,
+    ) -> Self {
+        let runtimeHost = defaultHostJavaScriptRuntimeHost();
+        let runtimeHostForState = runtimeHost.clone();
+        let stateHandle = runtimeHost
+            .createHostJavaScriptRuntimeState(
+                "OperitQuickJsEngine",
+                Box::new(move || {
+                    let runtime = runtimeHostForState.createHostJavaScriptRuntime()?;
+                    let state =
+                        JsEngineState::newWithRuntime(runtime, executionHost, toolPkgContext)
+                            .map_err(HostError::new)?;
+                    Ok(Box::new(state))
+                }),
+            )
+            .expect("JavaScript runtime state must be created by the Host");
+        Self {
+            runtimeHost,
+            stateHandle,
+        }
+    }
+
+    /// Executes one JavaScript request through the host-owned state executor.
+    #[allow(non_snake_case)]
+    fn execute_script_function(
+        &self,
+        script: &str,
+        functionName: &str,
+        params: &BTreeMap<String, Value>,
+        envOverrides: &BTreeMap<String, String>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        dispatchIntermediateOnMain: bool,
+        timeout: Duration,
+        timeoutSec: u64,
+        executionListener: Option<JsExecutionListenerRef>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
+        useComposeDslTextResources: bool,
+    ) -> JsExecutionResult<Option<String>> {
+        let script = script.to_string();
+        let functionName = functionName.to_string();
+        let params = params.clone();
+        let envOverrides = envOverrides.clone();
+        let composeResourceCount = textResources
+            .as_ref()
+            .map_or(0, |resources| resources.len());
+        let result = self
+            .runtimeHost
+            .executeHostJavaScriptRuntimeStateTask(
+                self.stateHandle,
+                u64::try_from(timeout.as_millis())
+                    .expect("JavaScript execution timeout must fit in milliseconds"),
+                Box::new(move |state, interrupt| {
+                    let state = state.downcast_mut::<JsEngineState>().ok_or_else(|| {
+                        HostError::new("JavaScript runtime state type does not match")
+                    })?;
+                    let executionStartedMillis = currentTimeMillisU128();
+                    if useComposeDslTextResources {
+                        AppLogger::d(
+                            TAG,
+                            &format!(
+                                "compose-request-start function={} resourceEntries={}",
+                                functionName, composeResourceCount
+                            ),
+                        );
+                    }
+                    let output = executeWithInterrupt(
+                        state,
+                        interrupt,
+                        timeoutSec,
+                        "Script execution",
+                        |state| {
+                            state.executeScriptFunctionForRequest(
+                                &script,
+                                &functionName,
+                                &params,
+                                &envOverrides,
+                                on_intermediate_result,
+                                dispatchIntermediateOnMain,
+                                timeoutSec,
+                                executionListener,
+                                textResources,
+                                useComposeDslTextResources,
+                            )
+                        },
+                    );
+                    if useComposeDslTextResources {
+                        AppLogger::d(
+                            TAG,
+                            &format!(
+                                "compose-request-finish function={} resourceEntries={} elapsedMs={} success={}",
+                                functionName,
+                                composeResourceCount,
+                                currentTimeMillisU128().saturating_sub(executionStartedMillis),
+                                output.is_ok()
+                            ),
+                        );
+                    }
+                    Ok(Box::new(output))
+                }),
+            );
+        match result {
+            Ok(output) => downcastJavaScriptStateOutput(output),
+            Err(error) => Err(javaScriptExecutionErrorFromHost(error)),
+        }
+    }
+
+    /// Executes one JavaScript request asynchronously through the host-owned state executor.
+    #[allow(non_snake_case)]
+    fn execute_script_function_async(
+        &self,
+        script: String,
+        functionName: String,
+        params: BTreeMap<String, Value>,
+        envOverrides: BTreeMap<String, String>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        dispatchIntermediateOnMain: bool,
+        timeout: Duration,
+        timeoutSec: u64,
+        executionListener: Option<JsExecutionListenerRef>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
+        useComposeDslTextResources: bool,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+        let stateHandle = self.stateHandle;
+        let runtimeHost = self.runtimeHost.clone();
+        Box::pin(async move {
+            let output = runtimeHost
+                .executeHostJavaScriptRuntimeStateAsyncTask(
+                    stateHandle,
+                    u64::try_from(timeout.as_millis())
+                        .expect("JavaScript execution timeout must fit in milliseconds"),
+                    Box::new(move |state, interrupt| {
+                        Box::pin(async move {
+                            let state = state.downcast_mut::<JsEngineState>().ok_or_else(|| {
+                                HostError::new("JavaScript runtime state type does not match")
+                            })?;
+                            let interruptForHandler = interrupt.clone();
+                            let handler: HostJavaScriptInterruptHandler =
+                                Arc::new(move || interruptForHandler.shouldInterrupt());
+                            state
+                                .runtime
+                                .setHostJavaScriptInterruptHandler(Some(handler))?;
+                            let output = state
+                                .executeScriptFunctionForRequestAsync(
+                                    script,
+                                    functionName,
+                                    params,
+                                    envOverrides,
+                                    on_intermediate_result,
+                                    dispatchIntermediateOnMain,
+                                    timeout,
+                                    timeoutSec,
+                                    executionListener,
+                                    textResources,
+                                    useComposeDslTextResources,
+                                )
+                                .await;
+                            let clearResult = state.runtime.setHostJavaScriptInterruptHandler(None);
+                            let output = match clearResult {
+                                Err(error) => Err(JsExecutionError::runtime(error.to_string())),
+                                Ok(()) if interrupt.didTimeOut() => {
+                                    Err(JsExecutionError::timeout(format!(
+                                        "Script execution timed out after {timeoutSec} seconds"
+                                    )))
+                                }
+                                Ok(()) => output,
+                            };
+                            Ok(Box::new(output) as HostJavaScriptRuntimeStateOutput)
+                        })
+                    }),
+                )
+                .await
+                .map_err(javaScriptExecutionErrorFromHost)?;
+            downcastJavaScriptStateOutput(output)
+        })
+    }
+
+    /// Executes one ToolPkg registration request through the host-owned state executor.
+    #[allow(non_snake_case)]
+    fn execute_toolpkg_main_registration_function(
+        &self,
+        script: &str,
+        functionName: &str,
+        params: &BTreeMap<String, Value>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
+        timeoutSec: u64,
+    ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
+        let result = self.runtimeHost.executeHostJavaScriptRuntimeStateTask(
+            self.stateHandle,
+            timeoutSec
+                .checked_mul(1_000)
+                .expect("ToolPkg registration timeout must fit in milliseconds"),
+            Box::new({
+                let script = script.to_string();
+                let functionName = functionName.to_string();
+                let params = params.clone();
+                move |state, interrupt| {
+                    let state = state.downcast_mut::<JsEngineState>().ok_or_else(|| {
+                        HostError::new("JavaScript runtime state type does not match")
+                    })?;
+                    let output = executeWithInterrupt(
+                        state,
+                        interrupt,
+                        timeoutSec,
+                        "ToolPkg registration",
+                        |state| {
+                            state.execute_toolpkg_main_registration_function_on_current_thread(
+                                &script,
+                                &functionName,
+                                &params,
+                                textResources,
+                            )
+                        },
+                    );
+                    Ok(Box::new(output))
+                }
+            }),
+        );
+        match result {
+            Ok(output) => downcastJavaScriptStateOutput(output),
+            Err(error) => Err(javaScriptExecutionErrorFromHost(error)),
+        }
+    }
+
+    /// Destroys the host-owned JavaScript runtime state.
+    fn destroy(&self) {
+        self.runtimeHost
+            .destroyHostJavaScriptRuntimeState(self.stateHandle)
+            .expect("JavaScript runtime state must be destroyed by the Host");
+    }
+}
+
+/// Converts one structured Host failure into the JavaScript execution error contract.
+#[allow(non_snake_case)]
+fn javaScriptExecutionErrorFromHost(error: HostError) -> JsExecutionError {
+    match error.kind {
+        HostErrorKind::Timeout => JsExecutionError::timeout(error.message),
+        HostErrorKind::General => JsExecutionError::worker_unavailable(error.message),
+    }
+}
+
+/// Converts one host state output into the exact JavaScript execution result type.
+fn downcastJavaScriptStateOutput<T: 'static>(
+    output: HostJavaScriptRuntimeStateOutput,
+) -> JsExecutionResult<T> {
+    let output = output.downcast::<JsExecutionResult<T>>().map_err(|_| {
+        JsExecutionError::worker_unavailable("JavaScript runtime state result type does not match")
+    })?;
+    *output
+}
+
+/// Executes one JavaScript operation under a host-owned interrupt token.
+#[allow(non_snake_case)]
+fn executeWithInterrupt<T>(
+    state: &mut JsEngineState,
+    interrupt: HostJavaScriptExecutionInterrupt,
+    timeoutSec: u64,
+    timeoutLabel: &str,
+    operation: impl FnOnce(&mut JsEngineState) -> JsExecutionResult<T>,
+) -> JsExecutionResult<T> {
+    let interruptForHandler = interrupt.clone();
+    let handler: HostJavaScriptInterruptHandler =
+        Arc::new(move || interruptForHandler.shouldInterrupt());
+    if let Err(error) = state
+        .runtime
+        .setHostJavaScriptInterruptHandler(Some(handler))
+    {
+        return Err(JsExecutionError::initialization(error.to_string()));
+    }
+    let output = operation(state);
+    let clearResult = state.runtime.setHostJavaScriptInterruptHandler(None);
+    if let Err(error) = clearResult {
+        return Err(JsExecutionError::runtime(error.to_string()));
+    }
+    if interrupt.didTimeOut() {
+        return Err(JsExecutionError::timeout(format!(
+            "{timeoutLabel} timed out after {timeoutSec} seconds"
+        )));
+    }
+    output
 }
 
 impl JsEngine {
     /// Creates a JavaScript execution engine backed by a caller-supplied execution host.
     pub fn new(executionHost: Arc<dyn JsExecutionHost>) -> Self {
         Self {
-            worker: JsEngineWorker::new(Some(executionHost)),
+            worker: JsEngineWorker::new(Some(executionHost), None),
+        }
+    }
+
+    /// Creates a JavaScript execution engine bound to one ToolPkg package environment.
+    pub fn new_toolpkg_execution_engine(
+        executionHost: Arc<dyn JsExecutionHost>,
+        context: ToolPkgExecutionContext,
+    ) -> Self {
+        Self {
+            worker: JsEngineWorker::new(Some(executionHost), Some(context)),
         }
     }
 
@@ -277,7 +437,7 @@ impl JsEngine {
     #[allow(non_snake_case)]
     pub fn new_toolpkg_registration_engine() -> Self {
         Self {
-            worker: JsEngineWorker::new(None),
+            worker: JsEngineWorker::new(None, None),
         }
     }
 
@@ -294,7 +454,13 @@ impl JsEngine {
         timeoutSec: u64,
         executionListener: Option<JsExecutionListenerRef>,
     ) -> JsExecutionResult<Option<String>> {
-        let safeTimeoutSec = timeoutSec.max(1);
+        if timeoutSec == 0 {
+            let reason = "Script execution timed out after 0 seconds";
+            if let Some(listener) = executionListener.as_ref() {
+                listener.on_failed("", reason);
+            }
+            return Err(JsExecutionError::timeout(reason));
+        }
         self.execute_script_function_with_timeout(
             script,
             functionName,
@@ -302,8 +468,8 @@ impl JsEngine {
             envOverrides,
             on_intermediate_result,
             dispatchIntermediateOnMain,
-            Duration::from_secs(safeTimeoutSec),
-            safeTimeoutSec,
+            Duration::from_secs(timeoutSec),
+            timeoutSec,
             executionListener,
             None,
             false,
@@ -346,6 +512,42 @@ impl JsEngine {
         )
     }
 
+    /// Executes a named JavaScript function while allowing the host runtime to keep advancing.
+    #[allow(non_snake_case)]
+    pub fn execute_script_function_async(
+        &self,
+        script: String,
+        functionName: String,
+        params: BTreeMap<String, Value>,
+        envOverrides: BTreeMap<String, String>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        dispatchIntermediateOnMain: bool,
+        timeoutMillis: u64,
+        executionListener: Option<JsExecutionListenerRef>,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+        if timeoutMillis == 0 {
+            let reason = "Script execution timed out after 0 milliseconds";
+            if let Some(listener) = executionListener.as_ref() {
+                listener.on_failed("", reason);
+            }
+            return Box::pin(async move { Err(JsExecutionError::timeout(reason)) });
+        }
+        let timeoutSec = (timeoutMillis - 1) / 1_000 + 1;
+        self.worker.execute_script_function_async(
+            script,
+            functionName,
+            params,
+            envOverrides,
+            on_intermediate_result,
+            dispatchIntermediateOnMain,
+            Duration::from_millis(timeoutMillis),
+            timeoutSec,
+            executionListener,
+            None,
+            false,
+        )
+    }
+
     /// Executes JavaScript with the supplied native deadline and whole-second script metadata.
     #[allow(non_snake_case)]
     fn execute_script_function_with_timeout(
@@ -362,94 +564,19 @@ impl JsEngine {
         textResources: Option<Arc<ToolPkgTextResources>>,
         useComposeDslTextResources: bool,
     ) -> JsExecutionResult<Option<String>> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            return self.worker.execute_script_function(
-                script,
-                functionName,
-                params,
-                envOverrides,
-                on_intermediate_result,
-                dispatchIntermediateOnMain,
-                timeoutSec,
-                executionListener,
-                textResources,
-                useComposeDslTextResources,
-            );
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if self.worker.control.isDestroyed() {
-                let reason = "JS execution worker was destroyed";
-                if let Some(listener) = executionListener.as_ref() {
-                    listener.on_failed("", reason);
-                }
-                return Err(JsExecutionError::worker_unavailable(reason));
-            }
-            let (response, receiver) = mpsc::channel();
-            let interrupt = Arc::new(JsExecutionInterrupt::new(timeout));
-            let request = JsEngineRequest::ExecuteScript {
-                script: script.to_string(),
-                functionName: functionName.to_string(),
-                params: params.clone(),
-                textResources,
-                useComposeDslTextResources,
-                envOverrides: envOverrides.clone(),
-                on_intermediate_result,
-                dispatchIntermediateOnMain,
-                executionListener: executionListener.clone(),
-                timeoutSec,
-                interrupt: interrupt.clone(),
-                response,
-            };
-            if let Err(error) = self.worker.sender.send(request) {
-                AppLogger::e(
-                    TAG,
-                    &format!(
-                        "request-send-error function={} scriptLen={} params={} error={}",
-                        functionName,
-                        script.len(),
-                        summarizeParams(params),
-                        error
-                    ),
-                );
-                if let Some(listener) = executionListener.as_ref() {
-                    listener.on_failed("", &error.to_string());
-                }
-                return Err(JsExecutionError::worker_unavailable(error.to_string()));
-            }
-            match receiver.recv_timeout(timeout) {
-                Ok(value) => value,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    interrupt.interrupt();
-                    let reason = format!(
-                        "Script execution timed out after {} milliseconds",
-                        timeout.as_millis()
-                    );
-                    if let Some(listener) = executionListener.as_ref() {
-                        listener.on_failed("", &reason);
-                    }
-                    Err(JsExecutionError::timeout(reason))
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    AppLogger::e(
-                        TAG,
-                        &format!(
-                            "response-recv-error function={} scriptLen={} params={} error=disconnected",
-                            functionName,
-                            script.len(),
-                            summarizeParams(params),
-                        ),
-                    );
-                    if let Some(listener) = executionListener.as_ref() {
-                        listener.on_failed("", "JS execution worker disconnected");
-                    }
-                    Err(JsExecutionError::worker_unavailable(
-                        "JS execution worker disconnected",
-                    ))
-                }
-            }
-        }
+        self.worker.execute_script_function(
+            script,
+            functionName,
+            params,
+            envOverrides,
+            on_intermediate_result,
+            dispatchIntermediateOnMain,
+            timeout,
+            timeoutSec,
+            executionListener,
+            textResources,
+            useComposeDslTextResources,
+        )
     }
 
     /// Executes a ToolPkg registration function and captures its declaration.
@@ -496,72 +623,18 @@ impl JsEngine {
         textResources: Option<Arc<ToolPkgTextResources>>,
         timeoutSec: u64,
     ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
-        let safeTimeoutSec = timeoutSec.max(1);
-        #[cfg(target_arch = "wasm32")]
-        {
-            return self.worker.execute_toolpkg_main_registration_function(
-                script,
-                functionName,
-                params,
-                textResources,
-            );
+        if timeoutSec == 0 {
+            return Err(JsExecutionError::timeout(
+                "ToolPkg registration timed out after 0 seconds",
+            ));
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if self.worker.control.isDestroyed() {
-                return Err(JsExecutionError::worker_unavailable(
-                    "JS execution worker was destroyed",
-                ));
-            }
-            let (response, receiver) = mpsc::channel();
-            let timeout = Duration::from_secs(safeTimeoutSec);
-            let interrupt = Arc::new(JsExecutionInterrupt::new(timeout));
-            let request = JsEngineRequest::ExecuteToolPkgMainRegistration {
-                script: script.to_string(),
-                functionName: functionName.to_string(),
-                params: params.clone(),
-                textResources,
-                timeoutSec: safeTimeoutSec,
-                interrupt: interrupt.clone(),
-                response,
-            };
-            if let Err(error) = self.worker.sender.send(request) {
-                AppLogger::e(
-                    TAG,
-                    &format!(
-                        "registration-send-error function={} scriptLen={} params={} error={}",
-                        functionName,
-                        script.len(),
-                        summarizeParams(params),
-                        error
-                    ),
-                );
-                return Err(JsExecutionError::worker_unavailable(error.to_string()));
-            }
-            match receiver.recv_timeout(timeout) {
-                Ok(value) => value,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    interrupt.interrupt();
-                    Err(JsExecutionError::timeout(format!(
-                        "ToolPkg registration timed out after {safeTimeoutSec} seconds"
-                    )))
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    AppLogger::e(
-                        TAG,
-                        &format!(
-                            "registration-recv-error function={} scriptLen={} params={} error=disconnected",
-                            functionName,
-                            script.len(),
-                            summarizeParams(params)
-                        ),
-                    );
-                    Err(JsExecutionError::worker_unavailable(
-                        "JS execution worker disconnected",
-                    ))
-                }
-            }
-        }
+        self.worker.execute_toolpkg_main_registration_function(
+            script,
+            functionName,
+            params,
+            textResources,
+            timeoutSec,
+        )
     }
 
     /// Executes a Compose DSL script and returns its rendered event stream.
@@ -576,6 +649,25 @@ impl JsEngine {
         self.executeComposeDslFunction(
             &buildComposeDslRuntimeWrappedScript(script),
             "__operit_render_compose_dsl",
+            runtimeOptions,
+            envOverrides,
+            None,
+            Some(textResources),
+        )
+    }
+
+    /// Executes a Compose DSL render while allowing the host runtime to keep advancing.
+    #[allow(non_snake_case)]
+    pub fn execute_compose_dsl_script_async(
+        &self,
+        script: String,
+        runtimeOptions: BTreeMap<String, Value>,
+        envOverrides: BTreeMap<String, String>,
+        textResources: Arc<ToolPkgTextResources>,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+        self.executeComposeDslFunctionAsync(
+            buildComposeDslRuntimeWrappedScript(&script),
+            "__operit_render_compose_dsl".to_string(),
             runtimeOptions,
             envOverrides,
             None,
@@ -610,6 +702,39 @@ impl JsEngine {
             "",
             "__operit_dispatch_compose_dsl_action",
             &params,
+            envOverrides,
+            on_intermediate_result,
+            None,
+        )
+    }
+
+    /// Dispatches a Compose DSL action while allowing the host runtime to keep advancing.
+    #[allow(non_snake_case)]
+    pub fn dispatch_compose_dsl_action_result_async(
+        &self,
+        actionId: String,
+        payload: Option<Value>,
+        runtimeOptions: BTreeMap<String, Value>,
+        envOverrides: BTreeMap<String, String>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+        let normalizedActionId = actionId.trim().to_string();
+        if normalizedActionId.is_empty() {
+            return Box::pin(async {
+                Err(JsExecutionError::invalid_request(
+                    "compose action id is required",
+                ))
+            });
+        }
+        let mut params = runtimeOptions;
+        params.insert("__action_id".to_string(), Value::String(normalizedActionId));
+        if let Some(payload) = payload {
+            params.insert("__action_payload".to_string(), payload);
+        }
+        self.executeComposeDslFunctionAsync(
+            String::new(),
+            "__operit_dispatch_compose_dsl_action".to_string(),
+            params,
             envOverrides,
             on_intermediate_result,
             None,
@@ -658,6 +783,32 @@ impl JsEngine {
         )
     }
 
+    /// Executes one Compose DSL operation through the asynchronous engine contract.
+    #[allow(non_snake_case)]
+    fn executeComposeDslFunctionAsync(
+        &self,
+        script: String,
+        functionName: String,
+        params: BTreeMap<String, Value>,
+        envOverrides: BTreeMap<String, String>,
+        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+        self.worker.execute_script_function_async(
+            script,
+            functionName,
+            params,
+            envOverrides,
+            onIntermediateResult,
+            true,
+            Duration::from_secs(TOOLPKG_SCRIPT_TIMEOUT_SECONDS),
+            TOOLPKG_SCRIPT_TIMEOUT_SECONDS,
+            None,
+            textResources,
+            true,
+        )
+    }
+
     #[allow(non_snake_case)]
     pub fn dispatch_compose_dsl_action_async(
         &self,
@@ -682,114 +833,43 @@ impl Stream for JsComposeDslActionEventStream {
     /// Collects Compose DSL action events without blocking the collector task.
     fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         Box::pin(async move {
-            #[cfg(not(target_arch = "wasm32"))]
+            let intermediateEvents = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            let intermediateEventsForCallback = intermediateEvents.clone();
+            let result = self
+                .engine
+                .dispatch_compose_dsl_action_result_async(
+                    self.actionId.clone(),
+                    self.payload.clone(),
+                    self.runtimeOptions.clone(),
+                    self.envOverrides.clone(),
+                    Some(Arc::new(move |intermediate| {
+                        intermediateEventsForCallback
+                            .lock()
+                            .expect("compose dsl intermediate event mutex poisoned")
+                            .push(composeDslActionEvent(
+                                "intermediate",
+                                None,
+                                Some(&intermediate),
+                            ));
+                    })),
+                )
+                .await;
+            for event in intermediateEvents
+                .lock()
+                .expect("compose dsl intermediate event mutex poisoned")
+                .iter()
+                .cloned()
             {
-                let engine = self.engine.clone();
-                let actionId = self.actionId.clone();
-                let payload = self.payload.clone();
-                let runtimeOptions = self.runtimeOptions.clone();
-                let envOverrides = self.envOverrides.clone();
-                let (sender, mut receiver) = tokio_mpsc::unbounded_channel::<String>();
-                std::thread::spawn(move || {
-                    let intermediateSender = sender.clone();
-                    runComposeDslActionDispatch(
-                        engine,
-                        actionId,
-                        payload,
-                        runtimeOptions,
-                        envOverrides,
-                        Arc::new(move |event| {
-                            let _ = intermediateSender.send(event);
-                        }),
-                        move |event| {
-                            let _ = sender.send(event);
-                        },
-                    );
-                });
-                while let Some(event) = receiver.recv().await {
-                    collector(event);
-                }
+                collector(event);
             }
-            #[cfg(target_arch = "wasm32")]
-            {
-                let engine = self.engine.clone();
-                let actionId = self.actionId.clone();
-                let payload = self.payload.clone();
-                let runtimeOptions = self.runtimeOptions.clone();
-                let envOverrides = self.envOverrides.clone();
-                let intermediateEvents = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-                let intermediateEventsForCallback = intermediateEvents.clone();
-                let flushedIntermediateEvents = Arc::new(std::sync::Mutex::new(false));
-                let flushedIntermediateEventsForEmit = flushedIntermediateEvents.clone();
-                runComposeDslActionDispatch(
-                    engine,
-                    actionId,
-                    payload,
-                    runtimeOptions,
-                    envOverrides,
-                    Arc::new(move |event| {
-                        if let Ok(mut values) = intermediateEventsForCallback.lock() {
-                            values.push(event);
-                        }
-                    }),
-                    |event| {
-                        if let Ok(mut flushed) = flushedIntermediateEventsForEmit.lock() {
-                            if !*flushed {
-                                if let Ok(values) = intermediateEvents.lock() {
-                                    for intermediate in values.iter() {
-                                        collector(intermediate.clone());
-                                    }
-                                }
-                                *flushed = true;
-                            }
-                        }
-                        collector(event);
-                    },
-                );
+            match result {
+                Ok(Some(result)) => collector(composeDslActionEvent("final", None, Some(&result))),
+                Ok(None) => {}
+                Err(error) => collector(composeDslActionEvent("error", Some(&error.message), None)),
             }
+            collector(composeDslActionEvent("complete", None, None));
         })
     }
-}
-
-#[allow(non_snake_case)]
-fn runComposeDslActionDispatch(
-    engine: JsEngine,
-    actionId: String,
-    payload: Option<Value>,
-    runtimeOptions: BTreeMap<String, Value>,
-    envOverrides: BTreeMap<String, String>,
-    emitIntermediate: Arc<dyn Fn(String) + Send + Sync>,
-    mut emit: impl FnMut(String),
-) {
-    let normalizedActionId = actionId.trim().to_string();
-    if normalizedActionId.is_empty() {
-        emit(composeDslActionEvent(
-            "error",
-            Some("compose action id is required"),
-            None,
-        ));
-        emit(composeDslActionEvent("complete", None, None));
-        return;
-    }
-    let result = engine.execute_compose_dsl_action(
-        &normalizedActionId,
-        payload,
-        &runtimeOptions,
-        &envOverrides,
-        Some(Arc::new(move |intermediate| {
-            emitIntermediate(composeDslActionEvent(
-                "intermediate",
-                None,
-                Some(&intermediate),
-            ));
-        })),
-    );
-    match result {
-        Ok(Some(result)) => emit(composeDslActionEvent("final", None, Some(&result))),
-        Ok(None) => {}
-        Err(error) => emit(composeDslActionEvent("error", Some(&error.message), None)),
-    }
-    emit(composeDslActionEvent("complete", None, None));
 }
 
 #[allow(non_snake_case)]
@@ -805,292 +885,42 @@ fn composeDslActionEvent(phase: &str, error: Option<&str>, result: Option<&str>)
     Value::Object(object).to_string()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-impl JsEngineWorker {
-    /// Starts a worker containing one isolated JavaScript runtime state.
-    fn new(executionHost: Option<Arc<dyn JsExecutionHost>>) -> Self {
-        let (sender, receiver) = mpsc::channel::<JsEngineRequest>();
-        let control = Arc::new(JsEngineWorkerControl::new());
-        let workerControl = control.clone();
-        std::thread::Builder::new()
-            .name("OperitQuickJsEngine".to_string())
-            .stack_size(16 * 1024 * 1024)
-            .spawn(move || {
-                let mut state = JsEngineState::new(executionHost);
-                for request in receiver {
-                    if workerControl.isDestroyed() {
-                        match request {
-                            JsEngineRequest::Shutdown => break,
-                            request => request.respondWorkerDestroyed(),
-                        }
-                        continue;
-                    }
-                    match request {
-                        JsEngineRequest::ExecuteScript {
-                            script,
-                            functionName,
-                            params,
-                            textResources,
-                            useComposeDslTextResources,
-                            envOverrides,
-                            on_intermediate_result,
-                            dispatchIntermediateOnMain,
-                            executionListener,
-                            timeoutSec,
-                            interrupt,
-                            response,
-                        } => {
-                            let composeResourceCount = match textResources.as_ref() {
-                                Some(resources) => resources.len(),
-                                None => state
-                                    .composeDslTextResources
-                                    .as_ref()
-                                    .map(|resources| resources.len())
-                                    .unwrap_or(0),
-                            };
-                            let executionStarted = Instant::now();
-                            if useComposeDslTextResources {
-                                AppLogger::d(
-                                    TAG,
-                                    &format!(
-                                        "compose-request-start function={} resourceEntries={}",
-                                        functionName, composeResourceCount
-                                    ),
-                                );
-                            }
-                            let output = executeWithInterrupt(
-                                &mut state,
-                                &workerControl,
-                                interrupt,
-                                timeoutSec,
-                                "Script execution",
-                                |state| {
-                                    state.executeScriptFunctionForRequest(
-                                        &script,
-                                        &functionName,
-                                        &params,
-                                        &envOverrides,
-                                        on_intermediate_result,
-                                        dispatchIntermediateOnMain,
-                                        timeoutSec,
-                                        executionListener,
-                                        textResources,
-                                        useComposeDslTextResources,
-                                    )
-                                },
-                            );
-                            if useComposeDslTextResources {
-                                AppLogger::d(
-                                    TAG,
-                                    &format!(
-                                        "compose-request-finish function={} resourceEntries={} elapsedMs={} success={}",
-                                        functionName,
-                                        composeResourceCount,
-                                        executionStarted.elapsed().as_millis(),
-                                        output.is_ok()
-                                    ),
-                                );
-                            }
-                            if let Err(error) = response.send(output) {
-                                AppLogger::e(
-                                    TAG,
-                                    &format!(
-                                        "worker-send-error kind=execute function={} error={}",
-                                        functionName, error
-                                    ),
-                                );
-                            }
-                        }
-                        JsEngineRequest::ExecuteToolPkgMainRegistration {
-                            script,
-                            functionName,
-                            params,
-                            textResources,
-                            timeoutSec,
-                            interrupt,
-                            response,
-                        } => {
-                            let output = executeWithInterrupt(
-                                &mut state,
-                                &workerControl,
-                                interrupt,
-                                timeoutSec,
-                                "ToolPkg registration",
-                                |state| {
-                                    state
-                                        .execute_toolpkg_main_registration_function_on_current_thread(
-                                            &script,
-                                            &functionName,
-                                            &params,
-                                            textResources,
-                                        )
-                                },
-                            );
-                            if let Err(error) = response.send(output) {
-                                AppLogger::e(
-                                    TAG,
-                                    &format!(
-                                        "worker-send-error kind=registration function={} error={}",
-                                        functionName, error
-                                    ),
-                                );
-                            }
-                        }
-                        JsEngineRequest::Shutdown => break,
-                    }
-                }
-            })
-            .expect("OperitQuickJsEngine worker thread must start");
-        Self { sender, control }
-    }
-}
-
-/// Executes one worker operation under its exact interrupt token and deadline.
-#[cfg(not(target_arch = "wasm32"))]
+/// Validates and converts one Host JavaScript callback argument list.
 #[allow(non_snake_case)]
-fn executeWithInterrupt<T>(
-    state: &mut JsEngineState,
-    control: &JsEngineWorkerControl,
-    interrupt: Arc<JsExecutionInterrupt>,
-    timeoutSec: u64,
-    timeoutLabel: &str,
-    operation: impl FnOnce(&mut JsEngineState) -> JsExecutionResult<T>,
-) -> JsExecutionResult<T> {
-    control.beginExecution(interrupt.clone());
-    state.installExecutionInterrupt(interrupt.clone());
-    let output = operation(state);
-    state.clearExecutionInterrupt();
-    control.finishExecution(&interrupt);
-    if interrupt.didTimeOut() {
-        return Err(JsExecutionError::timeout(format!(
-            "{timeoutLabel} timed out after {timeoutSec} seconds"
-        )));
-    }
-    output
-}
-
-#[cfg(target_arch = "wasm32")]
-impl JsEngineWorker {
-    /// Creates one WebAssembly JavaScript runtime state.
-    fn new(executionHost: Option<Arc<dyn JsExecutionHost>>) -> Self {
-        let stateId = NEXT_WASM_JS_ENGINE_STATE_ID.fetch_add(1, Ordering::Relaxed);
-        WASM_JS_ENGINE_STATES.with(|states| {
-            states
-                .borrow_mut()
-                .insert(stateId, JsEngineState::new(executionHost));
-        });
-        Self { stateId }
-    }
-
-    #[allow(non_snake_case)]
-    fn execute_script_function(
-        &self,
-        script: &str,
-        functionName: &str,
-        params: &BTreeMap<String, Value>,
-        envOverrides: &BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
-        dispatchIntermediateOnMain: bool,
-        timeoutSec: u64,
-        executionListener: Option<JsExecutionListenerRef>,
-        textResources: Option<Arc<ToolPkgTextResources>>,
-        useComposeDslTextResources: bool,
-    ) -> JsExecutionResult<Option<String>> {
-        WASM_JS_ENGINE_STATES.with(|states| {
-            let mut states = states.borrow_mut();
-            let state = states
-                .get_mut(&self.stateId)
-                .expect("wasm JsEngine state must exist");
-            state.executeScriptFunctionForRequest(
-                script,
-                functionName,
-                params,
-                envOverrides,
-                on_intermediate_result,
-                dispatchIntermediateOnMain,
-                timeoutSec,
-                executionListener,
-                textResources,
-                useComposeDslTextResources,
-            )
-        })
-    }
-
-    #[allow(non_snake_case)]
-    fn execute_toolpkg_main_registration_function(
-        &self,
-        script: &str,
-        functionName: &str,
-        params: &BTreeMap<String, Value>,
-        textResources: Option<Arc<ToolPkgTextResources>>,
-    ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
-        WASM_JS_ENGINE_STATES.with(|states| {
-            states
-                .borrow_mut()
-                .get_mut(&self.stateId)
-                .expect("wasm JsEngine state must exist")
-                .execute_toolpkg_main_registration_function_on_current_thread(
-                    script,
-                    functionName,
-                    params,
-                    textResources,
-                )
-        })
-    }
+fn exactHostJavaScriptArguments<const N: usize>(
+    functionName: &str,
+    arguments: Vec<String>,
+) -> HostResult<[String; N]> {
+    let argumentCount = arguments.len();
+    arguments.try_into().map_err(|_| {
+        HostError::new(format!(
+            "{functionName} requires {N} arguments, received {argumentCount}"
+        ))
+    })
 }
 
 impl JsEngineState {
-    /// Creates a JavaScript runtime state from an optional execution host.
-    fn new(executionHost: Option<Arc<dyn JsExecutionHost>>) -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let runtime = QuickJsRuntime::new().expect("OperitQuickJsEngine runtime must start");
-            let context =
-                QuickJsContext::full(&runtime).expect("OperitQuickJsEngine context must start");
-            let mut state = Self {
-                runtime,
-                context,
-                executionHost,
-                composeDslTextResources: None,
-                jsEnvironmentInitialized: false,
-            };
-            state
-                .registerNativeInterface()
-                .expect("NativeInterface bridge must register");
-            state
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let context = WasmQuickJsContext::default();
-            let mut state = Self {
-                context,
-                executionHost,
-                composeDslTextResources: None,
-                jsEnvironmentInitialized: false,
-            };
-            state
-                .registerNativeInterface()
-                .expect("NativeInterface bridge must register");
-            state
-        }
+    /// Creates a JavaScript runtime state from a Host-owned runtime instance.
+    fn newWithRuntime(
+        runtime: Box<dyn HostJavaScriptRuntime>,
+        executionHost: Option<Arc<dyn JsExecutionHost>>,
+        toolPkgContext: Option<ToolPkgExecutionContext>,
+    ) -> Result<Self, String> {
+        let (asyncCallbackSender, asyncCallbackReceiver) = mpsc::channel();
+        let mut state = Self {
+            runtime,
+            asyncCallbackSender,
+            asyncCallbackReceiver,
+            executionHost,
+            toolPkgContext,
+            composeDslTextResources: None,
+            jsEnvironmentInitialized: false,
+        };
+        state.registerNativeInterface()?;
+        Ok(state)
     }
 
-    /// Installs the interrupt handler for one native QuickJS execution.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(non_snake_case)]
-    fn installExecutionInterrupt(&self, interrupt: Arc<JsExecutionInterrupt>) {
-        self.runtime
-            .set_interrupt_handler(Some(Box::new(move || interrupt.shouldInterrupt())));
-    }
-
-    /// Removes the completed execution's native QuickJS interrupt handler.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(non_snake_case)]
-    fn clearExecutionInterrupt(&self) {
-        self.runtime.set_interrupt_handler(None);
-    }
-
-    /// Runs one request with the page-owned Compose DSL resource snapshot when requested.
+    /// Runs one request with the engine-bound ToolPkg host or page-owned Compose DSL resources.
     #[allow(non_snake_case)]
     fn executeScriptFunctionForRequest(
         &mut self,
@@ -1139,6 +969,187 @@ impl JsEngineState {
         })
     }
 
+    /// Executes one request cooperatively across host runtime turns.
+    #[allow(non_snake_case)]
+    async fn executeScriptFunctionForRequestAsync(
+        &mut self,
+        script: String,
+        functionName: String,
+        params: BTreeMap<String, Value>,
+        envOverrides: BTreeMap<String, String>,
+        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        _dispatchIntermediateOnMain: bool,
+        timeout: Duration,
+        timeoutSec: u64,
+        executionListener: Option<JsExecutionListenerRef>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
+        useComposeDslTextResources: bool,
+    ) -> JsExecutionResult<Option<String>> {
+        let activeTextResources = if useComposeDslTextResources {
+            if let Some(textResources) = textResources {
+                self.composeDslTextResources = Some(textResources);
+            }
+            Some(self.composeDslTextResources.clone().ok_or_else(|| {
+                JsExecutionError::invalid_request(
+                    "Compose DSL action requires a rendered page resource snapshot",
+                )
+            })?)
+        } else {
+            None
+        };
+        let textResourceHost = self
+            .toolPkgContext
+            .as_ref()
+            .map(|context| context.text_resource_host.clone());
+        self.executeScriptFunctionCooperatively(
+            script,
+            functionName,
+            params,
+            envOverrides,
+            onIntermediateResult,
+            timeout,
+            timeoutSec,
+            executionListener,
+            activeTextResources,
+            textResourceHost,
+        )
+        .await
+    }
+
+    /// Starts and advances one JavaScript call while yielding through the execution host.
+    #[allow(non_snake_case)]
+    async fn executeScriptFunctionCooperatively(
+        &mut self,
+        script: String,
+        functionName: String,
+        params: BTreeMap<String, Value>,
+        envOverrides: BTreeMap<String, String>,
+        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        timeout: Duration,
+        timeoutSec: u64,
+        executionListener: Option<JsExecutionListenerRef>,
+        textResources: Option<Arc<ToolPkgTextResources>>,
+        textResourceHost: Option<Arc<dyn ToolPkgTextResourceHost>>,
+    ) -> JsExecutionResult<Option<String>> {
+        let context = JsCallContext {
+            executionHost: self.executionHost.clone(),
+            intermediateCallback: onIntermediateResult,
+            executionListener,
+            envOverrides,
+            textResources,
+            textResourceHost,
+        };
+        installThreadLocalCallContext(&context);
+        let started = (|| {
+            self.initJavaScriptEnvironment()
+                .map_err(JsExecutionError::initialization)?;
+            let mut effectiveParams = params;
+            let explicitLanguage = effectiveParams
+                .get("__operit_package_lang")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if explicitLanguage.is_empty() {
+                let language = self
+                    .resolveCurrentPackageLanguage()
+                    .map_err(JsExecutionError::runtime)?;
+                effectiveParams
+                    .insert("__operit_package_lang".to_string(), Value::String(language));
+            }
+            let paramsJson = serde_json::to_string(&effectiveParams)
+                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
+            let scriptJson = serde_json::to_string(&script)
+                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
+            let functionNameJson = serde_json::to_string(&functionName)
+                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
+            let callId = format!(
+                "operit_call_{}",
+                Uuid::new_v4().to_string().replace('-', "")
+            );
+            let callIdJson = serde_json::to_string(&callId)
+                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
+            clearNativeExecutionSession(&callId);
+            let executionScript = format!(
+                "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, {timeoutSec}, 10000);"
+            );
+            self.evalJavaScriptVoid(&executionScript)
+                .map_err(JsExecutionError::runtime)?;
+            Ok(JsPendingScriptExecution {
+                callId,
+                context: context.clone(),
+                deadlineMillis: currentTimeMillisU128()
+                    .checked_add(timeout.as_millis())
+                    .ok_or_else(|| {
+                        JsExecutionError::timeout(
+                            "Script execution deadline exceeds host clock range",
+                        )
+                    })?,
+                timeout,
+            })
+        })();
+        clearThreadLocalCallState();
+        let pending = started?;
+        loop {
+            installThreadLocalCallContext(&pending.context);
+            let polled = self.pollCooperativeScriptExecution(&pending);
+            clearThreadLocalCallState();
+            match polled? {
+                JsScriptExecutionPoll::Complete(output) => {
+                    if let Some(message) = extractJsExecutionErrorMessage(output.as_deref()) {
+                        return Err(JsExecutionError::runtime(message));
+                    }
+                    return Ok(output);
+                }
+                JsScriptExecutionPoll::Pending => {}
+            }
+            let executionHost = pending.context.executionHost.clone().ok_or_else(|| {
+                JsExecutionError::worker_unavailable(
+                    "JavaScript execution host is unavailable for asynchronous execution",
+                )
+            })?;
+            if let Err(error) = executionHost.wait_for_javascript_runtime_turn().await {
+                return Err(JsExecutionError::worker_unavailable(error.to_string()));
+            }
+        }
+    }
+
+    /// Advances pending QuickJS jobs and queued host callbacks for one cooperative call.
+    #[allow(non_snake_case)]
+    fn pollCooperativeScriptExecution(
+        &mut self,
+        pending: &JsPendingScriptExecution,
+    ) -> JsExecutionResult<JsScriptExecutionPoll> {
+        self.runJavaScriptJobs()
+            .map_err(JsExecutionError::runtime)?;
+        loop {
+            match self.asyncCallbackReceiver.try_recv() {
+                Ok(callback) => {
+                    self.deliverAsyncCallback(callback)
+                        .map_err(JsExecutionError::runtime)?;
+                    self.runJavaScriptJobs()
+                        .map_err(JsExecutionError::runtime)?;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(JsExecutionError::worker_unavailable(
+                        "JavaScript asynchronous callback queue disconnected",
+                    ));
+                }
+            }
+        }
+        if let Some(output) = readNativeExecutionSession(&pending.callId) {
+            return Ok(JsScriptExecutionPoll::Complete(Some(output)));
+        }
+        if currentTimeMillisU128() >= pending.deadlineMillis {
+            return Err(JsExecutionError::timeout(format!(
+                "Script execution timed out after {} milliseconds",
+                pending.timeout.as_millis()
+            )));
+        }
+        Ok(JsScriptExecutionPoll::Pending)
+    }
+
     #[allow(non_snake_case)]
     fn execute_script_function_on_current_thread(
         &mut self,
@@ -1165,6 +1176,12 @@ impl JsEngineState {
         });
         CURRENT_ENV_OVERRIDES.with(|overrides| {
             *overrides.borrow_mut() = envOverrides.clone();
+        });
+        CURRENT_TOOLPKG_TEXT_RESOURCE_HOST.with(|host| {
+            *host.borrow_mut() = self
+                .toolPkgContext
+                .as_ref()
+                .map(|context| context.text_resource_host.clone());
         });
 
         let mut effectiveParams = params.clone();
@@ -1208,17 +1225,19 @@ impl JsEngineState {
             clearThreadLocalCallState();
             JsExecutionError::serialization(error.to_string())
         })?;
-        let safeTimeoutSec = timeoutSec.max(1);
-
         clearNativeExecutionSession(&callId);
         let executionScript = format!(
-            "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, {safeTimeoutSec}, 10000);"
+            "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, {timeoutSec}, 10000);"
         );
         let output = match self.evalJavaScriptVoid(&executionScript) {
-            Ok(_) => {
-                self.runJavaScriptJobs();
-                readNativeExecutionSession(&callId)
-            }
+            Ok(_) => match self.waitForExecutionResult(&callId, timeoutSec) {
+                Ok(output) => output,
+                Err(error) => {
+                    clearNativeExecutionSession(&callId);
+                    clearThreadLocalCallState();
+                    return Err(error);
+                }
+            },
             Err(error) => {
                 AppLogger::e(
                     TAG,
@@ -1291,7 +1310,8 @@ impl JsEngineState {
             );
             self.evalJavaScriptVoid(&executionScript)
                 .map_err(JsExecutionError::runtime)?;
-            self.runJavaScriptJobs();
+            self.runJavaScriptJobs()
+                .map_err(JsExecutionError::runtime)?;
             let output = readNativeExecutionSession(&callId).ok_or_else(|| {
                 JsExecutionError::runtime("ToolPkg registration JavaScript did not complete")
             })?;
@@ -1322,54 +1342,84 @@ impl JsEngineState {
 
     #[allow(non_snake_case)]
     fn evalJavaScriptVoid(&mut self, script: &str) -> Result<(), String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.context.with(|ctx| {
-                ctx.eval::<(), _>(script)
-                    .catch(&ctx)
-                    .map_err(|error| error.to_string())
-            })
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.context
-                .eval_global("operit.js", script)
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        }
+        self.runtime
+            .evaluateHostJavaScriptVoid("operit.js", script)
+            .map_err(|error| error.to_string())
     }
 
     #[allow(non_snake_case)]
     fn evalJavaScriptString(&mut self, script: &str) -> Result<String, String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.context.with(|ctx| {
-                ctx.eval::<String, _>(script)
-                    .catch(&ctx)
-                    .map_err(|error| error.to_string())
-            })
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.context
-                .eval_global("operit.js", script)
-                .map(|value| value.to_string())
-                .map_err(|error| error.to_string())
-        }
+        self.runtime
+            .evaluateHostJavaScriptString("operit.js", script)
+            .map_err(|error| error.to_string())
     }
 
     #[allow(non_snake_case)]
-    fn runJavaScriptJobs(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            while self.context.with(|ctx| ctx.execute_pending_job()) {}
+    fn runJavaScriptJobs(&mut self) -> Result<(), String> {
+        self.runtime
+            .executePendingHostJavaScriptJobs()
+            .map_err(|error| error.to_string())
+    }
+
+    /// Waits for one JavaScript call to complete while delivering queued host callbacks.
+    #[allow(non_snake_case)]
+    fn waitForExecutionResult(
+        &mut self,
+        callId: &str,
+        timeoutSec: u64,
+    ) -> JsExecutionResult<Option<String>> {
+        let timeout = Duration::from_secs(timeoutSec);
+        let deadlineMillis = currentTimeMillisU128()
+            .checked_add(timeout.as_millis())
+            .ok_or_else(|| {
+                JsExecutionError::timeout("Script execution deadline exceeds host clock range")
+            })?;
+        loop {
+            self.runJavaScriptJobs()
+                .map_err(JsExecutionError::runtime)?;
+            if let Some(output) = readNativeExecutionSession(callId) {
+                return Ok(Some(output));
+            }
+            let nowMillis = currentTimeMillisU128();
+            if nowMillis >= deadlineMillis {
+                return Err(JsExecutionError::timeout(format!(
+                    "Script execution timed out after {} milliseconds",
+                    timeout.as_millis()
+                )));
+            }
+            let waitDuration = Duration::from_millis(
+                deadlineMillis
+                    .saturating_sub(nowMillis)
+                    .min(10)
+                    .try_into()
+                    .expect("bounded JavaScript wait duration must fit in milliseconds"),
+            );
+            match self.asyncCallbackReceiver.recv_timeout(waitDuration) {
+                Ok(callback) => self
+                    .deliverAsyncCallback(callback)
+                    .map_err(JsExecutionError::runtime)?,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(JsExecutionError::worker_unavailable(
+                        "JavaScript asynchronous callback queue disconnected",
+                    ));
+                }
+            }
         }
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.context
-                .execute_pending()
-                .expect("OperitQuickJsEngine pending jobs must execute");
-        }
+    }
+
+    /// Delivers one asynchronous host result to its JavaScript callback.
+    #[allow(non_snake_case)]
+    fn deliverAsyncCallback(&mut self, callback: JsAsyncCallback) -> Result<(), String> {
+        let callbackIdJson =
+            serde_json::to_string(&callback.callbackId).map_err(|error| error.to_string())?;
+        let resultJson =
+            serde_json::to_string(&callback.result).map_err(|error| error.to_string())?;
+        let callbackScript = format!(
+            "(function() {{ var callback = globalThis[{callbackIdJson}]; if (typeof callback === 'function') {{ callback({resultJson}, {}); }} }})();",
+            callback.isError
+        );
+        self.evalJavaScriptVoid(&callbackScript)
     }
 
     #[allow(non_snake_case)]
@@ -1387,639 +1437,333 @@ impl JsEngineState {
 
     #[allow(non_snake_case)]
     fn registerNativeInterface(&mut self) -> Result<(), String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.context.with(|ctx| {
-                let globals = ctx.globals();
-                let nativeCallTool = QuickJsFunction::new(
-                    ctx.clone(),
-                    |toolType: String, toolName: String, paramsJson: String| {
-                        nativeCallToolStrings(toolType, toolName, paramsJson)
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeCallTool", nativeCallTool)
-                    .map_err(|error| error.to_string())?;
-
-                let sendIntermediateResult =
-                    QuickJsFunction::new(ctx.clone(), |callId: String, result: String| {
-                        nativeSendIntermediateResultString(callId, result)
-                    })
-                    .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitSendIntermediateResult", sendIntermediateResult)
-                    .map_err(|error| error.to_string())?;
-
-                let readToolPkgTextResource = QuickJsFunction::new(
-                    ctx.clone(),
-                    |packageNameOrSubpackageId: String, resourcePath: String| {
-                        nativeReadToolPkgTextResourceStrings(
-                            packageNameOrSubpackageId,
-                            resourcePath,
-                        )
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set(
+        let stringFunctions: Vec<(&str, HostJavaScriptStringCallback)> = vec![
+            (
+                "__operitNativeCallTool",
+                Arc::new(|arguments| {
+                    let [toolType, toolName, paramsJson] =
+                        exactHostJavaScriptArguments("__operitNativeCallTool", arguments)?;
+                    Ok(nativeCallToolStrings(toolType, toolName, paramsJson))
+                }),
+            ),
+            (
+                "__operitNativeReadToolPkgTextResource",
+                Arc::new(|arguments| {
+                    let [packageNameOrSubpackageId, resourcePath] = exactHostJavaScriptArguments(
                         "__operitNativeReadToolPkgTextResource",
-                        readToolPkgTextResource,
-                    )
-                    .map_err(|error| error.to_string())?;
-
-                let readToolPkgResource = QuickJsFunction::new(
-                    ctx.clone(),
-                    |packageNameOrSubpackageId: String,
-                     resourceKey: String,
-                     outputFileName: String,
-                     internal: String| {
-                        nativeReadToolPkgResourceStrings(
-                            packageNameOrSubpackageId,
-                            resourceKey,
-                            outputFileName,
-                            internal,
-                        )
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeReadToolPkgResource", readToolPkgResource)
-                    .map_err(|error| error.to_string())?;
-
-                let callToolPkgWasm = QuickJsFunction::new(
-                    ctx.clone(),
-                    |packageTarget: String,
-                     moduleId: String,
-                     exportName: String,
-                     argsJson: String| {
-                        nativeCallToolPkgWasmStrings(packageTarget, moduleId, exportName, argsJson)
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeCallToolPkgWasm", callToolPkgWasm)
-                    .map_err(|error| error.to_string())?;
-
-                let composeWebViewControllerCommand =
-                    QuickJsFunction::new(ctx.clone(), |payloadJson: String| {
-                        nativeComposeWebViewControllerCommandString(payloadJson)
-                    })
-                    .map_err(|error| error.to_string())?;
-                globals
-                    .set(
-                        "__operitNativeComposeWebViewControllerCommand",
-                        composeWebViewControllerCommand,
-                    )
-                    .map_err(|error| error.to_string())?;
-
-                let composeFilePickerCommand =
-                    QuickJsFunction::new(ctx.clone(), |payloadJson: String| {
-                        nativeComposeFilePickerCommandString(payloadJson)
-                    })
-                    .map_err(|error| error.to_string())?;
-                globals
-                    .set(
-                        "__operitNativeComposeFilePickerCommand",
-                        composeFilePickerCommand,
-                    )
-                    .map_err(|error| error.to_string())?;
-
-                let setCallResult =
-                    QuickJsFunction::new(ctx.clone(), |callId: String, result: String| {
-                        nativeSetCallResultStrings(callId, result)
-                    })
-                    .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeSetCallResult", setCallResult)
-                    .map_err(|error| error.to_string())?;
-
-                let setCallError =
-                    QuickJsFunction::new(ctx.clone(), |callId: String, error: String| {
-                        nativeSetCallErrorStrings(callId, error)
-                    })
-                    .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeSetCallError", setCallError)
-                    .map_err(|error| error.to_string())?;
-
-                let getEnvForCall =
-                    QuickJsFunction::new(ctx.clone(), |_callId: String, key: String| {
-                        nativeGetEnvForCallStrings(key)
-                    })
-                    .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeGetEnvForCall", getEnvForCall)
-                    .map_err(|error| error.to_string())?;
-
-                let getPluginConfigDir = QuickJsFunction::new(ctx.clone(), |pluginId: String| {
-                    nativeGetPluginConfigDirString(pluginId)
-                })
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeGetPluginConfigDir", getPluginConfigDir)
-                    .map_err(|error| error.to_string())?;
-
-                let isPackageImported = QuickJsFunction::new(ctx.clone(), |packageName: String| {
-                    nativeIsPackageImportedString(packageName)
-                })
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeIsPackageImported", isPackageImported)
-                    .map_err(|error| error.to_string())?;
-
-                let importPackage = QuickJsFunction::new(ctx.clone(), |packageName: String| {
-                    nativeImportPackageString(packageName)
-                })
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeImportPackage", importPackage)
-                    .map_err(|error| error.to_string())?;
-
-                let removePackage = QuickJsFunction::new(ctx.clone(), |packageName: String| {
-                    nativeRemovePackageString(packageName)
-                })
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeRemovePackage", removePackage)
-                    .map_err(|error| error.to_string())?;
-
-                let usePackage = QuickJsFunction::new(ctx.clone(), |packageName: String| {
-                    nativeUsePackageString(packageName)
-                })
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeUsePackage", usePackage)
-                    .map_err(|error| error.to_string())?;
-
-                let listImportedPackagesJson =
-                    QuickJsFunction::new(ctx.clone(), || nativeListImportedPackagesJsonString())
-                        .map_err(|error| error.to_string())?;
-                globals
-                    .set(
-                        "__operitNativeListImportedPackagesJson",
-                        listImportedPackagesJson,
-                    )
-                    .map_err(|error| error.to_string())?;
-
-                let resolveToolName = QuickJsFunction::new(
-                    ctx.clone(),
-                    |packageName: String,
-                     subpackageId: String,
-                     toolName: String,
-                     preferImported: String| {
-                        nativeResolveToolNameString(
-                            packageName,
-                            subpackageId,
-                            toolName,
-                            preferImported,
-                        )
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeResolveToolName", resolveToolName)
-                    .map_err(|error| error.to_string())?;
-
-                let invokeToolPkgIpc = QuickJsFunction::new(
-                    ctx.clone(),
-                    |packageTarget: String,
-                     callerContextKey: String,
-                     targetContextKey: String,
-                     targetRuntime: String,
-                     channel: String,
-                     payloadJson: String| {
-                        nativeInvokeToolPkgIpcStrings(
-                            packageTarget,
-                            callerContextKey,
-                            targetContextKey,
-                            targetRuntime,
-                            channel,
-                            payloadJson,
-                        )
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeInvokeToolPkgIpc", invokeToolPkgIpc)
-                    .map_err(|error| error.to_string())?;
-
-                let logJsExecutionTrace =
-                    QuickJsFunction::new(ctx.clone(), |callId: String, message: String| {
-                        nativeLogJsExecutionTraceStrings(callId, message)
-                    })
-                    .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeLogJsExecutionTrace", logJsExecutionTrace)
-                    .map_err(|error| error.to_string())?;
-
-                let decompress =
-                    QuickJsFunction::new(ctx.clone(), |data: String, algorithm: String| {
-                        nativeDecompressStrings(data, algorithm)
-                    })
-                    .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeDecompress", decompress)
-                    .map_err(|error| error.to_string())?;
-
-                let crypto = QuickJsFunction::new(
-                    ctx.clone(),
-                    |algorithm: String, operation: String, argsJson: String| {
-                        nativeCryptoStrings(algorithm, operation, argsJson)
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeCrypto", crypto)
-                    .map_err(|error| error.to_string())?;
-
-                let imageProcessing = QuickJsFunction::new(
-                    ctx.clone(),
-                    |callbackId: String, operation: String, argsJson: String| {
-                        nativeImageProcessingStrings(callbackId, operation, argsJson)
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeImageProcessing", imageProcessing)
-                    .map_err(|error| error.to_string())?;
-
-                let javaClassExists = QuickJsFunction::new(ctx.clone(), |className: String| {
-                    nativeJavaClassExistsString(className)
-                })
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeJavaClassExists", javaClassExists)
-                    .map_err(|error| error.to_string())?;
-
-                let javaGetApplicationContext =
-                    QuickJsFunction::new(ctx.clone(), || nativeJavaGetApplicationContextString())
-                        .map_err(|error| error.to_string())?;
-                globals
-                    .set(
-                        "__operitNativeJavaGetApplicationContext",
-                        javaGetApplicationContext,
-                    )
-                    .map_err(|error| error.to_string())?;
-
-                let javaCallInstance = QuickJsFunction::new(
-                    ctx.clone(),
-                    |instanceHandle: String, methodName: String, argsJson: String| {
-                        nativeJavaCallInstanceStrings(instanceHandle, methodName, argsJson)
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeJavaCallInstance", javaCallInstance)
-                    .map_err(|error| error.to_string())?;
-
-                let javaNewInstance =
-                    QuickJsFunction::new(ctx.clone(), |className: String, _argsJson: String| {
-                        nativeJavaNewInstanceString(className)
-                    })
-                    .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeJavaNewInstance", javaNewInstance)
-                    .map_err(|error| error.to_string())?;
-
-                let javaCallStatic = QuickJsFunction::new(
-                    ctx.clone(),
-                    |className: String, methodName: String, _argsJson: String| {
-                        nativeJavaCallStaticString(className, methodName)
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-                globals
-                    .set("__operitNativeJavaCallStatic", javaCallStatic)
-                    .map_err(|error| error.to_string())?;
-                Ok(())
-            })
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let globals = self
-                .context
-                .global_object()
-                .map_err(|error| error.to_string())?;
-
-            let nativeCallTool = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    let toolType = wasmQuickJsArgString(args, 0);
-                    let toolName = wasmQuickJsArgString(args, 1);
-                    let paramsJson = wasmQuickJsArgString(args, 2);
-                    Ok(WasmQuickJsValue::String(nativeCallToolStrings(
-                        toolType, toolName, paramsJson,
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeCallTool", nativeCallTool)
-                .map_err(|error| error.to_string())?;
-
-            let sendIntermediateResult = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    nativeSendIntermediateResultString(
-                        wasmQuickJsArgString(args, 0),
-                        wasmQuickJsArgString(args, 1),
-                    );
-                    Ok(WasmQuickJsValue::Undefined)
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitSendIntermediateResult", sendIntermediateResult)
-                .map_err(|error| error.to_string())?;
-
-            let readToolPkgTextResource = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    let packageNameOrSubpackageId = wasmQuickJsArgString(args, 0);
-                    let resourcePath = wasmQuickJsArgString(args, 1);
-                    Ok(WasmQuickJsValue::String(
-                        nativeReadToolPkgTextResourceStrings(
-                            packageNameOrSubpackageId,
-                            resourcePath,
-                        ),
+                        arguments,
+                    )?;
+                    Ok(nativeReadToolPkgTextResourceStrings(
+                        packageNameOrSubpackageId,
+                        resourcePath,
                     ))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property(
-                    "__operitNativeReadToolPkgTextResource",
-                    readToolPkgTextResource,
-                )
-                .map_err(|error| error.to_string())?;
-
-            let readToolPkgResource = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    let packageNameOrSubpackageId = wasmQuickJsArgString(args, 0);
-                    let resourceKey = wasmQuickJsArgString(args, 1);
-                    let outputFileName = wasmQuickJsArgString(args, 2);
-                    let internal = wasmQuickJsArgString(args, 3);
-                    Ok(WasmQuickJsValue::String(nativeReadToolPkgResourceStrings(
+                }),
+            ),
+            (
+                "__operitNativeReadToolPkgResource",
+                Arc::new(|arguments| {
+                    let [packageNameOrSubpackageId, resourceKey, outputFileName, internal] =
+                        exactHostJavaScriptArguments(
+                            "__operitNativeReadToolPkgResource",
+                            arguments,
+                        )?;
+                    Ok(nativeReadToolPkgResourceStrings(
                         packageNameOrSubpackageId,
                         resourceKey,
                         outputFileName,
                         internal,
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeReadToolPkgResource", readToolPkgResource)
-                .map_err(|error| error.to_string())?;
-
-            let callToolPkgWasm = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(nativeCallToolPkgWasmStrings(
-                        wasmQuickJsArgString(args, 0),
-                        wasmQuickJsArgString(args, 1),
-                        wasmQuickJsArgString(args, 2),
-                        wasmQuickJsArgString(args, 3),
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeCallToolPkgWasm", callToolPkgWasm)
-                .map_err(|error| error.to_string())?;
-
-            let composeWebViewControllerCommand = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(
-                        nativeComposeWebViewControllerCommandString(wasmQuickJsArgString(args, 0)),
                     ))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property(
-                    "__operitNativeComposeWebViewControllerCommand",
-                    composeWebViewControllerCommand,
-                )
-                .map_err(|error| error.to_string())?;
-
-            let composeFilePickerCommand = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(nativeComposeFilePickerCommandString(
-                        wasmQuickJsArgString(args, 0),
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property(
-                    "__operitNativeComposeFilePickerCommand",
-                    composeFilePickerCommand,
-                )
-                .map_err(|error| error.to_string())?;
-
-            let setCallResult = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    nativeSetCallResultStrings(
-                        wasmQuickJsArgString(args, 0),
-                        wasmQuickJsArgString(args, 1),
-                    );
-                    Ok(WasmQuickJsValue::Undefined)
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeSetCallResult", setCallResult)
-                .map_err(|error| error.to_string())?;
-
-            let setCallError = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    nativeSetCallErrorStrings(
-                        wasmQuickJsArgString(args, 0),
-                        wasmQuickJsArgString(args, 1),
-                    );
-                    Ok(WasmQuickJsValue::Undefined)
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeSetCallError", setCallError)
-                .map_err(|error| error.to_string())?;
-
-            let getEnvForCall = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(nativeGetEnvForCallStrings(
-                        wasmQuickJsArgString(args, 1),
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeGetEnvForCall", getEnvForCall)
-                .map_err(|error| error.to_string())?;
-
-            let getPluginConfigDir = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(nativeGetPluginConfigDirString(
-                        wasmQuickJsArgString(args, 0),
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeGetPluginConfigDir", getPluginConfigDir)
-                .map_err(|error| error.to_string())?;
-
-            let isPackageImported = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(nativeIsPackageImportedString(
-                        wasmQuickJsArgString(args, 0),
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeIsPackageImported", isPackageImported)
-                .map_err(|error| error.to_string())?;
-
-            let importPackage = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(nativeImportPackageString(
-                        wasmQuickJsArgString(args, 0),
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeImportPackage", importPackage)
-                .map_err(|error| error.to_string())?;
-
-            let removePackage = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(nativeRemovePackageString(
-                        wasmQuickJsArgString(args, 0),
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeRemovePackage", removePackage)
-                .map_err(|error| error.to_string())?;
-
-            let usePackage = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(nativeUsePackageString(
-                        wasmQuickJsArgString(args, 0),
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeUsePackage", usePackage)
-                .map_err(|error| error.to_string())?;
-
-            let listImportedPackagesJson = self
-                .context
-                .wrap_callback(|_, _, _args| {
-                    Ok(WasmQuickJsValue::String(
-                        nativeListImportedPackagesJsonString(),
+                }),
+            ),
+            (
+                "__operitNativeCallToolPkgWasm",
+                Arc::new(|arguments| {
+                    let [packageTarget, moduleId, exportName, argsJson] =
+                        exactHostJavaScriptArguments("__operitNativeCallToolPkgWasm", arguments)?;
+                    Ok(nativeCallToolPkgWasmStrings(
+                        packageTarget,
+                        moduleId,
+                        exportName,
+                        argsJson,
                     ))
-                })
+                }),
+            ),
+            (
+                "__operitNativeComposeWebViewControllerCommand",
+                Arc::new(|arguments| {
+                    let [payloadJson] = exactHostJavaScriptArguments(
+                        "__operitNativeComposeWebViewControllerCommand",
+                        arguments,
+                    )?;
+                    Ok(nativeComposeWebViewControllerCommandString(payloadJson))
+                }),
+            ),
+            (
+                "__operitNativeComposeFilePickerCommand",
+                Arc::new(|arguments| {
+                    let [payloadJson] = exactHostJavaScriptArguments(
+                        "__operitNativeComposeFilePickerCommand",
+                        arguments,
+                    )?;
+                    Ok(nativeComposeFilePickerCommandString(payloadJson))
+                }),
+            ),
+            (
+                "__operitNativeGetEnvForCall",
+                Arc::new(|arguments| {
+                    let [_callId, key] =
+                        exactHostJavaScriptArguments("__operitNativeGetEnvForCall", arguments)?;
+                    Ok(nativeGetEnvForCallStrings(key))
+                }),
+            ),
+            (
+                "__operitNativeGetPluginConfigDir",
+                Arc::new(|arguments| {
+                    let [pluginId] = exactHostJavaScriptArguments(
+                        "__operitNativeGetPluginConfigDir",
+                        arguments,
+                    )?;
+                    Ok(nativeGetPluginConfigDirString(pluginId))
+                }),
+            ),
+            (
+                "__operitNativeIsPackageImported",
+                Arc::new(|arguments| {
+                    let [packageName] =
+                        exactHostJavaScriptArguments("__operitNativeIsPackageImported", arguments)?;
+                    Ok(nativeIsPackageImportedString(packageName))
+                }),
+            ),
+            (
+                "__operitNativeImportPackage",
+                Arc::new(|arguments| {
+                    let [packageName] =
+                        exactHostJavaScriptArguments("__operitNativeImportPackage", arguments)?;
+                    Ok(nativeImportPackageString(packageName))
+                }),
+            ),
+            (
+                "__operitNativeRemovePackage",
+                Arc::new(|arguments| {
+                    let [packageName] =
+                        exactHostJavaScriptArguments("__operitNativeRemovePackage", arguments)?;
+                    Ok(nativeRemovePackageString(packageName))
+                }),
+            ),
+            (
+                "__operitNativeUsePackage",
+                Arc::new(|arguments| {
+                    let [packageName] =
+                        exactHostJavaScriptArguments("__operitNativeUsePackage", arguments)?;
+                    Ok(nativeUsePackageString(packageName))
+                }),
+            ),
+            (
+                "__operitNativeListImportedPackagesJson",
+                Arc::new(|arguments| {
+                    let [] = exactHostJavaScriptArguments(
+                        "__operitNativeListImportedPackagesJson",
+                        arguments,
+                    )?;
+                    Ok(nativeListImportedPackagesJsonString())
+                }),
+            ),
+            (
+                "__operitNativeResolveToolName",
+                Arc::new(|arguments| {
+                    let [packageName, subpackageId, toolName, preferImported] =
+                        exactHostJavaScriptArguments("__operitNativeResolveToolName", arguments)?;
+                    Ok(nativeResolveToolNameString(
+                        packageName,
+                        subpackageId,
+                        toolName,
+                        preferImported,
+                    ))
+                }),
+            ),
+            (
+                "__operitNativeDecompress",
+                Arc::new(|arguments| {
+                    let [data, algorithm] =
+                        exactHostJavaScriptArguments("__operitNativeDecompress", arguments)?;
+                    Ok(nativeDecompressStrings(data, algorithm))
+                }),
+            ),
+            (
+                "__operitNativeCrypto",
+                Arc::new(|arguments| {
+                    let [algorithm, operation, argsJson] =
+                        exactHostJavaScriptArguments("__operitNativeCrypto", arguments)?;
+                    Ok(nativeCryptoStrings(algorithm, operation, argsJson))
+                }),
+            ),
+            (
+                "__operitNativeImageProcessing",
+                Arc::new(|arguments| {
+                    let [callbackId, operation, argsJson] =
+                        exactHostJavaScriptArguments("__operitNativeImageProcessing", arguments)?;
+                    Ok(nativeImageProcessingStrings(
+                        callbackId, operation, argsJson,
+                    ))
+                }),
+            ),
+            (
+                "__operitNativeJavaClassExists",
+                Arc::new(|arguments| {
+                    let [className] =
+                        exactHostJavaScriptArguments("__operitNativeJavaClassExists", arguments)?;
+                    Ok(nativeJavaClassExistsString(className))
+                }),
+            ),
+            (
+                "__operitNativeJavaGetApplicationContext",
+                Arc::new(|arguments| {
+                    let [] = exactHostJavaScriptArguments(
+                        "__operitNativeJavaGetApplicationContext",
+                        arguments,
+                    )?;
+                    Ok(nativeJavaGetApplicationContextString())
+                }),
+            ),
+            (
+                "__operitNativeJavaCallInstance",
+                Arc::new(|arguments| {
+                    let [instanceHandle, methodName, argsJson] =
+                        exactHostJavaScriptArguments("__operitNativeJavaCallInstance", arguments)?;
+                    Ok(nativeJavaCallInstanceStrings(
+                        instanceHandle,
+                        methodName,
+                        argsJson,
+                    ))
+                }),
+            ),
+            (
+                "__operitNativeJavaNewInstance",
+                Arc::new(|arguments| {
+                    let [className, _argsJson] =
+                        exactHostJavaScriptArguments("__operitNativeJavaNewInstance", arguments)?;
+                    Ok(nativeJavaNewInstanceString(className))
+                }),
+            ),
+            (
+                "__operitNativeJavaCallStatic",
+                Arc::new(|arguments| {
+                    let [className, methodName, _argsJson] =
+                        exactHostJavaScriptArguments("__operitNativeJavaCallStatic", arguments)?;
+                    Ok(nativeJavaCallStaticString(className, methodName))
+                }),
+            ),
+        ];
+        for (name, callback) in stringFunctions {
+            self.runtime
+                .registerHostJavaScriptStringFunction(name, callback)
                 .map_err(|error| error.to_string())?;
-            globals
-                .set_property(
-                    "__operitNativeListImportedPackagesJson",
-                    listImportedPackagesJson,
-                )
-                .map_err(|error| error.to_string())?;
-
-            let resolveToolName = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(nativeResolveToolNameString(
-                        wasmQuickJsArgString(args, 0),
-                        wasmQuickJsArgString(args, 1),
-                        wasmQuickJsArgString(args, 2),
-                        wasmQuickJsArgString(args, 3),
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeResolveToolName", resolveToolName)
-                .map_err(|error| error.to_string())?;
-
-            let invokeToolPkgIpc = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(nativeInvokeToolPkgIpcStrings(
-                        wasmQuickJsArgString(args, 0),
-                        wasmQuickJsArgString(args, 1),
-                        wasmQuickJsArgString(args, 2),
-                        wasmQuickJsArgString(args, 3),
-                        wasmQuickJsArgString(args, 4),
-                        wasmQuickJsArgString(args, 5),
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeInvokeToolPkgIpc", invokeToolPkgIpc)
-                .map_err(|error| error.to_string())?;
-
-            let logJsExecutionTrace = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    nativeLogJsExecutionTraceStrings(
-                        wasmQuickJsArgString(args, 0),
-                        wasmQuickJsArgString(args, 1),
-                    );
-                    Ok(WasmQuickJsValue::Undefined)
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeLogJsExecutionTrace", logJsExecutionTrace)
-                .map_err(|error| error.to_string())?;
-
-            let decompress = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(nativeDecompressStrings(
-                        wasmQuickJsArgString(args, 0),
-                        wasmQuickJsArgString(args, 1),
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeDecompress", decompress)
-                .map_err(|error| error.to_string())?;
-
-            let crypto = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(nativeCryptoStrings(
-                        wasmQuickJsArgString(args, 0),
-                        wasmQuickJsArgString(args, 1),
-                        wasmQuickJsArgString(args, 2),
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeCrypto", crypto)
-                .map_err(|error| error.to_string())?;
-
-            let imageProcessing = self
-                .context
-                .wrap_callback(|_, _, args| {
-                    Ok(WasmQuickJsValue::String(nativeImageProcessingStrings(
-                        wasmQuickJsArgString(args, 0),
-                        wasmQuickJsArgString(args, 1),
-                        wasmQuickJsArgString(args, 2),
-                    )))
-                })
-                .map_err(|error| error.to_string())?;
-            globals
-                .set_property("__operitNativeImageProcessing", imageProcessing)
-                .map_err(|error| error.to_string())?;
-            Ok(())
         }
-    }
 
+        let executionHost = self.executionHost.clone();
+        let asyncCallbackSender = self.asyncCallbackSender.clone();
+        let asyncCallbackSink: JsAsyncCallbackSink = Arc::new(move |callback| {
+            let _ = asyncCallbackSender.send(callback);
+        });
+        let toolExecutionHost = self.executionHost.clone();
+        let toolAsyncCallbackSink = asyncCallbackSink.clone();
+        let timerCallbackSink = asyncCallbackSink.clone();
+        let voidFunctions: Vec<(&str, HostJavaScriptVoidCallback)> = vec![
+            (
+                "__operitSendIntermediateResult",
+                Arc::new(|arguments| {
+                    let [callId, result] =
+                        exactHostJavaScriptArguments("__operitSendIntermediateResult", arguments)?;
+                    nativeSendIntermediateResultString(callId, result);
+                    Ok(())
+                }),
+            ),
+            (
+                "__operitNativeSetCallResult",
+                Arc::new(|arguments| {
+                    let [callId, result] =
+                        exactHostJavaScriptArguments("__operitNativeSetCallResult", arguments)?;
+                    nativeSetCallResultStrings(callId, result);
+                    Ok(())
+                }),
+            ),
+            (
+                "__operitNativeSetCallError",
+                Arc::new(|arguments| {
+                    let [callId, error] =
+                        exactHostJavaScriptArguments("__operitNativeSetCallError", arguments)?;
+                    nativeSetCallErrorStrings(callId, error);
+                    Ok(())
+                }),
+            ),
+            (
+                "__operitNativeCallToolAsync",
+                Arc::new(move |arguments| {
+                    let [callbackId, toolType, toolName, paramsJson] =
+                        exactHostJavaScriptArguments("__operitNativeCallToolAsync", arguments)?;
+                    dispatchToolCallAsync(
+                        toolExecutionHost.clone(),
+                        toolAsyncCallbackSink.clone(),
+                        callbackId,
+                        toolType,
+                        toolName,
+                        paramsJson,
+                    );
+                    Ok(())
+                }),
+            ),
+            (
+                "__operitNativeScheduleJavaScriptTimer",
+                Arc::new(move |arguments| {
+                    let [callbackId, delayMs] = exactHostJavaScriptArguments(
+                        "__operitNativeScheduleJavaScriptTimer",
+                        arguments,
+                    )?;
+                    dispatchJavaScriptTimer(timerCallbackSink.clone(), callbackId, delayMs)
+                        .map_err(HostError::new)
+                }),
+            ),
+            (
+                "__operitNativeInvokeToolPkgIpcAsync",
+                Arc::new(move |arguments| {
+                    let [callbackId, packageTarget, callerContextKey, targetContextKey, targetRuntime, channel, payloadJson] =
+                        exactHostJavaScriptArguments(
+                            "__operitNativeInvokeToolPkgIpcAsync",
+                            arguments,
+                        )?;
+                    dispatchToolPkgIpcAsync(
+                        executionHost.clone(),
+                        asyncCallbackSink.clone(),
+                        callbackId,
+                        packageTarget,
+                        callerContextKey,
+                        targetContextKey,
+                        targetRuntime,
+                        channel,
+                        payloadJson,
+                    );
+                    Ok(())
+                }),
+            ),
+            (
+                "__operitNativeLogJsExecutionTrace",
+                Arc::new(|arguments| {
+                    let [callId, message] = exactHostJavaScriptArguments(
+                        "__operitNativeLogJsExecutionTrace",
+                        arguments,
+                    )?;
+                    nativeLogJsExecutionTraceStrings(callId, message);
+                    Ok(())
+                }),
+            ),
+        ];
+        for (name, callback) in voidFunctions {
+            self.runtime
+                .registerHostJavaScriptVoidFunction(name, callback)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
     #[allow(non_snake_case)]
     fn initJavaScriptEnvironment(&mut self) -> Result<(), String> {
         if self.jsEnvironmentInitialized {
@@ -2032,6 +1776,94 @@ impl JsEngineState {
     }
 }
 
+/// Submits one tool call through the Host task scheduler and reports completion to QuickJS.
+#[allow(non_snake_case)]
+fn dispatchToolCallAsync(
+    executionHost: Option<Arc<dyn JsExecutionHost>>,
+    callbackSink: JsAsyncCallbackSink,
+    callbackId: String,
+    toolType: String,
+    toolName: String,
+    paramsJson: String,
+) {
+    let normalizedCallbackId = callbackId.trim().to_string();
+    if normalizedCallbackId.is_empty() {
+        return;
+    }
+    let Some(executionHost) = executionHost else {
+        callbackSink(JsAsyncCallback {
+            callbackId: normalizedCallbackId,
+            result: serde_json::json!({
+                "success": false,
+                "message": "JavaScript execution host is unavailable"
+            })
+            .to_string(),
+            isError: true,
+        });
+        return;
+    };
+    let callbackSinkForTask = callbackSink.clone();
+    let callbackIdForTask = normalizedCallbackId.clone();
+    let scheduleResult = defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeTask(
+        "operit-js-tool-call",
+        Box::new(move || {
+            let (result, isError) = JsNativeInterfaceDelegates::callToolSerialized(
+                executionHost.as_ref(),
+                &toolType,
+                &toolName,
+                &paramsJson,
+            );
+            callbackSinkForTask(JsAsyncCallback {
+                callbackId: callbackIdForTask,
+                result,
+                isError,
+            });
+        }),
+    );
+    if let Err(error) = scheduleResult {
+        callbackSink(JsAsyncCallback {
+            callbackId: normalizedCallbackId,
+            result: serde_json::json!({
+                "success": false,
+                "message": format!("Schedule JavaScript tool call failed: {error}")
+            })
+            .to_string(),
+            isError: true,
+        });
+    }
+}
+
+/// Schedules one JavaScript timer through the platform Host task scheduler.
+#[allow(non_snake_case)]
+fn dispatchJavaScriptTimer(
+    callbackSink: JsAsyncCallbackSink,
+    callbackId: String,
+    delayMs: String,
+) -> Result<(), String> {
+    let normalizedCallbackId = callbackId.trim().to_string();
+    if normalizedCallbackId.is_empty() {
+        return Err("JavaScript timer callback id is empty".to_string());
+    }
+    let delayMillis = delayMs
+        .trim()
+        .parse::<u64>()
+        .map_err(|error| format!("JavaScript timer delay is invalid: {error}"))?;
+    let callbackIdForTask = normalizedCallbackId.clone();
+    defaultHostRuntimeTaskSchedulerHost()
+        .scheduleDelayedHostRuntimeTask(
+            "operit-js-timer",
+            delayMillis,
+            Box::new(move || {
+                callbackSink(JsAsyncCallback {
+                    callbackId: callbackIdForTask,
+                    result: String::new(),
+                    isError: false,
+                });
+            }),
+        )
+        .map_err(|error| format!("Schedule JavaScript timer failed: {error}"))
+}
+
 #[allow(non_snake_case)]
 fn buildToolPkgIpcFailure(message: &str) -> String {
     serde_json::json!({
@@ -2041,22 +1873,117 @@ fn buildToolPkgIpcFailure(message: &str) -> String {
     .to_string()
 }
 
+/// Submits ToolPkg IPC through the execution host and reports completion to the source engine.
 #[allow(non_snake_case)]
-fn nativeInvokeToolPkgIpcStrings(
+fn dispatchToolPkgIpcAsync(
+    executionHost: Option<Arc<dyn JsExecutionHost>>,
+    callbackSink: JsAsyncCallbackSink,
+    callbackId: String,
     packageTarget: String,
     callerContextKey: String,
     targetContextKey: String,
     targetRuntime: String,
     channel: String,
     payloadJson: String,
-) -> String {
+) {
+    let normalizedCallbackId = callbackId.trim().to_string();
+    if normalizedCallbackId.is_empty() {
+        return;
+    }
+    let request = match buildToolPkgIpcRequest(
+        packageTarget,
+        callerContextKey,
+        targetContextKey,
+        targetRuntime,
+        channel,
+        payloadJson,
+    ) {
+        Ok(request) => request,
+        Err(error) => {
+            callbackSink(JsAsyncCallback {
+                callbackId: normalizedCallbackId,
+                result: error,
+                isError: false,
+            });
+            return;
+        }
+    };
+    let Some(executionHost) = executionHost else {
+        callbackSink(JsAsyncCallback {
+            callbackId: normalizedCallbackId,
+            result: buildToolPkgIpcFailure("JavaScript execution host is unavailable"),
+            isError: false,
+        });
+        return;
+    };
+    AppLogger::d(
+        TAG,
+        &format!(
+            "toolpkg-ipc-submit package={} channel={} targetContext={} targetRuntime={}",
+            request.package_target,
+            request.channel,
+            request.target_context_key.as_deref().unwrap_or_default(),
+            request.target_runtime.as_deref().unwrap_or_default(),
+        ),
+    );
+    let callbackSinkForCompletion = callbackSink.clone();
+    let callbackIdForCompletion = normalizedCallbackId.clone();
+    let submitResult = executionHost.invoke_toolpkg_ipc_async(
+        request,
+        Box::new(move |result| {
+            let (result, isError) = match result {
+                Ok(value) => (
+                    serde_json::json!({
+                        "success": true,
+                        "value": value
+                    })
+                    .to_string(),
+                    false,
+                ),
+                Err(error) => (buildToolPkgIpcFailure(&error), false),
+            };
+            AppLogger::d(
+                TAG,
+                &format!(
+                    "toolpkg-ipc-finish callback={} isError={}",
+                    callbackIdForCompletion, isError
+                ),
+            );
+            callbackSinkForCompletion(JsAsyncCallback {
+                callbackId: callbackIdForCompletion,
+                result,
+                isError,
+            });
+        }),
+    );
+    if let Err(error) = submitResult {
+        callbackSink(JsAsyncCallback {
+            callbackId: normalizedCallbackId,
+            result: buildToolPkgIpcFailure(&format!("ToolPkg.ipc async dispatch failed: {error}")),
+            isError: false,
+        });
+    }
+}
+
+/// Parses one serialized ToolPkg IPC request into the host contract.
+#[allow(non_snake_case)]
+fn buildToolPkgIpcRequest(
+    packageTarget: String,
+    callerContextKey: String,
+    targetContextKey: String,
+    targetRuntime: String,
+    channel: String,
+    payloadJson: String,
+) -> Result<JsToolPkgIpcRequest, String> {
     let normalizedTarget = packageTarget.trim().to_string();
     if normalizedTarget.is_empty() {
-        return buildToolPkgIpcFailure("ToolPkg.ipc package target is empty");
+        return Err(buildToolPkgIpcFailure(
+            "ToolPkg.ipc package target is empty",
+        ));
     }
     let normalizedChannel = channel.trim().to_string();
     if normalizedChannel.is_empty() {
-        return buildToolPkgIpcFailure("ToolPkg.ipc channel is required");
+        return Err(buildToolPkgIpcFailure("ToolPkg.ipc channel is required"));
     }
     let requestedRuntime = targetRuntime.trim().to_ascii_lowercase();
     if !requestedRuntime.is_empty()
@@ -2065,38 +1992,25 @@ fn nativeInvokeToolPkgIpcStrings(
         && requestedRuntime != "sandbox"
         && requestedRuntime != "provider"
     {
-        return buildToolPkgIpcFailure(&format!(
+        return Err(buildToolPkgIpcFailure(&format!(
             "ToolPkg.ipc targetRuntime is invalid: {requestedRuntime}"
-        ));
+        )));
     }
     let payload = if payloadJson.trim().is_empty() {
         Value::Null
     } else {
-        match serde_json::from_str::<Value>(payloadJson.trim()) {
-            Ok(value) => value,
-            Err(error) => {
-                return buildToolPkgIpcFailure(&format!(
-                    "ToolPkg.ipc payload JSON is invalid: {error}"
-                ))
-            }
-        }
+        serde_json::from_str::<Value>(payloadJson.trim()).map_err(|error| {
+            buildToolPkgIpcFailure(&format!("ToolPkg.ipc payload JSON is invalid: {error}"))
+        })?
     };
-    let request = JsToolPkgIpcRequest {
+    Ok(JsToolPkgIpcRequest {
         package_target: normalizedTarget,
         caller_context_key: callerContextKey.trim().to_string(),
         target_context_key: normalizeOptionalString(&targetContextKey),
         target_runtime: normalizeOptionalString(&requestedRuntime),
         channel: normalizedChannel,
         payload,
-    };
-    match currentExecutionHost().and_then(|host| host.invoke_toolpkg_ipc(request)) {
-        Ok(value) => serde_json::json!({
-            "success": true,
-            "value": value
-        })
-        .to_string(),
-        Err(error) => buildToolPkgIpcFailure(&error),
-    }
+    })
 }
 
 #[allow(non_snake_case)]
@@ -2112,6 +2026,35 @@ fn clearThreadLocalCallState() {
     });
     CURRENT_ENV_OVERRIDES.with(|overrides| {
         overrides.borrow_mut().clear();
+    });
+    CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
+        *resources.borrow_mut() = None;
+    });
+    CURRENT_TOOLPKG_TEXT_RESOURCE_HOST.with(|host| {
+        *host.borrow_mut() = None;
+    });
+}
+
+/// Installs one engine-owned call context for the next QuickJS execution step.
+#[allow(non_snake_case)]
+fn installThreadLocalCallContext(context: &JsCallContext) {
+    CURRENT_EXECUTION_HOST.with(|host| {
+        *host.borrow_mut() = context.executionHost.clone();
+    });
+    CURRENT_INTERMEDIATE_CALLBACK.with(|callback| {
+        *callback.borrow_mut() = context.intermediateCallback.clone();
+    });
+    CURRENT_EXECUTION_LISTENER.with(|listener| {
+        *listener.borrow_mut() = context.executionListener.clone();
+    });
+    CURRENT_ENV_OVERRIDES.with(|overrides| {
+        *overrides.borrow_mut() = context.envOverrides.clone();
+    });
+    CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
+        *resources.borrow_mut() = context.textResources.clone();
+    });
+    CURRENT_TOOLPKG_TEXT_RESOURCE_HOST.with(|host| {
+        *host.borrow_mut() = context.textResourceHost.clone();
     });
 }
 
@@ -2214,18 +2157,7 @@ fn summarizeJsonValue(value: &Value) -> String {
 impl JsEngine {
     /// Releases the engine worker and associated JavaScript runtime state.
     pub fn destroy(&self) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if self.worker.control.destroy() {
-                let _ = self.worker.sender.send(JsEngineRequest::Shutdown);
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            WASM_JS_ENGINE_STATES.with(|states| {
-                states.borrow_mut().remove(&self.worker.stateId);
-            });
-        }
+        self.worker.destroy();
     }
 }
 
@@ -2280,6 +2212,31 @@ impl JsExecutionEngine for JsEngine {
         )
     }
 
+    /// Executes a named JavaScript function through the asynchronous engine contract.
+    #[allow(non_snake_case)]
+    fn execute_script_function_async(
+        &self,
+        script: String,
+        functionName: String,
+        params: BTreeMap<String, Value>,
+        envOverrides: BTreeMap<String, String>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        dispatchIntermediateOnMain: bool,
+        timeoutMillis: u64,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+        JsEngine::execute_script_function_async(
+            self,
+            script,
+            functionName,
+            params,
+            envOverrides,
+            on_intermediate_result,
+            dispatchIntermediateOnMain,
+            timeoutMillis,
+            None,
+        )
+    }
+
     /// Executes a ToolPkg registration function through this engine.
     #[allow(non_snake_case)]
     fn execute_toolpkg_main_registration_function_with_text_resources(
@@ -2316,6 +2273,24 @@ impl JsExecutionEngine for JsEngine {
         )
     }
 
+    /// Executes one Compose DSL render through the asynchronous engine contract.
+    #[allow(non_snake_case)]
+    fn execute_compose_dsl_script_async(
+        &self,
+        script: String,
+        runtimeOptions: BTreeMap<String, Value>,
+        envOverrides: BTreeMap<String, String>,
+        textResources: Arc<BTreeMap<String, String>>,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+        JsEngine::execute_compose_dsl_script_async(
+            self,
+            script,
+            runtimeOptions,
+            envOverrides,
+            textResources,
+        )
+    }
+
     /// Dispatches one Compose DSL action through this engine.
     #[allow(non_snake_case)]
     fn dispatch_compose_dsl_action(
@@ -2327,6 +2302,26 @@ impl JsExecutionEngine for JsEngine {
         on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
     ) -> JsExecutionResult<Option<String>> {
         JsEngine::execute_compose_dsl_action(
+            self,
+            actionId,
+            payload,
+            runtimeOptions,
+            envOverrides,
+            on_intermediate_result,
+        )
+    }
+
+    /// Dispatches one Compose DSL action through the asynchronous engine contract.
+    #[allow(non_snake_case)]
+    fn dispatch_compose_dsl_action_result_async(
+        &self,
+        actionId: String,
+        payload: Option<Value>,
+        runtimeOptions: BTreeMap<String, Value>,
+        envOverrides: BTreeMap<String, String>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+        JsEngine::dispatch_compose_dsl_action_result_async(
             self,
             actionId,
             payload,
@@ -2387,9 +2382,14 @@ fn nativeReadToolPkgTextResourceStrings(
     {
         return textResources.get(&resourceKey).cloned().unwrap_or_default();
     }
+    if let Some(host) = CURRENT_TOOLPKG_TEXT_RESOURCE_HOST.with(|host| host.borrow().clone()) {
+        return host
+            .read_toolpkg_text_resource(&packageNameOrSubpackageId, &resourcePath)
+            .unwrap_or_default();
+    }
     currentExecutionHost()
         .and_then(|host| host.read_toolpkg_text_resource(&packageNameOrSubpackageId, &resourcePath))
-        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
+        .unwrap_or_default()
 }
 
 #[allow(non_snake_case)]
@@ -2658,14 +2658,6 @@ fn parseBooleanFlag(value: &str) -> bool {
         value.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes" | "y" | "on"
     )
-}
-
-#[cfg(target_arch = "wasm32")]
-#[allow(non_snake_case)]
-fn wasmQuickJsArgString(args: &[WasmQuickJsValueRef], index: usize) -> String {
-    args.get(index)
-        .map(|value| value.to_string())
-        .unwrap_or_default()
 }
 
 #[allow(non_snake_case)]

@@ -6,12 +6,14 @@ use operit_host_api::{
 use operit_store::db::AppDatabase::AppDatabase;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
-use crate::data::backup::RawSnapshotBackupManager::{RawSnapshotBackupManager, RawSnapshotManifest};
 use crate::data::backup::Operit1SnapshotImportManager::{
     observeOperit1SnapshotImportProgress, publishOperit1SnapshotImportProgress,
     Operit1ModelConfigImportResult, Operit1ModelConfigSnapshotPreview,
     Operit1SnapshotImportManager, Operit1SnapshotImportProgress, Operit1SnapshotImportResult,
     Operit1SnapshotPreview,
+};
+use crate::data::backup::RawSnapshotBackupManager::{
+    RawSnapshotBackupManager, RawSnapshotManifest,
 };
 use crate::services::ArchiveTransferManager::{ArchiveTransferManager, StagedArchive};
 
@@ -51,7 +53,10 @@ impl SnapshotImportManager {
 
     /// Reads raw snapshot metadata from a sealed archive without changing runtime storage.
     #[allow(non_snake_case)]
-    pub fn inspectRawSnapshot(&self, archive: StagedArchive) -> Result<RawSnapshotManifest, String> {
+    pub fn inspectRawSnapshot(
+        &self,
+        archive: StagedArchive,
+    ) -> Result<RawSnapshotManifest, String> {
         RawSnapshotBackupManager::new(self.storageHost.clone(), self.storageWriteHost.clone())
             .inspectSnapshotSource(self.archiveTransferManager.openStagedArchive(&archive)?)
     }
@@ -71,8 +76,9 @@ impl SnapshotImportManager {
         &self,
         archive: StagedArchive,
     ) -> Result<Operit1ModelConfigSnapshotPreview, String> {
-        self.operit1Importer()
-            .inspectModelConfigSnapshotSource(self.archiveTransferManager.openStagedArchive(&archive)?)
+        self.operit1Importer().inspectModelConfigSnapshotSource(
+            self.archiveTransferManager.openStagedArchive(&archive)?,
+        )
     }
 
     /// Previews an Operit1 full snapshot from a sealed archive.
@@ -93,12 +99,11 @@ impl SnapshotImportManager {
         configId: String,
         modelId: String,
     ) -> Result<Operit1ModelConfigImportResult, String> {
-        self.operit1Importer()
-            .importModelConfigSnapshotSource(
-                self.archiveTransferManager.openStagedArchive(&archive)?,
-                configId,
-                modelId,
-            )
+        self.operit1Importer().importModelConfigSnapshotSource(
+            self.archiveTransferManager.openStagedArchive(&archive)?,
+            configId,
+            modelId,
+        )
     }
 
     /// Imports one sealed Operit1 snapshot and publishes progress events.
@@ -120,7 +125,9 @@ impl SnapshotImportManager {
 
     /// Observes the latest Operit1 snapshot import progress state.
     #[allow(non_snake_case)]
-    pub fn operit1SnapshotImportProgressFlow(&self) -> operit_store::PreferencesDataStore::StateFlow<Operit1SnapshotImportProgress> {
+    pub fn operit1SnapshotImportProgressFlow(
+        &self,
+    ) -> operit_store::PreferencesDataStore::StateFlow<Operit1SnapshotImportProgress> {
         observeOperit1SnapshotImportProgress()
     }
 

@@ -81,16 +81,13 @@ impl StandardSystemOperationTools {
         if message.is_empty() {
             return toolError(tool, "Must provide message parameter".to_string());
         }
-        match self
-            .host()
-            .and_then(|host| {
-                host.sendNotification(&SystemNotificationRequest {
-                    title,
-                    message,
-                    activation: SystemNotificationActivation::OpenApplication,
-                })
+        match self.host().and_then(|host| {
+            host.sendNotification(&SystemNotificationRequest {
+                title,
+                message,
+                activation: SystemNotificationActivation::OpenApplication,
             })
-        {
+        }) {
             Ok(()) => toolSuccess(tool, "OK".to_string()),
             Err(error) => toolError(
                 tool,

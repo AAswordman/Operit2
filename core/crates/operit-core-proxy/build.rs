@@ -57,6 +57,10 @@ fn main() {
         manifest_dir.join("../operit-host-api/src"),
         "operit_host_api",
     );
+    let javascript_bridge_root = SourceRoot::new(
+        manifest_dir.join("../operit-js-bridge/src"),
+        "operit_js_bridge",
+    );
     let restricted_source_roots = vec![
         runtime_root.clone(),
         model_root.clone(),
@@ -67,6 +71,7 @@ fn main() {
         util_root.clone(),
         tools_root.clone(),
         provider_root.clone(),
+        javascript_bridge_root.clone(),
     ];
     let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH")
         .expect("Cargo must provide CARGO_CFG_TARGET_ARCH to the proxy generator");
@@ -82,6 +87,7 @@ fn main() {
         util_root,
         tools_root.clone(),
         provider_root.clone(),
+        javascript_bridge_root,
         host_api_root,
     ];
     for source_root in &source_roots {

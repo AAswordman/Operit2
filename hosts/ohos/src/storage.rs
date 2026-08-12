@@ -45,6 +45,11 @@ impl RuntimeStorageHost for OhosRuntimeStorageHost {
         self.inner.writeBytes(path, content)
     }
 
+    /// Appends bytes to OpenHarmony runtime storage.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        self.inner.appendBytes(path, content)
+    }
+
     /// Deletes an OpenHarmony runtime storage entry.
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
         self.inner.delete(path, recursive)

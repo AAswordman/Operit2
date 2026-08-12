@@ -486,6 +486,21 @@ class AppearanceSettingsPanel extends StatelessWidget {
           ],
         ),
         _SectionCard(
+          title: l10n.settingsAppearanceChatDisplaySection,
+          children: <Widget>[
+            _InfoLine(
+              label: l10n.settingsAppearanceMessageStyle,
+              value: _messageStyleLabel(l10n, snapshot.chatStyle),
+            ),
+            _MessageStyleSelector(
+              value: snapshot.chatStyle,
+              onChanged: (value) {
+                unawaited(themeController.saveThemeSettings(chatStyle: value));
+              },
+            ),
+          ],
+        ),
+        _SectionCard(
           title: l10n.settingsAppearanceMessageDisplaySection,
           children: <Widget>[
             _SettingSwitch(

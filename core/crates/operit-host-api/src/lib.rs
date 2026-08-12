@@ -3,6 +3,7 @@
 pub mod HostManager;
 pub mod TimeUtils;
 
+use std::any::Any;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -11,6 +12,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -716,8 +718,16 @@ fn ohosOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
     ]
 }
 
+/// Classifies failures crossing a Host capability boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostErrorKind {
+    General,
+    Timeout,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostError {
+    pub kind: HostErrorKind,
     pub message: String,
 }
 
@@ -725,6 +735,15 @@ impl HostError {
     /// Creates a host boundary error from a displayable message.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
+            kind: HostErrorKind::General,
+            message: message.into(),
+        }
+    }
+
+    /// Creates a Host boundary timeout error.
+    pub fn timeout(message: impl Into<String>) -> Self {
+        Self {
+            kind: HostErrorKind::Timeout,
             message: message.into(),
         }
     }
@@ -973,7 +992,9 @@ impl ComposeDslFilePickerRequest {
         }
 
         let raw: RawRequest = serde_json::from_str(payloadJson).map_err(|error| {
-            HostError::new(format!("Compose DSL file picker request decode failed: {error}"))
+            HostError::new(format!(
+                "Compose DSL file picker request decode failed: {error}"
+            ))
         })?;
         let executionContextKey = raw.executionContextKey.trim();
         if executionContextKey.is_empty() {
@@ -999,10 +1020,7 @@ pub trait ComposeDslWebViewHost: Send + Sync {
     fn handleControllerCommand(&self, payloadJson: &str) -> HostResult<String>;
 
     /// Opens one validated Compose DSL file picker through the platform owner.
-    fn openFilePicker(
-        &self,
-        request: ComposeDslFilePickerRequest,
-    ) -> HostResult<String>;
+    fn openFilePicker(&self, request: ComposeDslFilePickerRequest) -> HostResult<String>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1365,6 +1383,8 @@ pub trait RuntimeStorageHost: Send + Sync {
     }
     /// Writes bytes to a virtual runtime storage path.
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()>;
+    /// Appends bytes to a virtual runtime storage path.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()>;
     /// Deletes a virtual runtime storage entry.
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()>;
     /// Checks whether a virtual runtime storage entry exists.
@@ -1558,6 +1578,192 @@ pub type HostRuntimeTask = Box<dyn FnOnce() + Send + 'static>;
 pub type HostRuntimeAsyncTask =
     Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + 'static>> + Send + 'static>;
 
+/// Represents one host-owned asynchronous runtime turn boundary that may cross runtime schedulers.
+pub type HostRuntimeTurnFuture = Pin<Box<dyn Future<Output = HostResult<()>> + Send + 'static>>;
+
+/// Handles one host JavaScript function that returns a string value.
+pub type HostJavaScriptStringCallback =
+    Arc<dyn Fn(Vec<String>) -> HostResult<String> + Send + Sync + 'static>;
+
+/// Handles one host JavaScript function that returns `undefined`.
+pub type HostJavaScriptVoidCallback =
+    Arc<dyn Fn(Vec<String>) -> HostResult<()> + Send + Sync + 'static>;
+
+/// Supplies one interrupt predicate to a host-owned JavaScript runtime.
+pub type HostJavaScriptInterruptHandler = Arc<dyn Fn() -> bool + Send + Sync + 'static>;
+
+/// Owns one concrete JavaScript runtime created by the active platform host.
+pub trait HostJavaScriptRuntime {
+    /// Evaluates one script without reading its return value.
+    fn evaluateHostJavaScriptVoid(&mut self, scriptName: &str, script: &str) -> HostResult<()>;
+
+    /// Evaluates one script and converts its return value to a string.
+    fn evaluateHostJavaScriptString(
+        &mut self,
+        scriptName: &str,
+        script: &str,
+    ) -> HostResult<String>;
+
+    /// Executes every JavaScript job currently ready in this runtime.
+    fn executePendingHostJavaScriptJobs(&mut self) -> HostResult<()>;
+
+    /// Replaces the interrupt predicate used by the current JavaScript execution.
+    fn setHostJavaScriptInterruptHandler(
+        &mut self,
+        handler: Option<HostJavaScriptInterruptHandler>,
+    ) -> HostResult<()>;
+
+    /// Registers one global JavaScript function that returns a string.
+    fn registerHostJavaScriptStringFunction(
+        &mut self,
+        name: &str,
+        callback: HostJavaScriptStringCallback,
+    ) -> HostResult<()>;
+
+    /// Registers one global JavaScript function that returns `undefined`.
+    fn registerHostJavaScriptVoidFunction(
+        &mut self,
+        name: &str,
+        callback: HostJavaScriptVoidCallback,
+    ) -> HostResult<()>;
+}
+
+/// Identifies one host-owned JavaScript runtime state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HostJavaScriptRuntimeStateHandle {
+    pub id: u64,
+}
+
+/// Stores one caller-defined state beside its host-owned JavaScript runtime.
+pub type HostJavaScriptRuntimeState = Box<dyn Any + 'static>;
+
+/// Creates one caller-defined JavaScript runtime state on its owning executor.
+pub type HostJavaScriptRuntimeStateFactory =
+    Box<dyn FnOnce() -> HostResult<HostJavaScriptRuntimeState> + Send + 'static>;
+
+/// Returns one type-erased result that can cross the host execution boundary.
+pub type HostJavaScriptRuntimeStateOutput = Box<dyn Any + Send + 'static>;
+
+/// Executes one synchronous operation against a host-owned JavaScript runtime state.
+pub type HostJavaScriptRuntimeStateTask = Box<
+    dyn FnOnce(
+            &mut dyn Any,
+            HostJavaScriptExecutionInterrupt,
+        ) -> HostResult<HostJavaScriptRuntimeStateOutput>
+        + Send
+        + 'static,
+>;
+
+/// Represents one asynchronous operation borrowing a host-owned JavaScript runtime state.
+pub type HostJavaScriptRuntimeStateTaskFuture<'a> =
+    Pin<Box<dyn Future<Output = HostResult<HostJavaScriptRuntimeStateOutput>> + 'a>>;
+
+/// Creates one asynchronous operation against a host-owned JavaScript runtime state.
+pub type HostJavaScriptRuntimeStateAsyncTask = Box<
+    dyn for<'a> FnOnce(
+            &'a mut dyn Any,
+            HostJavaScriptExecutionInterrupt,
+        ) -> HostJavaScriptRuntimeStateTaskFuture<'a>
+        + Send
+        + 'static,
+>;
+
+/// Resolves one asynchronous host-owned JavaScript runtime state operation.
+pub type HostJavaScriptRuntimeStateOutputFuture =
+    Pin<Box<dyn Future<Output = HostResult<HostJavaScriptRuntimeStateOutput>> + 'static>>;
+
+struct HostJavaScriptExecutionInterruptState {
+    deadlineMillis: u128,
+    cancelled: AtomicBool,
+    timedOut: AtomicBool,
+}
+
+/// Controls one exact host-owned JavaScript execution deadline.
+#[derive(Clone)]
+pub struct HostJavaScriptExecutionInterrupt {
+    state: Arc<HostJavaScriptExecutionInterruptState>,
+}
+
+impl HostJavaScriptExecutionInterrupt {
+    /// Creates one interrupt with an absolute deadline derived from milliseconds.
+    pub fn new(timeoutMillis: u64) -> HostResult<Self> {
+        if timeoutMillis == 0 {
+            return Err(HostError::new(
+                "JavaScript execution timeout must be greater than zero",
+            ));
+        }
+        let timeout = Duration::from_millis(timeoutMillis);
+        let nowMillis = crate::TimeUtils::currentTimeMillisU128();
+        let deadlineMillis = nowMillis
+            .checked_add(timeout.as_millis())
+            .ok_or_else(|| HostError::new("JavaScript execution deadline exceeds clock range"))?;
+        Ok(Self {
+            state: Arc::new(HostJavaScriptExecutionInterruptState {
+                deadlineMillis,
+                cancelled: AtomicBool::new(false),
+                timedOut: AtomicBool::new(false),
+            }),
+        })
+    }
+
+    /// Requests interruption of the execution owning this token.
+    pub fn interrupt(&self) {
+        self.state.cancelled.store(true, Ordering::Release);
+    }
+
+    /// Returns whether the JavaScript runtime must stop the current execution.
+    pub fn shouldInterrupt(&self) -> bool {
+        if self.state.cancelled.load(Ordering::Acquire) {
+            return true;
+        }
+        if crate::TimeUtils::currentTimeMillisU128() >= self.state.deadlineMillis {
+            self.state.timedOut.store(true, Ordering::Release);
+            return true;
+        }
+        false
+    }
+
+    /// Returns whether the execution crossed its configured deadline.
+    pub fn didTimeOut(&self) -> bool {
+        self.state.timedOut.load(Ordering::Acquire)
+    }
+}
+
+/// Creates and schedules platform-owned JavaScript runtimes and their affine state.
+pub trait HostJavaScriptRuntimeHost: Send + Sync {
+    /// Creates one concrete JavaScript runtime on the current owning executor.
+    fn createHostJavaScriptRuntime(&self) -> HostResult<Box<dyn HostJavaScriptRuntime>>;
+
+    /// Creates one affine state on a platform-owned JavaScript executor.
+    fn createHostJavaScriptRuntimeState(
+        &self,
+        taskName: &str,
+        factory: HostJavaScriptRuntimeStateFactory,
+    ) -> HostResult<HostJavaScriptRuntimeStateHandle>;
+
+    /// Executes one blocking operation against an affine JavaScript runtime state.
+    fn executeHostJavaScriptRuntimeStateTask(
+        &self,
+        handle: HostJavaScriptRuntimeStateHandle,
+        timeoutMillis: u64,
+        task: HostJavaScriptRuntimeStateTask,
+    ) -> HostResult<HostJavaScriptRuntimeStateOutput>;
+
+    /// Executes one asynchronous operation against an affine JavaScript runtime state.
+    fn executeHostJavaScriptRuntimeStateAsyncTask(
+        &self,
+        handle: HostJavaScriptRuntimeStateHandle,
+        timeoutMillis: u64,
+        task: HostJavaScriptRuntimeStateAsyncTask,
+    ) -> HostJavaScriptRuntimeStateOutputFuture;
+
+    /// Destroys one affine JavaScript runtime state and rejects later operations.
+    fn destroyHostJavaScriptRuntimeState(
+        &self,
+        handle: HostJavaScriptRuntimeStateHandle,
+    ) -> HostResult<()>;
+}
+
 pub trait HostRuntimeTaskSchedulerHost: Send + Sync {
     /// Schedules a named one-shot runtime task through the platform execution mechanism.
     fn scheduleHostRuntimeTask(&self, taskName: &str, task: HostRuntimeTask) -> HostResult<()>;
@@ -1576,6 +1782,12 @@ pub trait HostRuntimeTaskSchedulerHost: Send + Sync {
         delayMs: u64,
         task: HostRuntimeTask,
     ) -> HostResult<()>;
+
+    /// Waits until the platform runtime can continue work on a later event-loop turn.
+    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture;
+
+    /// Waits for a platform-owned delay without using a shared runtime timer.
+    fn waitForHostRuntimeDelay(&self, delayMs: u64) -> HostRuntimeTurnFuture;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

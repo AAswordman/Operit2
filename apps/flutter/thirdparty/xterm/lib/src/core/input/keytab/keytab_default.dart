@@ -92,27 +92,26 @@ key Down  +Shift+AppScreen             : "\E[1;*B"
 key Left  +Shift+AppScreen             : "\E[1;*D"
 key Right +Shift+AppScreen             : "\E[1;*C"
 
-# Keypad keys with NumLock ON
+# Application keypad keys
 # (see https://web.archive.org/web/20070807181942/http://www.nw.com/nw/WWW/products/wizcon/vt100.html
 #    https://vt100.net/docs/vt100-ug/chapter3.html)
-#
-# Not enabled for now because it breaks the keypad in Vim.
-#
-#key 0 +KeyPad+AppKeyPad : "\EOp"
-#key 1 +KeyPad+AppKeyPad : "\EOq"
-#key 2 +KeyPad+AppKeyPad : "\EOr"
-#key 3 +KeyPad+AppKeyPad : "\EOs"
-#key 4 +KeyPad+AppKeyPad : "\EOt"
-#key 5 +KeyPad+AppKeyPad : "\EOu"
-#key 6 +KeyPad+AppKeyPad : "\EOv"
-#key 7 +KeyPad+AppKeyPad : "\EOw"
-#key 8 +KeyPad+AppKeyPad : "\EOx"
-#key 9 +KeyPad+AppKeyPad : "\EOy"
-#key + +KeyPad+AppKeyPad : "\EOl"
-#key - +KeyPad+AppKeyPad : "\EOm"
-#key . +KeyPad+AppKeyPad : "\EOn"
-#key * +KeyPad+AppKeyPad : "\EOM"
-#key Enter +KeyPad+AppKeyPad : "\r"
+key Num0        +AppKeyPad : "\EOp"
+key Num1        +AppKeyPad : "\EOq"
+key Num2        +AppKeyPad : "\EOr"
+key Num3        +AppKeyPad : "\EOs"
+key Num4        +AppKeyPad : "\EOt"
+key Num5        +AppKeyPad : "\EOu"
+key Num6        +AppKeyPad : "\EOv"
+key Num7        +AppKeyPad : "\EOw"
+key Num8        +AppKeyPad : "\EOx"
+key Num9        +AppKeyPad : "\EOy"
+key NumDivide   +AppKeyPad : "\EOo"
+key NumMultiply +AppKeyPad : "\EOj"
+key NumSubtract +AppKeyPad : "\EOm"
+key NumAdd      +AppKeyPad : "\EOk"
+key NumComma    +AppKeyPad : "\EOl"
+key NumDecimal  +AppKeyPad : "\EOn"
+key NumEnter    +AppKeyPad : "\EOM"
 
 # Keypad keys with NumLock Off
 key Up    -Shift+Ansi+AppCuKeys+KeyPad : "\EOA"

@@ -53,10 +53,12 @@ impl RuntimeStorageHost for WebRuntimeStorageHost {
 
     /// Reads one bounded byte range from worker-owned OPFS runtime storage.
     fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
-        let offset = i64::try_from(offset)
-            .map_err(|_| operit_host_api::HostError::new("runtime storage offset does not fit i64"))?;
-        let length = i64::try_from(length)
-            .map_err(|_| operit_host_api::HostError::new("runtime storage length does not fit i64"))?;
+        let offset = i64::try_from(offset).map_err(|_| {
+            operit_host_api::HostError::new("runtime storage offset does not fit i64")
+        })?;
+        let length = i64::try_from(length).map_err(|_| {
+            operit_host_api::HostError::new("runtime storage length does not fit i64")
+        })?;
         let value = call_storage(
             "readBytesRange",
             &[
@@ -71,6 +73,15 @@ impl RuntimeStorageHost for WebRuntimeStorageHost {
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         call_storage(
             "writeBytes",
+            &[JsValue::from_str(path), bytes_to_js(content)],
+        )?;
+        Ok(())
+    }
+
+    /// Appends bytes to worker-owned OPFS runtime storage.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        call_storage(
+            "appendBytes",
             &[JsValue::from_str(path), bytes_to_js(content)],
         )?;
         Ok(())

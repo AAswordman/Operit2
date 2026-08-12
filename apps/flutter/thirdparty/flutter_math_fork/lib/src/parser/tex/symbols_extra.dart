@@ -27,6 +27,8 @@ const extraTexMathSymbolCommandConfigs = {
 
   // colon
   '\\colon': TexSymbolConfig(':', type: AtomType.punct), // From MathJax
+  '\\ordinarycolon':
+      TexSymbolConfig(':', type: AtomType.rel, font: mainrm),
 
   // Composite characters
   '\\dblcolon': TexSymbolConfig('\u2237'),

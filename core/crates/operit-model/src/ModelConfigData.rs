@@ -374,13 +374,6 @@ pub struct ProviderOperationSpec {
     pub result: ProviderOperationResultSpec,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(non_snake_case)]
-pub struct ModelCatalogKey {
-    pub providerTypeId: String,
-    pub modelId: String,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
 pub struct ModelCatalogEntry {
@@ -427,7 +420,6 @@ pub struct AvailableProviderModel {
 #[allow(non_snake_case)]
 pub struct ModelProfile {
     pub id: String,
-    pub catalogKey: Option<ModelCatalogKey>,
     pub pricingOverride: Option<ModelPricing>,
     pub contextOverride: Option<ModelContextSpec>,
     pub capabilitiesOverride: Option<ModelCapabilities>,
@@ -442,7 +434,6 @@ impl ModelProfile {
     pub fn new(id: String) -> Self {
         Self {
             id,
-            catalogKey: None,
             pricingOverride: None,
             contextOverride: None,
             capabilitiesOverride: None,
@@ -571,10 +562,6 @@ pub fn local_model_provider() -> ProviderProfile {
 
 pub fn default_deepseek_model() -> ModelProfile {
     let mut model = ModelProfile::new(ModelConfigDefaults::DEFAULT_MODEL_ID.to_string());
-    model.catalogKey = Some(ModelCatalogKey {
-        providerTypeId: ApiProviderType::DEEPSEEK.name().to_string(),
-        modelId: ModelConfigDefaults::DEFAULT_MODEL_ID.to_string(),
-    });
     model.contextOverride = Some(ModelContextSpec::default());
     model.capabilitiesOverride = Some(ModelCapabilities {
         toolCall: true,

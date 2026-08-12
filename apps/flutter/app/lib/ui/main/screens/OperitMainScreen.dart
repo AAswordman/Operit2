@@ -49,12 +49,18 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   StreamSubscription<String?>? _drawerCurrentChatSubscription;
   StreamSubscription<List<core_proxy.CharacterGroupCard>>?
   _drawerCharacterGroupsSubscription;
+  StreamSubscription<List<String>>? _drawerCharacterCardIdsSubscription;
+  final Map<String, StreamSubscription<core_proxy.CharacterCard>>
+  _drawerCharacterCardSubscriptions =
+      <String, StreamSubscription<core_proxy.CharacterCard>>{};
+  final Map<String, String> _drawerCharacterCardNamesById = <String, String>{};
   late final ValueNotifier<bool> _drawerOpenState;
   bool _isTabletSidebarExpanded = false;
   bool _isNavigatingBack = false;
   bool _requestedInitialToolPkgNavigationRefresh = false;
   int _backPressedTime = 0;
 
+  /// Initializes navigation services and drawer data subscriptions.
   @override
   void initState() {
     super.initState();
@@ -69,9 +75,18 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     NotificationActivationService.instance.installChatHandler(
       _activateNotificationChat,
     );
-    unawaited(_loadDrawerConversations());
+    unawaited(_initializeDrawerData());
+  }
+
+  /// Loads drawer data before subscribing to its live updates.
+  Future<void> _initializeDrawerData() async {
+    await _loadDrawerConversations();
+    if (!mounted) {
+      return;
+    }
     _watchDrawerConversations();
     _watchDrawerCharacterGroups();
+    _watchDrawerCharacterCards();
   }
 
   @override
@@ -97,6 +112,10 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     _drawerHistoriesSubscription?.cancel();
     _drawerCurrentChatSubscription?.cancel();
     _drawerCharacterGroupsSubscription?.cancel();
+    _drawerCharacterCardIdsSubscription?.cancel();
+    for (final subscription in _drawerCharacterCardSubscriptions.values) {
+      subscription.cancel();
+    }
     _drawerConversationState.dispose();
     _drawerOpenState.dispose();
     _routerState.dispose();
@@ -187,34 +206,48 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     });
   }
 
+  /// Loads drawer conversations and their character avatar metadata.
   Future<void> _loadDrawerConversations() async {
     final currentState = _drawerConversationState.value;
     _drawerConversationState.value = DrawerConversationState(
       histories: currentState.histories,
       characterGroupNamesById: currentState.characterGroupNamesById,
+      characterCardAvatarUrisByName: currentState.characterCardAvatarUrisByName,
       currentChatId: currentState.currentChatId,
       loading: true,
     );
     try {
       final characterGroupCoreProxy =
           _clients.preferencesCharacterGroupCardManager;
-      await characterGroupCoreProxy.initializeIfNeeded();
+      final characterCardCoreProxy = _clients.preferencesCharacterCardManager;
+      await Future.wait<void>(<Future<void>>[
+        characterGroupCoreProxy.initializeIfNeeded(),
+        characterCardCoreProxy.initializeIfNeeded(),
+      ]);
       final results = await Future.wait<Object?>(<Future<Object?>>[
         _clients.chatRuntimeHolderMain.chatHistoryListItemsFlowSnapshot(),
         _clients.chatRuntimeHolderMain.currentChatIdFlowSnapshot(),
         characterGroupCoreProxy.allCharacterGroupCardsFlowSnapshot(),
+        characterCardCoreProxy.getAllCharacterCards(),
       ]);
       final histories = results[0] as List<core_proxy.ChatHistoryListItem>;
       final currentChatId = results[1] as String?;
       final characterGroups = results[2] as List<core_proxy.CharacterGroupCard>;
+      final characterCards = results[3] as List<core_proxy.CharacterCard>;
       if (!mounted) {
         return;
       }
+      _replaceDrawerCharacterCardAvatars(characterCards);
       _drawerConversationState.value = DrawerConversationState(
         histories: List<core_proxy.ChatHistoryListItem>.unmodifiable(histories),
         characterGroupNamesById: _characterGroupNameMap(characterGroups),
+        characterCardAvatarUrisByName:
+            _drawerConversationState.value.characterCardAvatarUrisByName,
         currentChatId: currentChatId,
         loading: false,
+      );
+      await _syncDrawerCharacterCardSubscriptions(
+        characterCards.map((card) => card.id).toList(growable: false),
       );
     } catch (error, stackTrace) {
       debugPrint('Failed to load drawer conversations: $error\n$stackTrace');
@@ -225,6 +258,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       _drawerConversationState.value = DrawerConversationState(
         histories: state.histories,
         characterGroupNamesById: state.characterGroupNamesById,
+        characterCardAvatarUrisByName: state.characterCardAvatarUrisByName,
         currentChatId: state.currentChatId,
         errorMessage: error.toString(),
         loading: false,
@@ -247,6 +281,8 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                 histories,
               ),
               characterGroupNamesById: state.characterGroupNamesById,
+              characterCardAvatarUrisByName:
+                  state.characterCardAvatarUrisByName,
               currentChatId: state.currentChatId,
               loading: false,
             );
@@ -262,6 +298,8 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
               characterGroupNamesById: state.characterGroupNamesById,
+              characterCardAvatarUrisByName:
+                  state.characterCardAvatarUrisByName,
               currentChatId: state.currentChatId,
               errorMessage: error.toString(),
               loading: false,
@@ -281,6 +319,8 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
               characterGroupNamesById: state.characterGroupNamesById,
+              characterCardAvatarUrisByName:
+                  state.characterCardAvatarUrisByName,
               currentChatId: chatId,
               errorMessage: state.errorMessage,
               loading: state.loading,
@@ -297,6 +337,8 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
               characterGroupNamesById: state.characterGroupNamesById,
+              characterCardAvatarUrisByName:
+                  state.characterCardAvatarUrisByName,
               currentChatId: state.currentChatId,
               errorMessage: error.toString(),
               loading: state.loading,
@@ -319,6 +361,8 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
               characterGroupNamesById: _characterGroupNameMap(groups),
+              characterCardAvatarUrisByName:
+                  state.characterCardAvatarUrisByName,
               currentChatId: state.currentChatId,
               errorMessage: state.errorMessage,
               loading: state.loading,
@@ -335,12 +379,177 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
               characterGroupNamesById: state.characterGroupNamesById,
+              characterCardAvatarUrisByName:
+                  state.characterCardAvatarUrisByName,
               currentChatId: state.currentChatId,
               errorMessage: error.toString(),
               loading: state.loading,
             );
           },
         );
+  }
+
+  /// Watches the character-card collection used to supply drawer avatars.
+  void _watchDrawerCharacterCards() {
+    final characterCardCoreProxy = _clients.preferencesCharacterCardManager;
+    _drawerCharacterCardIdsSubscription?.cancel();
+    _drawerCharacterCardIdsSubscription = characterCardCoreProxy
+        .characterCardListFlowChanges()
+        .listen(
+          (cardIds) {
+            unawaited(_syncDrawerCharacterCardSubscriptions(cardIds));
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            _reportDrawerCharacterCardError(error, stackTrace);
+          },
+        );
+  }
+
+  /// Synchronizes per-card avatar subscriptions with the current card list.
+  Future<void> _syncDrawerCharacterCardSubscriptions(
+    List<String> cardIds,
+  ) async {
+    try {
+      final desiredCardIds = cardIds
+          .map((id) => id.trim())
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      final removedCardIds = _drawerCharacterCardSubscriptions.keys
+          .where((id) => !desiredCardIds.contains(id))
+          .toList(growable: false);
+      for (final cardId in removedCardIds) {
+        await _drawerCharacterCardSubscriptions.remove(cardId)!.cancel();
+        final previousName = _drawerCharacterCardNamesById.remove(cardId);
+        if (previousName != null) {
+          _removeDrawerCharacterCardAvatar(previousName);
+        }
+      }
+
+      final characterCardCoreProxy = _clients.preferencesCharacterCardManager;
+      for (final cardId in desiredCardIds) {
+        if (_drawerCharacterCardSubscriptions.containsKey(cardId)) {
+          continue;
+        }
+        _drawerCharacterCardSubscriptions[cardId] = characterCardCoreProxy
+            .getCharacterCardFlowChanges(id: cardId)
+            .listen(
+              _updateDrawerCharacterCardAvatar,
+              onError: (Object error, StackTrace stackTrace) {
+                _reportDrawerCharacterCardError(error, stackTrace);
+              },
+            );
+      }
+
+      final cards = await Future.wait<core_proxy.CharacterCard>(
+        desiredCardIds.map(
+          (id) => characterCardCoreProxy.getCharacterCardFlowSnapshot(id: id),
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      _replaceDrawerCharacterCardAvatars(cards);
+    } catch (error, stackTrace) {
+      _reportDrawerCharacterCardError(error, stackTrace);
+    }
+  }
+
+  /// Replaces all drawer avatar metadata with the supplied character cards.
+  void _replaceDrawerCharacterCardAvatars(
+    List<core_proxy.CharacterCard> cards,
+  ) {
+    final avatarUrisByName = <String, String>{};
+    _drawerCharacterCardNamesById.clear();
+    for (final card in cards) {
+      final id = card.id.trim();
+      final name = card.name.trim();
+      if (id.isEmpty || name.isEmpty) {
+        continue;
+      }
+      _drawerCharacterCardNamesById[id] = name;
+      final avatarUri = card.avatarUri?.trim();
+      if (avatarUri != null && avatarUri.isNotEmpty) {
+        avatarUrisByName[name] = avatarUri;
+      }
+    }
+    final state = _drawerConversationState.value;
+    _drawerConversationState.value = DrawerConversationState(
+      histories: state.histories,
+      characterGroupNamesById: state.characterGroupNamesById,
+      characterCardAvatarUrisByName: avatarUrisByName,
+      currentChatId: state.currentChatId,
+      errorMessage: state.errorMessage,
+      loading: state.loading,
+    );
+  }
+
+  /// Applies a single character-card avatar update to drawer state.
+  void _updateDrawerCharacterCardAvatar(core_proxy.CharacterCard card) {
+    if (!mounted) {
+      return;
+    }
+    final cardId = card.id.trim();
+    final cardName = card.name.trim();
+    if (cardId.isEmpty || cardName.isEmpty) {
+      return;
+    }
+    final avatarUrisByName = Map<String, String>.of(
+      _drawerConversationState.value.characterCardAvatarUrisByName,
+    );
+    final previousName = _drawerCharacterCardNamesById[cardId];
+    if (previousName != null) {
+      avatarUrisByName.remove(previousName);
+    }
+    _drawerCharacterCardNamesById[cardId] = cardName;
+    final avatarUri = card.avatarUri?.trim();
+    if (avatarUri != null && avatarUri.isNotEmpty) {
+      avatarUrisByName[cardName] = avatarUri;
+    }
+    final state = _drawerConversationState.value;
+    _drawerConversationState.value = DrawerConversationState(
+      histories: state.histories,
+      characterGroupNamesById: state.characterGroupNamesById,
+      characterCardAvatarUrisByName: avatarUrisByName,
+      currentChatId: state.currentChatId,
+      errorMessage: state.errorMessage,
+      loading: state.loading,
+    );
+  }
+
+  /// Removes a deleted character-card avatar from drawer state.
+  void _removeDrawerCharacterCardAvatar(String cardName) {
+    if (!mounted) {
+      return;
+    }
+    final avatarUrisByName = Map<String, String>.of(
+      _drawerConversationState.value.characterCardAvatarUrisByName,
+    )..remove(cardName);
+    final state = _drawerConversationState.value;
+    _drawerConversationState.value = DrawerConversationState(
+      histories: state.histories,
+      characterGroupNamesById: state.characterGroupNamesById,
+      characterCardAvatarUrisByName: avatarUrisByName,
+      currentChatId: state.currentChatId,
+      errorMessage: state.errorMessage,
+      loading: state.loading,
+    );
+  }
+
+  /// Publishes a character avatar loading error to the drawer state.
+  void _reportDrawerCharacterCardError(Object error, StackTrace stackTrace) {
+    debugPrint('Failed to watch drawer character cards: $error\n$stackTrace');
+    if (!mounted) {
+      return;
+    }
+    final state = _drawerConversationState.value;
+    _drawerConversationState.value = DrawerConversationState(
+      histories: state.histories,
+      characterGroupNamesById: state.characterGroupNamesById,
+      characterCardAvatarUrisByName: state.characterCardAvatarUrisByName,
+      currentChatId: state.currentChatId,
+      errorMessage: error.toString(),
+      loading: false,
+    );
   }
 
   Map<String, String> _characterGroupNameMap(

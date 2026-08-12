@@ -35,12 +35,13 @@ serde_bytes = "0.11"
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 url = "2"
 uuid.workspace = true
 zip.workspace = true
 
 [dev-dependencies]
+rusqlite.workspace = true
 
 [build-dependencies]
 serde.workspace = true

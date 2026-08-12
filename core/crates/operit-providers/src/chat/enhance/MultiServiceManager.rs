@@ -47,6 +47,13 @@ pub struct MultiServiceManager {
 struct FunctionServiceInstance {
     providerId: String,
     modelId: String,
+    config: ResolvedModelConfig,
+    service: SharedAIServiceHandle,
+}
+
+/// Tracks the resolved configuration backing one explicitly addressed model service.
+struct ModelServiceInstance {
+    config: ResolvedModelConfig,
     service: SharedAIServiceHandle,
 }
 
@@ -55,7 +62,7 @@ struct MultiServiceManagerState {
     pub rootDir: PathBuf,
     runtime_context: ProviderRuntimeContext,
     serviceInstances: HashMap<FunctionType, FunctionServiceInstance>,
-    modelServiceInstances: HashMap<String, SharedAIServiceHandle>,
+    modelServiceInstances: HashMap<String, ModelServiceInstance>,
     isInitialized: bool,
     defaultServiceKey: Option<FunctionType>,
 }
@@ -129,22 +136,24 @@ impl MultiServiceManager {
             .support()
             .modelBindingForFunction(inner.rootDir.clone(), functionType.clone())
             .map_err(AiServiceError::RequestFailed)?;
+        let config = inner
+            .runtime_context
+            .support()
+            .resolvedModelConfig(inner.rootDir.clone(), &binding.providerId, &binding.modelId)
+            .map_err(AiServiceError::RequestFailed)?;
         if !Self::functionServiceMatchesBinding(
             inner.serviceInstances.get(&functionType),
             &binding.providerId,
             &binding.modelId,
+            &config,
         ) {
-            let config = inner
-                .runtime_context
-                .support()
-                .resolvedModelConfig(inner.rootDir.clone(), &binding.providerId, &binding.modelId)
-                .map_err(AiServiceError::RequestFailed)?;
-            let service = Self::createServiceFromResolvedConfigLocked(&inner, config)?;
+            let service = Self::createServiceFromResolvedConfigLocked(&inner, config.clone())?;
             inner.serviceInstances.insert(
                 functionType.clone(),
                 FunctionServiceInstance {
                     providerId: binding.providerId.clone(),
                     modelId: binding.modelId.clone(),
+                    config,
                     service: Arc::new(AsyncMutex::new(service)),
                 },
             );
@@ -173,21 +182,26 @@ impl MultiServiceManager {
             .expect("MultiServiceManager mutex poisoned");
         Self::ensureInitializedLocked(&mut inner)?;
         let serviceKey = Self::modelServiceKey(&providerId, &modelId);
-        if !inner.modelServiceInstances.contains_key(&serviceKey) {
-            let config = inner
-                .runtime_context
-                .support()
-                .resolvedModelConfig(inner.rootDir.clone(), &providerId, &modelId)
-                .map_err(AiServiceError::RequestFailed)?;
-            let service = Self::createServiceFromResolvedConfigLocked(&inner, config)?;
-            inner
-                .modelServiceInstances
-                .insert(serviceKey.clone(), Arc::new(AsyncMutex::new(service)));
+        let config = inner
+            .runtime_context
+            .support()
+            .resolvedModelConfig(inner.rootDir.clone(), &providerId, &modelId)
+            .map_err(AiServiceError::RequestFailed)?;
+        if !Self::modelServiceMatchesConfig(inner.modelServiceInstances.get(&serviceKey), &config) {
+            let service = Self::createServiceFromResolvedConfigLocked(&inner, config.clone())?;
+            inner.modelServiceInstances.insert(
+                serviceKey.clone(),
+                ModelServiceInstance {
+                    config,
+                    service: Arc::new(AsyncMutex::new(service)),
+                },
+            );
         }
         let service = inner
             .modelServiceInstances
             .get(&serviceKey)
             .expect("model service must exist after creation")
+            .service
             .clone();
         Ok(service)
     }
@@ -229,6 +243,7 @@ impl MultiServiceManager {
             inner.serviceInstances.get(&functionType),
             &binding.providerId,
             &binding.modelId,
+            &config,
         ) {
             let service = Self::createServiceFromResolvedConfigLocked(&inner, config.clone())?;
             inner.serviceInstances.insert(
@@ -236,6 +251,7 @@ impl MultiServiceManager {
                 FunctionServiceInstance {
                     providerId: binding.providerId.clone(),
                     modelId: binding.modelId.clone(),
+                    config: config.clone(),
                     service: Arc::new(AsyncMutex::new(service)),
                 },
             );
@@ -277,16 +293,21 @@ impl MultiServiceManager {
             .resolvedModelConfig(inner.rootDir.clone(), &providerId, &modelId)
             .map_err(AiServiceError::RequestFailed)?;
         let modelParameters = config.parameters.clone();
-        if !inner.modelServiceInstances.contains_key(&serviceKey) {
+        if !Self::modelServiceMatchesConfig(inner.modelServiceInstances.get(&serviceKey), &config) {
             let service = Self::createServiceFromResolvedConfigLocked(&inner, config.clone())?;
-            inner
-                .modelServiceInstances
-                .insert(serviceKey.clone(), Arc::new(AsyncMutex::new(service)));
+            inner.modelServiceInstances.insert(
+                serviceKey.clone(),
+                ModelServiceInstance {
+                    config: config.clone(),
+                    service: Arc::new(AsyncMutex::new(service)),
+                },
+            );
         }
         let service = inner
             .modelServiceInstances
             .get(&serviceKey)
             .expect("model service must exist after creation")
+            .service
             .clone();
         Ok((config, modelParameters, service))
     }
@@ -377,7 +398,7 @@ impl MultiServiceManager {
                 inner
                     .modelServiceInstances
                     .drain()
-                    .map(|(_, oldService)| oldService)
+                    .map(|(_, oldService)| oldService.service)
                     .collect::<Vec<_>>()
             } else {
                 Vec::new()
@@ -410,7 +431,10 @@ impl MultiServiceManager {
                 .expect("MultiServiceManager mutex poisoned");
             Self::ensureInitializedLocked(&mut inner)?;
             let serviceKey = Self::modelServiceKey(&providerId, &modelId);
-            inner.modelServiceInstances.remove(&serviceKey)
+            inner
+                .modelServiceInstances
+                .remove(&serviceKey)
+                .map(|instance| instance.service)
         };
         if let Some(oldService) = oldService {
             let mut service = oldService.lock().await;
@@ -437,7 +461,7 @@ impl MultiServiceManager {
                 inner
                     .modelServiceInstances
                     .drain()
-                    .map(|(_, oldService)| oldService),
+                    .map(|(_, oldService)| oldService.service),
             );
             inner.defaultServiceKey = None;
             oldServices
@@ -455,9 +479,25 @@ impl MultiServiceManager {
         instance: Option<&FunctionServiceInstance>,
         providerId: &str,
         modelId: &str,
+        config: &ResolvedModelConfig,
     ) -> bool {
         match instance {
-            Some(instance) => instance.providerId == providerId && instance.modelId == modelId,
+            Some(instance) => {
+                instance.providerId == providerId
+                    && instance.modelId == modelId
+                    && instance.config == *config
+            }
+            None => false,
+        }
+    }
+
+    /// Checks whether an explicitly addressed model service was built from the latest config.
+    fn modelServiceMatchesConfig(
+        instance: Option<&ModelServiceInstance>,
+        config: &ResolvedModelConfig,
+    ) -> bool {
+        match instance {
+            Some(instance) => instance.config == *config,
             None => false,
         }
     }
@@ -473,12 +513,12 @@ impl MultiServiceManager {
                 services.push(instance.service.clone());
             }
         }
-        for service in inner.modelServiceInstances.values() {
+        for instance in inner.modelServiceInstances.values() {
             if !services
                 .iter()
-                .any(|existing| Arc::ptr_eq(existing, service))
+                .any(|existing| Arc::ptr_eq(existing, &instance.service))
             {
-                services.push(service.clone());
+                services.push(instance.service.clone());
             }
         }
         services

@@ -1,7 +1,7 @@
 // ignore_for_file: file_names
 
 import 'dart:convert';
-import 'dart:io';
+import 'dart:ui' show TimingsCallback;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +12,7 @@ import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../common/CharacterAvatar.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../common/components/OperitDialog.dart';
 import '../../../theme/OperitFormStyles.dart';
@@ -29,28 +30,40 @@ class CharacterSettingsPanel extends StatefulWidget {
 
   final GeneratedCoreProxyClients clients;
 
+  /// Creates the state object that owns character settings loading.
   @override
-  State<CharacterSettingsPanel> createState() => _CharacterSettingsPanelState();
+  CharacterSettingsPanelState createState() => CharacterSettingsPanelState();
 }
 
-class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
+class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
   static const String _diagnosticLogTag = 'CharacterSettings';
+  static const String _timingLogTag = 'CharacterSettingsTiming';
 
-  Future<_CharacterSettingsData>? _future;
+  Future<CharacterSettingsData>? _future;
+  int _latestLoadTraceId = 0;
+  int _latestLoadStartedAtUs = 0;
+  int _contentBuildLoggedTraceId = 0;
 
   GeneratedApplicationUserMarkdownRepositoryCoreProxy _userMarkdownRepository(
     String ownerKey,
   ) {
-    return widget.clients.application.userMarkdownRepository(ownerKey: ownerKey);
+    return widget.clients.application.userMarkdownRepository(
+      ownerKey: ownerKey,
+    );
   }
 
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _future = load();
   }
 
-  Future<_CharacterSettingsData> _load() async {
+  /// Loads the complete character settings snapshot from the runtime.
+  Future<CharacterSettingsData> load() async {
+    final traceId = ++_latestLoadTraceId;
+    final startedAtUs = DateTime.now().microsecondsSinceEpoch;
+    _latestLoadStartedAtUs = startedAtUs;
+    final stopwatch = Stopwatch()..start();
     final cardManager = widget.clients.preferencesCharacterCardManager;
     final groupManager = widget.clients.preferencesCharacterGroupCardManager;
     final sharedMemoryManager =
@@ -96,7 +109,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         'packageManager.getEnabledPackageNames',
         packageManager.getEnabledPackageNames,
       );
-      final packageOptions = <_ToolAccessOption>[];
+      final packageOptions = <ToolAccessOption>[];
       for (final packageName in enabledPackageNames) {
         final isContainer = await _timeLoadStep(
           'packageManager.isToolPkgContainer name=$packageName',
@@ -104,7 +117,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         );
         if (!isContainer) {
           packageOptions.add(
-            _ToolAccessOption(key: packageName, title: packageName),
+            ToolAccessOption(key: packageName, title: packageName),
           );
         }
       }
@@ -116,7 +129,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       final skillOptions =
           rawSkillPackages.entries
               .map(
-                (entry) => _ToolAccessOption(
+                (entry) => ToolAccessOption(
                   key: entry.key,
                   title: entry.key,
                   subtitle: entry.value.description,
@@ -131,7 +144,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       final mcpOptions =
           rawMcpServers.entries
               .map(
-                (entry) => _ToolAccessOption(
+                (entry) => ToolAccessOption(
                   key: entry.key,
                   title: entry.key,
                   subtitle: _mcpServerSubtitle(entry.value),
@@ -177,7 +190,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         'apiPreferences.disableUserPreferenceDescriptionFlowSnapshot',
         apiPreferences.disableUserPreferenceDescriptionFlowSnapshot,
       );
-      final data = _CharacterSettingsData(
+      final data = CharacterSettingsData(
         cards: cards,
         groups: groups,
         sharedMemoryStores: sharedMemoryStores,
@@ -185,9 +198,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         modelSummaries: modelSummaries,
         ttsConfigs: ttsConfigs,
         builtinToolOptions: toolNames
-            .map(
-              (toolName) => _ToolAccessOption(key: toolName, title: toolName),
-            )
+            .map((toolName) => ToolAccessOption(key: toolName, title: toolName))
             .toList(growable: false),
         packageToolOptions: packageOptions,
         skillToolOptions: skillOptions,
@@ -197,10 +208,20 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         enableMemoryAutoUpdate: enableMemoryAutoUpdate,
         disableUserPreferenceDescription: disableUserPreferenceDescription,
       );
+      stopwatch.stop();
+      _writeTiming(
+        'event=data_ready traceId=$traceId '
+        'elapsedMs=${stopwatch.elapsedMilliseconds} '
+        'cards=${cards.length} groups=${groups.length} '
+        'sharedMemoryStores=${sharedMemoryStores.length} tags=${tags.length}',
+      );
+      _scheduleLoadFrameTiming(traceId: traceId, startedAtUs: startedAtUs);
       return data;
     } catch (error, stackTrace) {
+      stopwatch.stop();
       ClientLogger.e(
-        'load failed',
+        'event=load_failed traceId=$traceId '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
         tag: _diagnosticLogTag,
         error: error,
         stackTrace: stackTrace,
@@ -209,13 +230,54 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     }
   }
 
-  /// Runs one character settings load step with failure diagnostics.
+  /// Returns the load operation started when the panel was initialized.
+  Future<CharacterSettingsData> get loadFuture => _future!;
+
+  /// Records the frame that first presents a completed character settings load.
+  void _scheduleLoadFrameTiming({
+    required int traceId,
+    required int startedAtUs,
+  }) {
+    late final TimingsCallback timingsCallback;
+    timingsCallback = (timings) {
+      WidgetsBinding.instance.removeTimingsCallback(timingsCallback);
+      if (!mounted || traceId != _latestLoadTraceId || timings.isEmpty) {
+        return;
+      }
+      final timing = timings.first;
+      _writeTiming(
+        'event=first_frame_timing traceId=$traceId '
+        'buildUs=${timing.buildDuration.inMicroseconds} '
+        'rasterUs=${timing.rasterDuration.inMicroseconds}',
+      );
+    };
+    WidgetsBinding.instance.addTimingsCallback(timingsCallback);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || traceId != _latestLoadTraceId) {
+        return;
+      }
+      final elapsedUs = DateTime.now().microsecondsSinceEpoch - startedAtUs;
+      _writeTiming(
+        'event=frame_presented traceId=$traceId '
+        'elapsedMs=${(elapsedUs / Duration.microsecondsPerMillisecond).toStringAsFixed(3)}',
+      );
+    });
+  }
+
+  /// Runs one character settings load step with timing and failure diagnostics.
   Future<T> _timeLoadStep<T>(
     String stepName,
     Future<T> Function() operation,
   ) async {
     try {
-      return await operation();
+      final result = await operation();
+      final elapsedUs =
+          DateTime.now().microsecondsSinceEpoch - _latestLoadStartedAtUs;
+      _writeTiming(
+        'event=step_ready traceId=$_latestLoadTraceId '
+        'name=$stepName elapsedUs=$elapsedUs',
+      );
+      return result;
     } catch (error, stackTrace) {
       ClientLogger.e(
         'load step failed name=$stepName',
@@ -227,13 +289,19 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     }
   }
 
+  /// Emits one non-persistent character settings timing record.
+  void _writeTiming(String message) {
+    // ignore: avoid_print
+    print('[$_timingLogTag] $message');
+  }
+
   Future<List<core_proxy.TtsConfig>> _loadTtsConfigs() {
     return widget.clients.preferencesTtsConfigManager.getAllTtsConfigs();
   }
 
   void _reload() {
     setState(() {
-      _future = _load();
+      _future = load();
     });
   }
 
@@ -424,7 +492,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     }
   }
 
-  Future<void> _createCard(_CharacterSettingsData data) async {
+  Future<void> _createCard(CharacterSettingsData data) async {
     final l10n = AppLocalizations.of(context)!;
     final now = DateTime.now().millisecondsSinceEpoch;
     final card = core_proxy.CharacterCard(
@@ -495,7 +563,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
 
   Future<void> _editCard(
     core_proxy.CharacterCard card,
-    _CharacterSettingsData data,
+    CharacterSettingsData data,
   ) async {
     final l10n = AppLocalizations.of(context)!;
     final result = await _CharacterCardEditorDialog.show(
@@ -599,7 +667,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     _reload();
   }
 
-  Future<void> _createGroup(_CharacterSettingsData data) async {
+  Future<void> _createGroup(CharacterSettingsData data) async {
     final l10n = AppLocalizations.of(context)!;
     final now = DateTime.now().millisecondsSinceEpoch;
     final group = core_proxy.CharacterGroupCard(
@@ -634,7 +702,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
 
   Future<void> _editGroup(
     core_proxy.CharacterGroupCard group,
-    _CharacterSettingsData data,
+    CharacterSettingsData data,
   ) async {
     final l10n = AppLocalizations.of(context)!;
     final result = await _CharacterGroupEditorDialog.show(
@@ -758,7 +826,7 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final horizontalPadding = 16.0;
-    return FutureBuilder<_CharacterSettingsData>(
+    return FutureBuilder<CharacterSettingsData>(
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -767,6 +835,16 @@ class _CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         final data = snapshot.data;
         if (data == null) {
           return const M3LoadingPane();
+        }
+        final traceId = _latestLoadTraceId;
+        final shouldLogContentBuild = _contentBuildLoggedTraceId != traceId;
+        if (shouldLogContentBuild) {
+          final elapsedUs =
+              DateTime.now().microsecondsSinceEpoch - _latestLoadStartedAtUs;
+          _writeTiming(
+            'event=content_build_start traceId=$traceId elapsedUs=$elapsedUs',
+          );
+          _contentBuildLoggedTraceId = traceId;
         }
         return ListView(
           padding: EdgeInsets.fromLTRB(

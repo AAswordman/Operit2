@@ -3,6 +3,8 @@ use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_tools::tools::packTool::RuntimePackageManager::BundledExternalPackageCandidate;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
+use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 pub fn run_package_command(
     application: &OperitApplication,
@@ -29,6 +31,7 @@ pub fn run_package_command(
             Ok(())
         }
         "list" => list_packages(tool_handler, output),
+        "menu" => list_input_menu_definitions(application, output),
         "more" => list_more_packages(tool_handler, output),
         "show" => {
             let name = args
@@ -97,6 +100,39 @@ pub fn run_package_command(
             Ok(())
         }
     }
+}
+
+/// Prints input-menu definitions produced by the registered ToolPkg bridge.
+fn list_input_menu_definitions(
+    application: &OperitApplication,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let bridge = application.inputMenuToggleBridge();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let definitions = loop {
+        let definitions = bridge.createToggleDefinitionsForFlutter(None, BTreeMap::new(), None);
+        let loading = definitions
+            .iter()
+            .any(|definition| definition.id == "toolpkg_input_menu_loading");
+        if !loading {
+            break definitions;
+        }
+        if Instant::now() >= deadline {
+            return Err("input-menu ToolPkg hooks did not finish loading within 10 seconds".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    for definition in definitions {
+        output.push_stdout_line(format!(
+            "{}\ttitle={}\tchecked={}\tenabled={}\tslot={}",
+            definition.id,
+            definition.title.unwrap_or_default(),
+            definition.isChecked,
+            definition.isEnabled,
+            definition.slot.unwrap_or_default(),
+        ));
+    }
+    Ok(())
 }
 
 fn list_packages(

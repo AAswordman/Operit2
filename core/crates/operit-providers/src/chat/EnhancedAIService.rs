@@ -1090,14 +1090,15 @@ impl EnhancedAIService {
                         let result = service
                             .executeSendMessageWithRuntime(options, runtime, producerStream.clone())
                             .await;
+                        if let Err(error) = result {
+                            let message = error.to_string();
+                            producerStream.set_terminal_failure(message.clone());
+                            service
+                                .setInputProcessingState(InputProcessingState::Error { message });
+                        }
                         producerStream.upstream.close();
                         producerStream.event_channel.close();
                         AppLogger::i("CoreSend", "provider response task closed output streams");
-                        if let Err(error) = result {
-                            service.setInputProcessingState(InputProcessingState::Error {
-                                message: error.to_string(),
-                            });
-                        }
                     })
                 }),
             )

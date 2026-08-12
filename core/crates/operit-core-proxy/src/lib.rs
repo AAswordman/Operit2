@@ -9,15 +9,15 @@ use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_host_api::{FileSystemHost, RuntimeStorageHost};
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
-    CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CoreObjectPath, CoreRequestId, CoreValue,
-    CoreWatchRequest,
+    CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CoreObjectPath, CoreRequestId,
+    CoreValue, CoreWatchRequest,
 };
 use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_util::stream::RevisableTextStream::{TextStreamEvent, TextStreamEventType};
 use operit_util::stream::ReverseStream::ReverseStreamSender;
+use operit_util::stream::RevisableTextStream::{TextStreamEvent, TextStreamEventType};
 use operit_util::stream::Stream::Stream;
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use serde::de::DeserializeOwned;
@@ -68,9 +68,13 @@ where
 {
     /// Decodes one Link item and forwards it to the typed stream.
     async fn send(&self, value: CoreValue) -> Result<(), CoreLinkError> {
-        let value = operit_link::fromCoreValue(value)
-            .map_err(|error| CoreLinkError::new("INVALID_REVERSE_STREAM_ITEM", error.to_string()))?;
-        self.sender.send(value).await.map_err(CoreLinkError::internal)
+        let value = operit_link::fromCoreValue(value).map_err(|error| {
+            CoreLinkError::new("INVALID_REVERSE_STREAM_ITEM", error.to_string())
+        })?;
+        self.sender
+            .send(value)
+            .await
+            .map_err(CoreLinkError::internal)
     }
 
     /// Closes the typed sender after the Link input completes.
@@ -104,7 +108,9 @@ impl CoreReverseStreamSession {
         self.sender.close();
         self.completion
             .take()
-            .ok_or_else(|| CoreLinkError::new("REVERSE_STREAM_CLOSED", "reverse stream is already closed"))?
+            .ok_or_else(|| {
+                CoreLinkError::new("REVERSE_STREAM_CLOSED", "reverse stream is already closed")
+            })?
             .await
             .map_err(|error| CoreLinkError::internal(error.to_string()))?
     }

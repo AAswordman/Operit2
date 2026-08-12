@@ -12,6 +12,8 @@ use crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggl
 use crate::plugins::PluginRegistry::PluginRegistry;
 use crate::services::ProviderRuntimeSupportService::ProviderRuntimeSupportService;
 use crate::services::ToolRuntimeSupportService::ToolRuntimeSupportService;
+#[cfg(feature = "javascript")]
+use operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost;
 use operit_host_api::HostManager::{
     setDefaultHostRuntimeTaskSchedulerHost, setDefaultHttpHost, HostManager,
 };
@@ -114,6 +116,13 @@ impl OperitApplication {
         if let Some(taskSchedulerHost) = hostManager.hostRuntimeTaskSchedulerHost.clone() {
             setDefaultHostRuntimeTaskSchedulerHost(taskSchedulerHost);
         }
+        #[cfg(feature = "javascript")]
+        setDefaultHostJavaScriptRuntimeHost(
+            hostManager
+                .hostJavaScriptRuntimeHost
+                .clone()
+                .expect("JavaScript runtime requires a HostJavaScriptRuntimeHost"),
+        );
         let chatFileSystemHost = hostManager
             .fileSystemHost
             .clone()

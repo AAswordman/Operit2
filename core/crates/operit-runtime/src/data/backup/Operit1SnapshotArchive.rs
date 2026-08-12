@@ -90,7 +90,9 @@ impl Operit1SnapshotArchive {
                 datastorePreferences.insert(name.clone(), decodeDataStorePreferences(&bytes)?);
             }
             if entries.insert(name.clone(), entry).is_some() {
-                return Err(format!("Operit1 snapshot contains a duplicate entry: {name}"));
+                return Err(format!(
+                    "Operit1 snapshot contains a duplicate entry: {name}"
+                ));
             }
         }
         let manifest: Operit1SnapshotManifest =
@@ -152,9 +154,7 @@ impl Operit1SnapshotArchive {
     }
 
     /// Returns an independently seekable ZIP archive over the immutable source.
-    fn openZip(
-        source: Arc<dyn ArchiveSource>,
-    ) -> Result<ZipArchive<ArchiveSourceReader>, String> {
+    fn openZip(source: Arc<dyn ArchiveSource>) -> Result<ZipArchive<ArchiveSourceReader>, String> {
         ZipArchive::new(ArchiveSourceReader::new(source)).map_err(|error| error.to_string())
     }
 

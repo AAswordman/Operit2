@@ -147,6 +147,8 @@ class _TabletLayoutState extends State<TabletLayout> {
                           histories: drawerState.histories,
                           characterGroupNamesById:
                               drawerState.characterGroupNamesById,
+                          characterCardAvatarUrisByName:
+                              drawerState.characterCardAvatarUrisByName,
                           currentChatId: drawerState.currentChatId,
                           errorMessage: drawerState.errorMessage,
                           loading: drawerState.loading,

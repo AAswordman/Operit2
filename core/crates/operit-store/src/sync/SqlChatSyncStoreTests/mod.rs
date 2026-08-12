@@ -92,6 +92,20 @@ impl RuntimeStorageHost for TestRuntimeHost {
         Ok(())
     }
 
+    /// Appends bytes to the SQL chat sync test runtime root.
+    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        let path = self.resolve(path)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        std::io::Write::write_all(&mut file, content)?;
+        Ok(())
+    }
+
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
         let path = self.resolve(path)?;
         if !path.exists() {
@@ -514,7 +528,7 @@ fn message_dao_locator_previews_match_kotlin_projection() {
     AppDatabase::closeDatabase();
 }
 
-/// Verifies the single version-22 migration creates final structured message parts.
+/// Verifies version-22 migration creates canonical structured message parts.
 #[test]
 fn migrates_version_22_messages_to_final_structured_parts() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
@@ -638,10 +652,11 @@ fn migrates_version_22_messages_to_final_structured_parts() {
         .messagePartDao()
         .getPartsForMessage("chat-22", 1, 0)
         .unwrap();
-    assert_eq!(baseParts.len(), 2);
-    assert_eq!(baseParts[0].content, "**Stored thought**");
+    assert_eq!(baseParts.len(), 3);
+    assert_eq!(baseParts[0].content, "");
+    assert_eq!(baseParts[1].content, "**Stored thought**");
     assert_eq!(
-        baseParts[1].content,
+        baseParts[2].content,
         "# Stored heading<tool_G543 name=\"read_file\">"
     );
     let variantParts = database
@@ -659,6 +674,57 @@ fn migrates_version_22_messages_to_final_structured_parts() {
             .unwrap(),
         2
     );
+    AppDatabase::closeDatabase();
+}
+
+/// Verifies version-24 migration restores parts required by locator previews and hydration.
+#[test]
+fn migrates_version_23_message_revisions_to_canonical_visible_parts() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (paths, database, _syncStore) = openTestStore("canonical-visible-parts-migration");
+    let chatId = "chat-23";
+    let timestamp = 23_000;
+    insertChatMessage(&database, chatId, timestamp, "");
+    database
+        .messagePartDao()
+        .replaceParts(
+            chatId,
+            timestamp,
+            0,
+            vec![MessagePartEntity::fromMessagePart(
+                chatId.to_string(),
+                timestamp,
+                0,
+                operit_model::MessagePart::MessagePart::thinking(
+                    "part-0".to_string(),
+                    0,
+                    "internal only".to_string(),
+                ),
+            )],
+        )
+        .unwrap();
+    database.store().setUserVersion(23).unwrap();
+    AppDatabase::closeDatabase();
+
+    let database = AppDatabase::getDatabase(paths).unwrap();
+    let parts = database
+        .messagePartDao()
+        .getPartsForMessage(chatId, timestamp, 0)
+        .unwrap();
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0].partId, "part--1");
+    assert_eq!(parts[0].sequence, -1);
+    assert_eq!(parts[0].content, "");
+    assert_eq!(
+        parts[1].kind,
+        operit_model::MessagePart::MessagePartKind::Thinking
+    );
+    let previews = database
+        .messageDao()
+        .getLocatorPreviewsForChat(chatId, 48)
+        .unwrap();
+    assert_eq!(previews[0].previewContent, "");
+    assert_eq!(previews[0].contentLength, 0);
     AppDatabase::closeDatabase();
 }
 

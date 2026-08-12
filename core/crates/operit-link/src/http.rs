@@ -296,9 +296,9 @@ impl CoreLinkHttpDispatcher {
         item: CorePushItem,
     ) -> Result<LinkPushItemResponse, CoreLinkError> {
         let mut streams = self.state.pushStreams.lock().await;
-        let state = streams.get_mut(&item.pushId).ok_or_else(|| {
-            CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found")
-        })?;
+        let state = streams
+            .get_mut(&item.pushId)
+            .ok_or_else(|| CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found"))?;
         if item.sequence != state.nextSequence {
             return Err(CoreLinkError::new(
                 "PUSH_SEQUENCE_MISMATCH",

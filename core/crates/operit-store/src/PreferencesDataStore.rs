@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
@@ -8,7 +9,7 @@ use operit_host_api::RuntimeStorageHost;
 use operit_util::RuntimeStorageLayout::{
     MODEL_CONFIGS_PREFERENCES_PATH, TTS_CONFIGS_PREFERENCES_PATH,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 use crate::PreferencesEncryption::PreferencesEncryption;
@@ -1476,11 +1477,10 @@ pub fn stringPreferencesKey(name: &str) -> PreferencesKey {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 /// In-memory representation of a preferences file.
 pub struct Preferences {
-    values: HashMap<String, String>,
+    values: Arc<HashMap<String, String>>,
 }
 
 impl Preferences {
@@ -1489,17 +1489,23 @@ impl Preferences {
         self.values.get(&key.name)
     }
 
-    /// Writes a preference value by key.
+    /// Updates a preference value and clones the shared map only when needed.
     pub fn set(&mut self, key: &PreferencesKey, value: String) {
-        self.values.insert(key.name.clone(), value);
+        if self.values.get(&key.name) == Some(&value) {
+            return;
+        }
+        Arc::make_mut(&mut self.values).insert(key.name.clone(), value);
     }
 
-    /// Removes a preference value by key.
+    /// Removes a preference value and clones the shared map only when needed.
     pub fn remove(&mut self, key: &PreferencesKey) {
-        self.values.remove(&key.name);
+        if !self.values.contains_key(&key.name) {
+            return;
+        }
+        Arc::make_mut(&mut self.values).remove(&key.name);
     }
 
-    /// Returns whether a value exists for the supplied key.
+    /// Checks whether a preference key exists.
     pub fn contains(&self, key: &PreferencesKey) -> bool {
         self.values.contains_key(&key.name)
     }
@@ -1510,6 +1516,29 @@ impl Preferences {
             .iter()
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect()
+    }
+}
+
+impl Serialize for Preferences {
+    /// Serializes preferences as the existing flat JSON object.
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.values.as_ref().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Preferences {
+    /// Deserializes the existing flat JSON object into a shared snapshot.
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let values = HashMap::<String, String>::deserialize(deserializer)?;
+        Ok(Self {
+            values: Arc::new(values),
+        })
     }
 }
 
@@ -1616,6 +1645,7 @@ struct PreferencesDataStoreFlowSubscription {
 
 #[derive(Default)]
 struct PreferencesDataStoreSharedState {
+    transaction: Mutex<()>,
     preferences: Mutex<PreferencesDataStoreLoadedPreferences>,
 }
 
@@ -1625,10 +1655,26 @@ struct PreferencesDataStoreLoadedPreferences {
     preferences: Preferences,
 }
 
-#[derive(Hash, PartialEq, Eq)]
 struct PreferencesDataStoreRegistryKey {
-    storageHostAddress: usize,
+    storageHost: Arc<dyn RuntimeStorageHost>,
     path: PathBuf,
+}
+
+impl PartialEq for PreferencesDataStoreRegistryKey {
+    /// Compares registry keys by storage-host identity and virtual storage path.
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.storageHost, &other.storageHost) && self.path == other.path
+    }
+}
+
+impl Eq for PreferencesDataStoreRegistryKey {}
+
+impl Hash for PreferencesDataStoreRegistryKey {
+    /// Hashes registry keys by storage-host identity and virtual storage path.
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (Arc::as_ptr(&self.storageHost) as *const () as usize).hash(state);
+        self.path.hash(state);
+    }
 }
 
 enum StoredEncryptedPreferences {
@@ -1826,19 +1872,22 @@ impl PreferencesDataStore {
         payload: serde_json::Value,
     ) -> Result<(), PreferencesDataStoreError> {
         let preferences: Preferences = serde_json::from_value(payload)?;
+        let path = RuntimeStorePaths::default().runtime_storage_path(entityId);
+        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
+        let _transaction = sharedState
+            .transaction
+            .lock()
+            .expect("PreferencesDataStore transaction mutex must not be poisoned");
         let content = serde_json::to_string_pretty(&preferences)?;
         let contentBytes = preferencesSyncStorageContent(storageHost.as_ref(), entityId, content)?;
         storageHost.writeBytes(entityId, &contentBytes)?;
-        let path = RuntimeStorePaths::default().runtime_storage_path(entityId);
-        {
-            let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
-            let mut loaded = sharedState
-                .preferences
-                .lock()
-                .expect("PreferencesDataStore shared state mutex must not be poisoned");
-            loaded.loaded = true;
-            loaded.preferences = preferences;
-        }
+        let mut loaded = sharedState
+            .preferences
+            .lock()
+            .expect("PreferencesDataStore shared state mutex must not be poisoned");
+        loaded.loaded = true;
+        loaded.preferences = preferences;
+        drop(loaded);
         let signal = preferencesDataStoreChangeSignal(&storageHost, &path);
         let mut version = signal
             .version
@@ -1853,16 +1902,44 @@ impl PreferencesDataStore {
 
     /// Reads the current preferences snapshot.
     pub fn data(&self) -> Result<Preferences, PreferencesDataStoreError> {
+        if let Some(preferences) = self.loadedPreferences() {
+            return Ok(preferences);
+        }
+        let _transaction = self
+            .sharedState
+            .transaction
+            .lock()
+            .expect("PreferencesDataStore transaction mutex must not be poisoned");
+        self.loadUnlocked()?;
+        Ok(self
+            .loadedPreferences()
+            .expect("PreferencesDataStore must be loaded after a successful load"))
+    }
+
+    /// Returns the current cached snapshot when this store has already loaded it.
+    fn loadedPreferences(&self) -> Option<Preferences> {
+        let loaded = self
+            .sharedState
+            .preferences
+            .lock()
+            .expect("PreferencesDataStore shared state mutex must not be poisoned");
+        loaded.loaded.then(|| loaded.preferences.clone())
+    }
+
+    /// Loads the storage snapshot while the caller owns the shared transaction lock.
+    fn loadUnlocked(&self) -> Result<(), PreferencesDataStoreError> {
+        if self.loadedPreferences().is_some() {
+            return Ok(());
+        }
+        let preferences = self.readFromStorage()?;
         let mut loaded = self
             .sharedState
             .preferences
             .lock()
             .expect("PreferencesDataStore shared state mutex must not be poisoned");
-        if !loaded.loaded {
-            loaded.preferences = self.readFromStorage()?;
-            loaded.loaded = true;
-        }
-        Ok(loaded.preferences.clone())
+        loaded.loaded = true;
+        loaded.preferences = preferences;
+        Ok(())
     }
 
     fn readFromStorage(&self) -> Result<Preferences, PreferencesDataStoreError> {
@@ -1948,36 +2025,60 @@ impl PreferencesDataStore {
         F: FnOnce(&mut Preferences) -> Result<T, E>,
         E: From<PreferencesDataStoreError>,
     {
+        let _transaction = self
+            .sharedState
+            .transaction
+            .lock()
+            .expect("PreferencesDataStore transaction mutex must not be poisoned");
+        self.loadUnlocked().map_err(E::from)?;
+        let currentPreferences = self
+            .loadedPreferences()
+            .expect("PreferencesDataStore must be loaded before editing");
+        let mut preferences = currentPreferences.clone();
+        let result = transform(&mut preferences)?;
+        if Arc::ptr_eq(&preferences.values, &currentPreferences.values) {
+            return Ok(result);
+        }
+        if preferences == currentPreferences {
+            return Ok(result);
+        }
+        self.persistUnlocked(&preferences).map_err(E::from)?;
         let mut loaded = self
             .sharedState
             .preferences
             .lock()
             .expect("PreferencesDataStore shared state mutex must not be poisoned");
-        if !loaded.loaded {
-            loaded.preferences = self.readFromStorage()?;
-            loaded.loaded = true;
-        }
-        let mut preferences = loaded.preferences.clone();
-        let result = transform(&mut preferences)?;
-        self.writeUnlocked(&preferences)?;
         loaded.preferences = preferences;
+        drop(loaded);
+        self.notifyChanged();
         Ok(result)
     }
 
     /// Replaces the full preferences snapshot and notifies observers.
     pub fn replace(&self, preferences: Preferences) -> Result<(), PreferencesDataStoreError> {
+        let _transaction = self
+            .sharedState
+            .transaction
+            .lock()
+            .expect("PreferencesDataStore transaction mutex must not be poisoned");
+        if self.loadedPreferences().as_ref() == Some(&preferences) {
+            return Ok(());
+        }
+        self.persistUnlocked(&preferences)?;
         let mut loaded = self
             .sharedState
             .preferences
             .lock()
             .expect("PreferencesDataStore shared state mutex must not be poisoned");
-        self.writeUnlocked(&preferences)?;
         loaded.loaded = true;
         loaded.preferences = preferences;
+        drop(loaded);
+        self.notifyChanged();
         Ok(())
     }
 
-    fn writeUnlocked(&self, preferences: &Preferences) -> Result<(), PreferencesDataStoreError> {
+    /// Persists one snapshot while the caller owns the shared transaction lock.
+    fn persistUnlocked(&self, preferences: &Preferences) -> Result<(), PreferencesDataStoreError> {
         let content = serde_json::to_string_pretty(preferences)?;
         let storedContent = match &self.encryption {
             Some(encryption) => encryption.encrypt(&self.storagePath, content.as_bytes())?,
@@ -1986,7 +2087,6 @@ impl PreferencesDataStore {
         self.storageHost
             .writeBytes(&self.storagePath, &storedContent)?;
         self.recordSyncOperation(preferences)?;
-        self.notifyChanged();
         Ok(())
     }
 
@@ -2077,7 +2177,7 @@ fn preferencesDataStoreRegistryKey(
     path: &Path,
 ) -> PreferencesDataStoreRegistryKey {
     PreferencesDataStoreRegistryKey {
-        storageHostAddress: Arc::as_ptr(storageHost) as *const () as usize,
+        storageHost: Arc::clone(storageHost),
         path: path.to_path_buf(),
     }
 }
@@ -2089,18 +2189,18 @@ fn preferencesDataStoreSharedState(
     path: &Path,
 ) -> Arc<PreferencesDataStoreSharedState> {
     static SHARED_STATES: OnceLock<
-        Mutex<HashMap<PreferencesDataStoreRegistryKey, Weak<PreferencesDataStoreSharedState>>>,
+        Mutex<HashMap<PreferencesDataStoreRegistryKey, Arc<PreferencesDataStoreSharedState>>>,
     > = OnceLock::new();
     let states = SHARED_STATES.get_or_init(|| Mutex::new(HashMap::new()));
     let key = preferencesDataStoreRegistryKey(storageHost, path);
     let mut states = states
         .lock()
         .expect("PreferencesDataStore shared state registry mutex must not be poisoned");
-    if let Some(state) = states.get(&key).and_then(Weak::upgrade) {
-        return state;
+    if let Some(state) = states.get(&key) {
+        return Arc::clone(state);
     }
     let state = Arc::new(PreferencesDataStoreSharedState::default());
-    states.insert(key, Arc::downgrade(&state));
+    states.insert(key, Arc::clone(&state));
     state
 }
 

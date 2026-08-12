@@ -230,15 +230,25 @@ class RenderEqnArray extends RenderBox
   @override
   void paint(PaintingContext context, Offset offset) {
     defaultPaint(context, offset);
+    const dashSize = 4.0;
+    final paint = Paint()..strokeWidth = ruleThickness;
     for (var i = 0; i < hlines.length; i++) {
-      if (hlines[i] != MatrixSeparatorStyle.none) {
+      if (hlines[i] == MatrixSeparatorStyle.solid) {
         context.canvas.drawLine(
           Offset(0, hlinePos[i] + ruleThickness / 2),
           Offset(width, hlinePos[i] + ruleThickness / 2),
-          Paint()..strokeWidth = ruleThickness,
+          paint,
         );
+      } else if (hlines[i] == MatrixSeparatorStyle.dashed) {
+        final y = hlinePos[i] + ruleThickness / 2;
+        for (var x = 0.0; x < width; x += dashSize) {
+          context.canvas.drawLine(
+            Offset(x, y),
+            Offset(math.min(x + dashSize / 2, width), y),
+            paint,
+          );
+        }
       }
-      // TODO dashed line
     }
   }
 }

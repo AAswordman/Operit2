@@ -1,6 +1,6 @@
 pub mod HotStream;
-pub mod RevisableTextStream;
 pub mod ReverseStream;
+pub mod RevisableTextStream;
 pub mod Stream;
 pub mod StreamBuilders;
 pub mod StreamGroup;

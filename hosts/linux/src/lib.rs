@@ -22,6 +22,8 @@ pub use host_runtime_event::LinuxHostRuntimeEventHost;
 #[cfg(target_os = "linux")]
 pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as LinuxHostRuntimeEventSchedulerHost;
 #[cfg(target_os = "linux")]
+pub use operit_host_native_common::NativeHostJavaScriptRuntimeHost as LinuxHostJavaScriptRuntimeHost;
+#[cfg(target_os = "linux")]
 pub use operit_host_native_common::NativeHostRuntimeTaskSchedulerHost as LinuxHostRuntimeTaskSchedulerHost;
 pub use tools::audio::LinuxAudioPlaybackHost;
 pub use tools::bluetooth::LinuxBluetoothHost;
@@ -69,5 +71,6 @@ pub fn createRuntimeHostManager(
     .withTtsPlaybackHost(Arc::new(LinuxTtsPlaybackHost::new()))
     .withHostRuntimeEventHost(Arc::new(LinuxHostRuntimeEventHost::new()))
     .withHostRuntimeEventSchedulerHost(Arc::new(LinuxHostRuntimeEventSchedulerHost::new()))
+    .withHostJavaScriptRuntimeHost(Arc::new(LinuxHostJavaScriptRuntimeHost::new()))
     .withHostRuntimeTaskSchedulerHost(Arc::new(LinuxHostRuntimeTaskSchedulerHost::new()))
 }

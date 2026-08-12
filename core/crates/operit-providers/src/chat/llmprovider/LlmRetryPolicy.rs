@@ -1,4 +1,5 @@
-use std::time::Duration;
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+use operit_host_api::HostRuntimeTaskSchedulerHost;
 
 pub struct LlmRetryPolicy;
 
@@ -17,5 +18,8 @@ impl LlmRetryPolicy {
 /// Waits for the retry delay selected by the provider implementation policy.
 pub async fn delay_retry_ms(retry_attempt: i32) {
     let delay_ms = LlmRetryPolicy::nextDelayMs(retry_attempt);
-    tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
+    defaultHostRuntimeTaskSchedulerHost()
+        .waitForHostRuntimeDelay(delay_ms as u64)
+        .await
+        .expect("runtime retry delay must be provided by the Host");
 }

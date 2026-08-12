@@ -22,11 +22,13 @@ class Keytab {
 
   final List<KeytabRecord> records;
 
+  /// Finds the first record matching the key and terminal modes.
   KeytabRecord? find(
     TerminalKey key, {
     bool ctrl = false,
     bool alt = false,
     bool shift = false,
+    bool ansi = true,
     bool newLineMode = false,
     bool appCursorKeys = false,
     bool appKeyPad = false,
@@ -87,8 +89,7 @@ class Keytab {
         continue;
       }
 
-      // TODO: support VT52
-      if (record.ansi == false) {
+      if (record.ansi != null && record.ansi != ansi) {
         continue;
       }
 

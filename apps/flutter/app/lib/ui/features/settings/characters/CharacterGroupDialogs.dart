@@ -840,8 +840,9 @@ String _ttsConfigSearchText(core_proxy.TtsConfig config) {
       .toLowerCase();
 }
 
-class _ToolAccessOption {
-  const _ToolAccessOption({
+class ToolAccessOption {
+  /// Creates one selectable tool access option.
+  const ToolAccessOption({
     required this.key,
     required this.title,
     this.subtitle = '',
@@ -852,7 +853,7 @@ class _ToolAccessOption {
   final String subtitle;
 }
 
-int _compareToolAccessOption(_ToolAccessOption left, _ToolAccessOption right) {
+int _compareToolAccessOption(ToolAccessOption left, ToolAccessOption right) {
   return left.title.toLowerCase().compareTo(right.title.toLowerCase());
 }
 

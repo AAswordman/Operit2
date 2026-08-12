@@ -2097,8 +2097,8 @@ interface ModelInstallWorkerError {
         }
         entries.set(name, {
           path: name,
-          isDirectory: separator >= 0,
-          size: separator < 0 ? entry.size : 0,
+          isDirectory: entry.isDirectory || separator >= 0,
+          size: entry.isDirectory || separator >= 0 ? 0 : entry.size,
         });
       }
     } else {
@@ -2117,6 +2117,40 @@ interface ModelInstallWorkerError {
       }
     }
     return Array.from(entries.values());
+  }
+
+  /** Copies one browser-host file-system entry while preserving directory recursion semantics. */
+  function copyFileSystemEntry(source: string, destination: string, recursive: boolean): void {
+    const normalizedSource = normalizeRuntimePath(source);
+    const normalizedDestination = normalizeRuntimePath(destination);
+    const sourceIsFile = storageHasFile(filePrefix, normalizedSource);
+    const sourceIsDirectory = !sourceIsFile && fileDirectoryExists(normalizedSource);
+    if (!sourceIsFile && !sourceIsDirectory) {
+      throw new Error(`Source path does not exist: ${source}`);
+    }
+    if (sourceIsFile) {
+      const separator = normalizedDestination.lastIndexOf("/");
+      if (separator >= 0) {
+        makeFileDirectory(normalizedDestination.slice(0, separator), true);
+      }
+      storageWrite(
+        filePrefix,
+        normalizedDestination,
+        storageRead(filePrefix, normalizedSource),
+      );
+      return;
+    }
+    if (!recursive) {
+      throw new Error("Source is a directory and recursive flag is not set");
+    }
+    makeFileDirectory(normalizedDestination, true);
+    for (const entry of listFileDirectory(normalizedSource)) {
+      copyFileSystemEntry(
+        `${normalizedSource}/${entry.path}`,
+        `${normalizedDestination}/${entry.path}`,
+        true,
+      );
+    }
   }
 
   // Removes one browser-host directory from the in-memory directory index.
@@ -4634,8 +4668,8 @@ self.onmessage = (event) => {
         storageWrite(filePrefix, destination, content);
         storageDelete(filePrefix, source, false);
       },
-      copyFile(source: string, destination: string): void {
-        storageWrite(filePrefix, destination, storageRead(filePrefix, source));
+      copyFile(source: string, destination: string, recursive: boolean): void {
+        copyFileSystemEntry(source, destination, recursive);
       },
       makeDirectory(path: string, createParents: boolean): void {
         makeFileDirectory(path, createParents);

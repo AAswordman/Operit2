@@ -378,7 +378,11 @@ function resolveExtraInfoI18n(locale) {
 }
 async function useSettingsConfig() {
     const config = await PluginConfig.use(SETTINGS_CONFIG_NAME, DEFAULT_SETTINGS);
-    config.injectionTimeoutSeconds = normalizeInjectionTimeoutSeconds(config.injectionTimeoutSeconds);
+    const normalizedTimeout = normalizeInjectionTimeoutSeconds(config.injectionTimeoutSeconds);
+    if (config.injectionTimeoutSeconds !== normalizedTimeout) {
+        config.injectionTimeoutSeconds = normalizedTimeout;
+        await PluginConfig.flush(config);
+    }
     return config;
 }
 function createDefaultSettings() {
@@ -440,6 +444,7 @@ async function saveSettings(patch) {
     config.allowRepeatedMemorySearch = next.allowRepeatedMemorySearch;
     config.memoryLimit = next.memoryLimit;
     config.injectionTimeoutSeconds = next.injectionTimeoutSeconds;
+    await PluginConfig.flush(config);
     logExtraInfoInjectionInfo("settings.saved", `master_enabled=${next.masterEnabled} persist=${next.persistInjectedContent} items=${describeEnabledItems(next) || "none"} memory_limit=${next.memoryLimit} injection_timeout_seconds=${next.injectionTimeoutSeconds}`);
     return next;
 }

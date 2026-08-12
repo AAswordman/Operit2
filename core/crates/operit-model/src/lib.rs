@@ -90,10 +90,10 @@ pub mod OpenAIModels;
 pub mod OperitChatArchive;
 #[path = "OperitNodeInfo.rs"]
 pub mod OperitNodeInfo;
-#[path = "PromptFunctionType.rs"]
-pub mod PromptFunctionType;
 #[path = "PendingQueueMessageItem.rs"]
 pub mod PendingQueueMessageItem;
+#[path = "PromptFunctionType.rs"]
+pub mod PromptFunctionType;
 #[path = "PromptTag.rs"]
 pub mod PromptTag;
 #[path = "PromptTurn.rs"]
@@ -166,8 +166,8 @@ pub use ModelParameter::*;
 pub use OpenAIModels::*;
 pub use OperitChatArchive::*;
 pub use OperitNodeInfo::*;
-pub use PromptFunctionType::*;
 pub use PendingQueueMessageItem::*;
+pub use PromptFunctionType::*;
 pub use PromptTag::*;
 pub use PromptTurn::*;
 pub use SerializableColorScheme::*;

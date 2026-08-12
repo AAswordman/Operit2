@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
+use crate::tools::AIToolHandler::AIToolHandler;
 use operit_plugin_sdk::execution_result::decode_js_execution_result_value;
 pub use operit_plugin_sdk::javascript::{
     JsExecutionEngine, JsExecutionProvider, JsPackageExecutor, JsPackageRuntime,
@@ -9,9 +11,6 @@ pub use operit_plugin_sdk::javascript::{
 use operit_plugin_sdk::javascript::{
     JsToolNameResolutionRequest, JsToolPkgIpcRequest, JsToolPkgResourceRequest,
 };
-
-use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
-use crate::tools::AIToolHandler::AIToolHandler;
 use operit_util::LocaleUtils::LocaleUtils;
 use operit_util::OperitPaths;
 use serde_json::Value;
@@ -215,20 +214,12 @@ pub fn resolveJsToolName(
 
 /// Invokes one ToolPkg IPC request through the concrete package manager.
 #[allow(non_snake_case)]
-pub fn invokeToolPkgIpc(
+pub async fn invokeToolPkgIpc(
     toolHandler: &AIToolHandler,
     request: JsToolPkgIpcRequest,
 ) -> Result<Value, String> {
     let packageTarget = requiredText(&request.package_target, "ToolPkg IPC package target")?;
     let channel = requiredText(&request.channel, "ToolPkg IPC channel")?;
-    let managerSnapshot = toolHandler
-        .getOrCreatePackageManager()
-        .lock()
-        .expect("package manager mutex poisoned")
-        .clone();
-    let containerRuntime = managerSnapshot
-        .getToolPkgContainerRuntime(&packageTarget)
-        .ok_or_else(|| format!("ToolPkg container not found: {packageTarget}"))?;
     let requestedRuntime = request
         .target_runtime
         .map(|value| value.trim().to_ascii_lowercase());
@@ -266,21 +257,31 @@ pub fn invokeToolPkgIpc(
             "ToolPkg IPC main context key is invalid: {targetContextKey}"
         ));
     }
-    let engine = if isMainTarget {
-        managerSnapshot.getToolPkgExecutionEngine(&targetContextKey, &packageTarget)
-    } else {
-        managerSnapshot
-            .findToolPkgExecutionEngine(&targetContextKey, &packageTarget)
-            .ok_or_else(|| format!("ToolPkg runtime is not active: {targetContextKey}"))?
-    };
-    let (scriptPath, script) = if isMainTarget {
-        let scriptPath = requiredText(&containerRuntime.mainEntry, "ToolPkg main entry")?;
-        let script = managerSnapshot
-            .getToolPkgMainScriptInternal(&packageTarget)
-            .ok_or_else(|| format!("ToolPkg main script is unavailable: {packageTarget}"))?;
-        (scriptPath, script)
-    } else {
-        (String::new(), String::new())
+    let packageManager = toolHandler.getOrCreatePackageManager();
+    let (engine, scriptPath, script) = {
+        let manager = packageManager
+            .lock()
+            .expect("package manager mutex poisoned");
+        let containerRuntime = manager
+            .getToolPkgContainerRuntime(&packageTarget)
+            .ok_or_else(|| format!("ToolPkg container not found: {packageTarget}"))?;
+        let engine = if isMainTarget {
+            manager.getToolPkgExecutionEngine(&targetContextKey, &packageTarget)
+        } else {
+            manager
+                .findToolPkgExecutionEngine(&targetContextKey, &packageTarget)
+                .ok_or_else(|| format!("ToolPkg runtime is not active: {targetContextKey}"))?
+        };
+        let (scriptPath, script) = if isMainTarget {
+            let scriptPath = requiredText(&containerRuntime.mainEntry, "ToolPkg main entry")?;
+            let script = manager
+                .getRegisteredToolPkgMainScript(&packageTarget)
+                .ok_or_else(|| format!("ToolPkg main script is unavailable: {packageTarget}"))?;
+            (scriptPath, script)
+        } else {
+            (String::new(), String::new())
+        };
+        (engine, scriptPath, script)
     };
     let mut params = BTreeMap::new();
     params.insert(
@@ -328,15 +329,16 @@ pub fn invokeToolPkgIpc(
         Value::String(request.caller_context_key.trim().to_string()),
     );
     let result = engine
-        .execute_script_function(
-            &script,
-            TOOLPKG_IPC_DISPATCH_FUNCTION_NAME,
-            &params,
-            &BTreeMap::new(),
+        .execute_script_function_async(
+            script,
+            TOOLPKG_IPC_DISPATCH_FUNCTION_NAME.to_string(),
+            params,
+            BTreeMap::new(),
             None,
             true,
-            TOOLPKG_SCRIPT_TIMEOUT_SECONDS,
+            TOOLPKG_SCRIPT_TIMEOUT_SECONDS * 1_000,
         )
+        .await
         .map_err(|error| error.to_string())?;
     decode_js_execution_result_value(result.as_deref()).map_err(|error| error.to_string())
 }

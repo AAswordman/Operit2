@@ -2,10 +2,10 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../../common/CharacterAvatar.dart';
 import '../../../../../common/markdown/StreamMarkdownRendererState.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../theme/OperitTheme.dart';
-import '../../../../../theme/OperitThemeAssets.dart';
 import '../bubble/BubbleSurface.dart';
 import '../../part/StructuredMessagePartRenderer.dart';
 import '../../part/ThinkToolsXmlNodeGrouper.dart';
@@ -245,11 +245,8 @@ class _MessageAvatar extends StatelessWidget {
   final bool square;
   final double cornerRadius;
 
-  static const String _operitAvatarAsset = 'assets/images/operit_avatar.png';
-
   @override
   Widget build(BuildContext context) {
-    final avatarImagePath = imagePath;
     return Padding(
       padding: const EdgeInsets.only(left: 8, top: 18),
       child: Container(
@@ -261,9 +258,7 @@ class _MessageAvatar extends StatelessWidget {
           borderRadius: square ? BorderRadius.circular(cornerRadius) : null,
         ),
         clipBehavior: Clip.antiAlias,
-        child: avatarImagePath != null && avatarImagePath.isNotEmpty
-            ? ThemeAssetImage(storagePath: avatarImagePath, fit: BoxFit.cover)
-            : Image.asset(_operitAvatarAsset, fit: BoxFit.cover),
+        child: CharacterAvatarImage(avatarUri: imagePath, fit: BoxFit.cover),
       ),
     );
   }

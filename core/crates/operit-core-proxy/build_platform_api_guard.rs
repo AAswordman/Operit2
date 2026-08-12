@@ -320,7 +320,7 @@ fn prohibited_path_api(path: &SynPath) -> Option<&'static str> {
     prohibited_segments_api(&segments)
 }
 
-/// Identifies restricted platform file, network, clock, and thread API paths.
+/// Identifies restricted platform file, network, clock, thread, and timer API paths.
 fn prohibited_segments_api(segments: &[String]) -> Option<&'static str> {
     match segments {
         [std, fs, ..] if std == "std" && fs == "fs" => Some("std::fs"),
@@ -337,6 +337,7 @@ fn prohibited_segments_api(segments: &[String]) -> Option<&'static str> {
         [reqwest, blocking, ..] if reqwest == "reqwest" && blocking == "blocking" => {
             Some("reqwest::blocking")
         }
+        [tokio, time, ..] if tokio == "tokio" && time == "time" => Some("tokio::time"),
         _ => None,
     }
 }

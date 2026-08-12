@@ -246,19 +246,46 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 return __operitNativeCallTool(String(toolType || 'default'), String(toolName || ''), String(paramsJson || '{{}}'));
             }},
             callToolAsync: function(callbackId, toolType, toolName, paramsJson) {{
-                var raw = __operitNativeCallTool(String(toolType || 'default'), String(toolName || ''), String(paramsJson || '{{}}'));
-                var parsed;
-                try {{
-                    parsed = JSON.parse(raw);
-                }} catch (_error) {{
-                    parsed = {{ success: false, message: String(raw || '') }};
-                }}
-                if (typeof window[callbackId] === 'function') {{
-                    window[callbackId](parsed, !parsed.success);
-                }}
+                __operitNativeCallToolAsync(
+                    String(callbackId || ''),
+                    String(toolType || 'default'),
+                    String(toolName || ''),
+                    String(paramsJson || '{{}}')
+                );
             }},
             callToolAsyncStreaming: function(callbackId, intermediateCallbackId, toolType, toolName, paramsJson) {{
                 this.callToolAsync(callbackId, toolType, toolName, paramsJson);
+            }},
+            setTimeout: function(handler, delayMs) {{
+                if (typeof handler !== 'function') {{
+                    throw new TypeError('setTimeout handler must be a function');
+                }}
+                var timerId = '__operit_timer_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+                var timerArguments = Array.prototype.slice.call(arguments, 2);
+                window[timerId] = function() {{
+                    try {{
+                        delete window[timerId];
+                    }} catch (_deleteTimerError) {{
+                        window[timerId] = undefined;
+                    }}
+                    handler.apply(window, timerArguments);
+                }};
+                var normalizedDelay = Number(delayMs);
+                if (!isFinite(normalizedDelay) || normalizedDelay < 0) {{
+                    throw new RangeError('setTimeout delay must be a finite non-negative number');
+                }}
+                __operitNativeScheduleJavaScriptTimer(timerId, String(Math.floor(normalizedDelay)));
+                return timerId;
+            }},
+            clearTimeout: function(timerId) {{
+                var normalizedTimerId = String(timerId || '');
+                if (normalizedTimerId) {{
+                    try {{
+                        delete window[normalizedTimerId];
+                    }} catch (_deleteTimerError) {{
+                        window[normalizedTimerId] = undefined;
+                    }}
+                }}
             }},
             logInfoForCall: function() {{}},
             logErrorForCall: function() {{}},
@@ -358,23 +385,15 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 if (!normalizedCallbackId) {{
                     return;
                 }}
-                try {{
-                    var resultJson = __operitNativeInvokeToolPkgIpc(
-                        String(packageTarget || ''),
-                        String(callerContextKey || ''),
-                        String(targetContextKey || ''),
-                        String(targetRuntime || ''),
-                        String(channel || ''),
-                        String(payloadJson || '')
-                    );
-                    if (typeof window[normalizedCallbackId] === 'function') {{
-                        window[normalizedCallbackId](resultJson, false);
-                    }}
-                }} catch (error) {{
-                    if (typeof window[normalizedCallbackId] === 'function') {{
-                        window[normalizedCallbackId](String(error && error.message ? error.message : error), true);
-                    }}
-                }}
+                __operitNativeInvokeToolPkgIpcAsync(
+                    normalizedCallbackId,
+                    String(packageTarget || ''),
+                    String(callerContextKey || ''),
+                    String(targetContextKey || ''),
+                    String(targetRuntime || ''),
+                    String(channel || ''),
+                    String(payloadJson || '')
+                );
             }},
             logJsExecutionTrace: function(callId, message) {{
                 __operitNativeLogJsExecutionTrace(String(callId || ''), String(message || ''));
@@ -443,6 +462,9 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 __operitNativeSetCallError(String(callId || ''), String(error == null ? '' : error));
             }}
         }};
+
+        var setTimeout = NativeInterface.setTimeout;
+        var clearTimeout = NativeInterface.clearTimeout;
 
         {}
 
@@ -1457,7 +1479,9 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 }}
 
                 ensureToolPkgIpcApi();
-                ensureToolPkgWasmApi();
+                if (!registrationMode) {{
+                    ensureToolPkgWasmApi();
+                }}
                 if (
                     globalThis.RuntimeContext &&
                     typeof globalThis.RuntimeContext.__operitEnsureContextRunnerRegistered === 'function'

@@ -45,7 +45,9 @@ pub(crate) fn visitLmdbRecords(
     let mut recordCount = 0usize;
     while let Some(pageNumber) = pending.pop() {
         if pageNumber >= pageCount {
-            return Err(format!("Operit1 LMDB page is outside the data file: {pageNumber}"));
+            return Err(format!(
+                "Operit1 LMDB page is outside the data file: {pageNumber}"
+            ));
         }
         if !visited.insert(pageNumber) {
             continue;
@@ -69,7 +71,9 @@ pub(crate) fn visitLmdbRecords(
             continue;
         }
         if flags & PAGE_LEAF == 0 {
-            return Err(format!("Operit1 LMDB tree contains an invalid page type: {flags}"));
+            return Err(format!(
+                "Operit1 LMDB tree contains an invalid page type: {flags}"
+            ));
         }
         for offset in nodeOffsets(&page, layout)? {
             recordCount = recordCount

@@ -115,15 +115,6 @@ void _requireInitialized() {
 Future<void> _attachPersistentStorageNow() async {
   final path = await _clients.repositoryRuntimeStorageRepository
       .clientLogPath();
-  final existing = await _clients.repositoryRuntimeStorageRepository.readText(
-    path: path,
-  );
-  if (existing == null) {
-    await _clients.repositoryRuntimeStorageRepository.writeText(
-      path: path,
-      content: '',
-    );
-  }
   _logPath = path;
 }
 
@@ -144,15 +135,9 @@ Future<void> _flushPendingLines() async {
 
 /// Appends text through runtime storage VFS.
 Future<void> _appendLogText(String path, String text) async {
-  final content = await _clients.repositoryRuntimeStorageRepository.readText(
+  await _clients.repositoryRuntimeStorageRepository.appendText(
     path: path,
-  );
-  if (content == null) {
-    throw StateError('ClientLogger runtime log is missing: $path');
-  }
-  await _clients.repositoryRuntimeStorageRepository.writeText(
-    path: path,
-    content: '$content$text',
+    content: text,
   );
 }
 

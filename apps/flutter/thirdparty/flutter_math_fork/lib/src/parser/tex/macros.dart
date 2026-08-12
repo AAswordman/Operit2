@@ -565,7 +565,7 @@ final Map<String, MacroDefinition> builtinMacros = {
 // \DeclareRobustCommand{\tmspace}[3]{%
 //   \ifmmode\mskip#1#2\else\kern#1#3\fi\relax}
   '\\tmspace': MacroDefinition.fromString(
-      "\\TextOrMath{\\kern#1#3}{\\mskip#1#2}\\relax"),
+      "\\TextOrMath{\\kern#1#3}{\\mskip{#1#2}}\\relax"),
 // \renewcommand{\,}{\tmspace+\thinmuskip{.1667em}}
 // TODO: math mode should use \thinmuskip
   '\\,': MacroDefinition.fromString("\\tmspace+{3mu}{.1667em}"),
@@ -573,9 +573,9 @@ final Map<String, MacroDefinition> builtinMacros = {
   '\\thinspace': MacroDefinition.fromString("\\,"),
 // \def\>{\mskip\medmuskip}
 // \renewcommand{\:}{\tmspace+\medmuskip{.2222em}}
-// TODO: \> and math mode of \: should use \medmuskip = 4mu plus 2mu minus 4mu
-  '\\>': MacroDefinition.fromString("\\mskip{4mu}"),
-  '\\:': MacroDefinition.fromString("\\tmspace+{4mu}{.2222em}"),
+  '\\>': MacroDefinition.fromString("\\mskip{4mu plus 2mu minus 4mu}"),
+  '\\:': MacroDefinition.fromString(
+      "\\tmspace+{4mu plus 2mu minus 4mu}{.2222em}"),
 // \let\medspace\:
   '\\medspace': MacroDefinition.fromString("\\:"),
 // \renewcommand{\;}{\tmspace+\thickmuskip{.2777em}}
@@ -680,10 +680,6 @@ final Map<String, MacroDefinition> builtinMacros = {
 
 //////////////////////////////////////////////////////////////////////
 // mathtools.sty migrated to extra_symbols
-// TODO: make as overrided type & font
-
-//\providecommand\ordinarycolon{:}
-  '\\ordinarycolon': MacroDefinition.fromString(":"),
 //\def\vcentcolon{\mathrel{\mathop\ordinarycolon}}
 //TODO(edemaine): Not yet centered. Fix via \raisebox or #726
   '\\vcentcolon':

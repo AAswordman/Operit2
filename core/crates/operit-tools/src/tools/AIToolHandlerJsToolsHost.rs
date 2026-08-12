@@ -280,7 +280,7 @@ fn invoke_terminal_streaming(
             return Err(JsHostError::new(message));
         }
         let results = host
-            .executeToolSafelyWithResolvedExecutor(&tool)
+            .executeToolDirectlyWithResolvedExecutor(&tool)
             .await
             .ok_or_else(|| JsHostError::new("Terminal streaming tool is not registered"))?;
         let mut final_result = None;

@@ -259,7 +259,10 @@ fn render_dart_reverse_stream_method(
         .iter()
         .map(|argument| {
             if argument.name == protocol.argument_name {
-                format!("required Stream<{item_type}> {}", dart_identifier(&argument.name))
+                format!(
+                    "required Stream<{item_type}> {}",
+                    dart_identifier(&argument.name)
+                )
             } else {
                 format!(
                     "required {} {}",
@@ -274,26 +277,38 @@ fn render_dart_reverse_stream_method(
         .args
         .iter()
         .filter(|argument| argument.name != protocol.argument_name)
-        .map(|argument| format!(
-            "'{}': {}",
-            argument.name,
-            dart_encode_expr(&dart_identifier(&argument.name), &dart_type(&argument.ty, serializable_types), serializable_types)
-        ))
+        .map(|argument| {
+            format!(
+                "'{}': {}",
+                argument.name,
+                dart_encode_expr(
+                    &dart_identifier(&argument.name),
+                    &dart_type(&argument.ty, serializable_types),
+                    serializable_types
+                )
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ");
     let method_name = dart_identifier(&method.name);
     let input_name = dart_identifier(&protocol.argument_name);
     let mut output = render_dart_doc_comments(method, "  ");
-    output.push_str(&format!("  Future<void> {method_name}({{{params}}}) async {{\n"));
+    output.push_str(&format!(
+        "  Future<void> {method_name}({{{params}}}) async {{\n"
+    ));
     output.push_str("    final sink = await bridge.push(\n");
     output.push_str("      CorePushRequest(\n");
     output.push_str("        requestId: _coreProxyRequestId(),\n");
     output.push_str("        targetPath: targetPath,\n");
     output.push_str(&format!("        methodName: '{}',\n", method.name));
-    output.push_str(&format!("        args: <String, Object?>{{{open_args}}},\n"));
+    output.push_str(&format!(
+        "        args: <String, Object?>{{{open_args}}},\n"
+    ));
     output.push_str("      ),\n    );\n");
     output.push_str("    try {\n");
-    output.push_str(&format!("      await for (final item in {input_name}) {{\n"));
+    output.push_str(&format!(
+        "      await for (final item in {input_name}) {{\n"
+    ));
     output.push_str(&format!("        await sink.add(item);\n"));
     output.push_str("      }\n");
     output.push_str("    } finally {\n      await sink.close();\n    }\n  }\n\n");
@@ -320,8 +335,9 @@ fn render_dart_call_method(
     ));
     let bridge_method = if control_call_registry()
         .iter()
-        .any(|(schema_key, method_name)| *schema_key == object.schema_key && *method_name == method.name)
-    {
+        .any(|(schema_key, method_name)| {
+            *schema_key == object.schema_key && *method_name == method.name
+        }) {
         "callControl"
     } else {
         "call"
@@ -329,7 +345,9 @@ fn render_dart_call_method(
     if return_type == "void" {
         output.push_str(&format!("    await bridge.{bridge_method}(\n"));
     } else {
-        output.push_str(&format!("    final value = await bridge.{bridge_method}(\n"));
+        output.push_str(&format!(
+            "    final value = await bridge.{bridge_method}(\n"
+        ));
     }
     output.push_str("      CoreCallRequest(\n");
     output.push_str("        requestId: _coreProxyRequestId(),\n");
