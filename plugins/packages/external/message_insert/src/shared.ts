@@ -616,7 +616,6 @@ export async function saveSettings(
   config.allowRepeatedMemorySearch = next.allowRepeatedMemorySearch;
   config.memoryLimit = next.memoryLimit;
   config.injectionTimeoutSeconds = next.injectionTimeoutSeconds;
-  await PluginConfig.flush(config);
   logExtraInfoInjectionInfo(
     "settings.saved",
     `master_enabled=${next.masterEnabled} persist=${next.persistInjectedContent} items=${describeEnabledItems(next) || "none"} memory_limit=${next.memoryLimit} injection_timeout_seconds=${next.injectionTimeoutSeconds}`
@@ -753,8 +752,75 @@ async function readLocationSnapshot(
   };
 }
 
+/// Resolves the wttr.in response language from the current Operit locale.
 function resolveWeatherLanguage(locale?: string): string {
   return normalizeLocale(locale) === "en-US" ? "en" : "zh";
+}
+
+interface WeatherTextValue {
+  value: string;
+}
+
+interface WeatherCurrentCondition {
+  weatherDesc: WeatherTextValue[];
+  lang_zh: WeatherTextValue[];
+  temp_C: string;
+  FeelsLikeC: string;
+  humidity: string;
+  windspeedKmph: string;
+}
+
+interface WeatherNearestArea {
+  areaName: WeatherTextValue[];
+  region: WeatherTextValue[];
+  country: WeatherTextValue[];
+}
+
+interface WeatherPayload {
+  current_condition: WeatherCurrentCondition[];
+  nearest_area: WeatherNearestArea[];
+}
+
+/// Validates the exact wttr.in fields used by the weather injection.
+function parseWeatherPayload(raw: string): WeatherPayload {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || "unknown");
+    throw new Error(`weather response parse failed: ${message}`);
+  }
+  if (value === null || typeof value !== "object") {
+    throw new Error("weather response must be an object");
+  }
+  const payload = value as Partial<WeatherPayload>;
+  const current = payload.current_condition?.[0];
+  const area = payload.nearest_area?.[0];
+  if (
+    !current ||
+    !Array.isArray(current.weatherDesc) ||
+    !Array.isArray(current.lang_zh) ||
+    typeof current.temp_C !== "string" ||
+    typeof current.FeelsLikeC !== "string" ||
+    typeof current.humidity !== "string" ||
+    typeof current.windspeedKmph !== "string" ||
+    !area ||
+    !Array.isArray(area.areaName) ||
+    !Array.isArray(area.region) ||
+    !Array.isArray(area.country)
+  ) {
+    throw new Error("weather response schema is invalid");
+  }
+  return payload as WeatherPayload;
+}
+
+/// Reads the first non-empty localized value from a verified wttr.in text array.
+function weatherTextValue(values: WeatherTextValue[]): string {
+  const value = values[0]?.value;
+  if (typeof value !== "string") {
+    throw new Error("weather response text value is invalid");
+  }
+  return value.trim();
 }
 
 function buildCombinedAttachmentFileName(timestampMs: number): string {
@@ -855,14 +921,11 @@ async function buildOptionalContent(
 }
 
 async function fetchWeatherPayload(
-  latitude: number,
-  longitude: number,
   locale?: string
-): Promise<any> {
-  const queryLocation = `${latitude.toFixed(4)},${longitude.toFixed(4)}`;
+): Promise<WeatherPayload> {
   const weatherLanguage = resolveWeatherLanguage(locale);
   const response = await Tools.Net.http({
-    url: `https://wttr.in/${queryLocation}?format=j1&lang=${weatherLanguage}`,
+    url: `https://wttr.in/?format=j1&lang=${weatherLanguage}`,
     method: "GET",
     headers: {
       Accept: "application/json",
@@ -881,39 +944,27 @@ async function fetchWeatherPayload(
     throw new Error("weather response empty");
   }
 
-  try {
-    return JSON.parse(rawContent);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error || "unknown");
-    throw new Error(`weather response parse failed: ${message}`);
-  }
+  return parseWeatherPayload(rawContent);
 }
 
 async function buildWeatherContent(): Promise<string> {
   const text = resolveExtraInfoI18n();
   const locale = typeof getLang === "function" ? String(getLang() || "") : "";
-  const locationSnapshot = await readLocationSnapshot(
-    false,
-    WEATHER_INJECTION_STEP_TIMEOUT_SECONDS,
-    false
-  );
-  const payload = await fetchWeatherPayload(
-    locationSnapshot.latitude,
-    locationSnapshot.longitude,
-    locale
-  );
-  const current = Array.isArray(payload?.current_condition) ? payload.current_condition[0] : null;
-  const locationText = formatCoordinates(
-    locationSnapshot.latitude,
-    locationSnapshot.longitude
-  );
+  const payload = await fetchWeatherPayload(locale);
+  const current = payload.current_condition[0];
+  const nearestArea = payload.nearest_area[0];
+  const locationText = [
+    weatherTextValue(nearestArea.areaName),
+    weatherTextValue(nearestArea.region),
+    weatherTextValue(nearestArea.country),
+  ].filter((value) => value.length > 0).join(", ");
   const weatherDesc = normalizeLocale(locale) === "en-US"
-    ? String(current?.weatherDesc?.[0]?.value || "").trim()
-    : String(current?.lang_zh?.[0]?.value || "").trim();
-  const tempC = String(current?.temp_C || "").trim();
-  const feelsLikeC = String(current?.FeelsLikeC || "").trim();
-  const humidity = String(current?.humidity || "").trim();
-  const windKmph = String(current?.windspeedKmph || "").trim();
+    ? weatherTextValue(current.weatherDesc)
+    : weatherTextValue(current.lang_zh);
+  const tempC = current.temp_C.trim();
+  const feelsLikeC = current.FeelsLikeC.trim();
+  const humidity = current.humidity.trim();
+  const windKmph = current.windspeedKmph.trim();
 
   return [
     text.attachmentWeatherTitle,
@@ -1062,7 +1113,11 @@ async function buildScreenTextContent(): Promise<string> {
   const text = resolveExtraInfoI18n();
   const screenshotResult = await toolCall("capture_screenshot", {});
   const screenshotPath = extractScreenshotPath(screenshotResult);
-  const recognizedText = "";
+  if (!screenshotPath) {
+    throw new Error("screenshot path unavailable");
+  }
+  const screenshot = await Tools.Files.read(screenshotPath);
+  const recognizedText = String(screenshot?.content || "").trim();
 
   return [
     text.attachmentScreenTextTitle,

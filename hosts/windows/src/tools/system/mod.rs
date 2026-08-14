@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoData,
@@ -13,7 +15,9 @@ use serde_json::Value;
 use uuid::Uuid;
 use windows::core::HSTRING;
 use windows::Data::Xml::Dom::XmlDocument;
+use windows::Devices::Geolocation::{Geolocator, PositionAccuracy};
 use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
+use windows_future::{AsyncOperationCompletedHandler, IAsyncOperation};
 
 #[derive(Clone, Debug, Default)]
 pub struct WindowsSystemOperationHost;
@@ -42,7 +46,9 @@ impl SystemOperationHost for WindowsSystemOperationHost {
         if status.success() {
             Ok(())
         } else {
-            Err(HostError::new(format!("Toast command exited with {status}")))
+            Err(HostError::new(format!(
+                "Toast command exited with {status}"
+            )))
         }
     }
 
@@ -184,15 +190,20 @@ fn show_windows_notification(request: &SystemNotificationRequest) -> HostResult<
         .LoadXml(&HSTRING::from(xml))
         .map_err(|error| HostError::new(format!("Failed to load Windows toast XML: {error}")))?;
     let notification = ToastNotification::CreateToastNotification(&document).map_err(|error| {
-        HostError::new(format!("Failed to create Windows toast notification: {error}"))
+        HostError::new(format!(
+            "Failed to create Windows toast notification: {error}"
+        ))
     })?;
-    let notifier = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(
-        "app.operit.operit2",
-    ))
-        .map_err(|error| HostError::new(format!("Failed to create Windows toast notifier: {error}")))?;
-    notifier
-        .Show(&notification)
-        .map_err(|error| HostError::new(format!("Failed to show Windows toast notification: {error}")))
+    let notifier =
+        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from("app.operit.operit2"))
+            .map_err(|error| {
+            HostError::new(format!("Failed to create Windows toast notifier: {error}"))
+        })?;
+    notifier.Show(&notification).map_err(|error| {
+        HostError::new(format!(
+            "Failed to show Windows toast notification: {error}"
+        ))
+    })
 }
 
 /// Builds the app protocol URI selected when a Windows notification is activated.
@@ -202,8 +213,8 @@ fn windows_notification_launch_uri(activation: &SystemNotificationActivation) ->
             "operit2://notification/open-app".to_string()
         }
         SystemNotificationActivation::OpenChat { chatId } => {
-            let encoded_chat_id: String = url::form_urlencoded::byte_serialize(chatId.as_bytes())
-                .collect();
+            let encoded_chat_id: String =
+                url::form_urlencoded::byte_serialize(chatId.as_bytes()).collect();
             format!("operit2://notification/open-chat?chatId={encoded_chat_id}")
         }
     }
@@ -258,15 +269,35 @@ try {{
         path = ps_string_literal(&outputPath.to_string_lossy()),
     );
     run_powershell_command(&script, "capture Windows screenshot")?;
-    validate_file_path(&outputPath, "Windows screenshot")
+    validate_file_path(&outputPath, "Windows screenshot")?;
+    windows_vfs_path_for_physical_path(&outputPath)
 }
 
-fn recognize_windows_text(imagePath: &str, language: OCRLanguage, quality: OCRQuality) -> HostResult<String> {
+/// Converts a Windows drive path into the shared mounted-drive VFS path.
+fn windows_vfs_path_for_physical_path(path: &Path) -> HostResult<String> {
+    let path = path.to_string_lossy().replace('\\', "/");
+    let bytes = path.as_bytes();
+    if bytes.len() < 2 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' {
+        return Err(HostError::new(format!(
+            "Windows screenshot path is not an absolute drive path: {path}"
+        )));
+    }
+    let drive = (bytes[0] as char).to_ascii_lowercase();
+    let rest = path[2..].trim_start_matches('/');
+    Ok(format!("/mnt/windows/{drive}/{rest}"))
+}
+
+fn recognize_windows_text(
+    imagePath: &str,
+    language: OCRLanguage,
+    quality: OCRQuality,
+) -> HostResult<String> {
     let preparedImage = prepare_windows_ocr_image(imagePath, quality)?;
     let languageTag = windows_ocr_language_tag(language);
     let script = format!(
         r#"
 $ErrorActionPreference = 'Stop'
+try {{
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 [Windows.Storage.StorageFile, Windows.Storage, ContentType=WindowsRuntime] > $null
 [Windows.Storage.Streams.IRandomAccessStreamWithContentType, Windows.Storage.Streams, ContentType=WindowsRuntime] > $null
@@ -348,17 +379,29 @@ fn prepare_windows_ocr_image(imagePath: &str, quality: OCRQuality) -> HostResult
         return Err(HostError::new("image_path is required"));
     }
     if !sourcePath.exists() {
-        return Err(HostError::new(format!("OCR image does not exist: {}", sourcePath.display())));
+        return Err(HostError::new(format!(
+            "OCR image does not exist: {}",
+            sourcePath.display()
+        )));
     }
     if !sourcePath.is_file() {
-        return Err(HostError::new(format!("OCR image is not a file: {}", sourcePath.display())));
+        return Err(HostError::new(format!(
+            "OCR image is not a file: {}",
+            sourcePath.display()
+        )));
     }
     if quality != OCRQuality::High {
-        return Ok(WindowsOcrImage { path: sourcePath.to_path_buf(), deleteOnDrop: false });
+        return Ok(WindowsOcrImage {
+            path: sourcePath.to_path_buf(),
+            deleteOnDrop: false,
+        });
     }
 
     let (width, height) = image::image_dimensions(sourcePath).map_err(|error| {
-        HostError::new(format!("Failed to read OCR image dimensions {}: {error}", sourcePath.display()))
+        HostError::new(format!(
+            "Failed to read OCR image dimensions {}: {error}",
+            sourcePath.display()
+        ))
     })?;
     let newWidth = u64::from(width).saturating_mul(2);
     let newHeight = u64::from(height).saturating_mul(2);
@@ -367,11 +410,18 @@ fn prepare_windows_ocr_image(imagePath: &str, quality: OCRQuality) -> HostResult
         || newWidth > 4096
         || newHeight > 4096
     {
-        return Ok(WindowsOcrImage { path: sourcePath.to_path_buf(), deleteOnDrop: false });
+        return Ok(WindowsOcrImage {
+            path: sourcePath.to_path_buf(),
+            deleteOnDrop: false,
+        });
     }
 
-    let image = image::open(sourcePath)
-        .map_err(|error| HostError::new(format!("Failed to load OCR image {}: {error}", sourcePath.display())))?;
+    let image = image::open(sourcePath).map_err(|error| {
+        HostError::new(format!(
+            "Failed to load OCR image {}: {error}",
+            sourcePath.display()
+        ))
+    })?;
     let resized = image.resize_exact(
         newWidth as u32,
         newHeight as u32,
@@ -380,8 +430,16 @@ fn prepare_windows_ocr_image(imagePath: &str, quality: OCRQuality) -> HostResult
     let tempPath = temp_capture_path("windows_ocr")?;
     resized
         .save_with_format(&tempPath, image::ImageFormat::Png)
-        .map_err(|error| HostError::new(format!("Failed to write OCR image {}: {error}", tempPath.display())))?;
-    Ok(WindowsOcrImage { path: tempPath, deleteOnDrop: true })
+        .map_err(|error| {
+            HostError::new(format!(
+                "Failed to write OCR image {}: {error}",
+                tempPath.display()
+            ))
+        })?;
+    Ok(WindowsOcrImage {
+        path: tempPath,
+        deleteOnDrop: true,
+    })
 }
 
 fn windows_ocr_language_tag(language: OCRLanguage) -> &'static str {
@@ -399,16 +457,27 @@ fn windows_ocr_storage_path(path: &Path) -> String {
 
 fn temp_capture_path(prefix: &str) -> HostResult<PathBuf> {
     let tempDir = std::env::temp_dir().join("operit-runtime").join("temp");
-    fs::create_dir_all(&tempDir)
-        .map_err(|error| HostError::new(format!("Failed to create temporary directory {}: {error}", tempDir.display())))?;
+    fs::create_dir_all(&tempDir).map_err(|error| {
+        HostError::new(format!(
+            "Failed to create temporary directory {}: {error}",
+            tempDir.display()
+        ))
+    })?;
     Ok(tempDir.join(format!("{prefix}_{}.png", Uuid::new_v4())))
 }
 
 fn validate_file_path(path: &Path, operation: &str) -> HostResult<String> {
-    let metadata = fs::metadata(path)
-        .map_err(|error| HostError::new(format!("Failed to verify {operation} output {}: {error}", path.display())))?;
+    let metadata = fs::metadata(path).map_err(|error| {
+        HostError::new(format!(
+            "Failed to verify {operation} output {}: {error}",
+            path.display()
+        ))
+    })?;
     if !metadata.is_file() || metadata.len() == 0 {
-        return Err(HostError::new(format!("{operation} did not create a valid file: {}", path.display())));
+        return Err(HostError::new(format!(
+            "{operation} did not create a valid file: {}",
+            path.display()
+        )));
     }
     Ok(path.to_string_lossy().into_owned())
 }
@@ -490,7 +559,10 @@ New-ItemProperty -LiteralPath $path -Name $name -Value $value -PropertyType Stri
         namespace = ps_string_literal(namespace),
         setting = ps_string_literal(setting),
     );
-    parse_windows_system_setting(run_powershell_json(&script, "modify Windows system setting")?)
+    parse_windows_system_setting(run_powershell_json(
+        &script,
+        "modify Windows system setting",
+    )?)
 }
 
 fn get_windows_system_setting(namespace: &str, setting: &str) -> HostResult<SystemSettingData> {
@@ -625,6 +697,7 @@ fn get_windows_notifications(limit: i32) -> HostResult<NotificationData> {
     let script = format!(
         r#"
 $ErrorActionPreference = 'Stop'
+try {{
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 [Windows.UI.Notifications.Management.UserNotificationListener, Windows.UI.Notifications, ContentType=WindowsRuntime] > $null
 [Windows.UI.Notifications.Management.UserNotificationListenerAccessStatus, Windows.UI.Notifications, ContentType=WindowsRuntime] > $null
@@ -731,7 +804,9 @@ foreach ($notification in ($notifications | Sort-Object -Property CreationTime -
         .arg("-Command")
         .arg(script)
         .output()
-        .map_err(|error| HostError::new(format!("Failed to query Windows notifications: {error}")))?;
+        .map_err(|error| {
+            HostError::new(format!("Failed to query Windows notifications: {error}"))
+        })?;
 
     if !output.status.success() {
         let errorText = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -742,13 +817,17 @@ foreach ($notification in ($notifications | Sort-Object -Property CreationTime -
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let value: Value = serde_json::from_str(&stdout).map_err(|error| {
-        HostError::new(format!("Failed to parse Windows notification data: {error}"))
+        HostError::new(format!(
+            "Failed to parse Windows notification data: {error}"
+        ))
     })?;
     let timestamp = json_i64(&value, "timestamp")?;
     let notificationsValue = value
         .get("notifications")
         .and_then(Value::as_array)
-        .ok_or_else(|| HostError::new("Windows notification data is missing notifications array"))?;
+        .ok_or_else(|| {
+            HostError::new("Windows notification data is missing notifications array")
+        })?;
     let mut notifications = Vec::new();
     for item in notificationsValue {
         notifications.push(NotificationEntry {
@@ -784,35 +863,26 @@ $limit = {limit}
 $includeSystemApps = {includeSystemApps}
 $now = [DateTimeOffset]::UtcNow
 $startWindow = $now.AddHours(-1 * $sinceHours)
+$currentSessionId = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
 $items = @()
 foreach ($process in Get-Process) {{
     try {{
-        $name = [string]$process.ProcessName
-        if ($requestedName -and $requestedName.Trim().Length -gt 0 -and $name -notlike "*$requestedName*") {{
+        if (-not $includeSystemApps -and $process.SessionId -ne $currentSessionId) {{
             continue
         }}
-        $path = ""
-        try {{ $path = [string]$process.Path }} catch {{}}
-        $isSystem = $false
-        if ($path -match "^[A-Za-z]:\\Windows\\" -or $path -match "^[A-Za-z]:\\Program Files\\WindowsApps\\") {{
-            $isSystem = $true
-        }}
-        if (-not $includeSystemApps -and $isSystem) {{
+        $name = [string]$process.ProcessName
+        if ($requestedName -and $requestedName.Trim().Length -gt 0 -and $name -notlike "*$requestedName*") {{
             continue
         }}
         $startTime = [DateTimeOffset]$process.StartTime
         $effectiveStart = if ($startTime -gt $startWindow) {{ $startTime }} else {{ $startWindow }}
         $durationMs = [Math]::Max(0, [int64]($now - $effectiveStart).TotalMilliseconds)
-        $displayName = $name
-        if ($process.MainWindowTitle -and $process.MainWindowTitle.Trim().Length -gt 0) {{
-            $displayName = "$name - $($process.MainWindowTitle)"
-        }}
         $items += [pscustomobject]@{{
             packageName = $name
-            appName = $displayName
+            appName = $name
             totalForegroundTimeMs = $durationMs
             lastTimeUsed = [long]$now.ToUnixTimeMilliseconds()
-            isSystemApp = $isSystem
+            isSystemApp = [bool]($process.SessionId -eq 0)
         }}
     }} catch {{}}
 }}
@@ -843,89 +913,111 @@ fn get_windows_device_location(
     if timeout <= 0 {
         return Err(HostError::new("timeout must be greater than 0"));
     }
-
-    let timeoutMs = timeout.saturating_mul(1000);
-    let desiredAccuracy = if highAccuracy { "High" } else { "Default" };
-    let script = format!(
-        r#"
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Runtime.WindowsRuntime
-[Windows.Devices.Geolocation.Geolocator, Windows.Devices.Geolocation, ContentType=WindowsRuntime] > $null
-[Windows.Devices.Geolocation.Geoposition, Windows.Devices.Geolocation, ContentType=WindowsRuntime] > $null
-$locator = [Windows.Devices.Geolocation.Geolocator]::new()
-$locator.DesiredAccuracy = [Windows.Devices.Geolocation.PositionAccuracy]::{desiredAccuracy}
-$operation = $locator.GetGeopositionAsync()
-$asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {{
-    $_.Name -eq 'AsTask' -and $_.IsGenericMethod -and $_.GetParameters().Count -eq 1
-}} | Select-Object -First 1)
-$task = $asTask.MakeGenericMethod([Windows.Devices.Geolocation.Geoposition]).Invoke($null, @($operation))
-if (-not $task.Wait({timeoutMs})) {{
-    throw 'Windows location request timed out.'
-}}
-$position = $task.Result
-$coordinate = $position.Coordinate
-$point = $coordinate.Point.Position
-$civic = $position.CivicAddress
-$address = ''
-$city = ''
-$province = ''
-$country = ''
-if ({includeAddress}) {{
-    if ($null -ne $civic) {{
-        $city = [string]$civic.City
-        $province = [string]$civic.State
-        $country = [string]$civic.Country
-        $addressParts = @($city, $province, $country, [string]$civic.PostalCode) | Where-Object {{ $_ -and $_.Trim().Length -gt 0 }}
-        $address = [string]::Join(', ', $addressParts)
-    }}
-}}
-[pscustomobject]@{{
-    latitude = [double]$point.Latitude
-    longitude = [double]$point.Longitude
-    accuracy = [double]$coordinate.Accuracy
-    provider = 'windows-geolocator'
-    timestamp = [long]$coordinate.Timestamp.ToUnixTimeMilliseconds()
-    rawData = ''
-    address = $address
-    city = $city
-    province = $province
-    country = $country
-}} | ConvertTo-Json -Compress
-"#,
-        desiredAccuracy = desiredAccuracy,
-        timeoutMs = timeoutMs,
-        includeAddress = if includeAddress { "$true" } else { "$false" },
-    );
-
-    let output = Command::new("powershell.exe")
-        .arg("-NoProfile")
-        .arg("-Command")
-        .arg(script)
-        .output()
-        .map_err(|error| HostError::new(format!("Failed to query Windows location: {error}")))?;
-
-    if !output.status.success() {
-        let errorText = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(HostError::new(format!(
-            "Failed to query Windows location: {errorText}"
-        )));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let value: Value = serde_json::from_str(&stdout)
-        .map_err(|error| HostError::new(format!("Failed to parse Windows location data: {error}")))?;
+    let timeout = Duration::from_secs(timeout as u64);
+    let locator = Geolocator::new().map_err(windows_location_error("create geolocator"))?;
+    locator
+        .SetDesiredAccuracy(if highAccuracy {
+            PositionAccuracy::High
+        } else {
+            PositionAccuracy::Default
+        })
+        .map_err(windows_location_error("configure geolocator"))?;
+    let position = wait_for_windows_async(
+        locator
+            .GetGeopositionAsync()
+            .map_err(windows_location_error("request location"))?,
+        timeout,
+    )?;
+    let coordinate = position
+        .Coordinate()
+        .map_err(windows_location_error("read location coordinate"))?;
+    let point = coordinate
+        .Point()
+        .map_err(windows_location_error("read location point"))?
+        .Position()
+        .map_err(windows_location_error("read location position"))?;
+    let (address, city, province, country) = if includeAddress {
+        let civic = position
+            .CivicAddress()
+            .map_err(windows_location_error("read location address"))?;
+        let city = civic
+            .City()
+            .map_err(windows_location_error("read location city"))?
+            .to_string();
+        let province = civic
+            .State()
+            .map_err(windows_location_error("read location state"))?
+            .to_string();
+        let country = civic
+            .Country()
+            .map_err(windows_location_error("read location country"))?
+            .to_string();
+        let postal_code = civic
+            .PostalCode()
+            .map_err(windows_location_error("read location postal code"))?
+            .to_string();
+        let address = [
+            city.as_str(),
+            province.as_str(),
+            country.as_str(),
+            postal_code.as_str(),
+        ]
+        .into_iter()
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
+        (address, city, province, country)
+    } else {
+        (String::new(), String::new(), String::new(), String::new())
+    };
     Ok(LocationData {
-        latitude: json_f64(&value, "latitude")?,
-        longitude: json_f64(&value, "longitude")?,
-        accuracy: json_f64(&value, "accuracy")? as f32,
-        provider: json_string(&value, "provider")?,
-        timestamp: json_i64(&value, "timestamp")?,
-        rawData: json_string(&value, "rawData")?,
-        address: json_string(&value, "address")?,
-        city: json_string(&value, "city")?,
-        province: json_string(&value, "province")?,
-        country: json_string(&value, "country")?,
+        latitude: point.Latitude,
+        longitude: point.Longitude,
+        accuracy: coordinate
+            .Accuracy()
+            .map_err(windows_location_error("read location accuracy"))? as f32,
+        provider: "windows-geolocator".to_string(),
+        timestamp: coordinate
+            .Timestamp()
+            .map_err(windows_location_error("read location timestamp"))?
+            .UniversalTime
+            / 10_000
+            - 11_644_473_600_000,
+        rawData: String::new(),
+        address,
+        city,
+        province,
+        country,
     })
+}
+
+/// Waits for a Windows Runtime async operation without leaving the Operit process.
+fn wait_for_windows_async<T>(operation: IAsyncOperation<T>, timeout: Duration) -> HostResult<T>
+where
+    T: windows::core::RuntimeType + Clone + Send + 'static,
+{
+    let (sender, receiver) = mpsc::sync_channel(1);
+    operation
+        .SetCompleted(&AsyncOperationCompletedHandler::new(move |operation, _| {
+            let result = operation
+                .ok()
+                .and_then(|operation| operation.GetResults())
+                .map_err(|error| error.to_string());
+            let _ = sender.send(result);
+            Ok(())
+        }))
+        .map_err(windows_location_error("subscribe to location request"))?;
+    receiver
+        .recv_timeout(timeout)
+        .map_err(|_| HostError::new("Windows location request timed out."))?
+        .map_err(|error| HostError::new(format!("Windows location request failed: {error}")))
+}
+
+/// Maps a Windows Runtime error to a location-specific Host error.
+fn windows_location_error(
+    operation: &'static str,
+) -> impl FnOnce(windows::core::Error) -> HostError {
+    move |error| HostError::new(format!("Failed to {operation}: {error}"))
 }
 
 fn get_windows_device_info() -> HostResult<DeviceInfoData> {
@@ -1000,17 +1092,19 @@ $additionalInfo = [ordered]@{
 }
 
 fn json_f64(value: &Value, key: &str) -> HostResult<f64> {
-    value
-        .get(key)
-        .and_then(Value::as_f64)
-        .ok_or_else(|| HostError::new(format!("Windows location data is missing numeric field: {key}")))
+    value.get(key).and_then(Value::as_f64).ok_or_else(|| {
+        HostError::new(format!(
+            "Windows location data is missing numeric field: {key}"
+        ))
+    })
 }
 
 fn json_i64(value: &Value, key: &str) -> HostResult<i64> {
-    value
-        .get(key)
-        .and_then(Value::as_i64)
-        .ok_or_else(|| HostError::new(format!("Windows location data is missing integer field: {key}")))
+    value.get(key).and_then(Value::as_i64).ok_or_else(|| {
+        HostError::new(format!(
+            "Windows location data is missing integer field: {key}"
+        ))
+    })
 }
 
 fn json_string(value: &Value, key: &str) -> HostResult<String> {
@@ -1018,7 +1112,11 @@ fn json_string(value: &Value, key: &str) -> HostResult<String> {
         .get(key)
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or_else(|| HostError::new(format!("Windows location data is missing string field: {key}")))
+        .ok_or_else(|| {
+            HostError::new(format!(
+                "Windows location data is missing string field: {key}"
+            ))
+        })
 }
 
 fn parse_app_operation_data(value: Value) -> HostResult<AppOperationData> {
@@ -1094,7 +1192,9 @@ fn run_powershell_json(script: &str, operation: &str) -> HostResult<Value> {
         .map_err(|error| HostError::new(format!("Failed to {operation}: {error}")))?;
     if !output.status.success() {
         let errorText = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(HostError::new(format!("Failed to {operation}: {errorText}")));
+        return Err(HostError::new(format!(
+            "Failed to {operation}: {errorText}"
+        )));
     }
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     serde_json::from_str(&stdout)

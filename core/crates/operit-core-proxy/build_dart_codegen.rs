@@ -309,7 +309,8 @@ fn render_dart_reverse_stream_method(
     output.push_str(&format!(
         "      await for (final item in {input_name}) {{\n"
     ));
-    output.push_str(&format!("        await sink.add(item);\n"));
+    let encoded_item = dart_encode_expr("item", &item_type, serializable_types);
+    output.push_str(&format!("        await sink.add({encoded_item});\n"));
     output.push_str("      }\n");
     output.push_str("    } finally {\n      await sink.close();\n    }\n  }\n\n");
     output

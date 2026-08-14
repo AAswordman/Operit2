@@ -9,6 +9,7 @@ fn plugin_config_proxy_persists_and_reads_values() {
     let script = r#"
         exports.plugin_config_roundtrip = async function(_params) {
             var files = Object.create(null);
+            var writeCount = 0;
             globalThis.__operit_call_runtime_ref.getPluginConfigDir = function() {
                 return '/plugin-config-test';
             };
@@ -27,6 +28,7 @@ fn plugin_config_proxy_persists_and_reads_values() {
                     return { successful: true };
                 },
                 write: async function(path, content, _append) {
+                    writeCount += 1;
                     files[String(path)] = String(content);
                     return { successful: true };
                 }
@@ -35,12 +37,15 @@ fn plugin_config_proxy_persists_and_reads_values() {
             var config = await PluginConfig.use('roundtrip', { count: 1, name: 'default' });
             config.count = 42;
             config.name = 'saved';
+            var beforeFlushWriteCount = writeCount;
             await PluginConfig.flush(config);
 
             var loaded = await PluginConfig.use('roundtrip', { count: 0, name: 'missing' });
             return {
                 count: loaded.count,
-                name: loaded.name
+                name: loaded.name,
+                beforeFlushWriteCount: beforeFlushWriteCount,
+                writeCount: writeCount
             };
         };
     "#;
@@ -63,6 +68,6 @@ fn plugin_config_proxy_persists_and_reads_values() {
 
     assert_eq!(
         expect_js_output(output, "plugin config roundtrip execution"),
-        "{\"count\":42,\"name\":\"saved\"}"
+        "{\"count\":42,\"name\":\"saved\",\"beforeFlushWriteCount\":0,\"writeCount\":1}"
     );
 }

@@ -847,8 +847,7 @@ impl AIMessageManager {
             chatId
         };
         if let Some(stream) = Self::takeActiveResponseStream(&chatKey) {
-            stream.upstream.close();
-            stream.event_channel.close();
+            stream.close();
         }
         if let Some(mut service) = Self::cloneActiveEnhancedAiService(&chatKey) {
             service.cancelConversation().await;

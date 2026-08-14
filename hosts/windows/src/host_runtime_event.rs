@@ -16,17 +16,15 @@ use windows_sys::core::GUID;
 use windows_sys::Win32::Devices::Bluetooth::{
     BluetoothFindDeviceClose, BluetoothFindFirstDevice, BluetoothFindFirstRadio,
     BluetoothFindNextDevice, BluetoothFindNextRadio, BluetoothFindRadioClose,
-    BluetoothGetRadioInfo, BluetoothIsConnectable, BluetoothIsDiscoverable,
-    BLUETOOTH_DEVICE_INFO, BLUETOOTH_DEVICE_SEARCH_PARAMS, BLUETOOTH_FIND_RADIO_PARAMS,
-    BLUETOOTH_RADIO_INFO,
+    BluetoothGetRadioInfo, BluetoothIsConnectable, BluetoothIsDiscoverable, BLUETOOTH_DEVICE_INFO,
+    BLUETOOTH_DEVICE_SEARCH_PARAMS, BLUETOOTH_FIND_RADIO_PARAMS, BLUETOOTH_RADIO_INFO,
     GUID_BLUETOOTHLE_DEVICE_INTERFACE, GUID_BLUETOOTH_GATT_SERVICE_DEVICE_INTERFACE,
 };
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
 };
 use windows_sys::Win32::NetworkManagement::IpHelper::{
-    CancelMibChangeNotify2, NotifyIpInterfaceChange, MIB_IPINTERFACE_ROW,
-    MIB_NOTIFICATION_TYPE,
+    CancelMibChangeNotify2, NotifyIpInterfaceChange, MIB_IPINTERFACE_ROW, MIB_NOTIFICATION_TYPE,
 };
 use windows_sys::Win32::Networking::WinSock::AF_UNSPEC;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -40,19 +38,17 @@ use windows_sys::Win32::System::RemoteDesktop::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
     GetWindowLongPtrW, PostMessageW, RegisterClassW, RegisterDeviceNotificationW,
-    SetWindowLongPtrW, UnregisterDeviceNotification,
-    TranslateMessage, CS_HREDRAW, CS_VREDRAW, DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE,
-    DBT_DEVTYP_DEVICEINTERFACE, DEV_BROADCAST_DEVICEINTERFACE_W, DEV_BROADCAST_HDR,
-    DEVICE_NOTIFY_WINDOW_HANDLE,
-    GWLP_USERDATA, HWND_MESSAGE, MSG, WM_CLOSE, WM_DEVICECHANGE, WM_POWERBROADCAST,
-    WM_TIMECHANGE, WM_WTSSESSION_CHANGE, WNDCLASSW, WTS_SESSION_LOCK, WTS_SESSION_UNLOCK,
+    SetWindowLongPtrW, TranslateMessage, UnregisterDeviceNotification, CS_HREDRAW, CS_VREDRAW,
+    DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVTYP_DEVICEINTERFACE,
+    DEVICE_NOTIFY_WINDOW_HANDLE, DEV_BROADCAST_DEVICEINTERFACE_W, DEV_BROADCAST_HDR, GWLP_USERDATA,
+    HWND_MESSAGE, MSG, WM_CLOSE, WM_DEVICECHANGE, WM_POWERBROADCAST, WM_TIMECHANGE,
+    WM_WTSSESSION_CHANGE, WNDCLASSW, WTS_SESSION_LOCK, WTS_SESSION_UNLOCK,
 };
 
 const CLASS_NAME: &[u16] = &[
-    'O' as u16, 'p' as u16, 'e' as u16, 'r' as u16, 'i' as u16, 't' as u16, 'H' as u16,
-    'o' as u16, 's' as u16, 't' as u16, 'R' as u16, 'u' as u16, 'n' as u16, 't' as u16,
-    'i' as u16, 'm' as u16, 'e' as u16, 'E' as u16, 'v' as u16, 'e' as u16, 'n' as u16,
-    't' as u16, 0,
+    'O' as u16, 'p' as u16, 'e' as u16, 'r' as u16, 'i' as u16, 't' as u16, 'H' as u16, 'o' as u16,
+    's' as u16, 't' as u16, 'R' as u16, 'u' as u16, 'n' as u16, 't' as u16, 'i' as u16, 'm' as u16,
+    'e' as u16, 'E' as u16, 'v' as u16, 'e' as u16, 'n' as u16, 't' as u16, 0,
 ];
 
 const PBT_APMSUSPEND: usize = 0x0004;
@@ -132,10 +128,14 @@ impl HostRuntimeEventHost for WindowsHostRuntimeEventHost {
         let worker = thread::Builder::new()
             .name("operit-windows-host-runtime-event".to_string())
             .spawn(move || run_windows_event_loop(sink, sender))
-            .map_err(|error| HostError::new(format!("spawn windows host event worker failed: {error}")))?;
+            .map_err(|error| {
+                HostError::new(format!("spawn windows host event worker failed: {error}"))
+            })?;
         let hwnd = receiver
             .recv()
-            .map_err(|error| HostError::new(format!("receive windows host event hwnd failed: {error}")))?
+            .map_err(|error| {
+                HostError::new(format!("receive windows host event hwnd failed: {error}"))
+            })?
             .map_err(HostError::new)? as HWND;
         Ok(Box::new(WindowsHostRuntimeEventRegistration {
             hwnd: hwnd as isize,
@@ -201,7 +201,10 @@ fn run_windows_event_loop(sink: HostRuntimeEventSink, init: mpsc::Sender<Result<
             null(),
         );
         if hwnd.is_null() {
-            let _ = init.send(Err(format!("create windows host event window failed: {}", GetLastError())));
+            let _ = init.send(Err(format!(
+                "create windows host event window failed: {}",
+                GetLastError()
+            )));
             return;
         }
         let bluetoothDevices = enumerate_bluetooth_devices();
@@ -238,7 +241,11 @@ unsafe fn register_power_notifications(hwnd: HWND, state: &mut WindowsEventState
         GUID_BATTERY_PERCENTAGE_REMAINING,
         GUID_CONSOLE_DISPLAY_STATE,
     ] {
-        let handle = RegisterPowerSettingNotification(hwnd as *mut c_void, &guid, DEVICE_NOTIFY_WINDOW_HANDLE);
+        let handle = RegisterPowerSettingNotification(
+            hwnd as *mut c_void,
+            &guid,
+            DEVICE_NOTIFY_WINDOW_HANDLE,
+        );
         if handle != 0 {
             state.powerNotifications.push(handle);
         }
@@ -375,11 +382,19 @@ unsafe extern "system" fn window_proc(
 unsafe fn handle_power_broadcast(state: &mut WindowsEventState, wparam: WPARAM, lparam: LPARAM) {
     match wparam {
         PBT_APMSUSPEND => {
-            emit(&state.sink, "system.power.sleep", serde_json::json!({"sleeping": true}));
+            emit(
+                &state.sink,
+                "system.power.sleep",
+                serde_json::json!({"sleeping": true}),
+            );
             return;
         }
         PBT_APMRESUMESUSPEND | PBT_APMRESUMEAUTOMATIC => {
-            emit(&state.sink, "system.power.wake", serde_json::json!({"sleeping": false}));
+            emit(
+                &state.sink,
+                "system.power.wake",
+                serde_json::json!({"sleeping": false}),
+            );
             return;
         }
         PBT_POWERSETTINGCHANGE => {}
@@ -392,16 +407,24 @@ unsafe fn handle_power_broadcast(state: &mut WindowsEventState, wparam: WPARAM, 
     let data = power_setting_u32(setting);
     if guid_eq(setting.PowerSetting, GUID_ACDC_POWER_SOURCE) {
         match data {
-            Some(0) => emit(&state.sink, "system.power.connected", serde_json::json!({
-                "connected": true,
-                "source": "ac",
-                "batteryLevel": null,
-            })),
-            Some(1) | Some(2) => emit(&state.sink, "system.power.disconnected", serde_json::json!({
-                "connected": false,
-                "source": "battery",
-                "batteryLevel": null,
-            })),
+            Some(0) => emit(
+                &state.sink,
+                "system.power.connected",
+                serde_json::json!({
+                    "connected": true,
+                    "source": "ac",
+                    "batteryLevel": null,
+                }),
+            ),
+            Some(1) | Some(2) => emit(
+                &state.sink,
+                "system.power.disconnected",
+                serde_json::json!({
+                    "connected": false,
+                    "source": "battery",
+                    "batteryLevel": null,
+                }),
+            ),
             _ => {}
         }
     }
@@ -414,18 +437,30 @@ unsafe fn handle_power_broadcast(state: &mut WindowsEventState, wparam: WPARAM, 
                     true => "system.battery.low",
                     false => "system.battery.okay",
                 };
-                emit(&state.sink, topic, serde_json::json!({
-                    "low": isLow,
-                    "level": percentage,
-                    "charging": null,
-                }));
+                emit(
+                    &state.sink,
+                    topic,
+                    serde_json::json!({
+                        "low": isLow,
+                        "level": percentage,
+                        "charging": null,
+                    }),
+                );
             }
         }
     }
     if guid_eq(setting.PowerSetting, GUID_CONSOLE_DISPLAY_STATE) {
         match data {
-            Some(0) => emit(&state.sink, "system.screen.off", serde_json::json!({"screenOn": false})),
-            Some(1) => emit(&state.sink, "system.screen.on", serde_json::json!({"screenOn": true})),
+            Some(0) => emit(
+                &state.sink,
+                "system.screen.off",
+                serde_json::json!({"screenOn": false}),
+            ),
+            Some(1) => emit(
+                &state.sink,
+                "system.screen.on",
+                serde_json::json!({"screenOn": true}),
+            ),
             _ => {}
         }
     }
@@ -448,10 +483,22 @@ unsafe fn power_setting_u32(setting: &POWERBROADCAST_SETTING) -> Option<u32> {
 
 fn handle_session_change(state: &mut WindowsEventState, wparam: WPARAM) {
     match wparam as u32 {
-        WTS_SESSION_LOCK => emit(&state.sink, "system.session.lock", serde_json::json!({"locked": true})),
+        WTS_SESSION_LOCK => emit(
+            &state.sink,
+            "system.session.lock",
+            serde_json::json!({"locked": true}),
+        ),
         WTS_SESSION_UNLOCK => {
-            emit(&state.sink, "system.session.unlock", serde_json::json!({"locked": false}));
-            emit(&state.sink, "system.user.present", serde_json::json!({"present": true}));
+            emit(
+                &state.sink,
+                "system.session.unlock",
+                serde_json::json!({"locked": false}),
+            );
+            emit(
+                &state.sink,
+                "system.user.present",
+                serde_json::json!({"present": true}),
+            );
         }
         _ => {}
     }
@@ -459,14 +506,22 @@ fn handle_session_change(state: &mut WindowsEventState, wparam: WPARAM) {
 
 fn handle_time_change(state: &mut WindowsEventState) {
     let timestampMillis = unix_millis();
-    emit(&state.sink, "system.date.changed", serde_json::json!({
-        "timestampMillis": timestampMillis,
-        "timezone": null,
-    }));
-    emit(&state.sink, "system.timezone.changed", serde_json::json!({
-        "timestampMillis": timestampMillis,
-        "timezone": null,
-    }));
+    emit(
+        &state.sink,
+        "system.date.changed",
+        serde_json::json!({
+            "timestampMillis": timestampMillis,
+            "timezone": null,
+        }),
+    );
+    emit(
+        &state.sink,
+        "system.timezone.changed",
+        serde_json::json!({
+            "timestampMillis": timestampMillis,
+            "timezone": null,
+        }),
+    );
 }
 
 fn handle_device_change(state: &mut WindowsEventState, wparam: WPARAM, lparam: LPARAM) {
@@ -526,7 +581,10 @@ unsafe fn device_interface_path(lparam: LPARAM) -> Option<(&'static str, String)
         "bthport"
     } else if guid_eq(device.dbcc_classguid, GUID_BLUETOOTHLE_DEVICE_INTERFACE) {
         "bluetoothle"
-    } else if guid_eq(device.dbcc_classguid, GUID_BLUETOOTH_GATT_SERVICE_DEVICE_INTERFACE) {
+    } else if guid_eq(
+        device.dbcc_classguid,
+        GUID_BLUETOOTH_GATT_SERVICE_DEVICE_INTERFACE,
+    ) {
         "bluetooth_gatt"
     } else if guid_eq(device.dbcc_classguid, GUID_AUDIO_RENDER_INTERFACE)
         || guid_eq(device.dbcc_classguid, GUID_AUDIO_CAPTURE_INTERFACE)
@@ -536,12 +594,18 @@ unsafe fn device_interface_path(lparam: LPARAM) -> Option<(&'static str, String)
         return None;
     };
     let namePtr = device.dbcc_name.as_ptr();
-    let maxNameUnits = ((device.dbcc_size as usize).saturating_sub(size_of::<DEV_BROADCAST_DEVICEINTERFACE_W>()) / 2) + 1;
+    let maxNameUnits = ((device.dbcc_size as usize)
+        .saturating_sub(size_of::<DEV_BROADCAST_DEVICEINTERFACE_W>())
+        / 2)
+        + 1;
     let mut nameUnits = 0usize;
     while nameUnits < maxNameUnits && *namePtr.add(nameUnits) != 0 {
         nameUnits += 1;
     }
-    Some((deviceInterface, String::from_utf16_lossy(std::slice::from_raw_parts(namePtr, nameUnits))))
+    Some((
+        deviceInterface,
+        String::from_utf16_lossy(std::slice::from_raw_parts(namePtr, nameUnits)),
+    ))
 }
 
 fn sync_bluetooth_device_snapshots(state: &mut WindowsEventState) {
@@ -756,7 +820,10 @@ fn bluetooth_address_string(address: u64) -> String {
 }
 
 fn wide_string(value: &[u16]) -> String {
-    let end = value.iter().position(|unit| *unit == 0).unwrap_or(value.len());
+    let end = value
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(value.len());
     String::from_utf16_lossy(&value[..end])
 }
 

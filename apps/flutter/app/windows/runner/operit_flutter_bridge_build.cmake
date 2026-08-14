@@ -1,4 +1,6 @@
 # Builds and copies the Rust artifacts required by the selected Windows runner configuration.
+file(MAKE_DIRECTORY "${OPERIT_OUTPUT_DIRECTORY}")
+
 if(OPERIT_BUILD_CONFIG STREQUAL "Debug")
   execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env

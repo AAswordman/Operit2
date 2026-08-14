@@ -159,8 +159,14 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
                     ),
                     MessagePressShieldRegion(
                       child: IconButton(
-                        onPressed: () {
-                          Clipboard.setData(ClipboardData(text: widget.code));
+                        onPressed: () async {
+                          try {
+                            await Clipboard.setData(
+                              ClipboardData(text: widget.code),
+                            );
+                          } on PlatformException {
+                            return;
+                          }
                           setState(() {
                             showCopiedToast = true;
                           });

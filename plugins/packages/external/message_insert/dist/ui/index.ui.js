@@ -10,7 +10,7 @@ async function readSettings() {
     return (0, shared_1.loadSettings)();
 }
 async function saveSettingsInMain(patch) {
-    return (0, shared_1.saveSettings)(patch);
+    return withContext("main", { patch }, () => (0, shared_1.saveSettings)(patch));
 }
 function createSectionTitle(ctx, icon, title) {
     return ctx.UI.Row({ verticalAlignment: "center" }, [
@@ -187,17 +187,70 @@ function Screen(ctx) {
         injectionTimeoutSecondsState.set(next.injectionTimeoutSeconds);
         injectionTimeoutInputState.set(String(next.injectionTimeoutSeconds));
     };
-    const persistSettings = async (patch, successMessage = "") => {
-        try {
-            syncSettings(await saveSettingsInMain(patch));
-            errorMessageState.set("");
-            successMessageState.set(successMessage);
+    /// Applies only the fields changed by the current interaction to the local DSL state.
+    const syncSettingsPatch = (patch) => {
+        if (patch.masterEnabled !== undefined) {
+            masterEnabledState.set(Boolean(patch.masterEnabled));
         }
-        catch (error) {
+        if (patch.persistInjectedContent !== undefined) {
+            persistInjectedContentState.set(Boolean(patch.persistInjectedContent));
+        }
+        if (patch.injectTime !== undefined) {
+            injectTimeState.set(Boolean(patch.injectTime));
+        }
+        if (patch.injectBattery !== undefined) {
+            injectBatteryState.set(Boolean(patch.injectBattery));
+        }
+        if (patch.injectWeather !== undefined) {
+            injectWeatherState.set(Boolean(patch.injectWeather));
+        }
+        if (patch.injectLocation !== undefined) {
+            injectLocationState.set(Boolean(patch.injectLocation));
+        }
+        if (patch.usePreciseLocation !== undefined) {
+            usePreciseLocationState.set(Boolean(patch.usePreciseLocation));
+        }
+        if (patch.injectCurrentScreenApp !== undefined) {
+            injectCurrentScreenAppState.set(Boolean(patch.injectCurrentScreenApp));
+        }
+        if (patch.injectRecentAppUsage !== undefined) {
+            injectRecentAppUsageState.set(Boolean(patch.injectRecentAppUsage));
+        }
+        if (patch.injectScreenText !== undefined) {
+            injectScreenTextState.set(Boolean(patch.injectScreenText));
+        }
+        if (patch.injectNotifications !== undefined) {
+            injectNotificationsState.set(Boolean(patch.injectNotifications));
+        }
+        if (patch.injectMemory !== undefined) {
+            injectMemoryState.set(Boolean(patch.injectMemory));
+        }
+        if (patch.allowRepeatedMemorySearch !== undefined) {
+            allowRepeatedMemorySearchState.set(Boolean(patch.allowRepeatedMemorySearch));
+        }
+        if (patch.memoryLimit !== undefined) {
+            const memoryLimit = Math.floor(Number(patch.memoryLimit));
+            memoryLimitState.set(memoryLimit);
+            memoryLimitInputState.set(String(memoryLimit));
+        }
+        if (patch.injectionTimeoutSeconds !== undefined) {
+            const timeoutSeconds = Number(patch.injectionTimeoutSeconds);
+            injectionTimeoutSecondsState.set(timeoutSeconds);
+            injectionTimeoutInputState.set(String(timeoutSeconds));
+        }
+    };
+    /// Updates the Compose state immediately and persists the same patch asynchronously.
+    const persistSettings = (patch, successMessage = "") => {
+        syncSettingsPatch(patch);
+        errorMessageState.set("");
+        successMessageState.set(successMessage);
+        return saveSettingsInMain(patch)
+            .then(() => undefined)
+            .catch(error => {
             const message = error instanceof Error ? error.message : String(error || "unknown");
             successMessageState.set("");
             errorMessageState.set(`${text.saveErrorPrefix}${message}`);
-        }
+        });
     };
     const applyMemorySettings = () => {
         const limit = Number(memoryLimitInputState.value.trim());
@@ -206,7 +259,7 @@ function Screen(ctx) {
             errorMessageState.set(`${text.saveErrorPrefix}${text.invalidMemoryLimitMessage}`);
             return;
         }
-        persistSettings({
+        return persistSettings({
             memoryLimit: Math.floor(limit),
         });
     };
@@ -220,7 +273,7 @@ function Screen(ctx) {
             errorMessageState.set(`${text.saveErrorPrefix}${text.invalidInjectionTimeoutMessage}`);
             return;
         }
-        void persistSettings({ injectionTimeoutSeconds: timeoutSeconds });
+        return persistSettings({ injectionTimeoutSeconds: timeoutSeconds });
     };
     const summaryLines = [
         masterEnabledState.value ? text.summaryMasterEnabled : text.summaryMasterDisabled,
@@ -286,10 +339,10 @@ function Screen(ctx) {
         ]),
         createSectionTitle(ctx, "settings", text.masterSectionTitle),
         createToggleCard(ctx, text.masterToggleTitle, text.masterToggleDescription, masterEnabledState.value, checked => {
-            persistSettings({ masterEnabled: checked });
+            return persistSettings({ masterEnabled: checked });
         }),
         createToggleCard(ctx, text.persistToggleTitle, text.persistToggleDescription, persistInjectedContentState.value, checked => {
-            persistSettings({ persistInjectedContent: checked });
+            return persistSettings({ persistInjectedContent: checked });
         }),
         createInjectionTimeoutConfigSection(ctx, text, injectionTimeoutInputState.value, value => {
             injectionTimeoutInputState.set(value);
@@ -301,7 +354,7 @@ function Screen(ctx) {
                 subtitle: text.timeToggleDescription,
                 checked: injectTimeState.value,
                 onCheckedChange: checked => {
-                    persistSettings({ injectTime: checked });
+                    return persistSettings({ injectTime: checked });
                 },
             },
             {
@@ -309,7 +362,7 @@ function Screen(ctx) {
                 subtitle: text.batteryToggleDescription,
                 checked: injectBatteryState.value,
                 onCheckedChange: checked => {
-                    persistSettings({ injectBattery: checked });
+                    return persistSettings({ injectBattery: checked });
                 },
             },
             {
@@ -317,7 +370,7 @@ function Screen(ctx) {
                 subtitle: text.weatherToggleDescription,
                 checked: injectWeatherState.value,
                 onCheckedChange: checked => {
-                    persistSettings({ injectWeather: checked });
+                    return persistSettings({ injectWeather: checked });
                 },
             },
             {
@@ -325,7 +378,7 @@ function Screen(ctx) {
                 subtitle: text.locationToggleDescription,
                 checked: injectLocationState.value,
                 onCheckedChange: checked => {
-                    persistSettings({ injectLocation: checked });
+                    return persistSettings({ injectLocation: checked });
                 },
             },
             {
@@ -334,7 +387,7 @@ function Screen(ctx) {
                 checked: usePreciseLocationState.value,
                 enabled: injectLocationState.value,
                 onCheckedChange: checked => {
-                    persistSettings({ usePreciseLocation: checked });
+                    return persistSettings({ usePreciseLocation: checked });
                 },
             },
             {
@@ -342,7 +395,7 @@ function Screen(ctx) {
                 subtitle: text.currentScreenAppToggleDescription,
                 checked: injectCurrentScreenAppState.value,
                 onCheckedChange: checked => {
-                    persistSettings({ injectCurrentScreenApp: checked });
+                    return persistSettings({ injectCurrentScreenApp: checked });
                 },
             },
             {
@@ -350,7 +403,7 @@ function Screen(ctx) {
                 subtitle: text.recentAppUsageToggleDescription,
                 checked: injectRecentAppUsageState.value,
                 onCheckedChange: checked => {
-                    persistSettings({ injectRecentAppUsage: checked });
+                    return persistSettings({ injectRecentAppUsage: checked });
                 },
             },
             {
@@ -358,7 +411,7 @@ function Screen(ctx) {
                 subtitle: text.screenTextToggleDescription,
                 checked: injectScreenTextState.value,
                 onCheckedChange: checked => {
-                    persistSettings({ injectScreenText: checked });
+                    return persistSettings({ injectScreenText: checked });
                 },
             },
             {
@@ -366,7 +419,7 @@ function Screen(ctx) {
                 subtitle: text.notificationsToggleDescription,
                 checked: injectNotificationsState.value,
                 onCheckedChange: checked => {
-                    persistSettings({ injectNotifications: checked });
+                    return persistSettings({ injectNotifications: checked });
                 },
             },
             {
@@ -374,11 +427,11 @@ function Screen(ctx) {
                 subtitle: text.memoryToggleDescription,
                 checked: injectMemoryState.value,
                 onCheckedChange: checked => {
-                    persistSettings({ injectMemory: checked });
+                    return persistSettings({ injectMemory: checked });
                 },
             },
         ], createMemoryConfigSection(ctx, text, injectMemoryState.value, allowRepeatedMemorySearchState.value, checked => {
-            persistSettings({ allowRepeatedMemorySearch: checked });
+            return persistSettings({ allowRepeatedMemorySearch: checked });
         }, memoryLimitInputState.value, value => {
             memoryLimitInputState.set(value);
         }, applyMemorySettings)),

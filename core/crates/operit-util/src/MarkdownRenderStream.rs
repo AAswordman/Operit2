@@ -108,6 +108,19 @@ impl MarkdownRenderEventStream {
         events
     }
 
+    /// Restores the parser state for the exact content retained after a rollback.
+    pub fn restoreContent(&mut self, content: &str) {
+        let chatId = self.chatId.clone();
+        let parentBlockId = self.parentBlockId;
+        let parseXmlChildren = self.parseXmlChildren;
+        *self = match parentBlockId {
+            Some(parentBlockId) => Self::child(chatId, parentBlockId),
+            None => Self::new(chatId),
+        };
+        self.parseXmlChildren = parseXmlChildren;
+        let _ = self.pushChunk(content);
+    }
+
     pub fn pushChunk(&mut self, chunk: &str) -> Vec<MarkdownStreamEvent> {
         let mut events = vec![MarkdownStreamEvent {
             chatId: self.chatId.clone(),
@@ -624,5 +637,25 @@ mod tests {
             }),
             "tool_result XML should emit as a top-level markdown block immediately after tool"
         );
+    }
+
+    #[test]
+    fn restores_inline_state_after_a_revision_rollback() {
+        let mut stream = MarkdownRenderEventStream::new("chat".to_string());
+
+        let _ = stream.pushChunk("plain ");
+        let _ = stream.pushChunk("**discarded");
+        stream.restoreContent("plain ");
+        let events = stream.pushChunk("**replacement");
+
+        let inline_start_index = events
+            .iter()
+            .position(|event| event.eventType == "markdownInlineStart")
+            .expect("replacement inline must start after the rollback");
+        let inline_chunk_index = events
+            .iter()
+            .position(|event| event.eventType == "markdownInlineChunk")
+            .expect("replacement inline must emit content after the rollback");
+        assert!(inline_start_index < inline_chunk_index);
     }
 }

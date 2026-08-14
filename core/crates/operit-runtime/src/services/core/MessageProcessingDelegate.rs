@@ -32,7 +32,7 @@ use operit_providers::chat::EnhancedAIService::{
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 use operit_tools::tools::ToolProgressBus::ToolProgressBus;
 use operit_util::stream::HotStream::SharedStream;
-use operit_util::stream::RevisableTextStream::{TextStreamEventCarrier, TextStreamEventType};
+use operit_util::stream::RevisableTextStream::{ResponseStreamItem, RevisableTextStream};
 use operit_util::stream::Stream::Stream;
 use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_util::AppLogger::AppLogger;
@@ -673,8 +673,7 @@ impl MessageProcessingDelegate {
         AIMessageManager::cancelOperation(chatId.clone()).await;
         self.withExistingRuntime(Some(chatId.clone()), |runtime| {
             if let Some(responseStream) = runtime.responseStream.as_ref() {
-                responseStream.upstream.close();
-                responseStream.event_channel.close();
+                responseStream.close();
             }
             runtime.isLoading = false;
             runtime.responseStream = None;
@@ -1088,7 +1087,6 @@ impl MessageProcessingDelegate {
         let workerTurnOptions = request.turnOptions.clone();
         let workerAiMessage = Arc::new(Mutex::new(aiMessage.clone()));
         let workerResponseStream = sharedResponseStream.clone();
-        let workerEventCollector = sharedResponseStream.event_channel().clone();
         let workerRevisionTracker = Arc::new(Mutex::new(TextStreamRevisionTracker::new("")));
         let workerPartStream = Arc::new(Mutex::new(AssistantMarkupStreamState::new()));
         let workerService = request.enhancedAiService.clone();
@@ -1148,18 +1146,35 @@ impl MessageProcessingDelegate {
         let completionMessageProcessingDelegate = workerMessageProcessingDelegate.clone();
         let completionWorkspaceToolHookSession = workerWorkspaceToolHookSession.clone();
         let completionWorkspaceToolHookHandler = workerWorkspaceToolHookHandler.clone();
-        let completionStreamingSnapshotPersistAt = workerStreamingSnapshotPersistAt.clone();
         let completionFirstResponseElapsed = workerFirstResponseElapsed.clone();
-        let completionEventCollector = workerEventCollector.clone();
         let completionResponseStream = workerResponseStream.clone();
-        let mut responseUpstream = workerResponseStream.upstream.clone();
+        let mut responseItems = workerResponseStream.clone();
         defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeAsyncTask(
                 "message-response-collection",
                 Box::new(move || {
                     Box::pin(async move {
-                        responseUpstream
-                            .collect(&mut move |chunk| {
+                        responseItems
+                            .collect_ordered(&mut move |item| {
+                                let chunk = match item {
+                                    ResponseStreamItem::Chunk(chunk) => chunk,
+                                    ResponseStreamItem::Revision(event) => {
+                                        let mut tracker = chunkRevisionTracker
+                                            .lock()
+                                            .expect("revision tracker mutex poisoned");
+                                        match event.event_type {
+                                            operit_util::stream::RevisableTextStream::TextStreamEventType::Savepoint => {
+                                                tracker.savepoint(&event.id);
+                                            }
+                                            operit_util::stream::RevisableTextStream::TextStreamEventType::Rollback => {
+                                                tracker
+                                                    .rollback(&event.id)
+                                                    .expect("response rollback must reference an active savepoint");
+                                            }
+                                        }
+                                        return;
+                                    }
+                                };
                                 ChainLogger::info(
                                     RECEIVE_CHAIN,
                                     "receive.stream.collect.start",
@@ -1207,8 +1222,8 @@ impl MessageProcessingDelegate {
                                             let mut partStream = chunkPartStream
                                                 .lock()
                                                 .expect("assistant message-part stream mutex poisoned");
-                                            partStream.pushSnapshot(&content).expect(
-                                                "streaming assistant snapshot must extend message-part source",
+                                            partStream.resetToSnapshot(&content).expect(
+                                                "streaming assistant snapshot must parse into message parts",
                                             );
                                             partStream.parts().to_vec()
                                         };
@@ -1279,58 +1294,6 @@ impl MessageProcessingDelegate {
                             );
                             return;
                         }
-                        for event in completionEventCollector.replay_cache() {
-                            match event.event_type {
-                                TextStreamEventType::Savepoint => {
-                                    completionRevisionTracker
-                                        .lock()
-                                        .expect("revision tracker mutex poisoned")
-                                        .savepoint(&event.id);
-                                }
-                                TextStreamEventType::Rollback => {
-                                    let mut tracker = completionRevisionTracker
-                                        .lock()
-                                        .expect("revision tracker mutex poisoned");
-                                    let rolled_back = tracker.rollback(&event.id).is_some();
-                                    let shouldPersist = rolled_back
-                                        && MessageProcessingDelegate::claimStreamingPersistenceSnapshot(
-                                            &completionTurnOptions,
-                                            &completionStreamingSnapshotPersistAt,
-                                        );
-                                    if rolled_back {
-                                        let snapshot = tracker.current_content().to_owned();
-                                        drop(tracker);
-                                        let workerAiMessage = {
-                                            let parts = {
-                                                let mut partStream = completionPartStream
-                                                    .lock()
-                                                    .expect("assistant message-part stream mutex poisoned");
-                                                partStream.resetToSnapshot(&snapshot).expect(
-                                                    "rolled-back assistant snapshot must parse into message parts",
-                                                );
-                                                partStream.parts().to_vec()
-                                            };
-                                            let mut workerAiMessage = completionAiMessage
-                                                .lock()
-                                                .expect("worker AI message mutex poisoned");
-                                            workerAiMessage.parts = parts;
-                                            workerAiMessage.clone()
-                                        };
-                                        let mut workerChatHistoryDelegate =
-                                            completionChatHistoryDelegate
-                                                .lock()
-                                                .expect("worker chat history mutex poisoned");
-                                        if shouldPersist {
-                                            MessageProcessingDelegate::persistStreamingSnapshot(
-                                                &mut workerChatHistoryDelegate,
-                                                &completionChatId,
-                                                &workerAiMessage,
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
                         let finalContent = completionRevisionTracker
                             .lock()
                             .expect("revision tracker mutex poisoned")
@@ -1353,8 +1316,8 @@ impl MessageProcessingDelegate {
                                 let mut partStream = completionPartStream
                                     .lock()
                                     .expect("assistant message-part stream mutex poisoned");
-                                partStream.pushSnapshot(&finalContent).expect(
-                                    "completed assistant snapshot must extend message-part source",
+                                partStream.resetToSnapshot(&finalContent).expect(
+                                    "completed assistant snapshot must parse into message parts",
                                 );
                                 partStream.finish().expect(
                                     "completed assistant markup must parse into message parts",

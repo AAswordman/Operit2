@@ -404,7 +404,7 @@ MessageParseResult parseMessageContent(String content) {
     final filename = match.group(2)!;
     final type = match.group(3)!;
     final size = _parseLong(match.group(4));
-    final attachmentContent = match.group(5) ?? '';
+    final attachmentContent = decodeChatXmlText(match.group(5) ?? '');
     final attachment = AttachmentData(
       id: id,
       filename: filename,

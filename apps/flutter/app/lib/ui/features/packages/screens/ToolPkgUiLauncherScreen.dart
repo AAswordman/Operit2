@@ -123,13 +123,6 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       _loading = true;
       _error = null;
     });
-    final renderStopwatch = Stopwatch()..start();
-    debugPrint(
-      'ToolPkg compose_dsl render start: '
-      'package=${widget.plugin.packageName}, '
-      'module=$uiModuleId, '
-      'context=$executionContextKey',
-    );
     try {
       final previousExecutionContext = _activeExecutionContext;
       if (previousExecutionContext != null &&
@@ -178,14 +171,6 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
         ),
         envOverrides: const <String, String>{},
       );
-      renderStopwatch.stop();
-      debugPrint(
-        'ToolPkg compose_dsl render finish: '
-        'package=${widget.plugin.packageName}, '
-        'module=$uiModuleId, '
-        'elapsedMs=${renderStopwatch.elapsedMilliseconds}, '
-        'resultChars=${raw?.length ?? 0}',
-      );
       if (!_isCurrentRouteLoad(routeLoadGeneration)) {
         return;
       }
@@ -198,16 +183,9 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
         _loading = false;
       });
     } catch (error, stackTrace) {
-      renderStopwatch.stop();
       if (!_isCurrentRouteLoad(routeLoadGeneration)) {
         return;
       }
-      debugPrint(
-        'ToolPkg compose_dsl render failure: '
-        'package=${widget.plugin.packageName}, '
-        'module=$uiModuleId, '
-        'elapsedMs=${renderStopwatch.elapsedMilliseconds}',
-      );
       _printComposeError('render', error, stackTrace);
       setState(() {
         _error = error.toString();
@@ -287,17 +265,9 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       routeInstanceId: routeInstanceId,
     );
     Object? latestActionResult;
-    final actionStopwatch = Stopwatch()..start();
-    debugPrint(
-      'ToolPkg compose_dsl action start: '
-      'package=${widget.plugin.packageName}, '
-      'module=$uiModuleId, '
-      'action=$actionId, '
-      'context=$executionContextKey',
-    );
     try {
-      final events = await _packageManager
-          .dispatchToolPkgComposeDslActionEvents(
+      await for (final event
+          in _packageManager.dispatchToolPkgComposeDslActionEventsChanges(
             contextKey: executionContextKey,
             containerPackageName: widget.plugin.packageName,
             actionId: actionId,
@@ -308,29 +278,12 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
               executionContextKey: executionContextKey,
             ),
             envOverrides: const <String, String>{},
-          );
-      actionStopwatch.stop();
-      debugPrint(
-        'ToolPkg compose_dsl action events received: '
-        'package=${widget.plugin.packageName}, '
-        'module=$uiModuleId, '
-        'action=$actionId, '
-        'elapsedMs=${actionStopwatch.elapsedMilliseconds}, '
-        'eventCount=${events.length}',
-      );
-      for (final event in events) {
+          )) {
         if (!mounted) {
           return latestActionResult;
         }
-        final parsedEvent = _ParsedComposeDslActionEvent.parse(event);
+        final parsedEvent = _ParsedComposeDslActionEvent.parse(event as String);
         final phase = parsedEvent.phase;
-        debugPrint(
-          'ToolPkg compose_dsl action event: '
-          'package=${widget.plugin.packageName}, '
-          'module=$uiModuleId, '
-          'action=$actionId, '
-          'phase=${phase ?? '<missing>'}',
-        );
         if (phase == 'intermediate' || phase == 'final') {
           latestActionResult = parsedEvent.actionResult;
           final result = parsedEvent.renderResult;
@@ -362,17 +315,9 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       }
       return latestActionResult;
     } catch (error, stackTrace) {
-      actionStopwatch.stop();
       if (!mounted) {
         return latestActionResult;
       }
-      debugPrint(
-        'ToolPkg compose_dsl action failure: '
-        'package=${widget.plugin.packageName}, '
-        'module=$uiModuleId, '
-        'action=$actionId, '
-        'elapsedMs=${actionStopwatch.elapsedMilliseconds}',
-      );
       _printComposeError('action:$actionId', error, stackTrace);
       setState(() {
         _error = error.toString();
@@ -708,18 +653,22 @@ class _ComposeDslRenderer extends StatelessWidget {
         );
       case 'Row':
         final contentNodes = _slotNodes('content', useChildren: true);
-        final children = _buildNodeWidgets(
-          contentNodes,
-          pathPrefix: '$nodePath:content',
-          modifierScope: _ComposeDslModifierScope.row,
-        );
-        return Row(
-          mainAxisSize: _nodesRequireRowFlex(contentNodes)
-              ? MainAxisSize.max
-              : MainAxisSize.min,
-          crossAxisAlignment: _crossAxis(node.props['verticalAlignment']),
-          mainAxisAlignment: _mainAxis(node.props['horizontalArrangement']),
-          children: children,
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final children = _buildRowChildren(
+              contentNodes,
+              pathPrefix: '$nodePath:content',
+              boundedWidth: constraints.hasBoundedWidth,
+            );
+            return Row(
+              mainAxisSize: _nodesRequireRowFlex(contentNodes)
+                  ? MainAxisSize.max
+                  : MainAxisSize.min,
+              crossAxisAlignment: _crossAxis(node.props['verticalAlignment']),
+              mainAxisAlignment: _mainAxis(node.props['horizontalArrangement']),
+              children: children,
+            );
+          },
         );
       case 'LazyRow':
         return SingleChildScrollView(
@@ -2312,6 +2261,34 @@ class _ComposeDslRenderer extends StatelessWidget {
             modifierScope: modifierScope,
           ),
         )
+        .toList(growable: false);
+  }
+
+  /// Wraps direct text children in loose flex when the Row has finite width.
+  List<Widget> _buildRowChildren(
+    List<_ComposeDslNode> nodes, {
+    required String pathPrefix,
+    required bool boundedWidth,
+  }) {
+    final widgets = _buildNodeWidgets(
+      nodes,
+      pathPrefix: pathPrefix,
+      modifierScope: _ComposeDslModifierScope.row,
+    );
+    if (!boundedWidth) {
+      return widgets;
+    }
+    return nodes
+        .asMap()
+        .entries
+        .map((entry) {
+          final child = entry.value;
+          if ((child.type == 'Text' || child.type == 'BasicText') &&
+              _rowFlexSpec(child.props) == null) {
+            return Flexible(fit: FlexFit.loose, child: widgets[entry.key]);
+          }
+          return widgets[entry.key];
+        })
         .toList(growable: false);
   }
 

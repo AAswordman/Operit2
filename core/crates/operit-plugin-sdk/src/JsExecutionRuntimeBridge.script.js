@@ -85,6 +85,14 @@
 
     function parseToolResult(result, isError) {
         if (isError) {
+            if (typeof result === 'string') {
+                try {
+                    var parsedError = JSON.parse(result);
+                    if (parsedError && typeof parsedError === 'object') {
+                        result = parsedError;
+                    }
+                } catch (_error) {}
+            }
             if (result && typeof result === 'object' && result.success === false) {
                 throw new Error(asString(result.message).trim());
             }
@@ -99,12 +107,13 @@
         if (typeof result === 'string' && result.length > 1) {
             var first = result.charAt(0);
             if (first === '{' || first === '[') {
+                var parsed;
                 try {
-                    var parsed = JSON.parse(result);
-                    return parseToolResult(parsed, false);
+                    parsed = JSON.parse(result);
                 } catch (_error) {
                     return result;
                 }
+                return parseToolResult(parsed, false);
             }
         }
         return result;

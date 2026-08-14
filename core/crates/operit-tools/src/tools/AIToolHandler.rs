@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Condvar, Mutex};
 
 use operit_host_api::HostEnvironmentDescriptor;
 use operit_host_api::HostManager::HostManager;
@@ -49,10 +49,12 @@ pub enum ToolRegistrationVisibility {
 #[derive(Clone)]
 pub struct AIToolHandler {
     inner: Arc<Mutex<AIToolHandlerState>>,
+    executorAvailability: Arc<Condvar>,
 }
 
 pub struct AIToolHandlerState {
     availableTools: BTreeMap<String, Box<dyn ToolExecutor>>,
+    executingTools: BTreeSet<String>,
     toolVisibility: BTreeMap<String, ToolRegistrationVisibility>,
     unavailableBuiltinTools: BTreeMap<BuiltinToolName, String>,
     defaultToolsRegistered: bool,
@@ -99,6 +101,7 @@ impl AIToolHandler {
         Self {
             inner: Arc::new(Mutex::new(AIToolHandlerState {
                 availableTools: BTreeMap::new(),
+                executingTools: BTreeSet::new(),
                 toolVisibility: BTreeMap::new(),
                 unavailableBuiltinTools: BTreeMap::new(),
                 defaultToolsRegistered: false,
@@ -108,6 +111,7 @@ impl AIToolHandler {
                 toolPermissionSystem: ToolPermissionSystem::getInstance(),
                 packageManager: None,
             })),
+            executorAvailability: Arc::new(Condvar::new()),
         }
     }
 
@@ -500,11 +504,43 @@ impl AIToolHandler {
     /// Returns whether a tool executor is already registered.
     #[allow(non_snake_case)]
     pub fn hasToolExecutor(&self, toolName: &str) -> bool {
-        self.inner
-            .lock()
-            .expect("AIToolHandler mutex poisoned")
-            .availableTools
-            .contains_key(toolName)
+        let guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
+        guard.availableTools.contains_key(toolName) || guard.executingTools.contains(toolName)
+    }
+
+    /// Acquires one named executor, waiting for an in-flight invocation of that same tool to finish.
+    fn takeToolExecutorForExecution(&self, toolName: &str) -> Option<Box<dyn ToolExecutor>> {
+        let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
+        loop {
+            if let Some(executor) = guard.availableTools.remove(toolName) {
+                assert!(
+                    guard.executingTools.insert(toolName.to_string()),
+                    "Tool executor was already marked executing: {toolName}"
+                );
+                return Some(executor);
+            }
+            if !guard.executingTools.contains(toolName) {
+                return None;
+            }
+            guard = self
+                .executorAvailability
+                .wait(guard)
+                .expect("AIToolHandler mutex poisoned while waiting for tool executor");
+        }
+    }
+
+    /// Restores one completed executor and wakes calls queued for the same tool name.
+    fn restoreToolExecutorAfterExecution(&self, toolName: String, executor: Box<dyn ToolExecutor>) {
+        let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
+        assert!(
+            guard.executingTools.remove(&toolName),
+            "Tool executor was not marked executing: {toolName}"
+        );
+        assert!(
+            guard.availableTools.insert(toolName, executor).is_none(),
+            "Tool executor was unexpectedly registered while executing"
+        );
+        self.executorAvailability.notify_all();
     }
 
     /// Ensures default or package tools are registered, then reports whether a tool exists.
@@ -832,13 +868,7 @@ impl AIToolHandler {
             return None;
         }
 
-        let Some(mut executor) = ({
-            self.inner
-                .lock()
-                .expect("AIToolHandler mutex poisoned")
-                .availableTools
-                .remove(&tool.name)
-        }) else {
+        let Some(mut executor) = self.takeToolExecutorForExecution(&tool.name) else {
             ChainLogger::warn(
                 TOOL_CHAIN,
                 "tool.stream.not_registered",
@@ -912,11 +942,7 @@ impl AIToolHandler {
             }]
         };
 
-        self.inner
-            .lock()
-            .expect("AIToolHandler mutex poisoned")
-            .availableTools
-            .insert(tool.name.clone(), executor);
+        self.restoreToolExecutorAfterExecution(tool.name.clone(), executor);
         let elapsedMs = operit_host_api::TimeUtils::currentTimeMillis().saturating_sub(startMs);
         let finalResult = collected.last().cloned();
         if let Some(finalResult) = finalResult {
@@ -1010,13 +1036,7 @@ impl AIToolHandler {
             return result;
         }
         self.getToolExecutorOrActivate(&tool.name);
-        let Some(mut executor) = ({
-            self.inner
-                .lock()
-                .expect("AIToolHandler mutex poisoned")
-                .availableTools
-                .remove(&tool.name)
-        }) else {
+        let Some(mut executor) = self.takeToolExecutorForExecution(&tool.name) else {
             let notFoundResult = ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
@@ -1049,11 +1069,7 @@ impl AIToolHandler {
                 "tool.execute.validation_failed",
                 &[("tool", tool.name.clone()), ("error", validationError)],
             );
-            self.inner
-                .lock()
-                .expect("AIToolHandler mutex poisoned")
-                .availableTools
-                .insert(tool.name.clone(), executor);
+            self.restoreToolExecutorAfterExecution(tool.name.clone(), executor);
             return validationFailedResult;
         }
 
@@ -1117,11 +1133,7 @@ impl AIToolHandler {
                 );
             }
         }
-        self.inner
-            .lock()
-            .expect("AIToolHandler mutex poisoned")
-            .availableTools
-            .insert(tool.name.clone(), executor);
+        self.restoreToolExecutorAfterExecution(tool.name.clone(), executor);
         result
     }
 

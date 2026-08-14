@@ -50,11 +50,15 @@ impl WindowsAudioPlaybackHost {
         let positionMs = mciCommandWithResponse(&format!("status {} position", session.alias))?
             .trim()
             .parse::<i64>()
-            .map_err(|error| HostError::new(format!("Windows music position parse failed: {error}")))?;
+            .map_err(|error| {
+                HostError::new(format!("Windows music position parse failed: {error}"))
+            })?;
         let durationMs = mciCommandWithResponse(&format!("status {} length", session.alias))?
             .trim()
             .parse::<i64>()
-            .map_err(|error| HostError::new(format!("Windows music duration parse failed: {error}")))?;
+            .map_err(|error| {
+                HostError::new(format!("Windows music duration parse failed: {error}"))
+            })?;
         Ok(MusicPlaybackStatus {
             state,
             source: Some(session.source.clone()),
@@ -264,14 +268,18 @@ fn playOpenedAudio(alias: &str) -> HostResult<u64> {
     let durationMillis = mciCommandWithResponse(&format!("status {alias} length"))?
         .trim()
         .parse::<u64>()
-        .map_err(|error| HostError::new(format!("Failed to read Windows audio duration: {error}")))?;
+        .map_err(|error| {
+            HostError::new(format!("Failed to read Windows audio duration: {error}"))
+        })?;
     mciCommand(&format!("play {alias}"))?;
     Ok(durationMillis)
 }
 
 fn quotedMciPath(path: &str) -> HostResult<String> {
     if path.chars().any(|value| value == '"') {
-        return Err(HostError::new("audio path contains invalid quote character"));
+        return Err(HostError::new(
+            "audio path contains invalid quote character",
+        ));
     }
     Ok(format!("\"{path}\""))
 }
@@ -320,9 +328,8 @@ fn mciCommandWithResponse(command: &str) -> HostResult<String> {
 
 fn mciErrorMessage(errorCode: u32) -> String {
     let mut buffer = vec![0u16; 512];
-    let succeeded = unsafe {
-        mciGetErrorStringW(errorCode, buffer.as_mut_ptr(), buffer.len() as u32)
-    };
+    let succeeded =
+        unsafe { mciGetErrorStringW(errorCode, buffer.as_mut_ptr(), buffer.len() as u32) };
     if succeeded == 0 {
         return format!("MCI error code {errorCode}");
     }

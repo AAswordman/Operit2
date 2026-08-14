@@ -152,7 +152,17 @@ class _MessageCopyPreviewSheetState extends State<MessageCopyPreviewSheet> {
 
   /// Copies the selected representation and reports completion in the sheet.
   Future<void> _copyText(BuildContext context, String text) async {
-    await Clipboard.setData(ClipboardData(text: text));
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+    } on PlatformException catch (error) {
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text('复制失败：${error.message ?? error.code}')),
+      );
+      return;
+    }
     if (!context.mounted) {
       return;
     }

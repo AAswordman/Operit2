@@ -2352,6 +2352,7 @@ dependencies = [
  "uuid",
  "windows",
  "windows-collections",
+ "windows-future",
  "windows-sys 0.59.0",
  "zip",
 ]

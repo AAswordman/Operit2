@@ -7,8 +7,8 @@ pub mod registry;
 pub mod tools;
 
 pub use host_runtime_event::WindowsHostRuntimeEventHost;
-pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as WindowsHostRuntimeEventSchedulerHost;
 pub use operit_host_native_common::NativeHostJavaScriptRuntimeHost as WindowsHostJavaScriptRuntimeHost;
+pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as WindowsHostRuntimeEventSchedulerHost;
 pub use operit_host_native_common::NativeHostRuntimeTaskSchedulerHost as WindowsHostRuntimeTaskSchedulerHost;
 pub use tools::audio::WindowsAudioPlaybackHost;
 pub use tools::bluetooth::WindowsBluetoothHost;
@@ -30,10 +30,11 @@ pub fn createRuntimeHostManager(
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
         runtimeRoot.clone(),
     ));
-    let runtimeStorageWriteHost = Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
-        runtimeRoot.clone(),
-        workspaceRoot.clone(),
-    ));
+    let runtimeStorageWriteHost =
+        Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
+            runtimeRoot.clone(),
+            workspaceRoot.clone(),
+        ));
     let runtimeStorageHost = Arc::new(WindowsRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();

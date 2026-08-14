@@ -3,6 +3,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 
@@ -130,6 +131,7 @@ void main() {
       'push-1',
       <Object?>['runtime', 'browser'],
       'interact',
+      <String, Object?>{},
     ]);
     expect(
       decodeCoreLink(encodeNativeCorePushItem('push-1', 4, true)),
@@ -163,6 +165,27 @@ void main() {
         null,
       ],
     );
+  });
+
+  test('browser reverse stream items use their serializable map form', () {
+    const command = RuntimeBrowserCommand(
+      action: 'interact',
+      sessionId: 'session-1',
+      url: null,
+      script: null,
+      payloadJson: '{"type":"pointer"}',
+      userAgent: null,
+      headers: <String, String>{},
+    );
+
+    final decoded =
+        decodeCoreLink(
+              encodeNativeCorePushItem('browser-push-1', 0, command.toJson()),
+            )
+            as List<Object?>;
+
+    expect(decoded[2], command.toJson());
+    expect(decoded[2], isNot(isA<RuntimeBrowserCommand>()));
   });
 
   test('native watch results and events decode without map conversion', () {

@@ -70,8 +70,12 @@ class _ParamItemView extends StatelessWidget {
                   height: 24,
                 ),
                 padding: EdgeInsets.zero,
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: param.value));
+                onPressed: () async {
+                  try {
+                    await Clipboard.setData(ClipboardData(text: param.value));
+                  } on PlatformException {
+                    return;
+                  }
                 },
                 icon: Icon(
                   Icons.content_copy,

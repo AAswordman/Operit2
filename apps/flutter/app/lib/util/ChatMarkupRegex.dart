@@ -80,3 +80,13 @@ class ChatMarkupRegex {
     return _openingTagNameRegex.firstMatch(xml.trim())?.group(1);
   }
 }
+
+/// Decodes XML entities from attachment text after markup parsing.
+String decodeChatXmlText(String input) {
+  return input
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&apos;', "'")
+      .replaceAll('&amp;', '&');
+}

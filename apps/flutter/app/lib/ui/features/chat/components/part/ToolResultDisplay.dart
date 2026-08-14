@@ -59,17 +59,27 @@ class ToolResultDisplay extends StatelessWidget {
                           onDismiss: () {
                             Navigator.of(dialogContext).pop();
                           },
-                          onCopy: () {
-                            Clipboard.setData(ClipboardData(text: result));
+                          onCopy: () async {
+                            try {
+                              await Clipboard.setData(
+                                ClipboardData(text: result),
+                              );
+                            } on PlatformException {
+                              return;
+                            }
                           },
                         );
                       },
                     );
                   }
                 : null,
-            onCopyClick: hasContent
-                ? () {
-                    Clipboard.setData(ClipboardData(text: result));
+                onCopyClick: hasContent
+                ? () async {
+                    try {
+                      await Clipboard.setData(ClipboardData(text: result));
+                    } on PlatformException {
+                      return;
+                    }
                   }
                 : null,
           ),

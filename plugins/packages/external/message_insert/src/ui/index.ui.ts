@@ -24,7 +24,7 @@ async function readSettings(): Promise<ExtraInfoInjectionSettings> {
 async function saveSettingsInMain(
   patch: Partial<ExtraInfoInjectionSettings>
 ): Promise<ExtraInfoInjectionSettings> {
-  return saveSettings(patch);
+  return withContext("main", { patch }, () => saveSettings(patch));
 }
 
 function createSectionTitle(ctx: ComposeDslContext, icon: string, title: string): ComposeNode {
@@ -318,22 +318,81 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     injectionTimeoutInputState.set(String(next.injectionTimeoutSeconds));
   };
 
-  const persistSettings = async (
-    patch: Partial<ExtraInfoInjectionSettings>,
-    successMessage = ""
-  ): Promise<void> => {
-    try {
-      syncSettings(await saveSettingsInMain(patch));
-      errorMessageState.set("");
-      successMessageState.set(successMessage);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error || "unknown");
-      successMessageState.set("");
-      errorMessageState.set(`${text.saveErrorPrefix}${message}`);
+  /// Applies only the fields changed by the current interaction to the local DSL state.
+  const syncSettingsPatch = (
+    patch: Partial<ExtraInfoInjectionSettings>
+  ): void => {
+    if (patch.masterEnabled !== undefined) {
+      masterEnabledState.set(Boolean(patch.masterEnabled));
+    }
+    if (patch.persistInjectedContent !== undefined) {
+      persistInjectedContentState.set(Boolean(patch.persistInjectedContent));
+    }
+    if (patch.injectTime !== undefined) {
+      injectTimeState.set(Boolean(patch.injectTime));
+    }
+    if (patch.injectBattery !== undefined) {
+      injectBatteryState.set(Boolean(patch.injectBattery));
+    }
+    if (patch.injectWeather !== undefined) {
+      injectWeatherState.set(Boolean(patch.injectWeather));
+    }
+    if (patch.injectLocation !== undefined) {
+      injectLocationState.set(Boolean(patch.injectLocation));
+    }
+    if (patch.usePreciseLocation !== undefined) {
+      usePreciseLocationState.set(Boolean(patch.usePreciseLocation));
+    }
+    if (patch.injectCurrentScreenApp !== undefined) {
+      injectCurrentScreenAppState.set(Boolean(patch.injectCurrentScreenApp));
+    }
+    if (patch.injectRecentAppUsage !== undefined) {
+      injectRecentAppUsageState.set(Boolean(patch.injectRecentAppUsage));
+    }
+    if (patch.injectScreenText !== undefined) {
+      injectScreenTextState.set(Boolean(patch.injectScreenText));
+    }
+    if (patch.injectNotifications !== undefined) {
+      injectNotificationsState.set(Boolean(patch.injectNotifications));
+    }
+    if (patch.injectMemory !== undefined) {
+      injectMemoryState.set(Boolean(patch.injectMemory));
+    }
+    if (patch.allowRepeatedMemorySearch !== undefined) {
+      allowRepeatedMemorySearchState.set(
+        Boolean(patch.allowRepeatedMemorySearch)
+      );
+    }
+    if (patch.memoryLimit !== undefined) {
+      const memoryLimit = Math.floor(Number(patch.memoryLimit));
+      memoryLimitState.set(memoryLimit);
+      memoryLimitInputState.set(String(memoryLimit));
+    }
+    if (patch.injectionTimeoutSeconds !== undefined) {
+      const timeoutSeconds = Number(patch.injectionTimeoutSeconds);
+      injectionTimeoutSecondsState.set(timeoutSeconds);
+      injectionTimeoutInputState.set(String(timeoutSeconds));
     }
   };
 
-  const applyMemorySettings = (): void => {
+  /// Updates the Compose state immediately and persists the same patch asynchronously.
+  const persistSettings = (
+    patch: Partial<ExtraInfoInjectionSettings>,
+    successMessage = ""
+  ): Promise<void> => {
+    syncSettingsPatch(patch);
+    errorMessageState.set("");
+    successMessageState.set(successMessage);
+    return saveSettingsInMain(patch)
+      .then(() => undefined)
+      .catch(error => {
+        const message = error instanceof Error ? error.message : String(error || "unknown");
+        successMessageState.set("");
+        errorMessageState.set(`${text.saveErrorPrefix}${message}`);
+      });
+  };
+
+  const applyMemorySettings = (): Promise<void> | void => {
     const limit = Number(memoryLimitInputState.value.trim());
 
     if (!Number.isFinite(limit) || limit < 1) {
@@ -342,12 +401,12 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
       return;
     }
 
-    persistSettings({
+    return persistSettings({
       memoryLimit: Math.floor(limit),
     });
   };
 
-  const applyInjectionTimeoutSettings = (): void => {
+  const applyInjectionTimeoutSettings = (): Promise<void> | void => {
     const timeoutSeconds = Number(injectionTimeoutInputState.value.trim());
 
     if (
@@ -361,7 +420,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
       return;
     }
 
-    void persistSettings({ injectionTimeoutSeconds: timeoutSeconds });
+    return persistSettings({ injectionTimeoutSeconds: timeoutSeconds });
   };
 
   const summaryLines = [
@@ -446,7 +505,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
       text.masterToggleDescription,
       masterEnabledState.value,
       checked => {
-        persistSettings({ masterEnabled: checked });
+        return persistSettings({ masterEnabled: checked });
       }
     ),
     createToggleCard(
@@ -455,7 +514,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
       text.persistToggleDescription,
       persistInjectedContentState.value,
       checked => {
-        persistSettings({ persistInjectedContent: checked });
+        return persistSettings({ persistInjectedContent: checked });
       }
     ),
     createInjectionTimeoutConfigSection(
@@ -477,7 +536,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           subtitle: text.timeToggleDescription,
           checked: injectTimeState.value,
           onCheckedChange: checked => {
-            persistSettings({ injectTime: checked });
+            return persistSettings({ injectTime: checked });
           },
         },
         {
@@ -485,7 +544,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           subtitle: text.batteryToggleDescription,
           checked: injectBatteryState.value,
           onCheckedChange: checked => {
-            persistSettings({ injectBattery: checked });
+            return persistSettings({ injectBattery: checked });
           },
         },
         {
@@ -493,7 +552,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           subtitle: text.weatherToggleDescription,
           checked: injectWeatherState.value,
           onCheckedChange: checked => {
-            persistSettings({ injectWeather: checked });
+            return persistSettings({ injectWeather: checked });
           },
         },
         {
@@ -501,7 +560,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           subtitle: text.locationToggleDescription,
           checked: injectLocationState.value,
           onCheckedChange: checked => {
-            persistSettings({ injectLocation: checked });
+            return persistSettings({ injectLocation: checked });
           },
         },
         {
@@ -510,7 +569,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           checked: usePreciseLocationState.value,
           enabled: injectLocationState.value,
           onCheckedChange: checked => {
-            persistSettings({ usePreciseLocation: checked });
+            return persistSettings({ usePreciseLocation: checked });
           },
         },
         {
@@ -518,7 +577,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           subtitle: text.currentScreenAppToggleDescription,
           checked: injectCurrentScreenAppState.value,
           onCheckedChange: checked => {
-            persistSettings({ injectCurrentScreenApp: checked });
+            return persistSettings({ injectCurrentScreenApp: checked });
           },
         },
         {
@@ -526,7 +585,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           subtitle: text.recentAppUsageToggleDescription,
           checked: injectRecentAppUsageState.value,
           onCheckedChange: checked => {
-            persistSettings({ injectRecentAppUsage: checked });
+            return persistSettings({ injectRecentAppUsage: checked });
           },
         },
         {
@@ -534,7 +593,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           subtitle: text.screenTextToggleDescription,
           checked: injectScreenTextState.value,
           onCheckedChange: checked => {
-            persistSettings({ injectScreenText: checked });
+            return persistSettings({ injectScreenText: checked });
           },
         },
         {
@@ -542,7 +601,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           subtitle: text.notificationsToggleDescription,
           checked: injectNotificationsState.value,
           onCheckedChange: checked => {
-            persistSettings({ injectNotifications: checked });
+            return persistSettings({ injectNotifications: checked });
           },
         },
         {
@@ -550,7 +609,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           subtitle: text.memoryToggleDescription,
           checked: injectMemoryState.value,
           onCheckedChange: checked => {
-            persistSettings({ injectMemory: checked });
+            return persistSettings({ injectMemory: checked });
           },
         },
       ],
@@ -560,7 +619,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
         injectMemoryState.value,
         allowRepeatedMemorySearchState.value,
         checked => {
-          persistSettings({ allowRepeatedMemorySearch: checked });
+          return persistSettings({ allowRepeatedMemorySearch: checked });
         },
         memoryLimitInputState.value,
         value => {

@@ -817,19 +817,20 @@ bool IsCurrentProcessElevated() {
   return ok != 0 && elevation.TokenIsElevated != 0;
 }
 
-flutter::EncodableValue WindowsAdminRequirementSnapshot() {
-  flutter::EncodableMap item;
-  item[flutter::EncodableValue("id")] =
+/// Builds the Windows elevation permission status snapshot.
+flutter::EncodableValue WindowsOnboardingRequirementSnapshot() {
+  flutter::EncodableMap snapshot;
+  flutter::EncodableMap admin;
+  admin[flutter::EncodableValue("id")] =
       flutter::EncodableValue("windows.admin");
-  item[flutter::EncodableValue("status")] = flutter::EncodableValue(
+  admin[flutter::EncodableValue("status")] = flutter::EncodableValue(
       IsCurrentProcessElevated() ? "Satisfied" : "Missing");
-
-  flutter::EncodableMap result;
-  result[flutter::EncodableValue("windows.admin")] =
-      flutter::EncodableValue(item);
-  return flutter::EncodableValue(result);
+  snapshot[flutter::EncodableValue("windows.admin")] =
+      flutter::EncodableValue(admin);
+  return flutter::EncodableValue(snapshot);
 }
 
+/// Starts a Windows elevation request and treats UAC cancellation as a normal result.
 void RequestWindowsAdminAuthorization(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   wchar_t exe_path[MAX_PATH];
@@ -844,7 +845,12 @@ void RequestWindowsAdminAuthorization(
   HINSTANCE instance =
       ::ShellExecuteW(nullptr, L"runas", exe_path, nullptr, nullptr,
                       SW_SHOWNORMAL);
-  if (reinterpret_cast<INT_PTR>(instance) <= 32) {
+  const INT_PTR launch_status = reinterpret_cast<INT_PTR>(instance);
+  if (launch_status == SE_ERR_ACCESSDENIED) {
+    result->Success();
+    return;
+  }
+  if (launch_status <= 32) {
     result->Error("HOST_AUTHORIZATION_DENIED",
                   "Administrator launch was not approved");
     return;
@@ -1426,7 +1432,7 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
             result->Error("INVALID_HOST", "Invalid onboarding host");
             return;
           }
-          result->Success(WindowsAdminRequirementSnapshot());
+          result->Success(WindowsOnboardingRequirementSnapshot());
           return;
         }
         if (method_call.method_name().compare(
@@ -1438,13 +1444,17 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
             result->Error("INVALID_HOST", "Invalid onboarding host");
             return;
           }
-          if (requirement_id == nullptr ||
-              *requirement_id != "windows.admin") {
+          if (requirement_id == nullptr) {
             result->Error("INVALID_ONBOARDING_REQUIREMENT",
                           "Invalid onboarding requirement");
             return;
           }
-          RequestWindowsAdminAuthorization(std::move(result));
+          if (*requirement_id == "windows.admin") {
+            RequestWindowsAdminAuthorization(std::move(result));
+            return;
+          }
+          result->Error("INVALID_ONBOARDING_REQUIREMENT",
+                        "Invalid onboarding requirement");
           return;
         }
         if (method_call.method_name().compare("stopWebAccessServer") == 0) {

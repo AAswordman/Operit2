@@ -21,7 +21,8 @@ use operit_model::ModelParameter::ParameterValueType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
-    with_event_channel_shared, RevisableTextStreamLike, TextStreamEvent, TextStreamEventType,
+    with_ordered_event_channel_shared, RevisableTextStreamLike, TextStreamEvent,
+    TextStreamEventType,
 };
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
@@ -88,17 +89,15 @@ pub struct StreamingState {
 
 pub struct StreamEmitter {
     pub received_content: String,
-    pub event_channel: operit_util::stream::HotStream::MutableSharedStreamImpl<TextStreamEvent>,
+    pub output: SharedAiResponseStream,
     pub savepoints: HashMap<String, usize>,
 }
 
 impl StreamEmitter {
-    pub fn new(
-        event_channel: operit_util::stream::HotStream::MutableSharedStreamImpl<TextStreamEvent>,
-    ) -> Self {
+    pub fn new(output: SharedAiResponseStream) -> Self {
         Self {
             received_content: String::new(),
-            event_channel,
+            output,
             savepoints: HashMap::new(),
         }
     }
@@ -113,7 +112,7 @@ impl StreamEmitter {
     pub fn emit_savepoint(&mut self, id: &str) {
         self.savepoints
             .insert(id.to_string(), self.received_content.len());
-        self.event_channel.emit(TextStreamEvent {
+        self.output.emit_revision(TextStreamEvent {
             event_type: TextStreamEventType::Savepoint,
             id: id.to_string(),
         });
@@ -126,7 +125,7 @@ impl StreamEmitter {
         if self.received_content.len() > savepoint_length {
             self.received_content.truncate(savepoint_length);
         }
-        self.event_channel.emit(TextStreamEvent {
+        self.output.emit_revision(TextStreamEvent {
             event_type: TextStreamEventType::Rollback,
             id: id.to_string(),
         });
@@ -867,7 +866,7 @@ impl OpenAIProvider {
                     let emitted_before = state.chunks.len();
                     self.process_streaming_line(&line, &mut state, on_tool_invocation)?;
                     for chunk in state.chunks[emitted_before..].iter().cloned() {
-                        output.upstream.emit(chunk.clone());
+                        output.emit_chunk(chunk.clone());
                         emitter.emit_chunk(&chunk);
                     }
                 }
@@ -878,7 +877,7 @@ impl OpenAIProvider {
                 let emitted_before = state.chunks.len();
                 self.process_streaming_line(&pending, &mut state, on_tool_invocation)?;
                 for chunk in state.chunks[emitted_before..].iter().cloned() {
-                    output.upstream.emit(chunk.clone());
+                    output.emit_chunk(chunk.clone());
                     emitter.emit_chunk(&chunk);
                 }
             }
@@ -1729,7 +1728,7 @@ impl OpenAIProvider {
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         self.begin_request();
         if request.stream {
-            let output = with_event_channel_shared(
+            let output = with_ordered_event_channel_shared(
                 operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
                 operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
             );
@@ -1745,7 +1744,7 @@ impl OpenAIProvider {
                     "openai-response-stream",
                     Box::new(move || Box::pin(async move {
                         let request_savepoint_id = format!("attempt_{}", Uuid::new_v4().simple());
-                        let mut emitter = StreamEmitter::new(producer.event_channel.clone());
+                        let mut emitter = StreamEmitter::new(producer.clone());
                         emitter.emit_savepoint(&request_savepoint_id);
                         let mut retryCount = 0;
                         loop {
@@ -1817,15 +1816,14 @@ impl OpenAIProvider {
                                 }
                             }
                         }
-                        producer.upstream.close();
-                        producer.event_channel.close();
+                        producer.close();
                     })),
                 )
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
             return Ok(Box::new(output));
         }
 
-        let output = with_event_channel_shared(
+        let output = with_ordered_event_channel_shared(
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
         );
@@ -1851,11 +1849,10 @@ impl OpenAIProvider {
                             .await
                         {
                             for chunk in chunks {
-                                producer.upstream.emit(chunk);
+                                producer.emit_chunk(chunk);
                             }
                         }
-                        producer.upstream.close();
-                        producer.event_channel.close();
+                        producer.close();
                     })
                 }),
             )

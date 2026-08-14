@@ -17,8 +17,11 @@ use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_util::stream::ReverseStream::ReverseStreamSender;
-use operit_util::stream::RevisableTextStream::{TextStreamEvent, TextStreamEventType};
+use operit_util::stream::RevisableTextStream::{
+    ResponseStreamItem, RevisableTextStream, TextStreamEventType,
+};
 use operit_util::stream::Stream::Stream;
+use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;
@@ -333,112 +336,65 @@ fn core_text_event_stream(
     request: CoreWatchRequest,
 ) -> CoreEventStream {
     let (sender, receiver) = core_event_stream_channel();
-    let (eventCancelSender, mut eventCancelReceiver) = tokio::sync::oneshot::channel::<()>();
-    let (textCancelSender, mut textCancelReceiver) = tokio::sync::oneshot::channel::<()>();
-    let event_sender = sender.clone();
-    let event_request_id = request.requestId.clone();
-    let event_target_path = request.targetPath.clone();
-    let event_property_name = request.propertyName.clone();
-    let event_chat_id = stream_chat_id.clone();
-    let mut eventStream = stream.event_channel.clone();
-    defaultHostRuntimeTaskSchedulerHost()
-        .scheduleHostRuntimeAsyncTask(
-            "core-proxy-text-events",
-            Box::new(move || {
-                Box::pin(async move {
-                    let mut eventCollector = move |event: TextStreamEvent| {
-                        let value = to_core_value(match event.event_type {
-                            TextStreamEventType::Savepoint => {
-                                MarkdownStreamEvent::savepoint(event_chat_id.clone(), event.id)
-                            }
-                            TextStreamEventType::Rollback => {
-                                MarkdownStreamEvent::rollback(event_chat_id.clone(), event.id)
-                            }
-                        })
-                        .expect("MarkdownStreamEvent must serialize");
-                        send_text_event(
-                            &event_sender,
-                            &event_request_id,
-                            &event_target_path,
-                            &event_property_name,
-                            CoreEventKind::Changed,
-                            value,
-                        );
-                    };
-                    let eventCollection = eventStream.collect(&mut eventCollector);
-                    tokio::select! {
-                        _ = eventCollection => {},
-                        _ = &mut eventCancelReceiver => {},
-                    }
-                })
-            }),
-        )
-        .expect("Core text event task must be scheduled");
-    let (textInputSender, textInputReceiver) = tokio::sync::mpsc::unbounded_channel();
-    spawn_text_markdown_processor(
-        stream_chat_id,
-        textInputReceiver,
-        sender.clone(),
-        request.requestId.clone(),
-        request.targetPath.clone(),
-        request.propertyName.clone(),
-    );
-    let mut textStream = stream.upstream.clone();
-    defaultHostRuntimeTaskSchedulerHost()
-        .scheduleHostRuntimeAsyncTask(
-            "core-proxy-text-chunks",
-            Box::new(move || {
-                Box::pin(async move {
-                    let mut textCollector = move |chunk| {
-                        let _ = textInputSender.send(chunk);
-                    };
-                    let textCollection = textStream.collect(&mut textCollector);
-                    tokio::select! {
-                        _ = textCollection => {},
-                        _ = &mut textCancelReceiver => {},
-                    }
-                })
-            }),
-        )
-        .expect("Core text chunk task must be scheduled");
-    receiver.withOnClose(move || {
-        let _ = eventCancelSender.send(());
-        let _ = textCancelSender.send(());
-    })
-}
-
-/// Runs one host-scheduled Markdown parser over the live response chunks.
-fn spawn_text_markdown_processor(
-    streamChatId: String,
-    mut input: tokio::sync::mpsc::UnboundedReceiver<String>,
-    sender: tokio::sync::mpsc::UnboundedSender<CoreEvent>,
-    requestId: CoreRequestId,
-    targetPath: CoreObjectPath,
-    propertyName: String,
-) {
+    let (cancelSender, mut cancelReceiver) = tokio::sync::oneshot::channel::<()>();
+    let mut orderedStream = stream;
     defaultHostRuntimeTaskSchedulerHost()
         .scheduleHostRuntimeAsyncTask(
             "core-proxy-text-markdown",
             Box::new(move || {
                 Box::pin(async move {
-                    let mut markdownStream = MarkdownRenderEventStream::new(streamChatId);
-                    while let Some(chunk) = input.recv().await {
-                        for event in markdownStream.pushChunk(&chunk) {
+                    let mut markdownStream = MarkdownRenderEventStream::new(stream_chat_id.clone());
+                    let mut textRevisions = TextStreamRevisionTracker::new("");
+                    let mut itemCollector = |item: ResponseStreamItem| match item {
+                        ResponseStreamItem::Chunk(chunk) => {
+                            let _ = textRevisions.append(&chunk);
+                            for event in markdownStream.pushChunk(&chunk) {
+                                send_text_event(
+                                    &sender,
+                                    &request.requestId,
+                                    &request.targetPath,
+                                    &request.propertyName,
+                                    CoreEventKind::Changed,
+                                    to_core_value(event)
+                                        .expect("MarkdownStreamEvent must serialize"),
+                                );
+                            }
+                        }
+                        ResponseStreamItem::Revision(event) => {
+                            let markdownEvent = match event.event_type {
+                                TextStreamEventType::Savepoint => {
+                                    textRevisions.savepoint(&event.id);
+                                    MarkdownStreamEvent::savepoint(stream_chat_id.clone(), event.id)
+                                }
+                                TextStreamEventType::Rollback => {
+                                    let content = textRevisions.rollback(&event.id).expect(
+                                        "markdown rollback must reference an active savepoint",
+                                    );
+                                    markdownStream.restoreContent(content);
+                                    MarkdownStreamEvent::rollback(stream_chat_id.clone(), event.id)
+                                }
+                            };
                             send_text_event(
                                 &sender,
-                                &requestId,
-                                &targetPath,
-                                &propertyName,
+                                &request.requestId,
+                                &request.targetPath,
+                                &request.propertyName,
                                 CoreEventKind::Changed,
-                                to_core_value(event).expect("MarkdownStreamEvent must serialize"),
+                                to_core_value(markdownEvent)
+                                    .expect("MarkdownStreamEvent must serialize"),
                             );
                         }
+                    };
+                    let streamCollection = orderedStream.collect_ordered(&mut itemCollector);
+                    tokio::select! {
+                        _ = streamCollection => {},
+                        _ = &mut cancelReceiver => {},
                     }
                     send_text_event(
                         &sender,
-                        &requestId,
-                        &targetPath,
-                        &propertyName,
+                        &request.requestId,
+                        &request.targetPath,
+                        &request.propertyName,
                         CoreEventKind::Completed,
                         to_core_value(markdownStream.completed())
                             .expect("MarkdownStreamEvent must serialize"),
@@ -446,7 +402,10 @@ fn spawn_text_markdown_processor(
                 })
             }),
         )
-        .expect("Markdown processor task must be scheduled");
+        .expect("Core text markdown task must be scheduled");
+    receiver.withOnClose(move || {
+        let _ = cancelSender.send(());
+    })
 }
 
 fn core_string_event_stream<S>(mut stream: S, request: CoreWatchRequest) -> CoreEventStream

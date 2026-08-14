@@ -1,4 +1,7 @@
 var PluginConfig = (function() {
+    var CONFIG_WRITE_BOUNCE_MS = 50;
+    var configCache = Object.create(null);
+
     function normalizeName(value) {
         var name = String(value == null ? "config" : value).trim();
         if (!name) throw new Error("PluginConfig name is empty");
@@ -74,6 +77,7 @@ var PluginConfig = (function() {
 
     function createProxy(name, path, dir, values) {
         var pendingWrite = Promise.resolve();
+        var debounceTimer = null;
 
         async function writeNow() {
             var mkdirResult = await Tools.Files.mkdir(dir, true);
@@ -86,19 +90,39 @@ var PluginConfig = (function() {
             }
         }
 
-        function scheduleWrite() {
-            pendingWrite = pendingWrite.catch(function(error) {
+        // Appends one write while allowing a previous write failure to be reported and bypassed.
+        function enqueueWrite() {
+            pendingWrite = pendingWrite.then(writeNow, writeNow);
+            pendingWrite.catch(function(error) {
                 logWriteError(name, path, error);
-            }).then(writeNow);
+            });
+        }
+
+        // Schedules one debounced write for the latest in-memory config snapshot.
+        function scheduleWrite() {
+            if (debounceTimer !== null) {
+                clearTimeout(debounceTimer);
+            }
+            debounceTimer = setTimeout(function() {
+                debounceTimer = null;
+                enqueueWrite();
+            }, CONFIG_WRITE_BOUNCE_MS);
+        }
+
+        // Flushes the pending debounce and waits for the serialized write chain.
+        function flushWrites() {
+            if (debounceTimer !== null) {
+                clearTimeout(debounceTimer);
+                debounceTimer = null;
+                enqueueWrite();
+            }
             return pendingWrite;
         }
 
         return new Proxy(values, {
             get: function(target, prop) {
                 if (prop === "__operitPluginConfigFlush") {
-                    return function() {
-                        return pendingWrite;
-                    };
+                    return flushWrites;
                 }
                 return target[prop];
             },
@@ -124,8 +148,16 @@ var PluginConfig = (function() {
 
             var dir = configDir();
             var path = dir + "/" + normalizeFileName(name);
-            var values = await loadValues(path, defaults);
-            return createProxy(name, path, dir, values);
+            if (configCache[path]) {
+                return configCache[path];
+            }
+            configCache[path] = loadValues(path, defaults).then(function(values) {
+                return createProxy(name, path, dir, values);
+            }).catch(function(error) {
+                delete configCache[path];
+                throw error;
+            });
+            return configCache[path];
         },
         flush: function(config) {
             if (!config || typeof config !== "object") {

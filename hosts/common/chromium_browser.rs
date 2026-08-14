@@ -55,7 +55,11 @@ impl ChromiumBrowserAutomationHost {
     fn start_state(&self) -> HostResult<BrowserState> {
         let port = allocate_port()?;
         let profile_dir = create_profile_dir()?;
-        let extra_args = self.extra_args.iter().map(String::as_str).collect::<Vec<_>>();
+        let extra_args = self
+            .extra_args
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
         let mut child = spawn_browser(&self.candidates, port, &profile_dir, &extra_args)?;
         match wait_for_browser(port) {
             Ok(()) => {}
@@ -79,7 +83,10 @@ impl ChromiumBrowserAutomationHost {
         }
     }
 
-    fn with_state<R>(&self, action: impl FnOnce(&mut BrowserState) -> HostResult<R>) -> HostResult<R> {
+    fn with_state<R>(
+        &self,
+        action: impl FnOnce(&mut BrowserState) -> HostResult<R>,
+    ) -> HostResult<R> {
         let mut guard = self.lock_state()?;
         if guard.is_none() {
             *guard = Some(self.start_state()?);
@@ -218,7 +225,9 @@ impl BrowserAutomationHost for ChromiumBrowserAutomationHost {
                     params
                         .optional_trimmed("button")?
                         .unwrap_or_else(|| "left".to_string()),
-                    params.optional_string_list("modifiers")?.unwrap_or_default(),
+                    params
+                        .optional_string_list("modifiers")?
+                        .unwrap_or_default(),
                 )?;
                 Ok("OK".to_string())
             }),
@@ -265,9 +274,9 @@ impl BrowserAutomationHost for ChromiumBrowserAutomationHost {
                     params.optional_trimmed("ref")?,
                 )
             }),
-            "browser_run_code" => self.with_existing_state(|state| {
-                state.run_code(&params.required_raw("code")?)
-            }),
+            "browser_run_code" => {
+                self.with_existing_state(|state| state.run_code(&params.required_raw("code")?))
+            }
             "browser_wait_for" => self.with_existing_state(|state| {
                 state.wait_for(
                     params.optional_f64("time")?,
@@ -276,7 +285,10 @@ impl BrowserAutomationHost for ChromiumBrowserAutomationHost {
                 )
             }),
             "browser_resize" => self.with_existing_state(|state| {
-                state.resize(params.required_i64("width")?, params.required_i64("height")?)?;
+                state.resize(
+                    params.required_i64("width")?,
+                    params.required_i64("height")?,
+                )?;
                 Ok("OK".to_string())
             }),
             "browser_take_screenshot" => self.with_existing_state(|state| {
@@ -331,7 +343,8 @@ impl BrowserState {
 
     fn navigate(&mut self, url: &str) -> HostResult<()> {
         let tab = self.active_tab_mut()?;
-        tab.session.command("Page.navigate", json!({ "url": url }))?;
+        tab.session
+            .command("Page.navigate", json!({ "url": url }))?;
         wait_for_document_ready(&mut tab.session)?;
         thread::sleep(Duration::from_millis(500));
         tab.collect_events()?;
@@ -340,7 +353,9 @@ impl BrowserState {
 
     fn navigate_back(&mut self) -> HostResult<()> {
         let tab = self.active_tab_mut()?;
-        let history = tab.session.command("Page.getNavigationHistory", json!({}))?;
+        let history = tab
+            .session
+            .command("Page.getNavigationHistory", json!({}))?;
         let current_index = history
             .get("currentIndex")
             .and_then(Value::as_i64)
@@ -359,8 +374,10 @@ impl BrowserState {
             .get("id")
             .and_then(Value::as_i64)
             .ok_or_else(|| HostError::new("Previous browser history entry did not include id"))?;
-        tab.session
-            .command("Page.navigateToHistoryEntry", json!({ "entryId": entry_id }))?;
+        tab.session.command(
+            "Page.navigateToHistoryEntry",
+            json!({ "entryId": entry_id }),
+        )?;
         wait_for_document_ready(&mut tab.session)?;
         tab.collect_events()?;
         Ok(())
@@ -422,7 +439,9 @@ impl BrowserState {
     fn snapshot(&mut self, selector: Option<String>, depth: Option<i64>) -> HostResult<String> {
         if let Some(depth) = depth {
             if depth < 0 {
-                return Err(HostError::new("browser_snapshot depth must be non-negative"));
+                return Err(HostError::new(
+                    "browser_snapshot depth must be non-negative",
+                ));
             }
         }
         let script = snapshot_script(selector.as_deref(), depth);
@@ -435,10 +454,7 @@ impl BrowserState {
     fn console_messages(&mut self, level: Option<String>) -> HostResult<String> {
         let tab = self.active_tab_mut()?;
         tab.collect_events()?;
-        let threshold = level
-            .as_deref()
-            .map(console_level_threshold)
-            .transpose()?;
+        let threshold = level.as_deref().map(console_level_threshold).transpose()?;
         let items = tab
             .console_messages
             .iter()
@@ -660,7 +676,9 @@ impl BrowserState {
 
     fn resize(&mut self, width: i64, height: i64) -> HostResult<()> {
         if width <= 0 || height <= 0 {
-            return Err(HostError::new("browser_resize width and height must be positive"));
+            return Err(HostError::new(
+                "browser_resize width and height must be positive",
+            ));
         }
         let tab = self.active_tab_mut()?;
         tab.session.command(
@@ -705,9 +723,9 @@ impl BrowserState {
         } else if full_page {
             let tab = self.active_tab_mut()?;
             let metrics = tab.session.command("Page.getLayoutMetrics", json!({}))?;
-            let content = metrics
-                .get("contentSize")
-                .ok_or_else(|| HostError::new("Page.getLayoutMetrics did not return contentSize"))?;
+            let content = metrics.get("contentSize").ok_or_else(|| {
+                HostError::new("Page.getLayoutMetrics did not return contentSize")
+            })?;
             params["captureBeyondViewport"] = Value::Bool(true);
             params["clip"] = json!({
                 "x": content.get("x").and_then(Value::as_f64).unwrap_or(0.0),
@@ -865,8 +883,9 @@ fn create_automation_tab(port: u16) -> HostResult<TabState> {
 }
 
 fn allocate_port() -> HostResult<u16> {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .map_err(|error| HostError::new(format!("Failed to allocate browser debug port: {error}")))?;
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| {
+        HostError::new(format!("Failed to allocate browser debug port: {error}"))
+    })?;
     listener
         .local_addr()
         .map(|addr| addr.port())
@@ -878,11 +897,7 @@ fn create_profile_dir() -> HostResult<PathBuf> {
         .duration_since(UNIX_EPOCH)
         .map_err(|error| HostError::new(error.to_string()))?
         .as_millis();
-    let path = env::temp_dir().join(format!(
-        "operit2_browser_{}_{}",
-        std::process::id(),
-        millis
-    ));
+    let path = env::temp_dir().join(format!("operit2_browser_{}_{}", std::process::id(), millis));
     fs::create_dir_all(&path)?;
     Ok(path)
 }
@@ -967,7 +982,9 @@ fn wait_for_browser(port: u16) -> HostResult<()> {
             return Ok(());
         }
         if started.elapsed() >= Duration::from_secs(10) {
-            return Err(HostError::new("Timed out waiting for browser DevTools endpoint"));
+            return Err(HostError::new(
+                "Timed out waiting for browser DevTools endpoint",
+            ));
         }
         thread::sleep(Duration::from_millis(100));
     }
@@ -990,8 +1007,9 @@ fn devtools_text(port: u16, method: &str, path: &str) -> HostResult<String> {
         .write_all(request.as_bytes())
         .map_err(|error| HostError::new(format!("Browser DevTools request failed: {error}")))?;
     let response = read_http_response(&mut stream)?;
-    let response_text = String::from_utf8(response)
-        .map_err(|error| HostError::new(format!("Browser DevTools response was not UTF-8: {error}")))?;
+    let response_text = String::from_utf8(response).map_err(|error| {
+        HostError::new(format!("Browser DevTools response was not UTF-8: {error}"))
+    })?;
     let Some((headers, body)) = response_text.split_once("\r\n\r\n") else {
         return Err(HostError::new("Browser DevTools response was malformed"));
     };
@@ -1014,9 +1032,9 @@ fn read_http_response(stream: &mut TcpStream) -> HostResult<Vec<u8>> {
     let mut response = Vec::new();
     let mut buffer = [0_u8; 4096];
     loop {
-        let count = stream
-            .read(&mut buffer)
-            .map_err(|error| HostError::new(format!("Browser DevTools response failed: {error}")))?;
+        let count = stream.read(&mut buffer).map_err(|error| {
+            HostError::new(format!("Browser DevTools response failed: {error}"))
+        })?;
         if count == 0 {
             return Ok(response);
         }
@@ -1055,8 +1073,9 @@ struct CdpSession {
 
 impl CdpSession {
     fn connect(ws_url: &str) -> HostResult<Self> {
-        let (mut socket, _) = connect(ws_url)
-            .map_err(|error| HostError::new(format!("Failed to connect browser debugger: {error}")))?;
+        let (mut socket, _) = connect(ws_url).map_err(|error| {
+            HostError::new(format!("Failed to connect browser debugger: {error}"))
+        })?;
         if let tungstenite::stream::MaybeTlsStream::Plain(stream) = socket.get_mut() {
             let _ = stream.set_read_timeout(Some(Duration::from_secs(8)));
         }
@@ -1073,19 +1092,23 @@ impl CdpSession {
         self.next_id += 1;
         self.socket
             .send(Message::Text(
-                json!({ "id": id, "method": method, "params": params }).to_string().into(),
+                json!({ "id": id, "method": method, "params": params })
+                    .to_string()
+                    .into(),
             ))
-            .map_err(|error| HostError::new(format!("Failed to send browser command {method}: {error}")))?;
+            .map_err(|error| {
+                HostError::new(format!("Failed to send browser command {method}: {error}"))
+            })?;
         loop {
-            let message = self
-                .socket
-                .read()
-                .map_err(|error| HostError::new(format!("Failed to read browser command {method}: {error}")))?;
+            let message = self.socket.read().map_err(|error| {
+                HostError::new(format!("Failed to read browser command {method}: {error}"))
+            })?;
             let Message::Text(text) = message else {
                 continue;
             };
-            let value = serde_json::from_str::<Value>(&text)
-                .map_err(|error| HostError::new(format!("Invalid browser command response: {error}")))?;
+            let value = serde_json::from_str::<Value>(&text).map_err(|error| {
+                HostError::new(format!("Invalid browser command response: {error}"))
+            })?;
             if value.get("id").and_then(Value::as_i64) == Some(id) {
                 if let Some(error) = value.get("error") {
                     return Err(HostError::new(format!(
@@ -1116,7 +1139,8 @@ impl CdpSession {
                 {
                     break;
                 }
-                Err(tungstenite::Error::ConnectionClosed) | Err(tungstenite::Error::AlreadyClosed) => {
+                Err(tungstenite::Error::ConnectionClosed)
+                | Err(tungstenite::Error::AlreadyClosed) => {
                     break;
                 }
                 Err(error) => {
@@ -1151,7 +1175,9 @@ fn wait_for_document_ready(session: &mut CdpSession) -> HostResult<()> {
         }
         thread::sleep(Duration::from_millis(250));
     }
-    Err(HostError::new("Timed out waiting for document.readyState=complete"))
+    Err(HostError::new(
+        "Timed out waiting for document.readyState=complete",
+    ))
 }
 
 fn scroll_page(session: &mut CdpSession) -> HostResult<()> {
@@ -1614,8 +1640,9 @@ struct BrowserToolParams {
 
 impl BrowserToolParams {
     fn parse(raw: &str) -> HostResult<Self> {
-        let value = serde_json::from_str::<Value>(raw)
-            .map_err(|error| HostError::new(format!("Invalid browser tool parameters JSON: {error}")))?;
+        let value = serde_json::from_str::<Value>(raw).map_err(|error| {
+            HostError::new(format!("Invalid browser tool parameters JSON: {error}"))
+        })?;
         let values = value
             .as_object()
             .cloned()
@@ -1646,7 +1673,9 @@ impl BrowserToolParams {
     }
 
     fn optional_trimmed(&self, name: &str) -> HostResult<Option<String>> {
-        Ok(self.optional_raw(name)?.map(|value| value.trim().to_string()))
+        Ok(self
+            .optional_raw(name)?
+            .map(|value| value.trim().to_string()))
     }
 
     fn required_trimmed(&self, name: &str) -> HostResult<String> {
@@ -1660,7 +1689,9 @@ impl BrowserToolParams {
         self.optional_trimmed(name)?
             .map(|value| {
                 value.parse::<i64>().map_err(|error| {
-                    HostError::new(format!("Browser tool parameter {name} must be an integer: {error}"))
+                    HostError::new(format!(
+                        "Browser tool parameter {name} must be an integer: {error}"
+                    ))
                 })
             })
             .transpose()
@@ -1692,7 +1723,9 @@ impl BrowserToolParams {
         self.optional_trimmed(name)?
             .map(|value| {
                 value.parse::<f64>().map_err(|error| {
-                    HostError::new(format!("Browser tool parameter {name} must be a number: {error}"))
+                    HostError::new(format!(
+                        "Browser tool parameter {name} must be a number: {error}"
+                    ))
                 })
             })
             .transpose()
@@ -1723,11 +1756,15 @@ impl BrowserToolParams {
     fn required_fields(&self, name: &str) -> HostResult<Vec<FormField>> {
         let raw = self.required_raw(name)?;
         let value = serde_json::from_str::<Value>(&raw).map_err(|error| {
-            HostError::new(format!("Browser tool parameter {name} must be a JSON array: {error}"))
+            HostError::new(format!(
+                "Browser tool parameter {name} must be a JSON array: {error}"
+            ))
         })?;
-        let fields = value
-            .as_array()
-            .ok_or_else(|| HostError::new(format!("Browser tool parameter {name} must be a JSON array")))?;
+        let fields = value.as_array().ok_or_else(|| {
+            HostError::new(format!(
+                "Browser tool parameter {name} must be a JSON array"
+            ))
+        })?;
         fields.iter().map(FormField::from_value).collect()
     }
 }
@@ -1744,17 +1781,23 @@ fn parse_bool(name: &str, value: &str) -> HostResult<bool> {
 
 fn parse_string_list(name: &str, raw: &str) -> HostResult<Vec<String>> {
     let value = serde_json::from_str::<Value>(raw).map_err(|error| {
-        HostError::new(format!("Browser tool parameter {name} must be a JSON array: {error}"))
+        HostError::new(format!(
+            "Browser tool parameter {name} must be a JSON array: {error}"
+        ))
     })?;
-    let array = value
-        .as_array()
-        .ok_or_else(|| HostError::new(format!("Browser tool parameter {name} must be a JSON array")))?;
+    let array = value.as_array().ok_or_else(|| {
+        HostError::new(format!(
+            "Browser tool parameter {name} must be a JSON array"
+        ))
+    })?;
     array
         .iter()
         .map(|item| {
-            item.as_str()
-                .map(str::to_string)
-                .ok_or_else(|| HostError::new(format!("Browser tool parameter {name} must contain strings")))
+            item.as_str().map(str::to_string).ok_or_else(|| {
+                HostError::new(format!(
+                    "Browser tool parameter {name} must contain strings"
+                ))
+            })
         })
         .collect()
 }

@@ -46,8 +46,11 @@ use operit_tools::ConversationMarkupManager::{
 use operit_tools::ToolExecutionManager::{
     AITool as RuntimeAITool, ToolExecutionManager, ToolExposureMode as RuntimeToolExposureMode,
 };
-use operit_util::stream::RevisableTextStream::{with_event_channel_shared, TextStreamEventCarrier};
+use operit_util::stream::RevisableTextStream::{
+    with_ordered_event_channel_shared, ResponseStreamItem, RevisableTextStream,
+};
 use operit_util::stream::Stream::Stream;
+use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ChatUtils::ChatUtils;
@@ -1075,7 +1078,7 @@ impl EnhancedAIService {
         runtime: SendMessageRuntime,
     ) -> Result<SharedAiResponseStream, AiServiceError> {
         AppLogger::i("CoreSend", "provider response task schedule start");
-        let responseStream = with_event_channel_shared(
+        let responseStream = with_ordered_event_channel_shared(
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
         );
@@ -1096,8 +1099,7 @@ impl EnhancedAIService {
                             service
                                 .setInputProcessingState(InputProcessingState::Error { message });
                         }
-                        producerStream.upstream.close();
-                        producerStream.event_channel.close();
+                        producerStream.close();
                         AppLogger::i("CoreSend", "provider response task closed output streams");
                     })
                 }),
@@ -1453,62 +1455,81 @@ impl EnhancedAIService {
         self.startAssistantResponseRound(&mut execContext);
 
         lifecycle.push(SendMessageLifecycleStage::CollectResponseStream);
-        let providerEventChannel = provider_stream.event_channel().clone();
-        let mut responseChunks = Vec::new();
         let mut totalChars = 0;
         let mut isFirstChunk = true;
         let mut chunkCount = 0;
         let mut lastLogTime = runtimeSupport.messageTimingNow().startedAtMs;
+        let mut responseRevisions = TextStreamRevisionTracker::new("");
         let activeExecutionState = self.shared_state.clone();
         AppLogger::i(
             "CoreSend",
             &format!("provider stream collect enter chatId={}", logChatId),
         );
         provider_stream
-            .collect(&mut |content| {
-                if !Self::isExecutionContextActiveInSharedState(&activeExecutionState, &execContext)
-                {
-                    return;
-                }
-                if isFirstChunk {
-                    AppLogger::i(
-                        "CoreSend",
-                        &format!(
-                            "provider stream first chunk chatId={} chars={}",
-                            logChatId,
-                            content.chars().count()
-                        ),
-                    );
-                    if !isSubTask {
-                        self.setInputProcessingState(InputProcessingState::Receiving {
-                            message: "enhanced_receiving_response".to_string(),
-                        });
+            .collect_ordered(&mut |item| match item {
+                ResponseStreamItem::Chunk(content) => {
+                    if !Self::isExecutionContextActiveInSharedState(
+                        &activeExecutionState,
+                        &execContext,
+                    ) {
+                        return;
                     }
-                    isFirstChunk = false;
-                    runtimeSupport.logMessageTiming(
-                        "enhanced.sendMessage.firstResponseChunk",
-                        requestStartTime.clone(),
-                        Some(format!(
-                            "functionType={}, stream={}",
-                            function_type_name(&functionType),
-                            stream
-                        )),
-                    );
+                    if isFirstChunk {
+                        AppLogger::i(
+                            "CoreSend",
+                            &format!(
+                                "provider stream first chunk chatId={} chars={}",
+                                logChatId,
+                                content.chars().count()
+                            ),
+                        );
+                        if !isSubTask {
+                            self.setInputProcessingState(InputProcessingState::Receiving {
+                                message: "enhanced_receiving_response".to_string(),
+                            });
+                        }
+                        isFirstChunk = false;
+                        runtimeSupport.logMessageTiming(
+                            "enhanced.sendMessage.firstResponseChunk",
+                            requestStartTime.clone(),
+                            Some(format!(
+                                "functionType={}, stream={}",
+                                function_type_name(&functionType),
+                                stream
+                            )),
+                        );
+                    }
+                    let _ = responseRevisions.append(&content);
+                    chunkCount += 1;
+                    totalChars += content.len() as i32;
+                    let currentTime = runtimeSupport.messageTimingNow().startedAtMs;
+                    if currentTime.saturating_sub(lastLogTime) > 5000 {
+                        AppLogger::d(
+                            TAG,
+                            &format!("已接收 {} 个内容块，总计 {} 个字符", chunkCount, totalChars),
+                        );
+                        lastLogTime = currentTime;
+                    }
+                    execContext.streamBuffer.push_str(&content);
+                    execContext.roundManager.appendContent(&content);
+                    responseStream.emit_chunk(content.clone());
                 }
-                chunkCount += 1;
-                totalChars += content.len() as i32;
-                let currentTime = runtimeSupport.messageTimingNow().startedAtMs;
-                if currentTime.saturating_sub(lastLogTime) > 5000 {
-                    AppLogger::d(
-                        TAG,
-                        &format!("已接收 {} 个内容块，总计 {} 个字符", chunkCount, totalChars),
-                    );
-                    lastLogTime = currentTime;
+                ResponseStreamItem::Revision(event) => {
+                    match event.event_type {
+                        operit_util::stream::RevisableTextStream::TextStreamEventType::Savepoint => {
+                            responseRevisions.savepoint(&event.id);
+                        }
+                        operit_util::stream::RevisableTextStream::TextStreamEventType::Rollback => {
+                            let content = responseRevisions
+                                .rollback(&event.id)
+                                .expect("response rollback must reference an active savepoint")
+                                .to_owned();
+                            execContext.streamBuffer = content.clone();
+                            execContext.roundManager.updateContent(content);
+                        }
+                    }
+                    responseStream.emit_revision(event);
                 }
-                execContext.streamBuffer.push_str(&content);
-                execContext.roundManager.appendContent(&content);
-                responseStream.upstream.emit(content.clone());
-                responseChunks.push(content);
             })
             .await;
         AppLogger::i(
@@ -1518,10 +1539,6 @@ impl EnhancedAIService {
                 logChatId, chunkCount
             ),
         );
-        for event in providerEventChannel.replay_cache() {
-            responseStream.event_channel.emit(event);
-        }
-
         if !self.isExecutionContextActive(&execContext) {
             self.unregisterExecutionContext(&execContext);
             return Ok(());
@@ -1709,7 +1726,7 @@ impl EnhancedAIService {
         let _ = requestHistory;
         let _ = requestWindowSize;
         let _ = lifecycle;
-        responseStream.upstream.close();
+        responseStream.close();
         AppLogger::d(
             TAG,
             &format!(
@@ -1963,26 +1980,42 @@ impl EnhancedAIService {
             return Ok(());
         }
 
-        let responseEventChannel = response.event_channel().clone();
         let activeExecutionState = self.shared_state.clone();
         let mut chunkCount = 0usize;
         let mut totalChars = 0usize;
+        let mut responseRevisions = TextStreamRevisionTracker::new("");
         response
-            .collect(&mut |content| {
-                if !Self::isExecutionContextActiveInSharedState(&activeExecutionState, context) {
-                    return;
+            .collect_ordered(&mut |item| match item {
+                ResponseStreamItem::Chunk(content) => {
+                    if !Self::isExecutionContextActiveInSharedState(&activeExecutionState, context)
+                    {
+                        return;
+                    }
+                    let _ = responseRevisions.append(&content);
+                    chunkCount += 1;
+                    totalChars += content.len();
+                    context.streamBuffer.push_str(&content);
+                    context.roundManager.appendContent(&content);
+                    collector.emit_chunk(content);
                 }
-                chunkCount += 1;
-                totalChars += content.len();
-                context.streamBuffer.push_str(&content);
-                context.roundManager.appendContent(&content);
-                collector.upstream.emit(content);
+                ResponseStreamItem::Revision(event) => {
+                    match event.event_type {
+                        operit_util::stream::RevisableTextStream::TextStreamEventType::Savepoint => {
+                            responseRevisions.savepoint(&event.id);
+                        }
+                        operit_util::stream::RevisableTextStream::TextStreamEventType::Rollback => {
+                            let content = responseRevisions
+                                .rollback(&event.id)
+                                .expect("response rollback must reference an active savepoint")
+                                .to_owned();
+                            context.streamBuffer = content.clone();
+                            context.roundManager.updateContent(content);
+                        }
+                    }
+                    collector.emit_revision(event);
+                }
             })
             .await;
-        for event in responseEventChannel.replay_cache() {
-            collector.event_channel.emit(event);
-        }
-
         if !self.isExecutionContextActive(context) {
             return Ok(());
         }
@@ -2191,7 +2224,7 @@ impl EnhancedAIService {
             context
                 .roundManager
                 .appendContent(&format!("\n{pureThinkingWarning}"));
-            collector.upstream.emit(pureThinkingWarning.clone());
+            collector.emit_chunk(pureThinkingWarning.clone());
             context.conversationHistory.push(PromptTurn {
                 kind: PromptTurnKind::TOOL_RESULT,
                 content: pureThinkingWarning.clone(),
@@ -2460,7 +2493,7 @@ impl EnhancedAIService {
             }
             context.streamBuffer.push_str(&content);
             context.roundManager.appendContent(&content);
-            collector.upstream.emit(content);
+            collector.emit_chunk(content);
         }
 
         if !allToolResults.is_empty() {

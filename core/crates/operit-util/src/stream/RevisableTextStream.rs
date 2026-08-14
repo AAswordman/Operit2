@@ -16,6 +16,19 @@ pub enum TextStreamEventType {
     Rollback,
 }
 
+/// Preserves the source order between response text and revision instructions.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ResponseStreamItem {
+    Chunk(String),
+    Revision(TextStreamEvent),
+}
+
+#[derive(Clone, Debug)]
+enum ResponseItemStream {
+    Chunks,
+    Ordered(MutableSharedStreamImpl<ResponseStreamItem>),
+}
+
 pub trait TextStreamEventCarrier {
     fn event_channel(&self) -> &MutableSharedStreamImpl<TextStreamEvent>;
 }
@@ -29,7 +42,26 @@ where
     }
 }
 
-pub trait RevisableTextStream: Stream<Item = String> + TextStreamEventCarrier {}
+pub trait RevisableTextStream: Stream<Item = String> + TextStreamEventCarrier {
+    /// Collects response text and revision instructions in source order.
+    fn collect_ordered<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(ResponseStreamItem),
+    ) -> CollectFuture<'a>;
+}
+
+impl<T> RevisableTextStream for Box<T>
+where
+    T: ?Sized + RevisableTextStream,
+{
+    /// Delegates ordered collection to the wrapped stream.
+    fn collect_ordered<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(ResponseStreamItem),
+    ) -> CollectFuture<'a> {
+        (**self).collect_ordered(collector)
+    }
+}
 
 pub trait RevisableSharedTextStream: SharedStream<String> + RevisableTextStream {}
 
@@ -100,12 +132,27 @@ where
     }
 }
 
-impl<S> RevisableTextStream for DelegatingRevisableTextStream<S> where S: Stream<Item = String> {}
+impl<S> RevisableTextStream for DelegatingRevisableTextStream<S>
+where
+    S: Stream<Item = String>,
+{
+    fn collect_ordered<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(ResponseStreamItem),
+    ) -> CollectFuture<'a> {
+        Box::pin(async move {
+            self.upstream
+                .collect(&mut |chunk| collector(ResponseStreamItem::Chunk(chunk)))
+                .await;
+        })
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct DelegatingRevisableSharedTextStream {
     pub upstream: MutableSharedStreamImpl<String>,
     pub event_channel: MutableSharedStreamImpl<TextStreamEvent>,
+    item_stream: ResponseItemStream,
     terminalFailure: Arc<Mutex<Option<String>>>,
 }
 
@@ -117,7 +164,47 @@ impl DelegatingRevisableSharedTextStream {
         Self {
             upstream,
             event_channel,
+            item_stream: ResponseItemStream::Chunks,
             terminalFailure: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Creates a shared response stream whose text and revisions have one order.
+    pub fn new_ordered(
+        upstream: MutableSharedStreamImpl<String>,
+        event_channel: MutableSharedStreamImpl<TextStreamEvent>,
+    ) -> Self {
+        Self {
+            upstream,
+            event_channel,
+            item_stream: ResponseItemStream::Ordered(mutable_shared_stream(usize::MAX)),
+            terminalFailure: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Emits one response chunk to both legacy and ordered subscribers.
+    pub fn emit_chunk(&self, chunk: String) {
+        if let ResponseItemStream::Ordered(orderedItems) = &self.item_stream {
+            orderedItems.emit(ResponseStreamItem::Chunk(chunk.clone()));
+        }
+        self.upstream.emit(chunk);
+    }
+
+    /// Emits one response revision to both legacy and ordered subscribers.
+    pub fn emit_revision(&self, event: TextStreamEvent) {
+        let ResponseItemStream::Ordered(orderedItems) = &self.item_stream else {
+            panic!("revisable response stream must preserve item order");
+        };
+        orderedItems.emit(ResponseStreamItem::Revision(event.clone()));
+        self.event_channel.emit(event);
+    }
+
+    /// Closes every response channel after the producer has finished.
+    pub fn close(&self) {
+        self.upstream.close();
+        self.event_channel.close();
+        if let ResponseItemStream::Ordered(orderedItems) = &self.item_stream {
+            orderedItems.close();
         }
     }
 
@@ -182,7 +269,26 @@ impl TextStreamEventCarrier for DelegatingRevisableSharedTextStream {
     }
 }
 
-impl RevisableTextStream for DelegatingRevisableSharedTextStream {}
+impl RevisableTextStream for DelegatingRevisableSharedTextStream {
+    fn collect_ordered<'a>(
+        &'a mut self,
+        collector: &'a mut dyn FnMut(ResponseStreamItem),
+    ) -> CollectFuture<'a> {
+        match &self.item_stream {
+            ResponseItemStream::Ordered(orderedItems) => {
+                let mut orderedItems = orderedItems.clone();
+                Box::pin(async move {
+                    orderedItems.collect(collector).await;
+                })
+            }
+            ResponseItemStream::Chunks => Box::pin(async move {
+                self.upstream
+                    .collect(&mut |chunk| collector(ResponseStreamItem::Chunk(chunk)))
+                    .await;
+            }),
+        }
+    }
+}
 impl RevisableSharedTextStream for DelegatingRevisableSharedTextStream {}
 
 #[derive(Clone, Debug)]
@@ -263,6 +369,14 @@ pub fn with_event_channel_shared(
     event_channel: MutableSharedStreamImpl<TextStreamEvent>,
 ) -> DelegatingRevisableSharedTextStream {
     DelegatingRevisableSharedTextStream::new(stream, event_channel)
+}
+
+/// Creates a shared response stream that preserves text and revision order.
+pub fn with_ordered_event_channel_shared(
+    stream: MutableSharedStreamImpl<String>,
+    event_channel: MutableSharedStreamImpl<TextStreamEvent>,
+) -> DelegatingRevisableSharedTextStream {
+    DelegatingRevisableSharedTextStream::new_ordered(stream, event_channel)
 }
 
 pub fn with_text_event_channel<S>(

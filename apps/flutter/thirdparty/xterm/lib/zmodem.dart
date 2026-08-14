@@ -75,9 +75,7 @@ class ZModemMux {
       // onPause: _stdoutSubscription.pause,
       // onResume: _stdoutSubscription.resume,
       )
-    ..stream
-        .transform(const Utf8Decoder(allowMalformed: true))
-        .listen(onTerminalInput);
+    ..stream.transform(const Utf8Decoder()).listen(onTerminalInput);
 
   /// Current ZModem session. If null, no session is active.
   ZModemCore? _session;

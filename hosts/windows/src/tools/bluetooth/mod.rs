@@ -1,6 +1,6 @@
+use std::collections::VecDeque;
 use std::collections::{BTreeMap, HashMap};
 use std::mem::{size_of, zeroed};
-use std::collections::VecDeque;
 use std::ptr::null_mut;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -18,27 +18,26 @@ use operit_host_api::{
     BluetoothScanResultData, BluetoothScannedDeviceData, BluetoothSessionData, BluetoothStateData,
     BluetoothTransferData, HostError, HostResult,
 };
-use windows_sys::Win32::Devices::Bluetooth::{
-    BluetoothFindDeviceClose, BluetoothFindFirstDevice, BluetoothFindFirstRadio,
-    BluetoothFindNextDevice, BluetoothFindNextRadio, BluetoothFindRadioClose,
-    BluetoothGetRadioInfo, AF_BTH, BTHPROTO_RFCOMM, BLUETOOTH_DEVICE_INFO,
-    BLUETOOTH_DEVICE_SEARCH_PARAMS, BLUETOOTH_FIND_RADIO_PARAMS, BLUETOOTH_RADIO_INFO,
-    SOCKADDR_BTH,
-};
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-use windows_sys::Win32::Networking::WinSock::{
-    accept, bind, closesocket, connect, listen, recv, send, shutdown, socket, WSAGetLastError,
-    WSAStartup, INVALID_SOCKET, SD_BOTH, SOCKADDR, SOCK_STREAM, SOCKET, WSADATA,
-};
 use uuid::Uuid;
-use windows::Devices::Bluetooth::{BluetoothCacheMode, BluetoothLEDevice};
 use windows::Devices::Bluetooth::GenericAttributeProfile::{
     GattCharacteristic, GattCharacteristicProperties,
     GattClientCharacteristicConfigurationDescriptorValue, GattCommunicationStatus,
     GattValueChangedEventArgs, GattWriteOption,
 };
+use windows::Devices::Bluetooth::{BluetoothCacheMode, BluetoothLEDevice};
 use windows::Foundation::TypedEventHandler;
 use windows::Storage::Streams::{DataReader, DataWriter, IBuffer};
+use windows_sys::Win32::Devices::Bluetooth::{
+    BluetoothFindDeviceClose, BluetoothFindFirstDevice, BluetoothFindFirstRadio,
+    BluetoothFindNextDevice, BluetoothFindNextRadio, BluetoothFindRadioClose,
+    BluetoothGetRadioInfo, AF_BTH, BLUETOOTH_DEVICE_INFO, BLUETOOTH_DEVICE_SEARCH_PARAMS,
+    BLUETOOTH_FIND_RADIO_PARAMS, BLUETOOTH_RADIO_INFO, BTHPROTO_RFCOMM, SOCKADDR_BTH,
+};
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+use windows_sys::Win32::Networking::WinSock::{
+    accept, bind, closesocket, connect, listen, recv, send, shutdown, socket, WSAGetLastError,
+    WSAStartup, INVALID_SOCKET, SD_BOTH, SOCKADDR, SOCKET, SOCK_STREAM, WSADATA,
+};
 
 #[derive(Clone, Debug)]
 pub struct WindowsBluetoothHost {
@@ -84,9 +83,9 @@ impl WindowsBluetoothHost {
     fn lockSessions(
         &self,
     ) -> HostResult<std::sync::MutexGuard<'_, HashMap<String, WindowsBluetoothSession>>> {
-        self.sessions
-            .lock()
-            .map_err(|error| HostError::new(format!("Windows Bluetooth session lock failed: {error}")))
+        self.sessions.lock().map_err(|error| {
+            HostError::new(format!("Windows Bluetooth session lock failed: {error}"))
+        })
     }
 }
 
@@ -106,12 +105,19 @@ impl BluetoothHost for WindowsBluetoothHost {
         Ok(BluetoothStateData {
             supported: !radios.is_empty(),
             enabled: !radios.is_empty(),
-            state: if radios.is_empty() { "unavailable" } else { "enabled" }.to_string(),
+            state: if radios.is_empty() {
+                "unavailable"
+            } else {
+                "enabled"
+            }
+            .to_string(),
         })
     }
 
     fn requestEnableBluetooth(&self) -> HostResult<String> {
-        Err(HostError::new("Windows Bluetooth enable must be changed in system settings"))
+        Err(HostError::new(
+            "Windows Bluetooth enable must be changed in system settings",
+        ))
     }
 
     fn listBluetoothBondedDevices(&self) -> HostResult<BluetoothBondedDevicesData> {
@@ -248,20 +254,20 @@ impl BluetoothHost for WindowsBluetoothHost {
     ) -> HostResult<BluetoothSessionData> {
         let listener = {
             let sessions = self.lockSessions()?;
-            match sessions
-                .get(&request.listenerSessionId)
-                .ok_or_else(|| HostError::new(format!(
+            match sessions.get(&request.listenerSessionId).ok_or_else(|| {
+                HostError::new(format!(
                     "Windows Bluetooth listener session is not available: {}",
                     request.listenerSessionId
-                )))? {
-                    WindowsBluetoothSession::Classic(session) => *session,
-                    WindowsBluetoothSession::Ble(_) => {
-                        return Err(HostError::new(format!(
-                            "Windows Bluetooth session is not a listener: {}",
-                            request.listenerSessionId
-                        )))
-                    }
+                ))
+            })? {
+                WindowsBluetoothSession::Classic(session) => *session,
+                WindowsBluetoothSession::Ble(_) => {
+                    return Err(HostError::new(format!(
+                        "Windows Bluetooth session is not a listener: {}",
+                        request.listenerSessionId
+                    )))
                 }
+            }
         };
         if !listener.listener {
             return Err(HostError::new(format!(
@@ -406,7 +412,9 @@ impl BluetoothHost for WindowsBluetoothHost {
         let result = session
             .device
             .GetGattServicesWithCacheModeAsync(BluetoothCacheMode::Uncached)
-            .map_err(winrt_error("create Windows BLE service discovery operation"))?
+            .map_err(winrt_error(
+                "create Windows BLE service discovery operation",
+            ))?
             .join()
             .map_err(winrt_error("discover Windows BLE services"))?;
         let status = result
@@ -418,16 +426,22 @@ impl BluetoothHost for WindowsBluetoothHost {
             .map_err(winrt_error("read Windows BLE service collection"))?;
         let mut output = Vec::new();
         for service in vector_view_items(&services)? {
-            let serviceUuid = guid_string(service.Uuid().map_err(winrt_error("read Windows BLE service UUID"))?);
+            let serviceUuid = guid_string(
+                service
+                    .Uuid()
+                    .map_err(winrt_error("read Windows BLE service UUID"))?,
+            );
             let characteristics = service
                 .GetCharacteristicsWithCacheModeAsync(BluetoothCacheMode::Uncached)
-                .map_err(winrt_error("create Windows BLE characteristic discovery operation"))?
+                .map_err(winrt_error(
+                    "create Windows BLE characteristic discovery operation",
+                ))?
                 .join()
                 .map_err(winrt_error("discover Windows BLE characteristics"))?;
             ensure_gatt_success(
-                characteristics
-                    .Status()
-                    .map_err(winrt_error("read Windows BLE characteristic discovery status"))?,
+                characteristics.Status().map_err(winrt_error(
+                    "read Windows BLE characteristic discovery status",
+                ))?,
                 "Windows BLE characteristic discovery",
             )?;
             let mut characteristicData = Vec::new();
@@ -472,7 +486,9 @@ impl BluetoothHost for WindowsBluetoothHost {
         )?;
         let result = characteristic
             .ReadValueWithCacheModeAsync(BluetoothCacheMode::Uncached)
-            .map_err(winrt_error("create Windows BLE characteristic read operation"))?
+            .map_err(winrt_error(
+                "create Windows BLE characteristic read operation",
+            ))?
             .join()
             .map_err(winrt_error("read Windows BLE characteristic"))?;
         ensure_gatt_success(
@@ -484,7 +500,10 @@ impl BluetoothHost for WindowsBluetoothHost {
         let buffer = result
             .Value()
             .map_err(winrt_error("read Windows BLE characteristic value"))?;
-        Ok(bluetooth_read_data(address.sessionId, buffer_bytes(&buffer)?))
+        Ok(bluetooth_read_data(
+            address.sessionId,
+            buffer_bytes(&buffer)?,
+        ))
     }
 
     fn bluetoothBleWriteCharacteristic(
@@ -503,7 +522,9 @@ impl BluetoothHost for WindowsBluetoothHost {
         let buffer = bytes_buffer(&bytes)?;
         let status = characteristic
             .WriteValueWithOptionAsync(&buffer, GattWriteOption::WriteWithResponse)
-            .map_err(winrt_error("create Windows BLE characteristic write operation"))?
+            .map_err(winrt_error(
+                "create Windows BLE characteristic write operation",
+            ))?
             .join()
             .map_err(winrt_error("write Windows BLE characteristic"))?;
         ensure_gatt_success(status, "Windows BLE characteristic write")?;
@@ -562,33 +583,40 @@ impl BluetoothHost for WindowsBluetoothHost {
             let queue = session.notifications.clone();
             let characteristicUuid = request.characteristicUuid.clone();
             let token = characteristic
-                .ValueChanged(&TypedEventHandler::<GattCharacteristic, GattValueChangedEventArgs>::new(
-                    move |_sender, args| {
-                        if let Some(args) = args.as_ref() {
-                            if let Ok(buffer) = args.CharacteristicValue() {
-                                if let Ok(bytes) = buffer_bytes(&buffer) {
-                                    if let Ok(mut notifications) = queue.lock() {
-                                        notifications.push_back(ble_notification_entry(
-                                            characteristicUuid.clone(),
-                                            bytes,
-                                        ));
-                                    }
+                .ValueChanged(&TypedEventHandler::<
+                    GattCharacteristic,
+                    GattValueChangedEventArgs,
+                >::new(move |_sender, args| {
+                    if let Some(args) = args.as_ref() {
+                        if let Ok(buffer) = args.CharacteristicValue() {
+                            if let Ok(bytes) = buffer_bytes(&buffer) {
+                                if let Ok(mut notifications) = queue.lock() {
+                                    notifications.push_back(ble_notification_entry(
+                                        characteristicUuid.clone(),
+                                        bytes,
+                                    ));
                                 }
                             }
                         }
-                        Ok(())
-                    },
-                ))
-                .map_err(winrt_error("subscribe Windows BLE characteristic value event"))?;
+                    }
+                    Ok(())
+                }))
+                .map_err(winrt_error(
+                    "subscribe Windows BLE characteristic value event",
+                ))?;
             let status = characteristic
                 .WriteClientCharacteristicConfigurationDescriptorAsync(
                     GattClientCharacteristicConfigurationDescriptorValue::Notify,
                 )
-                .map_err(winrt_error("create Windows BLE notification enable operation"))?
+                .map_err(winrt_error(
+                    "create Windows BLE notification enable operation",
+                ))?
                 .join()
                 .map_err(winrt_error("enable Windows BLE notifications"))?;
             ensure_gatt_success(status, "Windows BLE notification enable")?;
-            if let Some((oldCharacteristic, oldToken)) = session.subscriptions.insert(key, (characteristic, token)) {
+            if let Some((oldCharacteristic, oldToken)) =
+                session.subscriptions.insert(key, (characteristic, token))
+            {
                 let _ = oldCharacteristic.RemoveValueChanged(oldToken);
             }
         } else if let Some((oldCharacteristic, oldToken)) = session.subscriptions.remove(&key) {
@@ -597,7 +625,9 @@ impl BluetoothHost for WindowsBluetoothHost {
                 .WriteClientCharacteristicConfigurationDescriptorAsync(
                     GattClientCharacteristicConfigurationDescriptorValue::None,
                 )
-                .map_err(winrt_error("create Windows BLE notification disable operation"))?
+                .map_err(winrt_error(
+                    "create Windows BLE notification disable operation",
+                ))?
                 .join()
                 .map_err(winrt_error("disable Windows BLE notifications"))?;
             ensure_gatt_success(status, "Windows BLE notification disable")?;
@@ -627,11 +657,13 @@ impl BluetoothHost for WindowsBluetoothHost {
                 )))
             }
         };
-        let mut queue = session
-            .notifications
-            .lock()
-            .map_err(|error| HostError::new(format!("Windows BLE notification queue lock failed: {error}")))?;
-        let count = usize::try_from(limit.max(0)).map_err(|error| HostError::new(error.to_string()))?;
+        let mut queue = session.notifications.lock().map_err(|error| {
+            HostError::new(format!(
+                "Windows BLE notification queue lock failed: {error}"
+            ))
+        })?;
+        let count =
+            usize::try_from(limit.max(0)).map_err(|error| HostError::new(error.to_string()))?;
         let mut notifications = Vec::new();
         for _ in 0..count {
             let Some(entry) = queue.pop_front() else {
@@ -693,7 +725,10 @@ impl WindowsBluetoothHost {
         let session = self.bleSession(sessionId)?;
         let services = session
             .device
-            .GetGattServicesForUuidWithCacheModeAsync(winrt_guid(serviceUuid)?, BluetoothCacheMode::Uncached)
+            .GetGattServicesForUuidWithCacheModeAsync(
+                winrt_guid(serviceUuid)?,
+                BluetoothCacheMode::Uncached,
+            )
             .map_err(winrt_error("create Windows BLE service lookup operation"))?
             .join()
             .map_err(winrt_error("lookup Windows BLE service"))?;
@@ -714,7 +749,9 @@ impl WindowsBluetoothHost {
                 winrt_guid(characteristicUuid)?,
                 BluetoothCacheMode::Uncached,
             )
-            .map_err(winrt_error("create Windows BLE characteristic lookup operation"))?
+            .map_err(winrt_error(
+                "create Windows BLE characteristic lookup operation",
+            ))?
             .join()
             .map_err(winrt_error("lookup Windows BLE characteristic"))?;
         ensure_gatt_success(
@@ -813,7 +850,9 @@ fn ensure_winsock() -> HostResult<()> {
             if result == 0 {
                 Ok(())
             } else {
-                Err(HostError::new(format!("Windows WSAStartup failed: {result}")))
+                Err(HostError::new(format!(
+                    "Windows WSAStartup failed: {result}"
+                )))
             }
         })
         .clone()
@@ -836,9 +875,9 @@ fn winsock_error(context: &str) -> HostError {
 fn bluetooth_payload_bytes(payload: BluetoothPayload) -> HostResult<Vec<u8>> {
     match (payload.text, payload.dataBase64) {
         (Some(text), None) => Ok(text.into_bytes()),
-        (None, Some(data)) => BASE64_STANDARD
-            .decode(data)
-            .map_err(|error| HostError::new(format!("Bluetooth base64 payload decode failed: {error}"))),
+        (None, Some(data)) => BASE64_STANDARD.decode(data).map_err(|error| {
+            HostError::new(format!("Bluetooth base64 payload decode failed: {error}"))
+        }),
         (Some(_), Some(_)) => Err(HostError::new("Provide exactly one of text or dataBase64")),
         (None, None) => Err(HostError::new("Provide exactly one of text or dataBase64")),
     }
@@ -854,9 +893,7 @@ fn bluetooth_read_data(sessionId: String, bytes: Vec<u8>) -> BluetoothReadData {
     }
 }
 
-fn winrt_error(
-    operation: &'static str,
-) -> impl FnOnce(windows::core::Error) -> HostError {
+fn winrt_error(operation: &'static str) -> impl FnOnce(windows::core::Error) -> HostError {
     move |error| HostError::new(format!("{operation} failed: {error}"))
 }
 
@@ -864,7 +901,9 @@ fn ensure_gatt_success(status: GattCommunicationStatus, operation: &str) -> Host
     if status == GattCommunicationStatus::Success {
         Ok(())
     } else {
-        Err(HostError::new(format!("{operation} failed with status: {status:?}")))
+        Err(HostError::new(format!(
+            "{operation} failed with status: {status:?}"
+        )))
     }
 }
 
@@ -887,18 +926,14 @@ where
         .map_err(|error| HostError::new(format!("read Windows collection size failed: {error}")))?;
     let mut items = Vec::with_capacity(size as usize);
     for index in 0..size {
-        items.push(
-            view.GetAt(index)
-                .map_err(|error| HostError::new(format!("read Windows collection item failed: {error}")))?,
-        );
+        items.push(view.GetAt(index).map_err(|error| {
+            HostError::new(format!("read Windows collection item failed: {error}"))
+        })?);
     }
     Ok(items)
 }
 
-fn vector_view_first<T>(
-    view: &windows_collections::IVectorView<T>,
-    name: &str,
-) -> HostResult<T>
+fn vector_view_first<T>(view: &windows_collections::IVectorView<T>, name: &str) -> HostResult<T>
 where
     T: windows::core::RuntimeType + Clone + 'static,
 {
@@ -934,8 +969,7 @@ fn gatt_properties(value: GattCharacteristicProperties) -> Vec<String> {
 }
 
 fn bytes_buffer(bytes: &[u8]) -> HostResult<IBuffer> {
-    let writer = DataWriter::new()
-        .map_err(winrt_error("create Windows BLE data writer"))?;
+    let writer = DataWriter::new().map_err(winrt_error("create Windows BLE data writer"))?;
     writer
         .WriteBytes(bytes)
         .map_err(winrt_error("write Windows BLE data bytes"))?;
@@ -945,8 +979,8 @@ fn bytes_buffer(bytes: &[u8]) -> HostResult<IBuffer> {
 }
 
 fn buffer_bytes(buffer: &IBuffer) -> HostResult<Vec<u8>> {
-    let reader = DataReader::FromBuffer(buffer)
-        .map_err(winrt_error("create Windows BLE data reader"))?;
+    let reader =
+        DataReader::FromBuffer(buffer).map_err(winrt_error("create Windows BLE data reader"))?;
     let length = buffer
         .Length()
         .map_err(winrt_error("read Windows BLE buffer length"))?;
@@ -1030,6 +1064,9 @@ fn bluetooth_address_string(address: u64) -> String {
 }
 
 fn wide_string(value: &[u16]) -> String {
-    let end = value.iter().position(|unit| *unit == 0).unwrap_or(value.len());
+    let end = value
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(value.len());
     String::from_utf16_lossy(&value[..end])
 }

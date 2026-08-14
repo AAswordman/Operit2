@@ -61,6 +61,24 @@ def _find_manifest_file(folder: Path) -> Path | None:
     return None
 
 
+# Validates the package build contract for a script-managed ToolPkg.
+def _is_script_packed_toolpkg(folder: Path) -> bool:
+    package_json = folder / "package.json"
+    if not package_json.is_file():
+        return False
+    package_data = json.loads(package_json.read_text(encoding="utf-8"))
+    if not isinstance(package_data, dict):
+        raise ValueError(f"package.json must contain a JSON object: {package_json}")
+    scripts = package_data.get("scripts")
+    if not isinstance(scripts, dict):
+        raise ValueError(f"package.json must define scripts: {package_json}")
+    pack_script = scripts.get("pack:toolpkg")
+    if not isinstance(pack_script, str) or not pack_script.strip():
+        raise ValueError(f"package.json must define scripts.pack:toolpkg: {package_json}")
+    return True
+
+
+# Collects the output operations required for one plugin source directory.
 def _collect_sync_plan(source_dir: Path) -> list[SyncPlanItem]:
     plans: list[SyncPlanItem] = []
     if not source_dir.is_dir():
@@ -90,7 +108,7 @@ def _collect_sync_plan(source_dir: Path) -> list[SyncPlanItem]:
         if child.is_dir() and _find_manifest_file(child):
             plans.append(
                 SyncPlanItem(
-                    mode="pack",
+                    mode="copy-script-toolpkg" if _is_script_packed_toolpkg(child) else "pack",
                     source=child,
                     destination_name=f"{child.name}.toolpkg",
                 )
@@ -283,6 +301,7 @@ def _maybe_hot_reload_buildin(
     print("HOT-RELOAD-DONE: buildin output signature recorded")
 
 
+# Builds ToolPkg sources before their synchronization operations run.
 def _prebuild_plans(repo_root: Path, source_dir: Path, plans: list[SyncPlanItem], *, dry_run: bool) -> None:
     state_file = source_dir / ".sync_state.json"
     state = _load_state(state_file)
@@ -306,6 +325,10 @@ def _prebuild_plans(repo_root: Path, source_dir: Path, plans: list[SyncPlanItem]
         key=lambda path: path.name.lower(),
     )
     for child_dir in child_dirs:
+        if _is_script_packed_toolpkg(child_dir):
+            _run_checked_command(["pnpm", "run", "pack:toolpkg"], child_dir, dry_run=dry_run)
+            continue
+
         tsconfig = child_dir / "tsconfig.json"
         if not tsconfig.is_file():
             continue
@@ -317,10 +340,6 @@ def _prebuild_plans(repo_root: Path, source_dir: Path, plans: list[SyncPlanItem]
             _run_checked_command([_platform_command("tsc"), "-p", str(tsconfig)], repo_root, dry_run=dry_run)
             state[key] = signature
             changed = True
-
-        package_json = child_dir / "package.json"
-        if package_json.is_file():
-            _run_checked_command(["pnpm", "build"], child_dir, dry_run=dry_run)
 
     if changed and not dry_run:
         _save_state(state_file, state)
@@ -375,6 +394,7 @@ def _delete_unplanned_outputs(output_dir: Path, planned_names: set[str], *, dry_
     return deleted
 
 
+# Synchronizes one plugin source directory into its runtime output directory.
 def _sync(source_dir: Path, output_dir: Path, *, dry_run: bool) -> tuple[int, int, int]:
     repo_root = _repo_root()
     plans = _collect_sync_plan(source_dir)
@@ -402,6 +422,14 @@ def _sync(source_dir: Path, output_dir: Path, *, dry_run: bool) -> tuple[int, in
                     raise FileNotFoundError(f"Compiled JavaScript not found: {compiled}")
                 shutil.copy2(compiled, destination)
             copied += 1
+        elif plan.mode == "copy-script-toolpkg":
+            archive = plan.source / "dist" / plan.destination_name
+            print(f"{'DRY-COPY' if dry_run else 'COPY'}: {archive} -> {destination}")
+            if not dry_run:
+                if not archive.is_file():
+                    raise FileNotFoundError(f"Script-packed ToolPkg not found: {archive}")
+                shutil.copy2(archive, destination)
+            packed += 1
         else:
             print(f"{'DRY-PACK' if dry_run else 'PACK'}: {plan.source} -> {destination}")
             if not dry_run:

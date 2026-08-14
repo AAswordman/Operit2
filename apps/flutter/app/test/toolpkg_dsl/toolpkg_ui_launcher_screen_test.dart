@@ -134,6 +134,25 @@ void main() {
     );
   });
 
+  testWidgets(
+    'renders intermediate compose dsl action trees before completion',
+    (tester) async {
+      final bridge = _ToolPkgDslTestBridge(holdActionCompletion: true);
+      await tester.pumpWidget(_screen(bridge));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Increment'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Counter: 1'), findsOneWidget);
+      expect(bridge.actionCompletion, isNotNull);
+
+      bridge.actionCompletion!.complete();
+      await tester.pumpAndSettle();
+    },
+  );
+
   testWidgets('applies a compose dsl switch action result', (tester) async {
     final bridge = _ToolPkgDslTestBridge(
       renderResult: (_) => _toggleRenderResult(false),
@@ -179,6 +198,22 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('开始/暂停'), findsOneWidget);
+  });
+
+  testWidgets('wraps direct long text in a bounded row', (tester) async {
+    final bridge = _ToolPkgDslTestBridge(
+      renderResult: _rowLongTextRenderResult,
+    );
+    await tester.pumpWidget(_screen(bridge));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(
+      find.text(
+        '这里的开关和输入菜单里的“额外信息注入”是同一个状态；你可以分别控制注入项目、是否落盘保存，以及记忆检索是否允许重复命中。',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('renders text field slots and preserves focused input state', (
@@ -427,19 +462,6 @@ void main() {
     await tester.pumpWidget(_screen(bridge));
     await tester.pumpAndSettle();
 
-    final paintSizes = find
-        .byType(CustomPaint)
-        .evaluate()
-        .map(
-          (element) => tester.getSize(
-            find.byElementPredicate((candidate) => candidate == element),
-          ),
-        )
-        .toList(growable: false);
-    final canvasSize = paintSizes.singleWhere(
-      (size) => size.height == 48 && size.width > 100,
-    );
-
     final actionCall = bridge.calls.lastWhere(
       (request) =>
           request.methodName == 'dispatchToolPkgComposeDslActionEvents',
@@ -448,8 +470,8 @@ void main() {
     expect(args['actionId'], 'canvas_size');
 
     final payload = args['payload'] as Map<String, Object?>;
-    expect(payload['width'], canvasSize.width);
-    expect(payload['height'], canvasSize.height);
+    expect(payload['width'], 80);
+    expect(payload['height'], 48);
   });
 
   testWidgets('renders provide text style as inherited text context', (
@@ -954,11 +976,15 @@ core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
 }
 
 class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
-  _ToolPkgDslTestBridge({String Function(int count)? renderResult})
-    : _renderResult = renderResult ?? _counterRenderResult;
+  _ToolPkgDslTestBridge({
+    String Function(int count)? renderResult,
+    this.holdActionCompletion = false,
+  }) : _renderResult = renderResult ?? _counterRenderResult;
 
   final List<CoreCallRequest> calls = <CoreCallRequest>[];
   final String Function(int count) _renderResult;
+  final bool holdActionCompletion;
+  Completer<void>? actionCompletion;
   var _count = 0;
   var _checked = false;
 
@@ -978,22 +1004,6 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
         _count = 0;
         _checked = false;
         return _renderResult(_count);
-      case 'dispatchToolPkgComposeDslActionEvents':
-        final args = request.args as Map<String, Object?>;
-        final actionId = args['actionId'];
-        if (actionId == 'increment') {
-          _count += 1;
-        }
-        if (actionId == 'toggle') {
-          _checked = args['payload'] as bool;
-        }
-        final result = actionId == 'toggle'
-            ? _toggleRenderResult(_checked)
-            : _renderResult(_count);
-        return <Object?>[
-          jsonEncode(<String, Object?>{'phase': 'final', 'result': result}),
-          jsonEncode(<String, Object?>{'phase': 'complete'}),
-        ];
     }
     throw StateError('unexpected core call: ${request.methodName}');
   }
@@ -1015,10 +1025,61 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
     );
   }
 
-  /// Rejects watches because Compose DSL action events are direct Core calls.
+  /// Streams Compose DSL action results through the Core watch contract.
   @override
-  Stream<CoreEvent> watchStream(CoreWatchRequest request) {
-    throw StateError('unexpected core watch: ${request.propertyName}');
+  Stream<CoreEvent> watchStream(CoreWatchRequest request) async* {
+    if (request.propertyName != 'dispatchToolPkgComposeDslActionEvents') {
+      throw StateError('unexpected core watch: ${request.propertyName}');
+    }
+    calls.add(
+      CoreCallRequest(
+        requestId: request.requestId,
+        targetPath: request.targetPath,
+        methodName: request.propertyName,
+        args: request.args,
+      ),
+    );
+    final args = request.args as Map<String, Object?>;
+    final actionId = args['actionId'];
+    if (actionId == 'increment') {
+      _count += 1;
+    }
+    if (actionId == 'toggle') {
+      _checked = args['payload'] as bool;
+    }
+    final result = actionId == 'toggle'
+        ? _toggleRenderResult(_checked)
+        : _renderResult(_count);
+    if (holdActionCompletion) {
+      actionCompletion = Completer<void>();
+    }
+    yield CoreEvent(
+      requestId: request.requestId,
+      targetPath: request.targetPath,
+      propertyName: request.propertyName,
+      kind: 'Changed',
+      value: jsonEncode(<String, Object?>{
+        'phase': 'intermediate',
+        'result': result,
+      }),
+    );
+    if (actionCompletion != null) {
+      await actionCompletion!.future;
+    }
+    yield CoreEvent(
+      requestId: request.requestId,
+      targetPath: request.targetPath,
+      propertyName: request.propertyName,
+      kind: 'Changed',
+      value: jsonEncode(<String, Object?>{'phase': 'final', 'result': result}),
+    );
+    yield CoreEvent(
+      requestId: request.requestId,
+      targetPath: request.targetPath,
+      propertyName: request.propertyName,
+      kind: 'Completed',
+      value: jsonEncode(<String, Object?>{'phase': 'complete'}),
+    );
   }
 }
 
@@ -1123,6 +1184,39 @@ String _rowSurfaceRenderResult(int count) {
             _node(
               'Text',
               props: <String, Object?>{'text': '开始/暂停', 'style': 'labelLarge'},
+            ),
+          ],
+        ),
+      ],
+    ),
+    'state': <String, Object?>{'count': count},
+    'memo': <String, Object?>{'route': 'main'},
+  });
+}
+
+/// Builds a bounded Row containing the long banner text used by message_insert.
+String _rowLongTextRenderResult(int count) {
+  return jsonEncode(<String, Object?>{
+    'success': true,
+    'tree': _node(
+      'Surface',
+      props: <String, Object?>{'fillMaxWidth': true},
+      children: <Map<String, Object?>>[
+        _node(
+          'Row',
+          props: <String, Object?>{
+            'padding': <String, Object?>{'horizontal': 14, 'vertical': 12},
+          },
+          children: <Map<String, Object?>>[
+            _node('Icon', props: <String, Object?>{'name': 'info', 'size': 18}),
+            _node('Spacer', props: <String, Object?>{'width': 8}),
+            _node(
+              'Text',
+              props: <String, Object?>{
+                'text':
+                    '这里的开关和输入菜单里的“额外信息注入”是同一个状态；你可以分别控制注入项目、是否落盘保存，以及记忆检索是否允许重复命中。',
+                'softWrap': true,
+              },
             ),
           ],
         ),

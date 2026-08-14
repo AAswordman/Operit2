@@ -773,18 +773,6 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                 };
                 runtime.subscribeStateChange = subscribeStateChange;
                 runtime.flushStateChanges = flushPendingStateChanges;
-                runtime.updateRuntimeOptions = function(updatedOptions) {
-                    var next = updatedOptions && typeof updatedOptions === 'object' ? updatedOptions : {};
-                    if (next.state && typeof next.state === 'object') {
-                        runtime.stateStore = cloneObject(next.state);
-                    }
-                    if (next.memo && typeof next.memo === 'object') {
-                        runtime.memoStore = cloneObject(next.memo);
-                    }
-                    if (next.moduleSpec && typeof next.moduleSpec === 'object') {
-                        runtime.moduleSpec = next.moduleSpec;
-                    }
-                };
                 runtime.setCallRuntime = function(callRuntime) {
                     runtime.callRuntime = callRuntime;
                 };

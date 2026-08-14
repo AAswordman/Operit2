@@ -1,5 +1,5 @@
 use super::JsEngineState;
-use crate::javascript::TestJsToolsHost::expect_js_output;
+use crate::javascript::TestJsToolsHost::{expect_js_output, register_test_runtime_storage};
 use operit_host_api::HostManager::{
     setDefaultHostJavaScriptRuntimeHost, setDefaultHostRuntimeTaskSchedulerHost,
 };
@@ -46,6 +46,7 @@ fn testJavaScriptRuntimeHost() -> Arc<NativeHostJavaScriptRuntimeHost> {
 #[allow(non_snake_case)]
 fn newTestJsEngine(executionHost: Arc<dyn JsExecutionHost>) -> super::JsEngine {
     testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
     super::JsEngine::new(executionHost)
 }
 
@@ -53,6 +54,7 @@ fn newTestJsEngine(executionHost: Arc<dyn JsExecutionHost>) -> super::JsEngine {
 #[allow(non_snake_case)]
 fn newTestToolPkgRegistrationEngine() -> super::JsEngine {
     testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
     super::JsEngine::new_toolpkg_registration_engine()
 }
 
@@ -100,6 +102,13 @@ crate::impl_rejecting_js_tools_host!(TestPluginConfigExecutionHost);
 impl JsExecutionHost for TestPluginConfigExecutionHost {
     /// Executes the System sleep call used by the JavaScript worker regression test.
     fn execute_tool_call(&self, request: JsToolCallRequest) -> JsToolCallResult {
+        if request.tool_name == "get_device_location" {
+            return JsToolCallResult {
+                success: false,
+                data: JsToolCallResultData::Value(Value::Null),
+                error: Some("Error getting location information: location permission denied".to_string()),
+            };
+        }
         if request.tool_name != "sleep" {
             panic!(
                 "Unexpected tool execution in JavaScript engine test: {}",
@@ -230,11 +239,12 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
                 } else {
                     Some(&request.payload)
                 };
-                let value = valueSource
+                let result = valueSource
                     .and_then(|value| value.get("value"))
                     .and_then(Value::as_i64)
-                    .expect("ToolPkg IPC test payload must contain an integer value");
-                completion(Ok(serde_json::json!({ "value": value + 1 })))
+                    .map(|value| serde_json::json!({ "value": value + 1 }))
+                    .unwrap_or_else(|| serde_json::json!({}));
+                completion(Ok(result))
             })
             .map(|_| ())
             .map_err(|error| error.to_string())
@@ -244,6 +254,35 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
     fn wait_for_javascript_runtime_turn(&self) -> operit_host_api::HostRuntimeTurnFuture {
         Box::pin(async { Ok(()) })
     }
+}
+
+/// Verifies failed structured tool envelopes reject with their message instead of leaking JSON.
+#[test]
+fn structured_tool_failure_rejects_with_message() {
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let output = engine
+        .execute_script_function(
+            r#"
+                exports.read_location = async function() {
+                    try {
+                        await Tools.System.getLocation();
+                        return "unexpected-success";
+                    } catch (error) {
+                        return String(error.message || error);
+                    }
+                };
+            "#,
+            "read_location",
+            &testParams(),
+            &BTreeMap::new(),
+            None,
+            true,
+            2,
+            None,
+        )
+        .expect("location tool failure must be handled by JavaScript");
+    assert_eq!(output.as_deref(), Some("\"Error getting location information: location permission denied\""));
+    engine.destroy();
 }
 
 #[allow(non_snake_case)]
@@ -1145,6 +1184,66 @@ fn compose_dsl_action_updates_runtime_options_state_store() {
     assert_eq!(actionParsed["tree"]["props"]["checked"], true);
 }
 
+/// Verifies that the final DSL tree is rendered after an asynchronous toggle action settles.
+#[test]
+fn compose_dsl_async_toggle_action_renders_settled_state() {
+    let engine = newTestToolPkgRegistrationEngine();
+    let script = r#"
+        exports.default = function(ctx) {
+            var pair = ctx.useState('enabled', false);
+            return ctx.h('Switch', {
+                checked: pair[0],
+                onCheckedChange: function(value) {
+                    return Promise.resolve().then(function() {
+                        pair[1](value);
+                    });
+                }
+            }, []);
+        };
+    "#;
+    let mut params = testParams();
+    params.insert(
+        "packageName".to_string(),
+        Value::String("compose_async_toggle_test".to_string()),
+    );
+    params.insert(
+        "routeInstanceId".to_string(),
+        Value::String("compose_async_toggle_route".to_string()),
+    );
+    let raw = expect_js_output(
+        engine.execute_compose_dsl_script(
+            script,
+            &params,
+            &BTreeMap::new(),
+            Arc::new(BTreeMap::new()),
+        ),
+        "compose async toggle render result",
+    );
+    let rendered = serde_json::from_str::<Value>(&raw).expect("compose async toggle render json");
+    let actionId = rendered["tree"]["props"]["onCheckedChange"]["__actionId"]
+        .as_str()
+        .expect("async toggle action id")
+        .to_string();
+    params.insert("state".to_string(), rendered["state"].clone());
+    params.insert("memo".to_string(), rendered["memo"].clone());
+
+    let actionRaw = expect_js_output(
+        engine.execute_compose_dsl_action(
+            &actionId,
+            Some(Value::Bool(true)),
+            &params,
+            &BTreeMap::new(),
+            None,
+        ),
+        "compose async toggle action result",
+    );
+    let action =
+        serde_json::from_str::<Value>(&actionRaw).expect("compose async toggle action json");
+
+    assert_eq!(action["state"]["enabled"], true);
+    assert_eq!(action["tree"]["props"]["checked"], true);
+}
+
 #[test]
 fn compose_dsl_action_can_access_bootstrap_globals() {
     let engine = newTestToolPkgRegistrationEngine();
@@ -1544,6 +1643,182 @@ fn render_message_insert_compose_dsl_screen() {
     let rendered = serde_json::from_str::<Value>(&raw).expect("message_insert compose render JSON");
     assert!(rendered["tree"].is_object());
     engine.destroy();
+}
+
+/// Verifies the real message-insert master switch renders the immediate local state change.
+#[test]
+fn message_insert_compose_master_switch_updates_before_async_persistence() {
+    ensure_test_runtime_root();
+    let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("repo root");
+    let distRoot = repoRoot.join("plugins/packages/external/message_insert/dist");
+    let script = std::fs::read_to_string(distRoot.join("ui/index.ui.js"))
+        .expect("message_insert compose screen");
+    let mut textResources = BTreeMap::new();
+    collect_message_insert_text_resources(&distRoot, &distRoot, &mut textResources);
+    let mut params = testParams();
+    params.insert(
+        "toolPkgId".to_string(),
+        Value::String("message_insert".to_string()),
+    );
+    params.insert(
+        "__operit_ui_package_name".to_string(),
+        Value::String("message_insert".to_string()),
+    );
+    params.insert(
+        "__operit_script_screen".to_string(),
+        Value::String("dist/ui/index.ui.js".to_string()),
+    );
+    params.insert(
+        "__operit_toolpkg_runtime_kind".to_string(),
+        Value::String("ui".to_string()),
+    );
+    params.insert(
+        "__operit_execution_context_key".to_string(),
+        Value::String("toolpkg_compose_dsl:message_insert:message_insert_settings".to_string()),
+    );
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let resources = Arc::new(textResources);
+    let renderedRaw = expect_js_output(
+        engine.execute_compose_dsl_script(&script, &params, &BTreeMap::new(), resources),
+        "message_insert compose render",
+    );
+    let rendered = serde_json::from_str::<Value>(&renderedRaw).expect("rendered JSON");
+    let actionId = find_switch_action_for_text(&rendered["tree"], "额外信息注入")
+        .expect("master switch action id");
+    let mut actionParams = params.clone();
+    actionParams.insert("state".to_string(), rendered["state"].clone());
+    actionParams.insert("memo".to_string(), rendered["memo"].clone());
+    let actionRaw = expect_js_output(
+        engine.execute_compose_dsl_action(
+            &actionId,
+            Some(Value::Bool(true)),
+            &actionParams,
+            &BTreeMap::new(),
+            None,
+        ),
+        "message_insert master toggle action",
+    );
+    let action = serde_json::from_str::<Value>(&actionRaw).expect("action JSON");
+    assert_eq!(action["state"]["masterEnabled"], true);
+    assert_eq!(find_switch_checked_for_text(&action["tree"]), Some(true));
+    engine.destroy();
+}
+
+/// Finds one action id belonging to the toggle row with the requested title.
+fn find_switch_action_for_text(node: &Value, title: &str) -> Option<String> {
+    if contains_text(node, title) {
+        if let Some(actionId) = find_switch_action(node) {
+            return Some(actionId);
+        }
+    }
+    for key in ["children", "slots"] {
+        if let Some(value) = node.get(key) {
+            if let Some(found) = find_switch_action_in_value(value, title) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+/// Recursively finds the switch action in a Compose subtree containing a title.
+fn find_switch_action_in_value(value: &Value, title: &str) -> Option<String> {
+    if let Some(items) = value.as_array() {
+        for item in items {
+            if let Some(found) = find_switch_action_for_text(item, title) {
+                return Some(found);
+            }
+        }
+    } else if let Some(object) = value.as_object() {
+        for child in object.values() {
+            if let Some(found) = find_switch_action_in_value(child, title) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+/// Finds the checked state of the first switch in a Compose subtree.
+fn find_switch_checked_for_text(node: &Value) -> Option<bool> {
+    if node.get("type").and_then(Value::as_str) == Some("Switch") {
+        return node["props"]["checked"].as_bool();
+    }
+    for key in ["children", "slots"] {
+        if let Some(value) = node.get(key) {
+            if let Some(found) = find_switch_checked_in_value(value) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+/// Returns whether a Compose subtree contains the requested text node.
+fn contains_text(node: &Value, title: &str) -> bool {
+    if node["type"] == "Text" && node["props"]["text"] == title {
+        return true;
+    }
+    ["children", "slots"].iter().any(|key| {
+        node.get(*key)
+            .map(|value| contains_text_in_value(value, title))
+            .unwrap_or(false)
+    })
+}
+
+/// Recursively checks text nodes in a Compose tree value.
+fn contains_text_in_value(value: &Value, title: &str) -> bool {
+    if let Some(items) = value.as_array() {
+        return items.iter().any(|item| contains_text(item, title));
+    }
+    value
+        .as_object()
+        .map(|object| object.values().any(|child| contains_text_in_value(child, title)))
+        .unwrap_or(false)
+}
+
+/// Finds the first switch action id in a Compose subtree.
+fn find_switch_action(node: &Value) -> Option<String> {
+    if node.get("type").and_then(Value::as_str) == Some("Switch") {
+        return node["props"]["onCheckedChange"]["__actionId"]
+            .as_str()
+            .map(ToString::to_string);
+    }
+    ["children", "slots"].iter().find_map(|key| {
+        node.get(*key)
+            .and_then(|value| find_switch_action_in_value_any(value))
+    })
+}
+
+/// Recursively finds a switch action in a Compose tree value.
+fn find_switch_action_in_value_any(value: &Value) -> Option<String> {
+    if let Some(items) = value.as_array() {
+        return items.iter().find_map(find_switch_action);
+    }
+    value
+        .as_object()
+        .and_then(|object| object.values().find_map(find_switch_action_in_value_any))
+}
+
+/// Recursively finds one switch checked property in a Compose tree value.
+fn find_switch_checked_in_value(value: &Value) -> Option<bool> {
+    if let Some(items) = value.as_array() {
+        for item in items {
+            if let Some(found) = find_switch_checked_for_text(item) {
+                return Some(found);
+            }
+        }
+    } else if let Some(object) = value.as_object() {
+        for child in object.values() {
+            if let Some(found) = find_switch_checked_in_value(child) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 /// Collects all message-insert JavaScript resources using package-relative paths.

@@ -407,7 +407,16 @@ class ChatScreenContent extends StatelessWidget {
         .map((index) => messages[index])
         .map((message) => cleanMessageContent(message.copySourceText))
         .join('\n\n');
-    await Clipboard.setData(ClipboardData(text: text));
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+    } on PlatformException catch (error) {
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text('复制失败：${error.message ?? error.code}')),
+      );
+    }
   }
 
   /// Confirms deletion of the selected messages.

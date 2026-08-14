@@ -470,6 +470,14 @@ pub fn buildRuntimeBootstrapScript() -> String {
 
         function __operitParseToolResult(result, isError) {{
             if (isError) {{
+                if (typeof result === 'string' && result.length > 1) {{
+                    var errorFirst = result.charAt(0);
+                    if (errorFirst === '{{' || errorFirst === '[') {{
+                        try {{
+                            result = JSON.parse(result);
+                        }} catch (_error) {{}}
+                    }}
+                }}
                 if (result && typeof result === 'object' && result.success === false) {{
                     var err = new Error(String(result.message || 'Tool call failed'));
                     err.data = result.data;
@@ -488,11 +496,13 @@ pub fn buildRuntimeBootstrapScript() -> String {
             if (typeof result === 'string' && result.length > 1) {{
                 var first = result.charAt(0);
                 if (first === '{{' || first === '[') {{
+                    var parsedResult;
                     try {{
-                        return __operitParseToolResult(JSON.parse(result), false);
+                        parsedResult = JSON.parse(result);
                     }} catch (_error) {{
                         return result;
                     }}
+                    return __operitParseToolResult(parsedResult, false);
                 }}
             }}
             return result;

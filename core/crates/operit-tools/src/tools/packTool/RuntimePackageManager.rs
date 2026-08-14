@@ -45,6 +45,8 @@ use operit_store::PreferencesDataStore::{
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_util::AppLogger::AppLogger;
+use operit_util::stream::HotStream::MutableSharedStreamImpl;
+use operit_util::stream::Stream::{CollectFuture, Stream};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -201,6 +203,28 @@ pub struct RuntimePackageManager {
     mcpManager: MCPManager,
 }
 
+/// Streams serialized Compose DSL action events for one action invocation.
+#[derive(Clone)]
+pub struct ToolPkgComposeDslActionEventStream {
+    upstream: MutableSharedStreamImpl<String>,
+}
+
+impl ToolPkgComposeDslActionEventStream {
+    /// Creates an action event stream backed by the supplied shared event channel.
+    fn new(upstream: MutableSharedStreamImpl<String>) -> Self {
+        Self { upstream }
+    }
+}
+
+impl Stream for ToolPkgComposeDslActionEventStream {
+    type Item = String;
+
+    /// Collects action events in the order emitted by the JavaScript runtime.
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
+        self.upstream.collect(collector)
+    }
+}
+
 impl RuntimePackageManager {
     /// Creates a package manager bound to one tool handler instance.
     pub fn new(
@@ -284,18 +308,8 @@ impl RuntimePackageManager {
         runtimeOptions: BTreeMap<String, serde_json::Value>,
         envOverrides: BTreeMap<String, String>,
     ) -> Result<Option<String>, String> {
-        let executionStartedMillis = currentTimeMillis();
         let textResources = self.toolPkgTextResources(containerPackageName)?;
-        AppLogger::d(
-            PACKAGE_MANAGER_LOG_TAG,
-            &format!(
-                "compose-render-start context={} package={} resourceEntries={}",
-                contextKey,
-                containerPackageName,
-                textResources.len()
-            ),
-        );
-        let result = self
+        self
             .getToolPkgExecutionEngine(contextKey, containerPackageName)
             .execute_compose_dsl_script_async(
                 script.to_string(),
@@ -304,80 +318,72 @@ impl RuntimePackageManager {
                 textResources,
             )
             .await
-            .map_err(|error| error.to_string());
-        AppLogger::d(
-            PACKAGE_MANAGER_LOG_TAG,
-            &format!(
-                "compose-render-finish context={} package={} elapsedMs={} success={}",
-                contextKey,
-                containerPackageName,
-                currentTimeMillis() - executionStartedMillis,
-                result.is_ok()
-            ),
-        );
-        result
+            .map_err(|error| error.to_string())
     }
 
-    /// Dispatches a Compose DSL action through the host-owned asynchronous JavaScript boundary.
-    pub async fn dispatchToolPkgComposeDslActionEvents(
+    /// Dispatches a Compose DSL action and immediately streams intermediate render events.
+    pub fn dispatchToolPkgComposeDslActionEvents(
         &self,
-        contextKey: &str,
-        containerPackageName: &str,
-        actionId: &str,
+        contextKey: String,
+        containerPackageName: String,
+        actionId: String,
         payload: Option<serde_json::Value>,
         runtimeOptions: BTreeMap<String, serde_json::Value>,
         envOverrides: BTreeMap<String, String>,
-    ) -> Result<Vec<String>, String> {
-        let executionStartedMillis = currentTimeMillis();
-        AppLogger::d(
-            PACKAGE_MANAGER_LOG_TAG,
-            &format!(
-                "compose-action-start context={} package={} action={}",
-                contextKey, containerPackageName, actionId
-            ),
-        );
-        let events = Arc::new(Mutex::new(Vec::<String>::new()));
-        let eventCollector = events.clone();
-        let finalEvent = self
-            .getToolPkgExecutionEngine(contextKey, containerPackageName)
-            .dispatch_compose_dsl_action_result_async(
-                actionId.to_string(),
-                payload,
-                runtimeOptions,
-                envOverrides,
-                Some(Arc::new(move |event| {
-                    eventCollector
-                        .lock()
-                        .expect("compose dsl event collector mutex poisoned")
-                        .push(buildComposeDslActionEvent(
-                            "intermediate",
-                            None,
-                            Some(&event),
-                        ));
-                })),
+    ) -> ToolPkgComposeDslActionEventStream {
+        let eventStream = MutableSharedStreamImpl::new(usize::MAX);
+        let eventStreamForTask = eventStream.clone();
+        let engine = self.getToolPkgExecutionEngine(&contextKey, &containerPackageName);
+        let scheduler = self
+            .context
+            .hostRuntimeTaskSchedulerHost
+            .clone()
+            .expect("HostRuntimeTaskSchedulerHost is required for Compose DSL actions");
+        scheduler
+            .scheduleHostRuntimeAsyncTask(
+                "operit-compose-dsl-action",
+                Box::new(move || {
+                    Box::pin(async move {
+                        let intermediateStream = eventStreamForTask.clone();
+                        let finalEvent = engine
+                            .dispatch_compose_dsl_action_result_async(
+                                actionId.clone(),
+                                payload,
+                                runtimeOptions,
+                                envOverrides,
+                                Some(Arc::new(move |event| {
+                                    intermediateStream.emit(buildComposeDslActionEvent(
+                                        "intermediate",
+                                        None,
+                                        Some(&event),
+                                    ));
+                                })),
+                            )
+                            .await;
+                        match finalEvent {
+                            Ok(Some(event)) => {
+                                eventStreamForTask.emit(buildComposeDslActionEvent(
+                                    "final",
+                                    None,
+                                    Some(&event),
+                                ));
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                eventStreamForTask.emit(buildComposeDslActionEvent(
+                                    "error",
+                                    Some(&error.to_string()),
+                                    None,
+                                ));
+                            }
+                        }
+                        eventStreamForTask.emit(buildComposeDslActionEvent("complete", None, None));
+                        eventStreamForTask.close();
+                    })
+                }),
             )
-            .await;
-        let mut output = events
-            .lock()
-            .expect("compose dsl event collector mutex poisoned")
-            .clone();
-        let finalEvent = finalEvent.map_err(|error| error.to_string());
-        AppLogger::d(
-            PACKAGE_MANAGER_LOG_TAG,
-            &format!(
-                "compose-action-finish context={} package={} action={} elapsedMs={} success={}",
-                contextKey,
-                containerPackageName,
-                actionId,
-                currentTimeMillis() - executionStartedMillis,
-                finalEvent.is_ok()
-            ),
-        );
-        if let Some(event) = finalEvent? {
-            output.push(buildComposeDslActionEvent("final", None, Some(&event)));
-        }
-        output.push(buildComposeDslActionEvent("complete", None, None));
-        Ok(output)
+            .expect("HostRuntimeTaskSchedulerHost must schedule Compose DSL actions");
+        ToolPkgComposeDslActionEventStream::new(eventStream)
     }
 
     #[allow(non_snake_case)]

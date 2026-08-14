@@ -228,15 +228,7 @@ impl HostEnvironmentDescriptor {
                 "system.settings".to_string(),
             ],
             structuredCapabilities: defaultHostCapabilities(),
-            onboardingRequirements: vec![HostOnboardingRequirement {
-                id: "windows.admin".to_string(),
-                title: "管理员权限".to_string(),
-                description: "显示当前 Host 是否以管理员身份运行；提升权限必须由系统启动边界决定。"
-                    .to_string(),
-                capabilityIds: vec!["host.privilege".to_string()],
-                status: HostRequirementStatus::Missing,
-                action: HostRequirementAction::HostManaged,
-            }],
+            onboardingRequirements: windowsOnboardingRequirements(),
             workspaceRoots: Vec::new(),
         }
     }
@@ -610,6 +602,20 @@ fn hostCapabilities(ids: &[&str]) -> Vec<HostCapability> {
         .collect()
 }
 
+/// Builds Windows onboarding requirements for elevation.
+fn windowsOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
+    vec![HostOnboardingRequirement {
+        id: "windows.admin".to_string(),
+        title: "管理员权限".to_string(),
+        description: "显示当前 Host 是否以管理员身份运行；提升权限必须由系统启动边界决定。"
+            .to_string(),
+        capabilityIds: vec!["host.privilege".to_string()],
+        status: HostRequirementStatus::Missing,
+        action: HostRequirementAction::HostManaged,
+    }]
+}
+
+/// Builds Android onboarding requirements for runtime permissions.
 fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
     vec![
         HostOnboardingRequirement {

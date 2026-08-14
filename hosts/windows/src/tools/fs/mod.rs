@@ -116,7 +116,9 @@ impl FileSystemHost for WindowsFileSystemHost {
         self.validatePath(path, "path")?;
         let target = Path::new(path);
         if !target.exists() {
-            return Err(HostError::new(format!("File or directory does not exist: {path}")));
+            return Err(HostError::new(format!(
+                "File or directory does not exist: {path}"
+            )));
         }
         if target.is_dir() {
             if recursive {
@@ -152,7 +154,9 @@ impl FileSystemHost for WindowsFileSystemHost {
         self.validatePath(source, "source")?;
         self.validatePath(destination, "destination")?;
         if !Path::new(source).exists() {
-            return Err(HostError::new(format!("Source file does not exist: {source}")));
+            return Err(HostError::new(format!(
+                "Source file does not exist: {source}"
+            )));
         }
         ensure_parent_directory(destination)?;
         fs::rename(source, destination).map_err(HostError::from)
@@ -163,7 +167,9 @@ impl FileSystemHost for WindowsFileSystemHost {
         self.validatePath(destination, "destination")?;
         let sourcePath = Path::new(source);
         if !sourcePath.exists() {
-            return Err(HostError::new(format!("Source path does not exist: {source}")));
+            return Err(HostError::new(format!(
+                "Source path does not exist: {source}"
+            )));
         }
         ensure_parent_directory(destination)?;
         if sourcePath.is_dir() {
@@ -351,13 +357,14 @@ impl FileSystemHost for WindowsFileSystemHost {
         self.validatePath(destination, "destination")?;
         let sourcePath = Path::new(source);
         if !sourcePath.exists() {
-            return Err(HostError::new(format!("Source path does not exist: {source}")));
+            return Err(HostError::new(format!(
+                "Source path does not exist: {source}"
+            )));
         }
         ensure_parent_directory(destination)?;
         let destinationFile = File::create(destination)?;
         let mut zipWriter = ZipWriter::new(destinationFile);
-        let options = SimpleFileOptions::default()
-            .compression_method(CompressionMethod::Deflated);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
         if sourcePath.is_dir() {
             let baseName = sourcePath
                 .file_name()
@@ -543,7 +550,10 @@ fn zip_directory(
     let entryName = if relative.as_os_str().is_empty() {
         zipPrefix.to_string()
     } else {
-        format!("{zipPrefix}/{}", relative.to_string_lossy().replace('\\', "/"))
+        format!(
+            "{zipPrefix}/{}",
+            relative.to_string_lossy().replace('\\', "/")
+        )
     };
     if !entryName.is_empty() {
         zipWriter
