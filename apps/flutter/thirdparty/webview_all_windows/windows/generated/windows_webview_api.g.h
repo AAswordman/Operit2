@@ -540,7 +540,8 @@ public:
   SetPointerButton(int64_t texture_id,
                    const WindowsPointerButtonData &button) = 0;
   virtual std::optional<FlutterError>
-  SetScrollDelta(int64_t texture_id, const WindowsPointData &delta) = 0;
+  SetScrollDelta(int64_t texture_id, const WindowsPointData &delta,
+                 bool control_key_pressed) = 0;
   virtual std::optional<FlutterError> SetSize(int64_t texture_id,
                                               const WindowsSizeData &size) = 0;
 

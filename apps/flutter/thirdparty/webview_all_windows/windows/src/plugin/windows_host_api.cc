@@ -707,12 +707,14 @@ WindowsHostApi::SetPointerButton(
 }
 
 std::optional<webview_all_windows::FlutterError> WindowsHostApi::SetScrollDelta(
-    int64_t texture_id, const webview_all_windows::WindowsPointData &delta) {
+    int64_t texture_id,
+    const webview_all_windows::WindowsPointData &delta,
+    bool control_key_pressed) {
   auto bridge = FindBridge(texture_id);
   if (!bridge) {
     return InvalidIdError();
   }
-  bridge->SetScrollDelta(delta.x(), delta.y());
+  bridge->SetScrollDelta(delta.x(), delta.y(), control_key_pressed);
   return std::nullopt;
 }
 

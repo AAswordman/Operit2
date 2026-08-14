@@ -43,10 +43,10 @@ class SettingsCategorySpec {
         description: l10n.settingsCategoryModelDescription,
         icon: Icons.hub_outlined,
       ),
-      SettingsCategory.localModels => const SettingsCategorySpec(
-        title: '本地模型',
-        subtitle: '下载、引擎、STT / TTS',
-        description: '管理按需安装的本地模型和推理引擎。',
+      SettingsCategory.localModels => SettingsCategorySpec(
+        title: l10n.settingsCategoryLocalModelsTitle,
+        subtitle: l10n.settingsCategoryLocalModelsSubtitle,
+        description: l10n.settingsCategoryLocalModelsDescription,
         icon: Icons.memory_outlined,
       ),
       SettingsCategory.tts => const SettingsCategorySpec(

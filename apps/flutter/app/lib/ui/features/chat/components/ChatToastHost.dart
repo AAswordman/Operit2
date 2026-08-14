@@ -57,8 +57,9 @@ class _ChatToastHostState extends State<ChatToastHost> {
     final message = widget.message;
     final visible = message != null && message.trim().isNotEmpty;
     final colorScheme = Theme.of(context).colorScheme;
-    final estimatedLines = _estimatedLines(message ?? '');
-    final compact = estimatedLines <= 2;
+    final textStyle = DefaultTextStyle.of(
+      context,
+    ).style.merge(Theme.of(context).textTheme.bodyMedium);
 
     return AnimatedSlide(
       offset: visible ? Offset.zero : const Offset(0, -0.35),
@@ -87,37 +88,33 @@ class _ChatToastHostState extends State<ChatToastHost> {
                     const OperitLogoMark(size: 28),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: compact
-                          ? SizedBox(
-                              height: 28,
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  message ?? '',
-                                  style: Theme.of(context).textTheme.bodyMedium,
-                                  overflow: TextOverflow.clip,
-                                ),
-                              ),
-                            )
-                          : ConstrainedBox(
-                              constraints: BoxConstraints(
-                                maxHeight: widget.maxHeight,
-                              ),
-                              child: SingleChildScrollView(
-                                controller: _scrollController,
-                                physics: const BouncingScrollPhysics(),
-                                child: Align(
-                                  alignment: Alignment.topLeft,
-                                  child: Text(
-                                    message ?? '',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodyMedium,
-                                    overflow: TextOverflow.clip,
-                                  ),
-                                ),
-                              ),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final messageText = message ?? '';
+                          final textPainter = TextPainter(
+                            text: TextSpan(text: messageText, style: textStyle),
+                            textDirection: Directionality.of(context),
+                            textScaler: MediaQuery.textScalerOf(context),
+                          )..layout(maxWidth: constraints.maxWidth);
+                          final messageExceedsMaxHeight =
+                              textPainter.height > widget.maxHeight;
+                          textPainter.dispose();
+                          final text = Text(messageText, style: textStyle);
+                          if (!messageExceedsMaxHeight) {
+                            return text;
+                          }
+                          return ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxHeight: widget.maxHeight,
                             ),
+                            child: SingleChildScrollView(
+                              controller: _scrollController,
+                              physics: const BouncingScrollPhysics(),
+                              child: text,
+                            ),
+                          );
+                        },
+                      ),
                     ),
                     IconButton(
                       onPressed: widget.onDismiss,

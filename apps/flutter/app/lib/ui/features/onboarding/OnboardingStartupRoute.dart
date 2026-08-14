@@ -3173,9 +3173,10 @@ class _PermissionTile extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final granted = requirement.status == 'Satisfied';
     final canRequest =
-        requirement.action == 'RuntimePermission' ||
-        requirement.action == 'OpenSystemSettings' ||
-        requirement.action == 'HostManaged';
+        requirement.status != 'Unavailable' &&
+        (requirement.action == 'RuntimePermission' ||
+            requirement.action == 'OpenSystemSettings' ||
+            requirement.action == 'HostManaged');
     return Card(
       elevation: 0,
       color: granted
@@ -3187,7 +3188,20 @@ class _PermissionTile extends StatelessWidget {
           granted ? Icons.check_circle_rounded : Icons.radio_button_unchecked,
           color: granted ? colorScheme.primary : colorScheme.onSurfaceVariant,
         ),
-        title: Text(requirement.title),
+        title: Row(
+          children: <Widget>[
+            Expanded(child: Text(requirement.title)),
+            if (!requirement.isRequired) ...<Widget>[
+              const SizedBox(width: 8),
+              Text(
+                '可选',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ],
+        ),
         subtitle: Text(requirement.description),
         trailing: TextButton(
           onPressed: granted || requesting || !canRequest ? null : onTap,
@@ -3212,6 +3226,7 @@ class _OnboardingRequirement {
     required this.id,
     required this.title,
     required this.description,
+    required this.isRequired,
     required this.status,
     required this.action,
   });
@@ -3224,6 +3239,7 @@ class _OnboardingRequirement {
       id: requirement.id,
       title: requirement.title,
       description: requirement.description,
+      isRequired: requirement.isRequired,
       status: requirement.status.value,
       action: requirement.action.value,
     );
@@ -3232,6 +3248,7 @@ class _OnboardingRequirement {
   final String id;
   final String title;
   final String description;
+  final bool isRequired;
   final String status;
   final String action;
 
@@ -3240,6 +3257,7 @@ class _OnboardingRequirement {
       id: id,
       title: title,
       description: description,
+      isRequired: isRequired,
       status: status,
       action: action,
     );

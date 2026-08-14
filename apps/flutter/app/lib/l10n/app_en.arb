@@ -316,7 +316,13 @@
   "protectedMedia": "Protected media",
   "midiDevice": "MIDI device",
   "browserPermissionRequestTitle": "Website permission request",
-  "chatSpeechInputFailed": "Speech input failed. Please try again.",
+  "chatSpeechInputFailed": "Speech input failed: {error}",
+  "@chatSpeechInputFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "chatSpeechInputConfigurationRequired": "Select a speech recognition configuration in Settings > Voice & Recognition before using speech input.",
   "chatSpeechNoTextRecognized": "No speech recognized.",
   "history": "History",
   "bookmarks": "Bookmarks",
@@ -405,6 +411,9 @@
   "settingsCategoryModelTitle": "Models & AI",
   "settingsCategoryModelSubtitle": "Models, keys, context",
   "settingsCategoryModelDescription": "Configure model connections, choose the chat model, and manage thinking, context, and multimodal abilities.",
+  "settingsCategoryLocalModelsTitle": "Local Models",
+  "settingsCategoryLocalModelsSubtitle": "Downloads, engines, STT / TTS",
+  "settingsCategoryLocalModelsDescription": "Manage local models and inference engines installed on demand.",
   "settingsCategoryCharactersTitle": "Characters & Memory",
   "settingsCategoryCharactersSubtitle": "Cards, groups, bindings",
   "settingsCategoryCharactersDescription": "Manage character cards, groups, active roles, and role-level model, memory, and tool bindings.",
@@ -627,6 +636,83 @@
   "settingsModelProviderTypeOllama": "Ollama",
   "settingsModelProviderTypeOpenaiLocal": "OpenAI Local",
   "settingsModelProviderTypeLocalModel": "Local model",
+  "localModelsLoadFailed": "Failed to load local model status: {error}",
+  "@localModelsLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "localModelsOperationFailed": "Local model operation failed: {error}",
+  "@localModelsOperationFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "localModelsCatalog": "Model catalog",
+  "localModelsCategorySpeechToText": "Speech-to-text models",
+  "localModelsCategoryTextToSpeech": "Text-to-speech models",
+  "localModelsCategoryChat": "LLM models",
+  "localModelsCategoryEmbedding": "Embedding models",
+  "localModelsInstalledEngines": "Installed engines",
+  "localModelsNoInstalledEngines": "No local inference engine is installed on this platform.",
+  "localModelsDeleteModelTitle": "Delete local model",
+  "localModelsDeleteModelMessage": "Delete model files for {modelName}?",
+  "@localModelsDeleteModelMessage": {
+    "placeholders": {
+      "modelName": {}
+    }
+  },
+  "localModelsDeleteEngineTitle": "Delete local engine",
+  "localModelsDeleteEngineMessage": "Delete {engineName} {version}?",
+  "@localModelsDeleteEngineMessage": {
+    "placeholders": {
+      "engineName": {},
+      "version": {}
+    }
+  },
+  "localModelsCancelling": "Pausing",
+  "localModelsDownloadPaused": "Paused: {downloaded} / {total}",
+  "@localModelsDownloadPaused": {
+    "placeholders": {
+      "downloaded": {},
+      "total": {}
+    }
+  },
+  "localModelsDownloadInstalling": "Download complete, installing",
+  "localModelsDownloading": "Downloading: {downloaded} / {total}",
+  "@localModelsDownloading": {
+    "placeholders": {
+      "downloaded": {},
+      "total": {}
+    }
+  },
+  "localModelsLicense": "License: {license}",
+  "@localModelsLicense": {
+    "placeholders": {
+      "license": {}
+    }
+  },
+  "localModelsPlatformCompatible": "Platform compatible",
+  "localModelsPlatformIncompatible": "Platform incompatible",
+  "localModelsModelInstalled": "Model installed",
+  "localModelsModelNotInstalled": "Model not installed",
+  "localModelsEngineInstalled": "Engine installed",
+  "localModelsEngineNotInstalled": "Engine not installed",
+  "localModelsVerifyModelAndEngine": "Verify model and engine",
+  "localModelsDeleteModel": "Delete model",
+  "localModelsPauseDownload": "Pause download",
+  "localModelsDeleteDownload": "Delete download",
+  "localModelsResumeDownload": "Resume",
+  "localModelsInstalling": "Installing",
+  "localModelsInstall": "Install",
+  "localModelsDeleteEngine": "Delete engine",
+  "localModelDescriptionSherpaOnnxStreamingStt": "Streaming bilingual Chinese and English speech recognition.",
+  "localModelDescriptionSherpaOnnxVitsAishell3": "Local Chinese multi-speaker speech synthesis.",
+  "localModelDescriptionSherpaOnnxVitsZhLl": "Local Chinese five-speaker speech synthesis.",
+  "localModelDescriptionSherpaOnnxMatchaBaker": "Local Chinese single-speaker Matcha speech synthesis.",
+  "localModelDescriptionSherpaOnnxKittenNano": "Local English eight-speaker KittenTTS speech synthesis.",
+  "localModelDescriptionSherpaOnnxWebParaformer": "Browser packaged Chinese and English Paraformer speech recognition.",
+  "localModelDescriptionSherpaOnnxWebVitsPiper": "Browser packaged English multi-speaker VITS speech synthesis.",
   "settingsModelProviderTypeMnn": "MNN",
   "settingsModelProviderTypeLlamaCpp": "llama.cpp",
   "settingsModelProviderTypePpinfra": "PPInfra",
@@ -639,6 +725,7 @@
   "settingsModelAddModelShort": "Add",
   "settingsModelCustomModel": "Custom model",
   "settingsModelModelId": "Model ID",
+  "settingsModelDuplicateModelId": "This model has already been added to this provider.",
   "settingsModelMaxTokens": "Max tokens",
   "settingsModelMaxTokensDescription": "Limit how many tokens one response may generate.",
   "settingsModelTemperature": "Temperature",

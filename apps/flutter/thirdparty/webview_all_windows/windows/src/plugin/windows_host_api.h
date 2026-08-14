@@ -121,7 +121,8 @@ private:
   SetPointerButton(int64_t texture_id,
                    const WindowsPointerButtonData &button) override;
   std::optional<FlutterError>
-  SetScrollDelta(int64_t texture_id, const WindowsPointData &delta) override;
+  SetScrollDelta(int64_t texture_id, const WindowsPointData &delta,
+                 bool control_key_pressed) override;
   std::optional<FlutterError> SetSize(int64_t texture_id,
                                       const WindowsSizeData &size) override;
 

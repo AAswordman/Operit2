@@ -10,14 +10,19 @@ import android.os.Build
 import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
+import app.operit.core.tools.system.AndroidPrivilegedCommandExecutor
+import app.operit.core.tools.system.AndroidPrivilegedCommandTarget
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import rikka.shizuku.Shizuku
 
 class AndroidPlatformChannel(
     private val activity: MainActivity,
     private val runtimeHost: AndroidRuntimeHost,
 ) {
     private var pendingPermissionResult: MethodChannel.Result? = null
+    private var pendingShizukuAuthorizationResult: MethodChannel.Result? = null
+    private var pendingShizukuAuthorizationListener: Shizuku.OnRequestPermissionResultListener? = null
 
     fun handle(call: MethodCall, result: MethodChannel.Result): Boolean {
         when (call.method) {
@@ -34,6 +39,7 @@ class AndroidPlatformChannel(
         return true
     }
 
+    /** Returns Android onboarding authorization states for the requested host. */
     private fun hostOnboardingPermissionSnapshot(call: MethodCall, result: MethodChannel.Result) {
         val hostId = call.argument<String>("hostId")
         if (hostId != "android") {
@@ -43,6 +49,7 @@ class AndroidPlatformChannel(
         onboardingPermissionSnapshot(result)
     }
 
+    /** Starts an Android onboarding authorization request for the requested host. */
     private fun hostOnboardingRequestPermission(call: MethodCall, result: MethodChannel.Result) {
         val hostId = call.argument<String>("hostId")
         if (hostId != "android") {
@@ -115,6 +122,7 @@ class AndroidPlatformChannel(
         result.success(runtimeHost.runtimeStartupStatusMap())
     }
 
+    /** Builds the Android onboarding authorization status snapshot. */
     private fun onboardingPermissionSnapshot(result: MethodChannel.Result) {
         result.success(
             mapOf(
@@ -151,10 +159,16 @@ class AndroidPlatformChannel(
                     "android.batteryOptimization",
                     isIgnoringBatteryOptimizations(),
                 ),
+                "android.shizuku" to shizukuAuthorizationRequirement(),
+                "android.root" to requirement(
+                    "android.root",
+                    AndroidPrivilegeAuthorization.isRootAuthorized(activity),
+                ),
             ),
         )
     }
 
+    /** Routes an Android onboarding authorization request to its native implementation. */
     private fun onboardingRequestPermission(call: MethodCall, result: MethodChannel.Result) {
         when (call.argument<String>("requirementId")) {
             "android.fileManagement" -> requestFileManagementPermission(result)
@@ -178,11 +192,104 @@ class AndroidPlatformChannel(
                 openBatteryOptimizationSettings()
                 result.success(null)
             }
+            "android.shizuku" -> requestShizukuAuthorization(result)
+            "android.root" -> requestRootAuthorization(result)
             else -> {
                 result.error("INVALID_ONBOARDING_REQUIREMENT", "Invalid onboarding requirement", null)
                 return
             }
         }
+    }
+
+    /** Returns the Shizuku authorization state without prompting the user. */
+    private fun shizukuAuthorizationRequirement(): Map<String, Any> {
+        val status =
+            when (AndroidPrivilegeAuthorization.shizukuAuthorizationStatus()) {
+                ShizukuAuthorizationStatus.Unavailable -> "Unavailable"
+                ShizukuAuthorizationStatus.Missing -> "Missing"
+                ShizukuAuthorizationStatus.Authorized -> "Satisfied"
+            }
+        return requirementWithStatus("android.shizuku", status)
+    }
+
+    /** Requests the Shizuku authorization needed for optional Android host features. */
+    private fun requestShizukuAuthorization(result: MethodChannel.Result) {
+        when (AndroidPrivilegeAuthorization.shizukuAuthorizationStatus()) {
+            ShizukuAuthorizationStatus.Unavailable -> {
+                result.error(
+                    "SHIZUKU_UNAVAILABLE",
+                    "Start Shizuku or Sui before requesting host authorization",
+                    null,
+                )
+                return
+            }
+            ShizukuAuthorizationStatus.Authorized -> {
+                result.success(null)
+                return
+            }
+            ShizukuAuthorizationStatus.Missing -> Unit
+        }
+        if (pendingShizukuAuthorizationResult != null) {
+            result.error(
+                "SHIZUKU_AUTHORIZATION_REQUEST_ACTIVE",
+                "A Shizuku permission request is already active",
+                null,
+            )
+            return
+        }
+        val listener =
+            object : Shizuku.OnRequestPermissionResultListener {
+                /** Completes the matching Flutter request after Shizuku responds. */
+                override fun onRequestPermissionResult(requestCode: Int, grantResult: Int) {
+                    if (requestCode != SHIZUKU_PERMISSION_REQUEST_CODE) {
+                        return
+                    }
+                    Shizuku.removeRequestPermissionResultListener(this)
+                    pendingShizukuAuthorizationListener = null
+                    val pendingResult = pendingShizukuAuthorizationResult
+                    pendingShizukuAuthorizationResult = null
+                    pendingResult?.success(null)
+                }
+            }
+        pendingShizukuAuthorizationResult = result
+        pendingShizukuAuthorizationListener = listener
+        try {
+            Shizuku.addRequestPermissionResultListener(listener)
+            Shizuku.requestPermission(SHIZUKU_PERMISSION_REQUEST_CODE)
+        } catch (error: Throwable) {
+            Shizuku.removeRequestPermissionResultListener(listener)
+            pendingShizukuAuthorizationListener = null
+            pendingShizukuAuthorizationResult = null
+            result.error("SHIZUKU_AUTHORIZATION_REQUEST_ERROR", error.message, null)
+        }
+    }
+
+    /** Verifies and records the user's explicit Root authorization. */
+    private fun requestRootAuthorization(result: MethodChannel.Result) {
+        runtimeHost.runBackground {
+            try {
+                verifyRootAuthorization()
+                activity.runOnUiThread { result.success(null) }
+            } catch (error: Throwable) {
+                activity.runOnUiThread {
+                    result.error("ROOT_PERMISSION_REQUEST_ERROR", error.message, null)
+                }
+            }
+        }
+    }
+
+    /** Executes a Root identity check and stores an explicit successful approval. */
+    private fun verifyRootAuthorization() {
+        val result =
+            AndroidPrivilegedCommandExecutor.execute(
+                target = AndroidPrivilegedCommandTarget.RootExec,
+                command = "id -u",
+                timeoutMillis = ROOT_AUTHORIZATION_TIMEOUT_MS,
+            )
+        if (result.exitCode != 0 || result.stdoutText().trim() != "0") {
+            throw IllegalStateException("Root authorization was not granted")
+        }
+        AndroidPrivilegeAuthorization.setRootAuthorized(activity)
     }
 
     /** Requests broad shared-storage access for Android file tools. */
@@ -403,14 +510,22 @@ class AndroidPlatformChannel(
         return powerManager.isIgnoringBatteryOptimizations(activity.packageName)
     }
 
+    /** Builds an onboarding requirement payload from a satisfied flag. */
     private fun requirement(id: String, satisfied: Boolean): Map<String, Any> {
+        return requirementWithStatus(id, if (satisfied) "Satisfied" else "Missing")
+    }
+
+    /** Builds an onboarding requirement payload from a native status value. */
+    private fun requirementWithStatus(id: String, status: String): Map<String, Any> {
         return mapOf(
             "id" to id,
-            "status" to if (satisfied) "Satisfied" else "Missing",
+            "status" to status,
         )
     }
 
     private companion object {
         private const val ONBOARDING_PERMISSION_REQUEST_CODE = 2407
+        private const val SHIZUKU_PERMISSION_REQUEST_CODE = 2408
+        private const val ROOT_AUTHORIZATION_TIMEOUT_MS = 10_000L
     }
 }

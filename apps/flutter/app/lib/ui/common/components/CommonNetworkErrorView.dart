@@ -95,6 +95,7 @@ class NetworkErrorSummary {
   final String? detail;
   final IconData icon;
 
+  /// Converts structured runtime error details into a visible summary.
   factory NetworkErrorSummary.fromDetails(
     core_proxy.CoreProxyErrorDetails? details,
     String? text,
@@ -175,6 +176,17 @@ class NetworkErrorSummary {
         message: '无法连接到模型供应商，请检查网络连接和服务地址。',
         detail: remoteMessage,
         icon: Icons.wifi_off_rounded,
+      );
+    }
+
+    if (details?.variant == 'ModelAlreadyExists') {
+      final duplicateDetails = details!;
+      final modelId = duplicateDetails.stringField('modelId')!;
+      final providerName = duplicateDetails.stringField('providerName')!;
+      return NetworkErrorSummary(
+        title: '模型已存在',
+        message: '模型“$modelId”已添加到供应商“$providerName”。',
+        icon: Icons.info_outline_rounded,
       );
     }
 

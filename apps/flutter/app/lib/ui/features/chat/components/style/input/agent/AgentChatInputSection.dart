@@ -109,6 +109,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
   >?
   _modelBindingSubscription;
   bool _draggingFiles = false;
+  bool _inputExpanded = false;
   String _modelLabel = '';
 
   @override
@@ -131,6 +132,14 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
     if (mounted) {
       setState(() {});
     }
+  }
+
+  /// Toggles the input height while preserving the active draft and focus.
+  void _toggleInputExpansion() {
+    setState(() {
+      _inputExpanded = !_inputExpanded;
+    });
+    widget.focusNode.requestFocus();
   }
 
   void _toggleSettingsPopup() {
@@ -543,6 +552,8 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
                     isSpeechRecording: widget.isSpeechRecording,
                     isSpeechTranscribing: widget.isSpeechTranscribing,
                     onSpeechInput: widget.onSpeechInput,
+                    inputExpanded: _inputExpanded,
+                    onToggleInputExpansion: _toggleInputExpansion,
                     attachments: widget.attachments,
                     onRemoveAttachment: widget.onRemoveAttachment,
                     onInsertAttachment: widget.onInsertAttachment,
@@ -707,6 +718,8 @@ class _InputBody extends StatelessWidget {
     required this.isSpeechRecording,
     required this.isSpeechTranscribing,
     required this.onSpeechInput,
+    required this.inputExpanded,
+    required this.onToggleInputExpansion,
     required this.attachments,
     required this.onRemoveAttachment,
     required this.onInsertAttachment,
@@ -738,6 +751,8 @@ class _InputBody extends StatelessWidget {
   final bool isSpeechRecording;
   final bool isSpeechTranscribing;
   final VoidCallback onSpeechInput;
+  final bool inputExpanded;
+  final VoidCallback onToggleInputExpansion;
   final List<AttachmentInfo> attachments;
   final ValueChanged<String>? onRemoveAttachment;
   final ValueChanged<AttachmentInfo>? onInsertAttachment;
@@ -769,8 +784,8 @@ class _InputBody extends StatelessWidget {
           child: TextField(
             controller: controller,
             focusNode: focusNode,
-            minLines: 1,
-            maxLines: 6,
+            minLines: inputExpanded ? 10 : 1,
+            maxLines: inputExpanded ? 16 : 6,
             enabled: true,
             readOnly: isSpeechRecording || isSpeechTranscribing,
             textInputAction: TextInputAction.newline,
@@ -783,10 +798,12 @@ class _InputBody extends StatelessWidget {
               filled: false,
               fillColor: Colors.transparent,
               suffixIcon: IconButton(
-                onPressed: () {},
-                icon: const Icon(Icons.fullscreen),
+                onPressed: onToggleInputExpansion,
+                icon: Icon(
+                  inputExpanded ? Icons.fullscreen_exit : Icons.fullscreen,
+                ),
                 color: colorScheme.onSurfaceVariant,
-                tooltip: l10n.fullscreenInput,
+                tooltip: inputExpanded ? l10n.collapseInput : l10n.expandInput,
               ),
               border: InputBorder.none,
               enabledBorder: InputBorder.none,

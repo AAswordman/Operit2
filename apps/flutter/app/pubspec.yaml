@@ -64,7 +64,8 @@ dependencies:
     path: ../thirdparty/record_ohos
   archive: ^4.0.9
   xml: ^6.6.1
-  webview_all: ^1.2.1
+  webview_all:
+    path: ../thirdparty/webview_all
   webview_all_windows: ^1.2.1
   url_launcher: ^6.3.2
   url_launcher_ohos:
@@ -106,6 +107,10 @@ dependency_overrides:
     path: ../thirdparty/webview_all_web
   webview_all_windows:
     path: ../thirdparty/webview_all_windows
+  webview_flutter_android:
+    path: ../thirdparty/webview_flutter_android
+  webview_flutter_platform_interface:
+    path: ../thirdparty/webview_flutter_platform_interface
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

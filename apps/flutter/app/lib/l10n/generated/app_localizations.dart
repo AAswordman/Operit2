@@ -1109,8 +1109,14 @@ abstract class AppLocalizations {
   /// No description provided for @chatSpeechInputFailed.
   ///
   /// In en, this message translates to:
-  /// **'Speech input failed. Please try again.'**
-  String get chatSpeechInputFailed;
+  /// **'Speech input failed: {error}'**
+  String chatSpeechInputFailed(Object error);
+
+  /// No description provided for @chatSpeechInputConfigurationRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a speech recognition configuration in Settings > Voice & Recognition before using speech input.'**
+  String get chatSpeechInputConfigurationRequired;
 
   /// No description provided for @chatSpeechNoTextRecognized.
   ///
@@ -1597,6 +1603,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Configure model connections, choose the chat model, and manage thinking, context, and multimodal abilities.'**
   String get settingsCategoryModelDescription;
+
+  /// No description provided for @settingsCategoryLocalModelsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Local Models'**
+  String get settingsCategoryLocalModelsTitle;
+
+  /// No description provided for @settingsCategoryLocalModelsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloads, engines, STT / TTS'**
+  String get settingsCategoryLocalModelsSubtitle;
+
+  /// No description provided for @settingsCategoryLocalModelsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage local models and inference engines installed on demand.'**
+  String get settingsCategoryLocalModelsDescription;
 
   /// No description provided for @settingsCategoryCharactersTitle.
   ///
@@ -2384,6 +2408,240 @@ abstract class AppLocalizations {
   /// **'Local model'**
   String get settingsModelProviderTypeLocalModel;
 
+  /// No description provided for @localModelsLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to load local model status: {error}'**
+  String localModelsLoadFailed(Object error);
+
+  /// No description provided for @localModelsOperationFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Local model operation failed: {error}'**
+  String localModelsOperationFailed(Object error);
+
+  /// No description provided for @localModelsCatalog.
+  ///
+  /// In en, this message translates to:
+  /// **'Model catalog'**
+  String get localModelsCatalog;
+
+  /// No description provided for @localModelsCategorySpeechToText.
+  ///
+  /// In en, this message translates to:
+  /// **'Speech-to-text models'**
+  String get localModelsCategorySpeechToText;
+
+  /// No description provided for @localModelsCategoryTextToSpeech.
+  ///
+  /// In en, this message translates to:
+  /// **'Text-to-speech models'**
+  String get localModelsCategoryTextToSpeech;
+
+  /// No description provided for @localModelsCategoryChat.
+  ///
+  /// In en, this message translates to:
+  /// **'LLM models'**
+  String get localModelsCategoryChat;
+
+  /// No description provided for @localModelsCategoryEmbedding.
+  ///
+  /// In en, this message translates to:
+  /// **'Embedding models'**
+  String get localModelsCategoryEmbedding;
+
+  /// No description provided for @localModelsInstalledEngines.
+  ///
+  /// In en, this message translates to:
+  /// **'Installed engines'**
+  String get localModelsInstalledEngines;
+
+  /// No description provided for @localModelsNoInstalledEngines.
+  ///
+  /// In en, this message translates to:
+  /// **'No local inference engine is installed on this platform.'**
+  String get localModelsNoInstalledEngines;
+
+  /// No description provided for @localModelsDeleteModelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete local model'**
+  String get localModelsDeleteModelTitle;
+
+  /// No description provided for @localModelsDeleteModelMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete model files for {modelName}?'**
+  String localModelsDeleteModelMessage(Object modelName);
+
+  /// No description provided for @localModelsDeleteEngineTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete local engine'**
+  String get localModelsDeleteEngineTitle;
+
+  /// No description provided for @localModelsDeleteEngineMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {engineName} {version}?'**
+  String localModelsDeleteEngineMessage(Object engineName, Object version);
+
+  /// No description provided for @localModelsCancelling.
+  ///
+  /// In en, this message translates to:
+  /// **'Pausing'**
+  String get localModelsCancelling;
+
+  /// No description provided for @localModelsDownloadPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused: {downloaded} / {total}'**
+  String localModelsDownloadPaused(Object downloaded, Object total);
+
+  /// No description provided for @localModelsDownloadInstalling.
+  ///
+  /// In en, this message translates to:
+  /// **'Download complete, installing'**
+  String get localModelsDownloadInstalling;
+
+  /// No description provided for @localModelsDownloading.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading: {downloaded} / {total}'**
+  String localModelsDownloading(Object downloaded, Object total);
+
+  /// No description provided for @localModelsLicense.
+  ///
+  /// In en, this message translates to:
+  /// **'License: {license}'**
+  String localModelsLicense(Object license);
+
+  /// No description provided for @localModelsPlatformCompatible.
+  ///
+  /// In en, this message translates to:
+  /// **'Platform compatible'**
+  String get localModelsPlatformCompatible;
+
+  /// No description provided for @localModelsPlatformIncompatible.
+  ///
+  /// In en, this message translates to:
+  /// **'Platform incompatible'**
+  String get localModelsPlatformIncompatible;
+
+  /// No description provided for @localModelsModelInstalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Model installed'**
+  String get localModelsModelInstalled;
+
+  /// No description provided for @localModelsModelNotInstalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Model not installed'**
+  String get localModelsModelNotInstalled;
+
+  /// No description provided for @localModelsEngineInstalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Engine installed'**
+  String get localModelsEngineInstalled;
+
+  /// No description provided for @localModelsEngineNotInstalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Engine not installed'**
+  String get localModelsEngineNotInstalled;
+
+  /// No description provided for @localModelsVerifyModelAndEngine.
+  ///
+  /// In en, this message translates to:
+  /// **'Verify model and engine'**
+  String get localModelsVerifyModelAndEngine;
+
+  /// No description provided for @localModelsDeleteModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete model'**
+  String get localModelsDeleteModel;
+
+  /// No description provided for @localModelsPauseDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause download'**
+  String get localModelsPauseDownload;
+
+  /// No description provided for @localModelsDeleteDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete download'**
+  String get localModelsDeleteDownload;
+
+  /// No description provided for @localModelsResumeDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Resume'**
+  String get localModelsResumeDownload;
+
+  /// No description provided for @localModelsInstalling.
+  ///
+  /// In en, this message translates to:
+  /// **'Installing'**
+  String get localModelsInstalling;
+
+  /// No description provided for @localModelsInstall.
+  ///
+  /// In en, this message translates to:
+  /// **'Install'**
+  String get localModelsInstall;
+
+  /// No description provided for @localModelsDeleteEngine.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete engine'**
+  String get localModelsDeleteEngine;
+
+  /// No description provided for @localModelDescriptionSherpaOnnxStreamingStt.
+  ///
+  /// In en, this message translates to:
+  /// **'Streaming bilingual Chinese and English speech recognition.'**
+  String get localModelDescriptionSherpaOnnxStreamingStt;
+
+  /// No description provided for @localModelDescriptionSherpaOnnxVitsAishell3.
+  ///
+  /// In en, this message translates to:
+  /// **'Local Chinese multi-speaker speech synthesis.'**
+  String get localModelDescriptionSherpaOnnxVitsAishell3;
+
+  /// No description provided for @localModelDescriptionSherpaOnnxVitsZhLl.
+  ///
+  /// In en, this message translates to:
+  /// **'Local Chinese five-speaker speech synthesis.'**
+  String get localModelDescriptionSherpaOnnxVitsZhLl;
+
+  /// No description provided for @localModelDescriptionSherpaOnnxMatchaBaker.
+  ///
+  /// In en, this message translates to:
+  /// **'Local Chinese single-speaker Matcha speech synthesis.'**
+  String get localModelDescriptionSherpaOnnxMatchaBaker;
+
+  /// No description provided for @localModelDescriptionSherpaOnnxKittenNano.
+  ///
+  /// In en, this message translates to:
+  /// **'Local English eight-speaker KittenTTS speech synthesis.'**
+  String get localModelDescriptionSherpaOnnxKittenNano;
+
+  /// No description provided for @localModelDescriptionSherpaOnnxWebParaformer.
+  ///
+  /// In en, this message translates to:
+  /// **'Browser packaged Chinese and English Paraformer speech recognition.'**
+  String get localModelDescriptionSherpaOnnxWebParaformer;
+
+  /// No description provided for @localModelDescriptionSherpaOnnxWebVitsPiper.
+  ///
+  /// In en, this message translates to:
+  /// **'Browser packaged English multi-speaker VITS speech synthesis.'**
+  String get localModelDescriptionSherpaOnnxWebVitsPiper;
+
   /// No description provided for @settingsModelProviderTypeMnn.
   ///
   /// In en, this message translates to:
@@ -2455,6 +2713,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Model ID'**
   String get settingsModelModelId;
+
+  /// No description provided for @settingsModelDuplicateModelId.
+  ///
+  /// In en, this message translates to:
+  /// **'This model has already been added to this provider.'**
+  String get settingsModelDuplicateModelId;
 
   /// No description provided for @settingsModelMaxTokens.
   ///

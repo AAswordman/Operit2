@@ -570,7 +570,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get browserPermissionRequestTitle => 'Website permission request';
 
   @override
-  String get chatSpeechInputFailed => 'Speech input failed. Please try again.';
+  String chatSpeechInputFailed(Object error) {
+    return 'Speech input failed: $error';
+  }
+
+  @override
+  String get chatSpeechInputConfigurationRequired =>
+      'Select a speech recognition configuration in Settings > Voice & Recognition before using speech input.';
 
   @override
   String get chatSpeechNoTextRecognized => 'No speech recognized.';
@@ -822,6 +828,17 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsCategoryModelDescription =>
       'Configure model connections, choose the chat model, and manage thinking, context, and multimodal abilities.';
+
+  @override
+  String get settingsCategoryLocalModelsTitle => 'Local Models';
+
+  @override
+  String get settingsCategoryLocalModelsSubtitle =>
+      'Downloads, engines, STT / TTS';
+
+  @override
+  String get settingsCategoryLocalModelsDescription =>
+      'Manage local models and inference engines installed on demand.';
 
   @override
   String get settingsCategoryCharactersTitle => 'Characters & Memory';
@@ -1278,6 +1295,145 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelProviderTypeLocalModel => 'Local model';
 
   @override
+  String localModelsLoadFailed(Object error) {
+    return 'Failed to load local model status: $error';
+  }
+
+  @override
+  String localModelsOperationFailed(Object error) {
+    return 'Local model operation failed: $error';
+  }
+
+  @override
+  String get localModelsCatalog => 'Model catalog';
+
+  @override
+  String get localModelsCategorySpeechToText => 'Speech-to-text models';
+
+  @override
+  String get localModelsCategoryTextToSpeech => 'Text-to-speech models';
+
+  @override
+  String get localModelsCategoryChat => 'LLM models';
+
+  @override
+  String get localModelsCategoryEmbedding => 'Embedding models';
+
+  @override
+  String get localModelsInstalledEngines => 'Installed engines';
+
+  @override
+  String get localModelsNoInstalledEngines =>
+      'No local inference engine is installed on this platform.';
+
+  @override
+  String get localModelsDeleteModelTitle => 'Delete local model';
+
+  @override
+  String localModelsDeleteModelMessage(Object modelName) {
+    return 'Delete model files for $modelName?';
+  }
+
+  @override
+  String get localModelsDeleteEngineTitle => 'Delete local engine';
+
+  @override
+  String localModelsDeleteEngineMessage(Object engineName, Object version) {
+    return 'Delete $engineName $version?';
+  }
+
+  @override
+  String get localModelsCancelling => 'Pausing';
+
+  @override
+  String localModelsDownloadPaused(Object downloaded, Object total) {
+    return 'Paused: $downloaded / $total';
+  }
+
+  @override
+  String get localModelsDownloadInstalling => 'Download complete, installing';
+
+  @override
+  String localModelsDownloading(Object downloaded, Object total) {
+    return 'Downloading: $downloaded / $total';
+  }
+
+  @override
+  String localModelsLicense(Object license) {
+    return 'License: $license';
+  }
+
+  @override
+  String get localModelsPlatformCompatible => 'Platform compatible';
+
+  @override
+  String get localModelsPlatformIncompatible => 'Platform incompatible';
+
+  @override
+  String get localModelsModelInstalled => 'Model installed';
+
+  @override
+  String get localModelsModelNotInstalled => 'Model not installed';
+
+  @override
+  String get localModelsEngineInstalled => 'Engine installed';
+
+  @override
+  String get localModelsEngineNotInstalled => 'Engine not installed';
+
+  @override
+  String get localModelsVerifyModelAndEngine => 'Verify model and engine';
+
+  @override
+  String get localModelsDeleteModel => 'Delete model';
+
+  @override
+  String get localModelsPauseDownload => 'Pause download';
+
+  @override
+  String get localModelsDeleteDownload => 'Delete download';
+
+  @override
+  String get localModelsResumeDownload => 'Resume';
+
+  @override
+  String get localModelsInstalling => 'Installing';
+
+  @override
+  String get localModelsInstall => 'Install';
+
+  @override
+  String get localModelsDeleteEngine => 'Delete engine';
+
+  @override
+  String get localModelDescriptionSherpaOnnxStreamingStt =>
+      'Streaming bilingual Chinese and English speech recognition.';
+
+  @override
+  String get localModelDescriptionSherpaOnnxVitsAishell3 =>
+      'Local Chinese multi-speaker speech synthesis.';
+
+  @override
+  String get localModelDescriptionSherpaOnnxVitsZhLl =>
+      'Local Chinese five-speaker speech synthesis.';
+
+  @override
+  String get localModelDescriptionSherpaOnnxMatchaBaker =>
+      'Local Chinese single-speaker Matcha speech synthesis.';
+
+  @override
+  String get localModelDescriptionSherpaOnnxKittenNano =>
+      'Local English eight-speaker KittenTTS speech synthesis.';
+
+  @override
+  String get localModelDescriptionSherpaOnnxWebParaformer =>
+      'Browser packaged Chinese and English Paraformer speech recognition.';
+
+  @override
+  String get localModelDescriptionSherpaOnnxWebVitsPiper =>
+      'Browser packaged English multi-speaker VITS speech synthesis.';
+
+  @override
   String get settingsModelProviderTypeMnn => 'MNN';
 
   @override
@@ -1312,6 +1468,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsModelModelId => 'Model ID';
+
+  @override
+  String get settingsModelDuplicateModelId =>
+      'This model has already been added to this provider.';
 
   @override
   String get settingsModelMaxTokens => 'Max tokens';

@@ -282,6 +282,7 @@ class _PhoneLayoutState extends State<PhoneLayout>
                         color: appearance.containerColor,
                         layer: OperitGlassSurfaceLayer.panel,
                         transparentAlpha: 0.035,
+                        enableBackdropFilter: false,
                         borderRadius: const BorderRadiusDirectional.only(
                           topEnd: Radius.circular(16),
                           bottomEnd: Radius.circular(16),

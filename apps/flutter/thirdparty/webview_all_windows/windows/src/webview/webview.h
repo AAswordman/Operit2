@@ -221,7 +221,8 @@ public:
   void SetPointerUpdate(int32_t pointer, WebviewPointerEventKind eventKind,
                         double x, double y, double size, double pressure);
   void SetPointerButtonState(WebviewPointerButton button, bool isDown);
-  void SetScrollDelta(double delta_x, double delta_y);
+  void SetScrollDelta(double delta_x, double delta_y,
+                      bool control_key_pressed);
   bool DispatchKeyEvent(const std::string &event_json);
   void LoadUrl(const std::string &url);
   bool LoadRequest(const std::string &url, const std::string &method,
@@ -400,7 +401,7 @@ private:
       HWND hwnd, bool offscreen_only);
   void RegisterEventHandlers();
   void EnableSecurityUpdates();
-  void SendScroll(double offset, bool horizontal);
+  void SendScroll(double offset, bool horizontal, bool control_key_pressed);
   wil::com_ptr<ICoreWebView2CookieManager> GetCookieManager();
 };
 

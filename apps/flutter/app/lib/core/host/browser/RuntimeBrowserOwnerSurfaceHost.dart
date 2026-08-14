@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:operit2/ui/features/chat/components/workspace/browser/tabs/WorkspaceBrowserTabModels.dart';
 import 'package:webview_all/webview_all.dart';
@@ -61,6 +63,12 @@ class RuntimeBrowserOwnerWebView extends StatelessWidget {
   final WorkspaceBrowserTabState tab;
   final bool layoutControlsSurfaceSize;
 
+  /// Lets the native browser surface claim every touch sequence immediately.
+  static final Set<Factory<OneSequenceGestureRecognizer>>
+  _browserGestureRecognizers = <Factory<OneSequenceGestureRecognizer>>{
+    Factory<EagerGestureRecognizer>(EagerGestureRecognizer.new),
+  };
+
   /// Builds the platform WebView attached to the owner controller.
   @override
   Widget build(BuildContext context) {
@@ -72,10 +80,15 @@ class RuntimeBrowserOwnerWebView extends StatelessWidget {
         params: WindowsWebViewWidgetCreationParams(
           controller: platformController,
           layoutDirection: Directionality.of(context),
+          gestureRecognizers: _browserGestureRecognizers,
           layoutControlsSurfaceSize: layoutControlsSurfaceSize,
         ),
       );
     }
-    return WebViewWidget(key: key, controller: tab.controller);
+    return WebViewWidget(
+      key: key,
+      controller: tab.controller,
+      gestureRecognizers: _browserGestureRecognizers,
+    );
   }
 }

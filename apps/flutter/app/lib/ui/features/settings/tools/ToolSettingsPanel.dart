@@ -38,12 +38,12 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
       permissionMode: await widget.clients.permissionsToolPermissionSystem
           .getAiPermissionMode(),
       host: host,
-      hostRequirements: await _HostAuthorizationBridge.requirements(
-        host,
-      ),
+      hostRequirements: await _HostAuthorizationBridge.requirements(host),
       mcpStartupTimeoutSeconds: await widget.clients.preferencesApiPreferences
           .getMcpStartupTimeoutSeconds(),
-      toolPkgPreHookTimeoutSeconds: await widget.clients.preferencesApiPreferences
+      toolPkgPreHookTimeoutSeconds: await widget
+          .clients
+          .preferencesApiPreferences
           .getToolPkgPreHookTimeoutSeconds(),
     );
   }
@@ -325,11 +325,26 @@ class _HostAuthorizationTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text(
-                  requirement.title,
-                  style: textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Text(
+                        requirement.title,
+                        style: textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    if (!requirement.isRequired) ...<Widget>[
+                      const SizedBox(width: 8),
+                      Text(
+                        '可选',
+                        style: textTheme.labelMedium?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -364,6 +379,7 @@ class _HostRequirement {
     required this.id,
     required this.title,
     required this.description,
+    required this.isRequired,
     required this.status,
     required this.action,
   });
@@ -376,6 +392,7 @@ class _HostRequirement {
       id: requirement.id,
       title: requirement.title,
       description: requirement.description,
+      isRequired: requirement.isRequired,
       status: requirement.status.value,
       action: requirement.action.value,
     );
@@ -384,11 +401,13 @@ class _HostRequirement {
   final String id;
   final String title;
   final String description;
+  final bool isRequired;
   final String status;
   final String action;
 
   bool get canRequest =>
       status != 'Satisfied' &&
+      status != 'Unavailable' &&
       (action == 'RuntimePermission' ||
           action == 'OpenSystemSettings' ||
           action == 'HostManaged');
@@ -398,6 +417,7 @@ class _HostRequirement {
       id: id,
       title: title,
       description: description,
+      isRequired: isRequired,
       status: status,
       action: action,
     );
@@ -455,8 +475,14 @@ class _AdvancedHostSummary extends StatelessWidget {
         _InfoRow(label: '外层隔离', value: '${host.isolation}'),
         _InfoRow(label: '文件能力', value: host.fileSystemHost ? '已注册' : '未注册'),
         _InfoRow(label: '终端能力', value: host.terminalHost ? '已注册' : '未注册'),
-        _InfoRow(label: '授权项', value: '${host.onboardingRequirements.length} 项'),
-        _InfoRow(label: '结构化能力', value: '${host.structuredCapabilities.length} 项'),
+        _InfoRow(
+          label: '授权项',
+          value: '${host.onboardingRequirements.length} 项',
+        ),
+        _InfoRow(
+          label: '结构化能力',
+          value: '${host.structuredCapabilities.length} 项',
+        ),
       ],
     );
   }
@@ -537,12 +563,7 @@ class _InfoRow extends StatelessWidget {
               ),
             ),
           ),
-          Expanded(
-            child: Text(
-              value,
-              style: textTheme.bodyMedium,
-            ),
-          ),
+          Expanded(child: Text(value, style: textTheme.bodyMedium)),
         ],
       ),
     );
@@ -631,10 +652,7 @@ String _actionLabel(_HostRequirement requirement) {
 }
 
 class _ModeSummary {
-  const _ModeSummary({
-    required this.label,
-    required this.description,
-  });
+  const _ModeSummary({required this.label, required this.description});
 
   final String label;
   final String description;
@@ -643,17 +661,17 @@ class _ModeSummary {
 _ModeSummary _modeFor(core_proxy.AiPermissionMode mode) {
   return switch (mode) {
     core_proxy.AiPermissionMode.readOnly => const _ModeSummary(
-        label: '只读',
-        description: 'AI 可以读取当前工作区，不能启动写入工具。',
-      ),
+      label: '只读',
+      description: 'AI 可以读取当前工作区，不能启动写入工具。',
+    ),
     core_proxy.AiPermissionMode.workspaceWrite => const _ModeSummary(
-        label: '读写',
-        description: 'AI 可以读写当前工作区，应用内沙盒保持开启。',
-      ),
+      label: '读写',
+      description: 'AI 可以读写当前工作区，应用内沙盒保持开启。',
+    ),
     core_proxy.AiPermissionMode.full => const _ModeSummary(
-        label: '完整权限',
-        description: 'AI 可以读写当前工作区，并关闭应用内沙盒。',
-      ),
+      label: '完整权限',
+      description: 'AI 可以读写当前工作区，并关闭应用内沙盒。',
+    ),
   };
 }
 

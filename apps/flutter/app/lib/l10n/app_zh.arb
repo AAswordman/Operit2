@@ -316,7 +316,13 @@
   "protectedMedia": "受保护媒体",
   "midiDevice": "MIDI 设备",
   "browserPermissionRequestTitle": "网页权限请求",
-  "chatSpeechInputFailed": "语音输入失败，请重试",
+  "chatSpeechInputFailed": "语音输入失败：{error}",
+  "@chatSpeechInputFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "chatSpeechInputConfigurationRequired": "请先在设置 > 语音与识别中添加并选中一个语音识别配置。",
   "chatSpeechNoTextRecognized": "未识别到文本",
   "history": "历史记录",
   "bookmarks": "收藏夹",
@@ -405,6 +411,9 @@
   "settingsCategoryModelTitle": "模型与 AI",
   "settingsCategoryModelSubtitle": "模型、Key、上下文",
   "settingsCategoryModelDescription": "配置模型连接，选择聊天模型，并管理思考、上下文和多模态能力。",
+  "settingsCategoryLocalModelsTitle": "本地模型",
+  "settingsCategoryLocalModelsSubtitle": "下载、引擎、STT / TTS",
+  "settingsCategoryLocalModelsDescription": "管理按需安装的本地模型和推理引擎。",
   "settingsCategoryCharactersTitle": "角色与记忆",
   "settingsCategoryCharactersSubtitle": "角色卡、群组、绑定",
   "settingsCategoryCharactersDescription": "管理角色卡、群组、当前激活角色和角色级模型/记忆/工具绑定。",
@@ -627,6 +636,83 @@
   "settingsModelProviderTypeOllama": "Ollama",
   "settingsModelProviderTypeOpenaiLocal": "OpenAI 本地",
   "settingsModelProviderTypeLocalModel": "本地模型",
+  "localModelsLoadFailed": "本地模型状态加载失败：{error}",
+  "@localModelsLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "localModelsOperationFailed": "本地模型操作失败：{error}",
+  "@localModelsOperationFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "localModelsCatalog": "模型目录",
+  "localModelsCategorySpeechToText": "语音识别（STT）模型",
+  "localModelsCategoryTextToSpeech": "语音合成（TTS）模型",
+  "localModelsCategoryChat": "大语言（LLM）模型",
+  "localModelsCategoryEmbedding": "嵌入模型",
+  "localModelsInstalledEngines": "已安装引擎",
+  "localModelsNoInstalledEngines": "当前平台尚未安装本地推理引擎。",
+  "localModelsDeleteModelTitle": "删除本地模型",
+  "localModelsDeleteModelMessage": "删除 {modelName} 的模型文件？",
+  "@localModelsDeleteModelMessage": {
+    "placeholders": {
+      "modelName": {}
+    }
+  },
+  "localModelsDeleteEngineTitle": "删除本地引擎",
+  "localModelsDeleteEngineMessage": "删除 {engineName} {version}？",
+  "@localModelsDeleteEngineMessage": {
+    "placeholders": {
+      "engineName": {},
+      "version": {}
+    }
+  },
+  "localModelsCancelling": "正在暂停",
+  "localModelsDownloadPaused": "已暂停 · {downloaded} / {total}",
+  "@localModelsDownloadPaused": {
+    "placeholders": {
+      "downloaded": {},
+      "total": {}
+    }
+  },
+  "localModelsDownloadInstalling": "下载完成，正在安装",
+  "localModelsDownloading": "下载 {downloaded} / {total}",
+  "@localModelsDownloading": {
+    "placeholders": {
+      "downloaded": {},
+      "total": {}
+    }
+  },
+  "localModelsLicense": "许可证：{license}",
+  "@localModelsLicense": {
+    "placeholders": {
+      "license": {}
+    }
+  },
+  "localModelsPlatformCompatible": "平台兼容",
+  "localModelsPlatformIncompatible": "平台不兼容",
+  "localModelsModelInstalled": "模型已安装",
+  "localModelsModelNotInstalled": "模型未安装",
+  "localModelsEngineInstalled": "引擎已安装",
+  "localModelsEngineNotInstalled": "引擎未安装",
+  "localModelsVerifyModelAndEngine": "校验模型和引擎",
+  "localModelsDeleteModel": "删除模型",
+  "localModelsPauseDownload": "暂停下载",
+  "localModelsDeleteDownload": "删除下载",
+  "localModelsResumeDownload": "继续",
+  "localModelsInstalling": "下载中",
+  "localModelsInstall": "安装",
+  "localModelsDeleteEngine": "删除引擎",
+  "localModelDescriptionSherpaOnnxStreamingStt": "流式中英双语语音识别。",
+  "localModelDescriptionSherpaOnnxVitsAishell3": "本地中文多说话人语音合成。",
+  "localModelDescriptionSherpaOnnxVitsZhLl": "本地中文五说话人语音合成。",
+  "localModelDescriptionSherpaOnnxMatchaBaker": "本地中文单说话人 Matcha 语音合成。",
+  "localModelDescriptionSherpaOnnxKittenNano": "本地英文八说话人 KittenTTS 语音合成。",
+  "localModelDescriptionSherpaOnnxWebParaformer": "浏览器内置的中英 Paraformer 语音识别。",
+  "localModelDescriptionSherpaOnnxWebVitsPiper": "浏览器内置的英文多说话人 VITS 语音合成。",
   "settingsModelProviderTypeMnn": "MNN",
   "settingsModelProviderTypeLlamaCpp": "llama.cpp",
   "settingsModelProviderTypePpinfra": "PPInfra",
@@ -639,6 +725,7 @@
   "settingsModelAddModelShort": "添加",
   "settingsModelCustomModel": "自定义模型",
   "settingsModelModelId": "模型 ID",
+  "settingsModelDuplicateModelId": "该模型已添加到当前供应商。",
   "settingsModelMaxTokens": "Max tokens",
   "settingsModelMaxTokensDescription": "限制一次回复最多生成多少 Token。",
   "settingsModelTemperature": "Temperature",

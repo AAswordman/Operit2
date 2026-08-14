@@ -1042,6 +1042,7 @@ class WindowsWebViewController extends PlatformWebViewController {
   }
 
   /// Sets the WebView2 zoom factor.
+  @override
   Future<void> setZoomFactor(double zoomFactor) async {
     await _ensureInitialized();
     await _webviewController.setZoomFactor(zoomFactor);

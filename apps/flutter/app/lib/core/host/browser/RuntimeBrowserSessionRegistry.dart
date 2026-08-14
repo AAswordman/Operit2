@@ -109,6 +109,7 @@ class _WorkspaceBrowserSessionControls {
     required this.navigateForward,
     required this.reload,
     required this.stop,
+    required this.setZoomFactor,
     required this.supportsPageJavaScript,
   });
 
@@ -119,6 +120,7 @@ class _WorkspaceBrowserSessionControls {
   final Future<void> Function() navigateForward;
   final Future<void> Function() reload;
   final Future<void> Function() stop;
+  final Future<void> Function(double zoomFactor) setZoomFactor;
   final bool Function() supportsPageJavaScript;
 }
 
@@ -432,6 +434,7 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     required Future<void> Function() navigateForward,
     required Future<void> Function() reload,
     required Future<void> Function() stop,
+    required Future<void> Function(double zoomFactor) setZoomFactor,
     required bool Function() supportsPageJavaScript,
   }) {
     _controllers[sessionId] = controller;
@@ -443,6 +446,7 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
       navigateForward: navigateForward,
       reload: reload,
       stop: stop,
+      setZoomFactor: setZoomFactor,
       supportsPageJavaScript: supportsPageJavaScript,
     );
     _sessions[sessionId] = WorkspaceBrowserSessionInfo(
@@ -565,6 +569,16 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
       case 'stop':
         _selectSessionForCommand(command);
         await _controlsForCommand(command).stop();
+        return _commandResult(
+          success: true,
+          command: command,
+          session: _requireSession(command),
+        );
+      case 'zoom':
+        _selectSessionForCommand(command);
+        await _controlsForCommand(
+          command,
+        ).setZoomFactor(_requireCommandZoomFactor(command));
         return _commandResult(
           success: true,
           command: command,
@@ -982,6 +996,19 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
       throw StateError('Browser command is missing url');
     }
     return url;
+  }
+
+  /// Returns the zoom factor encoded by a semantic zoom command.
+  double _requireCommandZoomFactor(RuntimeBrowserCommand command) {
+    final payload = jsonDecode(command.payloadJson);
+    if (payload is! Map<String, Object?>) {
+      throw StateError('Browser zoom command payload is not a JSON object');
+    }
+    final value = payload['value'];
+    if (value is! num) {
+      throw StateError('Browser zoom command is missing numeric value');
+    }
+    return value.toDouble();
   }
 
   /// Finds the session opened after a create command began.

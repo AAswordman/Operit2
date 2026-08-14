@@ -63,6 +63,7 @@ android {
             useLegacyPackaging = true
         }
     }
+
 }
 
 flutter {
@@ -76,6 +77,9 @@ dependencies {
     implementation("com.google.mlkit:text-recognition-korean:16.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
+    implementation("com.github.topjohnwu.libsu:core:6.0.0")
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 }
 
 val operitBridgeCrate = project.layout.projectDirectory

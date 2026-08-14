@@ -1,0 +1,61 @@
+name: webview_all
+version: 1.2.1
+description: A Flutter WebView plugin with full-platform support that implements the webview_flutter platform interface.
+repository: https://github.com/abandoft/webview_all
+homepage: https://github.com/abandoft/webview_all
+issue_tracker: https://github.com/abandoft/webview_all/issues
+
+platforms:
+  android:
+  ios:
+  macos:
+  linux:
+  windows:
+  web:
+
+environment:
+  sdk: ^3.9.0
+  flutter: ">=3.35.0"
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        default_package: webview_flutter_android
+      ios:
+        default_package: webview_flutter_wkwebview
+      macos:
+        default_package: webview_flutter_wkwebview
+      linux:
+        default_package: webview_all_linux
+      windows:
+        default_package: webview_all_windows
+      ohos:
+        default_package: webview_all_ohos
+      web:
+        default_package: webview_all_web
+
+dependencies:
+  flutter:
+    sdk: flutter
+  webview_flutter_android: ^4.12.0
+  webview_flutter_wkwebview: ^3.25.0
+  webview_flutter_platform_interface:
+    path: ../webview_flutter_platform_interface
+  webview_all_windows: ^1.2.1
+  webview_all_linux: ^1.2.1
+  webview_all_ohos: ^1.2.1
+  webview_all_web: ^1.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+dependency_overrides:
+  webview_flutter_platform_interface:
+    path: ../webview_flutter_platform_interface
+
+topics:
+  - html
+  - webview
+  - webview-flutter

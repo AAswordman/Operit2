@@ -1555,7 +1555,11 @@ class WindowsWebViewHostApi {
     );
   }
 
-  Future<void> setScrollDelta(int textureId, WindowsPointData delta) async {
+  Future<void> setScrollDelta(
+    int textureId,
+    WindowsPointData delta,
+    bool controlKeyPressed,
+  ) async {
     final pigeonVar_channelName =
         'dev.flutter.pigeon.webview_all_windows.WindowsWebViewHostApi.setScrollDelta$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
@@ -1564,7 +1568,7 @@ class WindowsWebViewHostApi {
       binaryMessenger: pigeonVar_binaryMessenger,
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[textureId, delta],
+      <Object?>[textureId, delta, controlKeyPressed],
     );
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 

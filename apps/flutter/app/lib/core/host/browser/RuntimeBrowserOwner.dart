@@ -11,7 +11,6 @@ import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:webview_all/webview_all.dart';
-import 'package:webview_all_windows/webview_all_windows.dart';
 
 import 'package:operit2/ui/features/chat/components/workspace/browser/WorkspaceBrowserStores.dart';
 import 'package:operit2/ui/features/chat/components/workspace/browser/WorkspaceBrowserUrlUtils.dart';
@@ -574,11 +573,29 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     unawaited(_setZoomFactor(_defaultZoomFactor));
   }
 
+  /// Sets the zoom factor for one owner browser session.
+  Future<void> setZoomFactor(String sessionId, double zoomFactor) async {
+    final tab = tabForSession(sessionId);
+    if (tab == null) {
+      throw StateError('Browser session is not registered');
+    }
+    await _setTabZoomFactor(tab, zoomFactor);
+  }
+
+  /// Sets the zoom factor for the active owner browser session.
   Future<void> _setZoomFactor(double zoomFactor) async {
     final tab = currentTab;
     if (tab == null) {
       throw StateError('No active browser session');
     }
+    await _setTabZoomFactor(tab, zoomFactor);
+  }
+
+  /// Applies a normalized zoom factor to one owner browser tab.
+  Future<void> _setTabZoomFactor(
+    WorkspaceBrowserTabState tab,
+    double zoomFactor,
+  ) async {
     final nextZoomFactor = zoomFactor
         .clamp(_minZoomFactor, _maxZoomFactor)
         .toDouble();
@@ -644,16 +661,18 @@ class RuntimeBrowserOwner extends ChangeNotifier {
       navigateForward: goForward,
       reload: reloadCurrent,
       stop: stopCurrentLoad,
+      setZoomFactor: (zoomFactor) => setZoomFactor(tab.id, zoomFactor),
       supportsPageJavaScript: () => _supportsPageJavaScript(tab),
     );
     return tab;
   }
 
-  /// Configures one owner-host browser session controller.
+  /// Configures browser behavior shared by every owner WebView session.
   void _configureTab(WorkspaceBrowserTabState tab) {
     tab.controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.transparent);
+      ..setBackgroundColor(Colors.transparent)
+      ..enableZoom(true);
     if (tab.capabilities.pageHooks) {
       tab.controller
         ..setOnConsoleMessage((message) {
@@ -1107,15 +1126,9 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     return _pageJavaScriptSupportedByHost(tab.url);
   }
 
+  /// Applies the stored zoom factor through the tab's WebView host.
   Future<void> _applyZoomFactor(WorkspaceBrowserTabState tab) async {
-    if (defaultTargetPlatform != TargetPlatform.windows) {
-      return;
-    }
-    final platform = tab.controller.platform;
-    if (platform is! WindowsWebViewController) {
-      return;
-    }
-    await platform.setZoomFactor(tab.zoomFactor);
+    await tab.controller.setZoomFactor(tab.zoomFactor);
   }
 
   Future<void> _applyDesktopViewport(WorkspaceBrowserTabState tab) {

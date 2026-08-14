@@ -176,25 +176,21 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
                     control: true,
                   ): _sessionStore.resetZoom,
                 },
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onTapDown: (_) => _browserFocusNode.requestFocus(),
-                  child: Column(
-                    children: <Widget>[
-                      WorkspaceBrowserUrlBar(
-                        tab: tab,
-                        isBookmarked: isBookmarked,
-                        onSubmitted: _sessionStore.navigateCurrent,
-                        onToggleBookmark: _sessionStore.toggleBookmark,
-                        onBack: _sessionStore.goBack,
-                        onForward: _sessionStore.goForward,
-                        onRefreshOrStop: _sessionStore.refreshOrStop,
-                        onOpenMenu: _toggleMenuPopup,
-                        menuButtonKey: _menuButtonKey,
-                      ),
-                      Expanded(child: _buildBrowserSurface(tab)),
-                    ],
-                  ),
+                child: Column(
+                  children: <Widget>[
+                    WorkspaceBrowserUrlBar(
+                      tab: tab,
+                      isBookmarked: isBookmarked,
+                      onSubmitted: _sessionStore.navigateCurrent,
+                      onToggleBookmark: _sessionStore.toggleBookmark,
+                      onBack: _sessionStore.goBack,
+                      onForward: _sessionStore.goForward,
+                      onRefreshOrStop: _sessionStore.refreshOrStop,
+                      onOpenMenu: _toggleMenuPopup,
+                      menuButtonKey: _menuButtonKey,
+                    ),
+                    Expanded(child: _buildBrowserSurface(tab)),
+                  ],
                 ),
               ),
             );

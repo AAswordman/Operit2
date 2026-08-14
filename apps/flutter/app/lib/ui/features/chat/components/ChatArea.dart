@@ -19,6 +19,7 @@ import 'style/bubble/BubbleSurface.dart';
 import 'style/cursor/CursorStyleChatMessage.dart';
 
 const Duration _navigatorHideDelay = Duration(milliseconds: 1200);
+const Duration _viewportResizeSettleDelay = Duration(milliseconds: 120);
 
 class ChatArea extends StatefulWidget {
   const ChatArea({
@@ -107,10 +108,14 @@ class _ChatAreaState extends State<ChatArea> {
   final Map<int, _CachedMessageRow> _messageRowCache =
       <int, _CachedMessageRow>{};
   Timer? _navigatorHideTimer;
+  Timer? _viewportResizeTimer;
   bool _userScrollSessionActive = false;
+  bool _messageAnchorCollectionScheduled = false;
   double _viewportHeight = 0;
+  double _scrollViewportDimension = 0;
   bool _bottomFollowScheduled = false;
 
+  /// Builds the scrollable message area and its navigation overlay.
   @override
   Widget build(BuildContext context) {
     final showLoadingIndicator = _shouldShowLoadingIndicator();
@@ -126,13 +131,11 @@ class _ChatAreaState extends State<ChatArea> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        _viewportHeight = constraints.maxHeight;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            _collectMessageAnchors();
-            _scheduleBottomFollow();
-          }
-        });
+        final viewportHeight = constraints.maxHeight;
+        if (_viewportHeight != viewportHeight) {
+          _viewportHeight = viewportHeight;
+          _scheduleViewportResizeUpdate();
+        }
         final messageStartIndex = widget.hasOlderDisplayHistory ? 1 : 0;
         final messageEndIndex = messageStartIndex + widget.messages.length;
         return Stack(
@@ -249,14 +252,23 @@ class _ChatAreaState extends State<ChatArea> {
     );
   }
 
+  /// Keeps the chat bottom aligned while the viewport changes size.
   bool _handleScrollMetricsNotification(
     ScrollMetricsNotification notification,
   ) {
-    _collectMessageAnchors();
+    final viewportDimension = notification.metrics.viewportDimension;
+    if (_scrollViewportDimension != viewportDimension) {
+      _scrollViewportDimension = viewportDimension;
+      _scheduleViewportResizeUpdate();
+      _scheduleBottomFollow();
+      return false;
+    }
+    _scheduleMessageAnchorCollection();
     _scheduleBottomFollow();
     return false;
   }
 
+  /// Updates navigator anchors for active user scroll sessions only.
   bool _handleScrollNotification(ScrollNotification notification) {
     if (notification is UserScrollNotification) {
       if (notification.direction != ScrollDirection.idle) {
@@ -282,13 +294,41 @@ class _ChatAreaState extends State<ChatArea> {
         }
         _scheduleNavigatorHide();
       }
-      _collectMessageAnchors();
+      if (_userScrollSessionActive) {
+        _scheduleMessageAnchorCollection();
+      }
       if (_isAtBottom(notification.metrics) &&
           !widget.autoScrollToBottomListenable.value) {
         widget.onAutoScrollToBottomChanged(true);
       }
     }
     return false;
+  }
+
+  /// Coalesces a burst of viewport-size changes into one anchor refresh.
+  void _scheduleViewportResizeUpdate() {
+    _viewportResizeTimer?.cancel();
+    _viewportResizeTimer = Timer(_viewportResizeSettleDelay, () {
+      _viewportResizeTimer = null;
+      if (!mounted) {
+        return;
+      }
+      _scheduleMessageAnchorCollection();
+    });
+  }
+
+  /// Schedules one post-layout collection of message navigation anchors.
+  void _scheduleMessageAnchorCollection() {
+    if (_messageAnchorCollectionScheduled) {
+      return;
+    }
+    _messageAnchorCollectionScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _messageAnchorCollectionScheduled = false;
+      if (mounted) {
+        _collectMessageAnchors();
+      }
+    });
   }
 
   /// Hides the scroll navigator after the active user scroll session settles.
@@ -310,10 +350,12 @@ class _ChatAreaState extends State<ChatArea> {
     });
   }
 
+  /// Reports whether the supplied scroll metrics are positioned at the bottom.
   bool _isAtBottom(ScrollMetrics metrics) {
     return metrics.pixels >= metrics.maxScrollExtent - 2;
   }
 
+  /// Schedules a single automatic jump to the current bottom extent.
   void _scheduleBottomFollow() {
     if (_bottomFollowScheduled ||
         !widget.autoScrollToBottomListenable.value ||
@@ -430,6 +472,7 @@ class _ChatAreaState extends State<ChatArea> {
     return const ValueKey<String>('row-status');
   }
 
+  /// Refreshes cached rows and anchors after the message window changes.
   @override
   void didUpdateWidget(ChatArea oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -441,6 +484,7 @@ class _ChatAreaState extends State<ChatArea> {
             widget.messages.lastOrNull?.timestamp;
     if (messagesChanged) {
       _scheduleBottomFollow();
+      _scheduleMessageAnchorCollection();
     }
     final timestamps = widget.messages
         .map((message) => message.timestamp)
@@ -453,9 +497,11 @@ class _ChatAreaState extends State<ChatArea> {
     );
   }
 
+  /// Releases timers, cached rows, and navigation state.
   @override
   void dispose() {
     _navigatorHideTimer?.cancel();
+    _viewportResizeTimer?.cancel();
     _messageAnchorsNotifier.dispose();
     _showNavigatorChipNotifier.dispose();
     _messageKeys.clear();

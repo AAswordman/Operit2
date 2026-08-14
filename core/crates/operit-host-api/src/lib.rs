@@ -277,6 +277,7 @@ impl HostEnvironmentDescriptor {
                 description: "显示当前 Host 的系统账号权限；提权必须由系统或部署器完成。"
                     .to_string(),
                 capabilityIds: vec!["host.privilege".to_string()],
+                isRequired: true,
                 status: HostRequirementStatus::Missing,
                 action: HostRequirementAction::HostManaged,
             }],
@@ -401,6 +402,7 @@ pub struct HostOnboardingRequirement {
     pub title: String,
     pub description: String,
     pub capabilityIds: Vec<String>,
+    pub isRequired: bool,
     pub status: HostRequirementStatus,
     pub action: HostRequirementAction,
 }
@@ -610,6 +612,7 @@ fn windowsOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
         description: "显示当前 Host 是否以管理员身份运行；提升权限必须由系统启动边界决定。"
             .to_string(),
         capabilityIds: vec!["host.privilege".to_string()],
+        isRequired: true,
         status: HostRequirementStatus::Missing,
         action: HostRequirementAction::HostManaged,
     }]
@@ -629,6 +632,7 @@ fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
                 "fs.search".to_string(),
                 "fs.archive".to_string(),
             ],
+            isRequired: true,
             status: HostRequirementStatus::Missing,
             action: HostRequirementAction::OpenSystemSettings,
         },
@@ -637,6 +641,7 @@ fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
             title: "通知".to_string(),
             description: "Host 需要通知授权来显示前台服务、任务进度和工具执行结果。".to_string(),
             capabilityIds: vec!["system.notifications.send".to_string()],
+            isRequired: true,
             status: HostRequirementStatus::Missing,
             action: HostRequirementAction::RuntimePermission,
         },
@@ -645,6 +650,7 @@ fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
             title: "应用列表".to_string(),
             description: "Host 需要包可见性声明来列出、启动和停止 Android 应用。".to_string(),
             capabilityIds: vec!["system.app.list".to_string()],
+            isRequired: true,
             status: HostRequirementStatus::Missing,
             action: HostRequirementAction::None,
         },
@@ -653,6 +659,7 @@ fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
             title: "应用使用统计".to_string(),
             description: "Host 需要使用情况访问权限来读取应用前台使用时长。".to_string(),
             capabilityIds: vec!["system.app_usage".to_string()],
+            isRequired: true,
             status: HostRequirementStatus::Missing,
             action: HostRequirementAction::OpenSystemSettings,
         },
@@ -661,6 +668,7 @@ fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
             title: "系统设置修改".to_string(),
             description: "Host 需要修改系统设置权限来写入允许的 Android 系统设置项。".to_string(),
             capabilityIds: vec!["system.settings".to_string()],
+            isRequired: true,
             status: HostRequirementStatus::Missing,
             action: HostRequirementAction::OpenSystemSettings,
         },
@@ -669,6 +677,7 @@ fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
             title: "附近设备定位".to_string(),
             description: "Host 需要系统定位授权来完成部分附近设备发现能力。".to_string(),
             capabilityIds: vec!["system.location".to_string()],
+            isRequired: true,
             status: HostRequirementStatus::Missing,
             action: HostRequirementAction::RuntimePermission,
         },
@@ -677,6 +686,7 @@ fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
             title: "蓝牙连接".to_string(),
             description: "Host 需要蓝牙扫描与连接授权来发现和连接设备。".to_string(),
             capabilityIds: vec!["bluetooth.classic".to_string(), "bluetooth.ble".to_string()],
+            isRequired: true,
             status: HostRequirementStatus::Missing,
             action: HostRequirementAction::RuntimePermission,
         },
@@ -685,6 +695,7 @@ fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
             title: "悬浮入口".to_string(),
             description: "Host 需要系统悬浮窗授权来在其他应用中显示入口。".to_string(),
             capabilityIds: vec!["android.overlay".to_string()],
+            isRequired: true,
             status: HostRequirementStatus::Missing,
             action: HostRequirementAction::OpenSystemSettings,
         },
@@ -693,8 +704,28 @@ fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
             title: "持续任务".to_string(),
             description: "Host 需要电池优化例外来保持同步、协作和长任务连续。".to_string(),
             capabilityIds: vec!["runtime.background".to_string()],
+            isRequired: true,
             status: HostRequirementStatus::Missing,
             action: HostRequirementAction::OpenSystemSettings,
+        },
+        HostOnboardingRequirement {
+            id: "android.shizuku".to_string(),
+            title: "Shizuku".to_string(),
+            description: "可选。需先启动 Shizuku 或 Sui；授权后 Operit 可以使用支持 Shizuku 的 Android 系统能力。"
+                .to_string(),
+            capabilityIds: vec!["host.privilege".to_string()],
+            isRequired: false,
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::HostManaged,
+        },
+        HostOnboardingRequirement {
+            id: "android.root".to_string(),
+            title: "Root".to_string(),
+            description: "可选。授权后 Operit 可以使用需要 Root 的 Android 系统能力。".to_string(),
+            capabilityIds: vec!["host.privilege".to_string()],
+            isRequired: false,
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::HostManaged,
         },
     ]
 }
@@ -709,6 +740,7 @@ fn ohosOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
             description: "Host 需要系统定位授权来读取设备位置，并支持依赖位置权限的附近设备发现。"
                 .to_string(),
             capabilityIds: vec!["system.location".to_string()],
+            isRequired: true,
             status: HostRequirementStatus::Missing,
             action: HostRequirementAction::RuntimePermission,
         },
@@ -718,6 +750,7 @@ fn ohosOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
             description: "Host 需要蓝牙使用与发现授权来扫描、连接和读写经典蓝牙或 BLE 设备。"
                 .to_string(),
             capabilityIds: vec!["bluetooth.classic".to_string(), "bluetooth.ble".to_string()],
+            isRequired: true,
             status: HostRequirementStatus::Missing,
             action: HostRequirementAction::RuntimePermission,
         },
@@ -2467,6 +2500,24 @@ mod tests {
         let structured = structuredCapabilitySet(&descriptor);
 
         assert_eq!(raw, structured);
+    }
+
+    /// Verifies that Android privilege choices are optional onboarding items.
+    #[test]
+    fn androidPrivilegeOnboardingRequirementsAreOptional() {
+        let descriptor = HostEnvironmentDescriptor::android();
+        for id in ["android.shizuku", "android.root"] {
+            let requirement = descriptor
+                .onboardingRequirements
+                .iter()
+                .find(|requirement| requirement.id == id)
+                .unwrap_or_else(|| panic!("Android onboarding requirement is missing: {id}"));
+
+            assert!(
+                !requirement.isRequired,
+                "Android onboarding requirement must be optional: {id}"
+            );
+        }
     }
 
     /// Verifies that OpenHarmony does not advertise unimplemented OCR capability.

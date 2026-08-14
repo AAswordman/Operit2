@@ -29,6 +29,8 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Base64
 import android.util.Log
+import app.operit.core.tools.system.AndroidPrivilegedCommandExecutor
+import app.operit.core.tools.system.AndroidPrivilegedCommandTarget
 import app.operit.core.tools.system.MediaProjectionCaptureManager
 import app.operit.core.tools.system.MediaProjectionHolder
 import app.operit.core.tools.system.ScreenCaptureActivity
@@ -60,7 +62,24 @@ class OwnerSystemCapabilityChannel(
         private const val TTS_SYNTHESIS_TIMEOUT_MS = 120_000L
         private const val APPLICATION_NOTIFICATION_CHANNEL_ID = "operit_app_notifications"
         private const val APPLICATION_NOTIFICATION_CHANNEL_NAME = "Operit"
+        private val PNG_SIGNATURE =
+            byteArrayOf(
+                0x89.toByte(),
+                0x50,
+                0x4E,
+                0x47,
+                0x0D,
+                0x0A,
+                0x1A,
+                0x0A,
+            )
         private val nextApplicationNotificationId = AtomicInteger(4000)
+    }
+
+    private enum class ScreenCaptureStrategy {
+        Root,
+        Shizuku,
+        MediaProjection,
     }
 
     private var cachedMediaProjectionCaptureManager: MediaProjectionCaptureManager? = null
@@ -182,11 +201,17 @@ class OwnerSystemCapabilityChannel(
         }
     }
 
+    /** Captures screen content without blocking the Android main thread. */
     private fun ownerSystemCaptureScreenshot(result: MethodChannel.Result) {
-        try {
-            result.success(systemCaptureScreenshotResult())
-        } catch (error: Throwable) {
-            result.error("OWNER_SYSTEM_CAPTURE_SCREENSHOT_ERROR", error.message, null)
+        runtimeHost.runBackground {
+            try {
+                val response = systemCaptureScreenshotResult()
+                activity.runOnUiThread { result.success(response) }
+            } catch (error: Throwable) {
+                activity.runOnUiThread {
+                    result.error("OWNER_SYSTEM_CAPTURE_SCREENSHOT_ERROR", error.message, null)
+                }
+            }
         }
     }
 
@@ -234,6 +259,7 @@ class OwnerSystemCapabilityChannel(
                 val response =
                     when (operation) {
                         "send_notification" -> systemSendNotification(JSONObject(paramsJson))
+                        "execute_privileged_command" -> systemExecutePrivilegedCommand(JSONObject(paramsJson))
                         else -> throw IllegalArgumentException("unsupported system operation: $operation")
                     }
                 activity.runOnUiThread { result.success(response) }
@@ -297,6 +323,49 @@ class OwnerSystemCapabilityChannel(
                 .build(),
         )
         return mapOf("resultJson" to JSONObject().put("success", true).toString())
+    }
+
+    /** Executes one command through the explicitly requested privileged Android transport. */
+    private fun systemExecutePrivilegedCommand(params: JSONObject): Map<String, String> {
+        val target =
+            when (params.getString("target")) {
+                "root_libsu" -> AndroidPrivilegedCommandTarget.RootLibsu
+                "root_exec" -> AndroidPrivilegedCommandTarget.RootExec
+                "shizuku" -> AndroidPrivilegedCommandTarget.Shizuku
+                else -> throw IllegalArgumentException("unsupported privileged command target")
+            }
+        requirePrivilegedCommandAuthorization(target)
+        val result =
+            AndroidPrivilegedCommandExecutor.execute(
+                target = target,
+                command = params.getString("command"),
+                timeoutMillis = params.getLong("timeoutMillis"),
+            )
+        return mapOf(
+            "resultJson" to
+                JSONObject()
+                    .put("stdout", result.stdoutText())
+                    .put("stderr", result.stderrText())
+                    .put("exitCode", result.exitCode)
+                    .toString(),
+        )
+    }
+
+    /** Verifies the existing host authorization for one privileged command transport. */
+    private fun requirePrivilegedCommandAuthorization(target: AndroidPrivilegedCommandTarget) {
+        when (target) {
+            AndroidPrivilegedCommandTarget.RootLibsu,
+            AndroidPrivilegedCommandTarget.RootExec -> check(
+                AndroidPrivilegeAuthorization.isRootAuthorized(activity),
+            ) {
+                "Root authorization is not granted"
+            }
+            AndroidPrivilegedCommandTarget.Shizuku -> check(
+                AndroidPrivilegeAuthorization.isShizukuAuthorized(),
+            ) {
+                "Shizuku authorization is not granted"
+            }
+        }
     }
 
     private fun ownerAudioPlay(call: MethodCall, result: MethodChannel.Result) {
@@ -1922,12 +1991,80 @@ class OwnerSystemCapabilityChannel(
         }
     }
 
+    /** Captures a PNG screen image through the highest-priority approved strategy. */
     private fun captureScreenshotToFile(): String {
         val screenshotDir = File(runtimeHost.prepareAndroidRuntimePaths().runtimeRoot, "temp/clean_on_exit")
         screenshotDir.mkdirs()
 
         val shortName = System.currentTimeMillis().toString().takeLast(4)
         val file = File(screenshotDir, "$shortName.png")
+
+        when (selectScreenCaptureStrategy()) {
+            ScreenCaptureStrategy.Root -> captureScreenshotWithRoot(file)
+            ScreenCaptureStrategy.Shizuku -> captureScreenshotWithShizuku(file)
+            ScreenCaptureStrategy.MediaProjection -> captureScreenshotWithMediaProjection(file)
+        }
+        return file.absolutePath
+    }
+
+    /** Chooses the approved capture mechanism in Root, Shizuku, MediaProjection order. */
+    private fun selectScreenCaptureStrategy(): ScreenCaptureStrategy {
+        if (AndroidPrivilegeAuthorization.isRootAuthorized(activity)) {
+            return ScreenCaptureStrategy.Root
+        }
+        if (AndroidPrivilegeAuthorization.isShizukuAuthorized()) {
+            return ScreenCaptureStrategy.Shizuku
+        }
+        return ScreenCaptureStrategy.MediaProjection
+    }
+
+    /** Captures a PNG screen image through the explicitly approved Root session. */
+    private fun captureScreenshotWithRoot(file: File) {
+        val result =
+            AndroidPrivilegedCommandExecutor.execute(
+                target = AndroidPrivilegedCommandTarget.RootLibsu,
+                command = "/system/bin/screencap -p ${shellQuote(file.absolutePath)}",
+            )
+        if (result.exitCode != 0) {
+            file.delete()
+            throw IllegalStateException("Root screen capture failed: ${result.stderrText()}")
+        }
+        validateScreenshotPng(file, "Root")
+    }
+
+    /** Captures a PNG screen image through Shizuku's remote-process service. */
+    private fun captureScreenshotWithShizuku(file: File) {
+        val result =
+            AndroidPrivilegedCommandExecutor.execute(
+                target = AndroidPrivilegedCommandTarget.Shizuku,
+                command = "/system/bin/screencap -p",
+            )
+        if (result.exitCode != 0) {
+            throw IllegalStateException("Shizuku screen capture failed: ${result.stderrText()}")
+        }
+        file.outputStream().use { output -> output.write(result.stdout) }
+        validateScreenshotPng(file, "Shizuku")
+    }
+
+    /** Quotes one literal shell argument using POSIX single-quote syntax. */
+    private fun shellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
+
+    /** Verifies that a capture result is a non-empty PNG image. */
+    private fun validateScreenshotPng(file: File, source: String) {
+        if (!file.isFile || file.length() < PNG_SIGNATURE.size) {
+            file.delete()
+            throw IllegalStateException("$source screen capture did not produce a PNG")
+        }
+        val header = ByteArray(PNG_SIGNATURE.size)
+        val headerLength = file.inputStream().use { input -> input.read(header) }
+        if (headerLength != PNG_SIGNATURE.size || !header.contentEquals(PNG_SIGNATURE)) {
+            file.delete()
+            throw IllegalStateException("$source screen capture did not produce a PNG")
+        }
+    }
+
+    /** Captures a PNG screen image through the Android MediaProjection service. */
+    private fun captureScreenshotWithMediaProjection(file: File) {
 
         val manager = ensureMediaProjectionCaptureManager()
             ?: throw IllegalStateException("Screenshot failed")
@@ -1945,7 +2082,7 @@ class OwnerSystemCapabilityChannel(
         if (!success) {
             throw IllegalStateException("Screenshot failed")
         }
-        return file.absolutePath
+        validateScreenshotPng(file, "MediaProjection")
     }
 
     private fun ensureMediaProjectionCaptureManager(): MediaProjectionCaptureManager? {

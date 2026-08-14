@@ -527,11 +527,11 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
   Future<void> _setZoomFactor(double value) async {
     final tab = _requireCurrentTab();
     final next = value.clamp(_minZoomFactor, _maxZoomFactor).toDouble();
+    final result = await _sessions.setZoomFactor(tab.id, next);
+    if (!result.success) {
+      throw StateError(result.error ?? 'Browser zoom command failed');
+    }
     tab.update(zoomFactor: next);
-    await _sessions.interact(tab.id, <String, Object?>{
-      'type': 'zoom',
-      'value': next,
-    });
   }
 
   /// Applies one serialized compositor descriptor to a workspace tab.

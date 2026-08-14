@@ -558,7 +558,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get browserPermissionRequestTitle => '网页权限请求';
 
   @override
-  String get chatSpeechInputFailed => '语音输入失败，请重试';
+  String chatSpeechInputFailed(Object error) {
+    return '语音输入失败：$error';
+  }
+
+  @override
+  String get chatSpeechInputConfigurationRequired =>
+      '请先在设置 > 语音与识别中添加并选中一个语音识别配置。';
 
   @override
   String get chatSpeechNoTextRecognized => '未识别到文本';
@@ -805,6 +811,15 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get settingsCategoryModelDescription =>
       '配置模型连接，选择聊天模型，并管理思考、上下文和多模态能力。';
+
+  @override
+  String get settingsCategoryLocalModelsTitle => '本地模型';
+
+  @override
+  String get settingsCategoryLocalModelsSubtitle => '下载、引擎、STT / TTS';
+
+  @override
+  String get settingsCategoryLocalModelsDescription => '管理按需安装的本地模型和推理引擎。';
 
   @override
   String get settingsCategoryCharactersTitle => '角色与记忆';
@@ -1238,6 +1253,141 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelProviderTypeLocalModel => '本地模型';
 
   @override
+  String localModelsLoadFailed(Object error) {
+    return '本地模型状态加载失败：$error';
+  }
+
+  @override
+  String localModelsOperationFailed(Object error) {
+    return '本地模型操作失败：$error';
+  }
+
+  @override
+  String get localModelsCatalog => '模型目录';
+
+  @override
+  String get localModelsCategorySpeechToText => '语音识别（STT）模型';
+
+  @override
+  String get localModelsCategoryTextToSpeech => '语音合成（TTS）模型';
+
+  @override
+  String get localModelsCategoryChat => '大语言（LLM）模型';
+
+  @override
+  String get localModelsCategoryEmbedding => '嵌入模型';
+
+  @override
+  String get localModelsInstalledEngines => '已安装引擎';
+
+  @override
+  String get localModelsNoInstalledEngines => '当前平台尚未安装本地推理引擎。';
+
+  @override
+  String get localModelsDeleteModelTitle => '删除本地模型';
+
+  @override
+  String localModelsDeleteModelMessage(Object modelName) {
+    return '删除 $modelName 的模型文件？';
+  }
+
+  @override
+  String get localModelsDeleteEngineTitle => '删除本地引擎';
+
+  @override
+  String localModelsDeleteEngineMessage(Object engineName, Object version) {
+    return '删除 $engineName $version？';
+  }
+
+  @override
+  String get localModelsCancelling => '正在暂停';
+
+  @override
+  String localModelsDownloadPaused(Object downloaded, Object total) {
+    return '已暂停 · $downloaded / $total';
+  }
+
+  @override
+  String get localModelsDownloadInstalling => '下载完成，正在安装';
+
+  @override
+  String localModelsDownloading(Object downloaded, Object total) {
+    return '下载 $downloaded / $total';
+  }
+
+  @override
+  String localModelsLicense(Object license) {
+    return '许可证：$license';
+  }
+
+  @override
+  String get localModelsPlatformCompatible => '平台兼容';
+
+  @override
+  String get localModelsPlatformIncompatible => '平台不兼容';
+
+  @override
+  String get localModelsModelInstalled => '模型已安装';
+
+  @override
+  String get localModelsModelNotInstalled => '模型未安装';
+
+  @override
+  String get localModelsEngineInstalled => '引擎已安装';
+
+  @override
+  String get localModelsEngineNotInstalled => '引擎未安装';
+
+  @override
+  String get localModelsVerifyModelAndEngine => '校验模型和引擎';
+
+  @override
+  String get localModelsDeleteModel => '删除模型';
+
+  @override
+  String get localModelsPauseDownload => '暂停下载';
+
+  @override
+  String get localModelsDeleteDownload => '删除下载';
+
+  @override
+  String get localModelsResumeDownload => '继续';
+
+  @override
+  String get localModelsInstalling => '下载中';
+
+  @override
+  String get localModelsInstall => '安装';
+
+  @override
+  String get localModelsDeleteEngine => '删除引擎';
+
+  @override
+  String get localModelDescriptionSherpaOnnxStreamingStt => '流式中英双语语音识别。';
+
+  @override
+  String get localModelDescriptionSherpaOnnxVitsAishell3 => '本地中文多说话人语音合成。';
+
+  @override
+  String get localModelDescriptionSherpaOnnxVitsZhLl => '本地中文五说话人语音合成。';
+
+  @override
+  String get localModelDescriptionSherpaOnnxMatchaBaker =>
+      '本地中文单说话人 Matcha 语音合成。';
+
+  @override
+  String get localModelDescriptionSherpaOnnxKittenNano =>
+      '本地英文八说话人 KittenTTS 语音合成。';
+
+  @override
+  String get localModelDescriptionSherpaOnnxWebParaformer =>
+      '浏览器内置的中英 Paraformer 语音识别。';
+
+  @override
+  String get localModelDescriptionSherpaOnnxWebVitsPiper =>
+      '浏览器内置的英文多说话人 VITS 语音合成。';
+
+  @override
   String get settingsModelProviderTypeMnn => 'MNN';
 
   @override
@@ -1272,6 +1422,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsModelModelId => '模型 ID';
+
+  @override
+  String get settingsModelDuplicateModelId => '该模型已添加到当前供应商。';
 
   @override
   String get settingsModelMaxTokens => 'Max tokens';

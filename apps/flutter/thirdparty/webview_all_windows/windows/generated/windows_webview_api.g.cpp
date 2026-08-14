@@ -3106,8 +3106,17 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               }
               const auto &delta_arg = std::any_cast<const WindowsPointData &>(
                   std::get<CustomEncodableValue>(encodable_delta_arg));
+              const auto &encodable_control_key_pressed_arg = args.at(2);
+              if (encodable_control_key_pressed_arg.IsNull()) {
+                reply(WrapError(
+                    "control_key_pressed_arg unexpectedly null."));
+                return;
+              }
+              const auto &control_key_pressed_arg =
+                  std::get<bool>(encodable_control_key_pressed_arg);
               std::optional<FlutterError> output =
-                  api->SetScrollDelta(texture_id_arg, delta_arg);
+                  api->SetScrollDelta(texture_id_arg, delta_arg,
+                                      control_key_pressed_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;

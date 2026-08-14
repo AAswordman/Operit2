@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 
@@ -120,9 +121,10 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
         _reload();
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('本地模型操作失败：$error')));
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.localModelsOperationFailed('$error'))),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -163,9 +165,10 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('本地模型操作失败：$error')));
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.localModelsOperationFailed('$error'))),
+      );
     }
   }
 
@@ -181,9 +184,10 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
 
   /// Confirms and deletes one installed local model.
   Future<void> _deleteModel(core_proxy.LocalModelManifest manifest) async {
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await _confirmDelete(
-      title: '删除本地模型',
-      message: '删除 ${manifest.displayName} 的模型文件？',
+      title: l10n.localModelsDeleteModelTitle,
+      message: l10n.localModelsDeleteModelMessage(manifest.displayName),
     );
     if (!confirmed) {
       return;
@@ -226,9 +230,13 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
 
   /// Confirms and deletes one installed platform engine.
   Future<void> _deleteEngine(core_proxy.InstalledLocalEngine engine) async {
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await _confirmDelete(
-      title: '删除本地引擎',
-      message: '删除 ${engine.manifest.displayName} ${engine.manifest.version}？',
+      title: l10n.localModelsDeleteEngineTitle,
+      message: l10n.localModelsDeleteEngineMessage(
+        engine.manifest.displayName,
+        engine.manifest.version,
+      ),
     );
     if (!confirmed) {
       return;
@@ -249,6 +257,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
     required String title,
     required String message,
   }) async {
+    final l10n = AppLocalizations.of(context)!;
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -257,12 +266,12 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
+            child: Text(l10n.cancel),
           ),
           FilledButton.tonalIcon(
             onPressed: () => Navigator.of(context).pop(true),
             icon: const Icon(Icons.delete_outline),
-            label: const Text('删除'),
+            label: Text(l10n.delete),
           ),
         ],
       ),
@@ -273,6 +282,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
   /// Builds local model management content for the current runtime target.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final future = _future;
     if (future == null) {
       return const Center(child: M3LoadingIndicator());
@@ -280,34 +290,56 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
     return FutureBuilder<_LocalModelSettingsData>(
       future: future,
       builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(child: Text('本地模型状态加载失败：${snapshot.error}'));
-        }
-        if (snapshot.connectionState != ConnectionState.done) {
+        if (!snapshot.hasData) {
+          if (snapshot.hasError) {
+            return Center(
+              child: Text(l10n.localModelsLoadFailed('${snapshot.error}')),
+            );
+          }
           return const Center(child: M3LoadingIndicator());
         }
         final data = snapshot.requireData;
+        final modelKinds = data.catalog
+            .map((status) => status.manifest.kind)
+            .toSet();
         return ListView(
           padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
           children: <Widget>[
             _buildHeader(context, data.target),
             const SizedBox(height: 18),
-            Text('模型目录', style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              l10n.localModelsCatalog,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 10),
-            for (final status in data.catalog) ...<Widget>[
-              _buildModelItem(
-                context,
-                status,
-                _installStatuses ?? data.installStatuses,
+            for (final kind in core_proxy.LocalModelKind.values.where(
+              modelKinds.contains,
+            )) ...<Widget>[
+              Text(
+                _localModelKindTitle(l10n, kind),
+                style: Theme.of(context).textTheme.titleSmall,
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
+              for (final status in data.catalog.where(
+                (status) => status.manifest.kind == kind,
+              )) ...<Widget>[
+                _buildModelItem(
+                  context,
+                  status,
+                  _installStatuses ?? data.installStatuses,
+                ),
+                const SizedBox(height: 10),
+              ],
             ],
-            const SizedBox(height: 10),
-            Text('已安装引擎', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              l10n.localModelsInstalledEngines,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             if (data.registry.installedEngines.isEmpty)
               Text(
-                '当前平台尚未安装本地推理引擎',
+                l10n.localModelsNoInstalledEngines,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
@@ -326,6 +358,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
     BuildContext context,
     core_proxy.LocalPlatformTarget target,
   ) {
+    final l10n = AppLocalizations.of(context)!;
     final colors = Theme.of(context).colorScheme;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -337,7 +370,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Text(
-                'LOCAL_MODEL',
+                l10n.settingsModelProviderTypeLocalModel,
                 style: Theme.of(
                   context,
                 ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
@@ -355,7 +388,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
         IconButton(
           onPressed: _reload,
           icon: const Icon(Icons.refresh),
-          tooltip: '刷新',
+          tooltip: l10n.refresh,
         ),
       ],
     );
@@ -367,6 +400,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
     core_proxy.LocalModelCatalogStatus status,
     List<core_proxy.LocalModelInstallStatus> installStatuses,
   ) {
+    final l10n = AppLocalizations.of(context)!;
     final manifest = status.manifest;
     final installed = status.installedModel != null;
     final installStatus = _findInstallStatus(manifest, installStatuses);
@@ -410,7 +444,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        manifest.description,
+                        _localModelDescription(l10n, manifest.id),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: colors.onSurfaceVariant,
                         ),
@@ -439,14 +473,18 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
               const SizedBox(height: 6),
               Text(
                 isCancelling
-                    ? '正在暂停'
+                    ? l10n.localModelsCancelling
                     : isPaused
-                    ? '已暂停 · ${_formatBytes(installStatus.downloadedBytes)} '
-                          '/ ${_formatBytes(installStatus.totalBytes)}'
+                    ? l10n.localModelsDownloadPaused(
+                        _formatBytes(installStatus.downloadedBytes),
+                        _formatBytes(installStatus.totalBytes),
+                      )
                     : installStatus.downloadedBytes == installStatus.totalBytes
-                    ? '下载完成，正在安装'
-                    : '下载 ${_formatBytes(installStatus.downloadedBytes)} '
-                          '/ ${_formatBytes(installStatus.totalBytes)}',
+                    ? l10n.localModelsDownloadInstalling
+                    : l10n.localModelsDownloading(
+                        _formatBytes(installStatus.downloadedBytes),
+                        _formatBytes(installStatus.totalBytes),
+                      ),
                 style: Theme.of(
                   context,
                 ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
@@ -458,11 +496,23 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
               runSpacing: 5,
               children: <Widget>[
                 Text(_formatBytes(_modelByteSize(manifest))),
-                Text('License: ${manifest.license}'),
+                Text(l10n.localModelsLicense(manifest.license)),
                 Text(manifest.languages.join(' / ')),
-                Text(status.platformCompatible ? '平台兼容' : '平台不兼容'),
-                Text(installed ? '模型已安装' : '模型未安装'),
-                Text(status.installedEngine != null ? '引擎已安装' : '引擎未安装'),
+                Text(
+                  status.platformCompatible
+                      ? l10n.localModelsPlatformCompatible
+                      : l10n.localModelsPlatformIncompatible,
+                ),
+                Text(
+                  installed
+                      ? l10n.localModelsModelInstalled
+                      : l10n.localModelsModelNotInstalled,
+                ),
+                Text(
+                  status.installedEngine != null
+                      ? l10n.localModelsEngineInstalled
+                      : l10n.localModelsEngineNotInstalled,
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -473,12 +523,12 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
                   IconButton(
                     onPressed: !isBusy ? () => _verify(manifest) : null,
                     icon: const Icon(Icons.verified_outlined),
-                    tooltip: '校验模型和引擎',
+                    tooltip: l10n.localModelsVerifyModelAndEngine,
                   ),
                   IconButton(
                     onPressed: !isBusy ? () => _deleteModel(manifest) : null,
                     icon: const Icon(Icons.delete_outline),
-                    tooltip: '删除模型',
+                    tooltip: l10n.localModelsDeleteModel,
                   ),
                 ] else ...<Widget>[
                   if (hasDownloadTask)
@@ -487,13 +537,13 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
                           ? null
                           : () => _pauseInstall(manifest),
                       icon: const Icon(Icons.pause),
-                      tooltip: '暂停下载',
+                      tooltip: l10n.localModelsPauseDownload,
                     ),
                   if (hasDownloadTask)
                     IconButton(
                       onPressed: () => _deleteModel(manifest),
                       icon: const Icon(Icons.delete_outline),
-                      tooltip: '删除下载',
+                      tooltip: l10n.localModelsDeleteDownload,
                     ),
                   FilledButton.icon(
                     onPressed:
@@ -507,10 +557,10 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
                     ),
                     label: Text(
                       isPaused
-                          ? '继续'
+                          ? l10n.localModelsResumeDownload
                           : isBusy
-                          ? '下载中'
-                          : '安装',
+                          ? l10n.localModelsInstalling
+                          : l10n.localModelsInstall,
                     ),
                   ),
                 ],
@@ -527,6 +577,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
     BuildContext context,
     core_proxy.InstalledLocalEngine engine,
   ) {
+    final l10n = AppLocalizations.of(context)!;
     final colors = Theme.of(context).colorScheme;
     return ListTile(
       contentPadding: EdgeInsets.zero,
@@ -542,7 +593,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel> {
             ? () => _deleteEngine(engine)
             : null,
         icon: Icon(Icons.delete_outline, color: colors.error),
-        tooltip: '删除引擎',
+        tooltip: l10n.localModelsDeleteEngine,
       ),
     );
   }
@@ -558,6 +609,42 @@ bool _isInstallRunning(core_proxy.LocalModelInstallStatus status) {
     core_proxy.LocalModelInstallPhase.cancelled ||
     core_proxy.LocalModelInstallPhase.completed ||
     core_proxy.LocalModelInstallPhase.failed => false,
+  };
+}
+
+/// Returns the localized category title for one local model kind.
+String _localModelKindTitle(
+  AppLocalizations l10n,
+  core_proxy.LocalModelKind kind,
+) {
+  return switch (kind) {
+    core_proxy.LocalModelKind.speechToText =>
+      l10n.localModelsCategorySpeechToText,
+    core_proxy.LocalModelKind.textToSpeech =>
+      l10n.localModelsCategoryTextToSpeech,
+    core_proxy.LocalModelKind.chat => l10n.localModelsCategoryChat,
+    core_proxy.LocalModelKind.embedding => l10n.localModelsCategoryEmbedding,
+  };
+}
+
+/// Returns the localized description for one exact built-in local model.
+String _localModelDescription(AppLocalizations l10n, String modelId) {
+  return switch (modelId) {
+    'sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20' =>
+      l10n.localModelDescriptionSherpaOnnxStreamingStt,
+    'vits-zh-aishell3-int8' => l10n.localModelDescriptionSherpaOnnxVitsAishell3,
+    'sherpa-onnx-vits-zh-ll' => l10n.localModelDescriptionSherpaOnnxVitsZhLl,
+    'matcha-icefall-zh-baker' =>
+      l10n.localModelDescriptionSherpaOnnxMatchaBaker,
+    'kitten-nano-en-v0_8-int8' =>
+      l10n.localModelDescriptionSherpaOnnxKittenNano,
+    'sherpa-onnx-web-paraformer-small-zh-en' =>
+      l10n.localModelDescriptionSherpaOnnxWebParaformer,
+    'sherpa-onnx-web-vits-piper-en-us-libritts-r-medium' =>
+      l10n.localModelDescriptionSherpaOnnxWebVitsPiper,
+    _ => throw StateError(
+      'Local model catalog entry is missing a localized description: $modelId',
+    ),
   };
 }
 

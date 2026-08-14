@@ -198,9 +198,17 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     return _setPointerButtonState(button, isDown);
   }
 
-  /// Sends a logical scroll delta to the compositor surface.
-  Future<void> setSurfaceScrollDelta(double dx, double dy) {
-    return _setScrollDelta(dx, dy);
+  /// Sends a logical scroll delta and optional Ctrl modifier to the surface.
+  Future<void> setSurfaceScrollDelta(
+    double dx,
+    double dy, {
+    bool controlKeyPressed = false,
+  }) {
+    return _setScrollDelta(
+      dx,
+      dy,
+      controlKeyPressed: controlKeyPressed,
+    );
   }
 
   /// Resizes the compositor surface in logical pixels.
@@ -1046,12 +1054,20 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   }
 
   /// Sets the horizontal and vertical scroll delta.
-  Future<void> _setScrollDelta(double dx, double dy) async {
+  Future<void> _setScrollDelta(
+    double dx,
+    double dy, {
+    bool controlKeyPressed = false,
+  }) async {
     if (_isDisposed) {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.setScrollDelta(_textureId, WindowsPointData(x: dx, y: dy));
+    return _hostApi.setScrollDelta(
+      _textureId,
+      WindowsPointData(x: dx, y: dy),
+      controlKeyPressed,
+    );
   }
 
   /// Sets the surface size to the provided [size].
@@ -1224,14 +1240,26 @@ class _WebviewState extends State<Webview> {
                     _controller._setScrollDelta(
                       -signal.scrollDelta.dx,
                       -signal.scrollDelta.dy,
+                      controlKeyPressed:
+                          HardwareKeyboard.instance.isControlPressed,
                     );
                   }
                 },
                 onPointerPanZoomUpdate: (signal) {
+                  final controlKeyPressed =
+                      HardwareKeyboard.instance.isControlPressed;
                   if (signal.panDelta.dx.abs() > signal.panDelta.dy.abs()) {
-                    _controller._setScrollDelta(-signal.panDelta.dx, 0);
+                    _controller._setScrollDelta(
+                      -signal.panDelta.dx,
+                      0,
+                      controlKeyPressed: controlKeyPressed,
+                    );
                   } else {
-                    _controller._setScrollDelta(0, signal.panDelta.dy);
+                    _controller._setScrollDelta(
+                      0,
+                      signal.panDelta.dy,
+                      controlKeyPressed: controlKeyPressed,
+                    );
                   }
                 },
                 child: MouseRegion(

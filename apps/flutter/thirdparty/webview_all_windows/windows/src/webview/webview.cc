@@ -1310,7 +1310,8 @@ void Webview::SetPointerButtonState(WebviewPointerButton button, bool is_down) {
                                           last_cursor_pos_);
 }
 
-void Webview::SendScroll(double delta, bool horizontal) {
+void Webview::SendScroll(double delta, bool horizontal,
+                         bool control_key_pressed) {
   auto &remainder =
       horizontal ? horizontal_scroll_remainder_ : vertical_scroll_remainder_;
   const auto native_delta =
@@ -1326,28 +1327,34 @@ void Webview::SendScroll(double delta, bool horizontal) {
       std::clamp<long>(wheel_delta, (std::numeric_limits<short>::min)(),
                        (std::numeric_limits<short>::max)());
   auto offset = static_cast<short>(wheel_delta);
+  auto virtual_keys = virtual_keys_.state();
+  if (control_key_pressed) {
+    virtual_keys |= COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS::
+        COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_CONTROL;
+  }
 
   if (horizontal) {
     composition_controller_->SendMouseInput(
-        COREWEBVIEW2_MOUSE_EVENT_KIND_HORIZONTAL_WHEEL, virtual_keys_.state(),
-        offset, last_cursor_pos_);
+        COREWEBVIEW2_MOUSE_EVENT_KIND_HORIZONTAL_WHEEL, virtual_keys, offset,
+        last_cursor_pos_);
   } else {
-    composition_controller_->SendMouseInput(COREWEBVIEW2_MOUSE_EVENT_KIND_WHEEL,
-                                            virtual_keys_.state(), offset,
-                                            last_cursor_pos_);
+    composition_controller_->SendMouseInput(
+        COREWEBVIEW2_MOUSE_EVENT_KIND_WHEEL, virtual_keys, offset,
+        last_cursor_pos_);
   }
 }
 
-void Webview::SetScrollDelta(double delta_x, double delta_y) {
+void Webview::SetScrollDelta(double delta_x, double delta_y,
+                             bool control_key_pressed) {
   if (!IsValid()) {
     return;
   }
 
   if (delta_x != 0.0) {
-    SendScroll(delta_x, true);
+    SendScroll(delta_x, true, control_key_pressed);
   }
   if (delta_y != 0.0) {
-    SendScroll(delta_y, false);
+    SendScroll(delta_y, false, control_key_pressed);
   }
 }
 

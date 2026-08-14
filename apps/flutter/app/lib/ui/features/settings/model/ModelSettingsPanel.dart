@@ -272,6 +272,7 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
       final action = await _AddProviderModelErrorDialog.show(
         context: context,
         errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(error),
+        providerName: provider.name,
         showCustomAction: true,
       );
       if (action == _AddProviderModelErrorAction.custom && mounted) {
@@ -286,19 +287,16 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
             errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(
               error,
             ),
+            providerName: provider.name,
           );
         }
       }
       return;
     }
 
-    final existingModelIds = provider.models
-        .map((model) => model.id.toLowerCase())
-        .toSet();
+    final existingModelIds = provider.models.map((model) => model.id).toSet();
     final selectableModels = availableModels
-        .where(
-          (model) => !existingModelIds.contains(model.modelId.toLowerCase()),
-        )
+        .where((model) => !existingModelIds.contains(model.modelId))
         .toList(growable: false);
     if (!mounted) {
       return;
@@ -332,6 +330,7 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
       await _AddProviderModelErrorDialog.show(
         context: context,
         errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(error),
+        providerName: provider.name,
       );
     }
   }
@@ -345,6 +344,13 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
       context: context,
       title: l10n.settingsModelCustomModel,
       label: l10n.settingsModelModelId,
+      validator: (value) {
+        final normalizedModelId = value!.trim();
+        final isDuplicate = provider.models.any(
+          (model) => model.id == normalizedModelId,
+        );
+        return isDuplicate ? l10n.settingsModelDuplicateModelId : null;
+      },
     );
     if (modelId == null) {
       return;
@@ -1054,19 +1060,27 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
 }
 
 class _TextInputDialog extends StatefulWidget {
-  const _TextInputDialog({required this.title, required this.label});
+  const _TextInputDialog({
+    required this.title,
+    required this.label,
+    this.validator,
+  });
 
   final String title;
   final String label;
+  final String? Function(String? value)? validator;
 
+  /// Shows a validated dialog for entering a single text value.
   static Future<String?> show({
     required BuildContext context,
     required String title,
     required String label,
+    String? Function(String? value)? validator,
   }) {
     return showDialog<String>(
       context: context,
-      builder: (context) => _TextInputDialog(title: title, label: label),
+      builder: (context) =>
+          _TextInputDialog(title: title, label: label, validator: validator),
     );
   }
 
@@ -1084,6 +1098,7 @@ class _TextInputDialogState extends State<_TextInputDialog> {
     super.dispose();
   }
 
+  /// Validates and returns the entered value while preserving invalid input.
   void _save() {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -1098,10 +1113,12 @@ class _TextInputDialogState extends State<_TextInputDialog> {
       title: Text(widget.title),
       content: Form(
         key: _formKey,
+        autovalidateMode: AutovalidateMode.onUserInteraction,
         child: _DialogTextField(
           controller: _controller,
           label: widget.label,
           requiredField: true,
+          validator: widget.validator,
         ),
       ),
       actions: <Widget>[
@@ -2337,21 +2354,25 @@ enum _AddProviderModelErrorAction { custom, dismiss }
 class _AddProviderModelErrorDialog extends StatelessWidget {
   const _AddProviderModelErrorDialog({
     required this.errorDetails,
+    required this.providerName,
     required this.showCustomAction,
   });
 
   final core_proxy.CoreProxyErrorDetails errorDetails;
+  final String providerName;
 
   /// Shows the model import error dialog.
   static Future<_AddProviderModelErrorAction?> show({
     required BuildContext context,
     required core_proxy.CoreProxyErrorDetails errorDetails,
+    required String providerName,
     bool showCustomAction = false,
   }) {
     return showDialog<_AddProviderModelErrorAction>(
       context: context,
       builder: (context) => _AddProviderModelErrorDialog(
         errorDetails: errorDetails,
+        providerName: providerName,
         showCustomAction: showCustomAction,
       ),
     );
@@ -2359,6 +2380,23 @@ class _AddProviderModelErrorDialog extends StatelessWidget {
 
   final bool showCustomAction;
 
+  /// Adds the known provider display name to structured error details.
+  core_proxy.CoreProxyErrorDetails _errorDetailsWithProviderName() {
+    return core_proxy.CoreProxyErrorDetails(
+      errorType: errorDetails.errorType,
+      message: errorDetails.message,
+      variant: errorDetails.variant,
+      kind: errorDetails.kind,
+      httpStatus: errorDetails.httpStatus,
+      remoteMessage: errorDetails.remoteMessage,
+      fields: <String, Object?>{
+        ...errorDetails.fields,
+        'providerName': providerName,
+      },
+    );
+  }
+
+  /// Builds the model import error dialog.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -2366,7 +2404,9 @@ class _AddProviderModelErrorDialog extends StatelessWidget {
       title: Text(l10n.settingsModelAddModel),
       content: SizedBox(
         width: 520,
-        child: CommonNetworkErrorView(errorDetails: errorDetails),
+        child: CommonNetworkErrorView(
+          errorDetails: _errorDetailsWithProviderName(),
+        ),
       ),
       actions: <Widget>[
         if (showCustomAction)
@@ -2600,6 +2640,7 @@ class _DialogTextField extends StatelessWidget {
     this.obscureText = false,
     this.numberOnly = false,
     this.maxLines = 1,
+    this.validator,
   });
 
   final TextEditingController controller;
@@ -2608,7 +2649,9 @@ class _DialogTextField extends StatelessWidget {
   final bool obscureText;
   final bool numberOnly;
   final int maxLines;
+  final String? Function(String? value)? validator;
 
+  /// Builds a text field with the dialog's standard validation rules.
   @override
   Widget build(BuildContext context) {
     final textStyle = Theme.of(context).textTheme.bodyMedium;
@@ -2629,7 +2672,7 @@ class _DialogTextField extends StatelessWidget {
           if (numberOnly && text.isEmpty) {
             return label;
           }
-          return null;
+          return validator?.call(value);
         },
       ),
     );

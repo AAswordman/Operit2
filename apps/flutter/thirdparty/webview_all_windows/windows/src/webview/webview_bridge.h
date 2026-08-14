@@ -37,7 +37,7 @@ public:
   void SetCursorPos(double x, double y);
   void SetPointerUpdate(int64_t pointer, int64_t event, double x, double y,
                         double size, double pressure);
-  void SetScrollDelta(double dx, double dy);
+  void SetScrollDelta(double dx, double dy, bool control_key_pressed);
   void SetPointerButtonState(int64_t button, bool is_down);
   void SetSize(double width, double height, double scale_factor);
   bool DispatchKeyEvent(const std::string &event_json);

@@ -161,6 +161,18 @@ class BrowserSessions {
     return _submit(action: 'stop', sessionId: sessionId);
   }
 
+  /// Sets the semantic zoom factor of one owner browser session.
+  Future<RuntimeBrowserCommandResult> setZoomFactor(
+    String sessionId,
+    double zoomFactor,
+  ) {
+    return _submit(
+      action: 'zoom',
+      sessionId: sessionId,
+      payloadJson: jsonEncode(<String, double>{'value': zoomFactor}),
+    );
+  }
+
   /// Sends one compositor surface interaction to the real owner WebView.
   Future<void> interact(String sessionId, Map<String, Object?> payload) {
     _enqueueInteraction(

@@ -568,8 +568,9 @@ void WebviewBridge::SetPointerUpdate(int64_t pointer, int64_t event, double x,
                              size, pressure);
 }
 
-void WebviewBridge::SetScrollDelta(double dx, double dy) {
-  webview_->SetScrollDelta(dx, dy);
+void WebviewBridge::SetScrollDelta(double dx, double dy,
+                                   bool control_key_pressed) {
+  webview_->SetScrollDelta(dx, dy, control_key_pressed);
 }
 
 void WebviewBridge::SetPointerButtonState(int64_t button, bool is_down) {

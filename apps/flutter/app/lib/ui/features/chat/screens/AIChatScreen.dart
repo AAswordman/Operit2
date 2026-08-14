@@ -182,8 +182,7 @@ class _ChatContentData {
   final bool isSpeechTranscribing;
 }
 
-class _AIChatSurfaceState extends State<_AIChatSurface>
-    with WidgetsBindingObserver {
+class _AIChatSurfaceState extends State<_AIChatSurface> {
   late final ChatViewModel _viewModel =
       widget.viewModel ?? ChatViewModel(runtimeSurface: widget.runtimeSurface);
   final TextEditingController _messageController = TextEditingController();
@@ -232,6 +231,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
   bool _hasNewerDisplayHistory = false;
   bool _isLoadingDisplayWindow = false;
   bool _isPreparingChatSwitch = false;
+  bool _bottomScrollScheduled = false;
   int _chatSwitchRenderGeneration = 0;
   ChatViewModelSnapshot? _pendingChatSwitchSnapshot;
   late bool _workspaceOpen;
@@ -242,6 +242,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
   bool _isSpeechRecording = false;
   bool _isSpeechTranscribing = false;
 
+  /// Initializes chat state and subscriptions.
   @override
   void initState() {
     super.initState();
@@ -254,7 +255,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
     );
     _autoScrollToBottomNotifier = ValueNotifier<bool>(_autoScrollToBottom);
     _toastMessageNotifier = ValueNotifier<String?>(_toastMessage);
-    WidgetsBinding.instance.addObserver(this);
     _workspaceOpen = _chatWorkspaceOpen;
     _watchMainState();
     _watchToastEvent();
@@ -263,7 +263,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
     );
     PendingChatDraftHandler.revision.addListener(_consumePendingChatDraft);
     _onChatSwitchRenderRequest();
-    _inputFocusNode.addListener(_onInputFocusChanged);
     _messageController.addListener(_onMessageControllerChanged);
     unawaited(_loadLongPastedTextInputSettings());
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -291,15 +290,14 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
     }
   }
 
+  /// Releases chat state and subscriptions.
   @override
   void dispose() {
     _saveCurrentInputDraft();
-    WidgetsBinding.instance.removeObserver(this);
     ChatSwitchRenderCoordinator.requests.removeListener(
       _onChatSwitchRenderRequest,
     );
     PendingChatDraftHandler.revision.removeListener(_consumePendingChatDraft);
-    _inputFocusNode.removeListener(_onInputFocusChanged);
     _messageController.removeListener(_onMessageControllerChanged);
     _messageController.dispose();
     _inputFocusNode.dispose();
@@ -594,10 +592,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
       return;
     }
     try {
-      await _viewModel.deletePendingQueueMessage(
-        chatId: chatId,
-        messageId: id,
-      );
+      await _viewModel.deletePendingQueueMessage(chatId: chatId, messageId: id);
     } catch (error, stackTrace) {
       ClientLogger.e(
         'Failed to delete pending chat message',
@@ -855,14 +850,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
       composing: TextRange.empty,
     );
     _inputFocusNode.requestFocus();
-  }
-
-  @override
-  void didChangeMetrics() {
-    super.didChangeMetrics();
-    if (_inputFocusNode.hasFocus) {
-      _scheduleScrollToBottomAcrossKeyboardAnimation();
-    }
   }
 
   void _watchToastEvent() {
@@ -1180,13 +1167,27 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
         _isSpeechRecording = false;
         _isSpeechTranscribing = false;
       });
-      _showLocalToast(AppLocalizations.of(context)!.chatSpeechInputFailed);
+      _showLocalToast(
+        AppLocalizations.of(context)!.chatSpeechInputFailed('$error'),
+      );
     }
   }
 
-  /// Starts one WAV recording after validating the current STT provider config.
+  /// Starts one WAV recording after validating the selected STT provider config.
   Future<void> _startSpeechInput() async {
-    await _viewModel.clients.preferencesSttConfigManager.getCurrentSttConfig();
+    final selectedConfigId = await _viewModel
+        .clients
+        .preferencesSttConfigManager
+        .getSelectedSttConfigId();
+    if (!mounted) {
+      return;
+    }
+    if (selectedConfigId == null) {
+      _showLocalToast(
+        AppLocalizations.of(context)!.chatSpeechInputConfigurationRequired,
+      );
+      return;
+    }
     await _speechRecorder.start();
     if (!mounted) {
       return;
@@ -1251,6 +1252,39 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
     _sendMessageAfterNextFrame(text);
   }
 
+  /// Schedules one automatic alignment with the latest message for this frame.
+  void _scheduleScrollToBottom() {
+    if (_isPreparingChatSwitch || !_autoScrollToBottom) {
+      return;
+    }
+    if (_hasNewerDisplayHistory && !_isLoadingDisplayWindow) {
+      unawaited(
+        _viewModel.showLatestMessagesForCurrentChat().catchError((
+          Object error,
+          StackTrace stackTrace,
+        ) {
+          debugPrint('Failed to show latest messages: $error\n$stackTrace');
+        }),
+      );
+      return;
+    }
+    if (_bottomScrollScheduled) {
+      return;
+    }
+    _bottomScrollScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _bottomScrollScheduled = false;
+      if (!mounted || !_scrollController.hasClients) {
+        return;
+      }
+      final position = _scrollController.position;
+      final target = position.maxScrollExtent;
+      if ((target - position.pixels).abs() > 1) {
+        _scrollController.jumpTo(target);
+      }
+    });
+  }
+
   void _sendMessageAfterNextFrame(String text) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
@@ -1289,57 +1323,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface>
       StackTrace stackTrace,
     ) {
       debugPrint('Failed to cancel chat message: $error\n$stackTrace');
-    });
-  }
-
-  void _onInputFocusChanged() {
-    if (_inputFocusNode.hasFocus) {
-      _scheduleScrollToBottomAcrossKeyboardAnimation();
-    }
-  }
-
-  void _scheduleScrollToBottomAcrossKeyboardAnimation() {
-    _scheduleScrollToBottom();
-    for (final delay in const <Duration>[
-      Duration(milliseconds: 80),
-      Duration(milliseconds: 180),
-      Duration(milliseconds: 320),
-    ]) {
-      Future<void>.delayed(delay, () {
-        if (mounted && _inputFocusNode.hasFocus) {
-          _scheduleScrollToBottom();
-        }
-      });
-    }
-  }
-
-  void _scheduleScrollToBottom() {
-    if (_isPreparingChatSwitch) {
-      return;
-    }
-    if (!_autoScrollToBottom) {
-      return;
-    }
-    if (_hasNewerDisplayHistory && !_isLoadingDisplayWindow) {
-      unawaited(
-        _viewModel.showLatestMessagesForCurrentChat().catchError((
-          Object error,
-          StackTrace stackTrace,
-        ) {
-          debugPrint('Failed to show latest messages: $error\n$stackTrace');
-        }),
-      );
-      return;
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) {
-        return;
-      }
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      );
     });
   }
 

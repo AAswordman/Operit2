@@ -223,7 +223,11 @@ abstract class WindowsWebViewHostApi {
 
   void setPointerButton(int textureId, WindowsPointerButtonData button);
 
-  void setScrollDelta(int textureId, WindowsPointData delta);
+  void setScrollDelta(
+    int textureId,
+    WindowsPointData delta,
+    bool controlKeyPressed,
+  );
 
   void setSize(int textureId, WindowsSizeData size);
 }

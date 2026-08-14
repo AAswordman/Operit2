@@ -77,9 +77,6 @@ class RuntimeBrowserAutomationController {
           _readDouble(payload, 'dy'),
         );
         return;
-      case 'zoom':
-        await platform.setZoomFactor(_readDouble(payload, 'value'));
-        return;
       case 'key':
         await platform.dispatchBrowserSurfaceKeyEvent(
           type: _readString(payload, 'keyEventType'),
