@@ -112,6 +112,11 @@ impl RuntimeStorePaths {
         self.runtime_storage_path(PACKAGE_MANAGER_PREFERENCES_PATH)
     }
 
+    /// Returns the CoreNode-local ToolPkg installation preferences path.
+    pub fn toolpkg_installation_preferences_path(&self) -> PathBuf {
+        self.runtime_storage_path(TOOLPKG_INSTALLATION_PREFERENCES_PATH)
+    }
+
     /// Returns the current chat id state preferences path.
     pub fn current_chat_id_preferences_path(&self) -> PathBuf {
         self.runtime_storage_path(CURRENT_CHAT_ID_PREFERENCES_PATH)
@@ -170,6 +175,35 @@ impl RuntimeStorePaths {
     /// Maps a virtual runtime storage path into the configured physical runtime root.
     pub fn runtime_storage_path(&self, storage_path: &str) -> PathBuf {
         Self::runtime_storage_path_from_root(&self.runtime_dir, storage_path)
+    }
+
+    /// Converts one physical runtime path into its host-relative storage key.
+    pub fn runtime_storage_key(&self, path: &Path) -> Result<String, String> {
+        let relative = path.strip_prefix(&self.runtime_dir).map_err(|_| {
+            format!(
+                "runtime path {} is outside {}",
+                path.display(),
+                self.runtime_dir.display()
+            )
+        })?;
+        let mut segments = Vec::new();
+        for component in relative.components() {
+            match component {
+                std::path::Component::Normal(segment) => {
+                    segments.push(segment.to_string_lossy().into_owned())
+                }
+                _ => {
+                    return Err(format!(
+                        "runtime path contains an invalid component: {}",
+                        path.display()
+                    ))
+                }
+            }
+        }
+        if segments.is_empty() {
+            return Err("runtime storage key must identify an entry below runtime".to_string());
+        }
+        Ok(format!("{RUNTIME_ROOT_DIR_PATH}/{}", segments.join("/")))
     }
 
     /// Maps a virtual runtime storage path into an explicit physical runtime root.

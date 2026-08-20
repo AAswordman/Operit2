@@ -11,9 +11,8 @@ use ignore::WalkBuilder;
 use operit_host_api::{
     CapabilityOperation, CapabilityScope, FileEntry, FileExistence, FileInfo, FileSystemHost,
     FindFilesRequest, GrepCodeRequest, GrepCodeResult, GrepFileMatch, GrepLineMatch,
-    HostCapability, HostEnvironmentDescriptor, HostError, HostIsolation, HostPlatform,
-    HostOnboardingRequirement, HostPrivilege, HostRequirementAction, HostRequirementStatus,
-    HostResult,
+    HostCapability, HostEnvironmentDescriptor, HostError, HostIsolation, HostOnboardingRequirement,
+    HostPlatform, HostPrivilege, HostRequirementAction, HostRequirementStatus, HostResult,
 };
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};

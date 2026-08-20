@@ -45,7 +45,7 @@ web access
 | app access | 配对、session、签名、设备信任、权限 UI、server 组合 | core 业务执行、runtime 内部状态 |
 | Flutter Dart | 配对 UI 与 Core Link Access 状态投影 | session 持久化、签名、host server 生命周期 |
 | Flutter native Rust | 静态资源与平台 WebSocket listener 接入 | accepted session 文件、pairing code 文件、Dart UI 状态 |
-| CLI app | Link Access 命令与 Core Link Access 状态投影 | CLI session 文件、重复配对与验签实现 |
+| CLI app | Link Access 命令、身份选择与 Core Link Access 状态投影 | CLI 私有 session 文件、重复配对与验签实现 |
 | Web Access JS | 浏览器 app 的配对、session、签名、link 调用 | wasm local runtime 替换、host app server 生命周期 |
 
 ## 3. Module Ownership
@@ -60,9 +60,13 @@ apps/flutter/app/lib/core/link
   Dart link protocol models
   remote runtime link client
 
-apps/flutter/app/lib/core/path
-  app access storage paths
-  runtime connection config: client/access/runtime_connection.json
+apps/flutter/app/lib/core/runtime
+  启动前身份与存储根配置
+  每个身份解析到独立 runtime/workspace 目录
+
+apps/web_access/src
+  活动身份的浏览器启动投影
+  按身份隔离 Worker、OPFS、IndexedDB、密钥、下载与跨标签运行时所有权
 
 apps/flutter/native/operit-flutter-bridge
   Flutter host access server
@@ -71,13 +75,14 @@ apps/flutter/native/operit-flutter-bridge
   link dispatcher wiring
 
 apps/cli/src
-  CLI app access session
+  CLI 身份选择与 Link Access 命令
   link serve/connect command behavior
-  CLI remote link client
-  CLI access storage paths
-  client/access/link_sessions.json
-  client/access/link_server_sessions.json
+  runtime-owned Link Access 状态投影
 ```
+
+Flutter 和 CLI 都不再维护第二套配对 session 文件。配对、入站 session、出站 session 和
+设备身份由当前身份目录中的 `LinkAccessStore` 持久化；应用层只保存启动前的身份列表和
+活动身份 id。
 
 `operit-link` 可以提供 HTTP/WebSocket 的 link 承载工具，但这些工具只处理已经被 app access 接受的 link 请求。请求是谁发来的、是否可信、用什么 session、签名如何验证，都由调用它的 app access 层决定。
 
@@ -89,12 +94,12 @@ apps/cli/src
 Flutter UI
   -> CoreProxy
   -> MethodChannel / wasm bridge
-  -> RuntimeCoreRouter
+  -> CoreNodeRouter
      -> LocalCoreProxy
      -> PairedRemoteSession
 ```
 
-`RuntimeCoreRouter` reads the local runtime's persisted Link route before every
+`CoreNodeRouter` reads the local runtime's persisted Link route before every
 application request. Link control objects remain local; a paired remote route
 uses the runtime-owned authenticated session transport.
 

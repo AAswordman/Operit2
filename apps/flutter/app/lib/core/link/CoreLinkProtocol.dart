@@ -1,5 +1,8 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+import 'dart:typed_data';
+
 class CoreObjectPath {
   const CoreObjectPath(this.segments);
 
@@ -16,10 +19,6 @@ class CoreObjectPath {
   final List<String> segments;
 
   String get key => segments.join('.');
-
-  Map<String, Object?> toJson() {
-    return {'segments': segments};
-  }
 }
 
 class CoreCallRequest {
@@ -34,15 +33,6 @@ class CoreCallRequest {
   final CoreObjectPath targetPath;
   final String methodName;
   final Object? args;
-
-  Map<String, Object?> toJson() {
-    return {
-      'requestId': requestId,
-      'targetPath': targetPath.toJson(),
-      'methodName': methodName,
-      'args': args,
-    };
-  }
 }
 
 class CoreWatchRequest {
@@ -57,15 +47,6 @@ class CoreWatchRequest {
   final CoreObjectPath targetPath;
   final String propertyName;
   final Object? args;
-
-  Map<String, Object?> toJson() {
-    return {
-      'requestId': requestId,
-      'targetPath': targetPath.toJson(),
-      'propertyName': propertyName,
-      'args': args,
-    };
-  }
 }
 
 class CorePushRequest {
@@ -81,16 +62,6 @@ class CorePushRequest {
   final CoreObjectPath targetPath;
   final String methodName;
   final Object? args;
-
-  /// Encodes this push target for the Link carrier.
-  Map<String, Object?> toJson() {
-    return {
-      'requestId': requestId,
-      'targetPath': targetPath.toJson(),
-      'methodName': methodName,
-      'args': args,
-    };
-  }
 }
 
 abstract class CorePushSink {
@@ -102,43 +73,50 @@ abstract class CorePushSink {
 }
 
 class CoreEvent {
-  const CoreEvent({
+  CoreEvent({
     required this.requestId,
     required this.targetPath,
     required this.propertyName,
     required this.kind,
-    required this.value,
-  });
+    required Object? value,
+  }) : _value = value,
+       _valueBytes = null,
+       _decodeValue = null;
 
-  factory CoreEvent.fromJson(Map<String, Object?> json) {
-    return CoreEvent(
-      requestId: json['requestId'] as String?,
-      targetPath: CoreObjectPath(
-        ((json['targetPath'] as Map<String, Object?>)['segments']
-                as List<Object?>)
-            .cast<String>(),
-      ),
-      propertyName: json['propertyName'] as String,
-      kind: json['kind'] as String,
-      value: json['value'],
-    );
-  }
+  CoreEvent.raw({
+    required this.requestId,
+    required this.targetPath,
+    required this.propertyName,
+    required this.kind,
+    required Uint8List valueBytes,
+    required Object? Function(Uint8List bytes) decodeValue,
+  }) : _value = null,
+       _valueBytes = valueBytes,
+       _decodeValue = decodeValue;
 
   final String? requestId;
   final CoreObjectPath targetPath;
   final String propertyName;
   final String kind;
-  final Object? value;
+  final Uint8List? _valueBytes;
+  final Object? Function(Uint8List bytes)? _decodeValue;
+  Object? _value;
+  var _hasDecodedValue = false;
 
-  Map<String, Object?> toJson() {
-    return {
-      'requestId': requestId,
-      'targetPath': targetPath.toJson(),
-      'propertyName': propertyName,
-      'kind': kind,
-      'value': value,
-    };
+  /// Returns the generic payload only when a generic consumer reads it.
+  Object? get value {
+    final bytes = _valueBytes;
+    final decodeValue = _decodeValue;
+    if (bytes == null || decodeValue == null || _hasDecodedValue) {
+      return _value;
+    }
+    _value = decodeValue(bytes);
+    _hasDecodedValue = true;
+    return _value;
   }
+
+  /// Exposes the untouched MessagePack payload for typed generated consumers.
+  Uint8List? get valueBytes => _valueBytes;
 }
 
 class CoreLinkErrorLocation {

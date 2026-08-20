@@ -6,15 +6,9 @@ pub(crate) fn client_root_dir() -> PathBuf {
 }
 
 pub(crate) fn link_dir() -> PathBuf {
-    client_root_dir().join("link")
-}
-
-pub(crate) fn link_sessions_path() -> PathBuf {
-    link_dir().join("outbound_sessions.json")
-}
-
-pub(crate) fn link_server_sessions_path() -> PathBuf {
-    link_dir().join("inbound_sessions.json")
+    crate::bootstrap::active_cli_runtime_root()
+        .join("client")
+        .join("link")
 }
 
 pub(crate) fn link_host_config_path() -> PathBuf {
@@ -23,10 +17,6 @@ pub(crate) fn link_host_config_path() -> PathBuf {
 
 pub(crate) fn link_host_state_path() -> PathBuf {
     link_dir().join("host_state.json")
-}
-
-pub(crate) fn link_host_device_id_path() -> PathBuf {
-    link_dir().join("host_device_id")
 }
 
 pub(crate) fn link_host_web_access_bundle_dir() -> PathBuf {

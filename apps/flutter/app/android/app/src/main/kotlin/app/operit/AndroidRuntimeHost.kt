@@ -176,6 +176,11 @@ class AndroidRuntimeHost(context: Context) {
         )
     }
 
+    /** Returns the platform default Runtime root used to locate client bootstrap state. */
+    fun defaultRuntimeRootPath(): String {
+        return File(applicationContext.filesDir, "runtime").absolutePath
+    }
+
     /** Returns normalized storage paths without creating the runtime. */
     fun storagePathsMap(runtimePath: String?, workspacePath: String?): Map<String, String> {
         val runtimeRoot = requiredAbsoluteRoot(runtimePath, "runtimeRoot")

@@ -20,9 +20,9 @@ pub mod tools;
 #[cfg(target_os = "linux")]
 pub use host_runtime_event::LinuxHostRuntimeEventHost;
 #[cfg(target_os = "linux")]
-pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as LinuxHostRuntimeEventSchedulerHost;
-#[cfg(target_os = "linux")]
 pub use operit_host_native_common::NativeHostJavaScriptRuntimeHost as LinuxHostJavaScriptRuntimeHost;
+#[cfg(target_os = "linux")]
+pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as LinuxHostRuntimeEventSchedulerHost;
 #[cfg(target_os = "linux")]
 pub use operit_host_native_common::NativeHostRuntimeTaskSchedulerHost as LinuxHostRuntimeTaskSchedulerHost;
 pub use tools::audio::LinuxAudioPlaybackHost;
@@ -46,10 +46,11 @@ pub fn createRuntimeHostManager(
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
         runtimeRoot.clone(),
     ));
-    let runtimeStorageWriteHost = Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
-        runtimeRoot.clone(),
-        workspaceRoot.clone(),
-    ));
+    let runtimeStorageWriteHost =
+        Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
+            runtimeRoot.clone(),
+            workspaceRoot.clone(),
+        ));
     let runtimeStorageHost = Arc::new(LinuxRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
@@ -63,6 +64,7 @@ pub fn createRuntimeHostManager(
         runtimeSqliteHost,
     )
     .withHostSecretStore(hostSecretStore)
+    .withWebSocketHost(Arc::new(LinuxHttpHost::new()))
     .withArchiveStagingHost(archiveStagingHost)
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withAudioPlaybackHost(Arc::new(LinuxAudioPlaybackHost::new()))

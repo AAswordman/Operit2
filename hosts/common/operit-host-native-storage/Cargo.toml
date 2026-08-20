@@ -9,3 +9,6 @@ publish = false
 operit-host-api = { path = "../../../core/crates/operit-host-api" }
 rusqlite = { version = "0.31", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }

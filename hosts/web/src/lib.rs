@@ -25,6 +25,7 @@ pub use tools::browser::WebWebVisitHost;
 pub use tools::browser_session::WebBrowserSessionHost;
 pub use tools::fs::WebFileSystemHost;
 pub use tools::http::WebHttpHost;
+pub use tools::websocket::WebWebSocketHost;
 pub use tools::local_inference::WebLocalInferenceHost;
 pub use tools::runtime::WebManagedRuntimeHost;
 pub use tools::storage::WebRuntimeStorageHost;
@@ -59,6 +60,7 @@ pub fn createLocalCore(
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withArchiveStagingHost(archiveStagingHost);
     context = context.withBrowserSessionHost(Arc::new(WebBrowserSessionHost::new()));
+    context = context.withWebSocketHost(Arc::new(WebWebSocketHost::new()));
     context = context.withTerminalHost(Arc::new(WebTerminalHost::new()));
     context = context.withAudioPlaybackHost(Arc::new(WebAudioPlaybackHost::new()));
     context = context.withBluetoothHost(Arc::new(WebBluetoothHost::new()));

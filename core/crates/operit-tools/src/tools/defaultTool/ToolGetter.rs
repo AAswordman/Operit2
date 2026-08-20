@@ -32,6 +32,7 @@ impl ToolGetter {
                     .clone()
                     .expect("HTTP host must be configured before registering file download tool"),
                 context.systemOperationHost.clone(),
+                runtimeStorageHost.clone(),
                 runtimeStoreRoot,
                 workspaceCollectionRoot,
                 runtimeSupport,

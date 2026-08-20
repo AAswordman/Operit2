@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 use operit_host_api::{
@@ -12,6 +12,8 @@ use operit_host_api::{
     HttpDownloadProgressCallback, HttpDownloadProgressState, HttpDownloadRequest,
     HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData, HttpStreamChunkCallback,
     HttpStreamClosedCallback, HttpStreamHost, HttpStreamOpenedCallback,
+    WebSocketClosedCallback, WebSocketHost, WebSocketMessageCallback,
+    WebSocketOpenedCallback, WebSocketRequestData,
 };
 use reqwest::blocking::{multipart, Client as BlockingClient};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_RANGE, RANGE};
@@ -20,12 +22,170 @@ use reqwest::{Client as AsyncClient, Method, Proxy, StatusCode};
 #[derive(Clone, Debug, Default)]
 pub struct NativeHttpHost {
     byteStreams: Arc<Mutex<BTreeMap<String, tokio::sync::watch::Sender<bool>>>>,
+    webSockets: Arc<Mutex<BTreeMap<String, mpsc::Sender<NativeWebSocketCommand>>>>,
+}
+
+/// Carries one command from a Link carrier into a host-owned WebSocket thread.
+enum NativeWebSocketCommand {
+    Send(Vec<u8>),
+    Close,
 }
 
 impl NativeHttpHost {
     /// Creates a native HTTP host.
     pub fn new() -> Self {
         Self::default()
+    }
+}
+
+impl NativeHttpHost {
+    /// Opens one native WebSocket on a dedicated blocking network thread.
+    #[allow(non_snake_case)]
+    fn openNativeWebSocket(
+        &self,
+        streamId: String,
+        request: WebSocketRequestData,
+        onOpened: WebSocketOpenedCallback,
+        onMessage: WebSocketMessageCallback,
+        onClosed: WebSocketClosedCallback,
+    ) -> HostResult<()> {
+        let (commandSender, commandReceiver) = mpsc::channel();
+        {
+            let mut sockets = self
+                .webSockets
+                .lock()
+                .map_err(|error| HostError::new(format!("WebSocket lock poisoned: {error}")))?;
+            if sockets.contains_key(&streamId) {
+                return Err(HostError::new(format!(
+                    "WebSocket is already open: {streamId}"
+                )));
+            }
+            sockets.insert(streamId.clone(), commandSender);
+        }
+        let sockets = self.webSockets.clone();
+        let taskStreamId = streamId.clone();
+        std::thread::Builder::new()
+            .name(format!("operit-websocket-{streamId}"))
+            .spawn(move || {
+                let result = executeNativeWebSocket(request, commandReceiver, onOpened, onMessage)
+                    .map_err(|error| error.to_string());
+                onClosed(result);
+                sockets
+                    .lock()
+                    .expect("WebSocket lock poisoned")
+                    .remove(&taskStreamId);
+            })
+            .map_err(|error| HostError::new(error.to_string()))?;
+        Ok(())
+    }
+}
+
+impl WebSocketHost for NativeHttpHost {
+    /// Opens one native binary WebSocket and forwards its lifecycle callbacks.
+    #[allow(non_snake_case)]
+    fn openWebSocket(
+        &self,
+        streamId: String,
+        request: WebSocketRequestData,
+        onOpened: WebSocketOpenedCallback,
+        onMessage: WebSocketMessageCallback,
+        onClosed: WebSocketClosedCallback,
+    ) -> HostResult<()> {
+        self.openNativeWebSocket(streamId, request, onOpened, onMessage, onClosed)
+    }
+
+    /// Sends one binary message through a native WebSocket.
+    #[allow(non_snake_case)]
+    fn sendWebSocketMessage(&self, streamId: &str, message: Vec<u8>) -> HostResult<()> {
+        let sender = self
+            .webSockets
+            .lock()
+            .map_err(|error| HostError::new(format!("WebSocket lock poisoned: {error}")))?
+            .get(streamId)
+            .cloned()
+            .ok_or_else(|| HostError::new(format!("WebSocket is not open: {streamId}")))?;
+        sender
+            .send(NativeWebSocketCommand::Send(message))
+            .map_err(|error| HostError::new(error.to_string()))
+    }
+
+    /// Closes one native WebSocket.
+    #[allow(non_snake_case)]
+    fn closeWebSocket(&self, streamId: &str) -> HostResult<()> {
+        let sender = self
+            .webSockets
+            .lock()
+            .map_err(|error| HostError::new(format!("WebSocket lock poisoned: {error}")))?
+            .remove(streamId)
+            .ok_or_else(|| HostError::new(format!("WebSocket is not open: {streamId}")))?;
+        sender
+            .send(NativeWebSocketCommand::Close)
+            .map_err(|error| HostError::new(error.to_string()))
+    }
+}
+
+/// Runs one native WebSocket until the peer or its owner closes the connection.
+fn executeNativeWebSocket(
+    request: WebSocketRequestData,
+    commandReceiver: mpsc::Receiver<NativeWebSocketCommand>,
+    onOpened: WebSocketOpenedCallback,
+    onMessage: WebSocketMessageCallback,
+) -> HostResult<()> {
+    let readTimeoutSeconds = request.connectTimeoutSeconds;
+    let mut builder = tungstenite::http::Request::builder().uri(request.url);
+    for (name, value) in request.headers {
+        builder = builder.header(name, value);
+    }
+    let request = builder
+        .body(())
+        .map_err(|error| HostError::new(error.to_string()))?;
+    let (mut socket, _) = tungstenite::connect(request)
+        .map_err(|error| HostError::new(format!("WebSocket connect failed: {error}")))?;
+    setWebSocketReadTimeout(&mut socket, readTimeoutSeconds);
+    onOpened();
+    loop {
+        while let Ok(command) = commandReceiver.try_recv() {
+            match command {
+                NativeWebSocketCommand::Send(message) => socket
+                    .send(tungstenite::Message::Binary(message))
+                    .map_err(|error| HostError::new(error.to_string()))?,
+                NativeWebSocketCommand::Close => {
+                    let _ = socket.close(None);
+                    return Ok(());
+                }
+            }
+        }
+        match socket.read() {
+            Ok(tungstenite::Message::Binary(message)) => onMessage(message),
+            Ok(tungstenite::Message::Text(message)) => onMessage(message.as_bytes().to_vec()),
+            Ok(tungstenite::Message::Close(_)) => return Ok(()),
+            Ok(tungstenite::Message::Ping(_)) | Ok(tungstenite::Message::Pong(_)) => {}
+            Ok(tungstenite::Message::Frame(_)) => {}
+            Err(tungstenite::Error::Io(error))
+                if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(tungstenite::Error::ConnectionClosed)
+            | Err(tungstenite::Error::AlreadyClosed) => return Ok(()),
+            Err(error) => return Err(HostError::new(error.to_string())),
+        }
+    }
+}
+
+/// Applies a short polling timeout so sends and closes are observed promptly.
+fn setWebSocketReadTimeout(
+    socket: &mut tungstenite::WebSocket<
+        tungstenite::stream::MaybeTlsStream<std::net::TcpStream>,
+    >,
+    connectTimeoutSeconds: u64,
+) {
+    let timeout = Duration::from_millis(
+        connectTimeoutSeconds
+            .saturating_mul(1000)
+            .clamp(100, 1000),
+    );
+    if let tungstenite::stream::MaybeTlsStream::Plain(stream) = socket.get_mut() {
+        let _ = stream.set_read_timeout(Some(timeout));
+    } else if let tungstenite::stream::MaybeTlsStream::Rustls(stream) = socket.get_mut() {
+        let _ = stream.sock.set_read_timeout(Some(timeout));
     }
 }
 
@@ -42,10 +202,9 @@ impl HttpStreamHost for NativeHttpHost {
     ) -> HostResult<()> {
         let (cancelSender, cancelReceiver) = tokio::sync::watch::channel(false);
         {
-            let mut streams = self
-                .byteStreams
-                .lock()
-                .map_err(|error| HostError::new(format!("HTTP byte stream lock poisoned: {error}")))?;
+            let mut streams = self.byteStreams.lock().map_err(|error| {
+                HostError::new(format!("HTTP byte stream lock poisoned: {error}"))
+            })?;
             if streams.contains_key(&streamId) {
                 return Err(HostError::new(format!(
                     "HTTP byte stream is already open: {streamId}"
@@ -58,13 +217,8 @@ impl HttpStreamHost for NativeHttpHost {
         let spawnResult = std::thread::Builder::new()
             .name(format!("operit-http-stream-{streamId}"))
             .spawn(move || {
-                let result = executeHttpByteStream(
-                    request,
-                    cancelReceiver,
-                    onOpened,
-                    onChunk,
-                )
-                .map_err(|error| error.to_string());
+                let result = executeHttpByteStream(request, cancelReceiver, onOpened, onChunk)
+                    .map_err(|error| error.to_string());
                 onClosed(result);
                 streams
                     .lock()

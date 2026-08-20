@@ -33,6 +33,7 @@ use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
+use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
@@ -40,15 +41,15 @@ use operit_tools::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, ToolExposureMode as ResolvedToolExposureMode,
 };
 use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::tools::ToolResultDataClasses::ToolResultData;
 use operit_tools::ConversationMarkupManager::{
-    ConversationMarkupManager, ENHANCED_PURE_THINKING_ONLY_WARNING,
+    ConversationMarkupManager, ToolResult, ENHANCED_PURE_THINKING_ONLY_WARNING,
 };
 use operit_tools::ToolExecutionManager::{
-    AITool as RuntimeAITool, ToolExecutionManager, ToolExposureMode as RuntimeToolExposureMode,
+    AITool as RuntimeAITool, ToolBatchControl, ToolExecutionManager,
+    ToolExposureMode as RuntimeToolExposureMode,
 };
-use operit_util::stream::RevisableTextStream::{
-    with_ordered_event_channel_shared, ResponseStreamItem, RevisableTextStream,
-};
+use operit_util::stream::RevisableTextStream::{ResponseStreamItem, RevisableTextStream};
 use operit_util::stream::Stream::Stream;
 use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_util::AppLogger::AppLogger;
@@ -77,7 +78,6 @@ pub struct EnhancedAIService {
 
 #[derive(Clone, Debug)]
 pub struct EnhancedAISharedState {
-    pub is_service_manager_initialized: bool,
     pub per_request_token_counts: Option<(i64, i64)>,
     pub request_window_estimate: Option<i64>,
     pub active_execution_contexts: BTreeMap<i32, MessageExecutionContext>,
@@ -209,7 +209,6 @@ impl MessageExecutionContext {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SendMessageLifecycleStage {
-    EnsureInitialized,
     StartAiService,
     SetProcessingState,
     PrepareConversationHistory,
@@ -509,7 +508,6 @@ impl EnhancedAIService {
             package_manager: PackageManagerMirror,
             provider_runtime_context,
             shared_state: Arc::new(Mutex::new(EnhancedAISharedState {
-                is_service_manager_initialized: false,
                 per_request_token_counts: None,
                 request_window_estimate: None,
                 active_execution_contexts: BTreeMap::new(),
@@ -536,17 +534,6 @@ impl EnhancedAIService {
             .expect("EnhancedAIService shared_state mutex poisoned")
     }
 
-    /// Initializes the service manager once before provider access.
-    pub fn ensureInitialized(&mut self) {
-        if self.shared_state().is_service_manager_initialized {
-            return;
-        }
-        self.multi_service_manager
-            .initialize()
-            .expect("MultiServiceManager initialization must succeed");
-        self.shared_state().is_service_manager_initialized = true;
-    }
-
     /// Returns the model service configured for a functional prompt role.
     pub fn getAIServiceForFunction(
         &mut self,
@@ -555,7 +542,6 @@ impl EnhancedAIService {
         _chatModelIdOverride: Option<String>,
         runtime: &SendMessageRuntime,
     ) -> SharedAIServiceHandle {
-        self.ensureInitialized();
         runtime.aiService.clone()
     }
 
@@ -576,12 +562,10 @@ impl EnhancedAIService {
         _chatModelIdOverride: Option<String>,
         runtime: &SendMessageRuntime,
     ) -> ResolvedModelConfig {
-        self.ensureInitialized();
         runtime.modelConfig.clone()
     }
 
     pub async fn refreshServiceForFunction(&mut self, functionType: FunctionType) {
-        self.ensureInitialized();
         self.multi_service_manager
             .refreshServiceForFunction(functionType)
             .await
@@ -589,7 +573,6 @@ impl EnhancedAIService {
     }
 
     pub async fn refreshAllServices(&mut self) {
-        self.ensureInitialized();
         self.multi_service_manager
             .refreshAllServices()
             .await
@@ -603,7 +586,6 @@ impl EnhancedAIService {
         _chatModelIdOverride: Option<String>,
         runtime: &SendMessageRuntime,
     ) -> Vec<ModelParameter<Value>> {
-        self.ensureInitialized();
         runtime.modelParameters.clone()
     }
 
@@ -750,7 +732,6 @@ impl EnhancedAIService {
         previousSummary: Option<String>,
     ) -> Result<String, AiServiceError> {
         let mut multiServiceManager = self.multi_service_manager.clone();
-        multiServiceManager.initialize()?;
         self.conversation_service
             .generateSummary(messages, previousSummary, &mut multiServiceManager)
             .await
@@ -762,9 +743,21 @@ impl EnhancedAIService {
         previousSummary: Option<String>,
     ) -> Result<String, AiServiceError> {
         let mut multiServiceManager = self.multi_service_manager.clone();
-        multiServiceManager.initialize()?;
         self.conversation_service
             .generateSummaryFromPromptTurns(messages, previousSummary, &mut multiServiceManager)
+            .await
+    }
+
+    /// Generates a concise title using the model bound to title generation.
+    #[allow(non_snake_case)]
+    pub async fn generateConversationTitle(
+        &mut self,
+        user_text: String,
+        attachment_file_names: Vec<String>,
+    ) -> Result<String, AiServiceError> {
+        let mut multi_service_manager = self.multi_service_manager.clone();
+        self.conversation_service
+            .generateConversationTitle(user_text, attachment_file_names, &mut multi_service_manager)
             .await
     }
 
@@ -840,7 +833,6 @@ impl EnhancedAIService {
         publishEstimate: bool,
         mut runtime: SendMessageRuntime,
     ) -> Result<i64, AiServiceError> {
-        self.ensureInitialized();
         let preparedHistory = self.prepareConversationHistory(
             chatHistory,
             message.clone(),
@@ -995,7 +987,6 @@ impl EnhancedAIService {
         &mut self,
         options: &SendMessageOptions,
     ) -> Result<SendMessageRuntime, AiServiceError> {
-        self.ensureInitialized();
         let (modelConfig, modelParameters, selectedService) = match (
             options.chatProviderIdOverride.as_ref(),
             options.chatModelIdOverride.as_ref(),
@@ -1078,7 +1069,7 @@ impl EnhancedAIService {
         runtime: SendMessageRuntime,
     ) -> Result<SharedAiResponseStream, AiServiceError> {
         AppLogger::i("CoreSend", "provider response task schedule start");
-        let responseStream = with_ordered_event_channel_shared(
+        let responseStream = SharedAiResponseStream::new_ordered(
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
         );
@@ -1179,9 +1170,6 @@ impl EnhancedAIService {
             eventChannel,
         );
         self.registerExecutionContext(execContext.clone());
-        lifecycle.push(SendMessageLifecycleStage::EnsureInitialized);
-        self.ensureInitialized();
-
         if !isSubTask {
             lifecycle.push(SendMessageLifecycleStage::StartAiService);
             self.startAiService(characterName.clone(), avatarUri.clone());
@@ -2455,17 +2443,18 @@ impl EnhancedAIService {
             ToolExposureMode::Cli => RuntimeToolExposureMode::CLI,
             ToolExposureMode::Full => RuntimeToolExposureMode::FULL,
         };
-        let (emittedToolResultMessages, allToolResults) = ToolExecutionManager::executeInvocations(
-            &toolInvocations,
-            &mut self.tool_handler,
-            &packageManagerSnapshot,
-            characterName.clone(),
-            chatId.clone(),
-            roleCardId.clone(),
-            context.workspacePath.clone(),
-            toolExposureMode,
-        )
-        .await;
+        let (emittedToolResultMessages, allToolResults, batchControl) =
+            ToolExecutionManager::executeInvocations(
+                &toolInvocations,
+                &mut self.tool_handler,
+                &packageManagerSnapshot,
+                characterName.clone(),
+                chatId.clone(),
+                roleCardId.clone(),
+                context.workspacePath.clone(),
+                toolExposureMode,
+            )
+            .await;
         let emittedChars = emittedToolResultMessages
             .iter()
             .map(|content| content.len())
@@ -2494,6 +2483,65 @@ impl EnhancedAIService {
             context.streamBuffer.push_str(&content);
             context.roundManager.appendContent(&content);
             collector.emit_chunk(content);
+        }
+
+        if batchControl == ToolBatchControl::StopExecution {
+            if isSubTask {
+                return Err(AiServiceError::RequestFailed(
+                    "stream source transition is not available inside a subtask".to_string(),
+                ));
+            }
+            if chatId.as_ref().is_none_or(|value| value.trim().is_empty()) {
+                return Err(AiServiceError::RequestFailed(
+                    "stream source transition requires a persisted execution key".to_string(),
+                ));
+            }
+            let toolResultMessage =
+                ConversationMarkupManager::buildBoundedToolResultMessage(&allToolResults);
+            if toolResultMessage.trim().is_empty() {
+                return Err(AiServiceError::RequestFailed(
+                    "stream source transition produced an empty tool result message".to_string(),
+                ));
+            }
+            let toolNames = allToolResults
+                .iter()
+                .map(|result| result.toolName.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+            context.conversationHistory.push(PromptTurn {
+                kind: PromptTurnKind::TOOL_RESULT,
+                content: toolResultMessage,
+                tool_name: Some(toolNames),
+                metadata: HashMap::new(),
+            });
+            let normalizedChatHistory = self
+                .conversation_service
+                .normalize_conversation_history_for_model(&context.conversationHistory);
+            context.conversationHistory.clear();
+            context.conversationHistory.extend(normalizedChatHistory);
+            let targetNodeId = allToolResults
+                .iter()
+                .find(|result| {
+                    result.success && result.toolName == BuiltinToolName::SwitchCore.as_str()
+                })
+                .and_then(|result| match &result.result {
+                    ToolResultData::StringResultData(data) => Some(data.value.clone()),
+                    _ => None,
+                })
+                .ok_or_else(|| {
+                    AiServiceError::RequestFailed(
+                        "switch_core did not return a typed target CoreNode".to_string(),
+                    )
+                })?;
+            collector.request_terminal_source_transition(targetNodeId);
+            AppLogger::i(
+                TAG,
+                &format!(
+                    "chat.stream.source_transition_requested executionId={} round={}",
+                    context.executionId, context.roundManager.roundIndex
+                ),
+            );
+            return Ok(());
         }
 
         if !allToolResults.is_empty() {
@@ -3111,10 +3159,12 @@ fn applyToolPromptComposeHooksToAvailableTools(
     deserializePromptHookToolPrompts(hookContext.available_tools)
 }
 
+/// Serializes one functional model role for prompt-hook metadata.
 fn function_type_name(functionType: &FunctionType) -> &'static str {
     match functionType {
         FunctionType::CHAT => "CHAT",
         FunctionType::SUMMARY => "SUMMARY",
+        FunctionType::TITLE_GENERATION => "TITLE_GENERATION",
         FunctionType::MEMORY => "MEMORY",
         FunctionType::UI_CONTROLLER => "UI_CONTROLLER",
         FunctionType::TRANSLATION => "TRANSLATION",

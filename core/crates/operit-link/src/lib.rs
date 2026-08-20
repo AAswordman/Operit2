@@ -1,5 +1,7 @@
 pub mod client;
 pub mod codec;
+#[path = "CoreStream.rs"]
+mod core_stream;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http;
 pub mod http_protocol;
@@ -23,5 +25,7 @@ pub use protocol::{
     fromCoreValue, toCoreValue, CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind,
     CoreEventStream, CoreLinkError, CoreMethodMode, CoreMethodProtocol, CoreObjectPath,
     CorePayloadKind, CorePushItem, CorePushRequest, CoreRequestId, CoreValue, CoreWatchInitial,
-    CoreWatchRequest,
+    CoreWatchRequest, CoreWatchSourceActivator, CoreWatchSourceResume,
+    CORE_INCREMENTAL_VALUES_ARGUMENT,
 };
+pub use core_stream::{CoreStream, CoreStreamDescriptor};

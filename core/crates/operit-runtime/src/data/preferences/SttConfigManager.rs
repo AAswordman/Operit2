@@ -25,9 +25,7 @@ impl SttConfigManager {
     /// Creates an STT configuration manager backed by explicit runtime paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::newEncryptedSynced(
-                paths.stt_configs_preferences_path(),
-            ),
+            dataStore: PreferencesDataStore::newEncrypted(paths.stt_configs_preferences_path()),
             paths,
         }
     }

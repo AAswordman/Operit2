@@ -280,10 +280,10 @@ impl AIMessageManager {
             );
             Self::forgetActiveChatKey(&chatKey);
             Self::forgetActiveEnhancedAiService(&chatKey);
-            return Ok(with_event_channel_shared(
+            return Ok(SharedAiResponseStream::from(with_event_channel_shared(
                 pluginExecution.stream,
                 operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
-            ));
+            )));
         }
 
         let disableStreamOutput = apiPreferences
@@ -341,7 +341,7 @@ impl AIMessageManager {
         match request.enhancedAiService.sendMessage(options).await {
             Ok(stream) => {
                 let cleanupChatKey = chatKey.clone();
-                let mut cleanupStream = stream.upstream.clone();
+                let mut cleanupStream = stream.chunk_stream();
                 defaultHostRuntimeTaskSchedulerHost()
                     .scheduleHostRuntimeAsyncTask(
                         "ai-message-manager-response-cleanup",

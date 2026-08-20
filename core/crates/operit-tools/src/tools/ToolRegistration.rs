@@ -148,6 +148,102 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
         }),
         ToolRegistrationVisibility::PUBLIC,
     );
+    let coreNodeRuntimeSupport = handler.runtimeSupport();
+    handler.registerBuiltinTool(
+        BuiltinToolName::ListCoreNodes,
+        Box::new(FnToolExecutor {
+            effect: ToolEffect::READ,
+            validate: Arc::new(|_| ToolValidationResult {
+                valid: true,
+                errorMessage: String::new(),
+            }),
+            invoke: {
+                let runtimeSupport = coreNodeRuntimeSupport.clone();
+                Arc::new(move |tool| {
+                    let state = match runtimeSupport.coreNodeRouteState() {
+                        Ok(state) => state,
+                        Err(error) => return toolErrorResult(tool, error),
+                    };
+                    let result = serde_json::json!({
+                        "currentNodeId": state.currentNodeId,
+                        "nodes": state.nodes.into_iter().map(|node| serde_json::json!({
+                            "nodeId": node.nodeId,
+                            "displayName": node.displayName,
+                            "userName": node.userName,
+                            "platform": node.platform,
+                            "model": node.model,
+                            "reachable": node.reachable,
+                        })).collect::<Vec<_>>(),
+                    });
+                    ToolResult {
+                        toolName: tool.name.clone(),
+                        success: true,
+                        result: stringResultData(result.to_string()),
+                        error: None,
+                    }
+                })
+            },
+        }),
+        ToolRegistrationVisibility::PUBLIC,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::SwitchCore,
+        Box::new(FnToolExecutor {
+            effect: ToolEffect::WRITE,
+            validate: Arc::new(|tool| {
+                let targetNodeId = tool
+                    .parameters
+                    .iter()
+                    .find(|parameter| parameter.name == "node_id")
+                    .map(|parameter| parameter.value.trim());
+                match targetNodeId {
+                    Some(nodeId) if !nodeId.is_empty() => ToolValidationResult {
+                        valid: true,
+                        errorMessage: String::new(),
+                    },
+                    _ => ToolValidationResult {
+                        valid: false,
+                        errorMessage: "Missing required parameter: node_id".to_string(),
+                    },
+                }
+            }),
+            invoke: {
+                let runtimeSupport = coreNodeRuntimeSupport;
+                Arc::new(move |tool| {
+                    let targetNodeId = tool
+                        .parameters
+                        .iter()
+                        .find(|parameter| parameter.name == "node_id")
+                        .expect("validated switch_core invocation must contain node_id")
+                        .value
+                        .trim()
+                        .to_string();
+                    let bindingKey = match ToolExecutionManager::currentToolRuntimeContext()
+                        .and_then(|context| context.callerChatId)
+                    {
+                        Some(value) if !value.trim().is_empty() => value,
+                        _ => {
+                            return toolErrorResult(
+                                tool,
+                                "switch_core requires a persisted execution key".to_string(),
+                            )
+                        }
+                    };
+                    if let Err(error) = runtimeSupport.requestCoreSwitch(&bindingKey, &targetNodeId)
+                    {
+                        return toolErrorResult(tool, error);
+                    }
+                    ToolResult {
+                        toolName: tool.name.clone(),
+                        success: true,
+                        result: stringResultData(targetNodeId),
+                        error: None,
+                    }
+                })
+            },
+        }),
+        ToolRegistrationVisibility::PUBLIC,
+    );
     if let Some(fileSystemTools) = ToolGetter::getFileSystemTools(context, handler.runtimeSupport())
     {
         registerFileSystemTools(handler, fileSystemTools);

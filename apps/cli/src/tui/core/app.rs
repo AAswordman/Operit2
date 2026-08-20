@@ -255,9 +255,12 @@ impl OperitTui {
             .currentChatIdFlowSnapshot()
             .await
             .map_err(|error| error.to_string())?;
+        let active_chat_id = current_chat_id_cache
+            .clone()
+            .ok_or_else(|| "no active chat in tui".to_string())?;
         let current_messages_cache = core
             .chat_runtime_holder_main()
-            .chatHistoryFlowSnapshot()
+            .chatMessagesFlowSnapshot(Some(active_chat_id.clone()))
             .await
             .map_err(|error| error.to_string())?;
         let current_chat_is_loading_cache = core
@@ -280,10 +283,10 @@ impl OperitTui {
             .currentWindowSizeFlowSnapshot()
             .await
             .map_err(|error| error.to_string())?;
-        current_chat_id_cache
-            .as_ref()
-            .ok_or_else(|| "no active chat in tui".to_string())?;
         core.watchMainChatGeneratedStateFlows()
+            .await
+            .map_err(|error| error.to_string())?;
+        core.watchMainChatMessagesFlow(active_chat_id)
             .await
             .map_err(|error| error.to_string())?;
         Ok(Self {
@@ -426,7 +429,7 @@ impl OperitTui {
     ) -> Result<(), String> {
         while !self.should_quit {
             self.ensure_pending_queue_chat_id();
-            self.apply_pushed_events();
+            self.apply_pushed_events().await?;
             self.ensure_pending_queue_chat_id();
             self.refresh_runtime_status_if_due().await;
             self.advance_pending_message_queue().await?;
@@ -1095,7 +1098,7 @@ impl OperitTui {
         let chat_id = self.current_chat_id()?;
         self.core
             .chat_runtime_holder_main()
-            .cancelCurrentMessage()
+            .cancelMessage(chat_id.clone())
             .await
             .map_err(|error| error.to_string())?;
         self.last_current_chat_loading = false;
@@ -1160,16 +1163,6 @@ impl OperitTui {
         send_args: ChatSendArgs,
         inline_attachments: Vec<AttachmentInfo>,
     ) -> Result<String, String> {
-        self.core
-            .preferences_model_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
-        self.core
-            .preferences_functional_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
         let chat_binding = self
             .core
             .preferences_functional_config_manager()
@@ -1183,6 +1176,7 @@ impl OperitTui {
                 .await
                 .map_err(|error| error.to_string())?;
         }
+        let chat_id = self.current_chat_id()?;
         let mut attachments = build_attachments(&send_args.attachmentPaths)?;
         attachments.extend(inline_attachments);
         let reply_to_message = match send_args.replyToTimestamp {
@@ -1200,7 +1194,7 @@ impl OperitTui {
             .sendUserMessage(
                 PromptFunctionType::CHAT,
                 None,
-                None,
+                Some(chat_id),
                 send_args.message,
                 None,
                 Some(chat_binding.providerId),
@@ -1417,17 +1411,6 @@ impl OperitTui {
     async fn current_chat_model_status_parts(
         &mut self,
     ) -> Result<(String, String, String), String> {
-        self.core
-            .preferences_model_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
-        self.core
-            .preferences_functional_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
-
         let binding = self
             .core
             .preferences_functional_config_manager()
@@ -1449,11 +1432,6 @@ impl OperitTui {
     }
 
     async fn current_chat_model_ref(&mut self) -> Result<ModelRef, String> {
-        self.core
-            .preferences_functional_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
         let binding = self
             .core
             .preferences_functional_config_manager()
@@ -1630,17 +1608,6 @@ impl OperitTui {
     }
 
     async fn load_model_choices(&mut self) -> Result<Vec<ModelChoiceItem>, String> {
-        self.core
-            .preferences_model_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
-        self.core
-            .preferences_functional_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
-
         let binding = self
             .core
             .preferences_functional_config_manager()
@@ -1700,16 +1667,6 @@ impl OperitTui {
                 return Ok(());
             }
         };
-        self.core
-            .preferences_model_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
-        self.core
-            .preferences_functional_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
         let config = self
             .core
             .preferences_model_config_manager()
@@ -1730,11 +1687,6 @@ impl OperitTui {
     async fn apply_chat_model_choice(&mut self, choice: &ModelChoiceItem) -> Result<(), String> {
         self.core
             .preferences_functional_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
-        self.core
-            .preferences_functional_config_manager()
             .setModelForFunction(
                 FunctionType::CHAT,
                 choice.provider_id.clone(),
@@ -1753,11 +1705,6 @@ impl OperitTui {
 
     async fn toggle_max_context_mode(&mut self) -> Result<(), String> {
         let model_ref = self.editable_chat_model_ref().await?;
-        self.core
-            .preferences_model_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
         let current = self
             .core
             .preferences_model_config_manager()
@@ -1917,12 +1864,7 @@ impl OperitTui {
             .currentChatIdFlowSnapshot()
             .await
             .map_err(|error| error.to_string())?;
-        self.current_messages_cache = self
-            .core
-            .chat_runtime_holder_main()
-            .chatHistoryFlowSnapshot()
-            .await
-            .map_err(|error| error.to_string())?;
+        self.refresh_current_messages_for_cached_chat().await?;
         self.current_chat_is_loading_cache = self
             .core
             .chat_runtime_holder_main()
@@ -1950,19 +1892,48 @@ impl OperitTui {
         Ok(())
     }
 
-    fn apply_pushed_events(&mut self) {
+    /// Refreshes the current message cache and its chat-scoped watch.
+    async fn refresh_current_messages_for_cached_chat(&mut self) -> Result<(), String> {
+        let Some(chat_id) = self.current_chat_id_cache.clone() else {
+            self.core.clearMainChatMessagesWatch();
+            self.current_messages_cache.clear();
+            return Ok(());
+        };
+        self.core
+            .watchMainChatMessagesFlow(chat_id.clone())
+            .await
+            .map_err(|error| error.to_string())?;
+        self.current_messages_cache = self
+            .core
+            .chat_runtime_holder_main()
+            .chatMessagesFlowSnapshot(Some(chat_id))
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    /// Applies queued Core events and refreshes chat-scoped message state when selection changes.
+    async fn apply_pushed_events(&mut self) -> Result<(), String> {
         self.apply_startup_install_events();
         self.apply_full_update_download_events();
+        let mut should_refresh_messages = false;
         for event in self.core.drainEvents() {
             match event.propertyName.as_str() {
                 "currentChatIdFlow" => {
                     if let Ok(value) = operit_link::fromCoreValue::<Option<String>>(event.value) {
-                        self.current_chat_id_cache = value;
+                        if self.current_chat_id_cache != value {
+                            self.current_chat_id_cache = value;
+                            should_refresh_messages = true;
+                        }
                     }
                 }
-                "chatHistoryFlow" => {
-                    if let Ok(value) = operit_link::fromCoreValue::<Vec<ChatMessage>>(event.value) {
-                        self.current_messages_cache = value;
+                "chatMessagesFlow" => {
+                    if self.core.isActiveMainChatMessagesEvent(&event) {
+                        if let Ok(value) =
+                            operit_link::fromCoreValue::<Vec<ChatMessage>>(event.value)
+                        {
+                            self.current_messages_cache = value;
+                        }
                     }
                 }
                 "chatHistoriesFlow" => {
@@ -1999,6 +1970,10 @@ impl OperitTui {
                 _ => {}
             }
         }
+        if should_refresh_messages {
+            self.refresh_current_messages_for_cached_chat().await?;
+        }
+        Ok(())
     }
 
     fn apply_startup_install_events(&mut self) {
@@ -2248,11 +2223,6 @@ impl OperitTui {
 
     async fn current_context_usage_label(&mut self) -> Result<String, String> {
         let model_ref = self.editable_chat_model_ref().await?;
-        self.core
-            .preferences_model_config_manager()
-            .initializeIfNeeded()
-            .await
-            .map_err(|error| error.to_string())?;
         let config = self
             .core
             .preferences_model_config_manager()

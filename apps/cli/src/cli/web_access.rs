@@ -1,5 +1,8 @@
 use super::*;
 use crate::{create_cli_link_access_store, create_local_core};
+use operit_core_proxy::{
+    CoreNodeRouter::CoreNodeRouter, RuntimeRemoteLinkService::RuntimeRemoteLinkService,
+};
 
 use operit_link_access::{
     link_token_hash, LinkAccessStore, RemoteDeviceInfo, RemoteLinkServer, RemoteLinkServerConfig,
@@ -80,7 +83,6 @@ pub(crate) async fn run_web_access_command(args: &[String]) -> Result<(), String
 async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     let mut bind_address = None::<String>;
     let mut token = None::<String>;
-    let mut link_session_name = None::<String>;
     let mut web_root = None::<PathBuf>;
     let mut discoverable = false;
     let mut index = 0;
@@ -91,7 +93,7 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
                 bind_address = Some(
                     args.get(index)
                         .ok_or_else(|| {
-                            "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--link <session>] [--web-root <path>]"
+                            "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--web-root <path>]"
                                 .to_string()
                         })?
                         .clone(),
@@ -102,7 +104,7 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
                 token = Some(
                     args.get(index)
                         .ok_or_else(|| {
-                            "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--link <session>] [--web-root <path>]"
+                            "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--web-root <path>]"
                                 .to_string()
                         })?
                         .clone(),
@@ -113,29 +115,18 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
                 web_root = Some(PathBuf::from(
                     args.get(index)
                         .ok_or_else(|| {
-                            "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--link <session>] [--web-root <path>]"
+                            "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--web-root <path>]"
                                 .to_string()
                         })?
                         .clone(),
                 ));
-            }
-            "--link" => {
-                index += 1;
-                link_session_name = Some(
-                    args.get(index)
-                        .ok_or_else(|| {
-                            "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--link <session>] [--web-root <path>]"
-                                .to_string()
-                        })?
-                        .clone(),
-                );
             }
             "--discoverable" => {
                 discoverable = true;
             }
             _ => {
                 return Err(
-                    "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--link <session>] [--web-root <path>] [--discoverable]"
+                    "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--web-root <path>] [--discoverable]"
                         .to_string(),
                 );
             }
@@ -218,35 +209,6 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     );
     println!("webRoot={}", web_root.display());
 
-    if let Some(session_name) = link_session_name {
-        let remote = super::link::load_link_session_resolved(&session_name).await?;
-        println!("runtimeMode=remote");
-        println!("runtimeSession={session_name}");
-        let result = RemoteLinkServer::serveWithListener(
-            remote,
-            RemoteLinkServerConfig {
-                bindAddress: resolved_bind_address,
-                token: config.token.clone(),
-                localControlToken: Some(shutdown_token.clone()),
-                deviceId: device_id,
-                deviceInfo: device_info.clone(),
-                webAccess: Some(RemoteWebAccessConfig {
-                    token: config.token,
-                    shutdownToken: shutdown_token.clone(),
-                    webRoot: web_root,
-                    readAsset: web_asset_reader.clone(),
-                }),
-                printStartupInfo: false,
-                accessStore: access_store.clone(),
-            },
-            listener,
-            listener_address,
-        )
-        .await;
-        remove_link_host_state()?;
-        return result;
-    }
-
     let mut core = create_local_core();
     core.localApplicationMut().onCreate()?;
     {
@@ -262,10 +224,11 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
         holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService = Some(enhanced_ai_service);
     }
     super::link::install_link_permission_requester(&mut core);
+    RuntimeRemoteLinkService::new(core.clone()).startSpaceSync()?;
 
     println!("runtimeMode=local");
     let result = RemoteLinkServer::serveWithListener(
-        core,
+        CoreNodeRouter::new(Arc::new(core)),
         RemoteLinkServerConfig {
             bindAddress: resolved_bind_address,
             token: config.token.clone(),
@@ -523,7 +486,7 @@ fn unix_millis() -> i64 {
 }
 
 fn print_web_access_usage() {
-    println!("operit2 cli web open [--bind <addr:port>] [--token <token>] [--link <session>] [--web-root <path>] [--discoverable]");
+    println!("operit2 cli web open [--bind <addr:port>] [--token <token>] [--web-root <path>] [--discoverable]");
     println!("operit2 cli web close");
     println!("operit2 cli web status");
     println!("operit2 cli web token rotate");

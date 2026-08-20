@@ -24,6 +24,7 @@ pub struct ChatEntity {
 }
 
 impl ChatEntity {
+    /// Creates one persisted chat metadata record.
     pub fn new(id: String, title: String, timestamp: i64) -> Self {
         Self {
             id,
@@ -44,11 +45,13 @@ impl ChatEntity {
         }
     }
 
+    /// Creates chat metadata with a generated chat identifier.
     pub fn create(title: String) -> Self {
         let timestamp = currentTimeMillis();
         Self::new(Uuid::new_v4().to_string(), title, timestamp)
     }
 
+    /// Projects persisted chat metadata and messages into the runtime model.
     pub fn toChatHistory(&self, messages: Vec<ChatMessage>) -> ChatHistory {
         ChatHistory {
             id: self.id.clone(),
@@ -70,6 +73,7 @@ impl ChatEntity {
         }
     }
 
+    /// Converts the runtime chat model into persisted metadata.
     pub fn fromChatHistory(chatHistory: &ChatHistory) -> Self {
         Self {
             id: chatHistory.id.clone(),
@@ -97,6 +101,7 @@ impl ChatEntity {
     }
 }
 
+/// Returns the current epoch timestamp used by generated chat metadata.
 fn currentTimeMillis() -> i64 {
     operit_host_api::TimeUtils::currentTimeMillis()
 }

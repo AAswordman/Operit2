@@ -51,9 +51,6 @@ impl ModelConfigConnectionTester {
         modelId: &str,
         runtimeContext: ProviderRuntimeContext,
     ) -> Result<ModelConnectionTestReport, String> {
-        runtimeContext
-            .support()
-            .initializeFunctionModelBindings(rootDir.clone())?;
         let config =
             runtimeContext
                 .support()

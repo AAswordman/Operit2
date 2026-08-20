@@ -1,5 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use operit_host_api::HostEnvironmentDescriptor;
 use operit_model::FunctionType::FunctionType;
@@ -13,10 +13,11 @@ use operit_providers::chat::enhance::FileBindingService::{
 use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_tools::runtime_support::{
-    CachedMcpToolInfo, ResolvedCharacterCardToolAccess, RuntimeBundledExternalSkillAsset,
-    RuntimeCharacterCardInfo, RuntimeCharacterMemoryBinding, RuntimeChatSendRequest,
-    RuntimeChatSlot, RuntimePluginAsset, RuntimeSkillCatalogEntry, RuntimeStructuredEditAction,
-    RuntimeStructuredEditOperation, ToolRuntimeSupport, ToolRuntimeSupportFuture,
+    CachedMcpToolInfo, CoreNodeToolRuntime, ResolvedCharacterCardToolAccess,
+    RuntimeBundledExternalSkillAsset, RuntimeCharacterCardInfo, RuntimeCharacterMemoryBinding,
+    RuntimeChatSendRequest, RuntimeChatSlot, RuntimeCoreNodeRouteState, RuntimePluginAsset,
+    RuntimeSkillCatalogEntry, RuntimeStructuredEditAction, RuntimeStructuredEditOperation,
+    ToolRuntimeSupport, ToolRuntimeSupportFuture,
 };
 use operit_tools::tools::mcp_runtime::MCPLocalServer::MCPLocalServer;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
@@ -48,6 +49,7 @@ impl ToolRuntimeSupportService {
             hostManager,
             chatRuntimeHolder,
             runtimeBindings: OnceLock::new(),
+            coreNodeToolRuntime: RwLock::new(None),
         })
     }
 }
@@ -63,6 +65,7 @@ pub struct RuntimeToolSupport {
     hostManager: operit_host_api::HostManager::HostManager,
     chatRuntimeHolder: Arc<AsyncMutex<ChatRuntimeHolder>>,
     runtimeBindings: OnceLock<RuntimeToolBindings>,
+    coreNodeToolRuntime: RwLock<Option<Arc<dyn CoreNodeToolRuntime>>>,
 }
 
 impl RuntimeToolSupport {
@@ -89,6 +92,41 @@ impl RuntimeToolSupport {
 }
 
 impl ToolRuntimeSupport for RuntimeToolSupport {
+    /// Installs the live routing capability provided by the outer Core proxy.
+    #[allow(non_snake_case)]
+    fn bindCoreNodeToolRuntime(&self, runtime: Arc<dyn CoreNodeToolRuntime>) -> Result<(), String> {
+        *self
+            .coreNodeToolRuntime
+            .write()
+            .map_err(|error| format!("CoreNode tool runtime lock poisoned: {error}"))? =
+            Some(runtime);
+        Ok(())
+    }
+
+    /// Reads the current routing state from the installed outer Core proxy.
+    #[allow(non_snake_case)]
+    fn coreNodeRouteState(&self) -> Result<RuntimeCoreNodeRouteState, String> {
+        let runtime = self
+            .coreNodeToolRuntime
+            .read()
+            .map_err(|error| format!("CoreNode tool runtime lock poisoned: {error}"))?
+            .clone()
+            .ok_or_else(|| "CoreNode routing is not initialized".to_string())?;
+        runtime.coreNodeRouteState()
+    }
+
+    /// Stages one Binding ownership change through the installed outer Core proxy.
+    #[allow(non_snake_case)]
+    fn requestCoreSwitch(&self, bindingKey: &str, targetNodeId: &str) -> Result<(), String> {
+        let runtime = self
+            .coreNodeToolRuntime
+            .read()
+            .map_err(|error| format!("CoreNode tool runtime lock poisoned: {error}"))?
+            .clone()
+            .ok_or_else(|| "CoreNode routing is not initialized".to_string())?;
+        runtime.requestCoreSwitch(bindingKey, targetNodeId)
+    }
+
     /// Resolves role-card tool access through runtime preferences.
     #[allow(non_snake_case)]
     fn resolveCharacterCardToolAccess(

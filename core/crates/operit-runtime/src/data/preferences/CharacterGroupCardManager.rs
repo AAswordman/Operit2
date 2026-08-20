@@ -29,10 +29,13 @@ pub struct CharacterGroupCardManager {
 }
 
 impl CharacterGroupCardManager {
+    const PREFERENCES_VERSION: u32 = 1;
+
     /// Creates a character group manager backed by the supplied runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(paths.character_groups_preferences_path()),
+            dataStore: PreferencesDataStore::new(paths.character_groups_preferences_path())
+                .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences),
             characterCardManager: CharacterCardManager::new(paths),
         }
     }
@@ -244,16 +247,6 @@ impl CharacterGroupCardManager {
     }
 
     #[allow(non_snake_case)]
-    /// Creates the persisted character group list key when the store is empty.
-    pub fn initializeIfNeeded(&self) -> Result<(), PreferencesDataStoreError> {
-        self.dataStore.edit(|preferences| {
-            if preferences.get(&Self::CHARACTER_GROUP_LIST()).is_none() {
-                Self::writeGroupList(preferences, Vec::new());
-            }
-        })
-    }
-
-    #[allow(non_snake_case)]
     /// Duplicates a character group and returns the newly created group id.
     pub fn duplicateCharacterGroupCard(
         &self,
@@ -445,6 +438,22 @@ impl CharacterGroupCardManager {
             &Self::CHARACTER_GROUP_LIST(),
             serde_json::to_string(&groupIds).expect("group list must serialize"),
         );
+    }
+
+    /// Migrates character group preferences one schema version at a time.
+    fn migratePreferences(
+        version: u32,
+        preferences: &mut Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        match version {
+            0 => {
+                if preferences.get(&Self::CHARACTER_GROUP_LIST()).is_none() {
+                    Self::writeGroupList(preferences, Vec::new());
+                }
+                Ok(())
+            }
+            from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
+        }
     }
 }
 

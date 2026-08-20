@@ -146,6 +146,7 @@ mod tests {
         LocalEngineKind, LocalModelFile, LocalModelKind, LocalModelManifest, LocalModelSource,
         LocalModelSourceKind,
     };
+    use operit_util::RuntimeStorageLayout::RUNTIME_LOCAL_MODELS_DIR_PATH;
 
     /// Verifies registry records are replaced by model id and version.
     #[test]
@@ -174,7 +175,9 @@ mod tests {
     fn installedModel(modelId: &str, version: &str, installedAtMs: i64) -> InstalledLocalModel {
         InstalledLocalModel {
             manifest: manifest(modelId, version),
-            storagePath: format!("runtime/models/local/stt/sherpa_ncnn/{modelId}/{version}"),
+            storagePath: format!(
+                "{RUNTIME_LOCAL_MODELS_DIR_PATH}/stt/sherpa_ncnn/{modelId}/{version}"
+            ),
             installedAtMs,
             verifiedAtMs: None,
         }

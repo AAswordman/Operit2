@@ -57,6 +57,7 @@ pub fn createRuntimeHostManager(
         Arc::new(IosSystemOperationHost::new()),
     );
     hostManager.httpHost = Some(Arc::new(IosHttpHost::new()));
+    hostManager.webSocketHost = Some(Arc::new(IosHttpHost::new()));
     hostManager.managedRuntimeHost = Some(managedRuntimeHost);
     hostManager.runtimeStorageHost = Some(runtimeStorageHost);
     hostManager.runtimeSqliteHost = Some(runtimeSqliteHost);

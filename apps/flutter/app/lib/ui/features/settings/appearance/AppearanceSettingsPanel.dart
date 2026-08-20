@@ -321,27 +321,6 @@ class AppearanceSettingsPanel extends StatelessWidget {
                 );
               },
             ),
-            _InfoLine(
-              label: l10n.settingsAppearanceUserAvatar,
-              value: _avatarImageLabel(l10n, snapshot.customUserAvatarUri),
-            ),
-            _AvatarActionRow(
-              chooseLabel: l10n.settingsAppearanceChooseUserAvatar,
-              clearLabel: l10n.settingsAppearanceClearUserAvatar,
-              clearEnabled:
-                  snapshot.customUserAvatarUri != null &&
-                  snapshot.customUserAvatarUri!.isNotEmpty,
-              onChoose: () {
-                unawaited(_pickUserAvatarImage(context, themeController));
-              },
-              onClear: () {
-                unawaited(
-                  themeController.saveActiveThemeUserAvatarSettings(
-                    customUserAvatarUri: '',
-                  ),
-                );
-              },
-            ),
             Align(
               alignment: Alignment.centerLeft,
               child: OutlinedButton.icon(
@@ -657,24 +636,6 @@ Future<void> _pickBackgroundVideo(OperitThemeController themeController) async {
     backgroundMediaType: UserPreferencesManager.MEDIA_TYPE_VIDEO,
     videoBackgroundMuted: true,
     videoBackgroundLoop: true,
-  );
-}
-
-/// Crops, imports, and saves a selected image as the active user avatar asset.
-Future<void> _pickUserAvatarImage(
-  BuildContext context,
-  OperitThemeController themeController,
-) async {
-  final imported = await _pickCroppedThemeImage(
-    context,
-    aspectRatio: 1,
-    outputRole: 'avatar',
-  );
-  if (imported == null) {
-    return;
-  }
-  await themeController.saveActiveThemeUserAvatarSettings(
-    customUserAvatarUri: imported.storagePath,
   );
 }
 
@@ -1629,14 +1590,6 @@ String _selectedColorPresetId(ThemePreferenceSnapshot snapshot) {
 String _backgroundImageLabel(AppLocalizations l10n, String? imagePath) {
   if (imagePath == null || imagePath.isEmpty) {
     return l10n.settingsAppearanceBackgroundNone;
-  }
-  final normalized = imagePath.replaceAll('\\', '/');
-  return normalized.substring(normalized.lastIndexOf('/') + 1);
-}
-
-String _avatarImageLabel(AppLocalizations l10n, String? imagePath) {
-  if (imagePath == null || imagePath.isEmpty) {
-    return l10n.settingsAppearanceAvatarDefault;
   }
   final normalized = imagePath.replaceAll('\\', '/');
   return normalized.substring(normalized.lastIndexOf('/') + 1);

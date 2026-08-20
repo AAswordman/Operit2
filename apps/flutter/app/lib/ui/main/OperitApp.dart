@@ -11,7 +11,7 @@ import '../../core/host/ComposeWebViewControllerBridge.dart';
 import '../../core/logging/ClientLogger.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import '../../core/runtime/RuntimeConnectionManager.dart';
+import '../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../features/packages/screens/ToolPkgComposeDslWebView.dart';
 import '../theme/OperitTheme.dart';
@@ -26,8 +26,8 @@ class OperitApp extends StatefulWidget {
 }
 
 class _OperitAppState extends State<OperitApp> {
-  final RuntimeConnectionManager _runtimeManager =
-      RuntimeConnectionManager.instance;
+  final RuntimeBootstrapManager _runtimeManager =
+      RuntimeBootstrapManager.instance;
   StreamSubscription<Object>? _startupErrorSubscription;
   void Function()? _unregisterComposeWebViewController;
   String? _startupWebAccessError;
@@ -39,7 +39,7 @@ class _OperitAppState extends State<OperitApp> {
   void initState() {
     super.initState();
     _lastRuntimeConfigured = _runtimeManager.runtimeConfigured;
-    _runtimeManager.addListener(_handleRuntimeConnectionChanged);
+    _runtimeManager.addListener(_handleRuntimeBootstrapChanged);
     _startupErrorSubscription = CoreApplicationService.instance.startupErrors
         .listen(_handleStartupError);
     final pendingStartupError = CoreApplicationService.instance
@@ -56,12 +56,12 @@ class _OperitAppState extends State<OperitApp> {
   void dispose() {
     _unregisterComposeWebViewController?.call();
     unawaited(_startupErrorSubscription?.cancel());
-    _runtimeManager.removeListener(_handleRuntimeConnectionChanged);
+    _runtimeManager.removeListener(_handleRuntimeBootstrapChanged);
     super.dispose();
   }
 
   /// Reacts to runtime configuration and preserves onboarding state on startup.
-  void _handleRuntimeConnectionChanged() {
+  void _handleRuntimeBootstrapChanged() {
     final runtimeConfigured = _runtimeManager.runtimeConfigured;
     if (_lastRuntimeConfigured && !runtimeConfigured) {
       _startupRouteEpoch++;
@@ -127,7 +127,7 @@ class _AppDialogHostState extends State<_AppDialogHost> {
     }
     _webAccessPairingSubscription = _coreClients
         .servicesRuntimeHostInteractionService
-        .ownerHostInteractionEventsChanges(
+        .ownerHostInteractionEvents(
           kinds: <core_proxy.RuntimeHostInteractionKind>[
             core_proxy.RuntimeHostInteractionKind.webAccessPairing,
           ],

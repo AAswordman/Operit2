@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_util::RuntimeStorageLayout::RUNTIME_ROOT_DIR_PATH;
 use operit_util::RuntimeStoreRoot::RuntimeStoreRootConfig;
 
 /// Runs storage path inspection and migration commands.
@@ -41,7 +42,12 @@ fn migrate_storage_roots(
     let plan = parse_migrate_args(args)?;
     let current = storage_root_config(application)?;
 
-    migrate_named_root("runtime", &current.runtime_root, &plan.runtime_root, output)?;
+    migrate_named_root(
+        RUNTIME_ROOT_DIR_PATH,
+        &current.runtime_root,
+        &plan.runtime_root,
+        output,
+    )?;
     migrate_named_root(
         "workspace",
         &current.workspace_root,

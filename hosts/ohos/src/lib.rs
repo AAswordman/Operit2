@@ -75,6 +75,7 @@ pub fn createRuntimeHostManager(
         systemOperationHost,
     );
     context.httpHost = Some(Arc::new(OhosHttpHost::new()));
+    context.webSocketHost = Some(Arc::new(OhosHttpHost::new()));
     context.managedRuntimeHost = Some(managedRuntimeHost);
     context.runtimeStorageHost = Some(runtimeStorageHost);
     context.runtimeSqliteHost = Some(runtimeSqliteHost);

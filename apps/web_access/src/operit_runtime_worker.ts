@@ -2,6 +2,22 @@ import { MessagePack } from "./operit_messagepack.js";
 
 export {};
 
+/** Creates a RFC 4122 version 4 identifier with the Web Crypto random byte API. */
+function createRandomUuid(): string {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0"));
+  return [
+    hex.slice(0, 4).join(""),
+    hex.slice(4, 6).join(""),
+    hex.slice(6, 8).join(""),
+    hex.slice(8, 10).join(""),
+    hex.slice(10, 16).join(""),
+  ].join("-");
+}
+
 type WorkerCoreOperation =
   | "call"
   | "controlCall"
@@ -38,6 +54,7 @@ interface WorkerFileHandle {
 
 interface WorkerDirectoryHandle {
   getFileHandle(name: string, options: { create: boolean }): Promise<WorkerFileHandle>;
+  getDirectoryHandle(name: string, options: { create: boolean }): Promise<WorkerDirectoryHandle>;
 }
 
 interface WorkerStorageManager {
@@ -50,19 +67,14 @@ interface WorkerStorageRecord {
 }
 
 interface WorkerStorageIndex {
-  migrated: boolean;
   records: Array<[string, WorkerStorageRecord]>;
-}
-
-interface WorkerStorageNamespaceMigration {
-  sourcePrefix: string;
-  targetPrefix: string;
 }
 
 interface WorkerRuntimeStorageBridge {
   read(prefix: string, path: string): Uint8Array;
   readRange(prefix: string, path: string, offset: number, length: number): Uint8Array;
   write(prefix: string, path: string, content: Uint8Array): void;
+  append(prefix: string, path: string, content: Uint8Array): void;
   hasFile(prefix: string, path: string): boolean;
   exists(prefix: string, path: string): boolean;
   delete(prefix: string, path: string, recursive: boolean): void;
@@ -174,13 +186,7 @@ const runtimeStorageDataFileName = "operit_runtime_storage.data";
 const runtimeStorageIndexFileName = "operit_runtime_storage.index";
 const archiveStagingDataFileName = "operit_archive_staging.data";
 const runtimeStoragePrefix = "operit2.runtime.";
-const fileStoragePrefix = "operit2.files.";
-const legacySqlitePrefix = "operit2.sqlite.";
-const workerStorageNamespaceMigrations: readonly WorkerStorageNamespaceMigration[] = [
-  { sourcePrefix: runtimeStoragePrefix, targetPrefix: runtimeStoragePrefix },
-  { sourcePrefix: fileStoragePrefix, targetPrefix: fileStoragePrefix },
-  { sourcePrefix: legacySqlitePrefix, targetPrefix: runtimeStoragePrefix },
-];
+const runtimeIdentityId = requiredRuntimeIdentityId();
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -562,7 +568,6 @@ async function initializeRuntimeWorkerStorageOnce(): Promise<void> {
   let staging: RuntimeWorkerArchiveStaging | null = null;
   try {
     staging = await RuntimeWorkerArchiveStaging.open(root);
-    await storage.migrateLegacyEntries();
     runtimeStorage = storage;
     archiveStaging = staging;
   } catch (error) {
@@ -578,7 +583,19 @@ async function runtimeOpfsRoot(): Promise<WorkerDirectoryHandle> {
   if (storage === undefined || typeof storage.getDirectory !== "function") {
     throw new Error("OPFS is unavailable for the Web runtime worker");
   }
-  return (await storage.getDirectory()) as unknown as WorkerDirectoryHandle;
+  const root = (await storage.getDirectory()) as unknown as WorkerDirectoryHandle;
+  const runtimeRoot = await root.getDirectoryHandle("runtime", { create: true });
+  const identitiesRoot = await runtimeRoot.getDirectoryHandle("identities", { create: true });
+  return identitiesRoot.getDirectoryHandle(runtimeIdentityId, { create: true });
+}
+
+/** Reads and validates the identity carried by this dedicated Runtime worker URL. */
+function requiredRuntimeIdentityId(): string {
+  const identityId = new URL(workerGlobal.location.href).searchParams.get("identity");
+  if (identityId === null || !/^identity-[a-z0-9-]+$/.test(identityId)) {
+    throw new Error("Runtime worker identity is missing or invalid");
+  }
+  return identityId;
 }
 
 /** Returns the initialized worker-owned runtime storage service. */
@@ -608,6 +625,9 @@ function runtimeStorageBridge(): WorkerRuntimeStorageBridge {
     },
     write(prefix: string, path: string, content: Uint8Array): void {
       requiredRuntimeStorage().write(storageKey(prefix, path), content);
+    },
+    append(prefix: string, path: string, content: Uint8Array): void {
+      requiredRuntimeStorage().append(storageKey(prefix, path), content);
     },
     hasFile(prefix: string, path: string): boolean {
       return requiredRuntimeStorage().hasFile(storageKey(prefix, path));
@@ -667,16 +687,13 @@ function storageKey(prefix: string, path: string): string {
 class RuntimeWorkerStorage {
   private readonly records: Map<string, WorkerStorageRecord>;
   private readonly sessions = new Map<string, WorkerWriteSession>();
-  private migrated: boolean;
 
   private constructor(
     private readonly data: WorkerSyncAccessHandle,
     private readonly index: WorkerSyncAccessHandle,
     records: Map<string, WorkerStorageRecord>,
-    migrated: boolean,
   ) {
     this.records = records;
-    this.migrated = migrated;
   }
 
   /** Opens the persistent runtime OPFS files and validates the existing metadata index. */
@@ -687,7 +704,7 @@ class RuntimeWorkerStorage {
       data = await openSyncAccessHandle(root, runtimeStorageDataFileName);
       index = await openSyncAccessHandle(root, runtimeStorageIndexFileName);
       const loaded = readRuntimeStorageIndex(index, data.getSize());
-      return new RuntimeWorkerStorage(data, index, loaded.records, loaded.migrated);
+      return new RuntimeWorkerStorage(data, index, loaded.records);
     } catch (error) {
       index?.close();
       data?.close();
@@ -699,35 +716,6 @@ class RuntimeWorkerStorage {
   close(): void {
     this.index.close();
     this.data.close();
-  }
-
-  /** Migrates legacy IndexedDB entries without retaining their contents in a browser-wide map. */
-  async migrateLegacyEntries(): Promise<void> {
-    if (this.migrated) {
-      return;
-    }
-    const database = await openLegacyStorageDatabase();
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction("entries", "readonly");
-      const request = transaction.objectStore("entries").openCursor();
-      request.onsuccess = (): void => {
-        const cursor = request.result;
-        if (cursor === null) {
-          return;
-        }
-        const itemKey = String(cursor.key);
-        const targetKey = migratedWorkerStorageKey(itemKey);
-        if (targetKey !== null) {
-          this.writeRecord(targetKey, new Uint8Array(cursor.value), false);
-        }
-        cursor.continue();
-      };
-      request.onerror = (): void => reject(request.error || new Error("legacy storage cursor failed"));
-      transaction.oncomplete = (): void => resolve();
-      transaction.onerror = (): void => reject(transaction.error || new Error("legacy storage read failed"));
-    });
-    this.migrated = true;
-    this.persistIndex();
   }
 
   /** Reads one exact live record from runtime OPFS storage. */
@@ -755,6 +743,22 @@ class RuntimeWorkerStorage {
   /** Appends and atomically publishes one complete runtime storage value. */
   write(itemKey: string, content: Uint8Array): void {
     this.writeRecord(itemKey, content, true);
+  }
+
+  /** Appends bytes to one runtime OPFS record and publishes its new length. */
+  append(itemKey: string, content: Uint8Array): void {
+    const previous = this.records.get(itemKey);
+    const offset = this.data.getSize();
+    if (previous !== undefined) {
+      writeExact(this.data, readRecord(this.data, previous), offset);
+    }
+    writeExact(this.data, content, offset + (previous?.byteLength ?? 0));
+    this.data.flush();
+    this.records.set(itemKey, {
+      offset,
+      byteLength: (previous?.byteLength ?? 0) + content.byteLength,
+    });
+    this.persistIndex();
   }
 
   /** Reports whether one file or virtual directory exists in runtime OPFS storage. */
@@ -809,7 +813,7 @@ class RuntimeWorkerStorage {
 
   /** Opens one uncommitted sequential writer in the same storage namespace. */
   createWriteSession(itemKey: string): string {
-    const sessionId = `runtime-write-${crypto.randomUUID()}`;
+    const sessionId = `runtime-write-${createRandomUuid()}`;
     this.sessions.set(sessionId, {
       key: itemKey,
       offset: this.data.getSize(),
@@ -867,23 +871,12 @@ class RuntimeWorkerStorage {
   /** Persists the compact record index after a visible storage mutation. */
   private persistIndex(): void {
     const serialized = textEncoder.encode(JSON.stringify({
-      migrated: this.migrated,
       records: Array.from(this.records.entries()),
     } satisfies WorkerStorageIndex));
     this.index.truncate(0);
     writeExact(this.index, serialized, 0);
     this.index.flush();
   }
-}
-
-/** Resolves one legacy storage key through the registered namespace migrations. */
-function migratedWorkerStorageKey(itemKey: string): string | null {
-  for (const migration of workerStorageNamespaceMigrations) {
-    if (itemKey.startsWith(migration.sourcePrefix)) {
-      return `${migration.targetPrefix}${itemKey.slice(migration.sourcePrefix.length)}`;
-    }
-  }
-  return null;
 }
 
 /** Owns temporary append-only archive bytes for the lifetime of the runtime worker. */
@@ -1010,17 +1003,17 @@ async function openSyncAccessHandle(
 function readRuntimeStorageIndex(
   handle: WorkerSyncAccessHandle,
   dataSize: number,
-): { records: Map<string, WorkerStorageRecord>; migrated: boolean } {
+): { records: Map<string, WorkerStorageRecord> } {
   const indexSize = handle.getSize();
   if (indexSize === 0) {
-    return { records: new Map(), migrated: false };
+    return { records: new Map() };
   }
   const bytes = new Uint8Array(indexSize);
   if (handle.read(bytes, { at: 0 }) !== indexSize) {
     throw new Error("runtime OPFS index could not be read completely");
   }
   const parsed = JSON.parse(textDecoder.decode(bytes)) as Partial<WorkerStorageIndex>;
-  if (typeof parsed.migrated !== "boolean" || !Array.isArray(parsed.records)) {
+  if (!Array.isArray(parsed.records)) {
     throw new Error("runtime OPFS index is invalid");
   }
   const records = new Map<string, WorkerStorageRecord>();
@@ -1034,7 +1027,7 @@ function readRuntimeStorageIndex(
     }
     records.set(entry[0], { offset: record.offset!, byteLength: record.byteLength! });
   }
-  return { records, migrated: parsed.migrated };
+  return { records };
 }
 
 /** Validates a persisted OPFS record against the current data file size. */
@@ -1044,20 +1037,6 @@ function isValidStorageRecord(value: Partial<WorkerStorageRecord>, dataSize: num
     value.offset! >= 0 &&
     value.byteLength! >= 0 &&
     value.offset! + value.byteLength! <= dataSize;
-}
-
-/** Opens the legacy IndexedDB object store used before OPFS runtime ownership. */
-function openLegacyStorageDatabase(): Promise<IDBDatabase> {
-  return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("operit2.host.storage", 2);
-    request.onupgradeneeded = (): void => {
-      if (!request.result.objectStoreNames.contains("entries")) {
-        request.result.createObjectStore("entries");
-      }
-    };
-    request.onsuccess = (): void => resolve(request.result);
-    request.onerror = (): void => reject(request.error || new Error("legacy storage open failed"));
-  });
 }
 
 /** Reads one exact byte range from a synchronous OPFS data file. */

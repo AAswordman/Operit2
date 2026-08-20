@@ -418,13 +418,13 @@ impl MessageDao {
                     chatId, sender, timestamp, orderIndex, roleName,
                     selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
                     cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
-                    completedAt, displayMode, isFavorite
+                    completedAt, completedExecutionGeneration, displayMode, isFavorite
                 )
                 SELECT
                     ?2, sender, timestamp, orderIndex, roleName,
                     selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
                     cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
-                    completedAt, displayMode, isFavorite
+                    completedAt, completedExecutionGeneration, displayMode, isFavorite
                 FROM messages
                 WHERE chatId = ?1 AND (?3 IS NULL OR timestamp <= ?3)
                 "#,
@@ -442,7 +442,8 @@ impl MessageDao {
                     provider = ?8, modelName = ?9, inputTokens = ?10,
                     outputTokens = ?11, cachedInputTokens = ?12, sentAt = ?13,
                     outputDurationMs = ?14, waitDurationMs = ?15, completedAt = ?16,
-                    displayMode = ?17, isFavorite = ?18
+                    completedExecutionGeneration = ?17,
+                    displayMode = ?18, isFavorite = ?19
                 WHERE messageId = ?1
                 "#,
             sqliteParams![
@@ -462,6 +463,7 @@ impl MessageDao {
                 message.outputDurationMs,
                 message.waitDurationMs,
                 message.completedAt,
+                message.completedExecutionGeneration,
                 message.displayMode,
                 message.isFavorite,
             ],
@@ -635,6 +637,7 @@ fn mapMessageEntity(row: &SqliteRow) -> Result<MessageEntity, SqliteStoreError> 
         outputDurationMs: row.get("outputDurationMs")?,
         waitDurationMs: row.get("waitDurationMs")?,
         completedAt: row.get("completedAt")?,
+        completedExecutionGeneration: row.get("completedExecutionGeneration")?,
         displayMode: row.get("displayMode")?,
         isFavorite: row.get("isFavorite")?,
     })
@@ -647,9 +650,9 @@ fn insertMessageSql(withMessageId: bool) -> &'static str {
             messageId, chatId, sender, timestamp, orderIndex,
             roleName, selectedVariantIndex, provider, modelName, inputTokens,
             outputTokens, cachedInputTokens, sentAt, outputDurationMs,
-            waitDurationMs, completedAt, displayMode, isFavorite
+            waitDurationMs, completedAt, completedExecutionGeneration, displayMode, isFavorite
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
         "#
     } else {
         r#"
@@ -657,9 +660,9 @@ fn insertMessageSql(withMessageId: bool) -> &'static str {
             chatId, sender, timestamp, orderIndex,
             roleName, selectedVariantIndex, provider, modelName, inputTokens,
             outputTokens, cachedInputTokens, sentAt, outputDurationMs,
-            waitDurationMs, completedAt, displayMode, isFavorite
+            waitDurationMs, completedAt, completedExecutionGeneration, displayMode, isFavorite
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
         "#
     }
 }
@@ -683,6 +686,7 @@ fn insertMessageParams(message: &MessageEntity, withMessageId: bool) -> Vec<Sqli
             message.outputDurationMs,
             message.waitDurationMs,
             message.completedAt,
+            message.completedExecutionGeneration,
             message.displayMode,
             message.isFavorite,
         ]
@@ -703,6 +707,7 @@ fn insertMessageParams(message: &MessageEntity, withMessageId: bool) -> Vec<Sqli
             message.outputDurationMs,
             message.waitDurationMs,
             message.completedAt,
+            message.completedExecutionGeneration,
             message.displayMode,
             message.isFavorite,
         ]

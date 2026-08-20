@@ -1337,6 +1337,8 @@ String _usageSourceLabel(
       l10n.settingsDataDetailedStatsSourceToolResult,
     core_proxy.UsageRequestSource.summaryGeneration =>
       l10n.settingsDataDetailedStatsSourceSummary,
+    core_proxy.UsageRequestSource.titleGeneration =>
+      l10n.settingsDataDetailedStatsSourceTitleGeneration,
     core_proxy.UsageRequestSource.memoryAnalysis =>
       l10n.settingsDataDetailedStatsSourceMemory,
   };

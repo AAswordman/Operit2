@@ -12,6 +12,8 @@ pub struct PromptTagManager {
 }
 
 impl PromptTagManager {
+    const PREFERENCES_VERSION: u32 = 1;
+
     #[allow(non_snake_case)]
     /// Opens the prompt tag manager with default runtime store paths.
     pub fn getInstance() -> Self {
@@ -21,7 +23,8 @@ impl PromptTagManager {
     /// Creates a prompt tag manager backed by runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::new(paths.prompt_tags_preferences_path()),
+            dataStore: PreferencesDataStore::new(paths.prompt_tags_preferences_path())
+                .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences),
         }
     }
 
@@ -202,7 +205,7 @@ impl PromptTagManager {
             let mut currentList = Self::readTagList(preferences);
             currentList.retain(|item| item != id);
             Self::writeTagList(preferences, currentList);
-            self.removeTagPreferenceKeys(preferences, id);
+            Self::removeTagPreferenceKeys(preferences, id);
             Ok::<(), PreferencesDataStoreError>(())
         })
     }
@@ -254,31 +257,38 @@ impl PromptTagManager {
         self.createPromptTag(name, description, promptContent, tagType)
     }
 
-    #[allow(non_snake_case)]
-    /// Removes built-in prompt tag records created by older preference schemas.
-    pub fn removeLegacyBuiltInTags(&self) -> Result<(), PreferencesDataStoreError> {
-        self.dataStore.try_edit_result(|preferences| {
-            let mut currentList = Self::readTagList(preferences);
-            let idsToRemove = currentList
-                .iter()
-                .filter(|id| {
-                    preferences.get(&stringPreferencesKey(&format!(
-                        "prompt_tag_{id}_is_system_tag"
-                    ))) == Some(&"true".to_string())
-                        || preferences
-                            .get(&stringPreferencesKey(&format!("prompt_tag_{id}_tag_type")))
-                            .map(|value| value.starts_with("SYSTEM_"))
-                            .unwrap_or(false)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            currentList.retain(|id| !idsToRemove.contains(id));
-            Self::writeTagList(preferences, currentList);
-            for id in idsToRemove {
-                self.removeTagPreferenceKeys(preferences, &id);
+    /// Migrates prompt tag preferences one schema version at a time.
+    fn migratePreferences(
+        version: u32,
+        preferences: &mut Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        match version {
+            0 => {
+                let mut currentList = match preferences.get(&Self::PROMPT_TAG_LIST()) {
+                    Some(raw) => serde_json::from_str::<Vec<String>>(raw)?,
+                    None => Vec::new(),
+                };
+                let idsToRemove = currentList
+                    .iter()
+                    .filter(|id| {
+                        preferences.get(&stringPreferencesKey(&format!(
+                            "prompt_tag_{id}_is_system_tag"
+                        ))) == Some(&"true".to_string())
+                            || preferences
+                                .get(&stringPreferencesKey(&format!("prompt_tag_{id}_tag_type")))
+                                .is_some_and(|value| value.starts_with("SYSTEM_"))
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                currentList.retain(|id| !idsToRemove.contains(id));
+                Self::writeTagList(preferences, currentList);
+                for id in idsToRemove {
+                    Self::removeTagPreferenceKeys(preferences, &id);
+                }
+                Ok(())
             }
-            Ok::<(), PreferencesDataStoreError>(())
-        })
+            from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
+        }
     }
 
     #[allow(non_snake_case)]
@@ -320,7 +330,8 @@ impl PromptTagManager {
     }
 
     #[allow(non_snake_case)]
-    fn removeTagPreferenceKeys(&self, preferences: &mut Preferences, id: &str) {
+    /// Removes every persisted field owned by one prompt tag.
+    fn removeTagPreferenceKeys(preferences: &mut Preferences, id: &str) {
         for suffix in [
             "name",
             "description",

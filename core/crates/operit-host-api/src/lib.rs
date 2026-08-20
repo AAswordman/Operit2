@@ -1187,6 +1187,46 @@ pub type HttpStreamChunkCallback = Arc<dyn Fn(Vec<u8>) + Send + Sync + 'static>;
 
 pub type HttpStreamClosedCallback = Arc<dyn Fn(Result<(), String>) + Send + Sync + 'static>;
 
+/// Describes one binary WebSocket connection opened by a host implementation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebSocketRequestData {
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub connectTimeoutSeconds: u64,
+    pub ignoreSsl: bool,
+}
+
+/// Receives the successful WebSocket opening notification.
+pub type WebSocketOpenedCallback = Arc<dyn Fn() + Send + Sync + 'static>;
+
+/// Receives one ordered binary WebSocket message.
+pub type WebSocketMessageCallback = Arc<dyn Fn(Vec<u8>) + Send + Sync + 'static>;
+
+/// Receives the terminal WebSocket result.
+pub type WebSocketClosedCallback = Arc<dyn Fn(Result<(), String>) + Send + Sync + 'static>;
+
+/// Provides host-owned binary WebSocket connections to transport carriers.
+pub trait WebSocketHost: Send + Sync {
+    /// Opens one binary WebSocket and forwards its lifecycle through callbacks.
+    #[allow(non_snake_case)]
+    fn openWebSocket(
+        &self,
+        streamId: String,
+        request: WebSocketRequestData,
+        onOpened: WebSocketOpenedCallback,
+        onMessage: WebSocketMessageCallback,
+        onClosed: WebSocketClosedCallback,
+    ) -> HostResult<()>;
+
+    /// Sends one binary message through an opened WebSocket.
+    #[allow(non_snake_case)]
+    fn sendWebSocketMessage(&self, streamId: &str, message: Vec<u8>) -> HostResult<()>;
+
+    /// Closes one previously opened WebSocket.
+    #[allow(non_snake_case)]
+    fn closeWebSocket(&self, streamId: &str) -> HostResult<()>;
+}
+
 pub trait HttpHost: HttpStreamHost + Send + Sync {
     /// Executes one buffered HTTP request.
     fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData>;

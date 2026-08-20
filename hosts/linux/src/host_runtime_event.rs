@@ -69,18 +69,30 @@ impl HostRuntimeEventHost for LinuxHostRuntimeEventHost {
         let systemWorker = thread::Builder::new()
             .name("operit-linux-host-runtime-event-system".to_string())
             .spawn(move || run_system_dbus_event_loop(systemSink, systemRunning, systemSender))
-            .map_err(|error| HostError::new(format!("spawn linux system event worker failed: {error}")))?;
+            .map_err(|error| {
+                HostError::new(format!("spawn linux system event worker failed: {error}"))
+            })?;
         let sessionWorker = thread::Builder::new()
             .name("operit-linux-host-runtime-event-session".to_string())
             .spawn(move || run_session_dbus_event_loop(sessionSink, sessionRunning, sessionSender))
-            .map_err(|error| HostError::new(format!("spawn linux session event worker failed: {error}")))?;
+            .map_err(|error| {
+                HostError::new(format!("spawn linux session event worker failed: {error}"))
+            })?;
         systemReceiver
             .recv()
-            .map_err(|error| HostError::new(format!("receive linux system event init result failed: {error}")))?
+            .map_err(|error| {
+                HostError::new(format!(
+                    "receive linux system event init result failed: {error}"
+                ))
+            })?
             .map_err(HostError::new)?;
         sessionReceiver
             .recv()
-            .map_err(|error| HostError::new(format!("receive linux session event init result failed: {error}")))?
+            .map_err(|error| {
+                HostError::new(format!(
+                    "receive linux session event init result failed: {error}"
+                ))
+            })?
             .map_err(HostError::new)?;
         Ok(Box::new(LinuxHostRuntimeEventRegistration {
             running,
@@ -107,7 +119,9 @@ fn run_system_dbus_event_loop(
     let mut iterator = match MessageIterator::for_match_rule(rule, &connection, Some(64)) {
         Ok(iterator) => iterator,
         Err(error) => {
-            let _ = init.send(Err(format!("register system dbus signal match failed: {error}")));
+            let _ = init.send(Err(format!(
+                "register system dbus signal match failed: {error}"
+            )));
             return;
         }
     };
@@ -161,7 +175,9 @@ fn run_session_dbus_event_loop(
     let mut iterator = match MessageIterator::for_match_rule(rule, &connection, Some(64)) {
         Ok(iterator) => iterator,
         Err(error) => {
-            let _ = init.send(Err(format!("register session dbus signal match failed: {error}")));
+            let _ = init.send(Err(format!(
+                "register session dbus signal match failed: {error}"
+            )));
             return;
         }
     };
@@ -206,11 +222,11 @@ fn handle_system_dbus_signal(
 ) {
     match (signalInterface, member) {
         (DBUS_PROPERTIES_INTERFACE, "PropertiesChanged") => {
-            if let Ok((interface, changed, _invalidated)) = message.body().deserialize::<(
-                String,
-                HashMap<String, OwnedValue>,
-                Vec<String>,
-            )>() {
+            if let Ok((interface, changed, _invalidated)) =
+                message
+                    .body()
+                    .deserialize::<(String, HashMap<String, OwnedValue>, Vec<String>)>()
+            {
                 handle_properties_changed(sink, path, &interface, &changed);
             }
         }
@@ -285,11 +301,15 @@ fn handle_upower_daemon_changed(
             true => "system.power.disconnected",
             false => "system.power.connected",
         };
-        emit(sink, topic, serde_json::json!({
-            "connected": !onBattery,
-            "source": if onBattery { "battery" } else { "ac" },
-            "batteryLevel": prop_f64(changed, "Percentage"),
-        }));
+        emit(
+            sink,
+            topic,
+            serde_json::json!({
+                "connected": !onBattery,
+                "source": if onBattery { "battery" } else { "ac" },
+                "batteryLevel": prop_f64(changed, "Percentage"),
+            }),
+        );
     }
 }
 
@@ -305,11 +325,15 @@ fn handle_upower_device_changed(
             _ => return,
         };
         let low = matches!(warningLevel, 3 | 4 | 5);
-        emit(sink, topic, serde_json::json!({
-            "low": low,
-            "level": prop_f64(changed, "Percentage"),
-            "charging": upower_charging(changed),
-        }));
+        emit(
+            sink,
+            topic,
+            serde_json::json!({
+                "low": low,
+                "level": prop_f64(changed, "Percentage"),
+                "charging": upower_charging(changed),
+            }),
+        );
     }
 }
 
@@ -326,7 +350,11 @@ fn handle_logind_session_changed(
         };
         emit(sink, topic, payload.clone());
         if !lockedHint {
-            emit(sink, "system.user.present", serde_json::json!({"present": true}));
+            emit(
+                sink,
+                "system.user.present",
+                serde_json::json!({"present": true}),
+            );
         }
     }
 }
@@ -427,12 +455,19 @@ fn handle_interfaces_added(
     interfaces: &HashMap<String, HashMap<String, OwnedValue>>,
 ) {
     if let Some(properties) = interfaces.get(BLUEZ_DEVICE_INTERFACE) {
-        emit(sink, "bluetooth.device.found", bluez_device_payload(path, properties));
+        emit(
+            sink,
+            "bluetooth.device.found",
+            bluez_device_payload(path, properties),
+        );
     }
 }
 
 fn handle_interfaces_removed(sink: &HostRuntimeEventSink, path: &str, interfaces: &[String]) {
-    if interfaces.iter().any(|interface| interface == BLUEZ_DEVICE_INTERFACE) {
+    if interfaces
+        .iter()
+        .any(|interface| interface == BLUEZ_DEVICE_INTERFACE)
+    {
         emit(
             sink,
             "bluetooth.device.disconnected",

@@ -24,12 +24,13 @@ pub struct TtsConfigManager {
 }
 
 impl TtsConfigManager {
+    const PREFERENCES_VERSION: u32 = 1;
+
     /// Creates a text-to-speech configuration manager backed by runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            dataStore: PreferencesDataStore::newEncryptedSynced(
-                paths.tts_configs_preferences_path(),
-            ),
+            dataStore: PreferencesDataStore::newEncrypted(paths.tts_configs_preferences_path())
+                .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences),
             paths,
         }
     }
@@ -69,7 +70,6 @@ impl TtsConfigManager {
     #[allow(non_snake_case)]
     /// Reads the currently selected text-to-speech configuration identifier.
     pub fn getCurrentTtsConfigId(&self) -> Result<String, String> {
-        self.bootstrapDefaultSystemTtsConfig()?;
         self.currentTtsConfigIdFlow()
             .first()
             .map_err(|error| error.to_string())
@@ -85,7 +85,6 @@ impl TtsConfigManager {
     #[allow(non_snake_case)]
     /// Selects the active text-to-speech configuration by identifier.
     pub fn setCurrentTtsConfigId(&self, id: &str) -> Result<String, String> {
-        self.bootstrapDefaultSystemTtsConfig()?;
         let id = id.trim().to_string();
         if id.is_empty() {
             return Err("current tts config id is empty".to_string());
@@ -102,7 +101,6 @@ impl TtsConfigManager {
     #[allow(non_snake_case)]
     /// Reads every configured text-to-speech provider or voice profile.
     pub fn getAllTtsConfigs(&self) -> Result<Vec<TtsConfig>, String> {
-        self.bootstrapDefaultSystemTtsConfig()?;
         let ids = self
             .ttsConfigListFlow()
             .first()
@@ -123,7 +121,6 @@ impl TtsConfigManager {
     #[allow(non_snake_case)]
     /// Reads one text-to-speech configuration by identifier.
     pub fn getTtsConfig(&self, id: &str) -> Result<TtsConfig, String> {
-        self.bootstrapDefaultSystemTtsConfig()?;
         self.getTtsConfigFlow(id)
             .first()
             .map_err(|error| error.to_string())
@@ -141,7 +138,6 @@ impl TtsConfigManager {
     #[allow(non_snake_case)]
     /// Creates a text-to-speech configuration and assigns store timestamps.
     pub fn createTtsConfig(&self, config: TtsConfig) -> Result<TtsConfig, String> {
-        self.bootstrapDefaultSystemTtsConfig()?;
         let now = currentTimeMillis();
         let id = Uuid::new_v4().to_string();
         let config = normalizeConfig(TtsConfig {
@@ -340,7 +336,6 @@ impl TtsConfigManager {
     #[allow(non_snake_case)]
     /// Updates a text-to-speech configuration and preserves its creation timestamp.
     pub fn updateTtsConfig(&self, config: TtsConfig) -> Result<TtsConfig, String> {
-        self.bootstrapDefaultSystemTtsConfig()?;
         let id = config.id.trim().to_string();
         if id.is_empty() {
             return Err("tts config id is empty".to_string());
@@ -413,38 +408,31 @@ impl TtsConfigManager {
         Ok(deleted)
     }
 
-    #[allow(non_snake_case)]
-    fn bootstrapDefaultSystemTtsConfig(&self) -> Result<(), String> {
-        let preferences = self
-            .dataStore
-            .dataFlow()
-            .first()
-            .map_err(|error| error.to_string())?;
-        let currentConfigId = preferences
-            .get(&TtsConfigManager::CURRENT_TTS_CONFIG_ID())
-            .map(|value| value.trim().to_string());
-        if currentConfigId
-            .as_ref()
-            .is_some_and(|value| !value.is_empty())
-        {
-            return Ok(());
-        }
-        let list = readConfigList(&preferences).map_err(|error| error.to_string())?;
-        if !list.is_empty() {
-            return Ok(());
-        }
-        let now = currentTimeMillis();
-        let config = defaultSystemTtsConfig(now);
-        self.dataStore
-            .edit(|preferences| {
+    /// Migrates legacy TTS preferences and creates the default system profile once.
+    fn migratePreferences(
+        version: u32,
+        preferences: &mut Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        match version {
+            0 => {
+                let hasCurrentConfig = preferences
+                    .get(&TtsConfigManager::CURRENT_TTS_CONFIG_ID())
+                    .is_some_and(|value| !value.trim().is_empty());
+                let list = readConfigList(preferences)?;
+                if hasCurrentConfig || !list.is_empty() {
+                    return Ok(());
+                }
+                let config = defaultSystemTtsConfig(currentTimeMillis());
                 writeConfigList(preferences, &[DEFAULT_SYSTEM_TTS_CONFIG_ID.to_string()]);
                 writeTtsConfig(preferences, &config);
                 preferences.set(
                     &TtsConfigManager::CURRENT_TTS_CONFIG_ID(),
                     DEFAULT_SYSTEM_TTS_CONFIG_ID.to_string(),
                 );
-            })
-            .map_err(|error| error.to_string())
+                Ok(())
+            }
+            from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
+        }
     }
 }
 

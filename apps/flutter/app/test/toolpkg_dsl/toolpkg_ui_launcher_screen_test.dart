@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
+import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
@@ -988,6 +989,12 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   var _count = 0;
   var _checked = false;
 
+  /// Rejects encoded calls because this test models decoded tool package calls.
+  @override
+  Future<Uint8List> callBytes(CoreCallRequest request) {
+    throw UnimplementedError();
+  }
+
   @override
   Future<Object?> call(CoreCallRequest request) async {
     calls.add(request);
@@ -1014,6 +1021,19 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
     throw StateError('unexpected core push: ${request.methodName}');
   }
 
+  /// Rejects embedded streams because this test models direct DSL watches.
+  @override
+  Stream<T> openEmbeddedCoreStream<T>(
+    String streamId,
+    CoreObjectPath targetPath,
+    String propertyName,
+    Object? args,
+    T Function(CoreLinkValueReader reader) decode,
+  ) {
+    throw StateError('unexpected embedded core stream: $propertyName');
+  }
+
+  /// Returns the initial event for a direct DSL watch.
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
     return CoreEvent(

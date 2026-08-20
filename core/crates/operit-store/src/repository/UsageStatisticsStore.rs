@@ -12,6 +12,7 @@ pub enum UsageRequestSource {
     CHAT_RESPONSE,
     TOOL_RESULT_RESPONSE,
     SUMMARY_GENERATION,
+    TITLE_GENERATION,
     MEMORY_ANALYSIS,
 }
 
@@ -130,6 +131,7 @@ impl UsageStatisticsStore {
 }
 
 #[allow(non_snake_case)]
+/// Maps one database row into a usage request record.
 fn mapUsageRequestRecord(row: &SqliteRow) -> Result<UsageRequestRecord, SqliteStoreError> {
     let functionTypeName: String = row.get("functionType")?;
     let sourceName: String = row.get("source")?;
@@ -149,6 +151,7 @@ fn mapUsageRequestRecord(row: &SqliteRow) -> Result<UsageRequestRecord, SqliteSt
 }
 
 #[allow(non_snake_case)]
+/// Splits a provider-model identifier into its provider and model components.
 fn splitProviderModel(providerModel: &str) -> Result<(String, String), String> {
     let trimmed = providerModel.trim();
     let colonIndex = trimmed
@@ -165,10 +168,12 @@ fn splitProviderModel(providerModel: &str) -> Result<(String, String), String> {
 }
 
 #[allow(non_snake_case)]
+/// Serializes a functional model role for usage storage.
 fn functionTypeName(functionType: &FunctionType) -> &'static str {
     match functionType {
         FunctionType::CHAT => "CHAT",
         FunctionType::SUMMARY => "SUMMARY",
+        FunctionType::TITLE_GENERATION => "TITLE_GENERATION",
         FunctionType::MEMORY => "MEMORY",
         FunctionType::UI_CONTROLLER => "UI_CONTROLLER",
         FunctionType::TRANSLATION => "TRANSLATION",
@@ -181,10 +186,12 @@ fn functionTypeName(functionType: &FunctionType) -> &'static str {
 }
 
 #[allow(non_snake_case)]
+/// Parses a functional model role stored with usage statistics.
 fn parseFunctionType(value: &str) -> Result<FunctionType, SqliteStoreError> {
     match value {
         "CHAT" => Ok(FunctionType::CHAT),
         "SUMMARY" => Ok(FunctionType::SUMMARY),
+        "TITLE_GENERATION" => Ok(FunctionType::TITLE_GENERATION),
         "MEMORY" => Ok(FunctionType::MEMORY),
         "UI_CONTROLLER" => Ok(FunctionType::UI_CONTROLLER),
         "TRANSLATION" => Ok(FunctionType::TRANSLATION),
@@ -200,21 +207,25 @@ fn parseFunctionType(value: &str) -> Result<FunctionType, SqliteStoreError> {
 }
 
 #[allow(non_snake_case)]
+/// Serializes a usage request source for storage.
 fn usageRequestSourceName(source: &UsageRequestSource) -> &'static str {
     match source {
         UsageRequestSource::CHAT_RESPONSE => "CHAT_RESPONSE",
         UsageRequestSource::TOOL_RESULT_RESPONSE => "TOOL_RESULT_RESPONSE",
         UsageRequestSource::SUMMARY_GENERATION => "SUMMARY_GENERATION",
+        UsageRequestSource::TITLE_GENERATION => "TITLE_GENERATION",
         UsageRequestSource::MEMORY_ANALYSIS => "MEMORY_ANALYSIS",
     }
 }
 
 #[allow(non_snake_case)]
+/// Parses a stored usage request source.
 fn parseUsageRequestSource(value: &str) -> Result<UsageRequestSource, SqliteStoreError> {
     match value {
         "CHAT_RESPONSE" => Ok(UsageRequestSource::CHAT_RESPONSE),
         "TOOL_RESULT_RESPONSE" => Ok(UsageRequestSource::TOOL_RESULT_RESPONSE),
         "SUMMARY_GENERATION" => Ok(UsageRequestSource::SUMMARY_GENERATION),
+        "TITLE_GENERATION" => Ok(UsageRequestSource::TITLE_GENERATION),
         "MEMORY_ANALYSIS" => Ok(UsageRequestSource::MEMORY_ANALYSIS),
         _ => Err(SqliteStoreError::Message(format!(
             "unknown usage request source: {value}"
@@ -223,6 +234,7 @@ fn parseUsageRequestSource(value: &str) -> Result<UsageRequestSource, SqliteStor
 }
 
 #[allow(non_snake_case)]
+/// Reads the current host-provided time in milliseconds.
 fn currentTimeMillis() -> i64 {
     operit_host_api::TimeUtils::currentTimeMillis()
 }

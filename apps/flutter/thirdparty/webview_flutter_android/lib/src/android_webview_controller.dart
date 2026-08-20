@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -588,19 +589,14 @@ class AndroidWebViewController extends PlatformWebViewController {
     return _webView.evaluateJavascript(javaScript);
   }
 
+  /// Decodes the JSON text returned by Android WebView into its JavaScript value.
   @override
   Future<Object> runJavaScriptReturningResult(String javaScript) async {
     final String? result = await _webView.evaluateJavascript(javaScript);
-
     if (result == null) {
       return '';
-    } else if (result == 'true') {
-      return true;
-    } else if (result == 'false') {
-      return false;
     }
-
-    return num.tryParse(result) ?? result;
+    return jsonDecode(result);
   }
 
   @override

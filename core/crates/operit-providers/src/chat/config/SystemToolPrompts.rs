@@ -41,8 +41,9 @@ pub struct SystemToolPromptCategory {
     pub category_footer: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManageableToolPrompt {
+    #[serde(rename = "categoryName")]
     pub category_name: String,
     pub name: String,
     pub description: String,
@@ -331,6 +332,7 @@ impl SystemToolPrompts {
         categories
     }
 
+    /// Returns the built-in tools that can be assigned to a character card.
     #[allow(non_snake_case)]
     pub fn getManageableToolPrompts(use_english: bool) -> Vec<ManageableToolPrompt> {
         let base_categories = if use_english {
@@ -893,6 +895,22 @@ fn basic_tools_en() -> SystemToolPromptCategory {
                     None,
                 )],
             ),
+            tool(
+                "list_core_nodes",
+                "List the current device and every device in the current device space, including each device name, platform, model, ID, and current reachability.",
+                vec![],
+            ),
+            tool(
+                "switch_core",
+                "Continue this chat on another currently reachable device in the current device space.",
+                vec![param(
+                    "node_id",
+                    "string",
+                    "exact target device ID",
+                    true,
+                    None,
+                )],
+            ),
         ],
     )
 }
@@ -916,6 +934,16 @@ fn basic_tools_cn() -> SystemToolPromptCategory {
                 "use_package",
                 "在当前会话中激活包。",
                 vec![param("package_name", "string", "要激活的包名", true, None)],
+            ),
+            tool(
+                "list_core_nodes",
+                "列出当前设备和当前设备空间内的全部设备，包括每台设备的名称、平台、型号、ID 和当前是否可达。",
+                vec![],
+            ),
+            tool(
+                "switch_core",
+                "在当前设备空间内另一台当前可达的设备上继续这个聊天。",
+                vec![param("node_id", "string", "目标设备的精确 ID", true, None)],
             ),
         ],
     )

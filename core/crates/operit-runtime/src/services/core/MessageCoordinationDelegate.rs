@@ -198,7 +198,7 @@ impl MessageCoordinationDelegate {
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
     ) -> Option<i64> {
-        let targetChatId = chatId.or_else(|| self.chatHistoryDelegate.currentChatId.clone())?;
+        let targetChatId = chatId.or_else(|| self.chatHistoryDelegate.currentChatIdFlow.value())?;
         let effectivePromptFunctionType =
             promptFunctionType.unwrap_or_else(|| self.currentPromptFunctionType.clone());
         let effectiveChatModelIdOverride =
@@ -263,7 +263,7 @@ impl MessageCoordinationDelegate {
             .as_ref()
             .map(|id| id.trim().is_empty())
             .unwrap_or(true)
-            && self.chatHistoryDelegate.currentChatId.is_none()
+            && self.chatHistoryDelegate.currentChatIdFlow.value().is_none()
         {
             self.chatHistoryDelegate
                 .createNewChat(None, None, None, true, true, None);
@@ -279,14 +279,14 @@ impl MessageCoordinationDelegate {
         ) {
             let chatId = self
                 .chatHistoryDelegate
-                .currentChatId
-                .clone()
+                .currentChatIdFlow
+                .value()
                 .unwrap_or_else(|| {
                     self.chatHistoryDelegate
                         .createNewChat(None, None, None, true, true, None);
                     self.chatHistoryDelegate
-                        .currentChatId
-                        .clone()
+                        .currentChatIdFlow
+                        .value()
                         .unwrap_or_default()
                 });
             if self
@@ -320,6 +320,9 @@ impl MessageCoordinationDelegate {
             false,
             None,
             false,
+            None,
+            None,
+            None,
             turnOptions,
         )
         .await;
@@ -334,8 +337,8 @@ impl MessageCoordinationDelegate {
     ) -> Result<(), String> {
         let chatId = self
             .chatHistoryDelegate
-            .currentChatId
-            .clone()
+            .currentChatIdFlow
+            .value()
             .ok_or_else(|| "No active conversation".to_string())?;
         if self.messageProcessingDelegate.isChatLoading(chatId.clone()) {
             return Err("Chat is busy".to_string());
@@ -363,7 +366,8 @@ impl MessageCoordinationDelegate {
             };
         let currentChat = self
             .chatHistoryDelegate
-            .chatHistories
+            .chatHistoriesFlow
+            .value()
             .iter()
             .find(|history| history.id == chatId)
             .cloned();
@@ -451,19 +455,22 @@ impl MessageCoordinationDelegate {
         isGroupOrchestrationTurn: bool,
         groupParticipantNamesText: Option<String>,
         suppressUserMessageInHistory: bool,
+        assistantMessageTimestamp: Option<i64>,
+        executionGeneration: Option<i64>,
+        chatHistoryOverride: Option<Vec<ChatMessage>>,
         turnOptions: ChatTurnOptions,
     ) {
         self.currentPromptFunctionType = promptFunctionType.clone();
         self.currentChatProviderIdOverride = chatProviderIdOverride.clone();
         self.currentChatModelIdOverride = chatModelIdOverride.clone();
         let chatId = chatIdOverride
-            .or_else(|| self.chatHistoryDelegate.currentChatId.clone())
+            .or_else(|| self.chatHistoryDelegate.currentChatIdFlow.value())
             .unwrap_or_else(|| {
                 self.chatHistoryDelegate
                     .createNewChat(None, None, None, true, true, None);
                 self.chatHistoryDelegate
-                    .currentChatId
-                    .clone()
+                    .currentChatIdFlow
+                    .value()
                     .unwrap_or_default()
             });
         let providerOverrideSet = match chatProviderIdOverride.as_ref() {
@@ -507,7 +514,8 @@ impl MessageCoordinationDelegate {
             .bindChatService(Some(chatId.clone()), enhancedAiService);
         let currentChat = self
             .chatHistoryDelegate
-            .chatHistories
+            .chatHistoriesFlow
+            .value()
             .iter()
             .find(|history| history.id == chatId)
             .cloned();
@@ -537,9 +545,12 @@ impl MessageCoordinationDelegate {
                 }
             },
         };
-        let runtimeChatHistory = self
-            .chatHistoryDelegate
-            .getRuntimeChatHistory(chatId.clone());
+        let runtimeChatHistory = match chatHistoryOverride {
+            Some(history) => history,
+            None => self
+                .chatHistoryDelegate
+                .getRuntimeChatHistory(chatId.clone()),
+        };
         let enableThinking = ApiPreferences::getInstance()
             .enableThinkingModeFlow()
             .first()
@@ -571,6 +582,8 @@ impl MessageCoordinationDelegate {
                 proxySenderNameOverride,
                 suppressUserMessageInHistory: suppressUserMessageInHistory || isContinuation,
                 isAutoContinuation,
+                assistantMessageTimestamp,
+                executionGeneration,
                 turnOptions: turnOptions.clone(),
             })
             .await;
@@ -737,7 +750,8 @@ impl MessageCoordinationDelegate {
         }
         let existingBinding = self
             .chatHistoryDelegate
-            .chatHistories
+            .chatHistoriesFlow
+            .value()
             .iter()
             .find(|history| history.id == chatId)
             .and_then(|history| history.characterGroupId.clone());
@@ -763,23 +777,20 @@ impl MessageCoordinationDelegate {
 
         let currentChat = self
             .chatHistoryDelegate
-            .chatHistories
+            .chatHistoriesFlow
+            .value()
             .iter()
             .find(|history| history.id == chatId)
             .cloned();
         let workspacePath = currentChat.clone().and_then(|chat| chat.workspace);
-        if !self.chatHistoryDelegate.hasUserMessage(chatId.clone()) {
-            let newTitle = if !originalUserText.is_empty() {
-                originalUserText.clone()
-            } else {
-                attachments
-                    .first()
-                    .map(|attachment| attachment.fileName.clone())
-                    .unwrap_or_else(|| "New Chat".to_string())
-            };
+        let provisionalTitle = if !self.chatHistoryDelegate.hasUserMessage(chatId.clone()) {
+            let title = MessageProcessingDelegate::provisionalConversationTitle(&attachments);
             self.chatHistoryDelegate
-                .updateChatTitle(chatId.clone(), newTitle);
-        }
+                .updateChatTitle(chatId.clone(), title.clone());
+            Some(title)
+        } else {
+            None
+        };
 
         let finalUserMessageContent = match self
             .messageProcessingDelegate
@@ -823,6 +834,16 @@ impl MessageCoordinationDelegate {
             },
             Some(chatId.clone()),
         );
+        if let Some(provisionalTitle) = provisionalTitle {
+            MessageProcessingDelegate::launchConversationTitleGeneration(
+                enhancedAiService.clone(),
+                self.chatHistoryDelegate.clone_for_core(),
+                chatId.clone(),
+                originalUserText.clone(),
+                attachments.clone(),
+                provisionalTitle,
+            );
+        }
 
         let mut timeline = Vec::<(String, String)>::new();
         if !originalUserText.trim().is_empty() {
@@ -928,6 +949,9 @@ impl MessageCoordinationDelegate {
                     true,
                     Some(groupParticipantNamesText.clone()),
                     true,
+                    None,
+                    None,
+                    None,
                     turnOptions.clone(),
                 )
                 .await;
@@ -1138,7 +1162,8 @@ impl MessageCoordinationDelegate {
         };
         let _boundGroupId = self
             .chatHistoryDelegate
-            .chatHistories
+            .chatHistoriesFlow
+            .value()
             .iter()
             .find(|history| history.id == chatId)
             .and_then(|history| history.characterGroupId.clone())
@@ -1254,7 +1279,7 @@ impl MessageCoordinationDelegate {
         if self.isSummarizing {
             return;
         }
-        let currentChatId = self.chatHistoryDelegate.currentChatId.clone();
+        let currentChatId = self.chatHistoryDelegate.currentChatIdFlow.value();
         self.summarizeHistory(
             enhancedAiService,
             false,
@@ -1307,7 +1332,7 @@ impl MessageCoordinationDelegate {
     ) {
         let currentChatId = targetChatId
             .clone()
-            .or_else(|| self.chatHistoryDelegate.currentChatId.clone());
+            .or_else(|| self.chatHistoryDelegate.currentChatIdFlow.value());
         let shouldCancelSummary = self.isSummarizing
             && (targetChatId.is_none() || self.summarizingChatId == targetChatId);
         let shouldCancelAsyncSummary = self.isSendTriggeredSummarizing
@@ -1344,7 +1369,8 @@ impl MessageCoordinationDelegate {
                 self.removePendingAutoContinuation(chatId);
             }
         }
-        self.messageProcessingDelegate.refreshGlobalLoadingState();
+        self.messageProcessingDelegate
+            .refreshActiveStreamingChatIds();
     }
 
     /// Cancels active summary work for the current chat.
@@ -1401,7 +1427,8 @@ impl MessageCoordinationDelegate {
             );
         let isGroupChat = self
             .chatHistoryDelegate
-            .chatHistories
+            .chatHistoriesFlow
+            .value()
             .iter()
             .find(|history| history.id == originalChatId)
             .and_then(|history| history.characterGroupId.clone())
@@ -1461,7 +1488,7 @@ impl MessageCoordinationDelegate {
         }
         self.isSummarizing = true;
         let currentChatId =
-            chatIdOverride.or_else(|| self.chatHistoryDelegate.currentChatId.clone());
+            chatIdOverride.or_else(|| self.chatHistoryDelegate.currentChatIdFlow.value());
         self.summarizingChatId = currentChatId.clone();
         if let Some(currentChatId) = currentChatId.clone() {
             self.messageProcessingDelegate
@@ -1491,7 +1518,8 @@ impl MessageCoordinationDelegate {
                 self.messageProcessingDelegate
                     .setInputProcessingStateForChat(currentChatId, InputProcessingState::Idle);
             }
-            self.messageProcessingDelegate.refreshGlobalLoadingState();
+            self.messageProcessingDelegate
+                .refreshActiveStreamingChatIds();
             return false;
         }
         let insertPosition = self
@@ -1546,7 +1574,8 @@ impl MessageCoordinationDelegate {
                     );
             }
         }
-        self.messageProcessingDelegate.refreshGlobalLoadingState();
+        self.messageProcessingDelegate
+            .refreshActiveStreamingChatIds();
         if summarySuccess && autoContinue {
             if let Some(currentChatId) = currentChatId {
                 let continuationPromptType =
@@ -1583,6 +1612,9 @@ impl MessageCoordinationDelegate {
                         isGroupOrchestrationTurn,
                         groupParticipantNamesText,
                         false,
+                        None,
+                        None,
+                        None,
                         ChatTurnOptions::default(),
                     )
                     .await;

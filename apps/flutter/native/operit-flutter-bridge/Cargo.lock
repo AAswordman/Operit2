@@ -566,6 +566,16 @@ dependencies = [
 
 [[package]]
 name = "core-foundation"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91e195e091a93c46f7102ec7818a2aa394e1e1771c3ab4825963fa03e45afb8f"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
+name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2a6cd9ae233e7f62ba4e9353e81a88df7fc8a5987b8d445b4d90c879bd156f6"
@@ -1786,10 +1796,10 @@ dependencies = [
  "libc",
  "log",
  "openssl",
- "openssl-probe",
+ "openssl-probe 0.2.1",
  "openssl-sys",
  "schannel",
- "security-framework",
+ "security-framework 3.7.0",
  "security-framework-sys",
  "tempfile",
 ]
@@ -1877,6 +1887,12 @@ dependencies = [
 
 [[package]]
 name = "openssl-probe"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
+
+[[package]]
+name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
@@ -1911,6 +1927,10 @@ dependencies = [
  "sha2",
  "tokio",
 ]
+
+[[package]]
+name = "operit-core-annotations"
+version = "0.1.0"
 
 [[package]]
 name = "operit-core-proxy"
@@ -1957,6 +1977,7 @@ dependencies = [
  "operit-host-ios-native",
  "operit-host-linux-native",
  "operit-host-macos-native",
+ "operit-host-native-storage",
  "operit-host-ohos-native",
  "operit-host-web",
  "operit-host-windows-native",
@@ -2016,7 +2037,7 @@ dependencies = [
  "operit-host-native-common",
  "reqwest",
  "rusqlite",
- "security-framework",
+ "security-framework 3.7.0",
  "serde",
  "serde_json",
  "tungstenite",
@@ -2100,6 +2121,7 @@ dependencies = [
  "operit-host-api",
  "reqwest",
  "tokio",
+ "tungstenite",
 ]
 
 [[package]]
@@ -2118,6 +2140,7 @@ dependencies = [
  "operit-host-api",
  "rusqlite",
  "uuid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2237,6 +2260,7 @@ dependencies = [
  "operit-link",
  "operit-runtime",
  "operit-store",
+ "operit-util",
  "rand_core 0.6.4",
  "serde",
  "serde_bytes",
@@ -2267,6 +2291,7 @@ version = "2.0.0-preview.5"
 dependencies = [
  "chrono",
  "operit-host-api",
+ "operit-link",
  "operit-util",
  "serde",
  "serde_json",
@@ -2345,8 +2370,10 @@ dependencies = [
  "js-sys",
  "json5",
  "md-5",
+ "operit-core-annotations",
  "operit-host-api",
  "operit-js-bridge",
+ "operit-link",
  "operit-local-models",
  "operit-model",
  "operit-plugin-sdk",
@@ -2356,6 +2383,7 @@ dependencies = [
  "operit-util",
  "regex",
  "reqwest",
+ "rmp-serde",
  "rquickjs",
  "serde",
  "serde_bytes",
@@ -2383,7 +2411,9 @@ dependencies = [
  "operit-model",
  "operit-util",
  "serde",
+ "serde_bytes",
  "serde_json",
+ "sha2",
  "thiserror 1.0.69",
  "uuid",
 ]
@@ -3051,6 +3081,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustls-native-certs"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5bfb394eeed242e909609f56089eecfe5fda225042e8b171791b9c95f5931e5"
+dependencies = [
+ "openssl-probe 0.1.6",
+ "rustls-pemfile",
+ "rustls-pki-types",
+ "schannel",
+ "security-framework 2.11.1",
+]
+
+[[package]]
+name = "rustls-pemfile"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dce314e5fee3f39953d46bb63bb8a46d40c2f8fb7cc5a3b6cab2bde9721d6e50"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
 name = "rustls-pki-types"
 version = "1.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3109,12 +3161,25 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "security-framework"
+version = "2.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "897b2245f0b511c87893af39b033e5ca9cce68824c4d7e7630b5a1d339658d02"
+dependencies = [
+ "bitflags 2.11.1",
+ "core-foundation 0.9.4",
+ "core-foundation-sys",
+ "libc",
+ "security-framework-sys",
+]
+
+[[package]]
+name = "security-framework"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7f4bc775c73d9a02cde8bf7b2ec4c9d12743edf609006c7facc23998404cd1d"
 dependencies = [
  "bitflags 2.11.1",
- "core-foundation",
+ "core-foundation 0.10.1",
  "core-foundation-sys",
  "libc",
  "security-framework-sys",
@@ -3718,6 +3783,9 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.6",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
  "utf-8",

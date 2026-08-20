@@ -20,6 +20,8 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 json5.workspace = true
 md-5 = "0.10"
 operit-host-api = { path = "../operit-host-api" }
+operit-core-annotations = { path = "../operit-core-annotations" }
+operit-link = { path = "../operit-link" }
 operit-js-bridge = { path = "../operit-js-bridge", optional = true }
 operit-local-models = { path = "../operit-local-models" }
 operit-model = { path = "../operit-model" }
@@ -30,6 +32,7 @@ operit-tools = { path = "../operit-tools", default-features = false }
 operit-util = { path = "../operit-util" }
 reqwest.workspace = true
 regex.workspace = true
+rmp-serde = "1"
 serde.workspace = true
 serde_bytes = "0.11"
 serde_json.workspace = true

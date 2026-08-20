@@ -16,7 +16,7 @@ pub(crate) fn object_specs(
         "core/application/OperitApplication.rs",
         "OperitApplication",
         ObjectAccess::Application,
-        ObjectRouteScope::RuntimeSelected,
+        ObjectPathMatch::Exact,
     ));
     specs.push(required_object_spec(
         link_access_root,
@@ -24,15 +24,25 @@ pub(crate) fn object_specs(
         "lib.rs",
         "LinkAccessStore",
         ObjectAccess::ContextRefGetInstanceConstruct,
-        ObjectRouteScope::LocalControl,
+        ObjectPathMatch::Exact,
     ));
     specs.push(required_object_spec(
         runtime_root,
         "chatRuntimeHolder.main",
         "services/ChatServiceCore.rs",
         "ChatServiceCore",
-        ObjectAccess::ChatRuntimeMain,
-        ObjectRouteScope::RuntimeSelected,
+        ObjectAccess::ResolvedHolder {
+            holder_field: "chatRuntimeHolder".to_string(),
+            resolver_method: "coreForPath".to_string(),
+            proxy_aliases: vec![(
+                "chatRuntimeHolderFloating".to_string(),
+                "chatRuntimeHolder.floating".to_string(),
+            )],
+        },
+        ObjectPathMatch::Predicate(
+            "operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder::matchesCorePath"
+                .to_string(),
+        ),
     ));
     specs.extend(discover_constructible_objects(
         runtime_root,
@@ -207,7 +217,7 @@ pub(crate) fn discover_factory_object_specs(
                     returns_result,
                     returns_arc_mutex,
                 },
-                route_scope: parent_spec.route_scope.clone(),
+                path_match: ObjectPathMatch::TrailingSegments(method.args.len()),
             });
         }
     }
@@ -260,7 +270,7 @@ fn required_object_spec(
     relative_path: &str,
     type_name: &str,
     access: ObjectAccess,
-    route_scope: ObjectRouteScope,
+    path_match: ObjectPathMatch,
 ) -> ObjectSpec {
     let source_path = source_root.as_path().join(relative_path);
     ObjectSpec {
@@ -275,7 +285,7 @@ fn required_object_spec(
         ),
         source_path,
         access,
-        route_scope,
+        path_match,
     }
 }
 
@@ -331,7 +341,7 @@ fn discover_core_proxy_objects_inner(
             type_name,
             source_path: path,
             access,
-            route_scope: ObjectRouteScope::LocalControl,
+            path_match: ObjectPathMatch::Exact,
         });
     }
 }
@@ -356,6 +366,7 @@ fn discover_constructible_objects(
         let Some((type_name, access)) = discover_constructible_type(&file) else {
             continue;
         };
+        let path_match = constructible_object_path_match(&access);
         let schema_key = format!("{schema_prefix}.{}", lower_first(&type_name));
         specs.push(ObjectSpec {
             schema_key: schema_key.clone(),
@@ -369,7 +380,7 @@ fn discover_constructible_objects(
             type_name,
             source_path: path,
             access,
-            route_scope: ObjectRouteScope::RuntimeSelected,
+            path_match,
         });
     }
     specs
@@ -422,6 +433,7 @@ fn discover_constructible_objects_recursive_inner(
         let Some((type_name, access)) = discover_constructible_type(&file) else {
             continue;
         };
+        let path_match = constructible_object_path_match(&access);
         let relative = path
             .strip_prefix(root_dir)
             .expect("source path must be inside discovered dir")
@@ -446,8 +458,17 @@ fn discover_constructible_objects_recursive_inner(
             type_name,
             source_path: path,
             access,
-            route_scope: ObjectRouteScope::RuntimeSelected,
+            path_match,
         });
+    }
+}
+
+/// Returns the concrete path shape declared by one constructible access strategy.
+fn constructible_object_path_match(access: &ObjectAccess) -> ObjectPathMatch {
+    if access == &ObjectAccess::StringNewConstruct {
+        ObjectPathMatch::TrailingSegments(1)
+    } else {
+        ObjectPathMatch::Exact
     }
 }
 
@@ -494,6 +515,9 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
                     continue;
                 };
                 if !matches!(function.vis, Visibility::Public(_)) {
+                    continue;
+                }
+                if has_core_internal_attribute(function) {
                     continue;
                 }
                 has_public_instance_method |= function
@@ -665,20 +689,82 @@ pub(crate) fn scan_object(
     deserializable_types: &HashSet<String>,
     type_registry: &TypeRegistry,
 ) -> SourceObject {
+    let mut methods = scan_methods(
+        &spec.source_path,
+        &spec.type_name,
+        parent_module_path(&spec.full_type),
+        serializable_types,
+        deserializable_types,
+        type_registry,
+    );
+    validate_method_routes(&methods, &spec.type_name);
     SourceObject {
         schema_key: spec.schema_key.clone(),
         dispatch_name: spec.dispatch_name.clone(),
         full_type: spec.full_type.clone(),
         access: spec.access.clone(),
-        route_scope: spec.route_scope.clone(),
-        methods: scan_methods(
-            &spec.source_path,
-            &spec.type_name,
-            parent_module_path(&spec.full_type),
-            serializable_types,
-            deserializable_types,
-            type_registry,
-        ),
+        path_match: spec.path_match.clone(),
+        methods,
+    }
+}
+
+/// Validates every method-level Binding declaration on one generated object.
+fn validate_method_routes(methods: &[SourceMethod], type_name: &str) {
+    for method in methods {
+        match &method.route {
+            MethodRoute::Local => {}
+            MethodRoute::Binding {
+                binding_argument,
+                current_resolver,
+                supports_source_transition,
+            } => {
+                if method.call_protocol().is_none()
+                    && method.watch_protocol().is_none()
+                    && method.reverse_stream_protocol().is_none()
+                {
+                    panic!(
+                        "Method {type_name}.{} declares Binding routing without a Link protocol",
+                        method.name
+                    );
+                }
+                if !method
+                    .args
+                    .iter()
+                    .any(|argument| argument.name == *binding_argument)
+                {
+                    panic!("Method {type_name}.{} declares unknown Binding argument {binding_argument}", method.name);
+                }
+                if let Some(resolver) = current_resolver {
+                    validate_binding_resolver(methods, type_name, resolver);
+                }
+                if *supports_source_transition && method.watch_protocol().is_none() {
+                    panic!(
+                        "Method {type_name}.{} declares a source transition without a watch protocol",
+                        method.name
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Returns one named method declared on the current generated object.
+fn required_route_method<'a>(
+    methods: &'a [SourceMethod],
+    type_name: &str,
+    method_name: &str,
+) -> &'a SourceMethod {
+    methods
+        .iter()
+        .find(|method| method.name == method_name)
+        .unwrap_or_else(|| panic!("Object {type_name} does not declare route method {method_name}"))
+}
+
+/// Verifies that one explicit current-key resolver is a zero-argument watch.
+fn validate_binding_resolver(methods: &[SourceMethod], type_name: &str, resolver: &str) {
+    let method = required_route_method(methods, type_name, resolver);
+    if method.watch_protocol().is_none() || !method.args.is_empty() {
+        panic!("Binding resolver {type_name}.{resolver} must be a zero-argument watch");
     }
 }
 
@@ -718,10 +804,25 @@ fn scan_methods(
             if !matches!(function.vis, Visibility::Public(_)) {
                 continue;
             }
+            if has_core_internal_attribute(function) {
+                continue;
+            }
             methods.push(scan_method(function, &resolver));
         }
     }
     methods
+}
+
+/// Returns whether one method is reserved for generated in-process dispatch only.
+fn has_core_internal_attribute(function: &ImplItemFn) -> bool {
+    function.attrs.iter().any(|attribute| {
+        attribute
+            .path()
+            .segments
+            .last()
+            .map(|segment| segment.ident == "operit_core_internal")
+            .unwrap_or(false)
+    })
 }
 
 fn impl_type_name(item_impl: &ItemImpl) -> Option<String> {
@@ -735,6 +836,7 @@ fn impl_type_name(item_impl: &ItemImpl) -> Option<String> {
 
 fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
     let name = function.sig.ident.to_string();
+    let route = scan_method_route(function, &name);
     let mut args = Vec::new();
     let mut method_error = None::<String>;
     let is_async = function.sig.asyncness.is_some();
@@ -795,7 +897,6 @@ fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
     if let Some(reason) = method_error {
         protocol = MethodProtocol::Unsupported(reason);
     }
-
     SourceMethod {
         name,
         args,
@@ -803,13 +904,94 @@ fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
         is_async,
         cfg_attrs,
         doc_lines,
+        route,
         protocol,
     }
 }
 
-fn doc_lines(function: &ImplItemFn) -> Vec<String> {
-    function
+/// Reads one method-level Binding route declaration without assigning business meaning to it.
+fn scan_method_route(function: &ImplItemFn, method_name: &str) -> MethodRoute {
+    let declarations = function
         .attrs
+        .iter()
+        .filter(|attribute| {
+            attribute
+                .path()
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == "operit_core_route")
+        })
+        .collect::<Vec<_>>();
+    if declarations.len() > 1 {
+        panic!("Method {method_name} declares multiple Core route attributes");
+    }
+    let Some(attribute) = declarations.first() else {
+        return MethodRoute::Local;
+    };
+    let Meta::List(meta_list) = &attribute.meta else {
+        panic!("Method {method_name} Core route requires arguments");
+    };
+    let arguments = meta_list
+        .parse_args_with(Punctuated::<MetaNameValue, Token![,]>::parse_terminated)
+        .unwrap_or_else(|error| {
+            panic!("Method {method_name} has invalid Core route arguments: {error}")
+        });
+    let mut values = HashMap::<String, String>::new();
+    for argument in arguments {
+        let argument_name = argument
+            .path
+            .segments
+            .last()
+            .map(|segment| segment.ident.to_string())
+            .unwrap_or_default();
+        let value = route_attribute_identifier(argument.value, method_name, &argument_name);
+        if values.insert(argument_name.clone(), value).is_some() {
+            panic!(
+                "Method {method_name} declares Core route argument {argument_name} more than once"
+            );
+        }
+    }
+    let binding_argument = values.remove("binding");
+    let current_resolver = values.remove("current");
+    let supports_source_transition = values.remove("source").is_some();
+    if !values.is_empty() {
+        let unsupported = values.keys().cloned().collect::<Vec<_>>().join(", ");
+        panic!("Method {method_name} has unsupported Core route arguments: {unsupported}");
+    }
+    let Some(binding_argument) = binding_argument else {
+        panic!("Method {method_name} Core route requires binding");
+    };
+    MethodRoute::Binding {
+        binding_argument,
+        current_resolver,
+        supports_source_transition,
+    }
+}
+
+/// Extracts one identifier-valued route argument from a procedural macro attribute.
+fn route_attribute_identifier(value: Expr, method_name: &str, argument_name: &str) -> String {
+    let Expr::Path(expression) = value else {
+        panic!("Method {method_name} Core route argument {argument_name} must be an identifier");
+    };
+    if expression.qself.is_some() || expression.path.segments.len() != 1 {
+        panic!("Method {method_name} Core route argument {argument_name} must be an identifier");
+    }
+    expression
+        .path
+        .segments
+        .first()
+        .expect("single-segment Core route identifier must exist")
+        .ident
+        .to_string()
+}
+
+fn doc_lines(function: &ImplItemFn) -> Vec<String> {
+    doc_lines_from_attrs(&function.attrs)
+}
+
+/// Reads trimmed Rust documentation lines from an attribute list.
+fn doc_lines_from_attrs(attrs: &[Attribute]) -> Vec<String> {
+    attrs
         .iter()
         .filter_map(|attr| {
             if !attr.path().is_ident("doc") {
@@ -971,5 +1153,5 @@ fn is_text_event_stream_type(ty: &str, resolver: &TypeResolver) -> bool {
         .unwrap_or(false)
         && resolver
             .type_registry
-            .implements(&resolved, "TextStreamEventCarrier")
+            .implements(&resolved, "RenderableTextStream")
 }

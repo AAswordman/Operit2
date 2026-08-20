@@ -50,7 +50,7 @@ class _BubbleUserMessageComposableState
     final snapshot = OperitTheme.of(context).themePreferenceSnapshot;
     final isHiddenPlaceholder =
         widget.message.sender == 'user' &&
-        widget.message.displayMode == 'HIDDEN_PLACEHOLDER';
+        widget.message.displayMode.value == 'HIDDEN_PLACEHOLDER';
     final parseResult = isHiddenPlaceholder
         ? const MessageParseResult(processedText: '', trailingAttachments: [])
         : parseMessageContent(widget.message.displayText);

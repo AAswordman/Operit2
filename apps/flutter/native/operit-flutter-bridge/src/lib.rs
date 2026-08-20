@@ -5,6 +5,8 @@ mod BridgeExports;
 mod BridgeTransport;
 mod FlutterHostAdapters;
 mod PlatformRuntimeFactory;
+#[cfg(not(target_arch = "wasm32"))]
+mod RuntimeBootstrapStore;
 
 pub use BridgeExports::*;
 #[cfg(target_os = "android")]
@@ -27,7 +29,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use operit_core_proxy::{
-    LocalCoreProxy, RuntimeCoreRouter::RuntimeCorePushTarget, RuntimeCoreRouter::RuntimeCoreRouter,
+    CoreNodeRouter::{CoreNodePushTarget, CoreNodeRouter},
+    LocalCoreProxy,
 };
 #[cfg(not(target_arch = "wasm32"))]
 mod mdnss;
@@ -108,8 +111,8 @@ use operit_host_ios_native::{
     IosHostRuntimeEventSchedulerHost as NativeHostRuntimeEventSchedulerHost,
     IosHostRuntimeTaskSchedulerHost as NativeHostRuntimeTaskSchedulerHost,
     IosHttpHost as NativeHttpHost, IosLocalInferenceHost as NativeLocalInferenceHost,
-    IosManagedRuntimeHost as NativeManagedRuntimeHost,
-    IosMusicCommand as NativeMusicCommand, IosRuntimeStorageHost as NativeRuntimeStorageHost,
+    IosManagedRuntimeHost as NativeManagedRuntimeHost, IosMusicCommand as NativeMusicCommand,
+    IosRuntimeStorageHost as NativeRuntimeStorageHost,
     IosSystemOperationHost as NativeSystemOperationHost, IosTerminalHost as NativeTerminalHost,
     IosTtsPlaybackHost as NativeTtsPlaybackHost, IosTtsSynthesisHost as NativeTtsSynthesisHost,
 };
@@ -184,12 +187,12 @@ pub struct OperitFlutterBridge {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) runtime: tokio::runtime::Runtime,
     localCore: Arc<LocalCoreProxy>,
-    pub(crate) proxyCore: Arc<RuntimeCoreRouter>,
+    pub(crate) proxyCore: Arc<CoreNodeRouter>,
     runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) watchChannel: NativeWatchChannel,
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) watchSubscriptions: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    pub(crate) watchSubscriptions: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>,
     #[cfg(target_arch = "wasm32")]
     pub(crate) watchSubscriptions: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>,
     pub(crate) pushStreams: Mutex<HashMap<String, NativePushState>>,
@@ -273,7 +276,7 @@ impl OperitFlutterBridge {
         install_permission_requester(&mut core);
         let runtimeStorageHost = core.runtimeStorageHost();
         let localCore = Arc::new(core);
-        let proxyCore = Arc::new(RuntimeCoreRouter::new(localCore.clone()));
+        let proxyCore = Arc::new(CoreNodeRouter::new(localCore.clone()));
         Ok(Self {
             #[cfg(not(target_arch = "wasm32"))]
             runtime,
@@ -283,7 +286,7 @@ impl OperitFlutterBridge {
             #[cfg(not(target_arch = "wasm32"))]
             watchChannel: NativeWatchChannel::new(),
             #[cfg(not(target_arch = "wasm32"))]
-            watchSubscriptions: Mutex::new(HashMap::new()),
+            watchSubscriptions: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(target_arch = "wasm32")]
             watchSubscriptions: Arc::new(Mutex::new(HashMap::new())),
             pushStreams: Mutex::new(HashMap::new()),
@@ -400,9 +403,7 @@ impl OperitFlutterBridge {
                 *mdns_guard = Some(mdns);
             }
         }
-        let coreClient = SharedFlutterCoreClient {
-            proxyCore: self.localCore.clone(),
-        };
+        let coreClient = self.proxyCore.as_ref().clone();
         let task = self.runtime.spawn(async move {
             RemoteLinkServer::serveWithListener(
                 coreClient,
@@ -506,38 +507,6 @@ where
     storage
         .writeBytes(path, content.as_bytes())
         .map_err(|error| error.to_string())
-}
-
-#[derive(Clone)]
-struct SharedFlutterCoreClient {
-    proxyCore: Arc<LocalCoreProxy>,
-}
-
-#[async_trait(?Send)]
-impl CoreLinkClient for SharedFlutterCoreClient {
-    async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
-        CoreLinkSharedClient::call(self.proxyCore.as_ref(), request).await
-    }
-
-    #[allow(non_snake_case)]
-    async fn watchSnapshot(
-        &mut self,
-        request: CoreWatchRequest,
-    ) -> Result<CoreEvent, CoreLinkError> {
-        CoreLinkSharedClient::watchSnapshot(self.proxyCore.as_ref(), request).await
-    }
-
-    async fn watch(&mut self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
-        CoreLinkSharedClient::watch(self.proxyCore.as_ref(), request).await
-    }
-
-    #[allow(non_snake_case)]
-    async fn openPush(
-        &mut self,
-        request: CorePushRequest,
-    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
-        Ok(Box::new(self.proxyCore.openReverseStream(request)?))
-    }
 }
 
 /// Installs the asynchronous controller permission requester for every runtime.

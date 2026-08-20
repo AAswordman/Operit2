@@ -1,5 +1,14 @@
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
+/// Stores the portable content and savepoints of one revisable text stream.
+#[derive(Debug, Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TextStreamRevisionState {
+    pub content: String,
+    pub savepoints: BTreeMap<String, usize>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TextStreamRevisionTracker {
     content_buffer: String,
@@ -18,6 +27,22 @@ impl TextStreamRevisionTracker {
     /// Borrows the currently accumulated content without cloning it.
     pub fn current_content(&self) -> &str {
         &self.content_buffer
+    }
+
+    /// Restores a revision tracker from one portable stream cursor.
+    pub fn from_state(state: TextStreamRevisionState) -> Self {
+        Self {
+            content_buffer: state.content,
+            savepoints: state.savepoints,
+        }
+    }
+
+    /// Captures the current content and savepoints for route-transparent resumption.
+    pub fn state(&self) -> TextStreamRevisionState {
+        TextStreamRevisionState {
+            content: self.content_buffer.clone(),
+            savepoints: self.savepoints.clone(),
+        }
     }
 
     /// Appends one streamed chunk and borrows the updated content.

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use operit_host_api::FileEntry;
+use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
 
 const ROOT_APP: &str = "app";
 const ROOT_MNT: &str = "mnt";
@@ -8,7 +9,7 @@ const ROOT_SDCARD: &str = "sdcard";
 const ROOT_DATA: &str = "data";
 
 const APP_DATA: &str = "data";
-const APP_WORKSPACES: &str = "workspaces";
+const APP_WORKSPACES: &str = WORKSPACE_DIR_PATH;
 
 const MNT_WINDOWS: &str = "windows";
 const MNT_ANDROID: &str = "android";

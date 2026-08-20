@@ -5,6 +5,7 @@ pub mod browser;
 pub mod browser_session;
 pub mod fs;
 pub mod http;
+pub mod websocket;
 pub mod local_inference;
 pub mod runtime;
 pub mod storage;

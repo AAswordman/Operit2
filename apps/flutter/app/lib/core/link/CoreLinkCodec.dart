@@ -5,30 +5,36 @@ import 'dart:typed_data';
 
 import 'CoreLinkProtocol.dart';
 
+typedef CoreEmbeddedStreamFactory =
+    Stream<T> Function<T>(
+      String streamId,
+      CoreObjectPath targetPath,
+      String propertyName,
+      Object? args,
+      T Function(CoreLinkValueReader reader) decode,
+    );
+
 /// Encodes one Link value using the protocol's only MessagePack representation.
 Uint8List encodeCoreLink(Object? value) {
   final writer = _CoreLinkMessagePackWriter();
   writer.writeValue(value);
   return writer.takeBytes();
 }
-
 /// Decodes one complete MessagePack Link value.
-Object? decodeCoreLink(Uint8List bytes) {
-  final reader = _CoreLinkMessagePackReader(bytes);
-  final value = reader.readValue();
+T decodeCoreLink<T>(
+  Uint8List bytes, {
+  T Function(CoreLinkValueReader reader)? decode,
+  CoreObjectPath? targetPath,
+  CoreEmbeddedStreamFactory? embeddedStreamFactory,
+}) {
+  final reader = _CoreLinkMessagePackReader(
+    bytes,
+    targetPath: targetPath,
+    embeddedStreamFactory: embeddedStreamFactory,
+  );
+  final value = decode == null ? reader.readValue() as T : decode(reader);
   reader.expectDone();
   return value;
-}
-
-/// Decodes one complete MessagePack Link map.
-Map<String, Object?> decodeCoreLinkMap(Uint8List bytes) {
-  final value = decodeCoreLink(bytes);
-  if (value is! Map) {
-    throw FormatException(
-      'Link payload must be a map, got ${value.runtimeType}',
-    );
-  }
-  return value.cast<String, Object?>();
 }
 
 /// Encodes a CoreProxy call using the compact native bridge tuple format.
@@ -104,9 +110,21 @@ void _writeNativeCorePath(
 }
 
 /// Decodes a compact native bridge result and returns its successful value.
-Object? decodeNativeCoreResult(Uint8List bytes) {
-  final reader = _CoreLinkMessagePackReader(bytes);
-  final value = _readNativeCoreResult(reader, () => reader.readValue());
+T decodeNativeCoreResult<T>(
+  Uint8List bytes, {
+  T Function(CoreLinkValueReader reader)? decode,
+  CoreObjectPath? targetPath,
+  CoreEmbeddedStreamFactory? embeddedStreamFactory,
+}) {
+  final reader = _CoreLinkMessagePackReader(
+    bytes,
+    targetPath: targetPath,
+    embeddedStreamFactory: embeddedStreamFactory,
+  );
+  final value = _readNativeCoreResult(
+    reader,
+    () => decode == null ? reader.readValue() as T : decode(reader),
+  );
   reader.expectDone();
   return value;
 }
@@ -239,18 +257,16 @@ CoreEvent _readNativeCoreEvent(_CoreLinkMessagePackReader reader) {
     );
   }
   final targetPath = CoreObjectPath(_readNativeCorePath(reader));
-  final propertyName = reader.readValue();
-  final kind = reader.readValue();
-  final value = reader.readValue();
-  if (propertyName is! String || kind is! String) {
-    throw FormatException('Native core event fields have invalid types');
-  }
-  return CoreEvent(
+  final propertyName = reader.readString();
+  final kind = reader.readString();
+  final valueBytes = reader.readValueBytes();
+  return CoreEvent.raw(
     requestId: requestId,
     targetPath: targetPath,
     propertyName: propertyName,
     kind: kind,
-    value: value,
+    valueBytes: valueBytes,
+    decodeValue: (bytes) => decodeCoreLink<Object?>(bytes),
   );
 }
 
@@ -508,15 +524,137 @@ class _CoreLinkMessagePackWriter {
   }
 }
 
+/// Exposes typed reads over a single MessagePack value payload.
+abstract interface class CoreLinkValueReader {
+  /// Reads one dynamically typed Link value.
+  Object? readValue();
+
+  /// Reads one embedded stream descriptor and opens its generic item stream.
+  Stream<T> readEmbeddedStream<T>(
+    T Function(CoreLinkValueReader reader) decode,
+  );
+
+  /// Reads one untouched MessagePack value as a byte view.
+  Uint8List readValueBytes();
+
+  /// Reads one MessagePack array header.
+  int readArrayLength();
+
+  /// Reads one MessagePack map header.
+  int readMapLength();
+
+  /// Reads one UTF-8 string value.
+  String readString();
+
+  /// Reads one boolean value.
+  bool readBool();
+
+  /// Reads one integer value.
+  int readInt();
+
+  /// Reads one floating-point value.
+  double readDouble();
+
+  /// Reads one binary value.
+  Uint8List readBytes();
+
+  /// Consumes a nil marker when present.
+  bool readNull();
+
+  /// Reads a nullable value without constructing an intermediate container.
+  T? readNullable<T>(T Function() decode) {
+    if (readNull()) {
+      return null;
+    }
+    return decode();
+  }
+
+  /// Skips one complete MessagePack value without allocating its contents.
+  void skipValue();
+
+  /// Reports whether the next value is encoded as a string.
+  bool isNextString();
+}
+
 /// Reads the Link protocol's MessagePack value set without dart2js uint64 accessors.
-class _CoreLinkMessagePackReader {
+class _CoreLinkMessagePackReader implements CoreLinkValueReader {
   final Uint8List _bytes;
+  final CoreEmbeddedStreamFactory? _embeddedStreamFactory;
   int _offset = 0;
 
   /// Creates a reader over one complete MessagePack payload.
-  _CoreLinkMessagePackReader(this._bytes);
+  _CoreLinkMessagePackReader(
+    this._bytes, {
+    CoreObjectPath? targetPath,
+    CoreEmbeddedStreamFactory? embeddedStreamFactory,
+  }) : _embeddedStreamFactory = embeddedStreamFactory;
+
+  /// Reads a nullable value without constructing a dynamic container.
+  @override
+  T? readNullable<T>(T Function() decode) {
+    if (readNull()) {
+      return null;
+    }
+    return decode();
+  }
+
+  /// Reads one embedded stream descriptor and opens its generic item stream.
+  @override
+  Stream<T> readEmbeddedStream<T>(
+    T Function(CoreLinkValueReader reader) decode,
+  ) {
+    final fieldCount = readMapLength();
+    String? streamId;
+    String? targetPathKey;
+    String? propertyName;
+    Object? args;
+    for (var index = 0; index < fieldCount; index += 1) {
+      final key = readString();
+      if (key != '\$coreStream') {
+        skipValue();
+        continue;
+      }
+      final descriptorCount = readMapLength();
+      for (
+        var descriptorIndex = 0;
+        descriptorIndex < descriptorCount;
+        descriptorIndex += 1
+      ) {
+        final descriptorKey = readString();
+        if (descriptorKey == 'streamId') {
+          streamId = readString();
+        } else if (descriptorKey == 'targetPath') {
+          targetPathKey = readString();
+        } else if (descriptorKey == 'propertyName') {
+          propertyName = readString();
+        } else if (descriptorKey == 'args') {
+          args = readValue();
+        } else {
+          skipValue();
+        }
+      }
+    }
+    final resolvedStreamId = streamId;
+    final resolvedTargetPathKey = targetPathKey;
+    final resolvedPropertyName = propertyName;
+    final factory = _embeddedStreamFactory;
+    if (resolvedStreamId == null ||
+        resolvedTargetPathKey == null ||
+        resolvedPropertyName == null ||
+        factory == null) {
+      throw StateError('Embedded Core stream requires a stream factory');
+    }
+    return factory<T>(
+      resolvedStreamId,
+      CoreObjectPath.parse(resolvedTargetPathKey),
+      resolvedPropertyName,
+      args,
+      decode,
+    );
+  }
 
   /// Reads any supported Link value.
+  @override
   Object? readValue() {
     final marker = _readByte();
     if (marker <= 0x7f) {
@@ -589,7 +727,34 @@ class _CoreLinkMessagePackReader {
     );
   }
 
+  /// Reads one untouched MessagePack value as a byte view.
+  @override
+  Uint8List readValueBytes() {
+    final start = _offset;
+    skipValue();
+    return Uint8List.sublistView(_bytes, start, _offset);
+  }
+
+  /// Reads one MessagePack map header and returns its item count.
+  @override
+  int readMapLength() {
+    final marker = _readByte();
+    if ((marker & 0xf0) == 0x80) {
+      return marker & 0x0f;
+    }
+    switch (marker) {
+      case 0xde:
+        return _readUnsigned(2);
+      case 0xdf:
+        return _readUnsigned(4);
+    }
+    throw FormatException(
+      'Expected MessagePack map, got marker 0x${marker.toRadixString(16)}',
+    );
+  }
+
   /// Reads one MessagePack array header and returns its item count.
+  @override
   int readArrayLength() {
     final marker = _readByte();
     return _readArrayLengthForMarker(marker);
@@ -618,6 +783,206 @@ class _CoreLinkMessagePackReader {
     throw FormatException(
       'Expected MessagePack array, got marker 0x${marker.toRadixString(16)}',
     );
+  }
+
+  /// Reads one UTF-8 string value.
+  @override
+  String readString() {
+    final marker = _readByte();
+    if ((marker & 0xe0) == 0xa0) {
+      return _readString(marker & 0x1f);
+    }
+    switch (marker) {
+      case 0xd9:
+        return _readString(_readUnsigned(1));
+      case 0xda:
+        return _readString(_readUnsigned(2));
+      case 0xdb:
+        return _readString(_readUnsigned(4));
+    }
+    throw FormatException(
+      'Expected MessagePack string, got marker 0x${marker.toRadixString(16)}',
+    );
+  }
+
+  /// Reads one boolean value.
+  @override
+  bool readBool() {
+    final marker = _readByte();
+    return switch (marker) {
+      0xc2 => false,
+      0xc3 => true,
+      _ => throw FormatException(
+        'Expected MessagePack bool, got marker 0x${marker.toRadixString(16)}',
+      ),
+    };
+  }
+
+  /// Reads one integer value without constructing a dynamic value.
+  @override
+  int readInt() {
+    final marker = _readByte();
+    if (marker <= 0x7f) {
+      return marker;
+    }
+    if (marker >= 0xe0) {
+      return marker - 0x100;
+    }
+    return switch (marker) {
+      0xcc => _readUnsigned(1),
+      0xcd => _readUnsigned(2),
+      0xce => _readUnsigned(4),
+      0xcf => _readUnsigned(8),
+      0xd0 => _readSigned(1),
+      0xd1 => _readSigned(2),
+      0xd2 => _readSigned(4),
+      0xd3 => _readSigned(8),
+      _ => throw FormatException(
+        'Expected MessagePack integer, got marker 0x${marker.toRadixString(16)}',
+      ),
+    };
+  }
+
+  /// Reads one floating-point value without constructing a dynamic value.
+  @override
+  double readDouble() {
+    final marker = _readByte();
+    return switch (marker) {
+      0xca => _readFloat32(),
+      0xcb => _readFloat64(),
+      0xcc => _readUnsigned(1).toDouble(),
+      0xcd => _readUnsigned(2).toDouble(),
+      0xce => _readUnsigned(4).toDouble(),
+      0xcf => _readUnsigned(8).toDouble(),
+      0xd0 => _readSigned(1).toDouble(),
+      0xd1 => _readSigned(2).toDouble(),
+      0xd2 => _readSigned(4).toDouble(),
+      0xd3 => _readSigned(8).toDouble(),
+      _ when marker <= 0x7f => marker.toDouble(),
+      _ when marker >= 0xe0 => (marker - 0x100).toDouble(),
+      _ => throw FormatException(
+        'Expected MessagePack number, got marker 0x${marker.toRadixString(16)}',
+      ),
+    };
+  }
+
+  /// Reads one binary value.
+  @override
+  Uint8List readBytes() {
+    final marker = _readByte();
+    return switch (marker) {
+      0xc4 => _readBinary(_readUnsigned(1)),
+      0xc5 => _readBinary(_readUnsigned(2)),
+      0xc6 => _readBinary(_readUnsigned(4)),
+      _ => throw FormatException(
+        'Expected MessagePack binary, got marker 0x${marker.toRadixString(16)}',
+      ),
+    };
+  }
+
+  /// Consumes a nil marker when present.
+  @override
+  bool readNull() {
+    if (_offset < _bytes.length && _bytes[_offset] == 0xc0) {
+      _offset += 1;
+      return true;
+    }
+    return false;
+  }
+
+  /// Skips one complete MessagePack value without allocating its contents.
+  @override
+  void skipValue() {
+    final marker = _readByte();
+    if (marker <= 0x7f || marker >= 0xe0) {
+      return;
+    }
+    if ((marker & 0xe0) == 0xa0) {
+      _skipBytes(marker & 0x1f);
+      return;
+    }
+    if ((marker & 0xf0) == 0x90) {
+      _skipValues(marker & 0x0f);
+      return;
+    }
+    if ((marker & 0xf0) == 0x80) {
+      _skipMapValues(marker & 0x0f);
+      return;
+    }
+    switch (marker) {
+      case 0xc0:
+      case 0xc2:
+      case 0xc3:
+        return;
+      case 0xc4:
+        _skipBytes(_readUnsigned(1));
+        return;
+      case 0xc5:
+        _skipBytes(_readUnsigned(2));
+        return;
+      case 0xc6:
+        _skipBytes(_readUnsigned(4));
+        return;
+      case 0xca:
+        _skipBytes(4);
+        return;
+      case 0xcb:
+        _skipBytes(8);
+        return;
+      case 0xcc:
+      case 0xd0:
+        _skipBytes(1);
+        return;
+      case 0xcd:
+      case 0xd1:
+        _skipBytes(2);
+        return;
+      case 0xce:
+      case 0xd2:
+        _skipBytes(4);
+        return;
+      case 0xcf:
+      case 0xd3:
+        _skipBytes(8);
+        return;
+      case 0xd9:
+        _skipBytes(_readUnsigned(1));
+        return;
+      case 0xda:
+        _skipBytes(_readUnsigned(2));
+        return;
+      case 0xdb:
+        _skipBytes(_readUnsigned(4));
+        return;
+      case 0xdc:
+        _skipValues(_readUnsigned(2));
+        return;
+      case 0xdd:
+        _skipValues(_readUnsigned(4));
+        return;
+      case 0xde:
+        _skipMapValues(_readUnsigned(2));
+        return;
+      case 0xdf:
+        _skipMapValues(_readUnsigned(4));
+        return;
+    }
+    throw FormatException(
+      'Unsupported MessagePack marker 0x${marker.toRadixString(16)}',
+    );
+  }
+
+  /// Reports whether the next value is encoded as a string.
+  @override
+  bool isNextString() {
+    if (_offset >= _bytes.length) {
+      throw const FormatException('Unexpected end of Link payload');
+    }
+    final marker = _bytes[_offset];
+    return (marker & 0xe0) == 0xa0 ||
+        marker == 0xd9 ||
+        marker == 0xda ||
+        marker == 0xdb;
   }
 
   /// Verifies the reader consumed the complete payload.
@@ -705,6 +1070,27 @@ class _CoreLinkMessagePackReader {
       value[key] = readValue();
     }
     return value;
+  }
+
+  /// Skips a fixed number of MessagePack values.
+  void _skipValues(int count) {
+    for (var i = 0; i < count; i += 1) {
+      skipValue();
+    }
+  }
+
+  /// Skips a fixed number of MessagePack map entries.
+  void _skipMapValues(int count) {
+    for (var i = 0; i < count; i += 1) {
+      skipValue();
+      skipValue();
+    }
+  }
+
+  /// Advances past a raw byte segment after validating its length.
+  void _skipBytes(int count) {
+    _require(count);
+    _offset += count;
   }
 
   /// Checks that the requested byte count is present.

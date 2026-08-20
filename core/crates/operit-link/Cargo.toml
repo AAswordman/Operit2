@@ -31,15 +31,3 @@ harness = false
 [[bench]]
 name = "browser_surface_codec_bench"
 harness = false
-
-[[bench]]
-name = "dispatcher_call_bench"
-harness = false
-
-[[bench]]
-name = "watch_channel_bench"
-harness = false
-
-[[bench]]
-name = "link_stress_bench"
-harness = false

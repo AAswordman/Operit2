@@ -11,6 +11,7 @@ use operit_host_api::{
     HttpDownloadProgress, HttpDownloadProgressState, HttpDownloadRequest, HttpHost,
     RuntimeStorageHost,
 };
+use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, RUNTIME_ROOT_PATH_PREFIX};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -748,7 +749,7 @@ fn runtimeLayoutPath(
 ) -> Result<PathBuf, LocalEngineDownloadError> {
     let relative = storagePath
         .trim()
-        .strip_prefix("runtime/")
+        .strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
         .ok_or_else(|| LocalEngineDownloadError::Storage(storagePath.to_string()))?;
     Ok(runtimeRoot.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR)))
 }
@@ -763,9 +764,9 @@ fn runtimeStoragePathString(
         .map_err(|_| LocalEngineDownloadError::Storage(path.to_string_lossy().to_string()))?;
     let relative = relative.to_string_lossy().replace('\\', "/");
     if relative.is_empty() {
-        Ok("runtime".to_string())
+        Ok(RUNTIME_ROOT_DIR_PATH.to_string())
     } else {
-        Ok(format!("runtime/{relative}"))
+        Ok(format!("{RUNTIME_ROOT_PATH_PREFIX}{relative}"))
     }
 }
 

@@ -3,21 +3,15 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use crate::bootstrap::create_cli_application;
 use crate::core_proxy::{local_cli_core, CliCore};
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
-use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::PromptFunctionType::PromptFunctionType;
-use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
-use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
-use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use operit_runtime::services::ChatServiceCore::ChatServiceCore;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 
@@ -33,6 +27,7 @@ fn with_main_chat_core<R>(
     Ok(action(holder.getCore(ChatRuntimeSlot::MAIN)))
 }
 
+/// Runs the chat shell through an existing CoreNode-aware CLI proxy.
 pub(super) async fn run_chat_shell_command_with_core(
     core: &mut CliCore,
     args: &[String],
@@ -84,7 +79,7 @@ async fn show_chat_with_core(core: &mut CliCore, args: &[String]) -> Result<(), 
     print_chat_history_header(&chat);
     for message in core
         .chat_runtime_holder_main()
-        .chatHistoryFlowSnapshot()
+        .chatMessagesFlowSnapshot(Some(chatId.clone()))
         .await
         .map_err(|error| error.to_string())?
     {
@@ -542,55 +537,12 @@ pub(crate) fn parse_shell_args(args: &[String]) -> Result<ShellArgs, String> {
     Ok(shellArgs)
 }
 
-pub(crate) async fn run_shell_command(args: &[String]) -> Result<(), String> {
-    let shellArgs = parse_shell_args(args)?;
-    let mut application = create_cli_application();
-    application.onCreate()?;
-    let mut queuedAttachmentPaths = Vec::<String>::new();
-    let initialChatId = initialize_shell_chat(&mut application, &shellArgs)?;
-    println!("interactive shell ready");
-    println!("chat={initialChatId}");
-    println!("type /help for commands");
-    loop {
-        let currentChatId = current_shell_chat_id(&mut application)?;
-        print!("operit2[{}]> ", short_chat_label(&currentChatId));
-        io::stdout().flush().map_err(|error| error.to_string())?;
-        let mut line = String::new();
-        let readBytes = io::stdin()
-            .read_line(&mut line)
-            .map_err(|error| error.to_string())?;
-        if readBytes == 0 {
-            println!();
-            break;
-        }
-        let input = line.trim();
-        if input.is_empty() {
-            continue;
-        }
-        if input.starts_with('/') {
-            match handle_shell_command(input, &mut application, &mut queuedAttachmentPaths).await? {
-                ShellLoopControl::Continue => continue,
-                ShellLoopControl::Exit => break,
-            }
-        } else {
-            let sendArgs = ChatSendArgs {
-                chatId: Some(currentChatId),
-                message: input.to_string(),
-                attachmentPaths: queuedAttachmentPaths.clone(),
-                replyToTimestamp: None,
-            };
-            match send_chat_message_with_application(&mut application, sendArgs).await {
-                Ok(result) => {
-                    print_chat_send_result(&result);
-                    queuedAttachmentPaths.clear();
-                }
-                Err(error) => eprintln!("{error}"),
-            }
-        }
-    }
-    Ok(())
+/// Runs the interactive shell through the local CoreNode router.
+pub(crate) async fn run_shell_command(core: &mut CliCore, args: &[String]) -> Result<(), String> {
+    run_shell_command_with_core(core, args).await
 }
 
+/// Runs one interactive shell session through a CoreNode-aware CLI proxy.
 async fn run_shell_command_with_core(core: &mut CliCore, args: &[String]) -> Result<(), String> {
     let shellArgs = parse_shell_args(args)?;
     let mut queuedAttachmentPaths = Vec::<String>::new();
@@ -642,14 +594,6 @@ async fn initialize_shell_chat_with_core(
     core: &mut CliCore,
     shellArgs: &ShellArgs,
 ) -> Result<String, String> {
-    core.preferences_model_config_manager()
-        .initializeIfNeeded()
-        .await
-        .map_err(|error| error.to_string())?;
-    core.preferences_functional_config_manager()
-        .initializeIfNeeded()
-        .await
-        .map_err(|error| error.to_string())?;
     if let Some(chatId) = shellArgs.chatId.clone() {
         core.chat_runtime_holder_main()
             .switchChat(chatId.clone())
@@ -718,7 +662,7 @@ pub(crate) fn initialize_shell_chat(
 fn latest_chat_id() -> Result<String, String> {
     let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
     manager
-        .chatHistoriesFlow()
+        .loadChatHistories()
         .map_err(|error| error.to_string())?
         .into_iter()
         .max_by(|left, right| {
@@ -764,7 +708,7 @@ async fn latest_chat_id_with_core(core: &mut CliCore) -> Result<String, String> 
 pub(crate) fn ensure_chat_exists(chatId: &str) -> Result<(), String> {
     let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
     let exists = manager
-        .chatHistoriesFlow()
+        .loadChatHistories()
         .map_err(|error| error.to_string())?
         .iter()
         .any(|chat| chat.id == chatId);
@@ -775,159 +719,12 @@ pub(crate) fn ensure_chat_exists(chatId: &str) -> Result<(), String> {
     }
 }
 
-pub(crate) fn current_shell_chat_id(application: &mut OperitApplication) -> Result<String, String> {
-    with_main_chat_core(application, |core| {
-        core.currentChatIdFlow()
-            .value()
-            .ok_or_else(|| "no active chat in shell".to_string())
-    })?
-}
-
 async fn current_shell_chat_id_with_core(core: &mut CliCore) -> Result<String, String> {
     core.chat_runtime_holder_main()
         .currentChatIdFlowSnapshot()
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "no active chat in shell".to_string())
-}
-
-async fn handle_shell_command(
-    input: &str,
-    application: &mut OperitApplication,
-    queuedAttachmentPaths: &mut Vec<String>,
-) -> Result<ShellLoopControl, String> {
-    let parts = split_shell_command_line(input)?;
-    if parts.is_empty() {
-        return Ok(ShellLoopControl::Continue);
-    }
-    let command = parts[0].trim_start_matches('/');
-    let args = &parts[1..];
-    match command {
-        "help" => {
-            print_shell_usage();
-        }
-        "exit" | "quit" => {
-            return Ok(ShellLoopControl::Exit);
-        }
-        "chat" | "current" => {
-            println!("{}", current_shell_chat_id(application)?);
-        }
-        "new" => {
-            let shellArgs = parse_shell_args(args)?;
-            if shellArgs.chatId.is_some() {
-                return Err("shell /new does not accept --chat".to_string());
-            }
-            let chatId = with_main_chat_core(application, |core| {
-                core.createNewChat(
-                    shellArgs.characterCardName,
-                    shellArgs.group,
-                    true,
-                    true,
-                    shellArgs.characterGroupId,
-                );
-                core.currentChatIdFlow()
-                    .value()
-                    .ok_or_else(|| "core did not create chat".to_string())
-            })??;
-            println!("chat={chatId}");
-        }
-        "switch" => {
-            let chatId = args
-                .get(0)
-                .ok_or_else(|| "usage: /switch <chat-id>".to_string())?
-                .clone();
-            ensure_chat_exists(&chatId)?;
-            with_main_chat_core(application, |core| core.switchChat(chatId.clone()))?;
-            println!("chat={chatId}");
-        }
-        "resume" => {
-            let currentChatId = current_shell_chat_id(application)?;
-            let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
-            let target = manager
-                .chatHistoriesFlow()
-                .map_err(|error| error.to_string())?
-                .into_iter()
-                .filter(|chat| chat.id != currentChatId)
-                .max_by(|left, right| {
-                    left.updatedAt
-                        .parse::<i64>()
-                        .expect("chat.updatedAt must be epoch millis")
-                        .cmp(
-                            &right
-                                .updatedAt
-                                .parse::<i64>()
-                                .expect("chat.updatedAt must be epoch millis"),
-                        )
-                        .then_with(|| right.displayOrder.cmp(&left.displayOrder))
-                });
-            let Some(target) = target else {
-                println!("no previous chat to resume");
-                return Ok(ShellLoopControl::Continue);
-            };
-            with_main_chat_core(application, |core| core.switchChat(target.id.clone()))?;
-            println!("chat={}", target.id);
-        }
-        "show" => {
-            let chatId = current_shell_chat_id(application)?;
-            let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
-            let chat = manager
-                .chatHistoriesFlow()
-                .map_err(|error| error.to_string())?
-                .into_iter()
-                .find(|chat| chat.id == chatId)
-                .ok_or_else(|| format!("chat not found: {chatId}"))?;
-            print_chat_history_header(&chat);
-            let messages = with_main_chat_core(application, |core| core.chatHistoryFlow().value())?;
-            for message in messages {
-                print_chat_message(&message);
-            }
-        }
-        "attach" => {
-            let path = args
-                .get(0)
-                .ok_or_else(|| "usage: /attach <path>".to_string())?
-                .clone();
-            queuedAttachmentPaths.push(path.clone());
-            println!("queued attachment: {path}");
-        }
-        "attachments" => {
-            if queuedAttachmentPaths.is_empty() {
-                println!("attachments=none");
-            } else {
-                for path in queuedAttachmentPaths.iter() {
-                    println!("{path}");
-                }
-            }
-        }
-        "clear-attachments" => {
-            queuedAttachmentPaths.clear();
-            println!("attachments cleared");
-        }
-        "send" => {
-            let message = args.join(" ");
-            if message.trim().is_empty() {
-                return Err("usage: /send <message>".to_string());
-            }
-            let chatId = current_shell_chat_id(application)?;
-            let sendArgs = ChatSendArgs {
-                chatId: Some(chatId),
-                message,
-                attachmentPaths: queuedAttachmentPaths.clone(),
-                replyToTimestamp: None,
-            };
-            match send_chat_message_with_application(application, sendArgs).await {
-                Ok(result) => {
-                    print_chat_send_result(&result);
-                    queuedAttachmentPaths.clear();
-                }
-                Err(error) => eprintln!("{error}"),
-            }
-        }
-        _ => {
-            return Err(format!("unknown shell command: /{command}"));
-        }
-    }
-    Ok(ShellLoopControl::Continue)
 }
 
 async fn handle_shell_command_with_core(
@@ -1125,270 +922,6 @@ fn print_shell_usage() {
     println!("/send <message>");
 }
 
-pub(crate) async fn begin_chat_message_with_application(
-    application: &mut OperitApplication,
-    sendArgs: ChatSendArgs,
-) -> Result<ChatSendResult, String> {
-    let beforeLastAiTimestamp =
-        dispatch_chat_message_with_application(application, sendArgs).await?;
-    let (currentChatId, aiMessage) = with_main_chat_core(application, |core| {
-        let currentChatId = core
-            .currentChatIdFlow()
-            .value()
-            .ok_or_else(|| "core has no active chat after send".to_string())?;
-        let aiMessage = core
-            .chatHistoryFlow()
-            .value()
-            .iter()
-            .rev()
-            .find(|message| message.sender == "ai" && message.timestamp > beforeLastAiTimestamp)
-            .ok_or_else(|| "core did not produce ai message for current turn".to_string())?
-            .clone();
-        Ok::<_, String>((currentChatId, aiMessage))
-    })??;
-    Ok(ChatSendResult {
-        chatId: currentChatId,
-        aiMessage,
-    })
-}
-
-pub(crate) async fn dispatch_chat_message_with_application(
-    application: &mut OperitApplication,
-    sendArgs: ChatSendArgs,
-) -> Result<i64, String> {
-    let modelConfigManager = ModelConfigManager::default();
-    let functionalConfigManager = FunctionalConfigManager::default();
-    modelConfigManager
-        .initializeIfNeeded()
-        .map_err(|error| error.to_string())?;
-    functionalConfigManager
-        .initializeIfNeeded()
-        .map_err(|error| error.to_string())?;
-    let chatBinding = functionalConfigManager
-        .getModelBindingForFunction(FunctionType::CHAT)
-        .map_err(|error| error.to_string())?;
-    let turnOptions = ChatTurnOptions::default();
-    let enhanced_ai_service = EnhancedAIService::new(
-        application.toolHandler.clone(),
-        application.providerRuntimeContext.clone(),
-    );
-    let mut holder = application.chatRuntimeHolder.lock().await;
-    let core = holder.getCore(ChatRuntimeSlot::MAIN);
-    core.enhancedAiService = Some(enhanced_ai_service);
-    if let Some(chatId) = sendArgs.chatId.as_ref() {
-        core.switchChat(chatId.clone());
-    }
-    let attachments = sendArgs
-        .attachmentPaths
-        .iter()
-        .map(|path| build_attachment_info(path))
-        .collect::<Result<Vec<_>, _>>()?;
-    let replyToMessage = match sendArgs.replyToTimestamp {
-        Some(timestamp) => core
-            .chatHistoryFlow()
-            .value()
-            .iter()
-            .find(|message| message.timestamp == timestamp)
-            .cloned()
-            .ok_or_else(|| format!("reply-to message not found: {timestamp}"))?,
-        None => ChatMessage::new(String::new()),
-    };
-    let replyToMessage = if replyToMessage.sender.is_empty() {
-        None
-    } else {
-        Some(replyToMessage)
-    };
-    let beforeLastAiTimestamp = core
-        .chatHistoryFlow()
-        .value()
-        .iter()
-        .filter(|message| message.sender == "ai")
-        .map(|message| message.timestamp)
-        .max()
-        .unwrap_or(0);
-    core.sendUserMessage(
-        PromptFunctionType::CHAT,
-        None,
-        None,
-        sendArgs.message,
-        None,
-        Some(chatBinding.providerId),
-        Some(chatBinding.modelId),
-        attachments,
-        replyToMessage,
-        turnOptions,
-    )
-    .await;
-    let currentChatId = core
-        .currentChatIdFlow()
-        .value()
-        .ok_or_else(|| "core has no active chat after send".to_string())?;
-    let inputProcessingStateByChatId = core.inputProcessingStateByChatIdFlow().value();
-    match inputProcessingStateByChatId
-        .get(&currentChatId)
-        .or_else(|| inputProcessingStateByChatId.get("__DEFAULT_CHAT__"))
-    {
-        Some(InputProcessingState::Error { message }) => return Err(message.clone()),
-        _ => {}
-    }
-    Ok(beforeLastAiTimestamp)
-}
-
-pub(crate) fn launch_chat_message_with_application(
-    application: &mut OperitApplication,
-    sendArgs: ChatSendArgs,
-) -> Result<String, String> {
-    let modelConfigManager = ModelConfigManager::default();
-    let functionalConfigManager = FunctionalConfigManager::default();
-    modelConfigManager
-        .initializeIfNeeded()
-        .map_err(|error| error.to_string())?;
-    functionalConfigManager
-        .initializeIfNeeded()
-        .map_err(|error| error.to_string())?;
-    let chatBinding = functionalConfigManager
-        .getModelBindingForFunction(FunctionType::CHAT)
-        .map_err(|error| error.to_string())?;
-    let enhanced_ai_service = EnhancedAIService::new(
-        application.toolHandler.clone(),
-        application.providerRuntimeContext.clone(),
-    );
-    let (chatId, replyToMessage, messageText, mut service, mut delegate) =
-        with_main_chat_core(application, |core| {
-            core.enhancedAiService = Some(enhanced_ai_service);
-            if let Some(chatId) = sendArgs.chatId.as_ref() {
-                core.switchChat(chatId.clone());
-            }
-            let chatId = core
-                .currentChatIdFlow()
-                .value()
-                .ok_or_else(|| "core has no active chat before send".to_string())?;
-            let replyToMessage = match sendArgs.replyToTimestamp {
-                Some(timestamp) => core
-                    .chatHistoryFlow()
-                    .value()
-                    .iter()
-                    .find(|message| message.timestamp == timestamp)
-                    .cloned()
-                    .ok_or_else(|| format!("reply-to message not found: {timestamp}"))?,
-                None => ChatMessage::new(String::new()),
-            };
-            let replyToMessage = if replyToMessage.sender.is_empty() {
-                None
-            } else {
-                Some(replyToMessage)
-            };
-            let messageText = sendArgs.message;
-            let service = core
-                .enhancedAiService
-                .clone()
-                .ok_or_else(|| "ai service is not initialized".to_string())?;
-            let chatHistoryDelegate = core.chatHistoryDelegate.clone_for_core();
-            let messageProcessingDelegate = core.messageProcessingDelegate.clone_for_core();
-            let mut delegate =
-                MessageCoordinationDelegate::new(chatHistoryDelegate, messageProcessingDelegate);
-            if let Some(coreDelegate) = core.messageCoordinationDelegate.as_mut() {
-                coreDelegate
-                    .tokenStatisticsDelegate
-                    .setActiveChatId(Some(chatId.clone()));
-                coreDelegate
-                    .tokenStatisticsDelegate
-                    .bindChatService(Some(chatId.clone()), &service);
-                delegate.tokenStatisticsDelegate = coreDelegate.tokenStatisticsDelegate.clone();
-            }
-            Ok::<_, String>((chatId, replyToMessage, messageText, service, delegate))
-        })??;
-    let attachments = sendArgs
-        .attachmentPaths
-        .iter()
-        .map(|path| build_attachment_info(path))
-        .collect::<Result<Vec<_>, _>>()?;
-    let threadChatId = chatId.clone();
-    std::thread::spawn(move || {
-        let runtimeResult = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build();
-        let runtime = match runtimeResult {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                delegate
-                    .messageProcessingDelegate
-                    .setInputProcessingStateForChat(
-                        threadChatId,
-                        InputProcessingState::Error {
-                            message: error.to_string(),
-                        },
-                    );
-                return;
-            }
-        };
-        runtime.block_on(async move {
-            delegate
-                .sendUserMessage(
-                    &mut service,
-                    PromptFunctionType::CHAT,
-                    None,
-                    Some(threadChatId),
-                    messageText,
-                    None,
-                    Some(chatBinding.providerId),
-                    Some(chatBinding.modelId),
-                    attachments,
-                    replyToMessage,
-                    ChatTurnOptions::default(),
-                )
-                .await;
-        });
-    });
-    Ok(chatId)
-}
-
-pub(crate) async fn send_chat_message_with_application(
-    application: &mut OperitApplication,
-    sendArgs: ChatSendArgs,
-) -> Result<ChatSendResult, String> {
-    let mut result = begin_chat_message_with_application(application, sendArgs).await?;
-    result.aiMessage = wait_for_committed_ai_message(
-        application,
-        &result.chatId,
-        result.aiMessage.timestamp,
-        Duration::from_secs(30),
-    )?;
-    Ok(result)
-}
-
-fn wait_for_committed_ai_message(
-    application: &mut OperitApplication,
-    chatId: &str,
-    timestamp: i64,
-    timeout: Duration,
-) -> Result<ChatMessage, String> {
-    let startedAt = Instant::now();
-    loop {
-        let result = with_main_chat_core(application, |core| {
-            if let Some(message) = core.chatHistoryFlow().value().into_iter().find(|message| {
-                message.sender == "ai" && message.timestamp == timestamp && message.completedAt > 0
-            }) {
-                return Ok(Some(message));
-            }
-            let stateByChatId = core.inputProcessingStateByChatIdFlow().value();
-            if let Some(InputProcessingState::Error { message }) = stateByChatId.get(chatId) {
-                return Err(message.clone());
-            }
-            Ok(None)
-        })??;
-        if let Some(message) = result {
-            return Ok(message);
-        }
-        if startedAt.elapsed() >= timeout {
-            return Err(format!(
-                "timed out waiting for committed ai message: chat={chatId} timestamp={timestamp}"
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
 fn print_chat_send_result(result: &ChatSendResult) {
     print!("{}", result.aiMessage.displayText());
     println!();
@@ -1401,14 +934,6 @@ fn print_chat_send_result(result: &ChatSendResult) {
         result.aiMessage.cachedInputTokens,
         result.aiMessage.outputTokens
     );
-}
-
-async fn send_chat_message(sendArgs: ChatSendArgs) -> Result<(), String> {
-    let mut application = create_cli_application();
-    application.onCreate()?;
-    let result = send_chat_message_with_application(&mut application, sendArgs).await?;
-    print_chat_send_result(&result);
-    Ok(())
 }
 
 async fn send_chat_message_with_core(
@@ -1424,23 +949,21 @@ async fn send_chat_message_with_core_result(
     core: &mut CliCore,
     sendArgs: ChatSendArgs,
 ) -> Result<ChatSendResult, String> {
-    core.preferences_model_config_manager()
-        .initializeIfNeeded()
-        .await
-        .map_err(|error| error.to_string())?;
-    core.preferences_functional_config_manager()
-        .initializeIfNeeded()
-        .await
-        .map_err(|error| error.to_string())?;
     if let Some(chatId) = sendArgs.chatId.clone() {
         core.chat_runtime_holder_main()
             .switchChat(chatId)
             .await
             .map_err(|error| error.to_string())?;
     }
+    let chatId = core
+        .chat_runtime_holder_main()
+        .currentChatIdFlowSnapshot()
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "core has no active chat before send".to_string())?;
     let beforeMessages = core
         .chat_runtime_holder_main()
-        .chatHistoryFlowSnapshot()
+        .chatMessagesFlowSnapshot(Some(chatId.clone()))
         .await
         .map_err(|error| error.to_string())?;
     let beforeLastAiTimestamp = beforeMessages
@@ -1471,7 +994,7 @@ async fn send_chat_message_with_core_result(
         .sendUserMessage(
             PromptFunctionType::CHAT,
             None,
-            None,
+            Some(chatId.clone()),
             sendArgs.message,
             None,
             None,
@@ -1482,12 +1005,6 @@ async fn send_chat_message_with_core_result(
         )
         .await
         .map_err(|error| error.to_string())?;
-    let chatId = core
-        .chat_runtime_holder_main()
-        .currentChatIdFlowSnapshot()
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "core has no active chat after send".to_string())?;
     let aiMessage = wait_for_committed_ai_message_with_core(
         core,
         &chatId,
@@ -1517,7 +1034,7 @@ async fn wait_for_committed_ai_message_with_core(
         }
         let messages = core
             .chat_runtime_holder_main()
-            .chatHistoryFlowSnapshot()
+            .chatMessagesFlowSnapshot(Some(chatId.to_string()))
             .await
             .map_err(|error| error.to_string())?;
         if let Some(message) = messages.into_iter().rev().find(|message| {

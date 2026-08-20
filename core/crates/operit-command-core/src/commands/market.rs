@@ -18,6 +18,7 @@ use operit_tools::tools::mcp_runtime::MCPRepository::MCPRepository;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, WORKSPACE_DIR_PATH};
 use sha2::{Digest, Sha256};
 
 macro_rules! println {
@@ -1084,8 +1085,8 @@ mod tests {
     impl MemoryStorageHost {
         /// Creates isolated runtime and workspace roots for one market command test.
         fn new(root: PathBuf) -> Self {
-            let runtime_root = root.join("runtime");
-            let workspace_root = root.join("workspace");
+            let runtime_root = root.join(RUNTIME_ROOT_DIR_PATH);
+            let workspace_root = root.join(WORKSPACE_DIR_PATH);
             std::fs::create_dir_all(&runtime_root).expect("create test runtime root");
             std::fs::create_dir_all(&workspace_root).expect("create test workspace root");
             Self {

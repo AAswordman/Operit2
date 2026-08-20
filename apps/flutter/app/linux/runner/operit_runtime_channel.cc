@@ -39,9 +39,54 @@ using BridgeNextWatchChannelEvent = OperitByteBuffer (*)(BridgeHandle);
 using BridgeCloseWatchStream = OperitByteBuffer (*)(BridgeHandle, const char*);
 using BridgeFreeBytes = void (*)(OperitByteBuffer);
 using BridgeFreeString = void (*)(char*);
+using BridgeRuntimeBootstrapRead = char* (*)(const char*);
+using BridgeRuntimeBootstrapWrite = char* (*)(const char*, const char*);
 
 FlMethodChannel* g_operit_runtime_channel = nullptr;
 std::atomic_bool g_watch_channel_pump_running{false};
+
+/// Invokes one Runtime bootstrap storage export without creating a Core handle.
+bool invoke_runtime_bootstrap_storage(const std::string& default_runtime_root,
+                                      const std::string* content,
+                                      std::string* response,
+                                      std::string* error) {
+  void* library = dlopen("liboperit_flutter_bridge.so", RTLD_NOW | RTLD_LOCAL);
+  if (library == nullptr) {
+    if (error != nullptr) {
+      *error = dlerror();
+    }
+    return false;
+  }
+  const auto read = reinterpret_cast<BridgeRuntimeBootstrapRead>(
+      dlsym(library, "operit_flutter_bridge_runtime_bootstrap_read"));
+  const auto write = reinterpret_cast<BridgeRuntimeBootstrapWrite>(
+      dlsym(library, "operit_flutter_bridge_runtime_bootstrap_write"));
+  const auto free_string = reinterpret_cast<BridgeFreeString>(
+      dlsym(library, "operit_flutter_bridge_free_string"));
+  if (read == nullptr || write == nullptr || free_string == nullptr) {
+    if (error != nullptr) {
+      *error = "operit flutter bootstrap exports are incomplete";
+    }
+    dlclose(library);
+    return false;
+  }
+  char* raw = content == nullptr
+                  ? read(default_runtime_root.c_str())
+                  : write(default_runtime_root.c_str(), content->c_str());
+  if (raw == nullptr) {
+    if (error != nullptr) {
+      *error = "operit flutter bootstrap export returned null";
+    }
+    dlclose(library);
+    return false;
+  }
+  if (response != nullptr) {
+    *response = raw;
+  }
+  free_string(raw);
+  dlclose(library);
+  return true;
+}
 
 /// Normalizes one caller-supplied Linux storage root.
 bool normalize_linux_storage_root(const std::string& requested,
@@ -606,6 +651,44 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
     }
     g_autoptr(FlValue) result =
         linux_storage_paths(runtime_root, workspace_root);
+    respond_success_value(method_call, result);
+    return;
+  }
+  if (strcmp(method, "runtimeBootstrapRead") == 0) {
+    std::string runtime_root;
+    std::string workspace_root;
+    std::string response;
+    if (!resolve_linux_default_storage_roots(
+            &runtime_root, &workspace_root, &error) ||
+        !invoke_runtime_bootstrap_storage(
+            runtime_root, nullptr, &response, &error)) {
+      respond_error(method_call, "RUNTIME_BOOTSTRAP_READ_ERROR", error);
+      return;
+    }
+    g_autoptr(FlValue) result = fl_value_new_string(response.c_str());
+    respond_success_value(method_call, result);
+    return;
+  }
+  if (strcmp(method, "runtimeBootstrapWrite") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_STRING) {
+      respond_error(
+          method_call, "INVALID_ARGS",
+          "runtimeBootstrapWrite expects JSON text");
+      return;
+    }
+    std::string runtime_root;
+    std::string workspace_root;
+    std::string response;
+    const std::string content = fl_value_get_string(args);
+    if (!resolve_linux_default_storage_roots(
+            &runtime_root, &workspace_root, &error) ||
+        !invoke_runtime_bootstrap_storage(
+            runtime_root, &content, &response, &error)) {
+      respond_error(method_call, "RUNTIME_BOOTSTRAP_WRITE_ERROR", error);
+      return;
+    }
+    g_autoptr(FlValue) result = fl_value_new_string(response.c_str());
     respond_success_value(method_call, result);
     return;
   }

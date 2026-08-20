@@ -92,6 +92,8 @@ pub struct ToolResultMap {
     pub write_environment_variable: EnvironmentVariableWriteResultData,
     pub execute_cli_command: serde_json::Value,
     pub use_package: String,
+    pub list_core_nodes: String,
+    pub switch_core: String,
     pub package_proxy: ToolResultData,
     pub get_terminal_info: TerminalInfoResultData,
     pub execute_in_terminal_session: TerminalCommandResultData,
@@ -138,7 +140,9 @@ include!(concat!(env!("OUT_DIR"), "/builtin_tool_names.rs"));
 
 #[cfg(test)]
 mod tests {
-    use super::super::results::{FileApplyResultData, FileOperationData, ToolResultData};
+    use super::super::results::{
+        stringResultData, FileApplyResultData, FileOperationData, ToolResultData,
+    };
     use super::BuiltinToolName;
 
     /// Builds a representative file-apply result payload.
@@ -163,5 +167,14 @@ mod tests {
         assert!(BuiltinToolName::ApplyFile.accepts_runtime_result(&result));
         assert!(BuiltinToolName::CreateFile.accepts_runtime_result(&result));
         assert!(BuiltinToolName::EditFile.accepts_runtime_result(&result));
+    }
+
+    #[test]
+    /// Ensures CoreNode discovery keeps its public string result contract.
+    fn list_core_nodes_accepts_string_results() {
+        let result =
+            stringResultData(r#"{"currentNodeId":"node-a","nodeIds":["node-a","node-b"]}"#);
+
+        assert!(BuiltinToolName::ListCoreNodes.accepts_runtime_result(&result));
     }
 }

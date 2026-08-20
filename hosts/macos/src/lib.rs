@@ -11,9 +11,9 @@ use operit_host_api::HostManager::HostManager;
 pub use operit_host_apple_native::{
     AppleAudioPlaybackHost as MacosAudioPlaybackHost, AppleBluetoothHost as MacosBluetoothHost,
     AppleFileSystemHost as MacosFileSystemHost,
+    AppleHostJavaScriptRuntimeHost as MacosHostJavaScriptRuntimeHost,
     AppleHostRuntimeEventHost as MacosHostRuntimeEventHost,
     AppleHostRuntimeEventSchedulerHost as MacosHostRuntimeEventSchedulerHost,
-    AppleHostJavaScriptRuntimeHost as MacosHostJavaScriptRuntimeHost,
     AppleHostRuntimeTaskSchedulerHost as MacosHostRuntimeTaskSchedulerHost,
     AppleHttpHost as MacosHttpHost, AppleLocalInferenceCommand as MacosLocalInferenceCommand,
     AppleLocalInferenceHost as MacosLocalInferenceHost, AppleMusicCommand as MacosMusicCommand,
@@ -39,10 +39,11 @@ pub fn createRuntimeHostManager(
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
         runtimeRoot.clone(),
     ));
-    let runtimeStorageWriteHost = Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
-        runtimeRoot.clone(),
-        workspaceRoot.clone(),
-    ));
+    let runtimeStorageWriteHost =
+        Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
+            runtimeRoot.clone(),
+            workspaceRoot.clone(),
+        ));
     let runtimeStorageHost = Arc::new(MacosRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
@@ -56,6 +57,7 @@ pub fn createRuntimeHostManager(
         runtimeSqliteHost,
     )
     .withHostSecretStore(hostSecretStore)
+    .withWebSocketHost(Arc::new(MacosHttpHost::new()))
     .withArchiveStagingHost(archiveStagingHost)
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withHostRuntimeEventHost(Arc::new(MacosHostRuntimeEventHost::new()))

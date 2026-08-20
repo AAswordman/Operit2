@@ -118,7 +118,9 @@ fn list_input_menu_definitions(
             break definitions;
         }
         if Instant::now() >= deadline {
-            return Err("input-menu ToolPkg hooks did not finish loading within 10 seconds".to_string());
+            return Err(
+                "input-menu ToolPkg hooks did not finish loading within 10 seconds".to_string(),
+            );
         }
         std::thread::sleep(Duration::from_millis(25));
     };

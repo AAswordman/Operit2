@@ -542,6 +542,86 @@ impl ConversationService {
         Ok(summaryContent)
     }
 
+    /// Generates a concise title from the first user message and attachment names.
+    #[allow(non_snake_case)]
+    pub async fn generateConversationTitle(
+        &self,
+        user_text: String,
+        attachment_file_names: Vec<String>,
+        multi_service_manager: &mut MultiServiceManager,
+    ) -> Result<String, AiServiceError> {
+        let use_english = false;
+        let prepared_history = vec![
+            PromptTurn::new(
+                PromptTurnKind::SYSTEM,
+                FunctionalPrompts::conversationTitleSystemPrompt(use_english).to_string(),
+            ),
+            PromptTurn::new(
+                PromptTurnKind::USER,
+                FunctionalPrompts::conversationTitleUserPrompt(
+                    &user_text,
+                    &attachment_file_names,
+                    use_english,
+                ),
+            ),
+        ];
+        let model_parameters =
+            multi_service_manager.getModelParametersForFunction(FunctionType::TITLE_GENERATION)?;
+        let title_service =
+            multi_service_manager.getServiceForFunction(FunctionType::TITLE_GENERATION)?;
+        let provider_model = {
+            let service = title_service.lock().await;
+            service.provider_model()
+        };
+        let title_stream = {
+            let mut service = title_service.lock().await;
+            service
+                .send_message(SendMessageRequest {
+                    chat_history: prepared_history,
+                    model_parameters,
+                    enable_thinking: false,
+                    stream: false,
+                    available_tools: Vec::new(),
+                    preserve_think_in_history: false,
+                    enable_retry: false,
+                    on_non_fatal_error: None,
+                    on_tool_invocation: None,
+                })
+                .await?
+        };
+        let title_chunks = collect_stream_chunks(title_stream).await;
+        let title = sanitizeConversationTitle(&removeThinkingContent(&title_chunks.join("")));
+        let (input_tokens, cached_input_tokens, output_tokens) = {
+            let service = title_service.lock().await;
+            (
+                service.input_token_count(),
+                service.cached_input_token_count(),
+                service.output_token_count(),
+            )
+        };
+        self.runtime_context
+            .support()
+            .updateTokensForProviderModel(
+                &provider_model,
+                input_tokens,
+                output_tokens,
+                cached_input_tokens,
+            )
+            .map_err(AiServiceError::RequestFailed)?;
+        UsageStatisticsStore::new()
+            .recordProviderModelRequest(
+                provider_model,
+                FunctionType::TITLE_GENERATION,
+                UsageRequestSource::TITLE_GENERATION,
+                None,
+                input_tokens,
+                output_tokens,
+                cached_input_tokens,
+            )
+            .map_err(AiServiceError::RequestFailed)?;
+        Ok(title)
+    }
+
     pub fn translate_text(&self, text: &str) -> String {
         text.to_string()
     }
@@ -766,6 +846,47 @@ fn removeThinkingContent(input: &str) -> String {
         remaining.replace_range(start..end, " ");
     }
     remaining.trim().to_string()
+}
+
+/// Removes formatting and control characters from a model-generated conversation title.
+#[allow(non_snake_case)]
+fn sanitizeConversationTitle(raw_title: &str) -> String {
+    let Some(first_line) = raw_title
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+    else {
+        return String::new();
+    };
+    let title = first_line
+        .trim_start_matches(|character| {
+            matches!(character, '#' | '*' | '`' | '_' | '>' | '-' | ' ' | '\t')
+        })
+        .trim_end_matches(|character| matches!(character, '#' | '*' | '`' | '_'))
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect::<String>();
+    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let title = title
+        .trim()
+        .trim_matches(|character| {
+            matches!(
+                character,
+                '"' | '\'' | '“' | '”' | '‘' | '’' | '「' | '」' | '『' | '』'
+            )
+        })
+        .trim_end_matches(|character| {
+            matches!(
+                character,
+                '.' | '。' | '!' | '！' | '?' | '？' | ':' | '：' | ';' | '；' | ',' | '，'
+            )
+        });
+    title
+        .chars()
+        .take(40)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 fn build_final_system_prompt(

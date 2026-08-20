@@ -13,8 +13,8 @@ import '../logging/ClientLogger.dart';
 import '../notifications/AppNotificationService.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart';
-import '../runtime/RuntimeAutoSyncManager.dart';
-import '../runtime/RuntimeConnectionManager.dart';
+import '../runtime/RuntimeBootstrapManager.dart';
+import '../runtime/RuntimeDeviceInfoProvider.dart';
 
 class CoreApplicationService with WidgetsBindingObserver {
   CoreApplicationService._();
@@ -25,10 +25,8 @@ class CoreApplicationService with WidgetsBindingObserver {
   static const GeneratedCoreProxyClients _coreClients =
       GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
 
-  final RuntimeConnectionManager _runtimeManager =
-      RuntimeConnectionManager.instance;
-  final RuntimeAutoSyncManager _autoSyncManager =
-      RuntimeAutoSyncManager.instance;
+  final RuntimeBootstrapManager _runtimeManager =
+      RuntimeBootstrapManager.instance;
   final StreamController<Object> _startupErrors =
       StreamController<Object>.broadcast();
 
@@ -61,7 +59,7 @@ class CoreApplicationService with WidgetsBindingObserver {
     ClientLogger.i('initialize start', tag: _logTag);
     _initialized = true;
     WidgetsBinding.instance.addObserver(this);
-    _runtimeManager.addListener(_handleRuntimeConnectionChanged);
+    _runtimeManager.addListener(_handleRuntimeBootstrapChanged);
     unawaited(_startRuntimeServices());
     ClientLogger.i(
       'initialize done elapsedMs=${stopwatch.elapsedMilliseconds}',
@@ -139,9 +137,9 @@ class CoreApplicationService with WidgetsBindingObserver {
   }
 
   /// Starts Core services when runtime configuration becomes usable.
-  void _handleRuntimeConnectionChanged() {
+  void _handleRuntimeBootstrapChanged() {
     ClientLogger.i(
-      'runtime connection changed configured=${_runtimeManager.runtimeConfigured}',
+      'runtime bootstrap changed configured=${_runtimeManager.runtimeConfigured}',
       tag: _logTag,
     );
     unawaited(_startRuntimeServices());
@@ -176,22 +174,28 @@ class CoreApplicationService with WidgetsBindingObserver {
     }
     try {
       ClientLogger.i(
-        'runtime services start localConfirmed=${_runtimeManager.config.localStorage.confirmed}',
+        'runtime services start localConfirmed=${_runtimeManager.config.confirmed}',
         tag: _logTag,
       );
       await _startLocalBackgroundService();
       await _syncHostSubscriber();
       AppNotificationService.instance.initialize();
-      if (!_runtimeManager.config.localStorage.confirmed) {
+      if (!_runtimeManager.config.confirmed) {
         ClientLogger.i(
           'runtime services start done localStorageConfirmed=false elapsedMs=${stopwatch.elapsedMilliseconds}',
           tag: _logTag,
         );
         return;
       }
+      final deviceInfo = await RuntimeDeviceInfoProvider.current();
+      await _coreClients.linkAccessStore.initializeIdentity(
+        deviceInfo: deviceInfo,
+      );
+      await _coreClients.runtimeRemoteLinkService.updateCurrentDeviceUserName(
+        userName: _runtimeManager.activeIdentity.name,
+      );
       await _ensureLinkHostStarted();
-      await _coreClients.runtimeRemoteLinkService.startAutoSync();
-      await _autoSyncManager.initialize();
+      await _coreClients.runtimeRemoteLinkService.startSpaceSync();
       ClientLogger.i(
         'runtime services start done elapsedMs=${stopwatch.elapsedMilliseconds}',
         tag: _logTag,

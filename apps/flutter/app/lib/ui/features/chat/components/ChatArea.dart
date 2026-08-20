@@ -629,8 +629,7 @@ class _ChatAreaState extends State<ChatArea> {
     final lastMessage = widget.messages.last;
     return lastMessage.sender == 'user' ||
         (lastMessage.sender == 'ai' &&
-            lastMessage.parts.isEmpty &&
-            lastMessage.contentStream == null);
+            lastMessage.parts.isEmpty && lastMessage.contentStream == null);
   }
 
   /// Reports whether this AI row currently owns a live response stream.

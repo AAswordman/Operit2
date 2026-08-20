@@ -1,5 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+
 use std::sync::{Arc, Mutex};
+
+use serde::{Deserialize, Serialize};
 
 use crate::core::chat::AIMessageManager::{
     logMessageTiming, messageTimingNow, AIMessageManager, BuildUserMessageContentRequest,
@@ -10,12 +13,17 @@ use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
+use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use crate::services::RuntimeHostInteractionService::{
     publishOwnerAppNotification, RuntimeHostInteractionAppNotificationPayload,
 };
+use crate::services::RuntimeTextStreamRegistry::{registerTextStream, removeTextStream};
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+use operit_host_api::HostRuntimeTaskSchedulerHost;
+use operit_link::{CoreStream, CoreValue};
 use operit_model::AttachmentInfo::AttachmentInfo;
+use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
 use operit_model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
@@ -40,6 +48,7 @@ use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CH
 
 /// Minimum interval between persisted streaming snapshots.
 pub const STREAM_PERSIST_INTERVAL_MS: i64 = 1000;
+
 /// Maximum text length used when preparing automatic speech previews.
 pub const AUTO_READ_PREVIEW_MAX: usize = 48;
 
@@ -79,6 +88,23 @@ impl ChatRuntime {
     }
 }
 
+/// Stores the observable lifecycle of one logical chat execution.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChatExecutionState {
+    pub isLoading: bool,
+    pub inputProcessingState: InputProcessingState,
+}
+
+impl ChatExecutionState {
+    /// Creates an idle logical execution state.
+    pub fn idle() -> Self {
+        Self {
+            isLoading: false,
+            inputProcessingState: InputProcessingState::Idle,
+        }
+    }
+}
+
 /// Captures enough turn state to preserve or discard partial output during cancellation.
 #[derive(Clone, Debug)]
 pub struct TurnCancellationSnapshot {
@@ -111,6 +137,15 @@ pub struct BuildUserMessageContentForGroupOrchestrationRequest {
     pub roleCardId: String,
 }
 
+/// Stores opaque execution state required to activate one continued response source.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ResponseContinuationCheckpoint {
+    pub assistant_message_timestamp: i64,
+    pub execution_generation: i64,
+    pub chat: ChatHistory,
+    pub chat_history: Vec<ChatMessage>,
+}
+
 /// End-to-end request for sending a user message through enhanced AI processing.
 pub struct SendUserMessageProcessingRequest<'a> {
     pub enhancedAiService: &'a mut EnhancedAIService,
@@ -137,7 +172,28 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub proxySenderNameOverride: Option<String>,
     pub suppressUserMessageInHistory: bool,
     pub isAutoContinuation: bool,
+    pub assistantMessageTimestamp: Option<i64>,
+    pub executionGeneration: Option<i64>,
     pub turnOptions: ChatTurnOptions,
+}
+
+/// Removes one in-process continuation claim whenever its response worker exits.
+struct ExecutionContinuationGuard {
+    continuation: Option<(String, i64)>,
+    activeContinuations: Arc<Mutex<HashSet<(String, i64)>>>,
+}
+
+impl Drop for ExecutionContinuationGuard {
+    /// Releases the claimed continuation during normal return or unwinding.
+    fn drop(&mut self) {
+        let Some(continuation) = self.continuation.as_ref() else {
+            return;
+        };
+        self.activeContinuations
+            .lock()
+            .expect("active execution continuations mutex poisoned")
+            .remove(continuation);
+    }
 }
 
 /// Result returned after a user message send finishes and history is updated.
@@ -173,12 +229,7 @@ pub struct RegenerateAiMessageVariantRequest<'a> {
 pub struct MessageProcessingDelegate {
     pub functionalConfigManager: FunctionalConfigManager,
     pub modelConfigManager: ModelConfigManager,
-    pub isLoading: bool,
-    pub isLoadingFlow: MutableStateFlow<bool>,
-    pub activeStreamingChatIds: HashSet<String>,
-    pub activeStreamingChatIdsFlow: MutableStateFlow<HashSet<String>>,
-    pub inputProcessingStateByChatId: HashMap<String, InputProcessingState>,
-    pub inputProcessingStateByChatIdFlow: MutableStateFlow<HashMap<String, InputProcessingState>>,
+    executionStateByChatIdFlow: MutableStateFlow<HashMap<String, ChatExecutionState>>,
     pub scrollToBottomEvent: Vec<()>,
     pub nonFatalErrorEvent: Vec<String>,
     pub nonFatalErrorEventFlow: MutableStateFlow<Option<String>>,
@@ -191,6 +242,7 @@ pub struct MessageProcessingDelegate {
     pub lastScrollEmitMsByChatKey: Arc<Mutex<HashMap<String, i64>>>,
     pub suppressIdleCompletedStateByChatId: Arc<Mutex<HashMap<String, bool>>>,
     pub pendingAsyncSummaryUiByChatId: Arc<Mutex<HashMap<String, bool>>>,
+    pub activeExecutionContinuations: Arc<Mutex<HashSet<(String, i64)>>>,
     pub speakMessageHandler: Option<fn(String, bool)>,
 }
 
@@ -216,12 +268,7 @@ impl MessageProcessingDelegate {
         Self {
             functionalConfigManager,
             modelConfigManager,
-            isLoading: false,
-            isLoadingFlow: mutableStateFlow(false),
-            activeStreamingChatIds: HashSet::new(),
-            activeStreamingChatIdsFlow: mutableStateFlow(HashSet::new()),
-            inputProcessingStateByChatId: HashMap::new(),
-            inputProcessingStateByChatIdFlow: mutableStateFlow(HashMap::new()),
+            executionStateByChatIdFlow: mutableStateFlow(HashMap::new()),
             scrollToBottomEvent: Vec::new(),
             nonFatalErrorEvent: Vec::new(),
             nonFatalErrorEventFlow: mutableStateFlow(None),
@@ -234,6 +281,7 @@ impl MessageProcessingDelegate {
             lastScrollEmitMsByChatKey: Arc::new(Mutex::new(HashMap::new())),
             suppressIdleCompletedStateByChatId: Arc::new(Mutex::new(HashMap::new())),
             pendingAsyncSummaryUiByChatId: Arc::new(Mutex::new(HashMap::new())),
+            activeExecutionContinuations: Arc::new(Mutex::new(HashSet::new())),
             speakMessageHandler: None,
         }
     }
@@ -245,12 +293,7 @@ impl MessageProcessingDelegate {
         Self {
             functionalConfigManager: FunctionalConfigManager::new(rootDir.clone()),
             modelConfigManager: ModelConfigManager::new(rootDir),
-            isLoading: self.isLoadingFlow.value(),
-            isLoadingFlow: self.isLoadingFlow.clone(),
-            activeStreamingChatIds: self.activeStreamingChatIdsFlow.value(),
-            activeStreamingChatIdsFlow: self.activeStreamingChatIdsFlow.clone(),
-            inputProcessingStateByChatId: self.inputProcessingStateByChatIdFlow.value(),
-            inputProcessingStateByChatIdFlow: self.inputProcessingStateByChatIdFlow.clone(),
+            executionStateByChatIdFlow: self.executionStateByChatIdFlow.clone(),
             scrollToBottomEvent: self.scrollToBottomEvent.clone(),
             nonFatalErrorEvent: self.nonFatalErrorEvent.clone(),
             nonFatalErrorEventFlow: self.nonFatalErrorEventFlow.clone(),
@@ -267,8 +310,72 @@ impl MessageProcessingDelegate {
             lastScrollEmitMsByChatKey: self.lastScrollEmitMsByChatKey.clone(),
             suppressIdleCompletedStateByChatId: self.suppressIdleCompletedStateByChatId.clone(),
             pendingAsyncSummaryUiByChatId: self.pendingAsyncSummaryUiByChatId.clone(),
+            activeExecutionContinuations: self.activeExecutionContinuations.clone(),
             speakMessageHandler: self.speakMessageHandler,
         }
+    }
+
+    /// Builds the initial visible title used while title generation is in progress.
+    #[allow(non_snake_case)]
+    pub fn provisionalConversationTitle(attachments: &[AttachmentInfo]) -> String {
+        attachments
+            .first()
+            .and_then(|attachment| {
+                let file_name = attachment.fileName.trim();
+                (!file_name.is_empty()).then_some(file_name.to_string())
+            })
+            .unwrap_or_else(|| "New Chat".to_string())
+    }
+
+    /// Schedules title generation without delaying the primary chat response.
+    #[allow(non_snake_case)]
+    pub fn launchConversationTitleGeneration(
+        mut enhanced_ai_service: EnhancedAIService,
+        mut chat_history_delegate: ChatHistoryDelegate,
+        chat_id: String,
+        user_text: String,
+        attachments: Vec<AttachmentInfo>,
+        provisional_title: String,
+    ) {
+        defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask(
+                "conversation-title-generation",
+                Box::new(move || {
+                    Box::pin(async move {
+                        match enhanced_ai_service
+                            .generateConversationTitle(
+                                user_text,
+                                attachments
+                                    .into_iter()
+                                    .map(|attachment| attachment.fileName)
+                                    .collect(),
+                            )
+                            .await
+                        {
+                            Ok(generated_title) => {
+                                let current_title = chat_history_delegate
+                                    .chatHistoriesFlow()
+                                    .value()
+                                    .into_iter()
+                                    .find(|history| history.id == chat_id)
+                                    .map(|history| history.title);
+                                if !generated_title.is_empty()
+                                    && current_title.as_deref() == Some(provisional_title.as_str())
+                                {
+                                    chat_history_delegate.updateChatTitle(chat_id, generated_title);
+                                }
+                            }
+                            Err(error) => {
+                                AppLogger::e(
+                                    "MessageProcessingDelegate",
+                                    &format!("conversation title generation failed: {error}"),
+                                );
+                            }
+                        }
+                    })
+                }),
+            )
+            .expect("conversation title generation task must be scheduled by the Host");
     }
 
     /// Emits a toast message to UI observers.
@@ -369,7 +476,7 @@ impl MessageProcessingDelegate {
         runtimes.get_mut(&key).map(action)
     }
 
-    /// Clones an active provider response stream for internal runtime coordination.
+    /// Clones the active provider response stream for internal runtime coordination.
     #[allow(non_snake_case)]
     pub(crate) fn activeResponseStreamForChat(
         &self,
@@ -379,32 +486,157 @@ impl MessageProcessingDelegate {
             .flatten()
     }
 
-    /// Recomputes aggregate loading state and active streaming chat ids.
+    /// Claims one response execution continuation while it is actively running.
     #[allow(non_snake_case)]
-    pub fn updateGlobalLoadingState(&mut self) {
-        let (isLoading, activeStreamingChatIds) = {
+    pub(crate) fn claimExecutionContinuation(
+        &self,
+        chatId: String,
+        executionGeneration: i64,
+    ) -> bool {
+        self.activeExecutionContinuations
+            .lock()
+            .expect("active execution continuations mutex poisoned")
+            .insert((chatId, executionGeneration))
+    }
+
+    /// Releases one response execution continuation after its worker stops.
+    #[allow(non_snake_case)]
+    pub(crate) fn releaseExecutionContinuation(&self, chatId: String, executionGeneration: i64) {
+        self.activeExecutionContinuations
+            .lock()
+            .expect("active execution continuations mutex poisoned")
+            .remove(&(chatId, executionGeneration));
+    }
+
+    /// Starts a continued response from opaque source state after a generic stream source switch.
+    #[allow(non_snake_case)]
+    pub(crate) async fn activateResponseExecution(
+        &mut self,
+        enhancedAiService: &mut EnhancedAIService,
+        messageCoordinationDelegate: &mut MessageCoordinationDelegate,
+        chatHistoryDelegate: ChatHistoryDelegate,
+        chatId: String,
+        sourceState: Vec<u8>,
+    ) -> Result<(), String> {
+        let checkpoint: ResponseContinuationCheckpoint =
+            rmp_serde::from_slice(&sourceState).map_err(|error| error.to_string())?;
+        if checkpoint.execution_generation <= 0 {
+            return Err(format!(
+                "response execution generation must be positive for {chatId}: {}",
+                checkpoint.execution_generation
+            ));
+        }
+        let assistantMessage = checkpoint
+            .chat_history
+            .iter()
+            .find(|message| message.timestamp == checkpoint.assistant_message_timestamp)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "response continuation assistant message does not exist in source state for {chatId}: {}",
+                    checkpoint.assistant_message_timestamp
+                )
+            })?;
+        if assistantMessage.sender != "ai" {
+            return Err(format!(
+                "response continuation source state is not an assistant message for {chatId}: {}",
+                checkpoint.assistant_message_timestamp
+            ));
+        }
+        if assistantMessage.completedExecutionGeneration >= checkpoint.execution_generation {
+            return Ok(());
+        }
+        if !self.claimExecutionContinuation(chatId.clone(), checkpoint.execution_generation) {
+            return Ok(());
+        }
+        messageCoordinationDelegate.chatHistoryDelegate = chatHistoryDelegate;
+        messageCoordinationDelegate
+            .chatHistoryDelegate
+            .chatHistoriesFlow
+            .update(|histories| {
+                match histories.iter().position(|chat| chat.id == checkpoint.chat.id) {
+                    Some(index) => histories[index] = checkpoint.chat.clone(),
+                    None => histories.push(checkpoint.chat.clone()),
+                }
+            });
+        messageCoordinationDelegate.messageProcessingDelegate = self.clone_for_core();
+        messageCoordinationDelegate
+            .sendMessageInternal(
+                enhancedAiService,
+                PromptFunctionType::CHAT,
+                true,
+                false,
+                None,
+                Some(chatId.clone()),
+                String::new(),
+                None,
+                None,
+                None,
+                Vec::new(),
+                None,
+                false,
+                None,
+                true,
+                Some(checkpoint.assistant_message_timestamp),
+                Some(checkpoint.execution_generation),
+                Some(checkpoint.chat_history),
+                ChatTurnOptions::default(),
+            )
+            .await;
+        if self
+            .activeResponseStreamForChat(chatId.clone())
+            .is_none()
+        {
+            self.releaseExecutionContinuation(chatId, checkpoint.execution_generation);
+            return Err("response continuation did not create a response stream".to_string());
+        }
+        Ok(())
+    }
+
+    /// Updates one chat's observable logical execution state in a single publication.
+    #[allow(non_snake_case)]
+    fn updateChatExecutionState(
+        &self,
+        chatId: String,
+        update: impl FnOnce(&mut ChatExecutionState),
+    ) {
+        let key = Self::chatKey(Some(chatId));
+        let mut states = self.executionStateByChatIdFlow.value();
+        update(states.entry(key).or_insert_with(ChatExecutionState::idle));
+        self.executionStateByChatIdFlow.set_value(states);
+    }
+
+    /// Recomputes the chat ids that currently own active streaming turns.
+    #[allow(non_snake_case)]
+    pub fn updateActiveStreamingChatIds(&mut self) {
+        let activeStreamingChatIds = {
             let runtimes = self
                 .chatRuntimes
                 .lock()
                 .expect("chat runtimes mutex poisoned");
-            let isLoading = runtimes.values().any(|runtime| runtime.isLoading);
-            let activeStreamingChatIds = runtimes
+            runtimes
                 .iter()
                 .filter(|(key, runtime)| key.as_str() != "__DEFAULT_CHAT__" && runtime.isLoading)
                 .map(|(key, _)| key.clone())
-                .collect();
-            (isLoading, activeStreamingChatIds)
+                .collect::<HashSet<_>>()
         };
-        self.isLoading = isLoading;
-        self.activeStreamingChatIds = activeStreamingChatIds;
-        self.isLoadingFlow.set_value(self.isLoading);
-        self.activeStreamingChatIdsFlow
-            .set_value(self.activeStreamingChatIds.clone());
+        let mut states = self.executionStateByChatIdFlow.value();
+        for (chatId, state) in states.iter_mut() {
+            state.isLoading = activeStreamingChatIds.contains(chatId);
+        }
+        for chatId in activeStreamingChatIds {
+            states
+                .entry(chatId)
+                .or_insert_with(ChatExecutionState::idle)
+                .isLoading = true;
+        }
+        self.executionStateByChatIdFlow.set_value(states);
     }
-    /// Refreshes global loading state from the current runtime map.
+
+    /// Refreshes active streaming chat ids from the current runtime map.
     #[allow(non_snake_case)]
-    pub fn refreshGlobalLoadingState(&mut self) {
-        self.updateGlobalLoadingState();
+    pub fn refreshActiveStreamingChatIds(&mut self) {
+        self.updateActiveStreamingChatIds();
     }
 
     /// Returns whether an input-processing state represents an inactive terminal state.
@@ -445,10 +677,12 @@ impl MessageProcessingDelegate {
             ToolProgressBus::clear();
         }
         let key = Self::chatKey(chatId);
-        let mut states = self.inputProcessingStateByChatIdFlow.value();
-        states.insert(key, state);
-        self.inputProcessingStateByChatId = states.clone();
-        self.inputProcessingStateByChatIdFlow.set_value(states);
+        let mut states = self.executionStateByChatIdFlow.value();
+        states
+            .entry(key)
+            .or_insert_with(ChatExecutionState::idle)
+            .inputProcessingState = state;
+        self.executionStateByChatIdFlow.set_value(states);
     }
 
     /// Enables or clears suppression of idle/completed UI state for one chat.
@@ -483,6 +717,34 @@ impl MessageProcessingDelegate {
     #[allow(non_snake_case)]
     pub fn setInputProcessingStateForChat(&mut self, chatId: String, state: InputProcessingState) {
         self.setChatInputProcessingState(Some(chatId), state);
+    }
+
+    /// Publishes the beginning of one logical chat execution atomically.
+    #[allow(non_snake_case)]
+    fn startChatExecution(&mut self, chatId: String) {
+        ToolProgressBus::clear();
+        self.updateChatExecutionState(chatId, |state| {
+            state.isLoading = true;
+            state.inputProcessingState = InputProcessingState::Processing {
+                message: "message_processing".to_string(),
+            };
+        });
+    }
+
+    /// Publishes the terminal state of one logical chat execution atomically.
+    #[allow(non_snake_case)]
+    pub fn finishChatExecution(&mut self, chatId: String, terminalState: InputProcessingState) {
+        debug_assert!(matches!(
+            &terminalState,
+            InputProcessingState::Idle
+                | InputProcessingState::Completed
+                | InputProcessingState::Error { .. }
+        ));
+        ToolProgressBus::clear();
+        self.updateChatExecutionState(chatId, |state| {
+            state.isLoading = false;
+            state.inputProcessingState = terminalState;
+        });
     }
 
     /// Builds the user message payload used by group orchestration turns.
@@ -685,8 +947,7 @@ impl MessageProcessingDelegate {
             runtime.requestStartElapsed = 0;
             runtime.firstResponseElapsed = None;
         });
-        self.setInputProcessingStateForChat(chatId, InputProcessingState::Idle);
-        self.updateGlobalLoadingState();
+        self.finishChatExecution(chatId, InputProcessingState::Idle);
     }
 
     /// Cancels an active message turn while preserving partial response content.
@@ -701,21 +962,34 @@ impl MessageProcessingDelegate {
         self.cancelMessageInternal(chatId, false).await;
     }
 
-    /// Returns the observable global loading flow.
-    pub fn isLoadingFlow(&self) -> StateFlow<bool> {
-        self.isLoadingFlow.asStateFlow()
-    }
-
     /// Returns the observable set of chat ids with active streaming turns.
     pub fn activeStreamingChatIdsFlow(&self) -> StateFlow<HashSet<String>> {
-        self.activeStreamingChatIdsFlow.asStateFlow()
+        self.executionStateByChatIdFlow.asStateFlow().map(|states| {
+            states
+                .into_iter()
+                .filter_map(|(chatId, state)| {
+                    (chatId != "__DEFAULT_CHAT__" && state.isLoading).then_some(chatId)
+                })
+                .collect()
+        })
     }
 
     /// Returns the observable input-processing state map.
     pub fn inputProcessingStateByChatIdFlow(
         &self,
     ) -> StateFlow<HashMap<String, InputProcessingState>> {
-        self.inputProcessingStateByChatIdFlow.asStateFlow()
+        self.executionStateByChatIdFlow.asStateFlow().map(|states| {
+            states
+                .into_iter()
+                .map(|(chatId, state)| (chatId, state.inputProcessingState))
+                .collect()
+        })
+    }
+
+    /// Returns the observable logical execution state map.
+    #[allow(non_snake_case)]
+    pub fn executionStateByChatIdFlow(&self) -> StateFlow<HashMap<String, ChatExecutionState>> {
+        self.executionStateByChatIdFlow.asStateFlow()
     }
 
     /// Returns the observable turn-completion counter map.
@@ -800,6 +1074,38 @@ impl MessageProcessingDelegate {
     > {
         let chatId = request.chatId.clone();
         let originalMessageText = request.messageText.trim().to_string();
+        let continuationAssistantMessage = match request.assistantMessageTimestamp {
+            Some(timestamp) => {
+                let message = request
+                    .chatHistory
+                    .iter()
+                    .find(|message| message.timestamp == timestamp)
+                    .cloned()
+                    .ok_or_else(|| {
+                        operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(
+                            format!(
+                                "response continuation assistant message does not exist: {timestamp}"
+                            ),
+                        )
+                    })?;
+                if message.sender != "ai" {
+                    return Err(
+                        operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(
+                            format!(
+                                "response continuation timestamp is not an assistant message: {timestamp}"
+                            ),
+                        ),
+                    );
+                }
+                Some(message)
+            }
+            None => None,
+        };
+        let continuationContentPrefix = match continuationAssistantMessage.as_ref() {
+            Some(message) => message.assistantProtocolMarkup(),
+            None => String::new(),
+        };
+        let isResponseExecutionContinuation = continuationAssistantMessage.is_some();
         AppLogger::i(
             "CoreSend",
             &format!(
@@ -835,13 +1141,7 @@ impl MessageProcessingDelegate {
             runtime.isLoading = true;
             runtime.responseStream = None;
         });
-        self.updateGlobalLoadingState();
-        self.setInputProcessingStateForChat(
-            chatId.clone(),
-            InputProcessingState::Processing {
-                message: "message_processing".to_string(),
-            },
-        );
+        self.startChatExecution(chatId.clone());
 
         let finalMessageContent =
             match self.buildUserMessageContentForSend(BuildUserMessageContentForSendRequest {
@@ -869,8 +1169,7 @@ impl MessageProcessingDelegate {
                         runtime.streamCollectionJob = None;
                         runtime.stateCollectionJob = None;
                     });
-                    self.updateGlobalLoadingState();
-                    self.setInputProcessingStateForChat(
+                    self.finishChatExecution(
                         chatId.clone(),
                         InputProcessingState::Error {
                             message: error.to_string(),
@@ -888,18 +1187,15 @@ impl MessageProcessingDelegate {
                 && originalMessageText.is_empty()
                 && request.attachments.is_empty());
         let isFirstMessage = !request.chatHistoryDelegate.hasUserMessage(chatId.clone());
-        if request.turnOptions.persistTurn && isFirstMessage {
-            let newTitle = if !originalMessageText.trim().is_empty() {
-                originalMessageText.clone()
-            } else if let Some(attachment) = request.attachments.first() {
-                attachment.fileName.clone()
-            } else {
-                "New Chat".to_string()
-            };
+        let provisionalTitle = if request.turnOptions.persistTurn && isFirstMessage {
+            let title = Self::provisionalConversationTitle(&request.attachments);
             request
                 .chatHistoryDelegate
-                .updateChatTitle(chatId.clone(), newTitle);
-        }
+                .updateChatTitle(chatId.clone(), title.clone());
+            Some(title)
+        } else {
+            None
+        };
         let mut userMessageAdded = false;
         let mut userMessage = ChatMessage {
             sender: "user".to_string(),
@@ -958,6 +1254,16 @@ impl MessageProcessingDelegate {
                 ],
             );
             userMessageAdded = true;
+            if let Some(provisionalTitle) = provisionalTitle {
+                Self::launchConversationTitleGeneration(
+                    request.enhancedAiService.clone(),
+                    request.chatHistoryDelegate.clone_for_core(),
+                    chatId.clone(),
+                    originalMessageText.clone(),
+                    request.attachments.clone(),
+                    provisionalTitle,
+                );
+            }
         }
         request
             .enhancedAiService
@@ -1045,12 +1351,6 @@ impl MessageProcessingDelegate {
                     workspaceToolHookHandler.removeToolHook(session.hookId());
                     session.close();
                 }
-                self.setInputProcessingStateForChat(
-                    chatId.clone(),
-                    InputProcessingState::Error {
-                        message: error.to_string(),
-                    },
-                );
                 self.withExistingRuntime(Some(chatId.clone()), |runtime| {
                     runtime.isLoading = false;
                     runtime.responseStream = None;
@@ -1058,11 +1358,17 @@ impl MessageProcessingDelegate {
                     runtime.streamCollectionJob = None;
                     runtime.stateCollectionJob = None;
                 });
-                self.updateGlobalLoadingState();
+                self.finishChatExecution(
+                    chatId.clone(),
+                    InputProcessingState::Error {
+                        message: error.to_string(),
+                    },
+                );
                 return Err(error);
             }
         };
         let sharedResponseStream = completionStream.clone();
+        sharedResponseStream.set_initial_content(continuationContentPrefix.clone());
         self.withRuntime(Some(chatId.clone()), |runtime| {
             runtime.responseStream = Some(sharedResponseStream.clone());
         });
@@ -1071,23 +1377,52 @@ impl MessageProcessingDelegate {
             .getLastProviderModel()
             .unwrap_or_default();
         let (initialProvider, initialModelName) = split_provider_model(&initialProviderModel);
-        let mut aiMessage = ChatMessage {
-            sender: "ai".to_string(),
-            timestamp: ChatMessageTimestampAllocator::next(),
-            roleName: currentRoleName.clone(),
-            provider: initialProvider,
-            modelName: initialModelName,
-            inputTokens: 0,
-            outputTokens: 0,
-            cachedInputTokens: 0,
-            displayMode: ChatMessageDisplayMode::NORMAL,
-            ..ChatMessage::new("ai".to_string())
+        let mut aiMessage = match continuationAssistantMessage {
+            Some(message) => message,
+            None => ChatMessage {
+                sender: "ai".to_string(),
+                timestamp: ChatMessageTimestampAllocator::next(),
+                roleName: currentRoleName.clone(),
+                provider: initialProvider,
+                modelName: initialModelName,
+                inputTokens: 0,
+                outputTokens: 0,
+                cachedInputTokens: 0,
+                displayMode: ChatMessageDisplayMode::NORMAL,
+                ..ChatMessage::new("ai".to_string())
+            },
         };
+        let streamId = format!("chat-message-stream:{}", aiMessage.timestamp);
+        registerTextStream(streamId.clone(), sharedResponseStream.clone());
+        aiMessage.contentStream = Some(CoreStream::new_at(
+            streamId.clone(),
+            "services.runtimeTextStreamRegistry",
+            "openTextStream",
+            CoreValue::Map(BTreeMap::from([(
+                "streamId".to_string(),
+                CoreValue::String(streamId.clone()),
+            ), (
+                "routeKey".to_string(),
+                CoreValue::String(chatId.clone()),
+            )])),
+        ));
+        AppLogger::i(
+            "ResponseExecutionTrace",
+            &format!(
+                "response_segment_started chatId={} timestamp={} continuation={} initialChars={}",
+                chatId,
+                aiMessage.timestamp,
+                isResponseExecutionContinuation,
+                continuationContentPrefix.chars().count()
+            ),
+        );
         let workerChatId = chatId.clone();
         let workerTurnOptions = request.turnOptions.clone();
         let workerAiMessage = Arc::new(Mutex::new(aiMessage.clone()));
         let workerResponseStream = sharedResponseStream.clone();
-        let workerRevisionTracker = Arc::new(Mutex::new(TextStreamRevisionTracker::new("")));
+        let workerRevisionTracker = Arc::new(Mutex::new(TextStreamRevisionTracker::new(
+            &continuationContentPrefix,
+        )));
         let workerPartStream = Arc::new(Mutex::new(AssistantMarkupStreamState::new()));
         let workerService = request.enhancedAiService.clone();
         let workerChatHistoryDelegate =
@@ -1148,12 +1483,21 @@ impl MessageProcessingDelegate {
         let completionWorkspaceToolHookHandler = workerWorkspaceToolHookHandler.clone();
         let completionFirstResponseElapsed = workerFirstResponseElapsed.clone();
         let completionResponseStream = workerResponseStream.clone();
+        let completionStreamId = streamId.clone();
+        let completionExecutionGeneration = request.executionGeneration;
+        let completionActiveExecutionContinuations = self.activeExecutionContinuations.clone();
         let mut responseItems = workerResponseStream.clone();
         defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeAsyncTask(
                 "message-response-collection",
                 Box::new(move || {
                     Box::pin(async move {
+                        let _executionContinuationGuard =
+                            ExecutionContinuationGuard {
+                                continuation: completionExecutionGeneration
+                                    .map(|generation| (completionChatId.clone(), generation)),
+                                activeContinuations: completionActiveExecutionContinuations,
+                            };
                         responseItems
                             .collect_ordered(&mut move |item| {
                                 let chunk = match item {
@@ -1288,7 +1632,7 @@ impl MessageProcessingDelegate {
                                 completionChatId.clone(),
                                 completionTurnOptions.clone(),
                             );
-                            delegate.setInputProcessingStateForChat(
+                            delegate.finishChatExecution(
                                 completionChatId.clone(),
                                 InputProcessingState::Error { message: error },
                             );
@@ -1311,6 +1655,8 @@ impl MessageProcessingDelegate {
                             },
                         );
                         let completedElapsed = messageTimingNow().startedAtMs as i64;
+                        let terminalSourceTarget =
+                            completionResponseStream.terminal_source_target();
                         let finalMessage = {
                             let parts = {
                                 let mut partStream = completionPartStream
@@ -1328,10 +1674,15 @@ impl MessageProcessingDelegate {
                                 .expect("worker AI message mutex poisoned");
                             workerAiMessage.provider = provider;
                             workerAiMessage.modelName = modelName;
-                            workerAiMessage.inputTokens = tokenSnapshot.inputTokens;
-                            workerAiMessage.outputTokens = tokenSnapshot.outputTokens;
-                            workerAiMessage.cachedInputTokens = tokenSnapshot.cachedInputTokens;
+                            workerAiMessage.inputTokens += tokenSnapshot.inputTokens;
+                            workerAiMessage.outputTokens += tokenSnapshot.outputTokens;
+                            workerAiMessage.cachedInputTokens += tokenSnapshot.cachedInputTokens;
                             workerAiMessage.parts = parts;
+                            if let Some(executionGeneration) = completionExecutionGeneration {
+                                workerAiMessage.completedExecutionGeneration = workerAiMessage
+                                    .completedExecutionGeneration
+                                    .max(executionGeneration);
+                            }
                             MessageProcessingDelegate::withTurnMetrics(
                                 ChatMessage {
                                     completedAt: completedElapsed,
@@ -1358,21 +1709,117 @@ impl MessageProcessingDelegate {
                                     ),
                                 ],
                             );
-                            workerChatHistoryDelegate
+                        }
+                        if terminalSourceTarget.is_some() {
+                            if !workerTurnOptions.persistTurn {
+                                let error =
+                                    "response source transition requires a persisted assistant turn"
+                                        .to_string();
+                                completionResponseStream
+                                    .fail_terminal_source_transition(error.clone());
+                                let mut delegate = completionMessageProcessingDelegate
+                                    .lock()
+                                    .expect("worker message processing delegate mutex poisoned");
+                                delegate.cleanupRuntimeAfterSend(
+                                    completionChatId.clone(),
+                                    completionTurnOptions.clone(),
+                                );
+                                delegate.finishChatExecution(
+                                    completionChatId.clone(),
+                                    InputProcessingState::Error { message: error },
+                                );
+                                return;
+                            }
+                            let segmentMessage = ChatMessage {
+                                completedAt: 0,
+                                ..finalMessage.clone()
+                            };
+                            let _requiredClock = completionChatHistoryDelegate
                                 .lock()
                                 .expect("worker chat history mutex poisoned")
-                                .addMessageToChat(
-                                    finalMessage.clone(),
-                                    Some(completionChatId.clone()),
+                                .commitAssistantMessageSegment(
+                                    completionChatId.clone(),
+                                    segmentMessage,
+                                    None,
                                 );
+                            if let Err(error) = _requiredClock {
+                                let message = format!(
+                                    "failed to commit response source segment: {error}"
+                                );
+                                completionResponseStream
+                                    .fail_terminal_source_transition(message.clone());
+                                let mut delegate = completionMessageProcessingDelegate
+                                    .lock()
+                                    .expect("worker message processing delegate mutex poisoned");
+                                delegate.cleanupRuntimeAfterSend(
+                                    completionChatId.clone(),
+                                    completionTurnOptions.clone(),
+                                );
+                                delegate.finishChatExecution(
+                                    completionChatId.clone(),
+                                    InputProcessingState::Error { message },
+                                );
+                                return;
+                            }
+                            let executionGeneration = finalMessage.timestamp;
+                            let (chatHistory, mut chat) = {
+                                let delegate = completionChatHistoryDelegate
+                                    .lock()
+                                    .expect("worker chat history mutex poisoned");
+                                let chat = delegate
+                                    .chatHistoriesFlow
+                                    .value()
+                                    .iter()
+                                    .find(|chat| chat.id == completionChatId)
+                                    .cloned()
+                                    .expect("response source transition chat metadata must be loaded");
+                                (delegate.getRuntimeChatHistory(completionChatId.clone()), chat)
+                            };
+                            chat.messages.clear();
+                            AppLogger::i(
+                                "ResponseExecutionTrace",
+                                &format!(
+                                    "response_source_transition_ready chatId={} timestamp={} executionGeneration={} contentChars={}",
+                                    completionChatId,
+                                    finalMessage.timestamp,
+                                    executionGeneration,
+                                    finalContent.chars().count()
+                                ),
+                            );
+                            let checkpoint = match rmp_serde::to_vec_named(
+                                &ResponseContinuationCheckpoint {
+                                    assistant_message_timestamp: finalMessage.timestamp,
+                                    execution_generation: executionGeneration,
+                                    chat,
+                                    chat_history: chatHistory,
+                                },
+                            ) {
+                                Ok(checkpoint) => checkpoint,
+                                Err(error) => {
+                                    completionResponseStream.fail_terminal_source_transition(
+                                        format!("failed to encode response transition: {error}"),
+                                    );
+                                    return;
+                                }
+                            };
+                            completionResponseStream
+                                .complete_terminal_source_transition(checkpoint);
+                            return;
                         }
-                        let completionChatHistory = {
+                        let mut completionChatHistory = {
                             let workerChatHistoryDelegate = completionChatHistoryDelegate
                                 .lock()
                                 .expect("worker chat history mutex poisoned");
                             workerChatHistoryDelegate
                                 .getRuntimeChatHistory(completionChatId.clone())
                         };
+                        if workerTurnOptions.persistTurn {
+                            let persistedAssistant = completionChatHistory
+                                .iter_mut()
+                                .find(|message| message.timestamp == finalMessage.timestamp)
+                                .expect("persisted assistant placeholder must remain in chat history");
+                            *persistedAssistant = finalMessage.clone();
+                        }
                         let nextWindowSize = async {
                             let runtimeOptions = SendMessageOptions {
                                 roleCardId: Some(completionContextRoleCardId.clone()),
@@ -1413,7 +1860,7 @@ impl MessageProcessingDelegate {
                         let mut workerChatHistoryDelegate = completionChatHistoryDelegate
                             .lock()
                             .expect("worker chat history mutex poisoned");
-                        if let Some(windowSize) = nextWindowSize {
+                        let chatMetrics = nextWindowSize.map(|windowSize| {
                             let previousTokens = workerChatHistoryDelegate
                                 .chatHistoriesFlow()
                                 .value()
@@ -1427,20 +1874,51 @@ impl MessageProcessingDelegate {
                                 ),
                                 None => (finalMessage.inputTokens, finalMessage.outputTokens),
                             };
-                            workerChatHistoryDelegate.saveCurrentChat(
-                                inputTokens,
-                                outputTokens,
-                                windowSize,
-                                Some(completionChatId.clone()),
-                            );
+                            (inputTokens, outputTokens, windowSize)
+                        });
+                        if workerTurnOptions.persistTurn {
+                            let completedMessage = ChatMessage {
+                                contentStream: None,
+                                ..finalMessage.clone()
+                            };
+                            let commitResult = workerChatHistoryDelegate
+                                .commitAssistantMessageSegment(
+                                    completionChatId.clone(),
+                                    completedMessage.clone(),
+                                    chatMetrics,
+                                );
+                            if let Err(error) = commitResult {
+                                drop(workerChatHistoryDelegate);
+                                let message = format!(
+                                    "failed to commit completed assistant message: {error}"
+                                );
+                                let mut delegate = completionMessageProcessingDelegate
+                                    .lock()
+                                    .expect(
+                                        "worker message processing delegate mutex poisoned",
+                                    );
+                                delegate.cleanupRuntimeAfterSend(
+                                    completionChatId.clone(),
+                                    completionTurnOptions.clone(),
+                                );
+                                delegate.finishChatExecution(
+                                    completionChatId.clone(),
+                                    InputProcessingState::Error { message },
+                                );
+                                return;
+                            }
                         }
                         drop(workerChatHistoryDelegate);
+                        removeTextStream(&completionStreamId);
                         completionMessageProcessingDelegate
                             .lock()
                             .expect("worker message processing delegate mutex poisoned")
                             .finalizeMessageAndNotify(
                                 completionChatId.clone(),
-                                finalMessage,
+                                ChatMessage {
+                                    contentStream: None,
+                                    ..finalMessage
+                                },
                                 nextWindowSize,
                                 completionTurnOptions.clone(),
                             );
@@ -1491,6 +1969,8 @@ impl MessageProcessingDelegate {
                 proxySenderNameOverride: None,
                 suppressUserMessageInHistory: true,
                 isAutoContinuation: false,
+                assistantMessageTimestamp: None,
+                executionGeneration: None,
                 turnOptions: ChatTurnOptions {
                     persistTurn: false,
                     ..ChatTurnOptions::default()
@@ -1532,7 +2012,7 @@ impl MessageProcessingDelegate {
     ) {
         let shouldNotifyReply = turnOptions.persistTurn && turnOptions.notifyReply != Some(false);
         self.cleanupRuntimeAfterSend(chatId.clone(), turnOptions);
-        self.setInputProcessingStateForChat(chatId.clone(), InputProcessingState::Completed);
+        self.finishChatExecution(chatId.clone(), InputProcessingState::Completed);
         let mut counters = self.turnCompleteCounterByChatIdFlow.value();
         let next = counters.get(&chatId).copied().unwrap_or(0) + 1;
         counters.insert(chatId.clone(), next);
@@ -1560,7 +2040,6 @@ impl MessageProcessingDelegate {
             runtime.stateCollectionJob = None;
         });
         self.clearCurrentTurnToolInvocationCount(chatId);
-        self.updateGlobalLoadingState();
     }
 }
 

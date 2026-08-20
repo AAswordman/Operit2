@@ -48,6 +48,8 @@ using BridgeStartWebAccessServer =
               const char*, const char*, const char*);
 using BridgeStopWebAccessServer = char* (*)(BridgeHandle);
 using BridgeFreeString = void (*)(char*);
+using BridgeRuntimeBootstrapRead = char* (*)(const char*);
+using BridgeRuntimeBootstrapWrite = char* (*)(const char*, const char*);
 
 using OperitRuntimeMethodChannel =
     flutter::MethodChannel<flutter::EncodableValue>;
@@ -71,6 +73,49 @@ std::deque<flutter::EncodableMap> g_pending_notification_activations;
 bool g_notification_activation_receiver_ready = false;
 
 constexpr UINT kOperitRuntimePlatformTaskMessage = WM_APP + 0x520;
+
+/// Invokes one Runtime bootstrap storage export without creating a Core handle.
+bool InvokeRuntimeBootstrapStorage(const std::string& default_runtime_root,
+                                   const std::string* content,
+                                   std::string* response,
+                                   std::string* error) {
+  HMODULE library = LoadLibraryW(L"operit_flutter_bridge.dll");
+  if (library == nullptr) {
+    if (error != nullptr) {
+      *error = "operit_flutter_bridge.dll was not found";
+    }
+    return false;
+  }
+  const auto read = reinterpret_cast<BridgeRuntimeBootstrapRead>(
+      GetProcAddress(library, "operit_flutter_bridge_runtime_bootstrap_read"));
+  const auto write = reinterpret_cast<BridgeRuntimeBootstrapWrite>(
+      GetProcAddress(library, "operit_flutter_bridge_runtime_bootstrap_write"));
+  const auto free_string = reinterpret_cast<BridgeFreeString>(
+      GetProcAddress(library, "operit_flutter_bridge_free_string"));
+  if (read == nullptr || write == nullptr || free_string == nullptr) {
+    if (error != nullptr) {
+      *error = "operit flutter bootstrap exports are incomplete";
+    }
+    FreeLibrary(library);
+    return false;
+  }
+  char* raw = content == nullptr
+                  ? read(default_runtime_root.c_str())
+                  : write(default_runtime_root.c_str(), content->c_str());
+  if (raw == nullptr) {
+    if (error != nullptr) {
+      *error = "operit flutter bootstrap export returned null";
+    }
+    FreeLibrary(library);
+    return false;
+  }
+  if (response != nullptr) {
+    *response = raw;
+  }
+  free_string(raw);
+  FreeLibrary(library);
+  return true;
+}
 
 /// Returns whether the current foreground window belongs to this process.
 bool IsOperitApplicationForeground() {
@@ -1236,6 +1281,42 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
             return;
           }
           result->Success(WindowsStoragePaths(runtime_root, workspace_root));
+          return;
+        }
+        if (method_call.method_name().compare(
+                "runtimeBootstrapRead") == 0) {
+          std::string runtime_root;
+          std::string workspace_root;
+          std::string response;
+          if (!ResolveWindowsDefaultStorageRoots(
+                  &runtime_root, &workspace_root, &error) ||
+              !InvokeRuntimeBootstrapStorage(
+                  runtime_root, nullptr, &response, &error)) {
+            result->Error("RUNTIME_BOOTSTRAP_READ_ERROR", error);
+            return;
+          }
+          result->Success(flutter::EncodableValue(response));
+          return;
+        }
+        if (method_call.method_name().compare(
+                "runtimeBootstrapWrite") == 0) {
+          const std::string* content = StringArgument(method_call);
+          if (content == nullptr) {
+            result->Error(
+                "INVALID_ARGS", "runtimeBootstrapWrite expects JSON text");
+            return;
+          }
+          std::string runtime_root;
+          std::string workspace_root;
+          std::string response;
+          if (!ResolveWindowsDefaultStorageRoots(
+                  &runtime_root, &workspace_root, &error) ||
+              !InvokeRuntimeBootstrapStorage(
+                  runtime_root, content, &response, &error)) {
+            result->Error("RUNTIME_BOOTSTRAP_WRITE_ERROR", error);
+            return;
+          }
+          result->Success(flutter::EncodableValue(response));
           return;
         }
         if (method_call.method_name().compare(

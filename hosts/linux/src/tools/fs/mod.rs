@@ -116,7 +116,9 @@ impl FileSystemHost for LinuxFileSystemHost {
         self.validatePath(path, "path")?;
         let target = Path::new(path);
         if !target.exists() {
-            return Err(HostError::new(format!("File or directory does not exist: {path}")));
+            return Err(HostError::new(format!(
+                "File or directory does not exist: {path}"
+            )));
         }
         if target.is_dir() {
             if recursive {
@@ -152,7 +154,9 @@ impl FileSystemHost for LinuxFileSystemHost {
         self.validatePath(source, "source")?;
         self.validatePath(destination, "destination")?;
         if !Path::new(source).exists() {
-            return Err(HostError::new(format!("Source file does not exist: {source}")));
+            return Err(HostError::new(format!(
+                "Source file does not exist: {source}"
+            )));
         }
         ensure_parent_directory(destination)?;
         fs::rename(source, destination).map_err(HostError::from)
@@ -163,7 +167,9 @@ impl FileSystemHost for LinuxFileSystemHost {
         self.validatePath(destination, "destination")?;
         let sourcePath = Path::new(source);
         if !sourcePath.exists() {
-            return Err(HostError::new(format!("Source path does not exist: {source}")));
+            return Err(HostError::new(format!(
+                "Source path does not exist: {source}"
+            )));
         }
         ensure_parent_directory(destination)?;
         if sourcePath.is_dir() {
@@ -351,13 +357,14 @@ impl FileSystemHost for LinuxFileSystemHost {
         self.validatePath(destination, "destination")?;
         let sourcePath = Path::new(source);
         if !sourcePath.exists() {
-            return Err(HostError::new(format!("Source path does not exist: {source}")));
+            return Err(HostError::new(format!(
+                "Source path does not exist: {source}"
+            )));
         }
         ensure_parent_directory(destination)?;
         let destinationFile = File::create(destination)?;
         let mut zipWriter = ZipWriter::new(destinationFile);
-        let options = SimpleFileOptions::default()
-            .compression_method(CompressionMethod::Deflated);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
         if sourcePath.is_dir() {
             let baseName = sourcePath
                 .file_name()
@@ -409,9 +416,7 @@ impl FileSystemHost for LinuxFileSystemHost {
 
     fn openFile(&self, path: &str) -> HostResult<()> {
         self.validateReadableFile(path)?;
-        let status = Command::new("xdg-open")
-            .arg(path)
-            .status()?;
+        let status = Command::new("xdg-open").arg(path).status()?;
         if !status.success() {
             return Err(HostError::new(format!(
                 "Failed to open file with system default application: {path}"
@@ -433,7 +438,9 @@ impl FileSystemHost for LinuxFileSystemHost {
             .arg("--attach")
             .arg(path)
             .status()
-            .map_err(|error| HostError::new(format!("Failed to open Linux share request: {error}")))?;
+            .map_err(|error| {
+                HostError::new(format!("Failed to open Linux share request: {error}"))
+            })?;
         if !status.success() {
             return Err(HostError::new(format!(
                 "Linux share request exited with {status}"
@@ -518,7 +525,10 @@ fn zip_directory(
     let entryName = if relative.as_os_str().is_empty() {
         zipPrefix.to_string()
     } else {
-        format!("{zipPrefix}/{}", relative.to_string_lossy().replace('\\', "/"))
+        format!(
+            "{zipPrefix}/{}",
+            relative.to_string_lossy().replace('\\', "/")
+        )
     };
     if !entryName.is_empty() {
         zipWriter

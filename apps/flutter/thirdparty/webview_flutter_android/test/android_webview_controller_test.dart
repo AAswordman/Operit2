@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1574,7 +1576,7 @@ void main() {
       ).called(1);
     });
 
-    test('runJavaScriptReturningResult with return value', () async {
+    test('runJavaScriptReturningResult decodes a JavaScript string', () async {
       final mockWebView = MockWebView();
       final AndroidWebViewController controller = createControllerWithMocks(
         mockWebView: mockWebView,
@@ -1582,7 +1584,7 @@ void main() {
 
       when(
         mockWebView.evaluateJavascript('return "Hello" + " World!";'),
-      ).thenAnswer((_) => Future<String>.value('Hello World!'));
+      ).thenAnswer((_) => Future<String>.value(jsonEncode('Hello World!')));
 
       final message =
           await controller.runJavaScriptReturningResult(
@@ -1591,6 +1593,29 @@ void main() {
               as String;
 
       expect(message, 'Hello World!');
+    });
+
+    test('runJavaScriptReturningResult decodes a JavaScript array', () async {
+      final mockWebView = MockWebView();
+      final AndroidWebViewController controller = createControllerWithMocks(
+        mockWebView: mockWebView,
+      );
+
+      when(mockWebView.evaluateJavascript('window.menuCommands')).thenAnswer(
+        (_) => Future<String>.value(
+          jsonEncode(<Object?>[
+            <String, Object?>{'index': 0, 'caption': 'Open'},
+          ]),
+        ),
+      );
+
+      final commands =
+          await controller.runJavaScriptReturningResult('window.menuCommands')
+              as List<Object?>;
+
+      expect(commands, <Object?>[
+        <String, Object?>{'index': 0, 'caption': 'Open'},
+      ]);
     });
 
     test('runJavaScriptReturningResult returning null', () async {

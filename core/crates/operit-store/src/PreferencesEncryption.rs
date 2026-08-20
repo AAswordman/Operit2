@@ -3,12 +3,12 @@ use base64::Engine;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use operit_host_api::RuntimeStorageHost;
+use operit_util::RuntimeStorageLayout::PREFERENCES_ENCRYPTION_KEY_PATH;
 use serde::{Deserialize, Serialize};
 
 use crate::PreferencesDataStore::PreferencesDataStoreError;
 use crate::RuntimeStorageHost::defaultHostSecretStoreOption;
 
-const ENCRYPTION_KEY_PATH: &str = "secure/preferences_encryption_key.json";
 const ENCRYPTION_HOST_SECRET_KEY: &str = "operit.preferences.encryption_key.v1";
 const ENCRYPTION_KEY_FORMAT: &str = "operit.preferences.encryption.key";
 const ENCRYPTION_KEY_VERSION: u32 = 1;
@@ -62,7 +62,7 @@ impl PreferencesEncryption {
         if let Some(secretStore) = secretStore {
             return Self::loadOrCreateFromHostSecret(storageHost, secretStore);
         }
-        if storageHost.exists(ENCRYPTION_KEY_PATH)? {
+        if storageHost.exists(PREFERENCES_ENCRYPTION_KEY_PATH)? {
             return Self::load(storageHost);
         }
         Self::create(storageHost)
@@ -79,20 +79,20 @@ impl PreferencesEncryption {
         {
             return Self::decodeKeyBytes(&content);
         }
-        if storageHost.exists(ENCRYPTION_KEY_PATH)? {
-            let content = storageHost.readBytes(ENCRYPTION_KEY_PATH)?;
+        if storageHost.exists(PREFERENCES_ENCRYPTION_KEY_PATH)? {
+            let content = storageHost.readBytes(PREFERENCES_ENCRYPTION_KEY_PATH)?;
             let encryption = Self::decodeKeyBytes(&content)?;
             secretStore
                 .writeSecret(ENCRYPTION_HOST_SECRET_KEY, &content)
                 .map_err(|error| PreferencesDataStoreError::Encryption(error.to_string()))?;
-            storageHost.delete(ENCRYPTION_KEY_PATH, false)?;
+            storageHost.delete(PREFERENCES_ENCRYPTION_KEY_PATH, false)?;
             return Ok(encryption);
         }
         Self::createWithHostSecret(secretStore)
     }
 
     fn load(storageHost: &dyn RuntimeStorageHost) -> Result<Self, PreferencesDataStoreError> {
-        let content = storageHost.readBytes(ENCRYPTION_KEY_PATH)?;
+        let content = storageHost.readBytes(PREFERENCES_ENCRYPTION_KEY_PATH)?;
         Self::decodeKeyBytes(&content)
     }
 
@@ -147,7 +147,7 @@ impl PreferencesEncryption {
     fn create(storageHost: &dyn RuntimeStorageHost) -> Result<Self, PreferencesDataStoreError> {
         let stored = Self::newStoredKey()?;
         let content = serde_json::to_vec_pretty(&stored)?;
-        storageHost.writeBytes(ENCRYPTION_KEY_PATH, &content)?;
+        storageHost.writeBytes(PREFERENCES_ENCRYPTION_KEY_PATH, &content)?;
         Ok(Self {
             keyId: stored.keyId,
             key: decodeStoredKey(&stored.key)?,

@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::runtime_support::ResolvedCharacterCardToolAccess;
+use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_tools::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
 };
@@ -42,6 +43,13 @@ pub struct ToolRuntimeContext {
     pub callerCardId: Option<String>,
     pub workspacePath: Option<String>,
     pub toolExposureMode: ToolExposureMode,
+}
+
+/// Controls whether the provider may start another model round after a tool batch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolBatchControl {
+    Continue,
+    StopExecution,
 }
 
 /// Name-value parameter parsed from a model tool invocation.
@@ -192,7 +200,7 @@ impl ToolExecutionManager {
         (true, None)
     }
 
-    /// Executes a batch of parsed tool invocations and returns emitted markup plus results.
+    /// Executes a batch and returns emitted markup, results, and provider execution control.
     pub async fn executeInvocations(
         invocations: &[ToolInvocation],
         toolHandler: &mut AIToolHandler,
@@ -202,9 +210,10 @@ impl ToolExecutionManager {
         callerCardId: Option<String>,
         workspacePath: Option<String>,
         toolExposureMode: ToolExposureMode,
-    ) -> (Vec<String>, Vec<ToolResult>) {
+    ) -> (Vec<String>, Vec<ToolResult>, ToolBatchControl) {
         let mut emitted = Vec::new();
         let mut results = Vec::new();
+        let mut batchControl = ToolBatchControl::Continue;
         let requestedToolNames = invocations
             .iter()
             .map(|invocation| invocation.tool.name.clone())
@@ -445,8 +454,17 @@ impl ToolExecutionManager {
                     ),
                 );
                 results.push(finalResult);
+                if last.success
+                    && Self::resolveToolTarget(&invocation.tool).tool.name
+                        == BuiltinToolName::SwitchCore.as_str()
+                {
+                    batchControl = ToolBatchControl::StopExecution;
+                }
             }
             toolHandler.notifyToolExecutionFinished(&invocation.tool);
+            if batchControl == ToolBatchControl::StopExecution {
+                break;
+            }
         }
 
         TOOL_RUNTIME_CONTEXT.with(|value| {
@@ -463,7 +481,7 @@ impl ToolExecutionManager {
                 results.len()
             ),
         );
-        (emitted, results)
+        (emitted, results, batchControl)
     }
 
     fn ensureEndsWithNewline(content: &str) -> String {

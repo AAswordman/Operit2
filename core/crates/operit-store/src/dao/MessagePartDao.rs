@@ -1,5 +1,7 @@
 use crate::sqliteParams;
-use crate::SqliteStore::{SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError};
+use crate::SqliteStore::{
+    toSqliteValue, SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError,
+};
 
 use operit_model::MessagePart::MessagePartKind;
 use operit_model::MessagePartEntity::MessagePartEntity;
@@ -39,7 +41,7 @@ impl MessagePartDao {
         )
     }
 
-    /// Loads all parts for a chat so repository hydration can select message revisions.
+    /// Loads all parts for an explicitly requested full-chat snapshot.
     pub fn getPartsForChat(
         &self,
         chatId: &str,
@@ -52,6 +54,29 @@ impl MessagePartDao {
             ),
             sqliteParams![chatId],
         )
+    }
+
+    /// Loads all revisions' parts for the supplied message timestamps in display order.
+    pub fn getPartsForMessages(
+        &self,
+        chatId: &str,
+        messageTimestamps: Vec<i64>,
+    ) -> Result<Vec<MessagePartEntity>, SqliteStoreError> {
+        let placeholders = messageTimestamps
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "{SELECT_PART_COLUMNS}
+            WHERE chatId = ? AND messageTimestamp IN ({placeholders})
+            ORDER BY messageTimestamp ASC, variantIndex ASC, sequence ASC"
+        );
+        let mut params = sqliteParams![chatId];
+        for timestamp in &messageTimestamps {
+            params.push(toSqliteValue(timestamp));
+        }
+        self.selectParts(&sql, params)
     }
 
     /// Replaces the complete ordered part set for one message revision atomically.

@@ -3,7 +3,7 @@ use operit_store::PreferencesDataStore::{
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 use crate::data::preferences::CharacterCardBilingualData::CharacterCardBilingualData;
@@ -52,6 +52,7 @@ pub struct CharacterCardImportResult {
 }
 
 impl CharacterCardManager {
+    const PREFERENCES_VERSION: u32 = 1;
     #[allow(non_snake_case)]
     pub const DEFAULT_CHARACTER_CARD_ID: &str = "default_character";
     #[allow(non_snake_case)]
@@ -59,9 +60,14 @@ impl CharacterCardManager {
 
     /// Creates a character card manager over explicit runtime store paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
+        let tagManager = PromptTagManager::new(paths.clone());
+        let tagManagerForMigration = tagManager.clone();
         Self {
-            dataStore: PreferencesDataStore::new(paths.character_cards_preferences_path()),
-            tagManager: PromptTagManager::new(paths),
+            dataStore: PreferencesDataStore::new(paths.character_cards_preferences_path())
+                .withSchema(Self::PREFERENCES_VERSION, move |version, preferences| {
+                    Self::migratePreferences(version, preferences, &tagManagerForMigration)
+                }),
+            tagManager,
         }
     }
 
@@ -329,37 +335,11 @@ impl CharacterCardManager {
             .find(|card| card.name.trim() == normalized))
     }
 
-    /// Ensures the default character card exists in preferences.
-    #[allow(non_snake_case)]
-    pub fn initializeIfNeeded(&self) -> Result<(), PreferencesDataStoreError> {
-        self.dataStore.edit(|preferences| {
-            let currentList = preferences
-                .get(&Self::CHARACTER_CARD_LIST())
-                .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok());
-            if currentList
-                .as_ref()
-                .map(|list| list.is_empty())
-                .unwrap_or(true)
-            {
-                preferences.set(
-                    &Self::CHARACTER_CARD_LIST(),
-                    serde_json::to_string(&vec![Self::DEFAULT_CHARACTER_CARD_ID.to_string()])
-                        .expect("character card list must serialize"),
-                );
-                self.setupDefaultCharacterCard(preferences, Self::DEFAULT_CHARACTER_CARD_ID);
-            }
-        })?;
-        self.tagManager.removeLegacyBuiltInTags()?;
-        self.removeDeletedTagReferencesFromCharacterCards()?;
-        self.migrateLegacyOtherContentToChat()?;
-        Ok(())
-    }
-
     /// Recreates the default character card with the built-in default content.
     #[allow(non_snake_case)]
     pub fn resetDefaultCharacterCard(&self) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.edit(|preferences| {
-            self.setupDefaultCharacterCard(preferences, Self::DEFAULT_CHARACTER_CARD_ID);
+            Self::setupDefaultCharacterCard(preferences, Self::DEFAULT_CHARACTER_CARD_ID);
         })
     }
 
@@ -1087,7 +1067,7 @@ impl CharacterCardManager {
     }
 
     #[allow(non_snake_case)]
-    fn setupDefaultCharacterCard(&self, preferences: &mut Preferences, id: &str) {
+    fn setupDefaultCharacterCard(preferences: &mut Preferences, id: &str) {
         let now = currentTimeMillis();
         preferences.set(
             &stringPreferencesKey(&format!("character_card_{id}_name")),
@@ -1267,73 +1247,92 @@ impl CharacterCardManager {
     }
 
     #[allow(non_snake_case)]
-    fn removeDeletedTagReferencesFromCharacterCards(
-        &self,
+    /// Migrates character card preferences one schema version at a time.
+    fn migratePreferences(
+        version: u32,
+        preferences: &mut Preferences,
+        tagManager: &PromptTagManager,
     ) -> Result<(), PreferencesDataStoreError> {
-        let validTagIds = self
-            .tagManager
-            .getAllTags()?
-            .into_iter()
-            .map(|tag| tag.id)
-            .collect::<Vec<_>>();
-        self.dataStore.edit(|preferences| {
-            let cardIds = Self::readCardList(preferences);
-            for cardId in cardIds {
-                let key =
-                    stringPreferencesKey(&format!("character_card_{cardId}_attached_tag_ids"));
-                let attached = preferences
-                    .get(&key)
-                    .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok());
-                if let Some(attached) = attached {
-                    let filtered = attached
-                        .into_iter()
-                        .filter(|tagId| validTagIds.contains(tagId))
-                        .collect::<Vec<_>>();
-                    preferences.set(
-                        &key,
-                        serde_json::to_string(&filtered).expect("attached tag ids must serialize"),
+        match version {
+            0 => {
+                let currentList = match preferences.get(&Self::CHARACTER_CARD_LIST()) {
+                    Some(raw) => serde_json::from_str::<Vec<String>>(raw)?,
+                    None => Vec::new(),
+                };
+                if currentList.is_empty() {
+                    Self::writeCardList(
+                        preferences,
+                        vec![Self::DEFAULT_CHARACTER_CARD_ID.to_string()],
                     );
+                    Self::setupDefaultCharacterCard(preferences, Self::DEFAULT_CHARACTER_CARD_ID);
                 }
+                Self::migrateLegacyOtherContentToChat(preferences)?;
+                let validTagIds = tagManager
+                    .getAllTags()?
+                    .into_iter()
+                    .map(|tag| tag.id)
+                    .collect::<HashSet<_>>();
+                Self::removeDeletedTagReferences(preferences, &validTagIds)
             }
-        })
+            from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
+        }
     }
 
-    #[allow(non_snake_case)]
-    fn migrateLegacyOtherContentToChat(&self) -> Result<(), PreferencesDataStoreError> {
-        self.dataStore.edit(|preferences| {
-            let cardIds = Self::readCardList(preferences);
-            for cardId in cardIds {
-                let legacyKey =
-                    stringPreferencesKey(&format!("character_card_{cardId}_other_content"));
-                let chatKey =
-                    stringPreferencesKey(&format!("character_card_{cardId}_other_content_chat"));
-                let voiceKey =
-                    stringPreferencesKey(&format!("character_card_{cardId}_other_content_voice"));
-                let legacyValue = preferences.get(&legacyKey).cloned();
-                let chatValue = preferences.get(&chatKey).cloned();
-                if let Some(legacyValue) = legacyValue {
-                    if !legacyValue.trim().is_empty()
-                        && chatValue
-                            .map(|value| value.trim().is_empty())
-                            .unwrap_or(true)
-                    {
-                        preferences.set(&chatKey, legacyValue);
-                    }
-                }
-                let voiceValue = preferences.get(&voiceKey).cloned();
-                if voiceValue
-                    .map(|value| value.trim().is_empty())
-                    .unwrap_or(true)
-                    && cardId == Self::DEFAULT_CHARACTER_CARD_ID
+    /// Removes references to prompt tags that do not exist in the migrated tag store.
+    fn removeDeletedTagReferences(
+        preferences: &mut Preferences,
+        validTagIds: &HashSet<String>,
+    ) -> Result<(), PreferencesDataStoreError> {
+        for cardId in Self::readCardList(preferences) {
+            let key = stringPreferencesKey(&format!("character_card_{cardId}_attached_tag_ids"));
+            let Some(raw) = preferences.get(&key) else {
+                continue;
+            };
+            let attached = serde_json::from_str::<Vec<String>>(raw)?;
+            let filtered = attached
+                .into_iter()
+                .filter(|tagId| validTagIds.contains(tagId))
+                .collect::<Vec<_>>();
+            preferences.set(&key, serde_json::to_string(&filtered)?);
+        }
+        Ok(())
+    }
+
+    /// Moves legacy shared content into the chat field and completes default voice content.
+    fn migrateLegacyOtherContentToChat(
+        preferences: &mut Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        for cardId in Self::readCardList(preferences) {
+            let legacyKey = stringPreferencesKey(&format!("character_card_{cardId}_other_content"));
+            let chatKey =
+                stringPreferencesKey(&format!("character_card_{cardId}_other_content_chat"));
+            let voiceKey =
+                stringPreferencesKey(&format!("character_card_{cardId}_other_content_voice"));
+            let legacyValue = preferences.get(&legacyKey).cloned();
+            let chatValue = preferences.get(&chatKey).cloned();
+            if let Some(legacyValue) = legacyValue {
+                if !legacyValue.trim().is_empty()
+                    && chatValue
+                        .map(|value| value.trim().is_empty())
+                        .unwrap_or(true)
                 {
-                    preferences.set(
-                        &voiceKey,
-                        CharacterCardBilingualData::getDefaultOtherContentVoice(false),
-                    );
+                    preferences.set(&chatKey, legacyValue);
                 }
-                preferences.remove(&legacyKey);
             }
-        })
+            let voiceValue = preferences.get(&voiceKey).cloned();
+            if voiceValue
+                .map(|value| value.trim().is_empty())
+                .unwrap_or(true)
+                && cardId == Self::DEFAULT_CHARACTER_CARD_ID
+            {
+                preferences.set(
+                    &voiceKey,
+                    CharacterCardBilingualData::getDefaultOtherContentVoice(false),
+                );
+            }
+            preferences.remove(&legacyKey);
+        }
+        Ok(())
     }
 }
 

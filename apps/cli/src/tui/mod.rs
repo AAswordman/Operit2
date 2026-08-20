@@ -40,7 +40,10 @@ use app::{
 use approval::TuiApprovalBridge;
 use i18n::TuiLanguage;
 use link_proxy_rs::tui_core;
-use operit_core_proxy::GeneratedCoreProxy;
+use operit_core_proxy::{
+    CoreNodeRouter::CoreNodeRouter, GeneratedCoreProxy,
+    RuntimeRemoteLinkService::RuntimeRemoteLinkService,
+};
 use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest};
 use operit_link_access::{
     PairedRemoteSession, PairedRemoteSessionRecord, RemoteLinkClient, RemoteLinkServer,
@@ -62,19 +65,21 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cli::link::load_link_session_resolved;
 use crate::{create_local_core, initialize_shell_chat, parse_shell_args};
 
+/// Runs the local TUI through a CoreNode router after completing local setup.
 pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     let shell_args = parse_shell_args(args)?;
-    let mut core = create_local_core();
-    core.localApplicationMut().onCreate()?;
-    let language = TuiLanguage::from_context(&core.localApplicationMut().hostManager)?;
-    let initial_chat_id = initialize_shell_chat(core.localApplicationMut(), &shell_args)?;
+    let mut local_core = create_local_core();
+    local_core.localApplicationMut().onCreate()?;
+    let language = TuiLanguage::from_context(&local_core.localApplicationMut().hostManager)?;
+    let initial_chat_id = initialize_shell_chat(local_core.localApplicationMut(), &shell_args)?;
     let approval_bridge = TuiApprovalBridge::new();
-    install_local_permission_requester(&mut core, approval_bridge.clone());
+    install_local_permission_requester(&mut local_core, approval_bridge.clone());
     let startup_install_prompt = build_startup_install_prompt()?;
     let startup_update_prompt =
         build_startup_update_prompt(shell_args.updateCurrentVersion.as_deref()).await?;
@@ -88,8 +93,9 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     } else {
         None
     };
+    RuntimeRemoteLinkService::new(local_core.clone()).startSpaceSync()?;
     let mut tui = OperitTui::new(
-        tui_core(core),
+        tui_core(CoreNodeRouter::new(Arc::new(local_core))),
         shell_args,
         initial_chat_id,
         approval_bridge,
@@ -283,14 +289,6 @@ async fn initialize_remote_chat(
     core: &mut link_proxy_rs::TuiCore,
     shell_args: &crate::ShellArgs,
 ) -> Result<String, String> {
-    core.preferences_model_config_manager()
-        .initializeIfNeeded()
-        .await
-        .map_err(|error| error.to_string())?;
-    core.preferences_functional_config_manager()
-        .initializeIfNeeded()
-        .await
-        .map_err(|error| error.to_string())?;
     if let Some(chat_id) = shell_args.chatId.clone() {
         core.chat_runtime_holder_main()
             .switchChat(chat_id.clone())
@@ -340,6 +338,6 @@ async fn initialize_remote_chat(
             .currentChatIdFlowSnapshot()
             .await
             .map_err(|error| error.to_string())?
-            .ok_or_else(|| "remote core did not create chat".to_string())
+            .ok_or_else(|| "remote device did not create chat".to_string())
     }
 }

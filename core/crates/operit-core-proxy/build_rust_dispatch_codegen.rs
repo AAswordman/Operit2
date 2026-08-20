@@ -104,6 +104,117 @@ pub(crate) fn render_object_watch_dispatch(object: &SourceObject) -> String {
     output
 }
 
+/// Renders the generic source activation dispatcher for one generated watch object.
+pub(crate) fn render_object_watch_transition_dispatch(object: &SourceObject) -> String {
+    let transitionMethods = object
+        .methods
+        .iter()
+        .filter_map(|method| {
+            let MethodRoute::Binding {
+                binding_argument,
+                supports_source_transition: true,
+                ..
+            } = &method.route
+            else {
+                return None;
+            };
+            method
+                .watch_protocol()
+                .map(|_| (method, binding_argument))
+        })
+        .collect::<Vec<_>>();
+    if transitionMethods.is_empty() {
+        return String::new();
+    }
+    let mut output = String::new();
+    output.push_str("#[allow(unused_mut, unused_variables)]\n");
+    output.push_str(&format!(
+        "async fn generated_dispatch_{}_watch_transition(object: &mut {}, request: &operit_link::CoreWatchRequest, transition: operit_link::CoreWatchSourceResume) -> Result<(), operit_link::CoreLinkError> {{\n",
+        object.dispatch_name, object.full_type
+    ));
+    output.push_str("    let mut __core_args = object_args(request.args.clone())?;\n");
+    output.push_str("    match request.propertyName.as_str() {\n");
+    for (method, bindingArgument) in transitionMethods {
+        let binding = method
+            .args
+            .iter()
+            .find(|argument| argument.name == *bindingArgument)
+            .expect("validated Binding argument must exist");
+        output.push_str(&format!(
+            "        {:?} => {{\n            let {}: {} = decode_core_arg(&mut __core_args, {:?})?;\n            operit_link::CoreWatchSourceActivator::activateWatchSource(object, {}.to_string(), transition).await.map_err(|error| operit_link::CoreLinkError::new(\"STREAM_SOURCE_RESUME_FAILED\", error.to_string()))\n        }}\n",
+            method.name,
+            binding.name,
+            render_arg_decode_type(binding),
+            binding.name,
+            render_arg_call_expr(binding),
+        ));
+    }
+    output.push_str("        _ => Err(operit_link::CoreLinkError::new(\"STREAM_SOURCE_RESUME_UNSUPPORTED\", format!(\"Core watch {} does not accept source transitions\", request.propertyName))),\n");
+    output.push_str("    }\n}\n");
+    output
+}
+
+/// Returns whether one generated object declares an opaque watch transition handler.
+fn object_has_watch_transition(object: &SourceObject) -> bool {
+    object.methods.iter().any(|method| {
+        method.watch_protocol().is_some()
+            && matches!(
+                method.route,
+                MethodRoute::Binding {
+                    supports_source_transition: true,
+                    ..
+                }
+            )
+    })
+}
+
+/// Renders the canonical concrete-path predicate for every generated object.
+pub(crate) fn render_object_path_matchers(objects: &[SourceObject]) -> String {
+    let mut output = String::new();
+    for object in objects {
+        output.push_str(&format!(
+            "/// Returns whether a concrete path resolves to generated object `{}`.\n",
+            object.schema_key
+        ));
+        output.push_str(&format!(
+            "fn generated_object_path_matches_{}(path: &operit_link::CoreObjectPath) -> bool {{\n",
+            object.dispatch_name
+        ));
+        output.push_str(&format!("    {}\n", render_object_path_predicate(object)));
+        output.push_str("}\n\n");
+    }
+    output
+}
+
+/// Renders the concrete path predicate implied by one dispatch access strategy.
+fn render_object_path_predicate(object: &SourceObject) -> String {
+    match &object.path_match {
+        ObjectPathMatch::Exact => format!("path.key() == {:?}", object.schema_key),
+        ObjectPathMatch::TrailingSegments(dynamic_segments) => {
+            render_segmented_object_path_predicate(&object.schema_key, *dynamic_segments)
+        }
+        ObjectPathMatch::Predicate(function) => format!("{function}(&path.segments)"),
+    }
+}
+
+/// Renders an exact schema prefix followed by a declared number of dynamic segments.
+fn render_segmented_object_path_predicate(schema_key: &str, dynamic_segments: usize) -> String {
+    let schema_segments = schema_key.split('.').collect::<Vec<_>>();
+    let segment_checks = schema_segments
+        .iter()
+        .enumerate()
+        .map(|(index, segment)| {
+            format!("path.segments.get({index}).map(String::as_str) == Some({segment:?})")
+        })
+        .collect::<Vec<_>>()
+        .join(" && ");
+    format!(
+        "path.segments.len() == {} && {}",
+        schema_segments.len() + dynamic_segments,
+        segment_checks
+    )
+}
+
 pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
     let mut output = String::new();
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
@@ -127,13 +238,14 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
             application.schema_key, application.dispatch_name
         ));
     }
-    if let Some(chat_runtime) = objects
-        .iter()
-        .find(|object| object.access == ObjectAccess::ChatRuntimeMain && object.has_call_dispatch())
-    {
+    for object in objects.iter().filter(|object| object.has_call_dispatch()) {
+        let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
+            continue;
+        };
         output.push_str(&format!(
-            "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let mut holder = proxy.chatRuntimeHolder.lock().await;\n        let core = holder.getCore(slot);\n        return generated_dispatch_{}_call(core, request).await;\n    }}\n",
-            chat_runtime.dispatch_name
+            "    if generated_object_path_matches_{}(&request.targetPath) {{\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = holder.{resolver_method}(&request.targetPath.segments) {{\n            return generated_dispatch_{}_call(object, request).await;\n        }}\n    }}\n",
+            object.dispatch_name,
+            object.dispatch_name
         ));
     }
     output.push_str("    match request.targetPath.key().as_str() {\n");
@@ -177,13 +289,14 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
 
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("async fn generated_dispatch_core_proxy_watch_snapshot_async(proxy: &LocalCoreProxy, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEvent, operit_link::CoreLinkError> {\n");
-    if let Some(chat_runtime) = objects
-        .iter()
-        .find(|object| object.access == ObjectAccess::ChatRuntimeMain)
-    {
+    for object in objects {
+        let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
+            continue;
+        };
         output.push_str(&format!(
-            "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let propertyName = request.propertyName.clone();\n        let mut holder = proxy.chatRuntimeHolder.lock().await;\n        let core = holder.getCore(slot);\n        let value = generated_dispatch_{}_watch_snapshot(core, &request)?;\n        return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetPath: request.targetPath, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n    }}\n",
-            chat_runtime.dispatch_name
+            "    if generated_object_path_matches_{}(&request.targetPath) {{\n        let propertyName = request.propertyName.clone();\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = holder.{resolver_method}(&request.targetPath.segments) {{\n            let value = generated_dispatch_{}_watch_snapshot(object, &request)?;\n            return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetPath: request.targetPath, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n        }}\n    }}\n",
+            object.dispatch_name,
+            object.dispatch_name
         ));
     }
     if let Some(application) = objects
@@ -199,14 +312,52 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
     output.push_str("}\n\n");
 
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
-    output.push_str("async fn generated_dispatch_core_proxy_watch_async(proxy: &LocalCoreProxy, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n");
-    if let Some(chat_runtime) = objects
+    output.push_str("async fn generated_dispatch_core_proxy_watch_transition_async(proxy: &LocalCoreProxy, request: &operit_link::CoreWatchRequest, transition: operit_link::CoreWatchSourceResume) -> Result<(), operit_link::CoreLinkError> {\n");
+    for object in objects {
+        let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
+            continue;
+        };
+        if object_has_watch_transition(object) {
+            output.push_str(&format!(
+                "    if generated_object_path_matches_{}(&request.targetPath) {{\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = holder.{resolver_method}(&request.targetPath.segments) {{\n            return generated_dispatch_{}_watch_transition(object, request, transition).await;\n        }}\n        return Err(operit_link::CoreLinkError::new(\"STREAM_SOURCE_RUNTIME_NOT_FOUND\", format!(\"No runtime owns Core path {{}}\", request.targetPath.key())));\n    }}\n",
+                object.dispatch_name, object.dispatch_name
+            ));
+        } else {
+            output.push_str(&format!(
+                "    if generated_object_path_matches_{}(&request.targetPath) {{ return Err(operit_link::CoreLinkError::new(\"STREAM_SOURCE_RESUME_UNSUPPORTED\", format!(\"Core watch {{}} does not accept source transitions\", request.propertyName))); }}\n",
+                object.dispatch_name
+            ));
+        }
+    }
+    if let Some(application) = objects
         .iter()
-        .find(|object| object.access == ObjectAccess::ChatRuntimeMain)
+        .find(|object| object.access == ObjectAccess::Application)
     {
+        if object_has_watch_transition(application) {
+            output.push_str(&format!(
+                "    if request.targetPath.key() == {:?} {{\n        let mut application = proxy.application.lock().await;\n        return generated_dispatch_{}_watch_transition(&mut application, request, transition).await;\n    }}\n",
+                application.schema_key, application.dispatch_name
+            ));
+        } else {
+            output.push_str(&format!(
+                "    if request.targetPath.key() == {:?} {{ return Err(operit_link::CoreLinkError::new(\"STREAM_SOURCE_RESUME_UNSUPPORTED\", format!(\"Core watch {{}} does not accept source transitions\", request.propertyName))); }}\n",
+                application.schema_key
+            ));
+        }
+    }
+    output.push_str("    Err(operit_link::CoreLinkError::new(\"STREAM_SOURCE_RESUME_UNSUPPORTED\", format!(\"Core watch {} does not accept source transitions\", request.propertyName)))\n");
+    output.push_str("}\n\n");
+
+    output.push_str("#[allow(unused_mut, unused_variables)]\n");
+    output.push_str("async fn generated_dispatch_core_proxy_watch_async(proxy: &LocalCoreProxy, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n");
+    for object in objects {
+        let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
+            continue;
+        };
         output.push_str(&format!(
-            "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let mut holder = proxy.chatRuntimeHolder.lock().await;\n        let core = holder.getCore(slot);\n        return generated_dispatch_{}_watch(core, request);\n    }}\n",
-            chat_runtime.dispatch_name
+            "    if generated_object_path_matches_{}(&request.targetPath) {{\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = holder.{resolver_method}(&request.targetPath.segments) {{\n            return generated_dispatch_{}_watch(object, request);\n        }}\n    }}\n",
+            object.dispatch_name,
+            object.dispatch_name
         ));
     }
     if let Some(application) = objects
@@ -223,13 +374,14 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
 
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("fn generated_dispatch_core_proxy_watch_snapshot(proxy: &LocalCoreProxy, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEvent, operit_link::CoreLinkError> {\n");
-    if let Some(chat_runtime) = objects
-        .iter()
-        .find(|object| object.access == ObjectAccess::ChatRuntimeMain)
-    {
+    for object in objects {
+        let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
+            continue;
+        };
         output.push_str(&format!(
-            "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let propertyName = request.propertyName.clone();\n        let mut holder = proxy.chatRuntimeHolder.try_lock().map_err(|_| operit_link::CoreLinkError::internal(\"Chat runtime holder is busy\"))?;\n        let core = holder.getCore(slot);\n        let value = generated_dispatch_{}_watch_snapshot(core, &request)?;\n        return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetPath: request.targetPath, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n    }}\n",
-            chat_runtime.dispatch_name
+            "    if generated_object_path_matches_{}(&request.targetPath) {{\n        let propertyName = request.propertyName.clone();\n        let mut holder = proxy.{holder_field}.try_lock().map_err(|_| operit_link::CoreLinkError::internal(\"Resolved holder is busy\"))?;\n        if let Some(object) = holder.{resolver_method}(&request.targetPath.segments) {{\n            let value = generated_dispatch_{}_watch_snapshot(object, &request)?;\n            return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetPath: request.targetPath, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n        }}\n    }}\n",
+            object.dispatch_name,
+            object.dispatch_name
         ));
     }
     output.push_str("    let propertyName = request.propertyName.clone();\n");
@@ -280,13 +432,14 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
 
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("fn generated_dispatch_core_proxy_watch(proxy: &LocalCoreProxy, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n");
-    if let Some(chat_runtime) = objects
-        .iter()
-        .find(|object| object.access == ObjectAccess::ChatRuntimeMain)
-    {
+    for object in objects {
+        let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
+            continue;
+        };
         output.push_str(&format!(
-            "    if let Some(slot) = chat_runtime_slot(&request.targetPath) {{\n        let mut holder = proxy.chatRuntimeHolder.try_lock().map_err(|_| operit_link::CoreLinkError::internal(\"Chat runtime holder is busy\"))?;\n        let core = holder.getCore(slot);\n        return generated_dispatch_{}_watch(core, request);\n    }}\n",
-            chat_runtime.dispatch_name
+            "    if generated_object_path_matches_{}(&request.targetPath) {{\n        let mut holder = proxy.{holder_field}.try_lock().map_err(|_| operit_link::CoreLinkError::internal(\"Resolved holder is busy\"))?;\n        if let Some(object) = holder.{resolver_method}(&request.targetPath.segments) {{\n            return generated_dispatch_{}_watch(object, request);\n        }}\n    }}\n",
+            object.dispatch_name,
+            object.dispatch_name
         ));
     }
     output.push_str("    match request.targetPath.key().as_str() {\n");
@@ -552,7 +705,7 @@ fn render_object_constructor(object: &SourceObject, mode: DispatchMode) -> Strin
             *returns_arc_mutex,
             mode,
         ),
-        ObjectAccess::Application | ObjectAccess::ChatRuntimeMain => String::new(),
+        ObjectAccess::Application | ObjectAccess::ResolvedHolder { .. } => String::new(),
     }
 }
 
@@ -684,7 +837,19 @@ fn render_object_constructor_for_access(
         }
         ObjectAccess::StringNewConstruct
         | ObjectAccess::FactoryMethodConstruct { .. }
-        | ObjectAccess::ChatRuntimeMain => String::new(),
+        | ObjectAccess::ResolvedHolder { .. } => String::new(),
+    }
+}
+
+/// Returns the holder field and resolver declared by one generic holder-backed access strategy.
+fn resolved_holder_metadata(access: &ObjectAccess) -> Option<(&str, &str)> {
+    match access {
+        ObjectAccess::ResolvedHolder {
+            holder_field,
+            resolver_method,
+            ..
+        } => Some((holder_field.as_str(), resolver_method.as_str())),
+        _ => None,
     }
 }
 
@@ -840,7 +1005,7 @@ fn render_json_flow_watch_stream_arm(method: &SourceMethod, fallible: bool) -> S
         format!("object.{}({})", method.name, call_args)
     };
     format!(
-        "        {:?} => {{\n{}            let flow = {};\n            let (sender, receiver) = core_event_stream_channel();\n            let requestId = request.requestId;\n            let targetPath = request.targetPath;\n            let propertyName = request.propertyName;\n            let isFirstEvent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));\n            let subscription = flow.subscribeWithCancellation(\n                operit_store::PreferencesDataStore::FlowCancellation::new(),\n                move |value| {{\n                    let kind = if isFirstEvent.swap(false, std::sync::atomic::Ordering::SeqCst) {{\n                        operit_link::CoreEventKind::Snapshot\n                    }} else {{\n                        operit_link::CoreEventKind::Changed\n                    }};\n                    if let Ok(value) = to_core_value(value) {{\n                        let _ = sender.send(operit_link::CoreEvent {{\n                            requestId: Some(requestId.clone()),\n                            targetPath: targetPath.clone(),\n                            propertyName: propertyName.clone(),\n                            kind,\n                            value,\n                        }});\n                    }}\n                }},\n            ).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n            Ok(receiver.withOnClose(move || subscription.cancel()))\n        }}\n",
+        "        {:?} => {{\n{}            let flow = {};\n            let (sender, receiver) = core_event_stream_channel();\n            let incremental = request.acceptsIncrementalValues();\n            let requestId = request.requestId;\n            let targetPath = request.targetPath;\n            let propertyName = request.propertyName;\n            let previousValue = std::sync::Arc::new(std::sync::Mutex::new(None::<operit_link::CoreValue>));\n            let subscription = flow.subscribeWithCancellation(\n                operit_store::PreferencesDataStore::FlowCancellation::new(),\n                move |value| {{\n                    if let Ok(value) = to_core_value(value) {{\n                        let (kind, value) = operit_link::CoreValue::incrementalEvent(\n                            &mut *previousValue.lock().expect(\"incremental flow value mutex must not be poisoned\"),\n                            value,\n                            incremental,\n                        );\n                        let _ = sender.send(operit_link::CoreEvent {{\n                            requestId: Some(requestId.clone()),\n                            targetPath: targetPath.clone(),\n                            propertyName: propertyName.clone(),\n                            kind,\n                            value,\n                        }});\n                    }}\n                }},\n            ).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n            Ok(receiver.withOnClose(move || subscription.cancel()))\n        }}\n",
         method.name, args, flow_expr
     )
     .prepend_with(render_cfg_attrs(method))
@@ -858,7 +1023,7 @@ fn render_json_state_watch_stream_arm(method: &SourceMethod, fallible: bool) -> 
         format!("object.{}({})", method.name, call_args)
     };
     format!(
-        "        {:?} => {{\n{}            let stateFlow = {};\n            let (sender, receiver) = core_event_stream_channel();\n            let requestId = request.requestId;\n            let targetPath = request.targetPath;\n            let propertyName = request.propertyName;\n            let isFirstEvent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));\n            let isFirstEventForSubscriber = isFirstEvent.clone();\n            let subscriptionId = stateFlow.subscribe(move |value| {{\n                let kind = if isFirstEventForSubscriber.swap(false, std::sync::atomic::Ordering::SeqCst) {{\n                    operit_link::CoreEventKind::Snapshot\n                }} else {{\n                    operit_link::CoreEventKind::Changed\n                }};\n                if let Ok(value) = to_core_value(value) {{\n                    let _ = sender.send(operit_link::CoreEvent {{\n                        requestId: Some(requestId.clone()),\n                        targetPath: targetPath.clone(),\n                        propertyName: propertyName.clone(),\n                        kind,\n                        value,\n                    }});\n                }}\n            }});\n            Ok(receiver.withOnClose(move || stateFlow.unsubscribe(subscriptionId)))\n        }}\n",
+        "        {:?} => {{\n{}            let stateFlow = {};\n            let (sender, receiver) = core_event_stream_channel();\n            let incremental = request.acceptsIncrementalValues();\n            let requestId = request.requestId;\n            let targetPath = request.targetPath;\n            let propertyName = request.propertyName;\n            let previousValue = std::sync::Arc::new(std::sync::Mutex::new(None::<operit_link::CoreValue>));\n            let subscriptionId = stateFlow.subscribe(move |value| {{\n                if let Ok(value) = to_core_value(value) {{\n                    let (kind, value) = operit_link::CoreValue::incrementalEvent(\n                        &mut *previousValue.lock().expect(\"incremental state flow value mutex must not be poisoned\"),\n                        value,\n                        incremental,\n                    );\n                    let _ = sender.send(operit_link::CoreEvent {{\n                        requestId: Some(requestId.clone()),\n                        targetPath: targetPath.clone(),\n                        propertyName: propertyName.clone(),\n                        kind,\n                        value,\n                    }});\n                }}\n            }});\n            Ok(receiver.withOnClose(move || stateFlow.unsubscribe(subscriptionId)))\n        }}\n",
         method.name, args, state_expr
     )
     .prepend_with(render_cfg_attrs(method))
@@ -867,12 +1032,15 @@ fn render_json_state_watch_stream_arm(method: &SourceMethod, fallible: bool) -> 
 fn render_text_event_watch_stream_arm(method: &SourceMethod, optional: bool) -> String {
     let args = render_arg_decoders(method);
     let call_args = render_arg_call_list(method);
-    let chat_id_expr = method
-        .args
-        .iter()
-        .find(|arg| arg.name == "chatId" || arg.name == "chat_id")
-        .map(|arg| arg.name.clone())
-        .unwrap_or_else(|| "\"\".to_string()".to_string());
+    let MethodRoute::Binding {
+        binding_argument, ..
+    } = &method.route
+    else {
+        panic!(
+            "Renderable text watch {} must declare its stream key through Binding routing",
+            method.name
+        );
+    };
     let stream_expr = if optional {
         format!(
             "object.{}({}).ok_or_else(|| operit_link::CoreLinkError::watchNotFound(&registryKey))?",
@@ -882,8 +1050,8 @@ fn render_text_event_watch_stream_arm(method: &SourceMethod, optional: bool) -> 
         format!("object.{}({})", method.name, call_args)
     };
     format!(
-        "        {:?} => {{\n{}            let streamChatId = {}.clone();\n            let stream = {};\n            Ok(core_text_event_stream(streamChatId, stream, request))\n        }}\n",
-        method.name, args, chat_id_expr, stream_expr
+        "        {:?} => {{\n{}            let streamKey = {}.clone();\n            let stream = {};\n            core_text_event_stream(streamKey, stream, request)\n        }}\n",
+        method.name, args, binding_argument, stream_expr
     )
     .prepend_with(render_cfg_attrs(method))
 }

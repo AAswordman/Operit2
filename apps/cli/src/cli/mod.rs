@@ -60,7 +60,10 @@ pub(crate) mod link;
 mod transfer;
 mod web_access;
 
-use crate::bootstrap::persist_cli_storage_config;
+use crate::bootstrap::{
+    cli_identities, create_cli_identity, persist_cli_storage_config, rename_cli_identity,
+    scope_cli_storage_command_args, select_cli_identity,
+};
 use crate::browser_callback::CliOAuthCallback;
 use crate::chat_runtime::{run_chat_shell_command_with_core, run_shell_command};
 use crate::core_proxy::{cli_core, local_cli_core};
@@ -88,6 +91,10 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
         return run_link_command(&args[1..]).await;
     }
 
+    if args[0].as_str() == "identity" {
+        return run_identity_command(&args[1..]);
+    }
+
     if args[0].as_str() == "web" {
         return run_web_access_command(&args[1..]).await;
     }
@@ -100,10 +107,11 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
         return run_uninstall_cli_command(&args[1..]).await;
     }
 
+    let localArgs = scope_cli_storage_command_args(args)?;
     let mut core = local_cli_core()?;
 
-    let result = match args[0].as_str() {
-        "model" => run_core_command_and_print(&mut core, &args).await,
+    let result = match localArgs[0].as_str() {
+        "model" => run_core_command_and_print(&mut core, &localArgs).await,
         "version" => run_version_core_command(&mut core).await,
         "prefs" => run_core_command_and_print(&mut core, &args).await,
         "host" => run_core_command_and_print(&mut core, &args).await,
@@ -120,8 +128,8 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
         }
         "chat" => run_core_command_and_print(&mut core, &args).await,
         "workspace" => run_core_command_and_print(&mut core, &args).await,
-        "storage" => run_local_core_command_and_print(&mut core, &args).await,
-        "shell" => run_shell_command(&args[1..]).await,
+        "storage" => run_local_core_command_and_print(&mut core, &localArgs).await,
+        "shell" => run_shell_command(&mut core, &args[1..]).await,
         "tag" => run_core_command_and_print(&mut core, &args).await,
         "character" => run_core_command_and_print(&mut core, &args).await,
         "group" => run_core_command_and_print(&mut core, &args).await,
@@ -140,6 +148,52 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
         }
     };
     result.map_err(rewrite_cli_usage_message)
+}
+
+/// Runs local identity management before any Core runtime is created.
+fn run_identity_command(args: &[String]) -> Result<(), String> {
+    match args {
+        [command] if command == "list" => {
+            let (identities, activeIdentityId) = cli_identities();
+            for identity in identities {
+                println!(
+                    "id={} name={} current={}",
+                    identity.id,
+                    identity.name,
+                    identity.id == activeIdentityId
+                );
+            }
+            Ok(())
+        }
+        [command] if command == "current" => {
+            let (identities, activeIdentityId) = cli_identities();
+            let identity = identities
+                .into_iter()
+                .find(|identity| identity.id == activeIdentityId)
+                .expect("active CLI identity must exist");
+            println!("id={} name={}", identity.id, identity.name);
+            Ok(())
+        }
+        [command, name] if command == "create" => {
+            let identity = create_cli_identity(name.clone())?;
+            println!("id={} name={}", identity.id, identity.name);
+            Ok(())
+        }
+        [command, identityId] if command == "use" => {
+            select_cli_identity(identityId)?;
+            println!("currentIdentityId={identityId}");
+            Ok(())
+        }
+        [command, identityId, name] if command == "rename" => {
+            rename_cli_identity(identityId, name.clone())?;
+            println!("id={identityId} name={}", name.trim());
+            Ok(())
+        }
+        _ => {
+            print_identity_usage();
+            Ok(())
+        }
+    }
 }
 
 pub(crate) async fn run_cli_link_root(session_name: &str, args: &[String]) -> Result<(), String> {
@@ -1366,7 +1420,7 @@ pub(crate) fn print_root_usage() {
     println!("operit2 uninstall");
     println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]");
     println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]");
-    println!("operit2 cli <version|prefs|host|log|local-models|stt|memory|tts|export|import|backup|model|chat|workspace|storage|tag|character|group|active-prompt|approval|tool|market|update|install|uninstall|skill|package|plugin|mcp|link|web|shell>");
+    println!("operit2 cli <version|identity|prefs|host|log|local-models|stt|memory|tts|export|import|backup|model|chat|workspace|storage|tag|character|group|active-prompt|approval|tool|market|update|install|uninstall|skill|package|plugin|mcp|link|web|shell>");
     println!("operit2 cli --link <session> <version|prefs|host|log|local-models|stt|memory|export|import|backup|model|chat|workspace|storage|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
     println!();
     print_cli_usage();
@@ -1375,6 +1429,7 @@ pub(crate) fn print_root_usage() {
 fn print_cli_usage() {
     println!("operit2 cli --link <session> <version|chat|workspace|local-models|stt>");
     println!("operit2 cli version");
+    print_identity_usage();
     println!("operit2 cli prefs <show|thinking|thinking-quality|stream|media-history|mcp-timeout>");
     println!("operit2 cli host <show|capabilities|paths>");
     println!("operit2 cli storage <paths|migrate>");
@@ -1407,7 +1462,7 @@ fn print_cli_usage() {
     println!("operit2 cli plugin <help|list|more|load|show|import|enable|disable>");
     println!("operit2 cli mcp <dir|list|show|import|export|remove|enable|disable|start|kill|tools|config|config-set|local-set|meta|meta-set|describe>");
     println!(
-        "operit2 cli link <serve|discover|hello|connect|sessions|session-delete|accepted-sessions|accepted-session-delete|ping|sync|sync-status|call|watch|tui|run>"
+        "operit2 cli link <serve|discover|hello|connect|space|sessions|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|call|watch|tui|run>"
     );
     println!("operit2 cli web <open|close|status|token>");
     println!("operit2 cli shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
@@ -1445,6 +1500,15 @@ fn print_cli_usage() {
     println!("operit2 cli workspace commands-path <workspace>");
     println!("operit2 cli workspace run <chat-id> <command-id>");
     println!("operit2 cli workspace run-path <workspace> <command-id>");
+}
+
+/// Prints local identity commands that run before Core startup.
+fn print_identity_usage() {
+    println!("operit2 cli identity list");
+    println!("operit2 cli identity current");
+    println!("operit2 cli identity create <name>");
+    println!("operit2 cli identity use <id>");
+    println!("operit2 cli identity rename <id> <name>");
 }
 
 fn print_cli_link_usage() {
@@ -1922,6 +1986,7 @@ fn functionTypeName(functionType: &FunctionType) -> &'static str {
         FunctionType::MEMORY => "MEMORY",
         FunctionType::UI_CONTROLLER => "UI_CONTROLLER",
         FunctionType::TRANSLATION => "TRANSLATION",
+        FunctionType::TITLE_GENERATION => "TITLE_GENERATION",
         FunctionType::GREP => "GREP",
         FunctionType::ROLE_RESPONSE_PLANNER => "ROLE_RESPONSE_PLANNER",
         FunctionType::IMAGE_RECOGNITION => "IMAGE_RECOGNITION",

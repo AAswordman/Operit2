@@ -45,15 +45,6 @@ impl ModelCommand {
     fn functionalManager(&mut self) -> FunctionalConfigManager {
         FunctionalConfigManager::default()
     }
-
-    fn initialize(&mut self) -> Result<(), String> {
-        self.modelManager()
-            .initializeIfNeeded()
-            .map_err(|error| error.to_string())?;
-        self.functionalManager()
-            .initializeIfNeeded()
-            .map_err(|error| error.to_string())
-    }
 }
 
 pub fn run_model_command(
@@ -69,10 +60,6 @@ pub fn run_model_command(
     }
 
     match args[0].as_str() {
-        "init" => {
-            core.initialize()?;
-            println!("initialized");
-        }
         "provider-type-list" => {
             let mut providers = ModelCatalog::providers().map_err(|error| error.to_string())?;
             providers.sort_by(|left, right| left.providerTypeId.cmp(&right.providerTypeId));
@@ -87,7 +74,6 @@ pub fn run_model_command(
             }
         }
         "provider-list" => {
-            core.initialize()?;
             for provider in core
                 .modelManager()
                 .getProviderProfiles()
@@ -104,7 +90,6 @@ pub fn run_model_command(
             }
         }
         "provider-show" => {
-            core.initialize()?;
             let providerId =
                 requiredArg(args, 1, "usage: operit2 model provider-show <provider-id>")?;
             let provider = core
@@ -132,7 +117,6 @@ pub fn run_model_command(
             }
         }
         "provider-create" => {
-            core.initialize()?;
             let name = requiredArg(
                 args,
                 1,
@@ -158,7 +142,6 @@ pub fn run_model_command(
             println!("provider created: {providerId}");
         }
         "provider-set-key" => {
-            core.initialize()?;
             let providerId = requiredArg(
                 args,
                 1,
@@ -181,7 +164,6 @@ pub fn run_model_command(
             println!("provider api key updated: {providerId}");
         }
         "provider-set-endpoint" => {
-            core.initialize()?;
             let providerId = requiredArg(
                 args,
                 1,
@@ -204,7 +186,6 @@ pub fn run_model_command(
             println!("provider endpoint updated: {providerId}");
         }
         "provider-model-available-list" => {
-            core.initialize()?;
             let providerId = requiredArg(
                 args,
                 1,
@@ -228,7 +209,6 @@ pub fn run_model_command(
             }
         }
         "provider-model-add" => {
-            core.initialize()?;
             let providerId = requiredArg(
                 args,
                 1,
@@ -247,7 +227,6 @@ pub fn run_model_command(
             println!("provider model added: {modelId}");
         }
         "provider-model-create" => {
-            core.initialize()?;
             let providerId = requiredArg(
                 args,
                 1,
@@ -266,7 +245,6 @@ pub fn run_model_command(
             println!("provider model created: {modelId}");
         }
         "list" => {
-            core.initialize()?;
             let mut summaries = core
                 .modelManager()
                 .getAllModelSummaries()
@@ -287,7 +265,6 @@ pub fn run_model_command(
             }
         }
         "show" => {
-            core.initialize()?;
             let providerId = args
                 .get(1)
                 .map(String::as_str)
@@ -360,7 +337,6 @@ pub fn run_model_command(
             }
         }
         "use" => {
-            core.initialize()?;
             let providerId =
                 requiredArg(args, 1, "usage: operit2 model use <provider-id> <model-id>")?
                     .to_string();
@@ -373,7 +349,6 @@ pub fn run_model_command(
             println!("chat model updated: {providerId}\t{modelId}");
         }
         "params" => {
-            core.initialize()?;
             let providerId = args
                 .get(1)
                 .map(String::as_str)
@@ -394,7 +369,6 @@ pub fn run_model_command(
             }
         }
         "parameters" => {
-            core.initialize()?;
             let providerId = requiredArg(
                 args,
                 1,
@@ -419,7 +393,6 @@ pub fn run_model_command(
             println!("parameters updated: {providerId}\t{modelId}");
         }
         "context-show" => {
-            core.initialize()?;
             let providerId = args
                 .get(1)
                 .map(String::as_str)
@@ -441,7 +414,6 @@ pub fn run_model_command(
             );
         }
         "context-set" => {
-            core.initialize()?;
             let providerId = requiredArg(args, 1, "usage: operit2 model context-set <provider-id> <model-id> <max-context-length> <enable-max-context-mode>")?;
             let modelId = requiredArg(args, 2, "usage: operit2 model context-set <provider-id> <model-id> <max-context-length> <enable-max-context-mode>")?;
             let maxContextLength = parse_f32_arg(args.get(3), "usage: operit2 model context-set <provider-id> <model-id> <max-context-length> <enable-max-context-mode>")?;
@@ -459,7 +431,6 @@ pub fn run_model_command(
             println!("context settings updated: {providerId}\t{modelId}");
         }
         "summary-show" => {
-            core.initialize()?;
             let providerId = args
                 .get(1)
                 .map(String::as_str)
@@ -489,7 +460,6 @@ pub fn run_model_command(
             );
         }
         "summary-set" => {
-            core.initialize()?;
             let providerId = requiredArg(args, 1, "usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>")?;
             let modelId = requiredArg(args, 2, "usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>")?;
             let enableSummary = parse_bool_arg(args.get(3), "usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>")?;
@@ -511,7 +481,6 @@ pub fn run_model_command(
             println!("summary settings updated: {providerId}\t{modelId}");
         }
         "function-list" => {
-            core.initialize()?;
             let mut rows = functionTypes()
                 .into_iter()
                 .map(|functionType| {
@@ -532,7 +501,6 @@ pub fn run_model_command(
             }
         }
         "function-show" => {
-            core.initialize()?;
             let functionType = parseFunctionType(requiredArg(
                 args,
                 1,
@@ -547,7 +515,6 @@ pub fn run_model_command(
             println!("modelId={}", binding.modelId);
         }
         "function-set" => {
-            core.initialize()?;
             let functionType = parseFunctionType(requiredArg(
                 args,
                 1,
@@ -576,7 +543,6 @@ pub fn run_model_command(
             );
         }
         "function-reset" => {
-            core.initialize()?;
             if let Some(functionTypeValue) = args.get(1) {
                 let functionType = parseFunctionType(functionTypeValue)?;
                 core.functionalManager()
@@ -605,10 +571,12 @@ fn requiredArg<'a>(args: &'a [String], index: usize, usage: &str) -> Result<&'a 
         .ok_or_else(|| usage.to_string())
 }
 
+/// Parses a functional model role accepted by the model command.
 fn parseFunctionType(value: &str) -> Result<FunctionType, String> {
     match value {
         "CHAT" => Ok(FunctionType::CHAT),
         "SUMMARY" => Ok(FunctionType::SUMMARY),
+        "TITLE_GENERATION" => Ok(FunctionType::TITLE_GENERATION),
         "MEMORY" => Ok(FunctionType::MEMORY),
         "UI_CONTROLLER" => Ok(FunctionType::UI_CONTROLLER),
         "TRANSLATION" => Ok(FunctionType::TRANSLATION),
@@ -621,10 +589,12 @@ fn parseFunctionType(value: &str) -> Result<FunctionType, String> {
     }
 }
 
+/// Lists functional model roles supported by the model command.
 fn functionTypes() -> Vec<FunctionType> {
     vec![
         FunctionType::CHAT,
         FunctionType::SUMMARY,
+        FunctionType::TITLE_GENERATION,
         FunctionType::MEMORY,
         FunctionType::UI_CONTROLLER,
         FunctionType::TRANSLATION,
@@ -636,10 +606,12 @@ fn functionTypes() -> Vec<FunctionType> {
     ]
 }
 
+/// Formats a functional model role for command output.
 fn functionTypeName(functionType: &FunctionType) -> &'static str {
     match functionType {
         FunctionType::CHAT => "CHAT",
         FunctionType::SUMMARY => "SUMMARY",
+        FunctionType::TITLE_GENERATION => "TITLE_GENERATION",
         FunctionType::MEMORY => "MEMORY",
         FunctionType::UI_CONTROLLER => "UI_CONTROLLER",
         FunctionType::TRANSLATION => "TRANSLATION",
@@ -652,7 +624,6 @@ fn functionTypeName(functionType: &FunctionType) -> &'static str {
 }
 
 fn print_model_usage() {
-    println!("operit2 model init");
     println!("operit2 model provider-type-list");
     println!("operit2 model provider-list");
     println!("operit2 model provider-show <provider-id>");

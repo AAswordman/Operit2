@@ -11,6 +11,11 @@ object OperitRuntimeNative {
         host: AndroidRuntimeHost,
     ): Long
     @JvmStatic external fun createError(): String
+    /** Reads the client bootstrap record before the native Runtime is created. */
+    @JvmStatic external fun runtimeBootstrapRead(defaultRuntimeRoot: String): String
+    /** Writes the client bootstrap record before the native Runtime is created. */
+    @JvmStatic
+    external fun runtimeBootstrapWrite(defaultRuntimeRoot: String, content: String): String
     @JvmStatic external fun destroy(handle: Long)
     @JvmStatic external fun call(handle: Long, request: ByteArray): ByteArray
     @JvmStatic external fun pushOpen(handle: Long, request: ByteArray): ByteArray

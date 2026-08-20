@@ -254,6 +254,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get unlock => '解锁';
 
   @override
+  String get chatLockedCannotDelete => '该聊天已锁定，无法删除';
+
+  @override
   String get messageLocatorTitle => '消息定位';
 
   @override
@@ -1041,6 +1044,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelFunctionSummaryDescription => '长上下文自动总结使用的模型。';
 
   @override
+  String get settingsModelFunctionTitleGeneration => '对话标题';
+
+  @override
+  String get settingsModelFunctionTitleGenerationDescription =>
+      '根据首条消息和附件生成对话标题使用的模型。';
+
+  @override
   String get settingsModelFunctionMemory => '记忆';
 
   @override
@@ -1781,20 +1791,41 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCharactersToolAccessConfigure => '配置工具白名单';
 
   @override
+  String get settingsCharactersToolAccessTitle => '自定义允许使用的工具';
+
+  @override
+  String get settingsCharactersToolAccessTabBuiltin => '内建工具';
+
+  @override
+  String get settingsCharactersToolAccessTabPackage => '包';
+
+  @override
+  String get settingsCharactersToolAccessTabSkill => 'Skill';
+
+  @override
+  String get settingsCharactersToolAccessTabMcp => 'MCP';
+
+  @override
+  String get settingsCharactersToolAccessSearchPlaceholder => '搜索名称、描述或标识';
+
+  @override
+  String get settingsCharactersToolAccessEmptySearch => '未找到匹配的工具';
+
+  @override
   String get settingsCharactersToolAccessRequiresUsePackage =>
       '选择工具包、技能或 MCP 时，需要同时允许内置工具 use_package。';
 
   @override
-  String get settingsCharactersToolAccessEmptyBuiltin => '当前没有可选内置工具。';
+  String get settingsCharactersToolAccessEmptyBuiltin => '当前没有可配置的内建工具';
 
   @override
-  String get settingsCharactersToolAccessEmptyPackages => '当前没有可选工具包。';
+  String get settingsCharactersToolAccessEmptyPackages => '当前没有全局可用的包';
 
   @override
-  String get settingsCharactersToolAccessEmptySkills => '当前没有可选技能。';
+  String get settingsCharactersToolAccessEmptySkills => '当前没有对 AI 可见的 Skill';
 
   @override
-  String get settingsCharactersToolAccessEmptyMcp => '当前没有可选 MCP 服务。';
+  String get settingsCharactersToolAccessEmptyMcp => '当前没有已启用的 MCP 服务器';
 
   @override
   String get settingsCharactersBuiltinTools => '允许的内置工具';
@@ -2058,35 +2089,194 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsWorkspaceRefresh => '刷新';
 
   @override
-  String get settingsRuntimeConnection => '当前设备';
+  String get runtimeIdentity => '当前身份';
 
   @override
-  String get settingsRuntimeConnectionDescription =>
-      '选择让聊天和工具运行在这台设备，还是运行在另一台已连接设备。';
+  String get runtimeIdentityManage => '切换或管理身份';
 
   @override
-  String get settingsRuntimeUseLocal => '使用这台设备';
+  String get runtimeIdentitySheetTitle => '身份';
 
   @override
-  String get settingsRuntimeLocalTitle => '这台设备';
+  String get runtimeIdentityCreate => '新建身份';
 
   @override
-  String get settingsRuntimeLocalDescription => '聊天和工具会在这台设备上运行。';
+  String get runtimeIdentityCreateTitle => '新建身份';
+
+  @override
+  String get runtimeIdentityRename => '重命名身份';
+
+  @override
+  String get runtimeIdentityRenameTitle => '重命名身份';
+
+  @override
+  String get runtimeIdentityName => '名称（可选）';
+
+  @override
+  String runtimeIdentitySwitchTitle(String identityName) {
+    return '切换到 $identityName？';
+  }
+
+  @override
+  String get runtimeIdentitySwitchDescription =>
+      '每个身份拥有独立的聊天、配置、设备空间、配对设备和工作区。切换会结束当前运行实例；应用再次启动时将进入所选身份。';
+
+  @override
+  String get runtimeIdentitySwitchConfirm => '切换身份';
+
+  @override
+  String get runtimeIdentityCurrent => '当前';
+
+  @override
+  String get settingsUserProfileTitle => '用户档案';
+
+  @override
+  String get settingsUserProfileSubtitle => '头像、名字、身份与 GitHub';
+
+  @override
+  String get settingsUserProfileDescription => '管理当前档案并切换隔离的身份。';
+
+  @override
+  String get settingsUserProfileUnnamed => '未命名';
+
+  @override
+  String get settingsUserProfileNotLoggedIn => '未登录';
+
+  @override
+  String get settingsUserProfileGitHubLoading => '正在读取 GitHub 账号...';
+
+  @override
+  String settingsUserProfileGitHubAccount(String account) {
+    return 'GitHub：@$account';
+  }
+
+  @override
+  String settingsUserProfileGitHubStatusError(String error) {
+    return 'GitHub 状态错误：$error';
+  }
+
+  @override
+  String get settingsUserProfileOverview => '档案';
+
+  @override
+  String get settingsUserProfileAvatar => '头像';
+
+  @override
+  String get settingsUserProfileName => '名字';
+
+  @override
+  String get settingsUserProfileChooseAvatar => '选择头像';
+
+  @override
+  String get settingsUserProfileClearAvatar => '清除头像';
+
+  @override
+  String get settingsUserProfileEditName => '修改名字';
+
+  @override
+  String get settingsUserProfileIdentities => '身份';
+
+  @override
+  String get settingsUserProfileGitHub => 'GitHub 账号';
+
+  @override
+  String get settingsUserProfileGitHubDescription => '未登录';
+
+  @override
+  String get settingsUserProfileLogin => '登录';
+
+  @override
+  String get settingsUserProfileLogout => '退出登录';
+
+  @override
+  String get settingsAppearanceAvatarCustom => '自定义头像';
+
+  @override
+  String get settingsRuntimeConnection => '当前设备空间';
+
+  @override
+  String get settingsRuntimeConnectionDescription => '当前设备及其所在设备空间的连接状态。';
+
+  @override
+  String get settingsRuntimeCurrentSpace => '当前设备空间';
+
+  @override
+  String get settingsRuntimeRenameSpace => '重命名设备空间';
+
+  @override
+  String get settingsRuntimeLeaveSpace => '退出设备空间';
+
+  @override
+  String get settingsRuntimeLeaveSpaceTitle => '退出当前设备空间？';
+
+  @override
+  String get settingsRuntimeLeaveSpaceDescription =>
+      '这台设备会创建一个新的单设备空间。业务数据保留，已配对设备也不会被删除。';
+
+  @override
+  String get settingsRuntimeLeaveSpaceConfirm => '退出';
+
+  @override
+  String get settingsRuntimeSpaceName => '设备空间名称';
+
+  @override
+  String settingsRuntimeSpaceId(String spaceId) {
+    return '设备空间 ID：$spaceId';
+  }
+
+  @override
+  String settingsRuntimeSpaceDeviceCount(int count) {
+    return '共 $count 台设备';
+  }
+
+  @override
+  String get settingsRuntimeViewSpaceTopology => '查看设备拓扑';
+
+  @override
+  String settingsRuntimeSpaceTopologyTitle(String spaceName) {
+    return '$spaceName 的设备拓扑';
+  }
+
+  @override
+  String settingsRuntimeSpaceTopologySummary(
+    int deviceCount,
+    int connectionCount,
+  ) {
+    return '$deviceCount 台设备 · $connectionCount 条直连';
+  }
+
+  @override
+  String get settingsRuntimeDisconnectConnection => '断开连接';
+
+  @override
+  String get settingsRuntimeDisconnectConnectionTitle => '断开直连';
+
+  @override
+  String settingsRuntimeDisconnectConnectionMessage(String deviceName) {
+    return '确定要断开与 $deviceName 的直连吗？配对记录会保留。';
+  }
+
+  @override
+  String get settingsRuntimeDisconnectConnectionFailed => '断开失败';
+
+  @override
+  String get settingsRuntimeCurrentDevice => '当前设备';
 
   @override
   String get settingsRuntimeRemoteTitle => '已连接的设备';
 
   @override
-  String get settingsRuntimeRemoteDescription => '这些设备已经完成连接，可以切换使用或移除。';
-
-  @override
-  String get settingsRuntimeTesting => '正在检查连接…';
+  String get settingsRuntimeRemoteDescription =>
+      '已直接配对的设备。配对负责建立连接，加入设备空间后才会共享数据和路由。';
 
   @override
   String get settingsRuntimePairRemote => '连接另一台设备';
 
   @override
   String get settingsRuntimeNoPairedRemote => '还没有已连接的设备。';
+
+  @override
+  String get settingsRuntimeConnectionInitiatedByOtherDevice => '连接由对方设备发起';
 
   @override
   String get settingsRuntimePairToken => '连接 Token';
@@ -2104,30 +2294,8 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimeBaseUrl => '设备地址';
 
   @override
-  String get settingsRuntimeTestCurrent => '检查连接';
-
-  @override
-  String get settingsRuntimeSwitchedLocal => '已切换到这台设备。';
-
-  @override
-  String get settingsRuntimeSwitchedRemote => '已切换到已连接设备。';
-
-  @override
-  String settingsRuntimeTestResult(String version) {
-    return '设备可用：$version';
-  }
-
-  @override
-  String settingsRuntimeTestFailed(String error) {
-    return '连接检查失败：$error';
-  }
-
-  @override
-  String get settingsRuntimeRemoteDisconnected => '已连接设备断开';
-
-  @override
-  String settingsRuntimeRemoteDisconnectedMessage(String error) {
-    return '已切换到这台设备。\n\n$error';
+  String settingsRuntimeConnectionFailed(String error) {
+    return '设备连接失败：$error';
   }
 
   @override
@@ -2143,43 +2311,37 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimePairedOffline => '离线';
 
   @override
-  String get settingsRuntimeSync => '同步数据';
+  String get settingsRuntimeJoinSpace => '加入设备空间';
 
   @override
-  String get settingsRuntimeSyncing => '同步中…';
-
-  @override
-  String settingsRuntimeSyncCompleted(int localApplied, int remoteApplied) {
-    return '同步完成：本机 $localApplied 项，远端 $remoteApplied 项。';
+  String settingsRuntimeJoinSpaceTitle(String deviceName) {
+    return '加入 $deviceName 的设备空间？';
   }
 
   @override
-  String settingsRuntimeSyncFailed(String error) {
-    return '同步失败：$error';
+  String get settingsRuntimeJoinSpaceDescription =>
+      '当前设备空间会与对方合并，并采用对方的设备空间名称。';
+
+  @override
+  String get settingsRuntimePairingComplete => '设备已配对';
+
+  @override
+  String get settingsRuntimeDeviceInCurrentSpace => '已在当前设备空间';
+
+  @override
+  String get settingsRuntimeDiscoverSpaces => '发现设备空间';
+
+  @override
+  String get settingsRuntimeDiscoverSpacesDescription =>
+      '附近设备会按设备空间归并；展开设备空间后，可以选择其中一台设备直接连接。';
+
+  @override
+  String settingsRuntimeDiscoveredSpaceSummary(
+    int memberCount,
+    int nearbyCount,
+  ) {
+    return '共 $memberCount 台设备 · 附近可连接 $nearbyCount 台';
   }
-
-  @override
-  String get settingsRuntimeAutoSyncEnable => '开启持续同步';
-
-  @override
-  String get settingsRuntimeAutoSyncDisable => '关闭持续同步';
-
-  @override
-  String get settingsRuntimeAutoSyncEnabled => '已开启持续同步，扫到该设备后会自动同步。';
-
-  @override
-  String get settingsRuntimeAutoSyncDisabled => '已关闭持续同步。';
-
-  @override
-  String settingsRuntimeAutoSyncFailed(String error) {
-    return '持续同步设置失败：$error';
-  }
-
-  @override
-  String get settingsRuntimeDiscoverDevices => '发现设备';
-
-  @override
-  String get settingsRuntimeDiscoverDevicesDescription => '扫描附近设备或手动输入地址来建立连接。';
 
   @override
   String get settingsRuntimeScan => '扫描';
@@ -2194,20 +2356,20 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimeConnect => '连接';
 
   @override
-  String get settingsRuntimeEnableDiscovery => '允许其他设备发现这台设备';
+  String get settingsRuntimeEnableDiscovery => '允许附近设备发现当前设备空间';
 
   @override
   String get settingsRuntimeEnableDiscoveryDescription =>
-      '开启后，同网络下的设备能自动搜索到这台设备。';
+      '开启后，同一网络下的设备可以找到当前设备空间，并选择这台设备建立连接。';
 
   @override
   String settingsRuntimeEnableDiscoveryFailed(String error) {
-    return '无法开启设备发现：$error';
+    return '无法开启设备空间发现：$error';
   }
 
   @override
   String settingsRuntimeDisableDiscoveryFailed(String error) {
-    return '无法关闭设备发现：$error';
+    return '无法关闭设备空间发现：$error';
   }
 
   @override
@@ -2809,6 +2971,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsDataDetailedStatsSourceSummary => '摘要生成';
+
+  @override
+  String get settingsDataDetailedStatsSourceTitleGeneration => '标题生成';
 
   @override
   String get settingsDataDetailedStatsSourceMemory => '记忆分析';

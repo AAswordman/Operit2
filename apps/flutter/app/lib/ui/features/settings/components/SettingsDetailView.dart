@@ -11,6 +11,7 @@ import '../global_behavior/GlobalBehaviorSettingsPanel.dart';
 import '../model/ModelSettingsPanel.dart';
 import '../local_models/LocalModelSettingsPanel.dart';
 import '../models/SettingsModels.dart';
+import '../profile/UserProfileSettingsPanel.dart';
 import '../tools/ToolSettingsPanel.dart';
 import '../tts/TtsSettingsPanel.dart';
 import '../workspace/WorkspaceSettingsPanel.dart';
@@ -20,14 +21,20 @@ class SettingsDetailView extends StatelessWidget {
     super.key,
     required this.category,
     this.showHeader = true,
+    this.onProfileChanged,
   });
 
   final SettingsCategory category;
   final bool showHeader;
+  final VoidCallback? onProfileChanged;
 
+  /// Builds the settings panel selected by the navigation list.
   @override
   Widget build(BuildContext context) {
     return switch (category) {
+      SettingsCategory.profile => UserProfileSettingsPanel(
+        onProfileChanged: onProfileChanged,
+      ),
       SettingsCategory.model => const ModelSettingsPanel(),
       SettingsCategory.localModels => const LocalModelSettingsPanel(),
       SettingsCategory.tts => const TtsSettingsPanel(),

@@ -44,8 +44,6 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
   }
 
   Future<_AgentModelSelectorData> _loadSettings() async {
-    await _clients.preferencesModelConfigManager.initializeIfNeeded();
-    await _clients.preferencesFunctionalConfigManager.initializeIfNeeded();
     final binding = await _clients.preferencesFunctionalConfigManager
         .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
     final config = await _clients.preferencesModelConfigManager
@@ -59,9 +57,9 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
       currentBinding: binding,
       currentConfig: config,
       enableThinkingMode: await _clients.preferencesApiPreferences
-          .enableThinkingModeFlowSnapshot(),
+          .enableThinkingModeFlow().first,
       thinkingQualityLevel: await _clients.preferencesApiPreferences
-          .thinkingQualityLevelFlowSnapshot(),
+          .thinkingQualityLevelFlow().first,
     );
   }
 

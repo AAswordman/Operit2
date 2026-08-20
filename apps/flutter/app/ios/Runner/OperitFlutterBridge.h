@@ -15,6 +15,12 @@ void *operit_flutter_bridge_create_with_storage_roots(
     const char *runtime_root,
     const char *workspace_root);
 char *operit_flutter_bridge_create_error(void);
+/// Reads the client bootstrap record before the native Runtime is created.
+char *operit_flutter_bridge_runtime_bootstrap_read(const char *default_runtime_root);
+/// Writes the client bootstrap record before the native Runtime is created.
+char *operit_flutter_bridge_runtime_bootstrap_write(
+    const char *default_runtime_root,
+    const char *content);
 void operit_flutter_bridge_destroy(void *handle);
 typedef struct OperitByteBuffer {
     uint8_t *ptr;

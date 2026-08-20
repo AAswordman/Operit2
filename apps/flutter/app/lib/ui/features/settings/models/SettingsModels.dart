@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 
 enum SettingsCategory {
+  profile,
   model,
   localModels,
   tts,
@@ -37,6 +38,12 @@ class SettingsCategorySpec {
     AppLocalizations l10n,
   ) {
     return switch (category) {
+      SettingsCategory.profile => SettingsCategorySpec(
+        title: l10n.settingsUserProfileTitle,
+        subtitle: l10n.settingsUserProfileSubtitle,
+        description: l10n.settingsUserProfileDescription,
+        icon: Icons.account_circle_outlined,
+      ),
       SettingsCategory.model => SettingsCategorySpec(
         title: l10n.settingsCategoryModelTitle,
         subtitle: l10n.settingsCategoryModelSubtitle,

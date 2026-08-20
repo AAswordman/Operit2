@@ -1,5 +1,10 @@
 use super::*;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::RuntimeBootstrapStore::{
+    readNativeRuntimeBootstrapConfig, writeNativeRuntimeBootstrapConfig,
+};
+
 #[no_mangle]
 #[cfg(not(target_env = "ohos"))]
 pub extern "C" fn operit_flutter_bridge_create() -> *mut OperitFlutterBridge {
@@ -151,6 +156,84 @@ pub extern "C" fn operit_flutter_bridge_create_error() -> *mut c_char {
             .expect("create error lock must not be poisoned")
             .clone(),
     )
+}
+
+/// Reads the client bootstrap record before a native Runtime is created.
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe extern "C" fn operit_flutter_bridge_runtime_bootstrap_read(
+    default_runtime_root: *const c_char,
+) -> *mut c_char {
+    if default_runtime_root.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "value": null,
+                "error": "default Runtime root pointer is null",
+            })
+            .to_string(),
+        );
+    }
+    let default_runtime_root = match CStr::from_ptr(default_runtime_root).to_str() {
+        Ok(value) => PathBuf::from(value),
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::json!({
+                    "ok": false,
+                    "value": null,
+                    "error": format!("default Runtime root is not valid UTF-8: {error}"),
+                })
+                .to_string(),
+            );
+        }
+    };
+    string_to_ptr(readNativeRuntimeBootstrapConfig(default_runtime_root))
+}
+
+/// Writes the client bootstrap record before a native Runtime is created.
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub unsafe extern "C" fn operit_flutter_bridge_runtime_bootstrap_write(
+    default_runtime_root: *const c_char,
+    content: *const c_char,
+) -> *mut c_char {
+    if default_runtime_root.is_null() || content.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "ok": false,
+                "error": "runtime bootstrap write pointers must not be null",
+            })
+            .to_string(),
+        );
+    }
+    let default_runtime_root = match CStr::from_ptr(default_runtime_root).to_str() {
+        Ok(value) => PathBuf::from(value),
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("default Runtime root is not valid UTF-8: {error}"),
+                })
+                .to_string(),
+            );
+        }
+    };
+    let content = match CStr::from_ptr(content).to_str() {
+        Ok(value) => value,
+        Err(error) => {
+            return string_to_ptr(
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("runtime bootstrap config is not valid UTF-8: {error}"),
+                })
+                .to_string(),
+            );
+        }
+    };
+    string_to_ptr(writeNativeRuntimeBootstrapConfig(
+        default_runtime_root,
+        content,
+    ))
 }
 
 #[no_mangle]

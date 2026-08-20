@@ -29,16 +29,6 @@ impl UserPreferencesManager {
     }
 
     #[allow(non_snake_case)]
-    /// Initializes the user preference store.
-    pub fn initializeIfNeeded(
-        &self,
-        _defaultProfileName: &str,
-    ) -> Result<(), PreferencesDataStoreError> {
-        self.dataStore.data()?;
-        Ok(())
-    }
-
-    #[allow(non_snake_case)]
     /// Observes the selected application language code.
     pub fn appLanguage(&self) -> Flow<String> {
         self.dataStore.dataFlow().map(|preferences| {
@@ -88,14 +78,5 @@ impl PreferencesManager {
     /// Reads the selected application language code.
     pub fn getCurrentLanguage(&self) -> Result<String, PreferencesDataStoreError> {
         self.inner.getCurrentLanguage()
-    }
-
-    #[allow(non_snake_case)]
-    /// Initializes the user preference store through the preferences facade.
-    pub fn initializeIfNeeded(
-        &self,
-        defaultProfileName: &str,
-    ) -> Result<(), PreferencesDataStoreError> {
-        self.inner.initializeIfNeeded(defaultProfileName)
     }
 }

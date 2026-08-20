@@ -15,7 +15,6 @@ use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
-use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::services::ChatServiceCore::ChatServiceCore;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 
@@ -108,7 +107,7 @@ fn show_chat(
             .into_iter()
             .find(|chat| chat.id == chatId)
             .ok_or_else(|| format!("chat not found: {chatId}"))?;
-        Ok::<_, String>((chat, core.chatHistoryFlow().value()))
+        Ok::<_, String>((chat, core.chatHistory().clone()))
     })??;
     print_chat_history_header(&chat, output);
     for message in messages {
@@ -534,8 +533,7 @@ async fn send_chat_message_with_application(
             .value()
             .ok_or_else(|| "core has no active chat after send".to_string())?;
         let aiMessage = core
-            .chatHistoryFlow()
-            .value()
+            .chatHistory()
             .iter()
             .rev()
             .find(|message| message.sender == "ai" && message.timestamp > beforeLastAiTimestamp)
@@ -559,14 +557,7 @@ async fn dispatch_chat_message_with_application(
     application: &mut OperitApplication,
     sendArgs: ChatSendArgs,
 ) -> Result<i64, String> {
-    let modelConfigManager = ModelConfigManager::default();
     let functionalConfigManager = FunctionalConfigManager::default();
-    modelConfigManager
-        .initializeIfNeeded()
-        .map_err(|error| error.to_string())?;
-    functionalConfigManager
-        .initializeIfNeeded()
-        .map_err(|error| error.to_string())?;
     let chatBinding = functionalConfigManager
         .getModelBindingForFunction(FunctionType::CHAT)
         .map_err(|error| error.to_string())?;
@@ -587,8 +578,7 @@ async fn dispatch_chat_message_with_application(
         .collect::<Result<Vec<_>, _>>()?;
     let replyToMessage = match sendArgs.replyToTimestamp {
         Some(timestamp) => core
-            .chatHistoryFlow()
-            .value()
+            .chatHistory()
             .iter()
             .find(|message| message.timestamp == timestamp)
             .cloned()
@@ -601,8 +591,7 @@ async fn dispatch_chat_message_with_application(
         Some(replyToMessage)
     };
     let beforeLastAiTimestamp = core
-        .chatHistoryFlow()
-        .value()
+        .chatHistory()
         .iter()
         .filter(|message| message.sender == "ai")
         .map(|message| message.timestamp)
@@ -642,9 +631,16 @@ fn wait_for_committed_ai_message(
     let startedAt = Instant::now();
     loop {
         let result = with_main_chat_core(application, |core| {
-            if let Some(message) = core.chatHistoryFlow().value().into_iter().find(|message| {
-                message.sender == "ai" && message.timestamp == timestamp && message.completedAt > 0
-            }) {
+            if let Some(message) = core
+                .chatMessagesFlow(Some(chatId.to_string()))
+                .value()
+                .into_iter()
+                .find(|message| {
+                    message.sender == "ai"
+                        && message.timestamp == timestamp
+                        && message.completedAt > 0
+                })
+            {
                 return Ok(Some(message));
             }
             let stateByChatId = core.inputProcessingStateByChatIdFlow().value();

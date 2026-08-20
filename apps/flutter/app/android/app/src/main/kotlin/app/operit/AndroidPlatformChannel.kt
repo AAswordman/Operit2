@@ -28,6 +28,8 @@ class AndroidPlatformChannel(
         when (call.method) {
             "androidRuntimePaths" -> androidRuntimePaths(result)
             "localRuntimeStorageDefaults" -> localRuntimeStorageDefaults(result)
+            "runtimeBootstrapRead" -> runtimeBootstrapRead(result)
+            "runtimeBootstrapWrite" -> runtimeBootstrapWrite(call, result)
             "localRuntimeStoragePaths" -> localRuntimeStoragePaths(call, result)
             "setLocalRuntimeStorage" -> setLocalRuntimeStorage(call, result)
             "startLocalCoreService" -> startLocalCoreService(result)
@@ -75,6 +77,44 @@ class AndroidPlatformChannel(
     /** Returns the platform default runtime and workspace roots. */
     private fun localRuntimeStorageDefaults(result: MethodChannel.Result) {
         result.success(runtimeHost.defaultStoragePathsMap())
+    }
+
+    /** Reads the client bootstrap record through the Rust startup Host. */
+    private fun runtimeBootstrapRead(result: MethodChannel.Result) {
+        runtimeHost.runBackground {
+            try {
+                val response =
+                    OperitRuntimeNative.runtimeBootstrapRead(runtimeHost.defaultRuntimeRootPath())
+                activity.runOnUiThread { result.success(response) }
+            } catch (error: Throwable) {
+                activity.runOnUiThread {
+                    result.error("RUNTIME_BOOTSTRAP_READ_ERROR", error.message, null)
+                }
+            }
+        }
+    }
+
+    /** Writes the client bootstrap record through the Rust startup Host. */
+    private fun runtimeBootstrapWrite(call: MethodCall, result: MethodChannel.Result) {
+        val content = call.arguments as? String
+        if (content == null) {
+            result.error("INVALID_ARGS", "runtimeBootstrapWrite expects JSON text", null)
+            return
+        }
+        runtimeHost.runBackground {
+            try {
+                val response =
+                    OperitRuntimeNative.runtimeBootstrapWrite(
+                        runtimeHost.defaultRuntimeRootPath(),
+                        content,
+                    )
+                activity.runOnUiThread { result.success(response) }
+            } catch (error: Throwable) {
+                activity.runOnUiThread {
+                    result.error("RUNTIME_BOOTSTRAP_WRITE_ERROR", error.message, null)
+                }
+            }
+        }
     }
 
     /** Returns local runtime storage paths for requested roots. */

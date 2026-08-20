@@ -61,7 +61,7 @@ class AgentChatInputSection extends StatefulWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool isLoading;
-  final ChatInputProcessingState inputState;
+  final core_proxy.InputProcessingState inputState;
   final ChatViewModel viewModel;
   final String? currentChatId;
   final VoidCallback onSendMessage;
@@ -95,7 +95,8 @@ class AgentChatInputSection extends StatefulWidget {
   State<AgentChatInputSection> createState() => _AgentChatInputSectionState();
 }
 
-class _AgentChatInputSectionState extends State<AgentChatInputSection> {
+class _AgentChatInputSectionState extends State<AgentChatInputSection>
+    with WidgetsBindingObserver {
   final LayerLink _modelPopupLink = LayerLink();
   final LayerLink _inputMenuPopupLink = LayerLink();
   final GlobalKey _modelPopupTargetKey = GlobalKey();
@@ -112,9 +113,11 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
   bool _inputExpanded = false;
   String _modelLabel = '';
 
+  /// Starts input listeners and observes viewport metric changes.
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_handleInputChanged);
     _watchCurrentModelLabel();
   }
@@ -132,6 +135,22 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
     if (mounted) {
       setState(() {});
     }
+  }
+
+  /// Rebuilds open popups before and after the viewport relayout.
+  @override
+  void didChangeMetrics() {
+    _markOpenPopupsForBuild();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _markOpenPopupsForBuild();
+    });
+  }
+
+  /// Invalidates the placement of every open input popup.
+  void _markOpenPopupsForBuild() {
+    _modelPopupEntry?.markNeedsBuild();
+    _inputMenuPopupEntry?.markNeedsBuild();
+    _attachmentPopupEntry?.markNeedsBuild();
   }
 
   /// Toggles the input height while preserving the active draft and focus.
@@ -325,8 +344,6 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
 
   Future<void> _watchCurrentModelLabel() async {
     final clients = widget.viewModel.clients;
-    await clients.preferencesModelConfigManager.initializeIfNeeded();
-    await clients.preferencesFunctionalConfigManager.initializeIfNeeded();
     final binding = await clients.preferencesFunctionalConfigManager
         .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
     await _applyModelBinding(binding);
@@ -334,7 +351,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
       return;
     }
     _modelBindingSubscription = clients.preferencesFunctionalConfigManager
-        .functionModelBindingFlowChanges()
+        .functionModelBindingFlow()
         .listen((bindings) {
           _applyModelBinding(bindings[core_proxy.FunctionType.chat]!);
         });
@@ -446,8 +463,10 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection> {
     _attachmentPopupEntry = null;
   }
 
+  /// Releases listeners, viewport observation, and open popup entries.
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_handleInputChanged);
     _modelBindingSubscription?.cancel();
     _dismissModelSettingsPopup();
@@ -733,7 +752,7 @@ class _InputBody extends StatelessWidget {
 
   final TextEditingController controller;
   final FocusNode focusNode;
-  final ChatInputProcessingState inputState;
+  final core_proxy.InputProcessingState inputState;
   final String modelLabel;
   final LayerLink modelSelectorLink;
   final GlobalKey modelSelectorKey;
@@ -1839,7 +1858,7 @@ class _DesktopEnterSendShortcuts extends StatelessWidget {
 
 String _inputProcessingStatus(
   AppLocalizations l10n,
-  ChatInputProcessingState state,
+  core_proxy.InputProcessingState state,
 ) {
   final message = _inputProcessingMessage(l10n, state.message);
   if (message.isNotEmpty) {
@@ -1860,7 +1879,7 @@ String _inputProcessingStatus(
 
 String _toolProgressStatus(
   AppLocalizations l10n,
-  ChatInputProcessingState state,
+  core_proxy.InputProcessingState state,
 ) {
   final message = _inputProcessingMessage(l10n, state.message);
   if (message.isNotEmpty) {
@@ -2004,7 +2023,7 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
-double _progressFor(ChatInputProcessingState state) {
+double _progressFor(core_proxy.InputProcessingState state) {
   return switch (state.kind) {
     'Processing' => 0.3,
     'Connecting' => 0.6,

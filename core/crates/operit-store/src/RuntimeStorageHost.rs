@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use operit_host_api::{HostSecretStore, RuntimeSqliteHost, RuntimeStorageHost};
+use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_PATH_PREFIX, WORKSPACE_ROOT_PATH_PREFIX};
 
 use crate::RuntimeStorePaths::RuntimeStorePaths;
 
@@ -90,11 +91,14 @@ pub fn defaultHostSecretStoreOption() -> Option<Arc<dyn HostSecretStore>> {
 pub fn runtimeStoragePath(path: &Path) -> String {
     let paths = RuntimeStorePaths::default();
     if let Ok(relative) = path.strip_prefix(paths.runtime_dir()) {
-        return format!("runtime/{}", relative.to_string_lossy().replace('\\', "/"));
+        return format!(
+            "{RUNTIME_ROOT_PATH_PREFIX}{}",
+            relative.to_string_lossy().replace('\\', "/")
+        );
     }
     if let Ok(relative) = path.strip_prefix(paths.workspace_dir()) {
         return format!(
-            "workspaces/{}",
+            "{WORKSPACE_ROOT_PATH_PREFIX}{}",
             relative.to_string_lossy().replace('\\', "/")
         );
     }

@@ -10,7 +10,7 @@ use operit_plugin_sdk::toolpkg::ToolPkgRegistrationBridge::buildToolPkgRegistrat
 use operit_plugin_sdk::JsExecutionScriptBuilder;
 use operit_plugin_sdk::JsTools::getJsToolsDefinition;
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
-use operit_util::RuntimeStorageLayout::RUNTIME_CLEAN_ON_EXIT_DIR_PATH;
+use operit_util::RuntimeStorageLayout::{RUNTIME_CLEAN_ON_EXIT_DIR_PATH, RUNTIME_ROOT_PATH_PREFIX};
 
 /// JavaScript bootstrap module loaded into the QuickJS runtime.
 pub struct JsBootstrapModule {
@@ -134,7 +134,7 @@ fn cleanOnExitHostPath() -> String {
         .runtimeRootDir()
         .expect("runtime storage host must provide a clean-on-exit root");
     let relativePath = RUNTIME_CLEAN_ON_EXIT_DIR_PATH
-        .strip_prefix("runtime/")
+        .strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
         .expect("clean-on-exit path must be rooted under runtime");
     runtimeRoot
         .join(relativePath)

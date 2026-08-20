@@ -1,9 +1,17 @@
+#[path = "CoreNodeBindingStore.rs"]
+pub mod CoreNodeBindingStore;
+#[path = "CoreNodeIdentityStore.rs"]
+pub mod CoreNodeIdentityStore;
+#[path = "CoreSpaceStore.rs"]
+pub mod CoreSpaceStore;
 #[path = "ObjectBoxStore.rs"]
 pub mod ObjectBoxStore;
 #[path = "PreferencesDataStore.rs"]
 pub mod PreferencesDataStore;
 #[path = "PreferencesEncryption.rs"]
 pub mod PreferencesEncryption;
+#[path = "RuntimeFileSyncStore.rs"]
+pub mod RuntimeFileSyncStore;
 #[path = "RuntimeStorageHost.rs"]
 pub mod RuntimeStorageHost;
 #[path = "RuntimeStorePaths.rs"]
@@ -15,6 +23,7 @@ pub mod SyncOperationStore;
 
 pub use ObjectBoxStore::*;
 pub use PreferencesDataStore::*;
+pub use RuntimeFileSyncStore::*;
 pub use RuntimeStorageHost::*;
 pub use RuntimeStorePaths::*;
 pub use SqliteStore::*;

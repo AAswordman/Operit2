@@ -1,6 +1,7 @@
 use super::*;
 
 use operit_host_api::{HostError, RuntimeStorageEntry};
+use operit_util::RuntimeStorageLayout::RUNTIME_SPACE_TOPOLOGY_DIR_PATH;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -87,52 +88,85 @@ impl RuntimeStorageHost for MemoryStorageHost {
     }
 }
 
-/// Verifies local initialization, named remote persistence, and remote route validation.
+/// Verifies Link Access storage no longer creates a global execution route.
 #[test]
-fn routing_config_records_and_validates_runtime_route() {
-    let store = LinkAccessStore::new(Arc::new(MemoryStorageHost::default()));
+fn link_access_store_constructs_without_global_route() {
+    let _store = LinkAccessStore::new(Arc::new(MemoryStorageHost::default()));
+}
 
-    let config = store
-        .initializeRoutingConfig()
-        .expect("routing config must initialize");
-
-    assert_eq!(config.route, LinkAccessRoute::Local);
-    assert_eq!(
-        store
-            .routingConfig()
-            .expect("routing config must persist")
-            .route,
-        LinkAccessRoute::Local
-    );
-
-    let config = LinkAccessRoutingConfig {
-        route: LinkAccessRoute::Remote {
-            sessionName: "desktop".to_string(),
+/// Creates one accepted inbound session record for topology lifecycle tests.
+#[allow(non_snake_case)]
+fn acceptedSession(peerNodeId: &str) -> AcceptedRemoteSessionRecord {
+    AcceptedRemoteSessionRecord {
+        deviceId: peerNodeId.to_string(),
+        deviceInfo: RemoteDeviceInfo {
+            platform: "test".to_string(),
+            model: "peer".to_string(),
         },
-        updatedAt: 123,
-    };
+        pairingServiceVersion: 1,
+        sessionSecret: "inbound-secret".to_string(),
+    }
+}
 
-    store
-        .saveRoutingConfig(config.clone())
-        .expect("remote routing config must persist");
-
-    assert_eq!(
-        store
-            .routingConfig()
-            .expect("remote routing config must read"),
-        config
-    );
-
-    let config = LinkAccessRoutingConfig {
-        route: LinkAccessRoute::Remote {
-            sessionName: " ".to_string(),
+/// Creates one outbound session record targeting the same direct CoreNode.
+#[allow(non_snake_case)]
+fn outboundSession(localNodeId: &str, peerNodeId: &str) -> PairedRemoteSessionRecord {
+    PairedRemoteSessionRecord {
+        baseUrl: "http://peer.invalid".to_string(),
+        sessionId: "outbound-session".to_string(),
+        deviceId: localNodeId.to_string(),
+        coreDeviceId: peerNodeId.to_string(),
+        remoteDeviceInfo: RemoteDeviceInfo {
+            platform: "test".to_string(),
+            model: "peer".to_string(),
         },
-        updatedAt: 123,
-    };
+        pairingServiceVersion: 1,
+        sessionSecret: "outbound-secret".to_string(),
+        transport: LinkTransportPreference::Http,
+    }
+}
 
-    let error = store
-        .saveRoutingConfig(config)
-        .expect_err("blank remote session name must be rejected");
-
-    assert_eq!(error, "remote Link route requires a paired session name");
+/// Verifies pairing session persistence never reads the active Peer Link topology projection.
+#[test]
+fn session_persistence_does_not_read_space_topology() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    CoreNodeIdentityStore::new(storage.clone())
+        .writeNodeId("node-a".to_string())
+        .expect("local CoreNode identity must be written");
+    CoreSpaceStore::new(storage.clone())
+        .initialize()
+        .expect("local Space must initialize");
+    storage
+        .writeBytes(
+            &format!("{RUNTIME_SPACE_TOPOLOGY_DIR_PATH}/node-a.preferences.json"),
+            b"",
+        )
+        .expect("empty topology fixture must be written");
+    let accessStore = LinkAccessStore::new(storage.clone());
+    accessStore
+        .saveInboundSession("inbound-1".to_string(), acceptedSession("node-b"))
+        .expect("first inbound session must persist");
+    accessStore
+        .saveInboundSession("inbound-2".to_string(), acceptedSession("node-b"))
+        .expect("second inbound session must persist");
+    accessStore
+        .saveOutboundSession("outbound".to_string(), outboundSession("node-a", "node-b"))
+        .expect("outbound session must persist");
+    accessStore
+        .removeInboundSession("inbound-1")
+        .expect("first inbound session must be removed");
+    accessStore
+        .removeInboundSession("inbound-2")
+        .expect("second inbound session must be removed");
+    accessStore
+        .removeOutboundSession("outbound")
+        .expect("outbound session must be removed");
+    assert!(accessStore
+        .inboundSessions()
+        .expect("inbound sessions must read")
+        .is_empty());
+    assert!(accessStore
+        .outboundSessions()
+        .expect("outbound sessions must read")
+        .is_empty());
 }

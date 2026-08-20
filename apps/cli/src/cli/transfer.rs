@@ -353,7 +353,9 @@ async fn finishStagedArchive<T>(
         .map_err(|error| error.to_string());
     match (result, discardResult) {
         (Ok(value), Ok(())) => Ok(value),
-        (Ok(_), Err(discardError)) => Err(format!("failed to discard staged archive: {discardError}")),
+        (Ok(_), Err(discardError)) => {
+            Err(format!("failed to discard staged archive: {discardError}"))
+        }
         (Err(operationError), Ok(())) => Err(operationError),
         (Err(operationError), Err(discardError)) => Err(format!(
             "{operationError}; failed to discard staged archive: {discardError}"

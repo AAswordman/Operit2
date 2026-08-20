@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use operit_host_api::RuntimeStorageHost;
 use operit_util::AppLogger::AppLogger;
+use operit_util::RuntimeStorageLayout::RUNTIME_ROOT_PATH_PREFIX;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -295,7 +296,7 @@ impl LocalModelProvider {
     fn runtimeLayoutPath(&self, storagePath: &str) -> Result<PathBuf, LocalModelProviderError> {
         let relative = storagePath
             .trim()
-            .strip_prefix("runtime/")
+            .strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
             .ok_or_else(|| LocalModelProviderError::Storage(storagePath.to_string()))?;
         Ok(self
             .runtimeRoot

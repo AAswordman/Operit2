@@ -5,16 +5,19 @@ import 'package:flutter/material.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../models/SettingsModels.dart';
+import '../profile/UserProfileSummaryTile.dart';
 
 class SettingsCategoryList extends StatelessWidget {
   const SettingsCategoryList({
     super.key,
     required this.selectedCategory,
     required this.onCategorySelected,
+    this.profileRevision = 0,
   });
 
   final SettingsCategory? selectedCategory;
   final ValueChanged<SettingsCategory> onCategorySelected;
+  final int profileRevision;
 
   /// Builds the categorized settings navigation list.
   @override
@@ -57,6 +60,11 @@ class SettingsCategoryList extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 16),
       children: <Widget>[
+        UserProfileSummaryTile(
+          selected: selectedCategory == SettingsCategory.profile,
+          revision: profileRevision,
+          onTap: () => onCategorySelected(SettingsCategory.profile),
+        ),
         for (final groupEntry in groups.asMap().entries) ...<Widget>[
           Padding(
             padding: EdgeInsets.fromLTRB(8, groupEntry.key == 0 ? 2 : 12, 8, 6),

@@ -27,7 +27,7 @@ void main() {
           'targetPath': request['targetPath'],
           'propertyName': propertyName,
           'kind': 'Snapshot',
-          'value': propertyName == 'chatHistoryFlow' ? const [] : null,
+          'value': propertyName == 'chatMessagesFlow' ? const [] : null,
         });
       }
       if (call.method == 'watchStream') {

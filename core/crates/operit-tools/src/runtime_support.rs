@@ -152,8 +152,51 @@ pub struct RuntimeChatSendRequest {
     pub turnOptions: ChatTurnOptions,
 }
 
+/// Describes one device exposed to Core routing tools.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(non_snake_case)]
+pub struct RuntimeCoreNodeStatus {
+    pub nodeId: String,
+    pub displayName: String,
+    pub userName: String,
+    pub platform: String,
+    pub model: String,
+    pub reachable: bool,
+}
+
+/// Describes the current device and every member of its device space.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(non_snake_case)]
+pub struct RuntimeCoreNodeRouteState {
+    pub currentNodeId: String,
+    pub nodes: Vec<RuntimeCoreNodeStatus>,
+}
+
+/// Supplies live Core routing state without coupling tools to the transport implementation.
+pub trait CoreNodeToolRuntime: Send + Sync {
+    /// Returns one consistent snapshot of current device reachability.
+    #[allow(non_snake_case)]
+    fn coreNodeRouteState(&self) -> Result<RuntimeCoreNodeRouteState, String>;
+
+    /// Stages one exact Binding ownership change for the current execution boundary.
+    #[allow(non_snake_case)]
+    fn requestCoreSwitch(&self, bindingKey: &str, targetNodeId: &str) -> Result<(), String>;
+}
+
 /// Provides runtime-owned services that the tools crate must not own.
 pub trait ToolRuntimeSupport: Send + Sync {
+    /// Installs the live Core routing capability owned by the outer proxy.
+    #[allow(non_snake_case)]
+    fn bindCoreNodeToolRuntime(&self, runtime: Arc<dyn CoreNodeToolRuntime>) -> Result<(), String>;
+
+    /// Returns live device reachability for Core routing tools.
+    #[allow(non_snake_case)]
+    fn coreNodeRouteState(&self) -> Result<RuntimeCoreNodeRouteState, String>;
+
+    /// Stages one exact Binding ownership change through the outer Core router.
+    #[allow(non_snake_case)]
+    fn requestCoreSwitch(&self, bindingKey: &str, targetNodeId: &str) -> Result<(), String>;
+
     /// Resolves role-card tool access for the active invocation context.
     #[allow(non_snake_case)]
     fn resolveCharacterCardToolAccess(

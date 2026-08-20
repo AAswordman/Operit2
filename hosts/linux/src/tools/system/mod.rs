@@ -1,5 +1,5 @@
-use std::fs;
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -40,7 +40,9 @@ impl SystemOperationHost for LinuxSystemOperationHost {
         if status.success() {
             Ok(())
         } else {
-            Err(HostError::new(format!("Toast command exited with {status}")))
+            Err(HostError::new(format!(
+                "Toast command exited with {status}"
+            )))
         }
     }
 
@@ -88,17 +90,19 @@ impl SystemOperationHost for LinuxSystemOperationHost {
     fn listInstalledApps(&self, includeSystemApps: bool) -> HostResult<AppListData> {
         let mut packages = Vec::new();
         let applicationsDir = Path::new("/usr/share/applications");
-        for entry in fs::read_dir(applicationsDir)
-            .map_err(|error| HostError::new(format!("Failed to list desktop applications: {error}")))?
-        {
-            let entry = entry
-                .map_err(|error| HostError::new(format!("Failed to read desktop entry: {error}")))?;
+        for entry in fs::read_dir(applicationsDir).map_err(|error| {
+            HostError::new(format!("Failed to list desktop applications: {error}"))
+        })? {
+            let entry = entry.map_err(|error| {
+                HostError::new(format!("Failed to read desktop entry: {error}"))
+            })?;
             let path = entry.path();
             if path.extension().and_then(|value| value.to_str()) != Some("desktop") {
                 continue;
             }
-            let content = fs::read_to_string(&path)
-                .map_err(|error| HostError::new(format!("Failed to read {}: {error}", path.display())))?;
+            let content = fs::read_to_string(&path).map_err(|error| {
+                HostError::new(format!("Failed to read {}: {error}", path.display()))
+            })?;
             if let Some(name) = parseDesktopName(&content) {
                 packages.push(name);
             }
@@ -202,7 +206,11 @@ fn capture_linux_screenshot() -> HostResult<String> {
         .arg("-f")
         .arg(&outputPath)
         .status()
-        .map_err(|error| HostError::new(format!("Failed to capture Linux screenshot with gnome-screenshot: {error}")))?;
+        .map_err(|error| {
+            HostError::new(format!(
+                "Failed to capture Linux screenshot with gnome-screenshot: {error}"
+            ))
+        })?;
     if !status.success() {
         return Err(HostError::new(format!(
             "Failed to capture Linux screenshot with gnome-screenshot: exited with {status}"
@@ -211,7 +219,11 @@ fn capture_linux_screenshot() -> HostResult<String> {
     validate_file_path(&outputPath, "Linux screenshot")
 }
 
-fn recognize_linux_text(imagePath: &str, language: OCRLanguage, quality: OCRQuality) -> HostResult<String> {
+fn recognize_linux_text(
+    imagePath: &str,
+    language: OCRLanguage,
+    quality: OCRQuality,
+) -> HostResult<String> {
     let preparedImage = prepare_linux_ocr_image(imagePath, quality)?;
     let languageName = linux_tesseract_language(language);
     let output = Command::new("tesseract")
@@ -220,14 +232,20 @@ fn recognize_linux_text(imagePath: &str, language: OCRLanguage, quality: OCRQual
         .arg("-l")
         .arg(languageName)
         .output()
-        .map_err(|error| HostError::new(format!("Failed to recognize Linux OCR text with tesseract: {error}")))?;
+        .map_err(|error| {
+            HostError::new(format!(
+                "Failed to recognize Linux OCR text with tesseract: {error}"
+            ))
+        })?;
     if !output.status.success() {
         return Err(HostError::new(format!(
             "Failed to recognize Linux OCR text with tesseract: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    Ok(normalize_ocr_output(&String::from_utf8_lossy(&output.stdout)))
+    Ok(normalize_ocr_output(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 fn prepare_linux_ocr_image(imagePath: &str, quality: OCRQuality) -> HostResult<LinuxOcrImage> {
@@ -236,17 +254,29 @@ fn prepare_linux_ocr_image(imagePath: &str, quality: OCRQuality) -> HostResult<L
         return Err(HostError::new("image_path is required"));
     }
     if !sourcePath.exists() {
-        return Err(HostError::new(format!("OCR image does not exist: {}", sourcePath.display())));
+        return Err(HostError::new(format!(
+            "OCR image does not exist: {}",
+            sourcePath.display()
+        )));
     }
     if !sourcePath.is_file() {
-        return Err(HostError::new(format!("OCR image is not a file: {}", sourcePath.display())));
+        return Err(HostError::new(format!(
+            "OCR image is not a file: {}",
+            sourcePath.display()
+        )));
     }
     if quality != OCRQuality::High {
-        return Ok(LinuxOcrImage { path: sourcePath.to_path_buf(), deleteOnDrop: false });
+        return Ok(LinuxOcrImage {
+            path: sourcePath.to_path_buf(),
+            deleteOnDrop: false,
+        });
     }
 
     let (width, height) = image::image_dimensions(sourcePath).map_err(|error| {
-        HostError::new(format!("Failed to read OCR image dimensions {}: {error}", sourcePath.display()))
+        HostError::new(format!(
+            "Failed to read OCR image dimensions {}: {error}",
+            sourcePath.display()
+        ))
     })?;
     let newWidth = u64::from(width).saturating_mul(2);
     let newHeight = u64::from(height).saturating_mul(2);
@@ -255,11 +285,18 @@ fn prepare_linux_ocr_image(imagePath: &str, quality: OCRQuality) -> HostResult<L
         || newWidth > 4096
         || newHeight > 4096
     {
-        return Ok(LinuxOcrImage { path: sourcePath.to_path_buf(), deleteOnDrop: false });
+        return Ok(LinuxOcrImage {
+            path: sourcePath.to_path_buf(),
+            deleteOnDrop: false,
+        });
     }
 
-    let image = image::open(sourcePath)
-        .map_err(|error| HostError::new(format!("Failed to load OCR image {}: {error}", sourcePath.display())))?;
+    let image = image::open(sourcePath).map_err(|error| {
+        HostError::new(format!(
+            "Failed to load OCR image {}: {error}",
+            sourcePath.display()
+        ))
+    })?;
     let resized = image.resize_exact(
         newWidth as u32,
         newHeight as u32,
@@ -268,8 +305,16 @@ fn prepare_linux_ocr_image(imagePath: &str, quality: OCRQuality) -> HostResult<L
     let tempPath = temp_capture_path("linux_ocr")?;
     resized
         .save_with_format(&tempPath, image::ImageFormat::Png)
-        .map_err(|error| HostError::new(format!("Failed to write OCR image {}: {error}", tempPath.display())))?;
-    Ok(LinuxOcrImage { path: tempPath, deleteOnDrop: true })
+        .map_err(|error| {
+            HostError::new(format!(
+                "Failed to write OCR image {}: {error}",
+                tempPath.display()
+            ))
+        })?;
+    Ok(LinuxOcrImage {
+        path: tempPath,
+        deleteOnDrop: true,
+    })
 }
 
 fn linux_tesseract_language(language: OCRLanguage) -> &'static str {
@@ -283,16 +328,27 @@ fn linux_tesseract_language(language: OCRLanguage) -> &'static str {
 
 fn temp_capture_path(prefix: &str) -> HostResult<PathBuf> {
     let tempDir = env::temp_dir().join("operit-runtime").join("temp");
-    fs::create_dir_all(&tempDir)
-        .map_err(|error| HostError::new(format!("Failed to create temporary directory {}: {error}", tempDir.display())))?;
+    fs::create_dir_all(&tempDir).map_err(|error| {
+        HostError::new(format!(
+            "Failed to create temporary directory {}: {error}",
+            tempDir.display()
+        ))
+    })?;
     Ok(tempDir.join(format!("{prefix}_{}.png", Uuid::new_v4())))
 }
 
 fn validate_file_path(path: &Path, operation: &str) -> HostResult<String> {
-    let metadata = fs::metadata(path)
-        .map_err(|error| HostError::new(format!("Failed to verify {operation} output {}: {error}", path.display())))?;
+    let metadata = fs::metadata(path).map_err(|error| {
+        HostError::new(format!(
+            "Failed to verify {operation} output {}: {error}",
+            path.display()
+        ))
+    })?;
     if !metadata.is_file() || metadata.len() == 0 {
-        return Err(HostError::new(format!("{operation} did not create a valid file: {}", path.display())));
+        return Err(HostError::new(format!(
+            "{operation} did not create a valid file: {}",
+            path.display()
+        )));
     }
     Ok(path.to_string_lossy().into_owned())
 }
@@ -302,8 +358,9 @@ fn normalize_ocr_output(text: &str) -> String {
 }
 
 fn get_linux_system_language_code() -> HostResult<String> {
-    let lang = env::var("LANG")
-        .map_err(|error| HostError::new(format!("LANG is required to resolve language: {error}")))?;
+    let lang = env::var("LANG").map_err(|error| {
+        HostError::new(format!("LANG is required to resolve language: {error}"))
+    })?;
     let tag = lang
         .split('.')
         .next()
@@ -322,15 +379,22 @@ fn get_linux_notifications(limit: i32) -> HostResult<NotificationData> {
     let output = Command::new("dunstctl")
         .arg("history")
         .output()
-        .map_err(|error| HostError::new(format!("Failed to query Linux notifications with dunstctl: {error}")))?;
+        .map_err(|error| {
+            HostError::new(format!(
+                "Failed to query Linux notifications with dunstctl: {error}"
+            ))
+        })?;
     if !output.status.success() {
         return Err(HostError::new(format!(
             "Failed to query Linux notifications with dunstctl: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    let value: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| HostError::new(format!("Failed to parse dunst notification history: {error}")))?;
+    let value: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        HostError::new(format!(
+            "Failed to parse dunst notification history: {error}"
+        ))
+    })?;
     let mut notifications = Vec::new();
     collect_dunst_notifications(&value, &mut notifications);
     notifications.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
@@ -353,7 +417,8 @@ fn collect_dunst_notifications(value: &Value, notifications: &mut Vec<Notificati
                 || map.contains_key("summary")
                 || map.contains_key("body");
             if hasNotificationFields {
-                let packageName = dunst_data_string(map.get("appname")).unwrap_or_else(|| "dunst".to_string());
+                let packageName =
+                    dunst_data_string(map.get("appname")).unwrap_or_else(|| "dunst".to_string());
                 let summary = dunst_data_string(map.get("summary")).unwrap_or_default();
                 let body = dunst_data_string(map.get("body")).unwrap_or_default();
                 let text = [summary, body]
@@ -410,7 +475,9 @@ fn request_linux_install_app(path: &str) -> HostResult<AppOperationData> {
     Command::new("xdg-open")
         .arg(path)
         .spawn()
-        .map_err(|error| HostError::new(format!("Error requesting Linux app installation: {error}")))?;
+        .map_err(|error| {
+            HostError::new(format!("Error requesting Linux app installation: {error}"))
+        })?;
     Ok(AppOperationData {
         operationType: "install".to_string(),
         packageName: path.display().to_string(),
@@ -472,7 +539,11 @@ fn modify_linux_system_setting(
     let status = Command::new("gsettings")
         .args(["set", &target.schema, &target.key, value])
         .status()
-        .map_err(|error| HostError::new(format!("Failed to modify Linux setting with gsettings: {error}")))?;
+        .map_err(|error| {
+            HostError::new(format!(
+                "Failed to modify Linux setting with gsettings: {error}"
+            ))
+        })?;
     if !status.success() {
         return Err(HostError::new(format!(
             "gsettings set exited with {status}; setting must use schema:key form."
@@ -486,7 +557,11 @@ fn get_linux_system_setting(namespace: &str, setting: &str) -> HostResult<System
     let output = Command::new("gsettings")
         .args(["get", &target.schema, &target.key])
         .output()
-        .map_err(|error| HostError::new(format!("Failed to get Linux setting with gsettings: {error}")))?;
+        .map_err(|error| {
+            HostError::new(format!(
+                "Failed to get Linux setting with gsettings: {error}"
+            ))
+        })?;
     if !output.status.success() {
         return Err(HostError::new(format!(
             "gsettings get exited with {}: {}",
@@ -698,11 +773,17 @@ fn get_linux_device_info() -> HostResult<DeviceInfoData> {
     let (batteryLevel, batteryCharging) = linux_battery_info()?;
     let networkType = linux_network_type()?;
     let mut additionalInfo = BTreeMap::new();
-    additionalInfo.insert("Device name".to_string(), command_stdout("hostname", &[], "read Linux hostname")?);
+    additionalInfo.insert(
+        "Device name".to_string(),
+        command_stdout("hostname", &[], "read Linux hostname")?,
+    );
     additionalInfo.insert("Product name".to_string(), productName.clone());
     additionalInfo.insert("Hardware name".to_string(), model.clone());
     additionalInfo.insert("Build fingerprint".to_string(), kernel.clone());
-    additionalInfo.insert("Build time".to_string(), read_trimmed_file("/proc/version")?);
+    additionalInfo.insert(
+        "Build time".to_string(),
+        read_trimmed_file("/proc/version")?,
+    );
     Ok(DeviceInfoData {
         deviceId: machineId,
         model: productName,
@@ -762,8 +843,9 @@ fn meminfo_kb(content: &str, key: &str) -> HostResult<u64> {
         .split_whitespace()
         .next()
         .ok_or_else(|| HostError::new(format!("/proc/meminfo field {key} has no value")))?;
-    raw.parse::<u64>()
-        .map_err(|error| HostError::new(format!("/proc/meminfo field {key} is not numeric: {error}")))
+    raw.parse::<u64>().map_err(|error| {
+        HostError::new(format!("/proc/meminfo field {key} is not numeric: {error}"))
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -800,39 +882,56 @@ fn linux_cpu_info() -> HostResult<String> {
     let modelName = cpuInfo
         .lines()
         .find_map(|line| line.strip_prefix("model name"))
-        .and_then(|value| value.split_once(':').map(|(_, name)| name.trim().to_string()))
+        .and_then(|value| {
+            value
+                .split_once(':')
+                .map(|(_, name)| name.trim().to_string())
+        })
         .ok_or_else(|| HostError::new("/proc/cpuinfo is missing model name"))?;
     Ok(modelName)
 }
 
 fn linux_battery_info() -> HostResult<(i32, bool)> {
     let powerSupplyPath = Path::new("/sys/class/power_supply");
-    let entries = fs::read_dir(powerSupplyPath)
-        .map_err(|error| HostError::new(format!("Failed to read {}: {error}", powerSupplyPath.display())))?;
+    let entries = fs::read_dir(powerSupplyPath).map_err(|error| {
+        HostError::new(format!(
+            "Failed to read {}: {error}",
+            powerSupplyPath.display()
+        ))
+    })?;
     for entry in entries {
-        let entry = entry
-            .map_err(|error| HostError::new(format!("Failed to read power supply entry: {error}")))?;
+        let entry = entry.map_err(|error| {
+            HostError::new(format!("Failed to read power supply entry: {error}"))
+        })?;
         let path = entry.path();
-        let typeText = fs::read_to_string(path.join("type"))
-            .map_err(|error| HostError::new(format!("Failed to read power supply type: {error}")))?;
+        let typeText = fs::read_to_string(path.join("type")).map_err(|error| {
+            HostError::new(format!("Failed to read power supply type: {error}"))
+        })?;
         if typeText.trim() == "Battery" {
-            let capacityText = fs::read_to_string(path.join("capacity"))
-                .map_err(|error| HostError::new(format!("Failed to read battery capacity: {error}")))?;
-            let statusText = fs::read_to_string(path.join("status"))
-                .map_err(|error| HostError::new(format!("Failed to read battery status: {error}")))?;
-            let level = capacityText
-                .trim()
-                .parse::<i32>()
-                .map_err(|error| HostError::new(format!("Battery capacity is not numeric: {error}")))?;
+            let capacityText = fs::read_to_string(path.join("capacity")).map_err(|error| {
+                HostError::new(format!("Failed to read battery capacity: {error}"))
+            })?;
+            let statusText = fs::read_to_string(path.join("status")).map_err(|error| {
+                HostError::new(format!("Failed to read battery status: {error}"))
+            })?;
+            let level = capacityText.trim().parse::<i32>().map_err(|error| {
+                HostError::new(format!("Battery capacity is not numeric: {error}"))
+            })?;
             let charging = matches!(statusText.trim(), "Charging" | "Full");
             return Ok((level, charging));
         }
     }
-    Err(HostError::new("Linux battery information was not found in /sys/class/power_supply"))
+    Err(HostError::new(
+        "Linux battery information was not found in /sys/class/power_supply",
+    ))
 }
 
 fn linux_network_type() -> HostResult<String> {
-    let route = command_stdout("ip", &["route", "show", "default"], "read Linux default route")?;
+    let route = command_stdout(
+        "ip",
+        &["route", "show", "default"],
+        "read Linux default route",
+    )?;
     let parts = route.split_whitespace().collect::<Vec<_>>();
     let devIndex = parts
         .iter()
@@ -847,7 +946,9 @@ fn linux_network_type() -> HostResult<String> {
 fn linux_screen_resolution() -> HostResult<String> {
     let output = command_stdout("sh", &["-lc", "xrandr --current | sed -n 's/.* current \\([0-9][0-9]*\\) x \\([0-9][0-9]*\\).*/\\1x\\2/p' | head -n 1"], "read Linux screen resolution")?;
     if output.trim().is_empty() {
-        return Err(HostError::new("xrandr did not return a current screen resolution"));
+        return Err(HostError::new(
+            "xrandr did not return a current screen resolution",
+        ));
     }
     Ok(output)
 }
@@ -911,8 +1012,7 @@ fn unix_time_millis() -> HostResult<i64> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| HostError::new(format!("System clock is before UNIX_EPOCH: {error}")))?;
-    i64::try_from(duration.as_millis())
-        .map_err(|_| HostError::new("Current time is out of range"))
+    i64::try_from(duration.as_millis()).map_err(|_| HostError::new("Current time is out of range"))
 }
 
 fn local_applications_dir() -> HostResult<PathBuf> {

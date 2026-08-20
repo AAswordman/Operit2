@@ -5,9 +5,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use operit_host_api::FileSystemHost;
 use serde_json::Value;
 
-use crate::javascript::{
-    JsExecutionEngine, ToolPkgExecutionContext, ToolPkgTextResourceHost,
-};
+use crate::javascript::{JsExecutionEngine, ToolPkgExecutionContext, ToolPkgTextResourceHost};
 use crate::package::ToolPackage;
 use crate::toolpkg::ToolPkgHooks::{ToolPkgHookDispatcher, ToolPkgHookInvocation};
 use crate::toolpkg::ToolPkgParser::{
@@ -405,13 +403,13 @@ impl ToolPkgManager {
             self.isToolPkgContainer(normalizedContainer),
             "ToolPkg execution context requires a registered container"
         );
-        let engine = self.executionEngineFactory.createToolPkgExecutionEngine(
-            ToolPkgExecutionContext {
-                context_key: normalizedKey.to_string(),
-                container_package_name: normalizedContainer.to_string(),
-                text_resource_host: Arc::new(self.clone()),
-            },
-        );
+        let engine =
+            self.executionEngineFactory
+                .createToolPkgExecutionEngine(ToolPkgExecutionContext {
+                    context_key: normalizedKey.to_string(),
+                    container_package_name: normalizedContainer.to_string(),
+                    text_resource_host: Arc::new(self.clone()),
+                });
         engines.insert(
             normalizedKey.to_string(),
             ToolPkgExecutionEngineEntry {
@@ -452,13 +450,13 @@ impl ToolPkgManager {
             self.isToolPkgContainer(normalizedContainer),
             "ToolPkg execution context requires a registered container"
         );
-        let engine = self.executionEngineFactory.createToolPkgExecutionEngine(
-            ToolPkgExecutionContext {
-                context_key: normalizedKey.to_string(),
-                container_package_name: normalizedContainer.to_string(),
-                text_resource_host: Arc::new(self.clone()),
-            },
-        );
+        let engine =
+            self.executionEngineFactory
+                .createToolPkgExecutionEngine(ToolPkgExecutionContext {
+                    context_key: normalizedKey.to_string(),
+                    container_package_name: normalizedContainer.to_string(),
+                    text_resource_host: Arc::new(self.clone()),
+                });
         engines.insert(
             normalizedKey.to_string(),
             ToolPkgExecutionEngineEntry {
@@ -660,9 +658,7 @@ impl ToolPkgTextResourceHost for ToolPkgManager {
             .ok_or_else(|| format!("ToolPkg container not found: {normalizedPackageName}"))?;
         self.readToolPkgResourceText(&runtime, resource_path)
             .ok_or_else(|| {
-                format!(
-                    "ToolPkg text resource not found: {normalizedPackageName}/{resource_path}"
-                )
+                format!("ToolPkg text resource not found: {normalizedPackageName}/{resource_path}")
             })
     }
 }

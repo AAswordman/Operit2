@@ -1,8 +1,12 @@
+use crate::RuntimeFileSyncStore::RuntimeFileSyncStore;
 use crate::RuntimeStorageHost::defaultRuntimeStorageHost;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 
 use operit_util::OperitPaths;
+use operit_util::RuntimeStorageLayout::{
+    runtimeStorageOwnership, RuntimeStorageOwnership, RUNTIME_SYNC_DIR_PATH,
+};
 
 pub struct RuntimeStorageRepository;
 
@@ -43,17 +47,29 @@ impl RuntimeStorageRepository {
     #[allow(non_snake_case)]
     /// Writes UTF-8 text content to runtime storage.
     pub fn writeText(&self, path: String, content: String) -> Result<(), String> {
-        defaultRuntimeStorageHost()
-            .writeBytes(&path, content.as_bytes())
-            .map_err(|error| error.message)
+        let storageHost = defaultRuntimeStorageHost();
+        match runtimeStorageOwnership(&path)? {
+            RuntimeStorageOwnership::Space => {
+                runtimeFileSyncStore(storageHost).writeBytes(&path, content.as_bytes())
+            }
+            RuntimeStorageOwnership::CoreNode | RuntimeStorageOwnership::Ephemeral => storageHost
+                .writeBytes(&path, content.as_bytes())
+                .map_err(|error| error.message),
+        }
     }
 
     #[allow(non_snake_case)]
     /// Appends UTF-8 text content to runtime storage.
     pub fn appendText(&self, path: String, content: String) -> Result<(), String> {
-        defaultRuntimeStorageHost()
-            .appendBytes(&path, content.as_bytes())
-            .map_err(|error| error.message)
+        let storageHost = defaultRuntimeStorageHost();
+        match runtimeStorageOwnership(&path)? {
+            RuntimeStorageOwnership::Space => {
+                runtimeFileSyncStore(storageHost).appendBytes(&path, content.as_bytes())
+            }
+            RuntimeStorageOwnership::CoreNode | RuntimeStorageOwnership::Ephemeral => storageHost
+                .appendBytes(&path, content.as_bytes())
+                .map_err(|error| error.message),
+        }
     }
 
     #[allow(non_snake_case)]
@@ -62,9 +78,26 @@ impl RuntimeStorageRepository {
         let bytes = STANDARD
             .decode(base64Content.as_bytes())
             .map_err(|error| error.to_string())?;
-        defaultRuntimeStorageHost()
-            .writeBytes(&path, &bytes)
-            .map_err(|error| error.message)
+        let storageHost = defaultRuntimeStorageHost();
+        match runtimeStorageOwnership(&path)? {
+            RuntimeStorageOwnership::Space => {
+                runtimeFileSyncStore(storageHost).writeBytes(&path, &bytes)
+            }
+            RuntimeStorageOwnership::CoreNode | RuntimeStorageOwnership::Ephemeral => storageHost
+                .writeBytes(&path, &bytes)
+                .map_err(|error| error.message),
+        }
+    }
+
+    /// Deletes one runtime storage object using its registered synchronization scope.
+    pub fn delete(&self, path: String) -> Result<(), String> {
+        let storageHost = defaultRuntimeStorageHost();
+        match runtimeStorageOwnership(&path)? {
+            RuntimeStorageOwnership::Space => runtimeFileSyncStore(storageHost).delete(&path),
+            RuntimeStorageOwnership::CoreNode | RuntimeStorageOwnership::Ephemeral => storageHost
+                .delete(&path, false)
+                .map_err(|error| error.message),
+        }
     }
 
     #[allow(non_snake_case)]
@@ -144,4 +177,12 @@ impl RuntimeStorageRepository {
     pub fn webSessionUserscriptsStatePath(&self) -> String {
         OperitPaths::RUNTIME_WEBSESSION_USERSCRIPTS_STATE_PATH.to_string()
     }
+}
+
+/// Creates the synchronized runtime file store for one host-owned repository operation.
+#[allow(non_snake_case)]
+fn runtimeFileSyncStore(
+    storageHost: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>,
+) -> RuntimeFileSyncStore {
+    RuntimeFileSyncStore::new(storageHost, RUNTIME_SYNC_DIR_PATH.to_string())
 }

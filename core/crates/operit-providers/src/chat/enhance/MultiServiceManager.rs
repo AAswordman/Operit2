@@ -63,7 +63,6 @@ struct MultiServiceManagerState {
     runtime_context: ProviderRuntimeContext,
     serviceInstances: HashMap<FunctionType, FunctionServiceInstance>,
     modelServiceInstances: HashMap<String, ModelServiceInstance>,
-    isInitialized: bool,
     defaultServiceKey: Option<FunctionType>,
 }
 
@@ -76,7 +75,6 @@ impl MultiServiceManager {
                 runtime_context,
                 serviceInstances: HashMap::new(),
                 modelServiceInstances: HashMap::new(),
-                isInitialized: false,
                 defaultServiceKey: None,
             })),
         }
@@ -93,34 +91,6 @@ impl MultiServiceManager {
         Ok(Self::new(root_dir, runtime_context))
     }
 
-    /// Initializes preference-backed model bindings before service lookup.
-    pub fn initialize(&mut self) -> Result<(), AiServiceError> {
-        self.ensureInitialized()
-    }
-
-    /// Ensures manager state is initialized through the outer lock.
-    fn ensureInitialized(&mut self) -> Result<(), AiServiceError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("MultiServiceManager mutex poisoned");
-        Self::ensureInitializedLocked(&mut inner)
-    }
-
-    /// Ensures manager state is initialized while the state lock is already held.
-    fn ensureInitializedLocked(inner: &mut MultiServiceManagerState) -> Result<(), AiServiceError> {
-        if inner.isInitialized {
-            return Ok(());
-        }
-        inner
-            .runtime_context
-            .support()
-            .initializeFunctionModelBindings(inner.rootDir.clone())
-            .map_err(AiServiceError::RequestFailed)?;
-        inner.isInitialized = true;
-        Ok(())
-    }
-
     /// Returns a cached or newly created service for a functional model binding.
     pub fn getServiceForFunction(
         &mut self,
@@ -130,7 +100,6 @@ impl MultiServiceManager {
             .inner
             .lock()
             .expect("MultiServiceManager mutex poisoned");
-        Self::ensureInitializedLocked(&mut inner)?;
         let binding = inner
             .runtime_context
             .support()
@@ -180,7 +149,6 @@ impl MultiServiceManager {
             .inner
             .lock()
             .expect("MultiServiceManager mutex poisoned");
-        Self::ensureInitializedLocked(&mut inner)?;
         let serviceKey = Self::modelServiceKey(&providerId, &modelId);
         let config = inner
             .runtime_context
@@ -227,7 +195,6 @@ impl MultiServiceManager {
             .inner
             .lock()
             .expect("MultiServiceManager mutex poisoned");
-        Self::ensureInitializedLocked(&mut inner)?;
         let binding = inner
             .runtime_context
             .support()
@@ -285,7 +252,6 @@ impl MultiServiceManager {
             .inner
             .lock()
             .expect("MultiServiceManager mutex poisoned");
-        Self::ensureInitializedLocked(&mut inner)?;
         let serviceKey = Self::modelServiceKey(&providerId, &modelId);
         let config = inner
             .runtime_context
@@ -329,7 +295,6 @@ impl MultiServiceManager {
             .inner
             .lock()
             .expect("MultiServiceManager mutex poisoned");
-        Self::ensureInitializedLocked(&mut inner)?;
         let config = inner
             .runtime_context
             .support()
@@ -388,7 +353,6 @@ impl MultiServiceManager {
                 .inner
                 .lock()
                 .expect("MultiServiceManager mutex poisoned");
-            Self::ensureInitializedLocked(&mut inner)?;
             let oldService = inner
                 .serviceInstances
                 .remove(&functionType)
@@ -429,7 +393,6 @@ impl MultiServiceManager {
                 .inner
                 .lock()
                 .expect("MultiServiceManager mutex poisoned");
-            Self::ensureInitializedLocked(&mut inner)?;
             let serviceKey = Self::modelServiceKey(&providerId, &modelId);
             inner
                 .modelServiceInstances
@@ -451,7 +414,6 @@ impl MultiServiceManager {
                 .inner
                 .lock()
                 .expect("MultiServiceManager mutex poisoned");
-            Self::ensureInitializedLocked(&mut inner)?;
             let mut oldServices = inner
                 .serviceInstances
                 .drain()
@@ -974,7 +936,6 @@ impl MultiServiceManager {
             .inner
             .lock()
             .expect("MultiServiceManager mutex poisoned");
-        Self::ensureInitializedLocked(&mut inner)?;
         let binding = inner
             .runtime_context
             .support()
@@ -997,7 +958,6 @@ impl MultiServiceManager {
             .inner
             .lock()
             .expect("MultiServiceManager mutex poisoned");
-        Self::ensureInitializedLocked(&mut inner)?;
         inner
             .runtime_context
             .support()

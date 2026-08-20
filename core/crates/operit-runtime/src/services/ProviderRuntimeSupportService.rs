@@ -119,16 +119,6 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
         Ok(packages)
     }
 
-    /// Initializes model and function binding stores.
-    fn initializeFunctionModelBindings(&self, rootDir: PathBuf) -> Result<(), String> {
-        ModelConfigManager::new(rootDir.clone())
-            .initializeIfNeeded()
-            .map_err(|error| error.to_string())?;
-        FunctionalConfigManager::new(rootDir)
-            .initializeIfNeeded()
-            .map_err(|error| error.to_string())
-    }
-
     /// Returns the model binding for a function.
     fn modelBindingForFunction(
         &self,

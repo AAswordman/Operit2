@@ -48,6 +48,7 @@ pub fn createRuntimeHostManager(
         runtimeSqliteHost,
     )
     .withHostSecretStore(hostSecretStore)
+    .withWebSocketHost(Arc::new(WindowsHttpHost::new()))
     .withArchiveStagingHost(archiveStagingHost)
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withAudioPlaybackHost(Arc::new(WindowsAudioPlaybackHost::new()))

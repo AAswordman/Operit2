@@ -6,7 +6,8 @@ use crate::SqliteStore::{
     SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteTransaction,
 };
 use crate::SyncOperationStore::{
-    compactSyncOperations, SyncClock, SyncOperation, SyncOperationStore, SyncOperationStoreError,
+    compactSyncOperations, publishSyncMutation, SyncClock, SyncOperation, SyncOperationSemantics,
+    SyncOperationStore, SyncOperationStoreError,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -25,7 +26,7 @@ use operit_model::MessageVariantEntity::MessageVariantEntity;
 /// Sync domain used for SQL-backed chat history operations.
 pub const CHAT_SYNC_DOMAIN: &str = "chat";
 
-const CHAT_SYNC_OPERATION_SCHEMA_VERSION: i32 = 2;
+const CHAT_SYNC_OPERATION_SCHEMA_VERSION: i32 = 5;
 
 const DELETE_CHAT: &str = "chats";
 const DELETE_MESSAGE: &str = "messages";
@@ -74,6 +75,7 @@ pub struct ChatSyncPayload {
 #[derive(Clone)]
 pub struct SqlChatSyncStore {
     store: SqliteStore,
+    syncOperationStore: SyncOperationStore,
     originDeviceId: String,
 }
 
@@ -83,9 +85,11 @@ impl SqlChatSyncStore {
         paths: RuntimeStorePaths,
         database: &AppDatabase,
     ) -> Result<Self, SqlChatSyncStoreError> {
-        let deviceId = SyncOperationStore::native(paths).localDeviceId()?;
+        let syncOperationStore = SyncOperationStore::native(paths);
+        let deviceId = syncOperationStore.localDeviceId()?;
         Ok(Self {
             store: database.store().clone(),
+            syncOperationStore,
             originDeviceId: format!("{deviceId}:sql"),
         })
     }
@@ -102,7 +106,13 @@ impl SqlChatSyncStore {
         if payload.chatRows.is_empty() {
             return Ok(());
         }
-        self.appendLocalOperation("chat", chatId, "upsert", payload)?;
+        self.appendLocalOperation(
+            "chat",
+            chatId,
+            "upsert",
+            SyncOperationSemantics::EntityState,
+            payload,
+        )?;
         Ok(())
     }
 
@@ -112,7 +122,13 @@ impl SqlChatSyncStore {
         if payload.chatRows.is_empty() {
             return Ok(());
         }
-        self.appendLocalOperation("chat", chatId, "upsert", payload)?;
+        self.appendLocalOperation(
+            "chat",
+            chatId,
+            "upsert",
+            SyncOperationSemantics::EntityState,
+            payload,
+        )?;
         Ok(())
     }
 
@@ -134,9 +150,89 @@ impl SqlChatSyncStore {
             "message",
             &format!("{chatId}:{timestamp}"),
             "upsert",
+            SyncOperationSemantics::EntityState,
             payload,
         )?;
         Ok(())
+    }
+
+    /// Atomically commits one assistant segment together with chat metadata and sync state.
+    pub fn commitAssistantMessageSegment(
+        &self,
+        chat: ChatEntity,
+        message: MessageEntity,
+        baseParts: Vec<MessagePartEntity>,
+    ) -> Result<SyncClock, SqlChatSyncStoreError> {
+        if message.chatId != chat.id {
+            return Err(SqlChatSyncStoreError::Message(format!(
+                "assistant message chat {} does not match metadata chat {}",
+                message.chatId, chat.id
+            )));
+        }
+        if message.sender != "ai" {
+            return Err(SqlChatSyncStoreError::Message(format!(
+                "assistant segment requires an ai message for chat {}",
+                chat.id
+            )));
+        }
+        if baseParts.iter().any(|part| {
+            part.chatId != chat.id
+                || part.messageTimestamp != message.timestamp
+                || part.variantIndex != 0
+        }) {
+            return Err(SqlChatSyncStoreError::Message(format!(
+                "assistant segment contains parts outside {}:{} base revision",
+                chat.id, message.timestamp
+            )));
+        }
+
+        let variantDao = MessageVariantDao::new(self.store.clone());
+        let partDao = MessagePartDao::new(self.store.clone());
+        let variantRows = variantDao.getVariantsForMessage(&chat.id, message.timestamp)?;
+        let mut partRows = partDao
+            .getPartsForMessages(&chat.id, vec![message.timestamp])?
+            .into_iter()
+            .filter(|part| part.variantIndex != 0)
+            .collect::<Vec<_>>();
+        partRows.extend(baseParts);
+        let payload = ChatSyncPayload {
+            chatRows: vec![chat.clone()],
+            messageRows: vec![message.clone()],
+            partRows,
+            variantRows,
+            deletions: Vec::new(),
+        };
+        let payloadValue = serde_json::to_value(&payload)?;
+        let createdAt = currentTimeMillis()?;
+        self.store.transaction(|transaction| {
+            upsertChat(transaction, &chat)?;
+            upsertMessage(transaction, &message)?;
+            for variant in &payload.variantRows {
+                upsertVariant(transaction, variant)?;
+            }
+            replacePartRows(transaction, &payload.partRows)?;
+
+            let sequence = sequenceFor(transaction, &self.originDeviceId)? + 1;
+            let operation = SyncOperation {
+                opId: format!("{}:{sequence}", self.originDeviceId),
+                originDeviceId: self.originDeviceId.clone(),
+                sequence,
+                domain: CHAT_SYNC_DOMAIN.to_string(),
+                entityType: "message".to_string(),
+                entityId: format!("{}:{}", chat.id, message.timestamp),
+                operation: "upsert".to_string(),
+                semantics: SyncOperationSemantics::EntityState,
+                payload: payloadValue,
+                createdAt,
+                schemaVersion: CHAT_SYNC_OPERATION_SCHEMA_VERSION,
+            };
+            insertOperation(transaction, &operation, &payload)?;
+            observeOperation(transaction, &operation)?;
+            Ok(())
+        })?;
+        self.store.notifyInvalidated()?;
+        publishSyncMutation();
+        self.localClock()
     }
 
     /// Records deletion of one chat row.
@@ -150,7 +246,14 @@ impl SqlChatSyncStore {
             }],
             ..ChatSyncPayload::default()
         };
-        self.appendLocalOperation("chat", chatId, "delete", payload)?;
+        self.appendLocalOperation(
+            "chat",
+            chatId,
+            "delete",
+            SyncOperationSemantics::Transaction,
+            payload,
+        )?;
+        self.store.notifyInvalidated()?;
         Ok(())
     }
 
@@ -177,6 +280,7 @@ impl SqlChatSyncStore {
             "message",
             &format!("{chatId}:{timestamp}"),
             "delete",
+            SyncOperationSemantics::Transaction,
             payload,
         )?;
         Ok(())
@@ -205,6 +309,7 @@ impl SqlChatSyncStore {
             "messages",
             &format!("{chatId}:{timestamp}"),
             "delete",
+            SyncOperationSemantics::Transaction,
             payload,
         )?;
         Ok(())
@@ -228,7 +333,13 @@ impl SqlChatSyncStore {
             messageTimestamp: None,
             variantIndex: None,
         });
-        self.appendLocalOperation("messages", chatId, "delete", payload)?;
+        self.appendLocalOperation(
+            "messages",
+            chatId,
+            "delete",
+            SyncOperationSemantics::Transaction,
+            payload,
+        )?;
         Ok(())
     }
 
@@ -260,7 +371,7 @@ impl SqlChatSyncStore {
         let rows = self.store.queryRows(
             r#"
             SELECT opId, originDeviceId, sequence, domain, entityType, entityId,
-                operation, createdAt, schemaVersion
+                operation, semantics, createdAt, schemaVersion
             FROM sync_sql_operations
             WHERE domain = ?1
             ORDER BY createdAt ASC, originDeviceId ASC, sequence ASC
@@ -271,6 +382,13 @@ impl SqlChatSyncStore {
         for row in rows {
             let operation = mapOperationMetadata(&row)?;
             if operation.sequence <= clock.sequenceFor(&operation.originDeviceId) {
+                continue;
+            }
+            if operation.sequence
+                <= self
+                    .syncOperationStore
+                    .exportFloorFor(&operation.originDeviceId)?
+            {
                 continue;
             }
             operations.push(operation);
@@ -285,6 +403,25 @@ impl SqlChatSyncStore {
 
     /// Applies a remote SQL chat sync operation to the local database.
     pub fn applyOperation(&self, operation: &SyncOperation) -> Result<(), SqlChatSyncStoreError> {
+        self.applyOperationInternal(operation, false)
+    }
+
+    /// Applies one Space bootstrap operation without local entity conflict filtering.
+    #[allow(non_snake_case)]
+    pub fn applyBootstrapOperation(
+        &self,
+        operation: &SyncOperation,
+    ) -> Result<(), SqlChatSyncStoreError> {
+        self.applyOperationInternal(operation, true)
+    }
+
+    /// Applies one SQL operation with the selected conflict policy.
+    #[allow(non_snake_case)]
+    fn applyOperationInternal(
+        &self,
+        operation: &SyncOperation,
+        ignoreNewerEntityState: bool,
+    ) -> Result<(), SqlChatSyncStoreError> {
         let payload = decodePayload(operation)?;
         let didApply = self.store.transaction(|transaction| {
             if operation.sequence <= sequenceFor(transaction, &operation.originDeviceId)? {
@@ -294,18 +431,28 @@ impl SqlChatSyncStore {
                 observeOperation(transaction, operation)?;
                 return Ok(false);
             }
-            if hasNewerMergedUpsert(transaction, operation)? {
+            if !ignoreNewerEntityState && hasNewerMergedEntityState(transaction, operation)? {
                 observeOperation(transaction, operation)?;
                 return Ok(false);
             }
-            applyPayload(transaction, &payload)?;
+            applyPayload(transaction, operation, &payload)?;
             insertOperation(transaction, operation, &payload)?;
             observeOperation(transaction, operation)?;
             Ok(true)
         })?;
         if didApply {
             self.store.notifyInvalidated()?;
+            publishSyncMutation();
         }
+        Ok(())
+    }
+
+    /// Marks local SQL operations before the Space join as unexportable.
+    #[allow(non_snake_case)]
+    pub fn markLocalOperationsUnexportable(&self) -> Result<(), SqlChatSyncStoreError> {
+        let sequence = self.localClock()?.sequenceFor(&self.originDeviceId);
+        self.syncOperationStore
+            .setExportFloor(&self.originDeviceId, sequence)?;
         Ok(())
     }
 
@@ -315,6 +462,7 @@ impl SqlChatSyncStore {
         entityType: &str,
         entityId: &str,
         operationName: &str,
+        semantics: SyncOperationSemantics,
         payload: ChatSyncPayload,
     ) -> Result<SyncOperation, SqlChatSyncStoreError> {
         let payloadValue = serde_json::to_value(&payload)?;
@@ -329,6 +477,7 @@ impl SqlChatSyncStore {
                 entityType: entityType.to_string(),
                 entityId: entityId.to_string(),
                 operation: operationName.to_string(),
+                semantics,
                 payload: payloadValue,
                 createdAt,
                 schemaVersion: CHAT_SYNC_OPERATION_SCHEMA_VERSION,
@@ -337,6 +486,7 @@ impl SqlChatSyncStore {
             observeOperation(transaction, &operation)?;
             Ok(operation)
         })?;
+        publishSyncMutation();
         Ok(operation)
     }
 
@@ -391,11 +541,7 @@ impl SqlChatSyncStore {
             .into_iter()
             .collect::<Vec<_>>();
         let variantRows = variantDao.getVariantsForMessage(chatId, timestamp)?;
-        let partRows = partDao
-            .getPartsForChat(chatId)?
-            .into_iter()
-            .filter(|part| part.messageTimestamp == timestamp)
-            .collect();
+        let partRows = partDao.getPartsForMessages(chatId, vec![timestamp])?;
         Ok(ChatSyncPayload {
             chatRows,
             messageRows,
@@ -428,6 +574,8 @@ fn mapOperationMetadata(row: &SqliteRow) -> Result<SyncOperation, SqliteStoreErr
         entityType: row.get("entityType")?,
         entityId: row.get("entityId")?,
         operation: row.get("operation")?,
+        semantics: SyncOperationSemantics::fromStorageValue(&row.get::<_, String>("semantics")?)
+            .map_err(SqliteStoreError::Message)?,
         payload: serde_json::Value::Null,
         createdAt: row.get("createdAt")?,
         schemaVersion: row.get("schemaVersion")?,
@@ -490,7 +638,7 @@ fn readMessageRows(
             SELECT chatId, sender, timestamp, orderIndex, roleName,
                 selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
                 cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
-                completedAt, displayMode, isFavorite
+                completedAt, completedExecutionGeneration, displayMode, isFavorite
             FROM sync_sql_message_rows
             WHERE opId = ?1
             ORDER BY chatId, timestamp
@@ -516,8 +664,9 @@ fn readMessageRows(
                 outputDurationMs: row.get(12)?,
                 waitDurationMs: row.get(13)?,
                 completedAt: row.get(14)?,
-                displayMode: row.get(15)?,
-                isFavorite: row.get(16)?,
+                completedExecutionGeneration: row.get(15)?,
+                displayMode: row.get(16)?,
+                isFavorite: row.get(17)?,
             })
         })
         .collect()
@@ -632,14 +781,14 @@ fn insertOperation(
     operation: &SyncOperation,
     payload: &ChatSyncPayload,
 ) -> Result<(), SqliteStoreError> {
-    mergeOlderUpserts(transaction, operation)?;
+    mergeOlderEntityStates(transaction, operation)?;
     transaction.execute(
         r#"
         INSERT INTO sync_sql_operations (
             opId, originDeviceId, sequence, domain, entityType, entityId,
-            operation, createdAt, schemaVersion
+            operation, semantics, createdAt, schemaVersion
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
         "#,
         sqliteParams![
             operation.opId,
@@ -649,6 +798,7 @@ fn insertOperation(
             operation.entityType,
             operation.entityId,
             operation.operation,
+            operation.semantics.storageValue(),
             operation.createdAt,
             operation.schemaVersion,
         ],
@@ -733,9 +883,9 @@ fn insertMessageSyncRow(
             opId, chatId, sender, timestamp, orderIndex, roleName,
             selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
             cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
-            completedAt, displayMode, isFavorite
+            completedAt, completedExecutionGeneration, displayMode, isFavorite
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
         "#,
         sqliteParams![
             opId,
@@ -754,6 +904,7 @@ fn insertMessageSyncRow(
             message.outputDurationMs,
             message.waitDurationMs,
             message.completedAt,
+            message.completedExecutionGeneration,
             message.displayMode,
             message.isFavorite,
         ],
@@ -831,6 +982,7 @@ fn insertVariantSyncRow(
 
 fn applyPayload(
     transaction: &mut SqliteTransaction<'_>,
+    operation: &SyncOperation,
     payload: &ChatSyncPayload,
 ) -> Result<(), SqliteStoreError> {
     for deletion in &payload.deletions {
@@ -1012,9 +1164,9 @@ fn upsertMessage(
             chatId, sender, timestamp, orderIndex, roleName,
             selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
             cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
-            completedAt, displayMode, isFavorite
+            completedAt, completedExecutionGeneration, displayMode, isFavorite
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
         "#,
         sqliteParams![
             message.chatId,
@@ -1032,6 +1184,7 @@ fn upsertMessage(
             message.outputDurationMs,
             message.waitDurationMs,
             message.completedAt,
+            message.completedExecutionGeneration,
             message.displayMode,
             message.isFavorite,
         ],
@@ -1165,11 +1318,12 @@ fn operationExists(
         .is_some())
 }
 
-fn hasNewerMergedUpsert(
+/// Reports whether a newer replaceable state for this entity is already stored.
+fn hasNewerMergedEntityState(
     transaction: &mut SqliteTransaction<'_>,
     operation: &SyncOperation,
 ) -> Result<bool, SqliteStoreError> {
-    if operation.operation != "upsert" {
+    if operation.semantics != SyncOperationSemantics::EntityState {
         return Ok(false);
     }
     Ok(transaction
@@ -1180,8 +1334,8 @@ fn hasNewerMergedUpsert(
                 AND domain = ?2
                 AND entityType = ?3
                 AND entityId = ?4
-                AND operation = 'upsert'
-                AND sequence > ?5
+                AND semantics = ?5
+                AND sequence > ?6
             LIMIT 1
             "#,
             sqliteParams![
@@ -1189,17 +1343,19 @@ fn hasNewerMergedUpsert(
                 operation.domain,
                 operation.entityType,
                 operation.entityId,
+                SyncOperationSemantics::EntityState.storageValue(),
                 operation.sequence,
             ],
         )?
         .is_some())
 }
 
-fn mergeOlderUpserts(
+/// Removes older replaceable states for the same entity and origin.
+fn mergeOlderEntityStates(
     transaction: &mut SqliteTransaction<'_>,
     operation: &SyncOperation,
 ) -> Result<(), SqliteStoreError> {
-    if operation.operation != "upsert" {
+    if operation.semantics != SyncOperationSemantics::EntityState {
         return Ok(());
     }
     transaction.execute(
@@ -1209,14 +1365,15 @@ fn mergeOlderUpserts(
             AND domain = ?2
             AND entityType = ?3
             AND entityId = ?4
-            AND operation = 'upsert'
-            AND sequence < ?5
+            AND semantics = ?5
+            AND sequence < ?6
         "#,
         sqliteParams![
             operation.originDeviceId,
             operation.domain,
             operation.entityType,
             operation.entityId,
+            SyncOperationSemantics::EntityState.storageValue(),
             operation.sequence,
         ],
     )?;

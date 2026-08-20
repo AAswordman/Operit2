@@ -12,9 +12,9 @@ import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/logging/ClientLogger.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import '../../../core/runtime/RemotePairingBridge.dart';
-import '../../../core/runtime/RuntimeConnectionManager.dart';
+import '../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../core/snapshot/SnapshotImportUploader.dart';
+import '../../common/DeviceSpaceDiscoveryPanel.dart';
 import '../../common/OperitLogoMark.dart';
 import '../../common/RuntimeBootstrapScreen.dart';
 import '../../common/components/CommonNetworkErrorView.dart';
@@ -28,7 +28,7 @@ enum _AiSetupPage {
   permission,
   model,
   import,
-  remote,
+  deviceSpace,
 }
 
 const String _operit1SnapshotImportLogTag = 'Operit1SnapshotImport';
@@ -51,7 +51,7 @@ class OnboardingStartupRouteStrategy extends StartupRouteStrategy {
 
   @override
   Future<StartupRouteDecision?> resolve() async {
-    final localStorage = RuntimeConnectionManager.instance.config.localStorage;
+    final localStorage = RuntimeBootstrapManager.instance.config;
     var agreementAccepted = false;
     if (localStorage.confirmed) {
       agreementAccepted = await _isCurrentAgreementAccepted();
@@ -121,8 +121,6 @@ class OnboardingStartupRouteStrategy extends StartupRouteStrategy {
   static Future<bool> _hasConfiguredChatModel() async {
     final modelManager = _clients.preferencesModelConfigManager;
     final functionManager = _clients.preferencesFunctionalConfigManager;
-    await modelManager.initializeIfNeeded();
-    await functionManager.initializeIfNeeded();
     final chatBinding = await functionManager.getModelBindingForFunction(
       functionType: core_proxy.FunctionType.chat,
     );
@@ -198,11 +196,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   final TextEditingController _runtimeRootController = TextEditingController();
   final TextEditingController _workspaceRootController =
       TextEditingController();
-  final TextEditingController _remoteBaseUrlController =
-      TextEditingController();
-  final TextEditingController _remoteTokenController = TextEditingController();
-  final TextEditingController _remoteCodeController = TextEditingController();
-  late final List<_AiSetupPage> _pages;
   Timer? _agreementCountdownTimer;
   int _currentPage = 0;
   int _agreementWaitSeconds = 0;
@@ -217,8 +210,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   bool _importingOperit1Snapshot = false;
   bool _requestingPermission = false;
   bool _preparingLocalSetup = false;
-  bool _startingRemotePairing = false;
-  bool _finishingRemotePairing = false;
+  bool _deviceSpaceDiscoveryBusy = false;
   StreamSubscription<core_proxy.Operit1SnapshotImportProgress>?
   _operit1ImportProgressSubscription;
   String? _selectedProviderTypeId;
@@ -227,7 +219,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   _AiSetupStartMode? _selectedStartMode;
   core_proxy.Operit1SnapshotPreview? _operit1Snapshot;
   core_proxy.Operit1SnapshotImportProgress? _operit1ImportProgress;
-  RemotePairStartResult? _remotePairing;
   SnapshotImportSession? _operit1SnapshotSession;
   String? _operit1SnapshotFileName;
   List<core_proxy.ProviderCatalogEntry> _catalogEntries =
@@ -265,11 +256,38 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   /// Returns the import page index.
   int get _importPageIndex => _pages.indexOf(_AiSetupPage.import);
 
-  /// Returns the remote Runtime connection page index.
-  int get _remotePageIndex => _pages.indexOf(_AiSetupPage.remote);
+  /// Returns the device-space joining page index.
+  int get _deviceSpacePageIndex => _pages.indexOf(_AiSetupPage.deviceSpace);
 
-  /// Returns the number of pages in the active onboarding flow.
+  /// Returns the number of pages in the selected onboarding branch.
   int get _pageCount => _pages.length;
+
+  /// Returns the complete page sequence for the selected onboarding branch.
+  List<_AiSetupPage> get _pages {
+    final commonPages = <_AiSetupPage>[
+      _AiSetupPage.intro,
+      if (widget.agreementRequired) _AiSetupPage.agreement,
+      _AiSetupPage.storage,
+      _AiSetupPage.mode,
+    ];
+    return switch (_selectedStartMode) {
+      null => commonPages,
+      _AiSetupStartMode.quickStart => <_AiSetupPage>[
+        ...commonPages,
+        _AiSetupPage.permission,
+        _AiSetupPage.model,
+      ],
+      _AiSetupStartMode.operit1Import => <_AiSetupPage>[
+        ...commonPages,
+        _AiSetupPage.permission,
+        _AiSetupPage.import,
+      ],
+      _AiSetupStartMode.deviceSpace => <_AiSetupPage>[
+        ...commonPages,
+        _AiSetupPage.deviceSpace,
+      ],
+    };
+  }
 
   /// Reports whether the agreement page is currently visible.
   bool get _isAgreementPage => _currentPage == _agreementPageIndex;
@@ -278,8 +296,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   bool get _isModelPage => _currentPage == _modelPageIndex;
   bool get _isImportPage => _currentPage == _importPageIndex;
 
-  /// Reports whether the remote Runtime connection page is currently visible.
-  bool get _isRemotePage => _currentPage == _remotePageIndex;
+  /// Reports whether the device-space joining page is currently visible.
+  bool get _isDeviceSpacePage => _currentPage == _deviceSpacePageIndex;
 
   bool get _isPermissionPage => _currentPage == _permissionPageIndex;
 
@@ -308,16 +326,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     super.initState();
     _agreementAccepted = !widget.agreementRequired;
     _agreementWaitSeconds = widget.agreementRequired ? 5 : 0;
-    _pages = <_AiSetupPage>[
-      _AiSetupPage.intro,
-      if (widget.agreementRequired) _AiSetupPage.agreement,
-      _AiSetupPage.storage,
-      _AiSetupPage.mode,
-      _AiSetupPage.permission,
-      _AiSetupPage.model,
-      _AiSetupPage.import,
-      _AiSetupPage.remote,
-    ];
     WidgetsBinding.instance.addObserver(this);
     _introAnimationController = AnimationController(
       vsync: this,
@@ -327,7 +335,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       vsync: this,
       duration: const Duration(milliseconds: 760),
     );
-    final localStorage = RuntimeConnectionManager.instance.config.localStorage;
+    final localStorage = RuntimeBootstrapManager.instance.config;
     _storageConfirmed = localStorage.confirmed;
     if (_storageConfirmed) {
       _runtimeRootController.text = localStorage.runtimeRoot;
@@ -359,9 +367,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     _apiKeyController.dispose();
     _runtimeRootController.dispose();
     _workspaceRootController.dispose();
-    _remoteBaseUrlController.dispose();
-    _remoteTokenController.dispose();
-    _remoteCodeController.dispose();
     super.dispose();
   }
 
@@ -404,7 +409,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _setupError = null;
     });
     try {
-      final paths = await RuntimeConnectionManager.instance
+      final paths = await RuntimeBootstrapManager.instance
           .localRuntimeStorageDefaultPaths();
       if (!mounted) {
         return;
@@ -440,7 +445,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _setupError = null;
     });
     try {
-      final paths = await RuntimeConnectionManager.instance
+      final paths = await RuntimeBootstrapManager.instance
           .localRuntimeStoragePathsForRoots(runtimeRoot, workspaceRoot);
       if (!mounted) {
         return;
@@ -468,7 +473,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   Future<void> _loadSetupData() async {
     try {
       final modelManager = widget.clients.preferencesModelConfigManager;
-      await modelManager.initializeIfNeeded();
       final entries = await modelManager.getProviderCatalogEntries();
       await _refreshPermissionSnapshot();
       if (!mounted) {
@@ -499,7 +503,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     _operit1ImportProgressSubscription = widget
         .clients
         .servicesSnapshotImportManager
-        .operit1SnapshotImportProgressFlowChanges()
+        .operit1SnapshotImportProgressFlow()
         .listen(
           (progress) {
             if (!mounted) {
@@ -624,7 +628,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       await _animateToPage(_permissionPageIndex);
       return;
     }
-    if (_currentPage == _remotePageIndex) {
+    if (_currentPage == _deviceSpacePageIndex) {
       await _animateToPage(_modePageIndex);
       return;
     }
@@ -656,8 +660,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       return;
     }
     if (_isModePage) {
-      if (_selectedStartMode == _AiSetupStartMode.remoteConnection) {
-        await _animateToPage(_remotePageIndex);
+      if (_selectedStartMode == _AiSetupStartMode.deviceSpace) {
+        await _animateToPage(_deviceSpacePageIndex);
       } else if (_selectedStartMode != null) {
         await _openPermissionSetup();
       }
@@ -671,8 +675,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       await _saveOperit1Import();
       return;
     }
-    if (_isRemotePage) {
-      await _continueRemoteConnection();
+    if (_isDeviceSpacePage) {
+      await _completeDeviceSpaceSetup();
       return;
     }
     _pageController.nextPage(
@@ -730,9 +734,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _setupError = null;
     });
     try {
-      final paths = await RuntimeConnectionManager.instance
+      final paths = await RuntimeBootstrapManager.instance
           .localRuntimeStoragePathsForRoots(runtimeRoot, workspaceRoot);
-      await RuntimeConnectionManager.instance.confirmLocalRuntimeStorage(
+      await RuntimeBootstrapManager.instance.confirmLocalRuntimeStorage(
         runtimeRoot,
         workspaceRoot,
       );
@@ -855,7 +859,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     });
     try {
       final modelManager = widget.clients.preferencesModelConfigManager;
-      await modelManager.initializeIfNeeded();
       const providerId = _defaultProviderId;
       final provider = await modelManager.getProviderProfile(
         providerId: providerId,
@@ -935,8 +938,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     try {
       final modelManager = widget.clients.preferencesModelConfigManager;
       final functionManager = widget.clients.preferencesFunctionalConfigManager;
-      await modelManager.initializeIfNeeded();
-      await functionManager.initializeIfNeeded();
       final provider = await modelManager.getProviderProfile(
         providerId: providerId,
       );
@@ -1096,105 +1097,23 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     }
   }
 
-  /// Refreshes remote connection validation after editable fields change.
-  void _handleRemoteConnectionChanged(String _) {
-    setState(() {
-      _setupError = null;
-    });
+  /// Completes onboarding without joining another device space.
+  Future<void> _completeDeviceSpaceSetup() async {
+    await widget.onComplete();
   }
 
-  /// Runs the active remote Runtime connection step.
-  Future<void> _continueRemoteConnection() async {
-    final pairing = _remotePairing;
-    if (pairing == null) {
-      await _startRemotePairing();
+  /// Completes onboarding after the shared workflow synchronizes a device space.
+  Future<void> _handleJoinedDeviceSpace(core_proxy.CoreSpace _) async {
+    if (!mounted) {
       return;
     }
-    await _finishRemoteConnection(pairing);
+    await widget.onComplete();
   }
 
-  /// Starts pairing with a remote Runtime using the external access token.
-  Future<void> _startRemotePairing() async {
-    final baseUrl = _remoteBaseUrlController.text.trim();
-    final token = _remoteTokenController.text.trim();
-    if (baseUrl.isEmpty || token.isEmpty) {
-      setState(() {
-        _setupError = '远程地址和外部访问令牌都不能为空';
-      });
-      return;
-    }
-    setState(() {
-      _startingRemotePairing = true;
-      _setupError = null;
-    });
-    try {
-      final pairing = await const RemotePairingBridge().startWithToken(
-        baseUrl: baseUrl,
-        token: token,
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _remotePairing = pairing;
-        _remoteCodeController.clear();
-      });
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _setupError = '$error';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _startingRemotePairing = false;
-        });
-      }
-    }
-  }
-
-  /// Completes remote pairing and selects the paired Runtime route.
-  Future<void> _finishRemoteConnection(RemotePairStartResult pairing) async {
-    final pairingCode = _remoteCodeController.text.trim();
-    if (pairingCode.isEmpty) {
-      setState(() {
-        _setupError = '一次性配对码不能为空';
-      });
-      return;
-    }
-    final name = remotePairingSessionName(pairing);
-    setState(() {
-      _finishingRemotePairing = true;
-      _setupError = null;
-    });
-    try {
-      await const RemotePairingBridge().finish(
-        pairingId: pairing.pairingId,
-        pairingCode: pairingCode,
-        name: name,
-      );
-      await widget.clients.runtimeRemoteLinkService.selectPairedRemoteRoute(
-        name: name,
-      );
-      if (!mounted) {
-        return;
-      }
-      await widget.onComplete();
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _setupError = '$error';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _finishingRemotePairing = false;
-        });
-      }
+  /// Mirrors shared discovery activity into onboarding navigation state.
+  void _handleDeviceSpaceDiscoveryBusyChanged(bool busy) {
+    if (mounted) {
+      setState(() => _deviceSpaceDiscoveryBusy = busy);
     }
   }
 
@@ -1250,14 +1169,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
             _selectedModelId != null &&
             _selectedModelId!.isNotEmpty);
     final importReady = !_isImportPage || _operit1Snapshot != null;
-    final remoteBusy = _startingRemotePairing || _finishingRemotePairing;
-    final remoteReady =
-        !_isRemotePage ||
-        (!remoteBusy &&
-            (_remotePairing == null
-                ? _remoteBaseUrlController.text.trim().isNotEmpty &&
-                      _remoteTokenController.text.trim().isNotEmpty
-                : _remoteCodeController.text.trim().isNotEmpty));
+    final deviceSpaceReady = !_isDeviceSpacePage || !_deviceSpaceDiscoveryBusy;
     final canGoForward =
         !_savingModel &&
         !_loadingModels &&
@@ -1266,13 +1178,13 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         !_requestingPermission &&
         !_savingStorage &&
         !_preparingLocalSetup &&
-        !remoteBusy &&
+        !_deviceSpaceDiscoveryBusy &&
         agreementReady &&
         storageReady &&
         modeReady &&
         modelReady &&
         importReady &&
-        remoteReady;
+        deviceSpaceReady;
     final introActive = _currentPage == _introPageIndex;
     final showChrome = !introActive;
 
@@ -1389,15 +1301,13 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
                                     onPickSnapshot: _pickOperit1Snapshot,
                                     errorText: _setupError,
                                   );
-                                case _AiSetupPage.remote:
-                                  return _AiSetupRemotePage(
-                                    baseUrlController: _remoteBaseUrlController,
-                                    tokenController: _remoteTokenController,
-                                    codeController: _remoteCodeController,
-                                    pairing: _remotePairing,
-                                    busy: remoteBusy,
-                                    onChanged: _handleRemoteConnectionChanged,
-                                    errorText: _setupError,
+                                case _AiSetupPage.deviceSpace:
+                                  return _AiSetupDeviceSpacePage(
+                                    clients: widget.clients,
+                                    enabled: !_deviceSpaceDiscoveryBusy,
+                                    onJoined: _handleJoinedDeviceSpace,
+                                    onBusyChanged:
+                                        _handleDeviceSpaceDiscoveryBusyChanged,
                                   );
                               }
                             },
@@ -1466,14 +1376,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       }
       return _importingOperit1Snapshot ? '导入中' : '继续';
     }
-    if (_isRemotePage) {
-      if (_startingRemotePairing) {
-        return '连接中';
-      }
-      if (_finishingRemotePairing) {
-        return '配对中';
-      }
-      return _remotePairing == null ? '开始配对' : '完成连接';
+    if (_isDeviceSpacePage) {
+      return _deviceSpaceDiscoveryBusy ? '处理中' : '完成';
     }
     if (_isPermissionPage) {
       return '继续';
@@ -1497,8 +1401,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     if (_isImportPage) {
       return '导入配置';
     }
-    if (_isRemotePage) {
-      return '远程连接';
+    if (_isDeviceSpacePage) {
+      return '设备空间';
     }
     if (_isPermissionPage) {
       return '系统授权';
@@ -1560,60 +1464,55 @@ class _AiSetupProgressPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final showLabel = constraints.maxWidth >= 168;
-        final compact = !showLabel || pageCount >= 5;
-        final horizontalPadding = compact ? 12.0 : 14.0;
-        final activeDotWidth = compact ? 18.0 : 22.0;
-        final dotSize = compact ? 6.0 : 7.0;
-        final dotGap = compact ? 4.0 : 6.0;
-        final labelGap = compact ? 8.0 : 12.0;
-
-        return Container(
-          height: 40,
-          padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-          decoration: BoxDecoration(
-            color: trackColor.withValues(alpha: 0.72),
-            borderRadius: BorderRadius.circular(99),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.max,
-            children: <Widget>[
-              for (var index = 0; index < pageCount; index++) ...<Widget>[
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                  width: index == currentPage ? activeDotWidth : dotSize,
-                  height: dotSize,
-                  decoration: BoxDecoration(
-                    color: index == currentPage
-                        ? color
-                        : textColor.withValues(alpha: 0.25),
-                    borderRadius: BorderRadius.circular(99),
+    final progress = (currentPage + 1) / pageCount;
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: trackColor.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.labelSmall?.copyWith(
+                    color: textColor,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                    height: 1,
                   ),
                 ),
-                if (index != pageCount - 1) SizedBox(width: dotGap),
-              ],
-              if (showLabel) ...<Widget>[
-                SizedBox(width: labelGap),
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.labelMedium?.copyWith(
-                      color: textColor,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
-                  ),
+                const SizedBox(height: 5),
+                LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 3,
+                  color: color,
+                  backgroundColor: textColor.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(99),
                 ),
               ],
-            ],
+            ),
           ),
-        );
-      },
+          const SizedBox(width: 10),
+          Text(
+            '${currentPage + 1}/$pageCount',
+            maxLines: 1,
+            style: textTheme.labelSmall?.copyWith(
+              color: textColor,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1727,7 +1626,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
           chromeProgress,
         )!;
         final titleAlignmentX = lerpDouble(0, -1, chromeProgress)!;
-        const buttonWidth = 104.0;
+        final buttonWidth = constraints.maxWidth < 360 ? 124.0 : 132.0;
         final buttonHeight = lerpDouble(44, 46, chromeProgress)!;
         final buttonLeft = lerpDouble(
           (constraints.maxWidth - buttonWidth) * 0.5,
@@ -1881,7 +1780,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
                 child: FilledButton(
                   onPressed: canGoForward ? onPrimary : null,
                   style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(18),
                     ),
@@ -1897,11 +1796,14 @@ class _AiSetupSharedChrome extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: <Widget>[
-                        Text(
-                          introActive && chromeProgress < 0.5
-                              ? '开始'
-                              : primaryActionLabel,
-                          maxLines: 1,
+                        Flexible(
+                          child: Text(
+                            introActive && chromeProgress < 0.5
+                                ? '开始'
+                                : primaryActionLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                         const SizedBox(width: 6),
                         Icon(
@@ -2108,7 +2010,7 @@ class _AiSetupModePage extends StatelessWidget {
                 icon: Icons.route_rounded,
                 eyebrow: '启动方式',
                 title: '选择上手方式',
-                description: '快速开始适合首次使用；已有 Operit1 数据时可以导入，也可以直接连接远程 Runtime。',
+                description: '可以配置新环境、导入 Operit1 数据，或加入已有设备空间直接同步配置和数据。',
               ),
               const SizedBox(height: 22),
               _SetupModeTile(
@@ -2129,10 +2031,10 @@ class _AiSetupModePage extends StatelessWidget {
               const SizedBox(height: 10),
               _SetupModeTile(
                 icon: Icons.cloud_sync_rounded,
-                title: '连接远程 Runtime',
-                subtitle: '输入远程地址、外部访问令牌和一次性配对码',
-                selected: selectedMode == _AiSetupStartMode.remoteConnection,
-                onTap: () => onModeChanged(_AiSetupStartMode.remoteConnection),
+                title: '加入已有设备空间',
+                subtitle: '扫描附近设备空间，加入后直接同步模型和数据',
+                selected: selectedMode == _AiSetupStartMode.deviceSpace,
+                onTap: () => onModeChanged(_AiSetupStartMode.deviceSpace),
               ),
             ],
           ),
@@ -2142,31 +2044,22 @@ class _AiSetupModePage extends StatelessWidget {
   }
 }
 
-class _AiSetupRemotePage extends StatelessWidget {
-  const _AiSetupRemotePage({
-    required this.baseUrlController,
-    required this.tokenController,
-    required this.codeController,
-    required this.pairing,
-    required this.busy,
-    required this.onChanged,
-    required this.errorText,
+class _AiSetupDeviceSpacePage extends StatelessWidget {
+  const _AiSetupDeviceSpacePage({
+    required this.clients,
+    required this.enabled,
+    required this.onJoined,
+    required this.onBusyChanged,
   });
 
-  final TextEditingController baseUrlController;
-  final TextEditingController tokenController;
-  final TextEditingController codeController;
-  final RemotePairStartResult? pairing;
-  final bool busy;
-  final ValueChanged<String> onChanged;
-  final String? errorText;
+  final GeneratedCoreProxyClients clients;
+  final bool enabled;
+  final Future<void> Function(core_proxy.CoreSpace deviceSpace) onJoined;
+  final ValueChanged<bool> onBusyChanged;
 
-  /// Builds the remote Runtime pairing page.
+  /// Builds nearby device-space discovery inside the onboarding flow.
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final activePairing = pairing;
     return Align(
       alignment: Alignment.topCenter,
       child: SingleChildScrollView(
@@ -2178,93 +2071,17 @@ class _AiSetupRemotePage extends StatelessWidget {
             children: <Widget>[
               const _SetupSectionHeader(
                 icon: Icons.cloud_sync_rounded,
-                eyebrow: '远程连接',
-                title: '连接远程 Runtime',
-                description: '浏览器端作为独立客户端使用；完成配对后，会直接切换到远端 Runtime。',
+                eyebrow: '设备空间',
+                title: '加入设备空间',
+                description: '扫描附近设备空间并选择一台设备。完成配对后会先同步模型、配置和数据，再结束引导。',
               ),
               const SizedBox(height: 22),
-              TextField(
-                controller: baseUrlController,
-                enabled: !busy && activePairing == null,
-                onChanged: onChanged,
-                decoration: const InputDecoration(
-                  labelText: '远程地址',
-                  hintText: 'https://your-runtime.example.com',
-                  prefixIcon: Icon(Icons.link_rounded),
-                  border: OutlineInputBorder(),
-                ),
-                autocorrect: false,
-                enableSuggestions: false,
-                keyboardType: TextInputType.url,
-                textInputAction: TextInputAction.next,
+              DeviceSpaceDiscoveryPanel(
+                clients: clients,
+                enabled: enabled,
+                onJoined: onJoined,
+                onBusyChanged: onBusyChanged,
               ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: tokenController,
-                enabled: !busy && activePairing == null,
-                onChanged: onChanged,
-                decoration: const InputDecoration(
-                  labelText: '外部访问令牌',
-                  prefixIcon: Icon(Icons.vpn_key_rounded),
-                  border: OutlineInputBorder(),
-                ),
-                autocorrect: false,
-                enableSuggestions: false,
-                obscureText: true,
-                textInputAction: TextInputAction.next,
-              ),
-              if (activePairing != null) ...<Widget>[
-                const SizedBox(height: 14),
-                Card(
-                  elevation: 0,
-                  color: colorScheme.surfaceContainerHighest,
-                  child: ListTile(
-                    leading: Icon(
-                      Icons.devices_other_rounded,
-                      color: colorScheme.primary,
-                    ),
-                    title: Text(
-                      '已开始配对',
-                      style: textTheme.titleSmall?.copyWith(
-                        color: colorScheme.onSurface,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    subtitle: Text(
-                      '远端：${activePairing.coreDeviceInfo.platform} / ${activePairing.coreDeviceInfo.model}\n设备：${activePairing.coreDeviceId}\n请输入软件端显示的一次性配对码。',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: codeController,
-                  enabled: !busy,
-                  onChanged: onChanged,
-                  decoration: const InputDecoration(
-                    labelText: '一次性配对码',
-                    prefixIcon: Icon(Icons.pin_rounded),
-                    border: OutlineInputBorder(),
-                  ),
-                  autocorrect: false,
-                  enableSuggestions: false,
-                  keyboardType: TextInputType.text,
-                  textInputAction: TextInputAction.done,
-                ),
-              ],
-              const SizedBox(height: 18),
-              Text(
-                activePairing == null
-                    ? '先用远程地址和外部访问令牌建立配对会话。'
-                    : '配对码只用于本次确认，完成后会保存为一个可选择的远程 Runtime。',
-                style: textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                  height: 1.4,
-                ),
-              ),
-              if (errorText != null) ...<Widget>[
-                const SizedBox(height: 12),
-                CommonNetworkErrorView(errorText: errorText!),
-              ],
             ],
           ),
         ),
@@ -3219,7 +3036,7 @@ String? _requiredField(String? value) {
   return null;
 }
 
-enum _AiSetupStartMode { quickStart, operit1Import, remoteConnection }
+enum _AiSetupStartMode { quickStart, operit1Import, deviceSpace }
 
 class _OnboardingRequirement {
   const _OnboardingRequirement({

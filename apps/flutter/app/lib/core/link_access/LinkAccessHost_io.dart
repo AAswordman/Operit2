@@ -87,14 +87,14 @@ class LinkAccessHost extends ChangeNotifier {
     _running = true;
   }
 
+  /// Stops the active Link Access server using its configured control interface.
   Future<void> stop({bool updateConfig = true}) async {
     if (!_running) {
       return;
     }
-    final shutdownToken = _shutdownToken;
-    final baseUrl = this.baseUrl;
-    if (shutdownToken != null && baseUrl != null) {
-      await _requestNativeWebAccessClose(baseUrl, shutdownToken);
+    final config = _config!;
+    if (config.webAccessEnabled) {
+      await _requestNativeWebAccessClose(baseUrl!, _shutdownToken!);
     }
     await _stopNativeWebAccessServer();
     _running = false;

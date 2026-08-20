@@ -12,21 +12,68 @@ import 'CoreProxy.dart';
 class WebWasmCoreProxy extends CoreProxy {
   const WebWasmCoreProxy();
 
+  /// Reads the browser Host's default logical Runtime storage roots.
   @override
-  Future<Object?> call(CoreCallRequest request) async {
-    final responseBytes = await _invokeBytes('call', <JSAny?>[
-      encodeNativeCoreCallRequest(request).toJS,
-    ]);
-    return decodeNativeCoreResult(responseBytes);
+  Future<Map<Object?, Object?>> runtimeStorageDefaults() {
+    return _invokeStoragePaths('runtimeStorageDefaults', const <JSAny?>[]);
   }
 
-  /// Executes one control call through the parallel web runtime lane.
+  /// Normalizes explicit logical Runtime roots through the browser Host.
   @override
-  Future<Object?> callControl(CoreCallRequest request) async {
-    final responseBytes = await _invokeBytes('controlCall', <JSAny?>[
+  Future<Map<Object?, Object?>> runtimeStoragePaths(
+    String runtimeRoot,
+    String workspaceRoot,
+  ) {
+    return _invokeStoragePaths('runtimeStoragePaths', <JSAny?>[
+      runtimeRoot.toJS,
+      workspaceRoot.toJS,
+    ]);
+  }
+
+  /// Installs identity-isolated logical roots on the browser Host.
+  @override
+  Future<void> setRuntimeStorageRoots(
+    String runtimeRoot,
+    String workspaceRoot,
+  ) {
+    return _invokeVoid('setRuntimeStorageRoots', <JSAny?>[
+      runtimeRoot.toJS,
+      workspaceRoot.toJS,
+    ]);
+  }
+
+  /// Reads the browser bootstrap record before Runtime calls are dispatched.
+  @override
+  Future<String?> runtimeBootstrapRead() {
+    return _invokeString('runtimeBootstrapRead', const <JSAny?>[]);
+  }
+
+  /// Persists one validated browser bootstrap record.
+  @override
+  Future<void> runtimeBootstrapWrite(String content) {
+    return _invokeVoid('runtimeBootstrapWrite', <JSAny?>[content.toJS]);
+  }
+
+  /// Reloads the browser after selecting another bootstrap identity.
+  @override
+  Future<void> restartApplication() {
+    return _invokeVoid('restartApplication', const <JSAny?>[]);
+  }
+
+  /// Sends one Core call through the browser carrier without decoding its payload.
+  @override
+  Future<Uint8List> callBytes(CoreCallRequest request) async {
+    return _invokeBytes('call', <JSAny?>[
       encodeNativeCoreCallRequest(request).toJS,
     ]);
-    return decodeNativeCoreResult(responseBytes);
+  }
+
+  /// Sends one control call through the browser carrier without decoding its payload.
+  @override
+  Future<Uint8List> callControlBytes(CoreCallRequest request) async {
+    return _invokeBytes('controlCall', <JSAny?>[
+      encodeNativeCoreCallRequest(request).toJS,
+    ]);
   }
 
   /// Opens a client-owned Link input stream through the web runtime carrier.
@@ -184,9 +231,23 @@ Future<void> _closeNativeWebWatchStream(String subscriptionId) async {
 
 /// Invokes one binary wasm runtime method.
 Future<Uint8List> _invokeBytes(String method, List<JSAny?> args) async {
+  final value = await _invokeValue(method, args);
+  if (value.isA<JSUint8Array>()) {
+    return (value as JSUint8Array).toDart;
+  }
+  throw CoreLinkError(
+    code: 'WEB_WASM_BRIDGE_INVALID_RESPONSE',
+    message: 'window.__operitRuntime.$method returned a non-binary value',
+  );
+}
+
+/// Invokes one web Runtime method and returns its JavaScript value.
+Future<JSAny?> _invokeValue(String method, List<JSAny?> args) async {
   var runtime = globalContext.getProperty<JSAny?>('__operitRuntime'.toJS);
   if (runtime.isUndefinedOrNull) {
-    final ready = globalContext.getProperty<JSAny?>('__operitRuntimeReady'.toJS);
+    final ready = globalContext.getProperty<JSAny?>(
+      '__operitRuntimeReady'.toJS,
+    );
     if (ready.isA<JSPromise<JSAny?>>()) {
       await (ready as JSPromise<JSAny?>).toDart;
       runtime = globalContext.getProperty<JSAny?>('__operitRuntime'.toJS);
@@ -203,11 +264,63 @@ Future<Uint8List> _invokeBytes(String method, List<JSAny?> args) async {
     args,
   );
   final value = await promise.toDart;
-  if (value.isA<JSUint8Array>()) {
-    return (value as JSUint8Array).toDart;
+  return value;
+}
+
+/// Invokes one web Runtime method that must return a string.
+Future<String> _invokeString(String method, List<JSAny?> args) async {
+  final value = await _invokeValue(method, args);
+  if (value.isA<JSString>()) {
+    return (value as JSString).toDart;
   }
   throw CoreLinkError(
     code: 'WEB_WASM_BRIDGE_INVALID_RESPONSE',
-    message: 'window.__operitRuntime.$method returned a non-binary value',
+    message: 'window.__operitRuntime.$method returned a non-string value',
+  );
+}
+
+/// Invokes one web Runtime method that completes without a response payload.
+Future<void> _invokeVoid(String method, List<JSAny?> args) async {
+  final value = await _invokeValue(method, args);
+  if (!value.isUndefinedOrNull) {
+    throw CoreLinkError(
+      code: 'WEB_WASM_BRIDGE_INVALID_RESPONSE',
+      message: 'window.__operitRuntime.$method returned an unexpected value',
+    );
+  }
+}
+
+/// Invokes one browser storage Host method that returns normalized roots.
+Future<Map<Object?, Object?>> _invokeStoragePaths(
+  String method,
+  List<JSAny?> args,
+) async {
+  final value = await _invokeValue(method, args);
+  if (!value.isA<JSObject>()) {
+    throw CoreLinkError(
+      code: 'WEB_WASM_BRIDGE_INVALID_RESPONSE',
+      message: 'window.__operitRuntime.$method returned a non-object value',
+    );
+  }
+  final object = value as JSObject;
+  return <Object?, Object?>{
+    'runtimeRoot': _requiredJsStringProperty(object, 'runtimeRoot', method),
+    'workspaceRoot': _requiredJsStringProperty(object, 'workspaceRoot', method),
+  };
+}
+
+/// Reads one required string property from a JavaScript Host response.
+String _requiredJsStringProperty(
+  JSObject object,
+  String property,
+  String method,
+) {
+  final value = object.getProperty<JSAny?>(property.toJS);
+  if (value.isA<JSString>()) {
+    return (value as JSString).toDart;
+  }
+  throw CoreLinkError(
+    code: 'WEB_WASM_BRIDGE_INVALID_RESPONSE',
+    message: 'window.__operitRuntime.$method returned invalid $property',
   );
 }

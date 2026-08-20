@@ -8,7 +8,9 @@ use std::{
 use operit_host_api::RuntimeStorageHost;
 #[cfg(test)]
 use operit_host_api::{HostError, HostResult, RuntimeStorageEntry};
-use operit_util::RuntimeStorageLayout::RUNTIME_LOCAL_MODEL_REGISTRY_PATH;
+use operit_util::RuntimeStorageLayout::{
+    RUNTIME_LOCAL_MODEL_REGISTRY_PATH, RUNTIME_ROOT_DIR_PATH, RUNTIME_ROOT_PATH_PREFIX,
+};
 use thiserror::Error;
 
 use crate::LocalModelRegistry::LocalModelRegistrySnapshot;
@@ -143,7 +145,7 @@ impl TestRuntimeStorageHost {
         })?;
         let mut components = Path::new(path.trim()).components();
         match components.next() {
-            Some(Component::Normal(segment)) if segment == "runtime" => {}
+            Some(Component::Normal(segment)) if segment == RUNTIME_ROOT_DIR_PATH => {}
             _ => {
                 return Err(HostError::new(format!(
                     "runtime storage path must start with runtime/: {path}"
@@ -181,9 +183,9 @@ impl TestRuntimeStorageHost {
         })?;
         let relative = relative.to_string_lossy().replace('\\', "/");
         if relative.is_empty() {
-            Ok("runtime".to_string())
+            Ok(RUNTIME_ROOT_DIR_PATH.to_string())
         } else {
-            Ok(format!("runtime/{relative}"))
+            Ok(format!("{RUNTIME_ROOT_PATH_PREFIX}{relative}"))
         }
     }
 }

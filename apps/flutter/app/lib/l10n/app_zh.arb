@@ -129,6 +129,7 @@
   "unpin": "取消置顶",
   "lock": "锁定",
   "unlock": "解锁",
+  "chatLockedCannotDelete": "该聊天已锁定，无法删除",
   "messageLocatorTitle": "消息定位",
   "messageLocatorCurrent": "当前 {current} / {total}",
   "@messageLocatorCurrent": {
@@ -552,6 +553,8 @@
   "settingsModelFunctionChatDescription": "主对话回复使用的模型。",
   "settingsModelFunctionSummary": "总结",
   "settingsModelFunctionSummaryDescription": "长上下文自动总结使用的模型。",
+  "settingsModelFunctionTitleGeneration": "对话标题",
+  "settingsModelFunctionTitleGenerationDescription": "根据首条消息和附件生成对话标题使用的模型。",
   "settingsModelFunctionMemory": "记忆",
   "settingsModelFunctionMemoryDescription": "记忆提取、整理和更新使用的模型。",
   "settingsModelFunctionUiController": "UI 控制",
@@ -902,11 +905,18 @@
     }
   },
   "settingsCharactersToolAccessConfigure": "配置工具白名单",
+  "settingsCharactersToolAccessTitle": "自定义允许使用的工具",
+  "settingsCharactersToolAccessTabBuiltin": "内建工具",
+  "settingsCharactersToolAccessTabPackage": "包",
+  "settingsCharactersToolAccessTabSkill": "Skill",
+  "settingsCharactersToolAccessTabMcp": "MCP",
+  "settingsCharactersToolAccessSearchPlaceholder": "搜索名称、描述或标识",
+  "settingsCharactersToolAccessEmptySearch": "未找到匹配的工具",
   "settingsCharactersToolAccessRequiresUsePackage": "选择工具包、技能或 MCP 时，需要同时允许内置工具 use_package。",
-  "settingsCharactersToolAccessEmptyBuiltin": "当前没有可选内置工具。",
-  "settingsCharactersToolAccessEmptyPackages": "当前没有可选工具包。",
-  "settingsCharactersToolAccessEmptySkills": "当前没有可选技能。",
-  "settingsCharactersToolAccessEmptyMcp": "当前没有可选 MCP 服务。",
+  "settingsCharactersToolAccessEmptyBuiltin": "当前没有可配置的内建工具",
+  "settingsCharactersToolAccessEmptyPackages": "当前没有全局可用的包",
+  "settingsCharactersToolAccessEmptySkills": "当前没有对 AI 可见的 Skill",
+  "settingsCharactersToolAccessEmptyMcp": "当前没有已启用的 MCP 服务器",
   "settingsCharactersBuiltinTools": "允许的内置工具",
   "settingsCharactersAllowedPackages": "允许的工具包",
   "settingsCharactersAllowedSkills": "允许的技能",
@@ -1075,43 +1085,128 @@
     }
   },
   "settingsWorkspaceRefresh": "刷新",
-  "settingsRuntimeConnection": "当前设备",
-  "settingsRuntimeConnectionDescription": "选择让聊天和工具运行在这台设备，还是运行在另一台已连接设备。",
-  "settingsRuntimeUseLocal": "使用这台设备",
-  "settingsRuntimeLocalTitle": "这台设备",
-  "settingsRuntimeLocalDescription": "聊天和工具会在这台设备上运行。",
-  "settingsRuntimeRemoteTitle": "已连接的设备",
-  "settingsRuntimeRemoteDescription": "这些设备已经完成连接，可以切换使用或移除。",
-  "settingsRuntimeTesting": "正在检查连接…",
-  "settingsRuntimePairRemote": "连接另一台设备",
-  "settingsRuntimeNoPairedRemote": "还没有已连接的设备。",
-  "settingsRuntimePairToken": "连接 Token",
-  "settingsRuntimePairCode": "配对码",
-  "settingsRuntimeStartPairing": "开始连接",
-  "settingsRuntimeFinishPairing": "完成连接",
-  "settingsRuntimeBaseUrl": "设备地址",
-  "settingsRuntimeTestCurrent": "检查连接",
-  "settingsRuntimeSwitchedLocal": "已切换到这台设备。",
-  "settingsRuntimeSwitchedRemote": "已切换到已连接设备。",
-  "settingsRuntimeTestResult": "设备可用：{version}",
-  "@settingsRuntimeTestResult": {
+  "runtimeIdentity": "当前身份",
+  "runtimeIdentityManage": "切换或管理身份",
+  "runtimeIdentitySheetTitle": "身份",
+  "runtimeIdentityCreate": "新建身份",
+  "runtimeIdentityCreateTitle": "新建身份",
+  "runtimeIdentityRename": "重命名身份",
+  "runtimeIdentityRenameTitle": "重命名身份",
+  "runtimeIdentityName": "名称（可选）",
+  "runtimeIdentitySwitchTitle": "切换到 {identityName}？",
+  "@runtimeIdentitySwitchTitle": {
     "placeholders": {
-      "version": {
+      "identityName": {
         "type": "String"
       }
     }
   },
-  "settingsRuntimeTestFailed": "连接检查失败：{error}",
-  "@settingsRuntimeTestFailed": {
+  "runtimeIdentitySwitchDescription": "每个身份拥有独立的聊天、配置、设备空间、配对设备和工作区。切换会结束当前运行实例；应用再次启动时将进入所选身份。",
+  "runtimeIdentitySwitchConfirm": "切换身份",
+  "runtimeIdentityCurrent": "当前",
+  "settingsUserProfileTitle": "用户档案",
+  "settingsUserProfileSubtitle": "头像、名字、身份与 GitHub",
+  "settingsUserProfileDescription": "管理当前档案并切换隔离的身份。",
+  "settingsUserProfileUnnamed": "未命名",
+  "settingsUserProfileNotLoggedIn": "未登录",
+  "settingsUserProfileGitHubLoading": "正在读取 GitHub 账号...",
+  "settingsUserProfileGitHubAccount": "GitHub：@{account}",
+  "@settingsUserProfileGitHubAccount": {
+    "placeholders": {
+      "account": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsUserProfileGitHubStatusError": "GitHub 状态错误：{error}",
+  "@settingsUserProfileGitHubStatusError": {
     "placeholders": {
       "error": {
         "type": "String"
       }
     }
   },
-  "settingsRuntimeRemoteDisconnected": "已连接设备断开",
-  "settingsRuntimeRemoteDisconnectedMessage": "已切换到这台设备。\n\n{error}",
-  "@settingsRuntimeRemoteDisconnectedMessage": {
+  "settingsUserProfileOverview": "档案",
+  "settingsUserProfileAvatar": "头像",
+  "settingsUserProfileName": "名字",
+  "settingsUserProfileChooseAvatar": "选择头像",
+  "settingsUserProfileClearAvatar": "清除头像",
+  "settingsUserProfileEditName": "修改名字",
+  "settingsUserProfileIdentities": "身份",
+  "settingsUserProfileGitHub": "GitHub 账号",
+  "settingsUserProfileGitHubDescription": "未登录",
+  "settingsUserProfileLogin": "登录",
+  "settingsUserProfileLogout": "退出登录",
+  "settingsAppearanceAvatarCustom": "自定义头像",
+  "settingsRuntimeConnection": "当前设备空间",
+  "settingsRuntimeConnectionDescription": "当前设备及其所在设备空间的连接状态。",
+  "settingsRuntimeCurrentSpace": "当前设备空间",
+  "settingsRuntimeRenameSpace": "重命名设备空间",
+  "settingsRuntimeLeaveSpace": "退出设备空间",
+  "settingsRuntimeLeaveSpaceTitle": "退出当前设备空间？",
+  "settingsRuntimeLeaveSpaceDescription": "这台设备会创建一个新的单设备空间。业务数据保留，已配对设备也不会被删除。",
+  "settingsRuntimeLeaveSpaceConfirm": "退出",
+  "settingsRuntimeSpaceName": "设备空间名称",
+  "settingsRuntimeSpaceId": "设备空间 ID：{spaceId}",
+  "@settingsRuntimeSpaceId": {
+    "placeholders": {
+      "spaceId": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeSpaceDeviceCount": "共 {count} 台设备",
+  "@settingsRuntimeSpaceDeviceCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeViewSpaceTopology": "查看设备拓扑",
+  "settingsRuntimeSpaceTopologyTitle": "{spaceName} 的设备拓扑",
+  "@settingsRuntimeSpaceTopologyTitle": {
+    "placeholders": {
+      "spaceName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeSpaceTopologySummary": "{deviceCount} 台设备 · {connectionCount} 条直连",
+  "@settingsRuntimeSpaceTopologySummary": {
+    "placeholders": {
+      "deviceCount": {
+        "type": "int"
+      },
+      "connectionCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeDisconnectConnection": "断开连接",
+  "settingsRuntimeDisconnectConnectionTitle": "断开直连",
+  "settingsRuntimeDisconnectConnectionMessage": "确定要断开与 {deviceName} 的直连吗？配对记录会保留。",
+  "@settingsRuntimeDisconnectConnectionMessage": {
+    "placeholders": {
+      "deviceName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeDisconnectConnectionFailed": "断开失败",
+  "settingsRuntimeCurrentDevice": "当前设备",
+  "settingsRuntimeRemoteTitle": "已连接的设备",
+  "settingsRuntimeRemoteDescription": "已直接配对的设备。配对负责建立连接，加入设备空间后才会共享数据和路由。",
+  "settingsRuntimePairRemote": "连接另一台设备",
+  "settingsRuntimeNoPairedRemote": "还没有已连接的设备。",
+  "settingsRuntimeConnectionInitiatedByOtherDevice": "连接由对方设备发起",
+  "settingsRuntimePairToken": "连接 Token",
+  "settingsRuntimePairCode": "配对码",
+  "settingsRuntimeStartPairing": "开始连接",
+  "settingsRuntimeFinishPairing": "完成连接",
+  "settingsRuntimeBaseUrl": "设备地址",
+  "settingsRuntimeConnectionFailed": "设备连接失败：{error}",
+  "@settingsRuntimeConnectionFailed": {
     "placeholders": {
       "error": {
         "type": "String"
@@ -1122,48 +1217,38 @@
   "settingsRuntimePairedChecking": "检测中",
   "settingsRuntimePairedOnline": "在线",
   "settingsRuntimePairedOffline": "离线",
-  "settingsRuntimeSync": "同步数据",
-  "settingsRuntimeSyncing": "同步中…",
-  "settingsRuntimeSyncCompleted": "同步完成：本机 {localApplied} 项，远端 {remoteApplied} 项。",
-  "@settingsRuntimeSyncCompleted": {
+  "settingsRuntimeJoinSpace": "加入设备空间",
+  "settingsRuntimeJoinSpaceTitle": "加入 {deviceName} 的设备空间？",
+  "@settingsRuntimeJoinSpaceTitle": {
     "placeholders": {
-      "localApplied": {
+      "deviceName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeJoinSpaceDescription": "当前设备空间会与对方合并，并采用对方的设备空间名称。",
+  "settingsRuntimePairingComplete": "设备已配对",
+  "settingsRuntimeDeviceInCurrentSpace": "已在当前设备空间",
+  "settingsRuntimeDiscoverSpaces": "发现设备空间",
+  "settingsRuntimeDiscoverSpacesDescription": "附近设备会按设备空间归并；展开设备空间后，可以选择其中一台设备直接连接。",
+  "settingsRuntimeDiscoveredSpaceSummary": "共 {memberCount} 台设备 · 附近可连接 {nearbyCount} 台",
+  "@settingsRuntimeDiscoveredSpaceSummary": {
+    "placeholders": {
+      "memberCount": {
         "type": "int"
       },
-      "remoteApplied": {
+      "nearbyCount": {
         "type": "int"
       }
     }
   },
-  "settingsRuntimeSyncFailed": "同步失败：{error}",
-  "@settingsRuntimeSyncFailed": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsRuntimeAutoSyncEnable": "开启持续同步",
-  "settingsRuntimeAutoSyncDisable": "关闭持续同步",
-  "settingsRuntimeAutoSyncEnabled": "已开启持续同步，扫到该设备后会自动同步。",
-  "settingsRuntimeAutoSyncDisabled": "已关闭持续同步。",
-  "settingsRuntimeAutoSyncFailed": "持续同步设置失败：{error}",
-  "@settingsRuntimeAutoSyncFailed": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsRuntimeDiscoverDevices": "发现设备",
-  "settingsRuntimeDiscoverDevicesDescription": "扫描附近设备或手动输入地址来建立连接。",
   "settingsRuntimeScan": "扫描",
   "settingsRuntimeScanning": "扫描中…",
   "settingsRuntimeEnterManually": "手动输入",
   "settingsRuntimeConnect": "连接",
-  "settingsRuntimeEnableDiscovery": "允许其他设备发现这台设备",
-  "settingsRuntimeEnableDiscoveryDescription": "开启后，同网络下的设备能自动搜索到这台设备。",
-  "settingsRuntimeEnableDiscoveryFailed": "无法开启设备发现：{error}",
+  "settingsRuntimeEnableDiscovery": "允许附近设备发现当前设备空间",
+  "settingsRuntimeEnableDiscoveryDescription": "开启后，同一网络下的设备可以找到当前设备空间，并选择这台设备建立连接。",
+  "settingsRuntimeEnableDiscoveryFailed": "无法开启设备空间发现：{error}",
   "@settingsRuntimeEnableDiscoveryFailed": {
     "placeholders": {
       "error": {
@@ -1171,7 +1256,7 @@
       }
     }
   },
-  "settingsRuntimeDisableDiscoveryFailed": "无法关闭设备发现：{error}",
+  "settingsRuntimeDisableDiscoveryFailed": "无法关闭设备空间发现：{error}",
   "@settingsRuntimeDisableDiscoveryFailed": {
     "placeholders": {
       "error": {
@@ -1430,6 +1515,7 @@
   "settingsDataDetailedStatsSourceChat": "对话回复",
   "settingsDataDetailedStatsSourceToolResult": "工具结果续写",
   "settingsDataDetailedStatsSourceSummary": "摘要生成",
+  "settingsDataDetailedStatsSourceTitleGeneration": "标题生成",
   "settingsDataDetailedStatsSourceMemory": "记忆分析",
   "settingsDataDetailedStatsTotalRequests": "总请求数",
   "settingsDataDetailedStatsCachedInput": "缓存输入",

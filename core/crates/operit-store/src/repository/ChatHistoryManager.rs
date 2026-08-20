@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use crate::CoreNodeBindingStore::CoreNodeBindingStore;
 use crate::PreferencesDataStore::{
     stringPreferencesKey, CoroutineScope, PreferencesDataStore, PreferencesDataStoreError,
     PreferencesKey, SharingStarted, StateFlow,
@@ -88,7 +89,7 @@ pub enum ChatHistoryManagerError {
 /// Result alias used by chat history repository operations.
 pub type ChatHistoryManagerResult<T> = Result<T, ChatHistoryManagerError>;
 
-/// Repository for chats, messages, variants, branches, bindings, and sync recording.
+/// Repository for chats, messages, variants, branches, and sync recording.
 #[derive(Clone)]
 pub struct ChatHistoryManager {
     database: Arc<AppDatabase>,
@@ -97,10 +98,9 @@ pub struct ChatHistoryManager {
     messagePartDao: MessagePartDao,
     messageVariantDao: MessageVariantDao,
     syncStore: SqlChatSyncStore,
+    bindingStore: CoreNodeBindingStore,
     currentChatIdDataStore: PreferencesDataStore,
     pub currentChatIdFlow: StateFlow<Option<String>>,
-    _chatHistoriesFlow: StateFlow<Vec<ChatHistory>>,
-    pub chatHistoriesFlow: StateFlow<Vec<ChatHistory>>,
 }
 
 static INSTANCE: Mutex<Option<ChatHistoryManager>> = Mutex::new(None);
@@ -146,7 +146,7 @@ impl ChatHistoryManager {
         Self::getInstance(paths)
     }
 
-    /// Opens database handles and observable flows for chat history state.
+    /// Opens database handles and the persisted current-chat selection flow.
     fn create(paths: RuntimeStorePaths) -> ChatHistoryManagerResult<Self> {
         let currentChatIdDataStore =
             PreferencesDataStore::new(paths.current_chat_id_preferences_path());
@@ -156,6 +156,8 @@ impl ChatHistoryManager {
         let messagePartDao = database.messagePartDao();
         let messageVariantDao = database.messageVariantDao();
         let syncStore = SqlChatSyncStore::new(paths.clone(), &database)?;
+        let bindingStore =
+            CoreNodeBindingStore::default().map_err(ChatHistoryManagerError::IllegalState)?;
         let currentChatIdFlow = currentChatIdDataStore
             .dataFlow()
             .catch(|exception| match exception {
@@ -172,13 +174,6 @@ impl ChatHistoryManager {
                     .cloned()
             })
             .stateIn(CoroutineScope, SharingStarted::Lazily, None);
-        let _chatHistoriesFlow = chatDao.getAllChats()?.map(|chatEntities| {
-            chatEntities
-                .into_iter()
-                .map(|chatEntity| chatEntity.toChatHistory(Vec::new()))
-                .collect()
-        });
-        let chatHistoriesFlow = _chatHistoriesFlow.clone();
         Ok(Self {
             database,
             chatDao,
@@ -186,10 +181,9 @@ impl ChatHistoryManager {
             messagePartDao,
             messageVariantDao,
             syncStore,
+            bindingStore,
             currentChatIdDataStore,
             currentChatIdFlow,
-            _chatHistoriesFlow,
-            chatHistoriesFlow,
         })
     }
 
@@ -266,7 +260,7 @@ impl ChatHistoryManager {
             .collect()
     }
 
-    /// Loads and hydrates all messages and variants for one chat.
+    /// Hydrates one display window with only its messages' variants and parts.
     fn hydrateMessagesForChat(
         &self,
         chatId: &str,
@@ -281,8 +275,10 @@ impl ChatHistoryManager {
             .collect::<Vec<_>>();
         let variants = self
             .messageVariantDao
-            .getVariantsForMessages(chatId, visibleTimestamps)?;
-        let parts = self.messagePartDao.getPartsForChat(chatId)?;
+            .getVariantsForMessages(chatId, visibleTimestamps.clone())?;
+        let parts = self
+            .messagePartDao
+            .getPartsForMessages(chatId, visibleTimestamps)?;
         self.hydrateMessages(messageEntities, variants, parts)
     }
 
@@ -380,9 +376,23 @@ impl ChatHistoryManager {
         chatEntity.toChatHistory(Vec::new())
     }
 
-    /// Reads the current chat history list.
-    pub fn chatHistoriesFlow(&self) -> ChatHistoryManagerResult<Vec<ChatHistory>> {
-        Ok(self.chatHistoriesFlow.value())
+    /// Loads the current chat history list directly from persistent storage.
+    pub fn loadChatHistories(&self) -> ChatHistoryManagerResult<Vec<ChatHistory>> {
+        Ok(self
+            .chatDao
+            .getAllChatsDirectly()?
+            .into_iter()
+            .map(|chatEntity| chatEntity.toChatHistory(Vec::new()))
+            .collect())
+    }
+
+    /// Loads one persisted chat history metadata row.
+    #[allow(non_snake_case)]
+    pub fn loadChatHistory(&self, chatId: String) -> ChatHistoryManagerResult<Option<ChatHistory>> {
+        Ok(self
+            .chatDao
+            .getChatById(&chatId)?
+            .map(|chatEntity| chatEntity.toChatHistory(Vec::new())))
     }
 
     /// Counts all stored chats.
@@ -479,8 +489,12 @@ impl ChatHistoryManager {
     /// Saves chat metadata and records a chat snapshot for sync.
     pub fn saveChatHistory(&self, history: ChatHistory) -> ChatHistoryManagerResult<()> {
         let chatId = history.id.clone();
+        let isNewChat = self.chatDao.getChatById(&chatId)?.is_none();
         self.saveChatHistoryInternal(history)?;
         self.recordChatSnapshot(&chatId)?;
+        if isNewChat {
+            self.createBinding(&chatId)?;
+        }
         Ok(())
     }
 
@@ -488,8 +502,7 @@ impl ChatHistoryManager {
     /// Exports all chats and messages as an Operit chat archive.
     pub fn exportChatHistoriesToJson(&self) -> ChatHistoryManagerResult<String> {
         let chats = self
-            .chatHistoriesFlow
-            .value()
+            .loadChatHistories()?
             .into_iter()
             .map(|chatHistory| self.buildOperitArchivedChat(chatHistory))
             .collect::<ChatHistoryManagerResult<Vec<_>>>()?;
@@ -549,8 +562,7 @@ impl ChatHistoryManager {
         }
 
         let mut existingIds = self
-            .chatHistoriesFlow
-            .value()
+            .loadChatHistories()?
             .into_iter()
             .map(|chat| chat.id)
             .collect::<HashSet<_>>();
@@ -564,13 +576,13 @@ impl ChatHistoryManager {
         for archivedChat in archive.chats {
             let messageCount = archivedChat.messages.len();
             processedChatCount += 1;
-            if existingIds.contains(&archivedChat.id) {
+            let isNewChat = existingIds.insert(archivedChat.id.clone());
+            if !isNewChat {
                 counters.updatedCount += 1;
             } else {
-                existingIds.insert(archivedChat.id.clone());
                 counters.newCount += 1;
             }
-            self.saveArchivedChat(archivedChat)?;
+            self.saveArchivedChat(archivedChat, isNewChat)?;
             onChatPersisted(processedChatCount, totalChatCount, messageCount);
         }
         Ok(ChatImportResult {
@@ -580,14 +592,19 @@ impl ChatHistoryManager {
         })
     }
 
+    /// Persists one imported chat and optionally creates its initial Binding.
     #[allow(non_snake_case)]
-    fn saveArchivedChat(&self, archivedChat: OperitArchivedChat) -> ChatHistoryManagerResult<()> {
+    fn saveArchivedChat(
+        &self,
+        archivedChat: OperitArchivedChat,
+        createBinding: bool,
+    ) -> ChatHistoryManagerResult<()> {
         let chatId = archivedChat.id.clone();
         let history = archivedChat
             .toChatHistory()
             .map_err(ChatHistoryManagerError::IllegalArgument)?;
-        self.chatDao
-            .insertChat(ChatEntity::fromChatHistory(&history))?;
+        let chatEntity = ChatEntity::fromChatHistory(&history);
+        self.chatDao.insertChat(chatEntity)?;
         self.messagePartDao.deleteAllPartsForChat(&chatId)?;
         self.messageDao.deleteAllMessagesForChat(&chatId)?;
         self.messageVariantDao.deleteAllVariantsForChat(&chatId)?;
@@ -625,6 +642,9 @@ impl ChatHistoryManager {
                 .replaceParts(&chatId, timestamp, variantIndex, parts)?;
         }
         self.recordChatSnapshot(&chatId)?;
+        if createBinding {
+            self.createBinding(&chatId)?;
+        }
         Ok(())
     }
 
@@ -896,6 +916,12 @@ impl ChatHistoryManager {
         Ok(())
     }
 
+    /// Returns the persistent synchronization clock observed by this chat store.
+    #[allow(non_snake_case)]
+    pub fn syncClock(&self) -> ChatHistoryManagerResult<crate::SyncOperationStore::SyncClock> {
+        Ok(self.syncStore.localClock()?)
+    }
+
     /// Deletes one message and records sync deletion state.
     pub fn deleteMessage(&self, chatId: String, timestamp: i64) -> ChatHistoryManagerResult<()> {
         self.messagePartDao
@@ -1030,6 +1056,55 @@ impl ChatHistoryManager {
             self.recordMessageSnapshot(&chatId, messageTimestamp)?;
         }
         Ok(())
+    }
+
+    /// Atomically commits one assistant segment, chat metrics, and its sync operation.
+    pub fn commitAssistantMessageSegment(
+        &self,
+        chatId: String,
+        message: ChatMessage,
+        chatMetrics: Option<(i64, i64, i64)>,
+    ) -> ChatHistoryManagerResult<crate::SyncOperationStore::SyncClock> {
+        if message.sender != "ai" {
+            return Err(ChatHistoryManagerError::IllegalArgument(format!(
+                "assistant segment requires an ai message for chat {chatId}"
+            )));
+        }
+        if message.selectedVariantIndex != 0 {
+            return Err(ChatHistoryManagerError::IllegalArgument(format!(
+                "assistant segment requires the base revision for chat {chatId}"
+            )));
+        }
+        let existingMessage = self
+            .messageDao
+            .getMessageByTimestamp(&chatId, message.timestamp)?
+            .ok_or_else(|| {
+                ChatHistoryManagerError::IllegalState(format!(
+                    "Assistant placeholder {} does not exist in chat {chatId}",
+                    message.timestamp
+                ))
+            })?;
+        let mut chat = self.chatDao.getChatById(&chatId)?.ok_or_else(|| {
+            ChatHistoryManagerError::IllegalArgument(format!("Chat does not exist: {chatId}"))
+        })?;
+        chat.updatedAt = currentTimeMillis();
+        if let Some((inputTokens, outputTokens, currentWindowSize)) = chatMetrics {
+            chat.inputTokens = inputTokens;
+            chat.outputTokens = outputTokens;
+            chat.currentWindowSize = currentWindowSize;
+        }
+        let timestamp = message.timestamp;
+        let parts = message.parts.clone();
+        let messageEntity = MessageEntity::fromChatMessage(
+            chatId.clone(),
+            message,
+            existingMessage.orderIndex,
+            existingMessage.messageId,
+        );
+        let partEntities = messagePartEntities(&chatId, timestamp, 0, &parts);
+        Ok(self
+            .syncStore
+            .commitAssistantMessageSegment(chat, messageEntity, partEntities)?)
     }
 
     /// Updates favorite state for a message and its selected variant.
@@ -1242,6 +1317,7 @@ impl ChatHistoryManager {
         self.chatDao.deleteChat(&chatId)?;
         if chat.is_some() {
             self.recordChatDeletion(&chatId)?;
+            self.deleteBinding(&chatId)?;
         }
         if self.currentChatIdFlow()?.as_deref() == Some(chatId.as_str()) {
             self.clearCurrentChatId()?;
@@ -1249,7 +1325,7 @@ impl ChatHistoryManager {
         Ok(chat.is_some())
     }
 
-    /// Creates a new chat metadata row and optionally selects it.
+    /// Creates a new chat metadata row and binding.
     pub fn createNewChat(
         &self,
         title: Option<String>,
@@ -1278,8 +1354,8 @@ impl ChatHistoryManager {
         };
         self.chatDao.insertChat(chatEntity.clone())?;
         let history = chatEntity.toChatHistory(Vec::new());
-        self.setCurrentChatId(history.id.clone())?;
         self.recordChatMetadata(&history.id)?;
+        self.createBinding(&history.id)?;
         Ok(history)
     }
 
@@ -1419,8 +1495,8 @@ impl ChatHistoryManager {
             )?;
         }
         let branchHistory = branchEntity.toChatHistory(Vec::new());
-        self.setCurrentChatId(branchHistory.id.clone())?;
         self.recordChatSnapshot(&branchHistory.id)?;
+        self.createBinding(&branchHistory.id)?;
         Ok(branchHistory)
     }
 
@@ -1854,6 +1930,22 @@ impl ChatHistoryManager {
 
     fn recordChatSnapshot(&self, chatId: &str) -> ChatHistoryManagerResult<()> {
         self.syncStore.recordChatSnapshot(chatId)?;
+        Ok(())
+    }
+
+    /// Creates the local initial Binding for one newly created chat key.
+    fn createBinding(&self, chatId: &str) -> ChatHistoryManagerResult<()> {
+        self.bindingStore
+            .createLocal(chatId)
+            .map_err(ChatHistoryManagerError::IllegalState)?;
+        Ok(())
+    }
+
+    /// Deletes the Binding associated with one deleted chat key.
+    fn deleteBinding(&self, chatId: &str) -> ChatHistoryManagerResult<()> {
+        self.bindingStore
+            .delete(chatId)
+            .map_err(ChatHistoryManagerError::IllegalState)?;
         Ok(())
     }
 

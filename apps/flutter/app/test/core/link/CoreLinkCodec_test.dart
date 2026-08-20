@@ -16,16 +16,6 @@ void main() {
     expect(decodeCoreLink(encoded), Uint8List.fromList(<int>[1, 2, 3, 4]));
   });
 
-  test('nested maps use typed string keys', () {
-    final decoded = decodeCoreLinkMap(
-      encodeCoreLink(<String, Object?>{
-        'outer': <String, Object?>{'value': 7},
-      }),
-    );
-
-    expect(decoded['outer'], isA<Map<String, Object?>>());
-  });
-
   test('uint64 is decoded without dart2js uint64 accessors', () {
     final decoded = decodeCoreLink(
       Uint8List.fromList(<int>[0xcf, 0, 0, 0, 1, 0, 0, 0, 0]),

@@ -27,7 +27,8 @@ quote = "1"
 syn = { version = "2", features = ["full", "visit"] }
 
 [dev-dependencies]
-operit-host-native-common = { path = "../../../hosts/common/operit-host-native-common", default-features = false, features = ["storage"] }
+operit-host-native-common = { path = "../../../hosts/common/operit-host-native-common", default-features = false, features = ["fs", "http", "scheduler", "storage"] }
+operit-link-access = { path = "../operit-link-access", features = ["test-support"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

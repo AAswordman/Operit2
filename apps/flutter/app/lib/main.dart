@@ -8,7 +8,7 @@ import 'core/application/CoreApplicationService.dart';
 import 'core/errors/UnhandledErrorReporter.dart';
 import 'core/logging/ClientLogger.dart';
 import 'core/notifications/NotificationActivationService.dart';
-import 'core/runtime/RuntimeConnectionManager.dart';
+import 'core/runtime/RuntimeBootstrapManager.dart';
 import 'ui/main/OperitApp.dart';
 import 'ui/window/DetachedChatWindowApp.dart';
 import 'ui/window/OperitWindowArguments.dart';
@@ -44,10 +44,10 @@ void main(List<String> arguments) async {
       );
       NotificationActivationService.instance.initialize(arguments);
       final runtimeStopwatch = Stopwatch()..start();
-      await RuntimeConnectionManager.instance.initialize();
+      await RuntimeBootstrapManager.instance.initialize();
       ClientLogger.attachPersistentStorage();
       ClientLogger.i(
-        'runtime connection initialized elapsedMs=${runtimeStopwatch.elapsedMilliseconds}',
+        'runtime bootstrap initialized elapsedMs=${runtimeStopwatch.elapsedMilliseconds}',
         tag: _appStartupLogTag,
       );
       final glassStopwatch = Stopwatch()..start();

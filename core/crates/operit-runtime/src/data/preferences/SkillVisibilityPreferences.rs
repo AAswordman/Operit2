@@ -59,9 +59,10 @@ impl SkillVisibilityPreferences {
         let legacyKey = legacyKeyForSkillName(skillName);
         if let Some(value) = preferences.get(&legacyKey) {
             let legacyValue = value == "true";
-            self.dataStore.edit(|editable| {
+            self.dataStore.migrate(|editable| {
                 editable.remove(&legacyKey);
                 editable.set(&newKey, legacyValue.to_string());
+                Ok::<(), PreferencesDataStoreError>(())
             })?;
             return Ok(legacyValue);
         }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -6,16 +6,17 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::RuntimeStorageHost;
-use operit_util::RuntimeStorageLayout::{
-    MODEL_CONFIGS_PREFERENCES_PATH, TTS_CONFIGS_PREFERENCES_PATH,
-};
+use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::PreferencesEncryption::PreferencesEncryption;
 use crate::RuntimeStorageHost::{defaultRuntimeStorageHost, runtimeStoragePath};
-use crate::RuntimeStorePaths::RuntimeStorePaths;
-use crate::SyncOperationStore::{NewSyncOperation, SyncOperationStore, SyncOperationStoreError};
+use crate::SyncOperationStore::{
+    NewSyncOperation, SyncOperation, SyncOperationSemantics, SyncOperationStore,
+    SyncOperationStoreError,
+};
 
 #[derive(Debug, Error)]
 /// Error type for preference files, preference flows, and sync application.
@@ -30,9 +31,17 @@ pub enum PreferencesDataStoreError {
     Encryption(String),
     #[error("sync operation store error: {0}")]
     Sync(#[from] SyncOperationStoreError),
+    #[error("invalid preferences schema version: {value}")]
+    InvalidSchemaVersion { value: String },
+    #[error("preferences schema version {actual} is newer than runtime version {expected}")]
+    SchemaVersionTooNew { actual: u32, expected: u32 },
+    #[error("missing preferences migration from version {from} to {to}")]
+    MissingMigration { from: u32, to: u32 },
     #[error("{0}")]
     Message(String),
 }
+
+const PREFERENCES_SCHEMA_VERSION_KEY_NAME: &str = "__operit_preferences_schema_version";
 
 /// Result alias used by Flow-like preference APIs.
 pub type FlowResult<T> = Result<T, PreferencesDataStoreError>;
@@ -70,6 +79,11 @@ where
 
     /// Replaces the current value only when it equals `expect`.
     fn compare_and_set(&self, expect: T, update: T) -> bool;
+
+    /// Applies an atomic transformation to the current value.
+    fn update<F>(&self, update: F)
+    where
+        F: FnMut(&mut T);
 }
 
 /// Observed value source with Kotlin Flow-like collection semantics.
@@ -1423,6 +1437,25 @@ where
     pub fn compare_and_set(&self, expect: T, update: T) -> bool {
         self.state.compare_and_set(expect, update)
     }
+
+    /// Applies an atomic transformation to the current value.
+    pub fn update<F>(&self, update: F)
+    where
+        F: FnMut(&mut T),
+    {
+        let mut update = update;
+        loop {
+            let current = self.value();
+            let mut next = current.clone();
+            update(&mut next);
+            if current == next {
+                return;
+            }
+            if self.compare_and_set(current, next) {
+                return;
+            }
+        }
+    }
 }
 
 impl<T> FlowLike<T> for MutableStateFlow<T>
@@ -1460,6 +1493,13 @@ where
 
     fn compare_and_set(&self, expect: T, update: T) -> bool {
         MutableStateFlow::compare_and_set(self, expect, update)
+    }
+
+    fn update<F>(&self, update: F)
+    where
+        F: FnMut(&mut T),
+    {
+        MutableStateFlow::update(self, update);
     }
 }
 
@@ -1568,6 +1608,88 @@ pub struct PreferencesDataStore {
     syncDescriptor: Option<PreferencesSyncDescriptor>,
     changeSignal: Arc<PreferencesDataStoreChangeSignal>,
     sharedState: Arc<PreferencesDataStoreSharedState>,
+    schema: Option<PreferencesSchema>,
+    structuredJsonSync: bool,
+}
+
+type PreferencesMigration =
+    dyn Fn(u32, &mut Preferences) -> Result<(), PreferencesDataStoreError> + Send + Sync;
+
+#[derive(Clone)]
+/// Declares the current schema and one-step migration dispatcher for a preferences file.
+struct PreferencesSchema {
+    currentVersion: u32,
+    migrate: Arc<PreferencesMigration>,
+}
+
+#[derive(Clone)]
+/// Stores persistent state that belongs only to one CoreNode.
+pub struct CoreNodeStateStore {
+    inner: PreferencesDataStore,
+}
+
+impl CoreNodeStateStore {
+    /// Opens node-local state through an explicit runtime storage host.
+    #[allow(non_snake_case)]
+    pub fn newWithStorage(
+        storageHost: Arc<dyn RuntimeStorageHost>,
+        storagePath: impl Into<String>,
+    ) -> Self {
+        Self {
+            inner: PreferencesDataStore::newNodeLocalWithStorage(storageHost, storagePath, false),
+        }
+    }
+}
+
+impl std::ops::Deref for CoreNodeStateStore {
+    type Target = PreferencesDataStore;
+
+    /// Exposes the shared preferences API without exposing replication controls.
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+#[derive(Clone)]
+/// Stores encrypted credentials and secrets owned by one CoreNode.
+pub struct CoreNodeSecretStore {
+    inner: PreferencesDataStore,
+}
+
+impl CoreNodeSecretStore {
+    /// Opens encrypted node-local secrets through the default runtime storage host.
+    pub fn new(path: PathBuf) -> Self {
+        let storageHost = defaultRuntimeStorageHost();
+        let storagePath = runtimeStoragePath(&path);
+        Self {
+            inner: PreferencesDataStore::newNodeLocalWithResolvedPath(
+                storageHost,
+                path,
+                storagePath,
+                true,
+            ),
+        }
+    }
+
+    /// Opens encrypted node-local secrets through an explicit runtime storage host.
+    #[allow(non_snake_case)]
+    pub fn newWithStorage(
+        storageHost: Arc<dyn RuntimeStorageHost>,
+        storagePath: impl Into<String>,
+    ) -> Self {
+        Self {
+            inner: PreferencesDataStore::newNodeLocalWithStorage(storageHost, storagePath, true),
+        }
+    }
+}
+
+impl std::ops::Deref for CoreNodeSecretStore {
+    type Target = PreferencesDataStore;
+
+    /// Exposes the shared preferences API without exposing replication controls.
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1575,8 +1697,7 @@ pub struct PreferencesDataStore {
 pub struct PreferencesSyncDescriptor {
     pub domain: String,
     pub entityType: String,
-    pub entityId: String,
-    pub operation: String,
+    pub storagePath: String,
 }
 
 impl PreferencesSyncDescriptor {
@@ -1584,30 +1705,13 @@ impl PreferencesSyncDescriptor {
     pub fn new(
         domain: impl Into<String>,
         entityType: impl Into<String>,
-        entityId: impl Into<String>,
-        operation: impl Into<String>,
+        storagePath: impl Into<String>,
     ) -> Self {
         Self {
             domain: domain.into(),
             entityType: entityType.into(),
-            entityId: entityId.into(),
-            operation: operation.into(),
+            storagePath: storagePath.into(),
         }
-    }
-
-    #[allow(non_snake_case)]
-    /// Builds the standard sync descriptor for a preferences file path.
-    pub fn forPreferencesPath(path: &Path) -> Self {
-        let fileName = path
-            .file_name()
-            .map(|value| value.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string_lossy().to_string());
-        let entityId = runtimeStoragePath(path);
-        let entityType = fileName
-            .trim_end_matches(".preferences.json")
-            .trim_end_matches(".json")
-            .to_string();
-        Self::new("preferences", entityType, entityId, "upsert")
     }
 
     #[allow(non_snake_case)]
@@ -1623,8 +1727,136 @@ impl PreferencesSyncDescriptor {
             .trim_end_matches(".preferences.json")
             .trim_end_matches(".json")
             .to_string();
-        Self::new("preferences", entityType, storagePath.to_string(), "upsert")
+        Self::new("preferences", entityType, storagePath.to_string())
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+/// Carries one independently mergeable preference entry mutation.
+struct PreferencesSyncEntryPayload {
+    storagePath: String,
+    key: String,
+    value: Option<String>,
+    encrypted: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    jsonPath: Vec<PreferencesSyncJsonPathSegment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    jsonMutation: Option<PreferencesSyncJsonMutation>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+/// Stores one validated incoming preferences mutation ready for batched application.
+pub struct PreferencesSyncedEntry {
+    storagePath: String,
+    encrypted: bool,
+    mutation: PreferencesSyncedMutation,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum PreferencesSyncedMutation {
+    SetEntry {
+        key: String,
+        value: String,
+    },
+    DeleteEntry {
+        key: String,
+    },
+    SetJson {
+        key: String,
+        path: Vec<PreferencesSyncJsonPathSegment>,
+        value: Value,
+    },
+    DeleteJson {
+        key: String,
+        path: Vec<PreferencesSyncJsonPathSegment>,
+    },
+}
+
+impl PreferencesSyncedEntry {
+    /// Validates and decodes one generic synchronization operation as a preferences mutation.
+    #[allow(non_snake_case)]
+    pub fn fromOperation(operation: &SyncOperation) -> Result<Self, PreferencesDataStoreError> {
+        if operation.domain != "preferences" {
+            return Err(PreferencesDataStoreError::Message(format!(
+                "sync operation does not belong to preferences: {}",
+                operation.domain
+            )));
+        }
+        let payload: PreferencesSyncEntryPayload =
+            serde_json::from_value(operation.payload.clone())?;
+        let expectedEntityId =
+            preferenceMutationEntityId(&payload.storagePath, &payload.key, &payload.jsonPath)?;
+        if operation.entityId != expectedEntityId {
+            return Err(PreferencesDataStoreError::Message(
+                "preference sync entity id does not match its payload".to_string(),
+            ));
+        }
+        let mutation = decodePreferencesSyncedMutation(&operation.operation, &payload)?;
+        Ok(Self {
+            storagePath: payload.storagePath,
+            encrypted: payload.encrypted,
+            mutation,
+        })
+    }
+
+    /// Returns the virtual storage path owning this preferences mutation.
+    #[allow(non_snake_case)]
+    pub fn storagePath(&self) -> &str {
+        &self.storagePath
+    }
+
+    /// Applies this decoded mutation to one in-memory preferences snapshot.
+    fn apply(&self, preferences: &mut Preferences) -> Result<(), PreferencesDataStoreError> {
+        match &self.mutation {
+            PreferencesSyncedMutation::SetEntry { key, value } => {
+                preferences.set(&stringPreferencesKey(key), value.clone());
+                Ok(())
+            }
+            PreferencesSyncedMutation::DeleteEntry { key } => {
+                preferences.remove(&stringPreferencesKey(key));
+                Ok(())
+            }
+            PreferencesSyncedMutation::SetJson { key, path, value } => {
+                applyStructuredJsonPreferenceMutation(
+                    preferences,
+                    &stringPreferencesKey(key),
+                    path,
+                    Some(value.clone()),
+                )
+            }
+            PreferencesSyncedMutation::DeleteJson { key, path } => {
+                applyStructuredJsonPreferenceMutation(
+                    preferences,
+                    &stringPreferencesKey(key),
+                    path,
+                    None,
+                )
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+/// Identifies one independently synchronized location inside a JSON preference value.
+enum PreferencesSyncJsonPathSegment {
+    Field(String),
+    Item(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+/// Distinguishes an explicit JSON null assignment from a path deletion.
+enum PreferencesSyncJsonMutation {
+    Set(Value),
+    Delete,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+/// Carries one JSON mutation produced by structural comparison.
+struct PreferencesStructuredJsonMutation {
+    path: Vec<PreferencesSyncJsonPathSegment>,
+    value: Option<Value>,
 }
 
 struct PreferencesDataStoreChangeSignal {
@@ -1657,13 +1889,13 @@ struct PreferencesDataStoreLoadedPreferences {
 
 struct PreferencesDataStoreRegistryKey {
     storageHost: Arc<dyn RuntimeStorageHost>,
-    path: PathBuf,
+    storagePath: String,
 }
 
 impl PartialEq for PreferencesDataStoreRegistryKey {
     /// Compares registry keys by storage-host identity and virtual storage path.
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.storageHost, &other.storageHost) && self.path == other.path
+        Arc::ptr_eq(&self.storageHost, &other.storageHost) && self.storagePath == other.storagePath
     }
 }
 
@@ -1673,7 +1905,7 @@ impl Hash for PreferencesDataStoreRegistryKey {
     /// Hashes registry keys by storage-host identity and virtual storage path.
     fn hash<H: Hasher>(&self, state: &mut H) {
         (Arc::as_ptr(&self.storageHost) as *const () as usize).hash(state);
-        self.path.hash(state);
+        self.storagePath.hash(state);
     }
 }
 
@@ -1698,156 +1930,133 @@ impl PreferencesDataStore {
     /// Creates a preferences store backed by the default runtime storage host.
     pub fn new(path: PathBuf) -> Self {
         let storageHost = defaultRuntimeStorageHost();
-        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
-        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
-        Self {
-            storagePath: runtimeStoragePath(&path),
-            storageHost,
-            encryption: None,
-            syncOperationStore: Some(SyncOperationStore::native(RuntimeStorePaths::default())),
-            syncDescriptor: Some(PreferencesSyncDescriptor::forPreferencesPath(&path)),
-            path,
-            changeSignal,
-            sharedState,
-        }
-    }
-
-    #[allow(non_snake_case)]
-    /// Creates an encrypted and synced preferences store backed by the default runtime storage host.
-    pub fn newEncryptedSynced(path: PathBuf) -> Self {
-        let storageHost = defaultRuntimeStorageHost();
         let storagePath = runtimeStoragePath(&path);
-        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
-        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
-        let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
-            .expect("preferences encryption key must be available");
-        Self {
-            path: path.clone(),
-            storagePath,
-            storageHost,
-            encryption: Some(encryption),
-            syncOperationStore: Some(SyncOperationStore::native(RuntimeStorePaths::default())),
-            syncDescriptor: Some(PreferencesSyncDescriptor::forPreferencesPath(&path)),
-            changeSignal,
-            sharedState,
-        }
+        Self::newSpaceWithResolvedPath(storageHost, path, storagePath, false)
     }
 
     #[allow(non_snake_case)]
-    /// Creates an encrypted preferences store backed by the default runtime storage host.
+    /// Creates an encrypted Space preferences store backed by the default runtime storage host.
     pub fn newEncrypted(path: PathBuf) -> Self {
         let storageHost = defaultRuntimeStorageHost();
         let storagePath = runtimeStoragePath(&path);
-        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
-        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
-        let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
-            .expect("preferences encryption key must be available");
-        Self {
-            path,
-            storagePath,
-            storageHost,
-            encryption: Some(encryption),
-            syncOperationStore: None,
-            syncDescriptor: None,
-            changeSignal,
-            sharedState,
-        }
+        Self::newSpaceWithResolvedPath(storageHost, path, storagePath, true)
     }
 
     #[allow(non_snake_case)]
-    /// Creates a preferences store backed by an explicit storage host and path.
+    /// Creates a Space preferences store backed by an explicit storage host and path.
     pub fn newWithStorage(
         storageHost: Arc<dyn RuntimeStorageHost>,
         storagePath: impl Into<String>,
     ) -> Self {
         let storagePath = storagePath.into();
         let path = PathBuf::from(&storagePath);
-        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
-        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
-        Self {
-            path,
-            storagePath,
-            storageHost,
-            encryption: None,
-            syncOperationStore: None,
-            syncDescriptor: None,
-            changeSignal,
-            sharedState,
-        }
+        Self::newSpaceWithResolvedPath(storageHost, path, storagePath, false)
     }
 
     #[allow(non_snake_case)]
-    /// Creates a synced preferences store backed by an explicit storage host and path.
-    pub fn newSyncedWithStorage(
-        storageHost: Arc<dyn RuntimeStorageHost>,
-        storagePath: impl Into<String>,
-        syncRootPath: impl Into<String>,
-    ) -> Self {
-        let storagePath = storagePath.into();
-        let path = PathBuf::from(&storagePath);
-        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
-        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
-        let syncDescriptor = PreferencesSyncDescriptor::forStoragePath(&storagePath);
-        Self {
-            path: path.clone(),
-            storagePath,
-            storageHost: storageHost.clone(),
-            encryption: None,
-            syncOperationStore: Some(SyncOperationStore::new(storageHost, syncRootPath)),
-            syncDescriptor: Some(syncDescriptor),
-            changeSignal,
-            sharedState,
-        }
-    }
-
-    #[allow(non_snake_case)]
-    /// Creates an encrypted preferences store backed by an explicit storage host and path.
+    /// Creates an encrypted Space preferences store backed by an explicit storage host and path.
     pub fn newEncryptedWithStorage(
         storageHost: Arc<dyn RuntimeStorageHost>,
         storagePath: impl Into<String>,
     ) -> Self {
         let storagePath = storagePath.into();
         let path = PathBuf::from(&storagePath);
-        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
-        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
-        let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
-            .expect("preferences encryption key must be available");
+        Self::newSpaceWithResolvedPath(storageHost, path, storagePath, true)
+    }
+
+    /// Builds one synchronized preferences store after resolving its virtual storage path.
+    #[allow(non_snake_case)]
+    fn newSpaceWithResolvedPath(
+        storageHost: Arc<dyn RuntimeStorageHost>,
+        path: PathBuf,
+        storagePath: String,
+        encrypted: bool,
+    ) -> Self {
+        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &storagePath);
+        let sharedState = preferencesDataStoreSharedState(&storageHost, &storagePath);
+        let encryption = encrypted.then(|| {
+            PreferencesEncryption::load_or_create(storageHost.as_ref())
+                .expect("preferences encryption key must be available")
+        });
+        let syncDescriptor = PreferencesSyncDescriptor::forStoragePath(&storagePath);
+        Self {
+            path,
+            storagePath,
+            storageHost: storageHost.clone(),
+            encryption,
+            syncOperationStore: Some(SyncOperationStore::new(
+                storageHost,
+                RUNTIME_SYNC_DIR_PATH.to_string(),
+            )),
+            syncDescriptor: Some(syncDescriptor),
+            changeSignal,
+            sharedState,
+            schema: None,
+            structuredJsonSync: false,
+        }
+    }
+
+    /// Builds one node-local store from an explicit virtual storage path.
+    #[allow(non_snake_case)]
+    fn newNodeLocalWithStorage(
+        storageHost: Arc<dyn RuntimeStorageHost>,
+        storagePath: impl Into<String>,
+        encrypted: bool,
+    ) -> Self {
+        let storagePath = storagePath.into();
+        let path = PathBuf::from(&storagePath);
+        Self::newNodeLocalWithResolvedPath(storageHost, path, storagePath, encrypted)
+    }
+
+    /// Builds one node-local store after resolving its virtual storage path.
+    #[allow(non_snake_case)]
+    fn newNodeLocalWithResolvedPath(
+        storageHost: Arc<dyn RuntimeStorageHost>,
+        path: PathBuf,
+        storagePath: String,
+        encrypted: bool,
+    ) -> Self {
+        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &storagePath);
+        let sharedState = preferencesDataStoreSharedState(&storageHost, &storagePath);
+        let encryption = encrypted.then(|| {
+            PreferencesEncryption::load_or_create(storageHost.as_ref())
+                .expect("preferences encryption key must be available")
+        });
         Self {
             path,
             storagePath,
             storageHost,
-            encryption: Some(encryption),
+            encryption,
             syncOperationStore: None,
             syncDescriptor: None,
             changeSignal,
             sharedState,
+            schema: None,
+            structuredJsonSync: false,
         }
     }
 
     #[allow(non_snake_case)]
-    /// Creates an encrypted and synced preferences store backed by an explicit storage host and path.
-    pub fn newEncryptedSyncedWithStorage(
-        storageHost: Arc<dyn RuntimeStorageHost>,
-        storagePath: impl Into<String>,
-        syncRootPath: impl Into<String>,
-    ) -> Self {
-        let storagePath = storagePath.into();
-        let path = PathBuf::from(&storagePath);
-        let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &path);
-        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
-        let syncDescriptor = PreferencesSyncDescriptor::forStoragePath(&storagePath);
-        let encryption = PreferencesEncryption::load_or_create(storageHost.as_ref())
-            .expect("preferences encryption key must be available");
-        Self {
-            path: path.clone(),
-            storagePath,
-            storageHost: storageHost.clone(),
-            encryption: Some(encryption),
-            syncOperationStore: Some(SyncOperationStore::new(storageHost, syncRootPath)),
-            syncDescriptor: Some(syncDescriptor),
-            changeSignal,
-            sharedState,
-        }
+    /// Attaches a current schema version and a dispatcher for each one-step migration.
+    pub fn withSchema<F>(mut self, currentVersion: u32, migrate: F) -> Self
+    where
+        F: Fn(u32, &mut Preferences) -> Result<(), PreferencesDataStoreError>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.schema = Some(PreferencesSchema {
+            currentVersion,
+            migrate: Arc::new(migrate),
+        });
+        self
+    }
+
+    #[allow(non_snake_case)]
+    /// Enables recursive JSON-field synchronization for values changed in this store.
+    pub fn withStructuredJsonSync(mut self) -> Self {
+        self.structuredJsonSync = true;
+        self
     }
 
     /// Returns the logical path associated with this preferences store.
@@ -1856,54 +2065,44 @@ impl PreferencesDataStore {
     }
 
     #[allow(non_snake_case)]
-    /// Applies a synced preferences payload to local storage and observers.
-    pub fn applySyncedPreferences(
-        entityId: &str,
-        payload: serde_json::Value,
-    ) -> Result<(), PreferencesDataStoreError> {
-        Self::applySyncedPreferencesWithStorage(defaultRuntimeStorageHost(), entityId, payload)
+    /// Returns the schema version after applying this store's declared migrations.
+    pub fn schemaVersion(&self) -> Result<u32, PreferencesDataStoreError> {
+        Self::readSchemaVersion(&self.data()?)
     }
 
+    /// Applies validated synchronized entries for one file in one transaction and notification.
     #[allow(non_snake_case)]
-    /// Applies a synced preferences payload with an explicit storage host.
-    pub fn applySyncedPreferencesWithStorage(
+    pub fn applySyncedEntriesWithStorage(
         storageHost: Arc<dyn RuntimeStorageHost>,
-        entityId: &str,
-        payload: serde_json::Value,
+        entries: &[PreferencesSyncedEntry],
     ) -> Result<(), PreferencesDataStoreError> {
-        let preferences: Preferences = serde_json::from_value(payload)?;
-        let path = RuntimeStorePaths::default().runtime_storage_path(entityId);
-        let sharedState = preferencesDataStoreSharedState(&storageHost, &path);
-        let _transaction = sharedState
-            .transaction
-            .lock()
-            .expect("PreferencesDataStore transaction mutex must not be poisoned");
-        let content = serde_json::to_string_pretty(&preferences)?;
-        let contentBytes = preferencesSyncStorageContent(storageHost.as_ref(), entityId, content)?;
-        storageHost.writeBytes(entityId, &contentBytes)?;
-        let mut loaded = sharedState
-            .preferences
-            .lock()
-            .expect("PreferencesDataStore shared state mutex must not be poisoned");
-        loaded.loaded = true;
-        loaded.preferences = preferences;
-        drop(loaded);
-        let signal = preferencesDataStoreChangeSignal(&storageHost, &path);
-        let mut version = signal
-            .version
-            .lock()
-            .expect("PreferencesDataStore version mutex must not be poisoned");
-        *version += 1;
-        signal.changed.notify_all();
-        drop(version);
-        notifyPreferencesDataStoreSubscribers(&signal);
-        Ok(())
+        let Some(first) = entries.first() else {
+            return Ok(());
+        };
+        if entries.iter().any(|entry| {
+            entry.storagePath != first.storagePath || entry.encrypted != first.encrypted
+        }) {
+            return Err(PreferencesDataStoreError::Message(
+                "batched preference sync entries must share one storage path and encryption mode"
+                    .to_string(),
+            ));
+        }
+        let store =
+            Self::newNodeLocalWithStorage(storageHost, first.storagePath.clone(), first.encrypted);
+        store.try_edit_result(|preferences| {
+            for entry in entries {
+                entry.apply(preferences)?;
+            }
+            Ok(())
+        })
     }
 
     /// Reads the current preferences snapshot.
     pub fn data(&self) -> Result<Preferences, PreferencesDataStoreError> {
         if let Some(preferences) = self.loadedPreferences() {
-            return Ok(preferences);
+            if self.schemaIsCurrent(&preferences)? {
+                return Ok(preferences);
+            }
         }
         let _transaction = self
             .sharedState
@@ -1911,6 +2110,7 @@ impl PreferencesDataStore {
             .lock()
             .expect("PreferencesDataStore transaction mutex must not be poisoned");
         self.loadUnlocked()?;
+        self.migrateSchemaUnlocked()?;
         Ok(self
             .loadedPreferences()
             .expect("PreferencesDataStore must be loaded after a successful load"))
@@ -1940,6 +2140,93 @@ impl PreferencesDataStore {
         loaded.loaded = true;
         loaded.preferences = preferences;
         Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    /// Returns whether the loaded snapshot already matches the schema declared by this store.
+    fn schemaIsCurrent(
+        &self,
+        preferences: &Preferences,
+    ) -> Result<bool, PreferencesDataStoreError> {
+        let Some(schema) = &self.schema else {
+            return Ok(true);
+        };
+        let version = Self::readSchemaVersion(preferences)?;
+        if version > schema.currentVersion {
+            return Err(PreferencesDataStoreError::SchemaVersionTooNew {
+                actual: version,
+                expected: schema.currentVersion,
+            });
+        }
+        Ok(version == schema.currentVersion)
+    }
+
+    #[allow(non_snake_case)]
+    /// Migrates the loaded snapshot to the declared schema while the transaction lock is held.
+    fn migrateSchemaUnlocked(&self) -> Result<(), PreferencesDataStoreError> {
+        let currentPreferences = self
+            .loadedPreferences()
+            .expect("PreferencesDataStore must be loaded before schema migration");
+        let mut preferences = currentPreferences.clone();
+        if !self.migratePreferencesToCurrentSchema(&mut preferences)? {
+            return Ok(());
+        }
+        self.writeStoredPreferencesUnlocked(&preferences)?;
+        let mut loaded = self
+            .sharedState
+            .preferences
+            .lock()
+            .expect("PreferencesDataStore shared state mutex must not be poisoned");
+        loaded.preferences = preferences;
+        drop(loaded);
+        self.notifyChanged();
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    /// Applies every required one-step migration to an in-memory preferences snapshot.
+    fn migratePreferencesToCurrentSchema(
+        &self,
+        preferences: &mut Preferences,
+    ) -> Result<bool, PreferencesDataStoreError> {
+        let Some(schema) = &self.schema else {
+            return Ok(false);
+        };
+        let mut version = Self::readSchemaVersion(preferences)?;
+        if version > schema.currentVersion {
+            return Err(PreferencesDataStoreError::SchemaVersionTooNew {
+                actual: version,
+                expected: schema.currentVersion,
+            });
+        }
+        if version == schema.currentVersion {
+            return Ok(false);
+        }
+        while version < schema.currentVersion {
+            (schema.migrate)(version, preferences)?;
+            version += 1;
+        }
+        preferences.set(&Self::schemaVersionKey(), schema.currentVersion.to_string());
+        Ok(true)
+    }
+
+    #[allow(non_snake_case)]
+    /// Reads the schema version stored in a preferences snapshot, treating legacy files as version zero.
+    fn readSchemaVersion(preferences: &Preferences) -> Result<u32, PreferencesDataStoreError> {
+        let Some(value) = preferences.get(&Self::schemaVersionKey()) else {
+            return Ok(0);
+        };
+        value
+            .parse::<u32>()
+            .map_err(|_| PreferencesDataStoreError::InvalidSchemaVersion {
+                value: value.clone(),
+            })
+    }
+
+    #[allow(non_snake_case)]
+    /// Returns the reserved key used to persist a preferences schema version.
+    fn schemaVersionKey() -> PreferencesKey {
+        stringPreferencesKey(PREFERENCES_SCHEMA_VERSION_KEY_NAME)
     }
 
     fn readFromStorage(&self) -> Result<Preferences, PreferencesDataStoreError> {
@@ -2025,12 +2312,35 @@ impl PreferencesDataStore {
         F: FnOnce(&mut Preferences) -> Result<T, E>,
         E: From<PreferencesDataStoreError>,
     {
+        self.try_edit_result_internal(transform, true)
+    }
+
+    /// Applies a local migration or repair without emitting synchronization operations.
+    pub fn migrate<F, T, E>(&self, transform: F) -> Result<T, E>
+    where
+        F: FnOnce(&mut Preferences) -> Result<T, E>,
+        E: From<PreferencesDataStoreError>,
+    {
+        self.try_edit_result_internal(transform, false)
+    }
+
+    /// Applies one preference mutation with explicit synchronization behavior.
+    fn try_edit_result_internal<F, T, E>(
+        &self,
+        transform: F,
+        recordSyncOperations: bool,
+    ) -> Result<T, E>
+    where
+        F: FnOnce(&mut Preferences) -> Result<T, E>,
+        E: From<PreferencesDataStoreError>,
+    {
         let _transaction = self
             .sharedState
             .transaction
             .lock()
             .expect("PreferencesDataStore transaction mutex must not be poisoned");
         self.loadUnlocked().map_err(E::from)?;
+        self.migrateSchemaUnlocked().map_err(E::from)?;
         let currentPreferences = self
             .loadedPreferences()
             .expect("PreferencesDataStore must be loaded before editing");
@@ -2042,7 +2352,13 @@ impl PreferencesDataStore {
         if preferences == currentPreferences {
             return Ok(result);
         }
-        self.persistUnlocked(&preferences).map_err(E::from)?;
+        if recordSyncOperations {
+            self.persistUnlocked(&currentPreferences, &preferences)
+                .map_err(E::from)?;
+        } else {
+            self.writeStoredPreferencesUnlocked(&preferences)
+                .map_err(E::from)?;
+        }
         let mut loaded = self
             .sharedState
             .preferences
@@ -2055,16 +2371,22 @@ impl PreferencesDataStore {
     }
 
     /// Replaces the full preferences snapshot and notifies observers.
-    pub fn replace(&self, preferences: Preferences) -> Result<(), PreferencesDataStoreError> {
+    pub fn replace(&self, mut preferences: Preferences) -> Result<(), PreferencesDataStoreError> {
         let _transaction = self
             .sharedState
             .transaction
             .lock()
             .expect("PreferencesDataStore transaction mutex must not be poisoned");
-        if self.loadedPreferences().as_ref() == Some(&preferences) {
+        self.loadUnlocked()?;
+        self.migrateSchemaUnlocked()?;
+        self.migratePreferencesToCurrentSchema(&mut preferences)?;
+        let currentPreferences = self
+            .loadedPreferences()
+            .expect("PreferencesDataStore must be loaded before replacement");
+        if currentPreferences == preferences {
             return Ok(());
         }
-        self.persistUnlocked(&preferences)?;
+        self.persistUnlocked(&currentPreferences, &preferences)?;
         let mut loaded = self
             .sharedState
             .preferences
@@ -2077,8 +2399,11 @@ impl PreferencesDataStore {
         Ok(())
     }
 
-    /// Persists one snapshot while the caller owns the shared transaction lock.
-    fn persistUnlocked(&self, preferences: &Preferences) -> Result<(), PreferencesDataStoreError> {
+    /// Writes one preferences snapshot while the caller owns the shared transaction lock.
+    fn writeStoredPreferencesUnlocked(
+        &self,
+        preferences: &Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
         let content = serde_json::to_string_pretty(preferences)?;
         let storedContent = match &self.encryption {
             Some(encryption) => encryption.encrypt(&self.storagePath, content.as_bytes())?,
@@ -2086,13 +2411,25 @@ impl PreferencesDataStore {
         };
         self.storageHost
             .writeBytes(&self.storagePath, &storedContent)?;
-        self.recordSyncOperation(preferences)?;
+        Ok(())
+    }
+
+    /// Persists one user-owned snapshot while the caller owns the shared transaction lock.
+    fn persistUnlocked(
+        &self,
+        previous: &Preferences,
+        preferences: &Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        self.writeStoredPreferencesUnlocked(preferences)?;
+        self.recordSyncOperations(previous, preferences)?;
         Ok(())
     }
 
     #[allow(non_snake_case)]
-    fn recordSyncOperation(
+    /// Records independently mergeable mutations for every changed preference key.
+    fn recordSyncOperations(
         &self,
+        previous: &Preferences,
         preferences: &Preferences,
     ) -> Result<(), PreferencesDataStoreError> {
         let Some(syncOperationStore) = &self.syncOperationStore else {
@@ -2102,14 +2439,117 @@ impl PreferencesDataStore {
             return Ok(());
         };
         let deviceId = syncOperationStore.localDeviceId()?;
+        let previousEntries = previous.entries().into_iter().collect::<BTreeMap<_, _>>();
+        let nextEntries = preferences
+            .entries()
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        let mut keys = previousEntries
+            .keys()
+            .chain(nextEntries.keys())
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let schemaVersionChanged = keys.remove(PREFERENCES_SCHEMA_VERSION_KEY_NAME);
+        for key in keys
+            .into_iter()
+            .chain(schemaVersionChanged.then(|| PREFERENCES_SCHEMA_VERSION_KEY_NAME.to_string()))
+        {
+            let previousValue = previousEntries.get(&key);
+            let nextValue = nextEntries.get(&key);
+            if previousValue == nextValue {
+                continue;
+            }
+            if self.structuredJsonSync {
+                if let (Some(previousValue), Some(nextValue)) = (previousValue, nextValue) {
+                    let previousJson: Value = serde_json::from_str(previousValue)?;
+                    let nextJson: Value = serde_json::from_str(nextValue)?;
+                    let mutations = structuredJsonMutations(&previousJson, &nextJson);
+                    if !mutations.is_empty()
+                        && mutations.iter().all(|mutation| !mutation.path.is_empty())
+                    {
+                        for mutation in mutations {
+                            self.appendPreferenceSyncOperation(
+                                syncOperationStore,
+                                descriptor,
+                                &deviceId,
+                                &key,
+                                None,
+                                mutation.path,
+                                mutation.value,
+                            )?;
+                        }
+                        continue;
+                    }
+                }
+            }
+            self.appendPreferenceSyncOperation(
+                syncOperationStore,
+                descriptor,
+                &deviceId,
+                &key,
+                nextValue.cloned(),
+                Vec::new(),
+                None,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    /// Appends one entry-level or structured JSON preferences operation.
+    fn appendPreferenceSyncOperation(
+        &self,
+        syncOperationStore: &SyncOperationStore,
+        descriptor: &PreferencesSyncDescriptor,
+        deviceId: &str,
+        key: &str,
+        value: Option<String>,
+        jsonPath: Vec<PreferencesSyncJsonPathSegment>,
+        jsonValue: Option<Value>,
+    ) -> Result<(), PreferencesDataStoreError> {
+        let structured = !jsonPath.is_empty();
+        let jsonMutation = if structured {
+            if value.is_some() {
+                return Err(PreferencesDataStoreError::Message(
+                    "structured preference operation must not include an entry value".to_string(),
+                ));
+            }
+            Some(match jsonValue {
+                Some(value) => PreferencesSyncJsonMutation::Set(value),
+                None => PreferencesSyncJsonMutation::Delete,
+            })
+        } else {
+            if jsonValue.is_some() {
+                return Err(PreferencesDataStoreError::Message(
+                    "preference entry operation must not include a structured JSON value"
+                        .to_string(),
+                ));
+            }
+            None
+        };
+        let operation = if value.is_some()
+            || matches!(&jsonMutation, Some(PreferencesSyncJsonMutation::Set(_)))
+        {
+            "set"
+        } else {
+            "delete"
+        };
         syncOperationStore.appendLocalOperation(
-            &deviceId,
+            deviceId,
             NewSyncOperation {
                 domain: descriptor.domain.clone(),
                 entityType: descriptor.entityType.clone(),
-                entityId: descriptor.entityId.clone(),
-                operation: descriptor.operation.clone(),
-                payload: serde_json::to_value(preferences)?,
+                entityId: preferenceMutationEntityId(&descriptor.storagePath, key, &jsonPath)?,
+                operation: operation.to_string(),
+                semantics: SyncOperationSemantics::EntityState,
+                payload: serde_json::to_value(PreferencesSyncEntryPayload {
+                    storagePath: descriptor.storagePath.clone(),
+                    key: key.to_string(),
+                    value,
+                    encrypted: self.encryption.is_some(),
+                    jsonPath,
+                    jsonMutation,
+                })?,
             },
         )?;
         Ok(())
@@ -2148,37 +2588,336 @@ fn classifyStoredEncryptedPreferences(
     ))
 }
 
+/// Decodes one validated wire payload into its exact in-memory mutation.
 #[allow(non_snake_case)]
-/// Returns stored bytes for a synced preferences payload.
-fn preferencesSyncStorageContent(
-    storageHost: &dyn RuntimeStorageHost,
-    storagePath: &str,
-    content: String,
-) -> Result<Vec<u8>, PreferencesDataStoreError> {
-    if encryptedSyncedPreferencesPath(storagePath) {
-        let encryption = PreferencesEncryption::load_or_create(storageHost)
-            .expect("preferences encryption key must be available");
-        encryption.encrypt(storagePath, content.as_bytes())
-    } else {
-        Ok(content.into_bytes())
+fn decodePreferencesSyncedMutation(
+    operation: &str,
+    payload: &PreferencesSyncEntryPayload,
+) -> Result<PreferencesSyncedMutation, PreferencesDataStoreError> {
+    if !payload.jsonPath.is_empty() {
+        if payload.value.is_some() {
+            return Err(PreferencesDataStoreError::Message(
+                "structured preference operation must not include an entry value".to_string(),
+            ));
+        }
+        let jsonMutation = payload.jsonMutation.clone().ok_or_else(|| {
+            PreferencesDataStoreError::Message(
+                "structured preference operation is missing its JSON mutation".to_string(),
+            )
+        })?;
+        return match (operation, jsonMutation) {
+            ("set", PreferencesSyncJsonMutation::Set(value)) => {
+                Ok(PreferencesSyncedMutation::SetJson {
+                    key: payload.key.clone(),
+                    path: payload.jsonPath.clone(),
+                    value,
+                })
+            }
+            ("delete", PreferencesSyncJsonMutation::Delete) => {
+                Ok(PreferencesSyncedMutation::DeleteJson {
+                    key: payload.key.clone(),
+                    path: payload.jsonPath.clone(),
+                })
+            }
+            (operation, mutation) => Err(PreferencesDataStoreError::Message(format!(
+                "preference sync operation does not match its structured mutation: {operation}/{mutation:?}"
+            ))),
+        };
+    }
+    if payload.jsonMutation.is_some() {
+        return Err(PreferencesDataStoreError::Message(
+            "preference entry operation must not include a structured JSON mutation".to_string(),
+        ));
+    }
+    match operation {
+        "set" => Ok(PreferencesSyncedMutation::SetEntry {
+            key: payload.key.clone(),
+            value: payload.value.clone().ok_or_else(|| {
+                PreferencesDataStoreError::Message(
+                    "preference set operation is missing its value".to_string(),
+                )
+            })?,
+        }),
+        "delete" => {
+            if payload.value.is_some() {
+                return Err(PreferencesDataStoreError::Message(
+                    "preference delete operation must not include a value".to_string(),
+                ));
+            }
+            Ok(PreferencesSyncedMutation::DeleteEntry {
+                key: payload.key.clone(),
+            })
+        }
+        other => Err(PreferencesDataStoreError::Message(format!(
+            "unsupported preference sync operation: {other}"
+        ))),
     }
 }
 
+/// Encodes a preference entry identity without delimiter or path parsing.
 #[allow(non_snake_case)]
-/// Reports whether a synced preferences path is stored encrypted.
-fn encryptedSyncedPreferencesPath(storagePath: &str) -> bool {
-    storagePath == MODEL_CONFIGS_PREFERENCES_PATH || storagePath == TTS_CONFIGS_PREFERENCES_PATH
+fn preferenceEntryEntityId(
+    storagePath: &str,
+    key: &str,
+) -> Result<String, PreferencesDataStoreError> {
+    serde_json::to_string(&(storagePath, key)).map_err(PreferencesDataStoreError::from)
+}
+
+/// Encodes either one complete preference entry or one structured JSON location.
+#[allow(non_snake_case)]
+fn preferenceMutationEntityId(
+    storagePath: &str,
+    key: &str,
+    jsonPath: &[PreferencesSyncJsonPathSegment],
+) -> Result<String, PreferencesDataStoreError> {
+    if jsonPath.is_empty() {
+        return preferenceEntryEntityId(storagePath, key);
+    }
+    serde_json::to_string(&(storagePath, key, jsonPath)).map_err(PreferencesDataStoreError::from)
+}
+
+/// Produces independently mergeable mutations for every changed JSON location.
+#[allow(non_snake_case)]
+fn structuredJsonMutations(
+    previous: &Value,
+    next: &Value,
+) -> Vec<PreferencesStructuredJsonMutation> {
+    let mut mutations = Vec::new();
+    collectStructuredJsonMutations(previous, next, &mut Vec::new(), &mut mutations);
+    mutations
+}
+
+/// Recursively compares JSON objects and stable-id arrays without relying on field-name patterns.
+#[allow(non_snake_case)]
+fn collectStructuredJsonMutations(
+    previous: &Value,
+    next: &Value,
+    path: &mut Vec<PreferencesSyncJsonPathSegment>,
+    mutations: &mut Vec<PreferencesStructuredJsonMutation>,
+) {
+    if previous == next {
+        return;
+    }
+    match (previous, next) {
+        (Value::Object(previousObject), Value::Object(nextObject)) => {
+            let fields = previousObject
+                .keys()
+                .chain(nextObject.keys())
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            for field in fields {
+                path.push(PreferencesSyncJsonPathSegment::Field(field.clone()));
+                match (previousObject.get(&field), nextObject.get(&field)) {
+                    (Some(previousValue), Some(nextValue)) => {
+                        collectStructuredJsonMutations(previousValue, nextValue, path, mutations)
+                    }
+                    (None, Some(nextValue)) => mutations.push(PreferencesStructuredJsonMutation {
+                        path: path.clone(),
+                        value: Some(nextValue.clone()),
+                    }),
+                    (Some(_), None) => mutations.push(PreferencesStructuredJsonMutation {
+                        path: path.clone(),
+                        value: None,
+                    }),
+                    (None, None) => unreachable!("JSON field union must contain each field"),
+                }
+                path.pop();
+            }
+        }
+        (Value::Array(previousArray), Value::Array(nextArray)) => {
+            match (
+                stableJsonItemsById(previousArray),
+                stableJsonItemsById(nextArray),
+            ) {
+                (Some(previousItems), Some(nextItems)) => {
+                    let itemIds = previousItems
+                        .keys()
+                        .chain(nextItems.keys())
+                        .cloned()
+                        .collect::<BTreeSet<_>>();
+                    for itemId in itemIds {
+                        path.push(PreferencesSyncJsonPathSegment::Item(itemId.clone()));
+                        match (previousItems.get(&itemId), nextItems.get(&itemId)) {
+                            (Some(previousValue), Some(nextValue)) => {
+                                collectStructuredJsonMutations(
+                                    previousValue,
+                                    nextValue,
+                                    path,
+                                    mutations,
+                                )
+                            }
+                            (None, Some(nextValue)) => {
+                                mutations.push(PreferencesStructuredJsonMutation {
+                                    path: path.clone(),
+                                    value: Some((*nextValue).clone()),
+                                })
+                            }
+                            (Some(_), None) => mutations.push(PreferencesStructuredJsonMutation {
+                                path: path.clone(),
+                                value: None,
+                            }),
+                            (None, None) => {
+                                unreachable!("JSON item union must contain each item")
+                            }
+                        }
+                        path.pop();
+                    }
+                }
+                _ => mutations.push(PreferencesStructuredJsonMutation {
+                    path: path.clone(),
+                    value: Some(next.clone()),
+                }),
+            }
+        }
+        _ => mutations.push(PreferencesStructuredJsonMutation {
+            path: path.clone(),
+            value: Some(next.clone()),
+        }),
+    }
+}
+
+/// Indexes a JSON array whose elements all expose distinct non-empty string ids.
+#[allow(non_snake_case)]
+fn stableJsonItemsById(values: &[Value]) -> Option<BTreeMap<String, &Value>> {
+    let mut items = BTreeMap::new();
+    for value in values {
+        let id = value.as_object()?.get("id")?.as_str()?;
+        if id.is_empty() || items.insert(id.to_string(), value).is_some() {
+            return None;
+        }
+    }
+    Some(items)
+}
+
+/// Applies one structured JSON mutation to an existing preference entry.
+#[allow(non_snake_case)]
+fn applyStructuredJsonPreferenceMutation(
+    preferences: &mut Preferences,
+    key: &PreferencesKey,
+    path: &[PreferencesSyncJsonPathSegment],
+    value: Option<Value>,
+) -> Result<(), PreferencesDataStoreError> {
+    if path.is_empty() {
+        return Err(PreferencesDataStoreError::Message(
+            "structured preference path must not be empty".to_string(),
+        ));
+    }
+    let encoded = preferences.get(key).ok_or_else(|| {
+        PreferencesDataStoreError::Message(format!(
+            "structured preference entry is missing: {}",
+            key.name
+        ))
+    })?;
+    let mut root: Value = serde_json::from_str(encoded)?;
+    applyStructuredJsonMutation(&mut root, path, value)?;
+    preferences.set(key, serde_json::to_string(&root)?);
+    Ok(())
+}
+
+/// Traverses a structured JSON path and applies its terminal set or delete operation.
+#[allow(non_snake_case)]
+fn applyStructuredJsonMutation(
+    root: &mut Value,
+    path: &[PreferencesSyncJsonPathSegment],
+    value: Option<Value>,
+) -> Result<(), PreferencesDataStoreError> {
+    let (terminal, parents) = path
+        .split_last()
+        .expect("structured JSON path must contain a terminal segment");
+    let mut current = root;
+    for segment in parents {
+        current = match segment {
+            PreferencesSyncJsonPathSegment::Field(field) => current
+                .as_object_mut()
+                .and_then(|object| object.get_mut(field))
+                .ok_or_else(|| {
+                    PreferencesDataStoreError::Message(format!(
+                        "structured JSON field is missing: {field}"
+                    ))
+                })?,
+            PreferencesSyncJsonPathSegment::Item(itemId) => current
+                .as_array_mut()
+                .and_then(|items| {
+                    items.iter_mut().find(|item| {
+                        item.as_object()
+                            .and_then(|object| object.get("id"))
+                            .and_then(Value::as_str)
+                            == Some(itemId.as_str())
+                    })
+                })
+                .ok_or_else(|| {
+                    PreferencesDataStoreError::Message(format!(
+                        "structured JSON item is missing: {itemId}"
+                    ))
+                })?,
+        };
+    }
+    match terminal {
+        PreferencesSyncJsonPathSegment::Field(field) => {
+            let object = current.as_object_mut().ok_or_else(|| {
+                PreferencesDataStoreError::Message(
+                    "structured JSON field parent is not an object".to_string(),
+                )
+            })?;
+            match value {
+                Some(value) => {
+                    object.insert(field.clone(), value);
+                }
+                None => {
+                    object.remove(field);
+                }
+            }
+        }
+        PreferencesSyncJsonPathSegment::Item(itemId) => {
+            let items = current.as_array_mut().ok_or_else(|| {
+                PreferencesDataStoreError::Message(
+                    "structured JSON item parent is not an array".to_string(),
+                )
+            })?;
+            let existingIndex = items.iter().position(|item| {
+                item.as_object()
+                    .and_then(|object| object.get("id"))
+                    .and_then(Value::as_str)
+                    == Some(itemId.as_str())
+            });
+            match (existingIndex, value) {
+                (Some(index), Some(value)) => items[index] = value,
+                (None, Some(value)) => {
+                    let valueId = value
+                        .as_object()
+                        .and_then(|object| object.get("id"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            PreferencesDataStoreError::Message(
+                                "structured JSON array item is missing its id".to_string(),
+                            )
+                        })?;
+                    if valueId != itemId {
+                        return Err(PreferencesDataStoreError::Message(
+                            "structured JSON array item id does not match its path".to_string(),
+                        ));
+                    }
+                    items.push(value);
+                }
+                (Some(index), None) => {
+                    items.remove(index);
+                }
+                (None, None) => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 #[allow(non_snake_case)]
 /// Builds the process-local registry key for one storage host and preference path.
 fn preferencesDataStoreRegistryKey(
     storageHost: &Arc<dyn RuntimeStorageHost>,
-    path: &Path,
+    storagePath: &str,
 ) -> PreferencesDataStoreRegistryKey {
     PreferencesDataStoreRegistryKey {
         storageHost: Arc::clone(storageHost),
-        path: path.to_path_buf(),
+        storagePath: storagePath.to_string(),
     }
 }
 
@@ -2186,13 +2925,13 @@ fn preferencesDataStoreRegistryKey(
 /// Returns the preference cache shared by stores using the same storage host and path.
 fn preferencesDataStoreSharedState(
     storageHost: &Arc<dyn RuntimeStorageHost>,
-    path: &Path,
+    storagePath: &str,
 ) -> Arc<PreferencesDataStoreSharedState> {
     static SHARED_STATES: OnceLock<
         Mutex<HashMap<PreferencesDataStoreRegistryKey, Arc<PreferencesDataStoreSharedState>>>,
     > = OnceLock::new();
     let states = SHARED_STATES.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = preferencesDataStoreRegistryKey(storageHost, path);
+    let key = preferencesDataStoreRegistryKey(storageHost, storagePath);
     let mut states = states
         .lock()
         .expect("PreferencesDataStore shared state registry mutex must not be poisoned");
@@ -2208,13 +2947,13 @@ fn preferencesDataStoreSharedState(
 /// Returns the change signal shared by stores using the same storage host and path.
 fn preferencesDataStoreChangeSignal(
     storageHost: &Arc<dyn RuntimeStorageHost>,
-    path: &Path,
+    storagePath: &str,
 ) -> Arc<PreferencesDataStoreChangeSignal> {
     static CHANGE_SIGNALS: OnceLock<
         Mutex<HashMap<PreferencesDataStoreRegistryKey, Weak<PreferencesDataStoreChangeSignal>>>,
     > = OnceLock::new();
     let signals = CHANGE_SIGNALS.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = preferencesDataStoreRegistryKey(storageHost, path);
+    let key = preferencesDataStoreRegistryKey(storageHost, storagePath);
     let mut signals = signals
         .lock()
         .expect("PreferencesDataStore change signal registry mutex must not be poisoned");

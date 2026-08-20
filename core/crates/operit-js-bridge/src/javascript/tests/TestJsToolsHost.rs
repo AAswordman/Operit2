@@ -2,6 +2,7 @@ use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorage
 use operit_plugin_sdk::execution_result::JsExecutionResult;
 use operit_plugin_sdk::js_sdk::{JsFuture, JsHostError};
 use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
+use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, WORKSPACE_DIR_PATH};
 use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -139,8 +140,8 @@ impl RuntimeStorageHost for TestRuntimeStorageHost {
 /// Registers process-wide test runtime storage roots.
 pub fn register_test_runtime_storage(label: &str) {
     let root = std::env::temp_dir().join(format!("operit-runtime-{label}"));
-    let runtime_root = root.join("runtime");
-    let workspace_root = root.join("workspace");
+    let runtime_root = root.join(RUNTIME_ROOT_DIR_PATH);
+    let workspace_root = root.join(WORKSPACE_DIR_PATH);
     std::fs::create_dir_all(&runtime_root).expect("test runtime root");
     std::fs::create_dir_all(&workspace_root).expect("test workspace root");
     let host = Arc::new(TestRuntimeStorageHost::new(

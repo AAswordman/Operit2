@@ -3,6 +3,8 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
+#[cfg(windows)]
+use std::{ffi::OsStr, os::windows::ffi::OsStrExt};
 
 use operit_host_api::{
     ArchiveStagingHost, HostError, HostResult, RuntimeSqliteConnection, RuntimeSqliteHost,
@@ -35,8 +37,18 @@ impl NativeRuntimeStorageWriteSession {
             file.sync_all()?;
         }
         drop(file);
-        fs::rename(&self.temporaryPath, &self.targetPath)?;
+        atomicReplace(&self.temporaryPath, &self.targetPath)?;
         Ok(())
+    }
+}
+
+impl Drop for NativeRuntimeStorageWriteSession {
+    /// Removes an unpublished staging file when its write session is abandoned.
+    fn drop(&mut self) {
+        self.file.take();
+        if self.temporaryPath.exists() {
+            let _ = fs::remove_file(&self.temporaryPath);
+        }
     }
 }
 
@@ -345,12 +357,9 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
     }
 
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        let path = self.resolve(path)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(path, content)?;
-        Ok(())
+        let mut session = self.createWriteSession(path)?;
+        session.writeChunk(content)?;
+        session.commitFast()
     }
 
     /// Appends bytes to a native runtime storage file.
@@ -405,6 +414,44 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
         }
         Ok(entries)
     }
+}
+
+/// Atomically publishes one sibling staging file over its target path.
+#[cfg(not(windows))]
+#[allow(non_snake_case)]
+fn atomicReplace(source: &Path, target: &Path) -> HostResult<()> {
+    fs::rename(source, target)?;
+    Ok(())
+}
+
+/// Atomically publishes one sibling staging file over its target path on Windows.
+#[cfg(windows)]
+#[allow(non_snake_case)]
+fn atomicReplace(source: &Path, target: &Path) -> HostResult<()> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source = widePath(source.as_os_str());
+    let target = widePath(target.as_os_str());
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            target.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
+}
+
+/// Encodes one Windows path as a null-terminated UTF-16 string.
+#[cfg(windows)]
+#[allow(non_snake_case)]
+fn widePath(path: &OsStr) -> Vec<u16> {
+    path.encode_wide().chain(std::iter::once(0)).collect()
 }
 
 /// Resolves the legacy secure storage namespace beside the runtime root.
@@ -621,7 +668,7 @@ fn fromRusqliteValue(value: Value) -> SqliteValue {
 mod tests {
     use std::fs;
 
-    use operit_host_api::{ArchiveStagingHost, RuntimeStorageHost};
+    use operit_host_api::{ArchiveStagingHost, RuntimeStorageHost, RuntimeStorageWriteHost};
 
     use super::{NativeArchiveStagingHost, NativeRuntimeStorageHost};
 
@@ -673,6 +720,42 @@ mod tests {
             host.readBytes("runtime/state/client.log")
                 .expect("appended log must be readable"),
             b"first\nsecond\n"
+        );
+
+        fs::remove_dir_all(root).expect("temporary runtime storage root must be removed");
+    }
+
+    /// Verifies staged runtime writes keep the previous file visible until atomic publication.
+    #[test]
+    fn runtime_storage_replaces_files_atomically() {
+        let root = std::env::temp_dir().join(format!(
+            "operit-runtime-storage-atomic-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let workspace_root = root.join("workspaces");
+        let host = NativeRuntimeStorageHost::new(root.clone(), workspace_root);
+        let path = "runtime/config/preferences/atomic.preferences.json";
+        host.writeBytes(path, b"previous")
+            .expect("initial file must be written");
+
+        let mut session = host
+            .createWriteSession(path)
+            .expect("replacement session must open");
+        session
+            .writeChunk(b"replacement")
+            .expect("replacement content must stage");
+        assert_eq!(
+            host.readBytes(path)
+                .expect("published file must remain readable while staging"),
+            b"previous"
+        );
+        session
+            .commitFast()
+            .expect("replacement content must publish atomically");
+        assert_eq!(
+            host.readBytes(path)
+                .expect("replacement file must be readable"),
+            b"replacement"
         );
 
         fs::remove_dir_all(root).expect("temporary runtime storage root must be removed");

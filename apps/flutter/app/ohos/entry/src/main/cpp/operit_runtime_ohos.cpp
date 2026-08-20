@@ -34,6 +34,8 @@ using BridgeStartWebAccessServer = char* (*)(
     const char*);
 using BridgeStopWebAccessServer = char* (*)(BridgeHandle);
 using BridgeEmitRuntimeEvent = char* (*)(BridgeHandle, const char*);
+using BridgeRuntimeBootstrapRead = char* (*)(const char*);
+using BridgeRuntimeBootstrapWrite = char* (*)(const char*, const char*);
 
 class OperitBridgeLibrary {
  public:
@@ -75,6 +77,10 @@ class OperitBridgeLibrary {
     stop_web_access_server_ =
         Load<BridgeStopWebAccessServer>("operit_flutter_bridge_stop_web_access_server");
     emit_runtime_event_ = Load<BridgeEmitRuntimeEvent>("operit_flutter_bridge_emit_runtime_event");
+    runtime_bootstrap_read_ =
+        Load<BridgeRuntimeBootstrapRead>("operit_flutter_bridge_runtime_bootstrap_read");
+    runtime_bootstrap_write_ =
+        Load<BridgeRuntimeBootstrapWrite>("operit_flutter_bridge_runtime_bootstrap_write");
     free_bytes_ = Load<BridgeFreeBytes>("operit_flutter_bridge_free_bytes");
     free_string_ = Load<BridgeFreeString>("operit_flutter_bridge_free_string");
     if (create_with_storage_roots_ == nullptr || create_error_ == nullptr || destroy_ == nullptr ||
@@ -82,7 +88,8 @@ class OperitBridgeLibrary {
         push_close_ == nullptr || watch_snapshot_ == nullptr || watch_stream_ == nullptr ||
         next_watch_channel_event_ == nullptr || close_watch_stream_ == nullptr ||
         start_web_access_server_ == nullptr || stop_web_access_server_ == nullptr ||
-        emit_runtime_event_ == nullptr ||
+        emit_runtime_event_ == nullptr || runtime_bootstrap_read_ == nullptr ||
+        runtime_bootstrap_write_ == nullptr ||
         free_bytes_ == nullptr || free_string_ == nullptr) {
       AssignError(error, "operit flutter bridge exports are incomplete");
       return false;
@@ -172,6 +179,18 @@ class OperitBridgeLibrary {
     return TakeString(emit_runtime_event_(handle, event_json.c_str()));
   }
 
+  /// Reads the client bootstrap record without creating a Core handle.
+  std::string RuntimeBootstrapRead(const std::string& default_runtime_root) {
+    return TakeString(runtime_bootstrap_read_(default_runtime_root.c_str()));
+  }
+
+  /// Writes the client bootstrap record without creating a Core handle.
+  std::string RuntimeBootstrapWrite(const std::string& default_runtime_root,
+                                    const std::string& content) {
+    return TakeString(
+        runtime_bootstrap_write_(default_runtime_root.c_str(), content.c_str()));
+  }
+
   /// Frees an owned Rust byte buffer.
   void FreeBytes(OperitByteBuffer buffer) { free_bytes_(buffer); }
 
@@ -215,6 +234,8 @@ class OperitBridgeLibrary {
   BridgeStartWebAccessServer start_web_access_server_ = nullptr;
   BridgeStopWebAccessServer stop_web_access_server_ = nullptr;
   BridgeEmitRuntimeEvent emit_runtime_event_ = nullptr;
+  BridgeRuntimeBootstrapRead runtime_bootstrap_read_ = nullptr;
+  BridgeRuntimeBootstrapWrite runtime_bootstrap_write_ = nullptr;
   BridgeFreeBytes free_bytes_ = nullptr;
   BridgeFreeString free_string_ = nullptr;
 };
@@ -496,6 +517,33 @@ napi_value EmitRuntimeEvent(napi_env env, napi_callback_info info) {
   return StringValue(env, g_bridge_library.EmitRuntimeEvent(handle, ReadString(env, args[1])));
 }
 
+/// Reads the client bootstrap record through the Rust startup Host.
+napi_value RuntimeBootstrapRead(napi_env env, napi_callback_info info) {
+  if (!EnsureBridgeReady(env)) {
+    return nullptr;
+  }
+  auto args = CallbackArgs(env, info, 1);
+  if (args.empty()) {
+    return nullptr;
+  }
+  return StringValue(env, g_bridge_library.RuntimeBootstrapRead(ReadString(env, args[0])));
+}
+
+/// Writes the client bootstrap record through the Rust startup Host.
+napi_value RuntimeBootstrapWrite(napi_env env, napi_callback_info info) {
+  if (!EnsureBridgeReady(env)) {
+    return nullptr;
+  }
+  auto args = CallbackArgs(env, info, 2);
+  if (args.empty()) {
+    return nullptr;
+  }
+  return StringValue(
+      env,
+      g_bridge_library.RuntimeBootstrapWrite(
+          ReadString(env, args[0]), ReadString(env, args[1])));
+}
+
 /// Registers one named N-API function.
 void DefineFunction(napi_env env,
                     napi_value exports,
@@ -507,7 +555,7 @@ void DefineFunction(napi_env env,
 
 /// Initializes the OpenHarmony native runtime module.
 napi_value Init(napi_env env, napi_value exports) {
-  napi_property_descriptor descriptors[13];
+  napi_property_descriptor descriptors[15];
   DefineFunction(env, exports, "create", Create, &descriptors[0]);
   DefineFunction(env, exports, "destroy", Destroy, &descriptors[1]);
   DefineFunction(env, exports, "call", Call, &descriptors[2]);
@@ -521,7 +569,9 @@ napi_value Init(napi_env env, napi_value exports) {
   DefineFunction(env, exports, "startWebAccessServer", StartWebAccessServer, &descriptors[10]);
   DefineFunction(env, exports, "stopWebAccessServer", StopWebAccessServer, &descriptors[11]);
   DefineFunction(env, exports, "emitRuntimeEvent", EmitRuntimeEvent, &descriptors[12]);
-  napi_define_properties(env, exports, 13, descriptors);
+  DefineFunction(env, exports, "runtimeBootstrapRead", RuntimeBootstrapRead, &descriptors[13]);
+  DefineFunction(env, exports, "runtimeBootstrapWrite", RuntimeBootstrapWrite, &descriptors[14]);
+  napi_define_properties(env, exports, 15, descriptors);
   return exports;
 }
 

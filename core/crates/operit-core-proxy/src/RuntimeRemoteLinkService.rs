@@ -1,38 +1,40 @@
 #[cfg(not(target_arch = "wasm32"))]
-use crate::RuntimeRemoteLinkDiscovery::discoverRemoteDevices;
+use crate::RuntimeRemoteLinkDiscovery::{discoverRemoteDevices, RuntimeRemoteDiscoveryEndpoint};
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::{HostRuntimeTaskSchedulerHost, TimeUtils::currentTimeMillis};
-use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CoreLinkSharedClient, CoreValue};
+use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CoreValue};
 use operit_link_access::{
-    LinkAccessAutoSyncConfig, LinkAccessRoute, LinkAccessRoutingConfig, LinkAccessStore,
-    PairedRemoteSession, PairedRemoteSessionRecord, PendingOutboundPairingRecord, RemoteDeviceInfo,
-    RemoteLinkClient,
+    AcceptedRemoteSessionRecord,
+    CoreNodePeerLink::{
+        activePeerNodeIds, disconnectPeerLink, isPeerLinkActive, kickPeerLink,
+    },
+    LinkAccessStore, PairedRemoteSession, PairedRemoteSessionRecord, PendingOutboundPairingRecord,
+    LinkTransportPreference, RemoteDeviceInfo, RemoteLinkClient,
 };
+use operit_store::CoreNodeBindingStore::CoreNodeBindingStore;
+use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceStore};
+use operit_store::PreferencesDataStore::{combine2, CoroutineScope, SharingStarted, StateFlow};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
-use std::sync::{Mutex, OnceLock};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::oneshot;
 
-use crate::LocalCoreProxy;
+use crate::{
+    CoreNodeRouter::CoreNodeRouter, LocalCoreProxy,
+    SpacePersistenceSyncService::SpacePersistenceSyncService,
+};
 
-const SYNC_DOMAINS: [&str; 3] = ["preferences", "chat", "objectbox"];
-const AUTO_SYNC_INTERVAL_MS: u64 = 60_000;
-static AUTO_SYNC_TASK_STARTED: OnceLock<Mutex<bool>> = OnceLock::new();
-
-/// Reports the completed work from one runtime-owned paired remote sync transaction.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RuntimeRemoteSyncResult {
-    pub rounds: usize,
-    pub localApplied: usize,
-    pub remoteApplied: usize,
-}
-
-/// Reports the authenticated identity observed while probing one paired remote runtime.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RuntimeRemoteProbeResult {
-    pub coreDeviceId: String,
+/// Describes one paired device after merging inbound and outbound session records.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimePairedDevice {
+    pub deviceId: String,
+    pub deviceInfo: RemoteDeviceInfo,
+    pub outboundSessionName: Option<String>,
+    pub outboundBaseUrl: Option<String>,
+    pub outboundTransport: Option<LinkTransportPreference>,
+    pub inboundSessionIds: Vec<String>,
 }
 
 /// Reports the remote identity returned after beginning an outbound pairing transaction.
@@ -42,6 +44,7 @@ pub struct RuntimeRemotePairStartResult {
     pub pairingServiceVersion: i32,
     pub coreDeviceId: String,
     pub coreDeviceInfo: RemoteDeviceInfo,
+    pub coreUserName: String,
 }
 
 /// Describes a Link-enabled runtime discovered by the local runtime.
@@ -50,6 +53,7 @@ pub struct RuntimeRemotePairStartResult {
 pub struct RuntimeRemoteDiscoveredDevice {
     pub deviceId: String,
     pub displayName: String,
+    pub userName: String,
     pub platform: String,
     pub model: String,
     pub baseUrl: String,
@@ -59,124 +63,339 @@ pub struct RuntimeRemoteDiscoveredDevice {
     pub version: String,
 }
 
+/// Groups every discovered CoreNode that currently advertises the same Space identity.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeRemoteDiscoveredSpace {
+    pub spaceId: String,
+    pub spaceName: String,
+    pub spaceRevision: i64,
+    pub memberCount: usize,
+    pub devices: Vec<RuntimeRemoteDiscoveredDevice>,
+}
+
+/// Describes one device in the UI-facing device-space topology projection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeDeviceSpaceDevice {
+    pub deviceId: String,
+    pub userName: String,
+    pub deviceName: String,
+    pub platform: String,
+    pub model: String,
+    pub coreVersion: Option<String>,
+    pub online: bool,
+}
+
+/// Describes the current health state of one direct device-space connection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RuntimeDeviceSpaceConnectionStatus {
+    Online,
+    Offline,
+    VersionMismatch,
+    Unknown,
+}
+
+/// Describes one direct connection in the UI-facing device-space topology projection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeDeviceSpaceConnection {
+    pub firstDeviceId: String,
+    pub secondDeviceId: String,
+    pub status: RuntimeDeviceSpaceConnectionStatus,
+    pub reason: String,
+}
+
+/// Describes the current device and all visible device-space connections.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeDeviceSpaceTopology {
+    pub currentDeviceId: String,
+    pub devices: Vec<RuntimeDeviceSpaceDevice>,
+    pub connections: Vec<RuntimeDeviceSpaceConnection>,
+}
+
 /// Provides runtime-owned remote session operations to generated local Core clients.
 #[derive(Clone)]
 pub struct RuntimeRemoteLinkService {
     localCore: LocalCoreProxy,
+    nodeRouter: CoreNodeRouter,
     linkAccessStore: LinkAccessStore,
-}
-
-#[derive(Deserialize)]
-struct SyncOperationOrder {
-    opId: String,
-    originDeviceId: String,
-    sequence: i64,
-    createdAt: i64,
+    spaceStore: CoreSpaceStore,
 }
 
 impl RuntimeRemoteLinkService {
     /// Creates the service over the active local Core and its runtime-owned Link records.
     pub fn new(localCore: LocalCoreProxy) -> Self {
         let linkAccessStore = LinkAccessStore::new(localCore.runtimeStorageHost());
+        let spaceStore = CoreSpaceStore::new(localCore.runtimeStorageHost());
+        let nodeRouter = CoreNodeRouter::new(Arc::new(localCore.clone()));
         Self {
             localCore,
+            nodeRouter,
             linkAccessStore,
+            spaceStore,
         }
     }
 
-    /// Selects the local Core as the destination for incoming Link requests.
+    /// Returns the converged Space membership owned by this CoreNode.
     #[allow(non_snake_case)]
-    pub fn selectLocalRoute(&self) -> Result<(), String> {
-        self.linkAccessStore
-            .saveRoutingConfig(LinkAccessRoutingConfig {
-                route: LinkAccessRoute::Local,
-                updatedAt: currentTimeMillis(),
+    pub fn deviceSpace(&self) -> Result<CoreSpace, String> {
+        self.spaceStore.initialize()
+    }
+
+    /// Returns the synchronized device metadata and direct-connection graph.
+    #[allow(non_snake_case)]
+    pub fn deviceSpaceTopology(&self) -> Result<RuntimeDeviceSpaceTopology, String> {
+        let space = self.spaceStore.initialize()?;
+        let profiles = self.spaceStore.deviceProfiles()?;
+        let currentDeviceId = self.nodeRouter.localNodeId();
+        let activePeers = activePeerNodeIds(&currentDeviceId)?;
+        let devices = space
+            .members
+            .into_iter()
+            .map(|deviceId| {
+                let profile = profiles.get(&deviceId).ok_or_else(|| {
+                    format!("Device profile is missing in the current device space: {deviceId}")
+                })?;
+                let online = deviceId == currentDeviceId
+                    || self
+                        .spaceStore
+                        .reachableNextHopThroughPeers(deviceId.clone(), activePeers.clone())?
+                        .is_some();
+                Ok(runtimeDeviceSpaceDevice(profile, online))
             })
-    }
-
-    /// Selects one paired remote session as the destination for incoming Link requests.
-    #[allow(non_snake_case)]
-    pub fn selectPairedRemoteRoute(&self, name: String) -> Result<(), String> {
-        if name.trim().is_empty() {
-            return Err("paired remote session name must not be empty".to_string());
-        }
-        if !self.linkAccessStore.outboundSessions()?.contains_key(&name) {
-            return Err(format!("paired remote runtime does not exist: {name}"));
-        }
-        self.linkAccessStore
-            .saveRoutingConfig(LinkAccessRoutingConfig {
-                route: LinkAccessRoute::Remote { sessionName: name },
-                updatedAt: currentTimeMillis(),
+            .collect::<Result<Vec<_>, String>>()?;
+        let devicesById = devices
+            .iter()
+            .map(|device| (device.deviceId.clone(), device))
+            .collect::<BTreeMap<_, _>>();
+        let connections = self
+            .spaceStore
+            .deviceConnections()?
+            .into_iter()
+            .map(|connection| {
+                let first = devicesById.get(&connection.firstDeviceId).ok_or_else(|| {
+                    format!(
+                        "Device profile is missing for connection endpoint: {}",
+                        connection.firstDeviceId
+                    )
+                })?;
+                let second = devicesById.get(&connection.secondDeviceId).ok_or_else(|| {
+                    format!(
+                        "Device profile is missing for connection endpoint: {}",
+                        connection.secondDeviceId
+                    )
+                })?;
+                let directlyOnline = if connection.firstDeviceId == currentDeviceId {
+                    Some(activePeers.contains(&connection.secondDeviceId))
+                } else if connection.secondDeviceId == currentDeviceId {
+                    Some(activePeers.contains(&connection.firstDeviceId))
+                } else {
+                    None
+                };
+                let (status, reason) = runtimeDeviceSpaceConnectionState(
+                    first,
+                    second,
+                    directlyOnline,
+                );
+                Ok(RuntimeDeviceSpaceConnection {
+                    firstDeviceId: connection.firstDeviceId,
+                    secondDeviceId: connection.secondDeviceId,
+                    status,
+                    reason,
+                })
             })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(RuntimeDeviceSpaceTopology {
+            currentDeviceId,
+            devices,
+            connections,
+        })
     }
 
-    /// Returns the persisted runtime route, initializing it to the local runtime when absent.
+    /// Publishes the active user identity name as synchronized device metadata.
     #[allow(non_snake_case)]
-    pub fn currentRoute(&self) -> Result<LinkAccessRoutingConfig, String> {
-        self.linkAccessStore.initializeRoutingConfig()
-    }
-
-    /// Returns every paired remote session owned by the local runtime.
-    #[allow(non_snake_case)]
-    pub fn pairedRemoteSessions(
+    pub fn updateCurrentDeviceUserName(
         &self,
-    ) -> Result<BTreeMap<String, PairedRemoteSessionRecord>, String> {
-        self.linkAccessStore.outboundSessions()
+        userName: String,
+    ) -> Result<RuntimeDeviceSpaceDevice, String> {
+        let profile = self.spaceStore.writeLocalDeviceUserName(userName)?;
+        Ok(runtimeDeviceSpaceDevice(&profile, true))
     }
 
-    /// Enables or disables automatic synchronization for one paired remote session.
+    /// Adopts Space membership received through an explicit authenticated join.
     #[allow(non_snake_case)]
-    pub fn setPairedRemoteAutoSync(
+    pub fn adoptDeviceSpace(&self, space: CoreSpace) -> Result<CoreSpace, String> {
+        self.spaceStore.adopt(space)
+    }
+
+    /// Records one directly paired device's current Space projection.
+    #[allow(non_snake_case)]
+    pub fn observePairedDeviceSpace(
         &self,
-        name: String,
-        enabled: bool,
-    ) -> Result<LinkAccessAutoSyncConfig, String> {
-        if !self.linkAccessStore.outboundSessions()?.contains_key(&name) {
-            return Err(format!("paired remote runtime does not exist: {name}"));
+        deviceId: String,
+        space: CoreSpace,
+    ) -> Result<CoreSpace, String> {
+        if !self.pairedDevicesSnapshot()?.contains_key(&deviceId) {
+            return Err(format!("paired device does not exist: {deviceId}"));
         }
-        let mut config = self.linkAccessStore.initializeAutoSyncConfig()?;
-        if enabled {
-            if !config.autoSyncRemoteNames.contains(&name) {
-                config.autoSyncRemoteNames.push(name);
-            }
-        } else {
-            config
-                .autoSyncRemoteNames
-                .retain(|existing| existing != &name);
-        }
-        config.updatedAt = currentTimeMillis();
-        self.linkAccessStore.saveAutoSyncConfig(config.clone())?;
-        Ok(config)
+        self.spaceStore.observePairedDeviceSpace(deviceId, space)
     }
 
-    /// Returns the current automatic synchronization configuration owned by this runtime.
+    /// Renames the current Space and returns its new synchronized identity.
     #[allow(non_snake_case)]
-    pub fn autoSyncConfig(&self) -> Result<LinkAccessAutoSyncConfig, String> {
-        self.linkAccessStore.initializeAutoSyncConfig()
+    pub fn renameDeviceSpace(&self, spaceName: String) -> Result<CoreSpace, String> {
+        self.spaceStore.rename(spaceName)
     }
 
-    /// Starts the singleton runtime-owned automatic synchronization worker.
+    /// Leaves the current device space while preserving all direct pairing records.
     #[allow(non_snake_case)]
-    pub fn startAutoSync(&self) -> Result<(), String> {
-        let started = AUTO_SYNC_TASK_STARTED.get_or_init(|| Mutex::new(false));
-        let mut started = started
-            .lock()
-            .map_err(|error| format!("automatic sync state lock poisoned: {error}"))?;
-        if *started {
-            return Ok(());
+    pub fn leaveDeviceSpace(&self) -> Result<CoreSpace, String> {
+        let deviceSpace = self.spaceStore.leave()?;
+        let memberNodeIds = deviceSpace.members.iter().cloned().collect::<BTreeSet<_>>();
+        CoreNodeBindingStore::new(self.localCore.runtimeStorageHost())?
+            .rebindOutsideNodesToLocal(&memberNodeIds)?;
+        Ok(deviceSpace)
+    }
+
+    /// Joins the Space exposed by one directly paired CoreNode.
+    #[allow(non_snake_case)]
+    pub async fn joinPairedDeviceSpace(&self, name: String) -> Result<CoreSpace, String> {
+        let (record, session) = self.pairedSession(&name)?;
+        let info = session.sessionInfo().await?;
+        ensureRemoteIdentity(&record, &info.coreDeviceId)?;
+        let peerSpace: CoreSpace = serde_json::from_value(
+            callRemoteService(
+                &session,
+                "runtimeRemoteLinkService",
+                "deviceSpace",
+                Value::Null,
+            )
+            .await?,
+        )
+        .map_err(|error| error.to_string())?;
+        if !peerSpace
+            .members
+            .iter()
+            .any(|nodeId| nodeId == &record.coreDeviceId)
+        {
+            return Err("paired device is not present in its advertised device space".to_string());
         }
-        scheduleAutoSyncTick(self.clone(), 0)?;
-        *started = true;
+        let merged = self.spaceStore.merge(peerSpace)?;
+        let accepted: CoreSpace = serde_json::from_value(
+            callRemoteService(
+                &session,
+                "runtimeRemoteLinkService",
+                "adoptDeviceSpace",
+                json!({ "space": merged }),
+            )
+            .await?,
+        )
+        .map_err(|error| error.to_string())?;
+        self.spaceStore.adopt(accepted)?;
+        self.persistenceSyncService()
+            .synchronizePeer(name, 512, true)
+            .await?;
+        self.spaceStore.space()
+    }
+
+    /// Reads paired devices with inbound and outbound records merged by device id.
+    #[allow(non_snake_case)]
+    fn pairedDevicesSnapshot(&self) -> Result<BTreeMap<String, RuntimePairedDevice>, String> {
+        mergePairedDevices(
+            self.linkAccessStore.outboundSessions()?,
+            self.linkAccessStore.inboundSessions()?,
+        )
+    }
+
+    /// Observes paired devices after merging both connection directions by device id.
+    #[allow(non_snake_case)]
+    pub fn pairedDevicesFlow(
+        &self,
+    ) -> Result<StateFlow<BTreeMap<String, RuntimePairedDevice>>, String> {
+        let inboundFlow = self.linkAccessStore.inboundSessionsFlow();
+        let outboundFlow = self.linkAccessStore.outboundSessionsFlow();
+        let initialInbound = inboundFlow.first().map_err(|error| error.to_string())?;
+        let initialOutbound = outboundFlow.first().map_err(|error| error.to_string())?;
+        mergePairedDevices(initialOutbound.clone(), initialInbound.clone())?;
+        let inboundState =
+            inboundFlow.stateIn(CoroutineScope, SharingStarted::Lazily, initialInbound);
+        let outboundState =
+            outboundFlow.stateIn(CoroutineScope, SharingStarted::Lazily, initialOutbound);
+        Ok(combine2(
+            &outboundState,
+            &inboundState,
+            |outbound, inbound| {
+                mergePairedDevices(outbound, inbound)
+                    .expect("validated Link Access session records must merge by device id")
+            },
+        ))
+    }
+
+    /// Returns whether one paired device currently has an active direct connection.
+    #[allow(non_snake_case)]
+    pub fn pairedDeviceOnline(&self, deviceId: String) -> Result<bool, String> {
+        if !self.pairedDevicesSnapshot()?.contains_key(&deviceId) {
+            return Err(format!("paired device does not exist: {deviceId}"));
+        }
+        isPeerLinkActive(&self.nodeRouter.localNodeId(), &deviceId)
+    }
+
+    /// Disconnects one directly adjacent device while preserving pairing records.
+    #[allow(non_snake_case)]
+    pub fn disconnectDeviceSpaceConnection(&self, deviceId: String) -> Result<(), String> {
+        let localDeviceId = self.nodeRouter.localNodeId();
+        let space = self.spaceStore.initialize()?;
+        if !space.members.iter().any(|member| member == &deviceId) {
+            return Err(format!("device is not a member of the current device space: {deviceId}"));
+        }
+        if deviceId == localDeviceId {
+            return Err("current device cannot disconnect itself".to_string());
+        }
+        kickPeerLink(&localDeviceId, &deviceId)
+    }
+
+    /// Removes every local pairing record associated with one device.
+    #[allow(non_snake_case)]
+    pub fn removePairedDevice(&self, deviceId: String) -> Result<(), String> {
+        let outboundNames = self
+            .linkAccessStore
+            .outboundSessions()?
+            .into_iter()
+            .filter(|(_, record)| record.coreDeviceId == deviceId)
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>();
+        let inboundSessionIds = self
+            .linkAccessStore
+            .inboundSessions()?
+            .into_iter()
+            .filter(|(_, record)| record.deviceId == deviceId)
+            .map(|(sessionId, _)| sessionId)
+            .collect::<Vec<_>>();
+        if outboundNames.is_empty() && inboundSessionIds.is_empty() {
+            return Err(format!("paired device does not exist: {deviceId}"));
+        }
+        disconnectPeerLink(&self.nodeRouter.localNodeId(), &deviceId)?;
+        for name in outboundNames {
+            self.linkAccessStore.removeOutboundSession(&name)?;
+        }
+        for sessionId in inboundSessionIds {
+            self.linkAccessStore.removeInboundSession(&sessionId)?;
+        }
         Ok(())
     }
 
-    /// Discovers Link-enabled runtimes through the native runtime transport.
+    /// Starts the singleton persistent synchronization worker for direct Space peers.
+    #[allow(non_snake_case)]
+    pub fn startSpaceSync(&self) -> Result<(), String> {
+        self.persistenceSyncService().start()
+    }
+
+    /// Discovers nearby Spaces and groups their directly connectable CoreNodes.
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(non_snake_case)]
-    pub async fn discoverPairedRemotes(
+    pub async fn discoverSpaces(
         &self,
         timeoutMs: u64,
-    ) -> Result<Vec<RuntimeRemoteDiscoveredDevice>, String> {
+    ) -> Result<Vec<RuntimeRemoteDiscoveredSpace>, String> {
         if timeoutMs == 0 {
             return Err("remote discovery timeout must be greater than 0".to_string());
         }
@@ -194,47 +413,7 @@ impl RuntimeRemoteLinkService {
             .map_err(|_| "runtime discovery task ended before producing a result".to_string())??;
         self.refreshDiscoveredPairedRemoteEndpoints(&devices)
             .await?;
-        Ok(devices)
-    }
-
-    /// Runs automatic synchronization for every enabled paired remote endpoint.
-    #[allow(non_snake_case)]
-    pub async fn syncConfiguredPairedRemotes(&self) -> Result<(), String> {
-        let config = self.linkAccessStore.initializeAutoSyncConfig()?;
-        if config.autoSyncRemoteNames.is_empty() {
-            return Ok(());
-        }
-        for name in config.autoSyncRemoteNames {
-            self.syncPairedRemote(name, 512).await?;
-        }
-        Ok(())
-    }
-
-    /// Removes one paired remote while preserving a valid route and auto-sync configuration.
-    #[allow(non_snake_case)]
-    pub fn removePairedRemote(&self, name: String) -> Result<(), String> {
-        if !self.linkAccessStore.outboundSessions()?.contains_key(&name) {
-            return Err(format!("paired remote runtime does not exist: {name}"));
-        }
-        let route = self.linkAccessStore.initializeRoutingConfig()?;
-        if route.route
-            == (LinkAccessRoute::Remote {
-                sessionName: name.clone(),
-            })
-        {
-            self.linkAccessStore
-                .saveRoutingConfig(LinkAccessRoutingConfig {
-                    route: LinkAccessRoute::Local,
-                    updatedAt: currentTimeMillis(),
-                })?;
-        }
-        let mut autoSync = self.linkAccessStore.initializeAutoSyncConfig()?;
-        autoSync
-            .autoSyncRemoteNames
-            .retain(|existing| existing != &name);
-        autoSync.updatedAt = currentTimeMillis();
-        self.linkAccessStore.saveAutoSyncConfig(autoSync)?;
-        self.linkAccessStore.removeOutboundSession(&name)
+        self.groupDiscoveredSpaces(devices).await
     }
 
     /// Starts a runtime-owned outbound pairing and stores its confidential client state.
@@ -253,7 +432,10 @@ impl RuntimeRemoteLinkService {
         }
         let client = RemoteLinkClient::new(baseUrl.clone());
         let hello = client.hello(&tokenHash).await?;
-        let state = client.pairStart(&tokenHash, clientDeviceInfo).await?;
+        let identity = self.linkAccessStore.initializeIdentity(clientDeviceInfo)?;
+        let state = client
+            .pairStart(&tokenHash, identity.deviceId, identity.deviceInfo)
+            .await?;
         if hello.coreDeviceId != state.coreDeviceId {
             return Err("paired remote identity changed during pairing".to_string());
         }
@@ -269,10 +451,11 @@ impl RuntimeRemoteLinkService {
             pairingServiceVersion: state.pairingServiceVersion,
             coreDeviceId: state.coreDeviceId,
             coreDeviceInfo: state.coreDeviceInfo,
+            coreUserName: hello.deviceSpace.userName,
         })
     }
 
-    /// Completes a runtime-owned outbound pairing, stores its named session, and selects it.
+    /// Completes a runtime-owned outbound pairing and stores its named direct connection.
     #[allow(non_snake_case)]
     pub async fn finishPairedRemote(
         &self,
@@ -306,27 +489,27 @@ impl RuntimeRemoteLinkService {
         self.linkAccessStore
             .saveOutboundSession(name.clone(), record.clone())?;
         self.linkAccessStore
-            .saveRoutingConfig(LinkAccessRoutingConfig {
-                route: LinkAccessRoute::Remote { sessionName: name },
-                updatedAt: currentTimeMillis(),
-            })?;
-        self.linkAccessStore
             .removePendingOutboundPairing(&pairingId)?;
         Ok(record)
     }
 
-    /// Probes one named paired remote and verifies the persisted remote identity.
+    /// Persists the explicit carrier selected for one named outbound session.
     #[allow(non_snake_case)]
-    pub async fn probePairedRemote(
+    pub fn setPairedRemoteTransport(
         &self,
         name: String,
-    ) -> Result<RuntimeRemoteProbeResult, String> {
-        let (record, session) = self.pairedSession(&name)?;
-        let info = session.sessionInfo().await?;
-        ensureRemoteIdentity(&record, &info.coreDeviceId)?;
-        Ok(RuntimeRemoteProbeResult {
-            coreDeviceId: info.coreDeviceId,
-        })
+        transport: LinkTransportPreference,
+    ) -> Result<PairedRemoteSessionRecord, String> {
+        let mut record = self
+            .linkAccessStore
+            .outboundSessions()?
+            .get(&name)
+            .cloned()
+            .ok_or_else(|| format!("paired remote runtime does not exist: {name}"))?;
+        record.transport = transport;
+        self.linkAccessStore
+            .saveOutboundSession(name, record.clone())?;
+        Ok(record)
     }
 
     /// Verifies and persists a discovered endpoint for one named paired remote runtime.
@@ -352,82 +535,6 @@ impl RuntimeRemoteLinkService {
         Ok(updated)
     }
 
-    /// Runs one complete two-way sync transaction with a named paired remote runtime.
-    #[allow(non_snake_case)]
-    pub async fn syncPairedRemote(
-        &self,
-        name: String,
-        limit: usize,
-    ) -> Result<RuntimeRemoteSyncResult, String> {
-        if limit == 0 {
-            return Err("sync limit must be greater than 0".to_string());
-        }
-        let (record, session) = self.pairedSession(&name)?;
-        let info = session.sessionInfo().await?;
-        ensureRemoteIdentity(&record, &info.coreDeviceId)?;
-
-        let localVersion = self.callLocal("coreVersion", Value::Null).await?;
-        let remoteVersion = callRemote(&session, "coreVersion", Value::Null).await?;
-        if localVersion != remoteVersion {
-            return Err(format!(
-                "core version mismatch: local={localVersion}, remote={remoteVersion}. sync blocked"
-            ));
-        }
-
-        let mut rounds = 0;
-        let mut localApplied = 0;
-        let mut remoteApplied = 0;
-        loop {
-            rounds += 1;
-            let localClock = self.callLocal("syncClock", Value::Null).await?;
-            let remoteClock = callRemote(&session, "syncClock", Value::Null).await?;
-            let localOperations = self
-                .callLocal(
-                    "syncOperationsSince",
-                    json!({
-                        "clock": remoteClock,
-                        "domains": SYNC_DOMAINS,
-                        "limit": limit,
-                    }),
-                )
-                .await?;
-            let remoteOperations = callRemote(
-                &session,
-                "syncOperationsSince",
-                json!({
-                    "clock": localClock,
-                    "domains": SYNC_DOMAINS,
-                    "limit": limit,
-                }),
-            )
-            .await?;
-            let operations = mergeSyncOperations(localOperations, remoteOperations)?;
-            if operations.is_empty() {
-                break;
-            }
-            let remoteResult = callRemote(
-                &session,
-                "syncApplyOperations",
-                json!({ "operations": operations.clone() }),
-            )
-            .await?;
-            let localResult = self
-                .callLocal("syncApplyOperations", json!({ "operations": operations }))
-                .await?;
-            remoteApplied += appliedCount(remoteResult)?;
-            localApplied += appliedCount(localResult)?;
-            if operations.len() < limit {
-                break;
-            }
-        }
-
-        Ok(RuntimeRemoteSyncResult {
-            rounds,
-            localApplied,
-            remoteApplied,
-        })
-    }
-
     /// Resolves a named persisted outbound record into its authenticated remote session.
     #[allow(non_snake_case)]
     fn pairedSession(
@@ -448,7 +555,7 @@ impl RuntimeRemoteLinkService {
     #[allow(non_snake_case)]
     async fn refreshDiscoveredPairedRemoteEndpoints(
         &self,
-        devices: &[RuntimeRemoteDiscoveredDevice],
+        devices: &[RuntimeRemoteDiscoveryEndpoint],
     ) -> Result<(), String> {
         let sessions = self.linkAccessStore.outboundSessions()?;
         for device in devices {
@@ -464,74 +571,225 @@ impl RuntimeRemoteLinkService {
         Ok(())
     }
 
-    /// Invokes one local application method through the active in-process Core.
+    /// Resolves live Space identities for discovered devices and groups them by Space id.
+    #[cfg(not(target_arch = "wasm32"))]
     #[allow(non_snake_case)]
-    async fn callLocal(&self, methodName: &str, args: Value) -> Result<Value, String> {
-        let response =
-            CoreLinkSharedClient::call(&self.localCore, applicationCallRequest(methodName, args)?)
-                .await;
-        coreResponseValue(response.result.map_err(|error| error.to_string())?)
+    async fn groupDiscoveredSpaces(
+        &self,
+        devices: Vec<RuntimeRemoteDiscoveryEndpoint>,
+    ) -> Result<Vec<RuntimeRemoteDiscoveredSpace>, String> {
+        let mut spaces = BTreeMap::<String, RuntimeRemoteDiscoveredSpace>::new();
+        for endpoint in devices {
+            let hello = RemoteLinkClient::new(endpoint.baseUrl.clone())
+                .hello(&endpoint.tokenHash)
+                .await?;
+            ensureRemoteIdentityById(&endpoint.deviceId, &hello.coreDeviceId)?;
+            if hello.deviceSpace.deviceCount == 0 {
+                return Err("discovered device space has no devices".to_string());
+            }
+            let device = RuntimeRemoteDiscoveredDevice {
+                deviceId: endpoint.deviceId,
+                displayName: hello.coreDeviceInfo.displayName(),
+                userName: hello.deviceSpace.userName,
+                platform: hello.coreDeviceInfo.platform,
+                model: hello.coreDeviceInfo.model,
+                baseUrl: endpoint.baseUrl,
+                hostname: endpoint.hostname,
+                port: endpoint.port,
+                tokenHash: endpoint.tokenHash,
+                version: endpoint.version,
+            };
+            let memberCount = hello.deviceSpace.deviceCount;
+            match spaces.get_mut(&hello.deviceSpace.spaceId) {
+                Some(space) => {
+                    if hello.deviceSpace.spaceRevision > space.spaceRevision {
+                        space.spaceName = hello.deviceSpace.spaceName.clone();
+                        space.spaceRevision = hello.deviceSpace.spaceRevision;
+                        space.memberCount = memberCount;
+                    } else if hello.deviceSpace.spaceRevision == space.spaceRevision {
+                        if hello.deviceSpace.spaceName != space.spaceName {
+                            return Err(format!(
+                                "device space {} advertises conflicting names at revision {}",
+                                hello.deviceSpace.spaceId, hello.deviceSpace.spaceRevision
+                            ));
+                        }
+                        space.memberCount = space.memberCount.max(memberCount);
+                    }
+                    space.devices.push(device);
+                }
+                None => {
+                    spaces.insert(
+                        hello.deviceSpace.spaceId.clone(),
+                        RuntimeRemoteDiscoveredSpace {
+                            spaceId: hello.deviceSpace.spaceId,
+                            spaceName: hello.deviceSpace.spaceName,
+                            spaceRevision: hello.deviceSpace.spaceRevision,
+                            memberCount,
+                            devices: vec![device],
+                        },
+                    );
+                }
+            }
+        }
+        for space in spaces.values_mut() {
+            space.devices.sort_by(|left, right| {
+                left.displayName
+                    .cmp(&right.displayName)
+                    .then(left.deviceId.cmp(&right.deviceId))
+            });
+        }
+        Ok(spaces.into_values().collect())
+    }
+
+    /// Builds the persistent synchronization service owned by this runtime facade.
+    #[allow(non_snake_case)]
+    fn persistenceSyncService(&self) -> SpacePersistenceSyncService {
+        SpacePersistenceSyncService::new(
+            self.localCore.clone(),
+            self.nodeRouter.clone(),
+            self.linkAccessStore.clone(),
+            self.spaceStore.clone(),
+        )
     }
 }
 
-/// Schedules one Host-owned automatic sync tick and no persistent executor-owned timer.
+/// Converts one synchronized Store profile into the runtime-facing device model.
 #[allow(non_snake_case)]
-fn scheduleAutoSyncTick(service: RuntimeRemoteLinkService, delayMs: u64) -> Result<(), String> {
-    defaultHostRuntimeTaskSchedulerHost()
-        .scheduleDelayedHostRuntimeTask(
-            "runtime-remote-auto-sync-tick",
-            delayMs,
-            Box::new(move || {
-                let syncService = service.clone();
-                let scheduler = defaultHostRuntimeTaskSchedulerHost();
-                if let Err(error) = scheduler.scheduleHostRuntimeAsyncTask(
-                    "runtime-remote-auto-sync",
-                    Box::new(move || {
-                        Box::pin(async move {
-                            if let Err(error) = syncService.syncConfiguredPairedRemotes().await {
-                                operit_util::AppLogger::AppLogger::w(
-                                    "RuntimeRemoteLinkService",
-                                    &format!("automatic paired runtime sync failed: {error}"),
-                                );
-                            }
-                        })
-                    }),
-                ) {
-                    operit_util::AppLogger::AppLogger::w(
-                        "RuntimeRemoteLinkService",
-                        &format!("automatic paired runtime sync scheduling failed: {error}"),
-                    );
-                }
-                if let Err(error) = scheduleAutoSyncTick(service, AUTO_SYNC_INTERVAL_MS) {
-                    operit_util::AppLogger::AppLogger::w(
-                        "RuntimeRemoteLinkService",
-                        &format!("automatic paired runtime tick scheduling failed: {error}"),
-                    );
-                }
-            }),
-        )
-        .map_err(|error| error.to_string())
+fn runtimeDeviceSpaceDevice(
+    profile: &CoreSpaceDeviceProfile,
+    online: bool,
+) -> RuntimeDeviceSpaceDevice {
+    RuntimeDeviceSpaceDevice {
+        deviceId: profile.nodeId.clone(),
+        userName: profile.userName.clone(),
+        deviceName: profile.displayName.clone(),
+        platform: profile.platform.clone(),
+        model: profile.model.clone(),
+        coreVersion: profile.coreVersion.clone(),
+        online,
+    }
 }
 
-/// Invokes one application method through an authenticated paired remote session.
+/// Computes one connection status from both endpoint reachability and versions.
+fn runtimeDeviceSpaceConnectionState(
+    first: &RuntimeDeviceSpaceDevice,
+    second: &RuntimeDeviceSpaceDevice,
+    directlyOnline: Option<bool>,
+) -> (RuntimeDeviceSpaceConnectionStatus, String) {
+    let mut reasons = Vec::new();
+    if !first.online {
+        reasons.push(format!("{} is offline", first.deviceName));
+    }
+    if !second.online {
+        reasons.push(format!("{} is offline", second.deviceName));
+    }
+    let versionsMismatch = match (&first.coreVersion, &second.coreVersion) {
+        (Some(firstVersion), Some(secondVersion)) if firstVersion != secondVersion => {
+            reasons.push(format!(
+                "Core version mismatch: {}={}, {}={}",
+                first.deviceName, firstVersion, second.deviceName, secondVersion
+            ));
+            true
+        }
+        _ => false,
+    };
+    if directlyOnline == Some(false) {
+        reasons.push("Direct Peer Link is offline".to_string());
+    }
+    let status = if !first.online || !second.online || directlyOnline == Some(false) {
+        RuntimeDeviceSpaceConnectionStatus::Offline
+    } else if versionsMismatch {
+        RuntimeDeviceSpaceConnectionStatus::VersionMismatch
+    } else if first.coreVersion.is_none() || second.coreVersion.is_none() {
+        reasons.push("Core version is unavailable".to_string());
+        RuntimeDeviceSpaceConnectionStatus::Unknown
+    } else if directlyOnline.is_none() {
+        reasons.push(
+            "Direct Peer Link status is not observable from the current device".to_string(),
+        );
+        RuntimeDeviceSpaceConnectionStatus::Unknown
+    } else {
+        RuntimeDeviceSpaceConnectionStatus::Online
+    };
+    let reason = if reasons.is_empty() {
+        "Link is healthy".to_string()
+    } else {
+        reasons.join("; ")
+    };
+    (status, reason)
+}
+
+/// Merges inbound and outbound pairing records into one device-indexed projection.
 #[allow(non_snake_case)]
-async fn callRemote(
+fn mergePairedDevices(
+    outboundSessions: BTreeMap<String, PairedRemoteSessionRecord>,
+    inboundSessions: BTreeMap<String, AcceptedRemoteSessionRecord>,
+) -> Result<BTreeMap<String, RuntimePairedDevice>, String> {
+    let mut devices = BTreeMap::<String, RuntimePairedDevice>::new();
+    for (sessionName, record) in outboundSessions {
+        let device = devices
+            .entry(record.coreDeviceId.clone())
+            .or_insert_with(|| RuntimePairedDevice {
+                deviceId: record.coreDeviceId.clone(),
+                deviceInfo: record.remoteDeviceInfo.clone(),
+                outboundSessionName: None,
+                outboundBaseUrl: None,
+                outboundTransport: None,
+                inboundSessionIds: Vec::new(),
+            });
+        ensureDeviceInfoMatches(&device.deviceInfo, &record.remoteDeviceInfo)?;
+        if device.outboundSessionName.is_some() {
+            return Err(format!(
+                "multiple outgoing pairings target device {}",
+                record.coreDeviceId
+            ));
+        }
+        device.outboundSessionName = Some(sessionName);
+        device.outboundBaseUrl = Some(record.baseUrl);
+        device.outboundTransport = Some(record.transport);
+    }
+    for (sessionId, record) in inboundSessions {
+        let device =
+            devices
+                .entry(record.deviceId.clone())
+                .or_insert_with(|| RuntimePairedDevice {
+                    deviceId: record.deviceId.clone(),
+                    deviceInfo: record.deviceInfo.clone(),
+                    outboundSessionName: None,
+                    outboundBaseUrl: None,
+                    outboundTransport: None,
+                    inboundSessionIds: Vec::new(),
+                });
+        ensureDeviceInfoMatches(&device.deviceInfo, &record.deviceInfo)?;
+        device.inboundSessionIds.push(sessionId);
+    }
+    Ok(devices)
+}
+
+/// Invokes one generated service method through an authenticated paired remote session.
+#[allow(non_snake_case)]
+async fn callRemoteService(
     session: &PairedRemoteSession,
+    targetPath: &str,
     methodName: &str,
     args: Value,
 ) -> Result<Value, String> {
     let response = session
-        .call(applicationCallRequest(methodName, args)?)
+        .call(serviceCallRequest(targetPath, methodName, args)?)
         .await?;
     coreResponseValue(response.result.map_err(|error| error.to_string())?)
 }
 
-/// Builds one Link request for an application-level runtime operation.
+/// Builds one Link request for a generated Core service operation.
 #[allow(non_snake_case)]
-fn applicationCallRequest(methodName: &str, args: Value) -> Result<CoreCallRequest, String> {
+fn serviceCallRequest(
+    targetPath: &str,
+    methodName: &str,
+    args: Value,
+) -> Result<CoreCallRequest, String> {
     Ok(CoreCallRequest::new(
         format!("runtime-remote-{methodName}-{}", currentTimeMillis()),
-        "application",
+        targetPath,
         methodName,
         toCoreValue(args).map_err(|error| error.to_string())?,
     ))
@@ -555,98 +813,26 @@ fn ensureRemoteIdentity(
     Ok(())
 }
 
-/// Merges two operation pages into their deterministic application order.
+/// Verifies one observed CoreNode id against an authenticated Link response.
 #[allow(non_snake_case)]
-fn mergeSyncOperations(left: Value, right: Value) -> Result<Vec<Value>, String> {
-    let mut byId = BTreeMap::new();
-    for operation in syncOperations(left)?
-        .into_iter()
-        .chain(syncOperations(right)?)
-    {
-        let key: SyncOperationOrder = serde_json::from_value(operation.clone())
-            .map_err(|error| format!("invalid sync operation: {error}"))?;
-        byId.insert(key.opId.clone(), (key, operation));
+fn ensureRemoteIdentityById(expectedNodeId: &str, observedNodeId: &str) -> Result<(), String> {
+    if observedNodeId != expectedNodeId {
+        return Err(format!(
+            "paired device identity mismatch: expected={}, observed={observedNodeId}",
+            expectedNodeId
+        ));
     }
-    let mut operations = byId.into_values().collect::<Vec<_>>();
-    operations.sort_by(|left, right| {
-        (
-            left.0.createdAt,
-            &left.0.originDeviceId,
-            left.0.sequence,
-            &left.0.opId,
-        )
-            .cmp(&(
-                right.0.createdAt,
-                &right.0.originDeviceId,
-                right.0.sequence,
-                &right.0.opId,
-            ))
-    });
-    Ok(operations
-        .into_iter()
-        .map(|(_, operation)| operation)
-        .collect())
+    Ok(())
 }
 
-/// Decodes one runtime sync operation page into its ordered operation array.
+/// Verifies that directional session records describe the same paired device.
 #[allow(non_snake_case)]
-fn syncOperations(value: Value) -> Result<Vec<Value>, String> {
-    serde_json::from_value(value).map_err(|error| format!("invalid sync operations: {error}"))
-}
-
-/// Reads the applied operation count from one runtime sync apply response.
-#[allow(non_snake_case)]
-fn appliedCount(value: Value) -> Result<usize, String> {
-    let applied = value
-        .get("applied")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| "sync apply response is missing an applied count".to_string())?;
-    usize::try_from(applied).map_err(|error| error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Verifies duplicate operations are collapsed and the merged page has stable sync order.
-    #[test]
-    fn merge_sync_operations_deduplicates_and_orders_operations() {
-        let operations = mergeSyncOperations(
-            json!([
-                {
-                    "opId": "device-a:2",
-                    "originDeviceId": "device-a",
-                    "sequence": 2,
-                    "createdAt": 20,
-                },
-                {
-                    "opId": "device-a:1",
-                    "originDeviceId": "device-a",
-                    "sequence": 1,
-                    "createdAt": 10,
-                },
-            ]),
-            json!([
-                {
-                    "opId": "device-b:1",
-                    "originDeviceId": "device-b",
-                    "sequence": 1,
-                    "createdAt": 10,
-                },
-                {
-                    "opId": "device-a:2",
-                    "originDeviceId": "device-a",
-                    "sequence": 2,
-                    "createdAt": 20,
-                },
-            ]),
-        )
-        .expect("sync operations must merge");
-
-        let ids = operations
-            .iter()
-            .map(|operation| operation["opId"].as_str().expect("operation id"))
-            .collect::<Vec<_>>();
-        assert_eq!(ids, vec!["device-a:1", "device-b:1", "device-a:2"]);
+fn ensureDeviceInfoMatches(
+    expected: &RemoteDeviceInfo,
+    observed: &RemoteDeviceInfo,
+) -> Result<(), String> {
+    if expected.platform != observed.platform || expected.model != observed.model {
+        return Err("paired device metadata conflicts across session directions".to_string());
     }
+    Ok(())
 }

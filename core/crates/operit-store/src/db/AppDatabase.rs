@@ -14,7 +14,7 @@ use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::MessagePartEntity::MessagePartEntity;
 
 /// Current SQLite schema version expected by the runtime.
-pub const DATABASE_VERSION: i32 = 24;
+pub const DATABASE_VERSION: i32 = 26;
 
 #[derive(Debug, Error)]
 /// Error surface for opening and migrating the application database.
@@ -132,6 +132,8 @@ impl AppDatabase {
             21 => MIGRATION_21_22(self)?,
             22 => MIGRATION_22_23(self)?,
             23 => MIGRATION_23_24(self)?,
+            24 => MIGRATION_24_25(self)?,
+            25 => MIGRATION_25_26(self)?,
             version => {
                 return Err(AppDatabaseError::MissingMigration {
                     from: version,
@@ -447,7 +449,7 @@ fn MIGRATION_22_23(database: &AppDatabase) -> Result<(), SqliteStoreError> {
         transaction.execute("DROP TABLE messages", sqliteParams![])?;
         transaction.execute("ALTER TABLE messages_v23 RENAME TO messages", sqliteParams![])?;
         transaction.execute(
-            "CREATE INDEX index_messages_chatId_timestamp ON messages(chatId, timestamp)",
+            "CREATE UNIQUE INDEX index_messages_chatId_timestamp ON messages(chatId, timestamp)",
             sqliteParams![],
         )?;
         transaction.execute(
@@ -711,6 +713,60 @@ fn MIGRATION_23_24(database: &AppDatabase) -> Result<(), SqliteStoreError> {
     database.store.setUserVersion(24)
 }
 
+#[allow(non_snake_case)]
+/// Adds continuation completion metadata and entity-state sync semantics.
+fn MIGRATION_24_25(database: &AppDatabase) -> Result<(), SqliteStoreError> {
+    database.store.transaction(|transaction| {
+        transaction.execute(
+            "ALTER TABLE messages ADD COLUMN completedRouteGeneration INTEGER NOT NULL DEFAULT 0",
+            sqliteParams![],
+        )?;
+        transaction.execute(
+            "ALTER TABLE sync_sql_message_rows ADD COLUMN completedRouteGeneration INTEGER NOT NULL DEFAULT 0",
+            sqliteParams![],
+        )?;
+        transaction.execute(
+            "ALTER TABLE sync_sql_operations ADD COLUMN semantics TEXT NOT NULL DEFAULT 'transaction'",
+            sqliteParams![],
+        )?;
+        transaction.execute(
+            "DROP INDEX index_messages_chatId_timestamp",
+            sqliteParams![],
+        )?;
+        transaction.execute(
+            "CREATE UNIQUE INDEX index_messages_chatId_timestamp ON messages(chatId, timestamp)",
+            sqliteParams![],
+        )?;
+        transaction.execute(
+            "UPDATE sync_sql_operations SET semantics = 'entity_state' WHERE operation = 'upsert'",
+            sqliteParams![],
+        )?;
+        transaction.execute(
+            "UPDATE sync_sql_operations SET schemaVersion = 5 WHERE domain = 'chat'",
+            sqliteParams![],
+        )?;
+        Ok(())
+    })?;
+    database.store.setUserVersion(25)
+}
+
+/// Renames response continuation metadata to remove route semantics from chat persistence.
+#[allow(non_snake_case)]
+fn MIGRATION_25_26(database: &AppDatabase) -> Result<(), SqliteStoreError> {
+    database.store.transaction(|transaction| {
+        transaction.execute(
+            "ALTER TABLE messages RENAME COLUMN completedRouteGeneration TO completedExecutionGeneration",
+            sqliteParams![],
+        )?;
+        transaction.execute(
+            "ALTER TABLE sync_sql_message_rows RENAME COLUMN completedRouteGeneration TO completedExecutionGeneration",
+            sqliteParams![],
+        )?;
+        Ok(())
+    })?;
+    database.store.setUserVersion(26)
+}
+
 /// Stores a parsed legacy sync part together with the operation that owns it.
 struct LegacySyncPart {
     opId: String,
@@ -958,6 +1014,7 @@ pub fn createAllTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             outputDurationMs INTEGER NOT NULL DEFAULT 0,
             waitDurationMs INTEGER NOT NULL DEFAULT 0,
             completedAt INTEGER NOT NULL DEFAULT 0,
+            completedExecutionGeneration INTEGER NOT NULL DEFAULT 0,
             displayMode TEXT NOT NULL DEFAULT 'NORMAL',
             isFavorite INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY(chatId) REFERENCES chats(id) ON DELETE CASCADE
@@ -981,7 +1038,7 @@ pub fn createAllTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             FOREIGN KEY(chatId) REFERENCES chats(id) ON DELETE CASCADE
         );
 
-        CREATE INDEX IF NOT EXISTS index_messages_chatId_timestamp
+        CREATE UNIQUE INDEX IF NOT EXISTS index_messages_chatId_timestamp
             ON messages(chatId, timestamp);
         CREATE INDEX IF NOT EXISTS index_messages_chatId_orderIndex
             ON messages(chatId, orderIndex);
@@ -1065,6 +1122,7 @@ pub fn createSyncTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             entityType TEXT NOT NULL,
             entityId TEXT NOT NULL,
             operation TEXT NOT NULL,
+            semantics TEXT NOT NULL,
             createdAt INTEGER NOT NULL,
             schemaVersion INTEGER NOT NULL
         );
@@ -1112,6 +1170,7 @@ pub fn createSyncTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             outputDurationMs INTEGER NOT NULL,
             waitDurationMs INTEGER NOT NULL,
             completedAt INTEGER NOT NULL,
+            completedExecutionGeneration INTEGER NOT NULL,
             displayMode TEXT NOT NULL,
             isFavorite INTEGER NOT NULL,
             PRIMARY KEY(opId, chatId, timestamp),

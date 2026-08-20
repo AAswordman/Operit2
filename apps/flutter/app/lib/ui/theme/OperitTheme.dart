@@ -12,7 +12,7 @@ import 'package:video_player/video_player.dart';
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import '../../core/runtime/RuntimeConnectionManager.dart';
+import '../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../data/preferences/UserPreferencesManager.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../common/RuntimeBootstrapScreen.dart';
@@ -48,8 +48,8 @@ class OperitTheme extends StatefulWidget {
 }
 
 class _OperitThemeState extends State<OperitTheme> {
-  final RuntimeConnectionManager _runtimeManager =
-      RuntimeConnectionManager.instance;
+  final RuntimeBootstrapManager _runtimeManager =
+      RuntimeBootstrapManager.instance;
   late final OperitThemeController _controller = OperitThemeController(
     onChanged: () {
       if (mounted) {
@@ -71,7 +71,7 @@ class _OperitThemeState extends State<OperitTheme> {
   @override
   void initState() {
     super.initState();
-    _runtimeManager.addListener(_handleRuntimeConnectionChanged);
+    _runtimeManager.addListener(_handleRuntimeBootstrapChanged);
     _preserveUnconfiguredChild =
         widget.unconfiguredChildEnabled && !_runtimeManager.runtimeConfigured;
     if (_runtimeManager.runtimeConfigured) {
@@ -83,13 +83,13 @@ class _OperitThemeState extends State<OperitTheme> {
   @override
   void dispose() {
     _stopRuntimeStartupStatusPolling();
-    _runtimeManager.removeListener(_handleRuntimeConnectionChanged);
+    _runtimeManager.removeListener(_handleRuntimeBootstrapChanged);
     _controller.dispose();
     super.dispose();
   }
 
   /// Synchronizes the theme lifecycle with runtime configuration changes.
-  void _handleRuntimeConnectionChanged() {
+  void _handleRuntimeBootstrapChanged() {
     if (!_runtimeManager.runtimeConfigured) {
       _runtimeGeneration++;
       _stopRuntimeStartupStatusPolling();
@@ -339,7 +339,7 @@ class OperitThemeController {
     _applyActivePrompt(activePrompt);
     final revision = ++_activePromptRevision;
     _activePromptSubscription = _clients.preferencesActivePromptManager
-        .activePromptFlowChanges()
+        .activePromptFlow()
         .listen((activePrompt) {
           unawaited(_handleActivePromptChange(activePrompt));
         });

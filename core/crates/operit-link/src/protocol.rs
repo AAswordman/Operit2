@@ -23,6 +23,281 @@ impl CoreValue {
     pub fn emptyMap() -> Self {
         Self::Map(BTreeMap::new())
     }
+
+    /// Produces the smallest safe event representation for one ordered value update.
+    pub fn incrementalEvent(
+        previous: &mut Option<CoreValue>,
+        current: CoreValue,
+        incremental: bool,
+    ) -> (CoreEventKind, CoreValue) {
+        let Some(previousValue) = previous.as_ref() else {
+            *previous = Some(current.clone());
+            return (CoreEventKind::Snapshot, current);
+        };
+        if !incremental {
+            *previous = Some(current.clone());
+            return (CoreEventKind::Changed, current);
+        }
+        let Some(delta) = buildCoreValueDelta(previousValue, &current) else {
+            *previous = Some(current.clone());
+            return (CoreEventKind::Changed, current);
+        };
+        let event = if coreValueSize(&delta) < coreValueSize(&current) {
+            (CoreEventKind::Delta, delta)
+        } else {
+            (CoreEventKind::Changed, current.clone())
+        };
+        *previous = Some(current);
+        event
+    }
+
+    /// Applies one generic incremental value payload to a complete base value.
+    pub fn applyIncrementalDelta(&self, delta: &CoreValue) -> Result<CoreValue, String> {
+        applyCoreValueDelta(self, delta)
+    }
+}
+
+const CORE_DELTA_MARKER: &str = "$coreDelta";
+
+/// Builds a generic map/list delta between two serialized Core values.
+fn buildCoreValueDelta(previous: &CoreValue, current: &CoreValue) -> Option<CoreValue> {
+    if previous == current {
+        return None;
+    }
+    let mut operations = Vec::new();
+    collectCoreValueDelta(previous, current, &mut Vec::new(), &mut operations);
+    let mut delta = BTreeMap::new();
+    delta.insert(CORE_DELTA_MARKER.to_string(), CoreValue::List(operations));
+    Some(CoreValue::Map(delta))
+}
+
+/// Collects recursive set and remove operations for one value pair.
+fn collectCoreValueDelta(
+    previous: &CoreValue,
+    current: &CoreValue,
+    path: &mut Vec<CoreValue>,
+    operations: &mut Vec<CoreValue>,
+) {
+    match (previous, current) {
+        (CoreValue::Map(previousValues), CoreValue::Map(currentValues)) => {
+            for key in previousValues.keys() {
+                if !currentValues.contains_key(key) {
+                    path.push(CoreValue::String(key.clone()));
+                    appendCoreDeltaOperation(operations, "remove", path, None);
+                    path.pop();
+                }
+            }
+            for (key, currentValue) in currentValues {
+                path.push(CoreValue::String(key.clone()));
+                match previousValues.get(key) {
+                    Some(previousValue) => {
+                        collectCoreValueDelta(previousValue, currentValue, path, operations)
+                    }
+                    None => appendCoreDeltaOperation(operations, "set", path, Some(currentValue)),
+                }
+                path.pop();
+            }
+        }
+        (CoreValue::List(previousValues), CoreValue::List(currentValues)) => {
+            let commonLength = previousValues.len().min(currentValues.len());
+            for index in 0..commonLength {
+                path.push(CoreValue::Unsigned(index as u64));
+                collectCoreValueDelta(
+                    &previousValues[index],
+                    &currentValues[index],
+                    path,
+                    operations,
+                );
+                path.pop();
+            }
+            for index in (currentValues.len()..previousValues.len()).rev() {
+                path.push(CoreValue::Unsigned(index as u64));
+                appendCoreDeltaOperation(operations, "remove", path, None);
+                path.pop();
+            }
+            for index in previousValues.len()..currentValues.len() {
+                path.push(CoreValue::Unsigned(index as u64));
+                appendCoreDeltaOperation(operations, "set", path, Some(&currentValues[index]));
+                path.pop();
+            }
+        }
+        _ => appendCoreDeltaOperation(operations, "set", path, Some(current)),
+    }
+}
+
+/// Appends one encoded delta operation without interpreting business fields.
+fn appendCoreDeltaOperation(
+    operations: &mut Vec<CoreValue>,
+    operation: &str,
+    path: &[CoreValue],
+    value: Option<&CoreValue>,
+) {
+    let mut fields = BTreeMap::new();
+    fields.insert("op".to_string(), CoreValue::String(operation.to_string()));
+    fields.insert("path".to_string(), CoreValue::List(path.to_vec()));
+    if let Some(value) = value {
+        fields.insert("value".to_string(), value.clone());
+    }
+    operations.push(CoreValue::Map(fields));
+}
+
+/// Applies all operations contained in one generic Core value delta.
+fn applyCoreValueDelta(base: &CoreValue, delta: &CoreValue) -> Result<CoreValue, String> {
+    let CoreValue::Map(deltaFields) = delta else {
+        return Err("incremental delta must be a map".to_string());
+    };
+    let Some(CoreValue::List(operations)) = deltaFields.get(CORE_DELTA_MARKER) else {
+        return Err("incremental delta marker is missing".to_string());
+    };
+    let mut result = base.clone();
+    for operation in operations {
+        applyCoreDeltaOperation(&mut result, operation)?;
+    }
+    Ok(result)
+}
+
+/// Applies one set or remove operation to a mutable Core value tree.
+fn applyCoreDeltaOperation(target: &mut CoreValue, operation: &CoreValue) -> Result<(), String> {
+    let CoreValue::Map(fields) = operation else {
+        return Err("incremental operation must be a map".to_string());
+    };
+    let Some(CoreValue::String(operationName)) = fields.get("op") else {
+        return Err("incremental operation name is missing".to_string());
+    };
+    let Some(CoreValue::List(path)) = fields.get("path") else {
+        return Err("incremental operation path is missing".to_string());
+    };
+    match operationName.as_str() {
+        "set" => {
+            let Some(value) = fields.get("value") else {
+                return Err("incremental set operation value is missing".to_string());
+            };
+            setCoreValueAtPath(target, path, value.clone())
+        }
+        "remove" => removeCoreValueAtPath(target, path),
+        _ => Err(format!(
+            "unsupported incremental operation: {operationName}"
+        )),
+    }
+}
+
+/// Replaces or appends one value at a typed map/list path.
+fn setCoreValueAtPath(
+    target: &mut CoreValue,
+    path: &[CoreValue],
+    value: CoreValue,
+) -> Result<(), String> {
+    if path.is_empty() {
+        *target = value;
+        return Ok(());
+    }
+    let segment = path
+        .first()
+        .expect("non-empty path must have a first segment");
+    match target {
+        CoreValue::Map(fields) => {
+            let CoreValue::String(key) = segment else {
+                return Err("map delta path segment must be a string".to_string());
+            };
+            if path.len() == 1 {
+                fields.insert(key.clone(), value);
+                return Ok(());
+            }
+            let child = fields
+                .get_mut(key)
+                .ok_or_else(|| format!("map delta path does not exist: {key}"))?;
+            setCoreValueAtPath(child, &path[1..], value)
+        }
+        CoreValue::List(values) => {
+            let CoreValue::Unsigned(index) = segment else {
+                return Err("list delta path segment must be an unsigned index".to_string());
+            };
+            let index = usize::try_from(*index)
+                .map_err(|_| format!("list delta index exceeds platform limits: {index}"))?;
+            if path.len() == 1 {
+                if index == values.len() {
+                    values.push(value);
+                } else if index < values.len() {
+                    values[index] = value;
+                } else {
+                    return Err(format!("list delta append index is invalid: {index}"));
+                }
+                return Ok(());
+            }
+            let child = values
+                .get_mut(index)
+                .ok_or_else(|| format!("list delta path does not exist: {index}"))?;
+            setCoreValueAtPath(child, &path[1..], value)
+        }
+        _ => Err("delta path traverses a scalar value".to_string()),
+    }
+}
+
+/// Removes one value at a typed map/list path.
+fn removeCoreValueAtPath(target: &mut CoreValue, path: &[CoreValue]) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("cannot remove the root Core value".to_string());
+    }
+    let segment = path
+        .first()
+        .expect("non-empty path must have a first segment");
+    match target {
+        CoreValue::Map(fields) => {
+            let CoreValue::String(key) = segment else {
+                return Err("map delta path segment must be a string".to_string());
+            };
+            if path.len() == 1 {
+                fields
+                    .remove(key)
+                    .map(|_| ())
+                    .ok_or_else(|| format!("map delta removal path does not exist: {key}"))
+            } else {
+                let child = fields
+                    .get_mut(key)
+                    .ok_or_else(|| format!("map delta path does not exist: {key}"))?;
+                removeCoreValueAtPath(child, &path[1..])
+            }
+        }
+        CoreValue::List(values) => {
+            let CoreValue::Unsigned(index) = segment else {
+                return Err("list delta path segment must be an unsigned index".to_string());
+            };
+            let index = usize::try_from(*index)
+                .map_err(|_| format!("list delta index exceeds platform limits: {index}"))?;
+            if path.len() == 1 {
+                if index < values.len() {
+                    values.remove(index);
+                    Ok(())
+                } else {
+                    Err(format!("list delta removal index is invalid: {index}"))
+                }
+            } else {
+                let child = values
+                    .get_mut(index)
+                    .ok_or_else(|| format!("list delta path does not exist: {index}"))?;
+                removeCoreValueAtPath(child, &path[1..])
+            }
+        }
+        _ => Err("delta path traverses a scalar value".to_string()),
+    }
+}
+
+/// Estimates the encoded size of one Core value for automatic delta selection.
+fn coreValueSize(value: &CoreValue) -> usize {
+    match value {
+        CoreValue::Null => 1,
+        CoreValue::Bool(_) => 2,
+        CoreValue::Signed(_) | CoreValue::Unsigned(_) | CoreValue::Float(_) => 9,
+        CoreValue::String(value) => value.len() + 1,
+        CoreValue::Bytes(value) => value.len() + 1,
+        CoreValue::List(values) => 2 + values.iter().map(coreValueSize).sum::<usize>(),
+        CoreValue::Map(values) => {
+            2 + values
+                .iter()
+                .map(|(key, value)| key.len() + coreValueSize(value))
+                .sum::<usize>()
+        }
+    }
 }
 
 impl Serialize for CoreValue {
@@ -386,12 +661,32 @@ impl CoreCallResponse {
     }
 }
 
+pub const CORE_INCREMENTAL_VALUES_ARGUMENT: &str = "$coreIncremental";
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CoreWatchRequest {
     pub requestId: CoreRequestId,
     pub targetPath: CoreObjectPath,
     pub propertyName: String,
     pub args: CoreValue,
+}
+
+/// Carries opaque state required to activate the next physical source of one logical watch.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CoreWatchSourceResume {
+    pub generation: i64,
+    pub payload: Vec<u8>,
+}
+
+/// Exposes generic source activation without coupling routing to a business implementation.
+#[async_trait::async_trait(?Send)]
+pub trait CoreWatchSourceActivator {
+    /// Activates the next source for the bound logical stream.
+    async fn activateWatchSource(
+        &mut self,
+        bindingKey: String,
+        resume: CoreWatchSourceResume,
+    ) -> Result<(), CoreLinkError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -453,6 +748,15 @@ impl CoreWatchRequest {
     pub fn registryKey(&self) -> String {
         format!("{}::{}", self.targetPath.key(), self.propertyName)
     }
+
+    /// Reports whether this subscriber accepts generic incremental values.
+    pub fn acceptsIncrementalValues(&self) -> bool {
+        matches!(
+            &self.args,
+            CoreValue::Map(arguments)
+                if arguments.get(CORE_INCREMENTAL_VALUES_ARGUMENT) == Some(&CoreValue::Bool(true))
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -468,6 +772,7 @@ pub struct CoreEvent {
 pub enum CoreEventKind {
     Snapshot,
     Changed,
+    Delta,
     Completed,
 }
 

@@ -13,6 +13,7 @@ use operit_host_api::{
     HostError, HostResult, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeSqliteTransaction,
     RuntimeStorageEntry, RuntimeStorageHost, SqliteRow as HostSqliteRow, SqliteValue,
 };
+use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
 use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
 use rusqlite::types::Value as RusqliteValue;
 
@@ -61,7 +62,7 @@ impl RuntimeStorageHost for TestRuntimeHost {
     }
 
     fn workspaceRootDir(&self) -> Option<PathBuf> {
-        Some(self.root.join("workspaces"))
+        Some(self.root.join(WORKSPACE_DIR_PATH))
     }
 
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
@@ -322,7 +323,7 @@ fn installTestHosts() {
         let host = Arc::new(TestRuntimeHost::new(root));
         setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
             host.root.clone(),
-            host.root.join("workspaces"),
+            host.root.join(WORKSPACE_DIR_PATH),
         ));
         setDefaultRuntimeStorageHost(host.clone());
         setDefaultRuntimeSqliteHost(host);
@@ -335,7 +336,7 @@ fn testPaths(name: &str) -> RuntimeStorePaths {
     let runtimeDir = RuntimeStorePaths::default()
         .runtime_dir()
         .join(format!("sync-tests/{name}-{id}"));
-    RuntimeStorePaths::new(runtimeDir.clone(), runtimeDir.join("workspaces"))
+    RuntimeStorePaths::new(runtimeDir.clone(), runtimeDir.join(WORKSPACE_DIR_PATH))
 }
 
 fn openTestStore(name: &str) -> (RuntimeStorePaths, Arc<AppDatabase>, SqlChatSyncStore) {
@@ -368,6 +369,7 @@ fn message(chatId: &str, timestamp: i64, content: &str) -> MessageEntity {
         outputDurationMs: 0,
         waitDurationMs: 0,
         completedAt: 0,
+        completedExecutionGeneration: 0,
         displayMode: "NORMAL".to_string(),
         isFavorite: false,
     }
@@ -459,10 +461,158 @@ fn upsertOperation(sequence: i64, content: &str) -> SyncOperation {
         entityType: "message".to_string(),
         entityId: "chat-remote:2000".to_string(),
         operation: "upsert".to_string(),
+        semantics: SyncOperationSemantics::EntityState,
         payload: serde_json::to_value(payload).unwrap(),
         createdAt: sequence,
-        schemaVersion: 2,
+        schemaVersion: 5,
     }
+}
+
+/// Verifies that applying a remote chat operation updates observers of the chats table.
+#[test]
+fn remote_chat_operation_invalidates_chat_history_flow() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_sourcePaths, sourceDatabase, sourceSyncStore) = openTestStore("history-flow-source");
+    sourceDatabase
+        .chatDao()
+        .insertChat(chat("remote-flow-chat"))
+        .unwrap();
+    sourceSyncStore
+        .recordChatMetadata("remote-flow-chat")
+        .unwrap();
+    let operations = sourceSyncStore
+        .operationsSince(
+            &SyncClock::default(),
+            &[CHAT_SYNC_DOMAIN.to_string()],
+            10,
+        )
+        .unwrap();
+    assert_eq!(operations.len(), 1);
+
+    AppDatabase::closeDatabase();
+    let (_targetPaths, targetDatabase, targetSyncStore) = openTestStore("history-flow-target");
+    let chatHistoriesFlow = targetDatabase.chatDao().getAllChats().unwrap();
+    let observedChatIds = Arc::new(Mutex::new(Vec::<Vec<String>>::new()));
+    let observedChatIdsForSubscription = Arc::clone(&observedChatIds);
+    let _subscription = chatHistoriesFlow.subscribe(move |histories| {
+        observedChatIdsForSubscription
+            .lock()
+            .unwrap()
+            .push(histories.into_iter().map(|history| history.id).collect());
+    });
+
+    assert!(chatHistoriesFlow.value().is_empty());
+    for operation in &operations {
+        targetSyncStore.applyOperation(operation).unwrap();
+    }
+
+    assert_eq!(
+        chatHistoriesFlow
+            .value()
+            .into_iter()
+            .map(|history| history.id)
+            .collect::<Vec<_>>(),
+        vec!["remote-flow-chat".to_string()]
+    );
+    assert!(observedChatIds
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|chatIds| chatIds == &["remote-flow-chat".to_string()]));
+}
+/// Verifies assistant completion, chat metadata, and sync rows commit as one generation.
+#[test]
+fn assistant_segment_commit_is_atomic_and_synchronizable() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_sourcePaths, sourceDatabase, sourceSyncStore) = openTestStore("assistant-commit-source");
+    let chatId = "chat-assistant-commit";
+    let timestamp = 7_000;
+    sourceDatabase.chatDao().insertChat(chat(chatId)).unwrap();
+    insertChatMessage(&sourceDatabase, chatId, timestamp, "partial");
+
+    let mut completedChat = sourceDatabase
+        .chatDao()
+        .getChatById(chatId)
+        .unwrap()
+        .expect("assistant completion chat must exist");
+    completedChat.updatedAt = 7_100;
+    completedChat.inputTokens = 11;
+    completedChat.outputTokens = 13;
+    completedChat.currentWindowSize = 4_096;
+    let mut completedMessage = message(chatId, timestamp, "complete");
+    completedMessage.completedAt = 7_100;
+    completedMessage.completedExecutionGeneration = 1;
+    completedMessage.inputTokens = 11;
+    completedMessage.outputTokens = 13;
+    let committedClock = sourceSyncStore
+        .commitAssistantMessageSegment(
+            completedChat.clone(),
+            completedMessage.clone(),
+            vec![messagePart(chatId, timestamp, "complete")],
+        )
+        .unwrap();
+    assert!(committedClock.sequenceFor(&sourceSyncStore.originDeviceId) > 0);
+    assert_eq!(
+        sourceDatabase
+            .messageDao()
+            .getMessageByTimestamp(chatId, timestamp)
+            .unwrap()
+            .expect("completed assistant message must exist")
+            .completedExecutionGeneration,
+        1
+    );
+    assert_eq!(
+        sourceDatabase
+            .messagePartDao()
+            .getPartsForMessage(chatId, timestamp, 0)
+            .unwrap()[0]
+            .content,
+        "complete"
+    );
+    assert_eq!(
+        sourceDatabase
+            .chatDao()
+            .getChatById(chatId)
+            .unwrap()
+            .expect("completed assistant chat metadata must exist"),
+        completedChat
+    );
+    let operations = sourceSyncStore
+        .operationsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.to_string()], 10)
+        .unwrap();
+    AppDatabase::closeDatabase();
+
+    let (_targetPaths, targetDatabase, targetSyncStore) = openTestStore("assistant-commit-target");
+    for operation in &operations {
+        targetSyncStore.applyOperation(operation).unwrap();
+    }
+    assert_eq!(
+        targetDatabase
+            .messageDao()
+            .getMessageByTimestamp(chatId, timestamp)
+            .unwrap()
+            .expect("synchronized completed assistant message must exist")
+            .completedExecutionGeneration,
+        1
+    );
+    assert_eq!(
+        targetDatabase
+            .messagePartDao()
+            .getPartsForMessage(chatId, timestamp, 0)
+            .unwrap()[0]
+            .content,
+        "complete"
+    );
+    assert_eq!(
+        targetDatabase
+            .chatDao()
+            .getChatById(chatId)
+            .unwrap()
+            .expect("synchronized completed assistant chat metadata must exist")
+            .currentWindowSize,
+        4_096
+    );
+    AppDatabase::closeDatabase();
 }
 
 #[test]
@@ -499,6 +649,29 @@ fn chat_dao_update_chats_preserves_child_messages() {
             .content,
         "kept"
     );
+    AppDatabase::closeDatabase();
+}
+
+/// Verifies the logical message identity replaces repeated writes instead of duplicating rows.
+#[test]
+fn repeated_message_entity_insert_replaces_the_existing_row() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_paths, database, _syncStore) = openTestStore("message-entity-identity");
+    let chatId = "chat-message-entity-identity";
+    let timestamp = 9_200;
+    database.chatDao().insertChat(chat(chatId)).unwrap();
+
+    let mut first = message(chatId, timestamp, "first");
+    first.outputTokens = 1;
+    database.messageDao().insertMessage(first).unwrap();
+
+    let mut second = message(chatId, timestamp, "second");
+    second.outputTokens = 2;
+    database.messageDao().insertMessage(second).unwrap();
+
+    let messages = database.messageDao().getMessagesForChat(chatId).unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].outputTokens, 2);
     AppDatabase::closeDatabase();
 }
 
@@ -589,6 +762,10 @@ fn migrates_version_22_messages_to_final_structured_parts() {
                     createdAt INTEGER NOT NULL,
                     schemaVersion INTEGER NOT NULL
                 );
+                CREATE TABLE sync_sql_clocks (
+                    originDeviceId TEXT PRIMARY KEY NOT NULL,
+                    sequence INTEGER NOT NULL
+                );
                 CREATE TABLE sync_sql_message_rows (
                     opId TEXT NOT NULL,
                     chatId TEXT NOT NULL,
@@ -672,7 +849,7 @@ fn migrates_version_22_messages_to_final_structured_parts() {
                 sqliteParams![],
             )
             .unwrap(),
-        2
+        5
     );
     AppDatabase::closeDatabase();
 }
@@ -681,30 +858,116 @@ fn migrates_version_22_messages_to_final_structured_parts() {
 #[test]
 fn migrates_version_23_message_revisions_to_canonical_visible_parts() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
-    let (paths, database, _syncStore) = openTestStore("canonical-visible-parts-migration");
+    AppDatabase::closeDatabase();
+    let paths = testPaths("canonical-visible-parts-migration");
     let chatId = "chat-23";
     let timestamp = 23_000;
-    insertChatMessage(&database, chatId, timestamp, "");
-    database
-        .messagePartDao()
-        .replaceParts(
-            chatId,
-            timestamp,
-            0,
-            vec![MessagePartEntity::fromMessagePart(
-                chatId.to_string(),
-                timestamp,
-                0,
-                operit_model::MessagePart::MessagePart::thinking(
-                    "part-0".to_string(),
-                    0,
-                    "internal only".to_string(),
-                ),
-            )],
-        )
-        .unwrap();
-    database.store().setUserVersion(23).unwrap();
-    AppDatabase::closeDatabase();
+    {
+        let store = SqliteStore::open(paths.sqlite_database_path()).unwrap();
+        store
+            .executeBatch(
+                r#"
+                CREATE TABLE chats (id TEXT PRIMARY KEY NOT NULL);
+                CREATE TABLE messages (
+                    messageId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    chatId TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    orderIndex INTEGER NOT NULL,
+                    roleName TEXT NOT NULL DEFAULT '',
+                    selectedVariantIndex INTEGER NOT NULL DEFAULT 0,
+                    provider TEXT NOT NULL DEFAULT '',
+                    modelName TEXT NOT NULL DEFAULT '',
+                    inputTokens INTEGER NOT NULL DEFAULT 0,
+                    outputTokens INTEGER NOT NULL DEFAULT 0,
+                    cachedInputTokens INTEGER NOT NULL DEFAULT 0,
+                    sentAt INTEGER NOT NULL DEFAULT 0,
+                    outputDurationMs INTEGER NOT NULL DEFAULT 0,
+                    waitDurationMs INTEGER NOT NULL DEFAULT 0,
+                    completedAt INTEGER NOT NULL DEFAULT 0,
+                    displayMode TEXT NOT NULL DEFAULT 'NORMAL',
+                    isFavorite INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX index_messages_chatId_timestamp
+                    ON messages(chatId, timestamp);
+                CREATE TABLE message_variants (
+                    variantId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    chatId TEXT NOT NULL,
+                    messageTimestamp INTEGER NOT NULL,
+                    variantIndex INTEGER NOT NULL,
+                    roleName TEXT NOT NULL DEFAULT '',
+                    provider TEXT NOT NULL DEFAULT '',
+                    modelName TEXT NOT NULL DEFAULT '',
+                    inputTokens INTEGER NOT NULL DEFAULT 0,
+                    outputTokens INTEGER NOT NULL DEFAULT 0,
+                    cachedInputTokens INTEGER NOT NULL DEFAULT 0,
+                    sentAt INTEGER NOT NULL DEFAULT 0,
+                    outputDurationMs INTEGER NOT NULL DEFAULT 0,
+                    waitDurationMs INTEGER NOT NULL DEFAULT 0,
+                    completedAt INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE message_parts (
+                    chatId TEXT NOT NULL,
+                    messageTimestamp INTEGER NOT NULL,
+                    variantIndex INTEGER NOT NULL,
+                    partId TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    toolCallId TEXT,
+                    toolName TEXT,
+                    attributesJson TEXT NOT NULL,
+                    PRIMARY KEY(chatId, messageTimestamp, variantIndex, partId)
+                );
+                CREATE TABLE sync_sql_clocks (
+                    originDeviceId TEXT PRIMARY KEY NOT NULL,
+                    sequence INTEGER NOT NULL
+                );
+                CREATE TABLE sync_sql_operations (
+                    opId TEXT PRIMARY KEY NOT NULL,
+                    originDeviceId TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    domain TEXT NOT NULL,
+                    entityType TEXT NOT NULL,
+                    entityId TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    createdAt INTEGER NOT NULL,
+                    schemaVersion INTEGER NOT NULL
+                );
+                CREATE TABLE sync_sql_message_rows (
+                    opId TEXT NOT NULL,
+                    chatId TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    orderIndex INTEGER NOT NULL,
+                    roleName TEXT NOT NULL,
+                    selectedVariantIndex INTEGER NOT NULL,
+                    provider TEXT NOT NULL,
+                    modelName TEXT NOT NULL,
+                    inputTokens INTEGER NOT NULL,
+                    outputTokens INTEGER NOT NULL,
+                    cachedInputTokens INTEGER NOT NULL,
+                    sentAt INTEGER NOT NULL,
+                    outputDurationMs INTEGER NOT NULL,
+                    waitDurationMs INTEGER NOT NULL,
+                    completedAt INTEGER NOT NULL,
+                    displayMode TEXT NOT NULL,
+                    isFavorite INTEGER NOT NULL,
+                    PRIMARY KEY(opId, chatId, timestamp)
+                );
+                INSERT INTO chats (id) VALUES ('chat-23');
+                INSERT INTO messages (chatId, sender, timestamp, orderIndex)
+                VALUES ('chat-23', 'ai', 23000, 0);
+                INSERT INTO message_parts (
+                    chatId, messageTimestamp, variantIndex, partId, sequence, kind,
+                    content, toolCallId, toolName, attributesJson
+                ) VALUES ('chat-23', 23000, 0, 'part-0', 0, 'thinking',
+                    'internal only', NULL, NULL, '{}');
+                "#,
+            )
+            .unwrap();
+        store.setUserVersion(23).unwrap();
+    }
 
     let database = AppDatabase::getDatabase(paths).unwrap();
     let parts = database
@@ -728,6 +991,60 @@ fn migrates_version_23_message_revisions_to_canonical_visible_parts() {
     AppDatabase::closeDatabase();
 }
 
+/// Verifies version-25 migration deterministically renames execution generation columns.
+#[test]
+fn migrates_version_25_execution_generation_columns() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    AppDatabase::closeDatabase();
+    let paths = testPaths("execution-generation-migration");
+    {
+        let store = SqliteStore::open(paths.sqlite_database_path()).unwrap();
+        store
+            .executeBatch(
+                r#"
+                CREATE TABLE messages (
+                    messageId INTEGER PRIMARY KEY NOT NULL,
+                    completedRouteGeneration INTEGER NOT NULL
+                );
+                CREATE TABLE sync_sql_message_rows (
+                    opId TEXT PRIMARY KEY NOT NULL,
+                    completedRouteGeneration INTEGER NOT NULL
+                );
+                INSERT INTO messages (messageId, completedRouteGeneration) VALUES (1, 7);
+                INSERT INTO sync_sql_message_rows (opId, completedRouteGeneration)
+                VALUES ('operation-25', 9);
+                "#,
+            )
+            .unwrap();
+        store.setUserVersion(25).unwrap();
+    }
+
+    let database = AppDatabase::getDatabase(paths).unwrap();
+
+    assert_eq!(database.store().getUserVersion().unwrap(), DATABASE_VERSION);
+    assert_eq!(
+        database
+            .store()
+            .queryScalar::<i64>(
+                "SELECT completedExecutionGeneration FROM messages WHERE messageId = 1",
+                sqliteParams![],
+            )
+            .unwrap(),
+        7
+    );
+    assert_eq!(
+        database
+            .store()
+            .queryScalar::<i64>(
+                "SELECT completedExecutionGeneration FROM sync_sql_message_rows WHERE opId = 'operation-25'",
+                sqliteParams![],
+            )
+            .unwrap(),
+        9
+    );
+    AppDatabase::closeDatabase();
+}
+
 #[test]
 fn record_message_snapshots_are_merged_into_final_stream_state() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
@@ -747,7 +1064,7 @@ fn record_message_snapshots_are_merged_into_final_stream_state() {
         .unwrap();
     assert_eq!(operations.len(), 1);
     assert_eq!(operations[0].sequence, 100);
-    assert_eq!(operations[0].schemaVersion, 2);
+    assert_eq!(operations[0].schemaVersion, 5);
     let payload = exportedPayload(&operations[0]);
     assert_eq!(payload.messageRows.len(), 1);
     assert_eq!(payload.partRows[0].content, "token-100");

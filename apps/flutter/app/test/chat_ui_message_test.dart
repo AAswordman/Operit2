@@ -100,7 +100,7 @@ ChatUiMessage _message({
   required String sender,
   required List<MessagePart> parts,
 }) {
-  return ChatUiMessage(
+  return ChatMessage(
     sender: sender,
     parts: parts,
     timestamp: 1,
@@ -115,9 +115,9 @@ ChatUiMessage _message({
     sentAt: 0,
     outputDurationMs: 0,
     waitDurationMs: 0,
-    displayMode: ChatMessageDisplayMode.normal.value,
-    isFavorite: false,
-    isVariantPreview: false,
     completedAt: 1,
+    displayMode: ChatMessageDisplayMode.normal,
+    isFavorite: false,
+    contentStream: null,
   );
 }

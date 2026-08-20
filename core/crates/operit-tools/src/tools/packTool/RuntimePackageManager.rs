@@ -44,9 +44,9 @@ use operit_store::PreferencesDataStore::{
     stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
-use operit_util::AppLogger::AppLogger;
 use operit_util::stream::HotStream::MutableSharedStreamImpl;
 use operit_util::stream::Stream::{CollectFuture, Stream};
+use operit_util::AppLogger::AppLogger;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -309,8 +309,7 @@ impl RuntimePackageManager {
         envOverrides: BTreeMap<String, String>,
     ) -> Result<Option<String>, String> {
         let textResources = self.toolPkgTextResources(containerPackageName)?;
-        self
-            .getToolPkgExecutionEngine(contextKey, containerPackageName)
+        self.getToolPkgExecutionEngine(contextKey, containerPackageName)
             .execute_compose_dsl_script_async(
                 script.to_string(),
                 runtimeOptions,
@@ -2553,7 +2552,7 @@ impl RuntimePackageManager {
             records.remove(&packageName);
         }
         if recordsChanged {
-            self.saveBundledExternalImportRecords(&records)?;
+            self.saveBundledExternalImportRecordsLocally(&records)?;
         }
         Ok(())
     }
@@ -3380,6 +3379,24 @@ impl RuntimePackageManager {
             .map_err(|error| error.to_string())
     }
 
+    /// Persists startup package-record reconciliation without publishing a Space mutation.
+    #[allow(non_snake_case)]
+    fn saveBundledExternalImportRecordsLocally(
+        &self,
+        records: &BTreeMap<String, BundledExternalImportRecord>,
+    ) -> Result<(), String> {
+        let updatedJson = serde_json::to_string(records).map_err(|error| error.to_string())?;
+        self.dataStore
+            .migrate(|preferences| {
+                preferences.set(
+                    &stringPreferencesKey(BUNDLED_EXTERNAL_IMPORTS_KEY),
+                    updatedJson,
+                );
+                Ok::<(), operit_store::PreferencesDataStore::PreferencesDataStoreError>(())
+            })
+            .map_err(|error| error.to_string())
+    }
+
     #[allow(non_snake_case)]
     fn upsertBundledExternalImportRecord(
         &self,
@@ -3632,9 +3649,7 @@ impl RuntimePackageManager {
         // Registration runs package-owned code; per-load ownership prevents one timed-out
         // package from retaining state or blocking registration of the next package.
         let registrationEngine = ToolPkgRegistrationEngineGuard {
-            engine: self
-                .toolPkgExecutionEngineFactory
-                .createExecutionEngine(),
+            engine: self.toolPkgExecutionEngineFactory.createExecutionEngine(),
         };
         operation(registrationEngine.engine.as_ref())
     }

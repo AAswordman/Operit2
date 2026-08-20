@@ -5,8 +5,9 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use operit_host_api::{
     FileEntry, FileSystemHost, FindFilesRequest, GrepCodeRequest, GrepCodeResult, HttpHost,
-    HttpRequestData, SystemOperationHost,
+    HttpRequestData, RuntimeStorageHost, SystemOperationHost,
 };
+use operit_store::RuntimeFileSyncStore::RuntimeFileSyncStore;
 
 use crate::runtime_support::{
     RuntimeStructuredEditAction, RuntimeStructuredEditOperation, ToolRuntimeSupport,
@@ -28,6 +29,9 @@ use operit_tools::ToolExecutionManager::{
     ToolValidationResult,
 };
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};
+use operit_util::RuntimeStorageLayout::{
+    EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH, RUNTIME_ROOT_PATH_PREFIX, RUNTIME_SYNC_DIR_PATH,
+};
 
 use super::StandardWebVisitTool::StandardWebVisitTool;
 
@@ -37,6 +41,7 @@ pub struct StandardFileSystemTools {
     pub host: Arc<dyn FileSystemHost>,
     pub httpHost: Arc<dyn HttpHost>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
+    runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
     runtimeStoreRoot: PathBuf,
     workspaceCollectionRoot: PathBuf,
     runtimeSupport: Arc<dyn ToolRuntimeSupport>,
@@ -48,6 +53,7 @@ impl StandardFileSystemTools {
         host: Arc<dyn FileSystemHost>,
         httpHost: Arc<dyn HttpHost>,
         systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
+        runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
         runtimeStoreRoot: PathBuf,
         workspaceCollectionRoot: PathBuf,
         runtimeSupport: Arc<dyn ToolRuntimeSupport>,
@@ -56,6 +62,7 @@ impl StandardFileSystemTools {
             host,
             httpHost,
             systemOperationHost,
+            runtimeStorageHost,
             runtimeStoreRoot,
             workspaceCollectionRoot,
             runtimeSupport,
@@ -70,6 +77,48 @@ impl StandardFileSystemTools {
                 self.workspaceCollectionRoot.clone(),
             ),
         )
+    }
+
+    /// Writes one text file through the synchronized plugin-config store or its mapped host.
+    #[allow(non_snake_case)]
+    fn writeMappedText(
+        &self,
+        vfs: &VisualFileSystem,
+        path: &str,
+        content: &str,
+        append: bool,
+    ) -> Result<(), String> {
+        match pluginConfigStoragePath(path)? {
+            Some(storagePath) => {
+                let store = RuntimeFileSyncStore::new(
+                    self.runtimeStorageHost.clone(),
+                    RUNTIME_SYNC_DIR_PATH,
+                );
+                if append {
+                    store.appendBytes(&storagePath, content.as_bytes())
+                } else {
+                    store.writeBytes(&storagePath, content.as_bytes())
+                }
+            }
+            None => vfs.writeFile(path, content, append),
+        }
+    }
+
+    /// Writes one binary file through the synchronized plugin-config store or its mapped host.
+    #[allow(non_snake_case)]
+    fn writeMappedBytes(
+        &self,
+        vfs: &VisualFileSystem,
+        path: &str,
+        content: &[u8],
+    ) -> Result<(), String> {
+        match pluginConfigStoragePath(path)? {
+            Some(storagePath) => {
+                RuntimeFileSyncStore::new(self.runtimeStorageHost.clone(), RUNTIME_SYNC_DIR_PATH)
+                    .writeBytes(&storagePath, content)
+            }
+            None => vfs.writeFileBytes(path, content),
+        }
     }
 
     #[allow(non_snake_case)]
@@ -342,7 +391,7 @@ impl StandardFileSystemTools {
         let append = parameterBool(tool, "append");
         let vfs = self.vfs();
 
-        match vfs.writeFile(&path, &content, append) {
+        match self.writeMappedText(&vfs, &path, &content, append) {
             Ok(()) => {
                 let operation = if append { "append" } else { "write" };
                 let details = if append {
@@ -373,7 +422,7 @@ impl StandardFileSystemTools {
                 return toolError(tool, fileOperationDataToString(&message), message);
             }
         };
-        match vfs.writeFileBytes(&path, &decoded) {
+        match self.writeMappedBytes(&vfs, &path, &decoded) {
             Ok(()) => successData(
                 tool,
                 fileOperationResult(
@@ -771,7 +820,7 @@ impl StandardFileSystemTools {
         }
         let bytes = response.body;
 
-        match vfs.writeFileBytes(&destPath, bytes.as_ref()) {
+        match self.writeMappedBytes(&vfs, &destPath, bytes.as_ref()) {
             Ok(()) => successData(
                 tool,
                 fileOperationResult(
@@ -1137,6 +1186,24 @@ pub enum FileSystemToolOperation {
     UnzipFiles,
     OpenFile,
     ShareFile,
+}
+
+/// Maps one ToolPkg or JS plugin configuration VFS file into runtime storage.
+#[allow(non_snake_case)]
+fn pluginConfigStoragePath(vfsPath: &str) -> Result<Option<String>, String> {
+    let relativeRoot = EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH
+        .strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
+        .expect("plugin configuration layout must be below runtime");
+    let vfsRoot = PathMapper::joinVfsPath("/app/data", relativeRoot)?;
+    let Some(relativePath) = PathMapper::relativePath(&vfsRoot, vfsPath)? else {
+        return Ok(None);
+    };
+    if relativePath.is_empty() {
+        return Err("plugin configuration writes must identify a file".to_string());
+    }
+    Ok(Some(format!(
+        "{EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH}/{relativePath}"
+    )))
 }
 
 impl ToolExecutor for FileSystemToolExecutor {

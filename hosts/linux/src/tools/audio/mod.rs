@@ -81,7 +81,8 @@ impl LinuxAudioPlaybackHost {
         match session.pausedAtMs {
             Some(positionMs) => positionMs,
             None => {
-                session.startPositionMs + i64::try_from(session.startedAt.elapsed().as_millis()).unwrap_or(i64::MAX)
+                session.startPositionMs
+                    + i64::try_from(session.startedAt.elapsed().as_millis()).unwrap_or(i64::MAX)
             }
         }
     }
@@ -147,7 +148,9 @@ impl AudioPlaybackHost for LinuxAudioPlaybackHost {
         Command::new("xdg-open")
             .arg(path)
             .spawn()
-            .map_err(|error| HostError::new(format!("Failed to start Linux audio playback: {error}")))?;
+            .map_err(|error| {
+                HostError::new(format!("Failed to start Linux audio playback: {error}"))
+            })?;
         Ok(AudioPlaybackStatus {
             path: path.to_string(),
             started: true,
@@ -175,7 +178,9 @@ impl AudioPlaybackHost for LinuxAudioPlaybackHost {
             return Err(HostError::new("music volume must be between 0 and 1"));
         }
         if request.startPositionMs < 0 {
-            return Err(HostError::new("music start_position_ms must be non-negative"));
+            return Err(HostError::new(
+                "music start_position_ms must be non-negative",
+            ));
         }
         let child = Self::startMusicProcess(&request, request.startPositionMs)?;
         let session = LinuxMusicSession {

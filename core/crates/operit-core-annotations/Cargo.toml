@@ -1,0 +1,9 @@
+[package]
+name = "operit-core-annotations"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+proc-macro = true

@@ -1,7 +1,10 @@
 // ignore_for_file: file_names
 
 import 'package:flutter_test/flutter_test.dart';
+import 'dart:typed_data';
+
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
+import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
@@ -39,6 +42,12 @@ class _RecordingBridge extends OperitRuntimeBridge {
   final _RecordingPushSink sink = _RecordingPushSink();
   CorePushRequest? pushRequest;
 
+  /// Rejects encoded calls because this test only exercises reverse streams.
+  @override
+  Future<Uint8List> callBytes(CoreCallRequest request) {
+    throw UnimplementedError();
+  }
+
   /// Rejects direct calls because this test only exercises reverse streams.
   @override
   Future<Object?> call(CoreCallRequest request) {
@@ -50,6 +59,18 @@ class _RecordingBridge extends OperitRuntimeBridge {
   Future<CorePushSink> push(CorePushRequest request) async {
     pushRequest = request;
     return sink;
+  }
+
+  /// Rejects embedded streams because this test only exercises reverse streams.
+  @override
+  Stream<T> openEmbeddedCoreStream<T>(
+    String streamId,
+    CoreObjectPath targetPath,
+    String propertyName,
+    Object? args,
+    T Function(CoreLinkValueReader reader) decode,
+  ) {
+    throw UnimplementedError();
   }
 
   /// Rejects snapshots because this test only exercises reverse streams.

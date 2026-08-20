@@ -73,9 +73,6 @@ pub trait ProviderRuntimeSupport: Send + Sync {
     /// Returns deployed skill package descriptions for provider prompt composition.
     fn aiVisibleSkillPackages(&self) -> Result<Vec<ProviderPackageInfo>, String>;
 
-    /// Initializes function/model binding state.
-    fn initializeFunctionModelBindings(&self, rootDir: PathBuf) -> Result<(), String>;
-
     /// Returns the model binding for a function.
     fn modelBindingForFunction(
         &self,

@@ -8,4 +8,5 @@ publish = false
 [dependencies]
 operit-host-api = { path = "../../../core/crates/operit-host-api" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "multipart", "rustls-tls", "stream"] }
+tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }

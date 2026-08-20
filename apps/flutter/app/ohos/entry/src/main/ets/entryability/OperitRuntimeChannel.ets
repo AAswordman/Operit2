@@ -238,6 +238,10 @@ interface BleCharacteristicPayload {
 
 interface RuntimeNativeModule {
   create(runtimeRoot: string, workspaceRoot: string, systemLanguageCode: string): bigint;
+  /** Reads the client bootstrap record before the native Runtime is created. */
+  runtimeBootstrapRead(defaultRuntimeRoot: string): string;
+  /** Writes the client bootstrap record before the native Runtime is created. */
+  runtimeBootstrapWrite(defaultRuntimeRoot: string, content: string): string;
   destroy(handle: bigint): void;
   call(handle: bigint, request: ArrayBuffer): ArrayBuffer;
   pushOpen(handle: bigint, request: ArrayBuffer): ArrayBuffer;
@@ -399,6 +403,15 @@ export class OperitRuntimeChannel {
           return;
         case 'localRuntimeStorageDefaults':
           result.success(this.defaultStoragePaths());
+          return;
+        case 'runtimeBootstrapRead':
+          result.success(nativeBridge.runtimeBootstrapRead(this.defaultStoragePaths().runtimeRoot));
+          return;
+        case 'runtimeBootstrapWrite':
+          result.success(nativeBridge.runtimeBootstrapWrite(
+            this.defaultStoragePaths().runtimeRoot,
+            this.requiredStringArg(call, 'runtimeBootstrapWrite')
+          ));
           return;
         case 'localRuntimeStoragePaths':
           result.success(this.storagePaths(call));

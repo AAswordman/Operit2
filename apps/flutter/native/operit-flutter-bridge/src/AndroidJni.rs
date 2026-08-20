@@ -93,6 +93,76 @@ pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_createError(
     )
 }
 
+/// Reads the client bootstrap record before the Android Runtime is created.
+#[no_mangle]
+pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_runtimeBootstrapRead(
+    mut env: JNIEnv,
+    _class: JClass,
+    default_runtime_root: JString,
+) -> jstring {
+    let default_runtime_root = match env.get_string(&default_runtime_root) {
+        Ok(value) => PathBuf::from(String::from(value)),
+        Err(error) => {
+            return new_java_string(
+                env,
+                &serde_json::json!({
+                    "ok": false,
+                    "value": null,
+                    "error": format!("default Runtime root is invalid: {error}"),
+                })
+                .to_string(),
+            );
+        }
+    };
+    new_java_string(
+        env,
+        &crate::RuntimeBootstrapStore::readNativeRuntimeBootstrapConfig(default_runtime_root),
+    )
+}
+
+/// Writes the client bootstrap record before the Android Runtime is created.
+#[no_mangle]
+pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_runtimeBootstrapWrite(
+    mut env: JNIEnv,
+    _class: JClass,
+    default_runtime_root: JString,
+    content: JString,
+) -> jstring {
+    let default_runtime_root = match env.get_string(&default_runtime_root) {
+        Ok(value) => PathBuf::from(String::from(value)),
+        Err(error) => {
+            return new_java_string(
+                env,
+                &serde_json::json!({
+                    "ok": false,
+                    "error": format!("default Runtime root is invalid: {error}"),
+                })
+                .to_string(),
+            );
+        }
+    };
+    let content = match env.get_string(&content) {
+        Ok(value) => String::from(value),
+        Err(error) => {
+            return new_java_string(
+                env,
+                &serde_json::json!({
+                    "ok": false,
+                    "error": format!("runtime bootstrap config is invalid: {error}"),
+                })
+                .to_string(),
+            );
+        }
+    };
+    new_java_string(
+        env,
+        &crate::RuntimeBootstrapStore::writeNativeRuntimeBootstrapConfig(
+            default_runtime_root,
+            &content,
+        ),
+    )
+}
+
 #[no_mangle]
 pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_destroy(
     _env: JNIEnv,

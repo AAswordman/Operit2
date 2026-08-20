@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../../../../core/logging/ClientLogger.dart';
+import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../main/MainLayoutController.dart';
@@ -21,7 +22,6 @@ import '../components/style/input/common/PendingQueueMessageItem.dart';
 import '../components/workspace/WorkspaceLayoutMetrics.dart';
 import '../components/workspace/WorkspaceTopBarButton.dart';
 import '../speech/LocalSpeechRecorder.dart';
-import '../viewmodel/ChatSwitchRenderCoordinator.dart';
 import '../viewmodel/ChatViewModel.dart';
 
 bool _chatWorkspaceOpen = false;
@@ -155,7 +155,6 @@ class _ChatContentData {
     required this.isMultiSelectMode,
     required this.selectedMessageIndices,
     required this.currentCharacterCardAvatarUri,
-    required this.isPreparingChatSwitch,
     required this.pendingQueueMessages,
     required this.isPendingQueueExpanded,
     required this.attachments,
@@ -166,7 +165,7 @@ class _ChatContentData {
   final List<ChatUiMessage> messages;
   final bool loading;
   final String? errorMessage;
-  final ChatInputProcessingState inputProcessingState;
+  final core_proxy.InputProcessingState inputProcessingState;
   final String? currentChatId;
   final bool hasOlderDisplayHistory;
   final bool hasNewerDisplayHistory;
@@ -174,7 +173,6 @@ class _ChatContentData {
   final bool isMultiSelectMode;
   final Set<int> selectedMessageIndices;
   final String? currentCharacterCardAvatarUri;
-  final bool isPreparingChatSwitch;
   final List<PendingQueueMessageItem> pendingQueueMessages;
   final bool isPendingQueueExpanded;
   final List<AttachmentInfo> attachments;
@@ -198,17 +196,12 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   late final ValueNotifier<String?> _toastMessageNotifier;
 
   bool _loading = true;
-  ChatInputProcessingState _inputProcessingState =
-      const ChatInputProcessingState(
-        kind: 'Idle',
-        message: '',
-        progress: 0,
-        toolName: '',
-      );
+  core_proxy.InputProcessingState _inputProcessingState =
+      core_proxy.InputProcessingState.idle();
   String? _errorMessage;
-  StreamSubscription<ChatViewModelSnapshot>? _mainStateSubscription;
+  StreamSubscription<List<ChatUiMessage>>? _messagesSubscription;
+  StreamSubscription<core_proxy.ChatState>? _chatStateSubscription;
   StreamSubscription<String?>? _toastEventSubscription;
-  ChatSwitchRenderRequest? _activeChatSwitchRequest;
   TopBarController? _topBarController;
   MainLayoutController? _mainLayoutController;
   final Object _topBarTitleOwner = Object();
@@ -230,10 +223,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   bool _hasOlderDisplayHistory = false;
   bool _hasNewerDisplayHistory = false;
   bool _isLoadingDisplayWindow = false;
-  bool _isPreparingChatSwitch = false;
   bool _bottomScrollScheduled = false;
-  int _chatSwitchRenderGeneration = 0;
-  ChatViewModelSnapshot? _pendingChatSwitchSnapshot;
   late bool _workspaceOpen;
   bool _isCurrentMainScreen = true;
   bool _topBarActionsUpdateScheduled = false;
@@ -256,13 +246,9 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _autoScrollToBottomNotifier = ValueNotifier<bool>(_autoScrollToBottom);
     _toastMessageNotifier = ValueNotifier<String?>(_toastMessage);
     _workspaceOpen = _chatWorkspaceOpen;
-    _watchMainState();
+    _watchChatFlows();
     _watchToastEvent();
-    ChatSwitchRenderCoordinator.requests.addListener(
-      _onChatSwitchRenderRequest,
-    );
     PendingChatDraftHandler.revision.addListener(_consumePendingChatDraft);
-    _onChatSwitchRenderRequest();
     _messageController.addListener(_onMessageControllerChanged);
     unawaited(_loadLongPastedTextInputSettings());
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -294,9 +280,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   @override
   void dispose() {
     _saveCurrentInputDraft();
-    ChatSwitchRenderCoordinator.requests.removeListener(
-      _onChatSwitchRenderRequest,
-    );
     PendingChatDraftHandler.revision.removeListener(_consumePendingChatDraft);
     _messageController.removeListener(_onMessageControllerChanged);
     _messageController.dispose();
@@ -305,7 +288,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _chatContentDataNotifier.dispose();
     _autoScrollToBottomNotifier.dispose();
     _toastMessageNotifier.dispose();
-    _mainStateSubscription?.cancel();
+    _messagesSubscription?.cancel();
+    _chatStateSubscription?.cancel();
     _toastEventSubscription?.cancel();
     unawaited(_speechRecorder.dispose());
     _topBarController?.clearActions(owner: _topBarActionsOwner);
@@ -881,181 +865,69 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     });
   }
 
-  void _watchMainState() {
-    _mainStateSubscription?.cancel();
-    _mainStateSubscription = _viewModel.watchMainState().listen(
-      (snapshot) {
-        if (!mounted) {
-          return;
-        }
-        _applySnapshot(snapshot);
-        _updateTopBarTitle();
-        _scheduleScrollToBottom();
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        debugPrint('Failed to watch chat state: $error\n$stackTrace');
-        if (!mounted) {
-          return;
-        }
-        _errorMessage = error.toString();
-        _loading = false;
-        _publishChatContentData();
-      },
+  /// Opens the independent routed message and chat-state streams for this surface.
+  void _watchChatFlows() {
+    _messagesSubscription?.cancel();
+    _chatStateSubscription?.cancel();
+    _messagesSubscription = _viewModel.watchMessages().listen(
+      _applyMessages,
+      onError: _handleChatFlowError,
+    );
+    _chatStateSubscription = _viewModel.watchChatState().listen(
+      _applyChatState,
+      onError: _handleChatFlowError,
     );
   }
 
-  void _onChatSwitchRenderRequest() {
-    final request = ChatSwitchRenderCoordinator.requests.value;
-    if (request == null) {
-      _activeChatSwitchRequest = null;
-      _pendingChatSwitchSnapshot = null;
-      if (_isPreparingChatSwitch) {
-        _chatSwitchRenderGeneration += 1;
-        _mutateChatContentData(() {
-          _isPreparingChatSwitch = false;
-        });
-      }
+  /// Applies a message-window change without changing chat execution state.
+  void _applyMessages(List<ChatUiMessage> messages) {
+    if (!mounted) {
       return;
     }
-    if (request.targetChatId == _currentChatId) {
-      return;
+    _errorMessage = null;
+    _messages
+      ..clear()
+      ..addAll(messages);
+    if (_selectedMessageIndices.isNotEmpty) {
+      _selectedMessageIndices = _selectedMessageIndices.where((index) {
+        if (index < 0 || index >= messages.length) {
+          return false;
+        }
+        final sender = messages[index].sender;
+        return sender == 'user' || sender == 'ai';
+      }).toSet();
     }
-    _activeChatSwitchRequest = request;
-    _pendingChatSwitchSnapshot = null;
-    _chatSwitchRenderGeneration += 1;
-    _setAutoScrollToBottom(true);
-    if (!_isPreparingChatSwitch) {
-      _mutateChatContentData(() {
-        _isPreparingChatSwitch = true;
-        _errorMessage = null;
-      });
-    }
+    _publishChatContentData();
+    _scheduleScrollToBottom();
   }
 
-  void _applySnapshot(ChatViewModelSnapshot snapshot) {
-    final activeRequest = _activeChatSwitchRequest;
-    if (_isPreparingChatSwitch && activeRequest != null) {
-      if (snapshot.currentChatId != activeRequest.targetChatId) {
-        return;
-      }
-      _prepareChatSwitchSnapshot(snapshot);
+  /// Applies one routed chat-state change without replacing the message window.
+  void _applyChatState(core_proxy.ChatState state) {
+    if (!mounted) {
       return;
     }
-    final isChatSwitch =
-        _currentChatId != null &&
-        snapshot.currentChatId != null &&
-        _currentChatId != snapshot.currentChatId;
-    if (isChatSwitch) {
-      _prepareChatSwitchSnapshot(snapshot);
-      return;
-    }
-    _commitSnapshot(snapshot, keepPreparingChatSwitch: _isPreparingChatSwitch);
-  }
-
-  void _prepareChatSwitchSnapshot(ChatViewModelSnapshot snapshot) {
-    _pendingChatSwitchSnapshot = snapshot;
-    final generation = ++_chatSwitchRenderGeneration;
-    if (!_isPreparingChatSwitch) {
-      _mutateChatContentData(() {
-        _isPreparingChatSwitch = true;
-        _errorMessage = null;
-      });
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _commitPreparedChatSwitchSnapshot(generation);
-    });
-  }
-
-  Future<void> _commitPreparedChatSwitchSnapshot(int generation) async {
-    await WidgetsBinding.instance.endOfFrame;
-    if (!mounted || generation != _chatSwitchRenderGeneration) {
-      return;
-    }
-    final snapshot = _pendingChatSwitchSnapshot;
-    if (snapshot == null) {
-      return;
-    }
-    _pendingChatSwitchSnapshot = null;
-    _commitSnapshot(snapshot, keepPreparingChatSwitch: true);
-    _updateTopBarTitle();
-    final renderReady = await _waitForPreparedChatSwitchRender(generation);
-    if (!renderReady) {
-      return;
-    }
-    _jumpToBottomAfterPreparedSwitch();
-    await WidgetsBinding.instance.endOfFrame;
-    if (!mounted || generation != _chatSwitchRenderGeneration) {
-      return;
-    }
-    _mutateChatContentData(() {
-      _isPreparingChatSwitch = false;
-    });
-    _activeChatSwitchRequest = null;
-    ChatSwitchRenderCoordinator.clear();
-  }
-
-  Future<bool> _waitForPreparedChatSwitchRender(int generation) async {
-    for (var frame = 0; frame < 2; frame++) {
-      await WidgetsBinding.instance.endOfFrame;
-      if (!mounted || generation != _chatSwitchRenderGeneration) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  void _commitSnapshot(
-    ChatViewModelSnapshot snapshot, {
-    required bool keepPreparingChatSwitch,
-  }) {
-    final chatChanged = _currentChatId != snapshot.currentChatId;
+    final chatChanged = _currentChatId != state.currentChatId;
     final workspaceChanged =
-        _currentChatId != snapshot.currentChatId ||
-        _currentWorkspacePath != snapshot.currentWorkspacePath;
+        _currentWorkspacePath != state.currentWorkspacePath;
     if (chatChanged) {
       _saveCurrentInputDraft();
+      _currentChatId = state.currentChatId;
+      _isMultiSelectMode = false;
+      _selectedMessageIndices = const <int>{};
+      _restoreInputDraftForChat(state.currentChatId);
     }
-    _mutateChatContentData(() {
-      final didSwitchChat =
-          _currentChatId != null &&
-          snapshot.currentChatId != null &&
-          _currentChatId != snapshot.currentChatId;
-      _errorMessage = null;
-      _messages
-        ..clear()
-        ..addAll(snapshot.messages);
-      _loading = snapshot.isLoading;
-      _inputProcessingState = snapshot.inputProcessingState;
-      _currentChatId = snapshot.currentChatId;
-      _currentWorkspacePath = snapshot.currentWorkspacePath;
-      _currentChatTitle = snapshot.currentChatTitle;
-      _currentCharacterCardName = snapshot.currentCharacterCardName;
-      _currentCharacterCardAvatarUri = snapshot.currentCharacterCardAvatarUri;
-      _activeCharacterCardName = snapshot.activeCharacterCardName;
-      _hasOlderDisplayHistory = snapshot.hasOlderDisplayHistory;
-      _hasNewerDisplayHistory = snapshot.hasNewerDisplayHistory;
-      _isLoadingDisplayWindow = snapshot.isLoadingDisplayWindow;
-      _isPreparingChatSwitch = keepPreparingChatSwitch;
-      if (didSwitchChat) {
-        _isMultiSelectMode = false;
-        _selectedMessageIndices = const <int>{};
-      } else if (_selectedMessageIndices.isNotEmpty) {
-        _selectedMessageIndices = _selectedMessageIndices.where((index) {
-          if (index < 0 || index >= snapshot.messages.length) {
-            return false;
-          }
-          final sender = snapshot.messages[index].sender;
-          return sender == 'user' || sender == 'ai';
-        }).toSet();
-      }
-    });
-    _chatContentDataNotifier.value = _currentChatContentData(
-      pendingQueueMessages: snapshot.pendingQueueMessages,
-      isPendingQueueExpanded: snapshot.isPendingQueueExpanded,
-    );
-    if (chatChanged) {
-      _restoreInputDraftForChat(snapshot.currentChatId);
-    }
+    _errorMessage = null;
+    _currentChatTitle = state.currentChatTitle;
+    _currentCharacterCardName = state.currentCharacterCardName;
+    _currentCharacterCardAvatarUri = state.currentCharacterCardAvatarUri;
+    _currentWorkspacePath = state.currentWorkspacePath;
+    _loading = state.isLoading;
+    _inputProcessingState = state.inputProcessingState;
+    _hasOlderDisplayHistory = state.hasOlderDisplayHistory;
+    _hasNewerDisplayHistory = state.hasNewerDisplayHistory;
+    _isLoadingDisplayWindow = state.isLoadingDisplayWindow;
+    _publishChatContentData();
+    _updateTopBarTitle();
     if (workspaceChanged && mounted) {
       setState(() {});
       _mainLayoutController?.refreshAttachment(owner: _mainLayoutOwner);
@@ -1063,16 +935,20 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _syncPendingQueueAfterSnapshot();
   }
 
-  void _jumpToBottomAfterPreparedSwitch() {
-    if (!_autoScrollToBottom || !_scrollController.hasClients) {
+  /// Surfaces an unrecoverable routed-flow failure to this chat surface.
+  void _handleChatFlowError(Object error, StackTrace stackTrace) {
+    ClientLogger.e(
+      'chat routed flow failed',
+      tag: 'AIChatScreen',
+      error: error,
+      stackTrace: stackTrace,
+    );
+    if (!mounted) {
       return;
     }
-    final position = _scrollController.position;
-    final target = position.maxScrollExtent;
-    if ((target - position.pixels).abs() <= 1) {
-      return;
-    }
-    _scrollController.jumpTo(target);
+    _errorMessage = error.toString();
+    _loading = false;
+    _publishChatContentData();
   }
 
   void _sendMessage() {
@@ -1241,11 +1117,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       _autoScrollToBottomNotifier.value = true;
       _errorMessage = null;
       _loading = true;
-      _inputProcessingState = const ChatInputProcessingState(
-        kind: 'Processing',
+      _inputProcessingState = core_proxy.InputProcessingState.processing(
         message: 'message_processing',
-        progress: 0,
-        toolName: '',
       );
     });
     _scheduleScrollToBottom();
@@ -1254,7 +1127,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
 
   /// Schedules one automatic alignment with the latest message for this frame.
   void _scheduleScrollToBottom() {
-    if (_isPreparingChatSwitch || !_autoScrollToBottom) {
+    if (!_autoScrollToBottom) {
       return;
     }
     if (_hasNewerDisplayHistory && !_isLoadingDisplayWindow) {
@@ -1305,11 +1178,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
             _mutateChatContentData(() {
               _errorMessage = error.toString();
               _loading = false;
-              _inputProcessingState = ChatInputProcessingState(
-                kind: 'Error',
+              _inputProcessingState = core_proxy.InputProcessingState.error(
                 message: error.toString(),
-                progress: 0,
-                toolName: '',
               );
             });
             return null;
@@ -1317,8 +1187,13 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     });
   }
 
+  /// Cancels the active turn for the selected chat.
   void _cancelMessage() {
-    _viewModel.cancelCurrentMessage().catchError((
+    final chatId = _currentChatId;
+    if (chatId == null) {
+      return;
+    }
+    _viewModel.cancelMessage(chatId).catchError((
       Object error,
       StackTrace stackTrace,
     ) {
@@ -1343,18 +1218,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
 
   Future<void> _setMessageFavorite(int timestamp, bool isFavorite) async {
     await _viewModel.setMessageFavorite(timestamp, isFavorite);
-    if (!mounted) {
-      return;
-    }
-    _mutateChatContentData(() {
-      for (var index = 0; index < _messages.length; index++) {
-        final message = _messages[index];
-        if (message.timestamp == timestamp) {
-          _messages[index] = message.copyWith(isFavorite: isFavorite);
-          break;
-        }
-      }
-    });
   }
 
   Future<void> _deleteMessage(int index) async {
@@ -1678,7 +1541,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           onRefreshRequested: _viewModel.showLatestMessagesForCurrentChat,
           isMultiSelectMode: data.isMultiSelectMode,
           selectedMessageIndices: data.selectedMessageIndices,
-          isPreparingChatSwitch: data.isPreparingChatSwitch,
           isSpeechRecording: data.isSpeechRecording,
           isSpeechTranscribing: data.isSpeechTranscribing,
           onSpeechInput: _toggleSpeechInput,
@@ -1843,7 +1705,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       isMultiSelectMode: _isMultiSelectMode,
       selectedMessageIndices: _selectedMessageIndices,
       currentCharacterCardAvatarUri: _currentCharacterCardAvatarUri,
-      isPreparingChatSwitch: _isPreparingChatSwitch,
       pendingQueueMessages: List<PendingQueueMessageItem>.unmodifiable(
         pendingQueueMessages,
       ),

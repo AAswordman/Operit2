@@ -21,8 +21,7 @@ use operit_model::ModelParameter::ParameterValueType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
-    with_ordered_event_channel_shared, RevisableTextStreamLike, TextStreamEvent,
-    TextStreamEventType,
+    RevisableTextStreamLike, TextStreamEvent, TextStreamEventType,
 };
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
@@ -1728,7 +1727,7 @@ impl OpenAIProvider {
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
         self.begin_request();
         if request.stream {
-            let output = with_ordered_event_channel_shared(
+            let output = SharedAiResponseStream::new_ordered(
                 operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
                 operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
             );
@@ -1823,7 +1822,7 @@ impl OpenAIProvider {
             return Ok(Box::new(output));
         }
 
-        let output = with_ordered_event_channel_shared(
+        let output = SharedAiResponseStream::new_ordered(
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
         );

@@ -79,6 +79,19 @@ pub struct ChatRuntimeHolder {
 }
 
 impl ChatRuntimeHolder {
+    /// Returns whether proxy path segments identify a chat runtime owned by this holder.
+    #[allow(non_snake_case)]
+    pub fn matchesCorePath(pathSegments: &[String]) -> bool {
+        chatRuntimeSlotFromPath(pathSegments).is_some()
+    }
+
+    /// Resolves proxy path segments to the chat service core owned by this holder.
+    #[allow(non_snake_case)]
+    pub fn coreForPath(&mut self, pathSegments: &[String]) -> Option<&mut ChatServiceCore> {
+        let slot = chatRuntimeSlotFromPath(pathSegments)?;
+        Some(self.getCore(slot))
+    }
+
     /// Creates a holder using bootstrap cores without host-backed enhanced AI services.
     pub fn new(fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
         Self::newWithFactory(ChatRuntimeCoreFactory::bootstrap(fileSystemHost))
@@ -194,9 +207,36 @@ impl ChatRuntimeHolder {
         chatId: String,
     ) {
         let targetCore = self.getCore(targetSlot);
-        if targetCore.currentChatId().as_ref() == Some(&chatId) {
+        if targetCore.currentChatIdFlow().value().as_ref() == Some(&chatId) {
             return;
         }
         targetCore.switchChatLocal(chatId);
+    }
+}
+
+/// Parses one holder-owned proxy path into its runtime slot.
+#[allow(non_snake_case)]
+fn chatRuntimeSlotFromPath(pathSegments: &[String]) -> Option<ChatRuntimeSlot> {
+    match pathSegments {
+        [root, slot] if root == "chatRuntimeHolder" => chatRuntimeSlot(slot, None),
+        [root, holder, slot] if root == "application" && holder == "chatRuntimeHolder" => {
+            chatRuntimeSlot(slot, None)
+        }
+        [root, slot, id] if root == "chatRuntimeHolder" => chatRuntimeSlot(slot, Some(id)),
+        [root, holder, slot, id] if root == "application" && holder == "chatRuntimeHolder" => {
+            chatRuntimeSlot(slot, Some(id))
+        }
+        _ => None,
+    }
+}
+
+/// Parses one slot segment and optional instance identifier.
+#[allow(non_snake_case)]
+fn chatRuntimeSlot(slot: &str, id: Option<&String>) -> Option<ChatRuntimeSlot> {
+    match (slot, id) {
+        ("MAIN" | "main", None) => Some(ChatRuntimeSlot::MAIN),
+        ("FLOATING" | "floating", None) => Some(ChatRuntimeSlot::FLOATING),
+        ("DETACHED" | "detached", Some(id)) => Some(ChatRuntimeSlot::DETACHED(id.clone())),
+        _ => None,
     }
 }

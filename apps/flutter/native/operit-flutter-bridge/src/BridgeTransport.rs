@@ -5,7 +5,11 @@ use std::sync::{mpsc, Arc, Mutex};
 
 #[cfg(target_arch = "wasm32")]
 use js_sys::Function;
-use operit_core_proxy::RuntimeCoreRouter::RuntimeCorePushTarget;
+#[cfg(not(target_arch = "wasm32"))]
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+#[cfg(not(target_arch = "wasm32"))]
+use operit_host_api::HostRuntimeTaskSchedulerHost;
+use operit_core_proxy::CoreNodeRouter::CoreNodePushTarget;
 use operit_link::{
     CoreEventKind, CoreLinkClient, CoreLinkError, CoreLinkSharedClient, CorePushItem,
     CorePushRequest, CoreWatchRequest,
@@ -19,7 +23,7 @@ use crate::{native_watch_event_vec, OperitFlutterBridge};
 #[derive(Clone)]
 pub(crate) enum NativePushState {
     Routed {
-        target: RuntimeCorePushTarget,
+        target: CoreNodePushTarget,
         nextSequence: u64,
     },
 }
@@ -88,8 +92,8 @@ impl Drop for OperitFlutterBridge {
         {
             self.watchChannel.close();
             if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {
-                for (_, task) in subscriptions.drain() {
-                    task.abort();
+                for (_, cancelSender) in subscriptions.drain() {
+                    let _ = cancelSender.send(());
                 }
             }
         }
@@ -233,7 +237,7 @@ impl OperitFlutterBridge {
         CoreLinkSharedClient::watchSnapshot(self.proxyCore.as_ref(), request).await
     }
 
-    /// Opens one native watch stream and forwards events to the platform channel.
+    /// Registers one native watch stream and opens its routed source on the host scheduler.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn watchStream(
         &self,
@@ -251,38 +255,105 @@ impl OperitFlutterBridge {
                 ));
             }
         }
-        let receiver = self.runtime.block_on(CoreLinkSharedClient::watch(
-            self.proxyCore.as_ref(),
-            request,
-        ))?;
-        let channel = self.watchChannel.clone();
-        let taskSubscriptionId = subscriptionId.clone();
-        let task = self.runtime.spawn(async move {
-            let mut receiver = receiver;
-            while let Some(event) = receiver.recv().await {
-                let completed = event.kind == CoreEventKind::Completed;
-                channel.send(native_watch_event_vec(&taskSubscriptionId, event));
-                if completed {
-                    break;
-                }
-            }
-        });
+        eprintln!(
+            "[FlutterBridgeWatch] open subscription={} property={} target={}",
+            subscriptionId,
+            request.propertyName,
+            request.targetPath.key(),
+        );
+        let (cancelSender, mut cancelReceiver) = tokio::sync::oneshot::channel();
         let mut subscriptions = self.watchSubscriptions.lock().map_err(|error| {
             CoreLinkError::internal(format!("watch subscription lock poisoned: {error}"))
         })?;
         match subscriptions.entry(subscriptionId.clone()) {
             Entry::Vacant(entry) => {
-                entry.insert(task);
-                Ok(subscriptionId)
+                entry.insert(cancelSender);
             }
             Entry::Occupied(_) => {
-                task.abort();
-                Err(CoreLinkError::new(
+                return Err(CoreLinkError::new(
                     "WATCH_ALREADY_EXISTS",
                     "watch subscription already exists",
-                ))
+                ));
             }
         }
+        drop(subscriptions);
+
+        let channel = self.watchChannel.clone();
+        let taskSubscriptionId = subscriptionId.clone();
+        let taskSubscriptions = self.watchSubscriptions.clone();
+        let proxyCore = self.proxyCore.clone();
+        let scheduleResult = HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(
+            defaultHostRuntimeTaskSchedulerHost().as_ref(),
+            "operit-flutter-watch",
+            Box::new(move || {
+                Box::pin(async move {
+                    let openedReceiver = tokio::select! {
+                        _ = &mut cancelReceiver => None,
+                        opened = CoreLinkSharedClient::watch(proxyCore.as_ref(), request) => Some(opened),
+                    };
+                    let Some(openedReceiver) = openedReceiver else {
+                        return;
+                    };
+                    let mut receiver = match openedReceiver {
+                        Ok(receiver) => receiver,
+                        Err(error) => {
+                            eprintln!(
+                                "[FlutterBridgeWatch] source open failed subscription={} error={}",
+                                taskSubscriptionId, error
+                            );
+                            if let Ok(mut subscriptions) = taskSubscriptions.lock() {
+                                subscriptions.remove(&taskSubscriptionId);
+                            }
+                            return;
+                        }
+                    };
+                    eprintln!(
+                        "[FlutterBridgeWatch] source accepted subscription={}",
+                        taskSubscriptionId
+                    );
+                    let mut eventIndex = 0usize;
+                    loop {
+                        let event = tokio::select! {
+                            _ = &mut cancelReceiver => None,
+                            event = receiver.recv() => event,
+                        };
+                        let Some(event) = event else {
+                            break;
+                        };
+                        let completed = event.kind == CoreEventKind::Completed;
+                        if eventIndex < 20 || eventIndex % 50 == 0 || completed {
+                            eprintln!(
+                                "[FlutterBridgeWatch] event index={} subscription={} property={} kind={:?}",
+                                eventIndex, taskSubscriptionId, event.propertyName, event.kind
+                            );
+                        }
+                        channel.send(native_watch_event_vec(&taskSubscriptionId, event));
+                        eventIndex += 1;
+                        if completed {
+                            break;
+                        }
+                    }
+                    if let Ok(mut subscriptions) = taskSubscriptions.lock() {
+                        subscriptions.remove(&taskSubscriptionId);
+                    }
+                    eprintln!(
+                        "[FlutterBridgeWatch] receiver ended subscription={} events={}",
+                        taskSubscriptionId, eventIndex
+                    );
+                })
+            }),
+        );
+        if let Err(error) = scheduleResult {
+            if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {
+                subscriptions.remove(&subscriptionId);
+            }
+            return Err(CoreLinkError::internal(error.to_string()));
+        }
+        eprintln!(
+            "[FlutterBridgeWatch] open accepted subscription={}",
+            subscriptionId
+        );
+        Ok(subscriptionId)
     }
 
     /// Opens one wasm watch stream and forwards events to the JavaScript callback.
@@ -348,8 +419,8 @@ impl OperitFlutterBridge {
     pub(crate) fn closeWatchStream(&self, subscriptionId: &str) {
         #[cfg(not(target_arch = "wasm32"))]
         if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {
-            if let Some(task) = subscriptions.remove(subscriptionId) {
-                task.abort();
+            if let Some(cancelSender) = subscriptions.remove(subscriptionId) {
+                let _ = cancelSender.send(());
             }
         }
         #[cfg(target_arch = "wasm32")]

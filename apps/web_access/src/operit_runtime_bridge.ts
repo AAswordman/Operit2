@@ -79,7 +79,24 @@ interface SqliteQueryRow {
   values: SqliteSerializedValue[];
 }
 
+interface RuntimeStoragePaths {
+  runtimeRoot: string;
+  workspaceRoot: string;
+}
+
 interface RuntimeBridge {
+  /** Returns the platform default logical Runtime storage roots. */
+  runtimeStorageDefaults(): Promise<RuntimeStoragePaths>;
+  /** Normalizes explicit logical Runtime storage roots. */
+  runtimeStoragePaths(runtimeRoot: string, workspaceRoot: string): Promise<RuntimeStoragePaths>;
+  /** Installs identity-isolated logical Runtime storage roots. */
+  setRuntimeStorageRoots(runtimeRoot: string, workspaceRoot: string): Promise<void>;
+  /** Reads the client bootstrap record outside active Runtime storage. */
+  runtimeBootstrapRead(): Promise<string>;
+  /** Writes the client bootstrap record outside active Runtime storage. */
+  runtimeBootstrapWrite(content: string): Promise<void>;
+  /** Reloads the browser after selecting another identity. */
+  restartApplication(): Promise<void>;
   call(request: Uint8Array): Promise<Uint8Array>;
   controlCall(request: Uint8Array): Promise<Uint8Array>;
   pushOpen(request: Uint8Array): Promise<Uint8Array>;
@@ -146,6 +163,21 @@ interface BrowserNotificationActivation {
   chatId?: string;
 }
 
+interface RuntimeBootstrapIdentity {
+  id: string;
+  name: string;
+  createdAt: number;
+}
+
+interface RuntimeBootstrapRecord {
+  confirmed: boolean;
+  runtimeRoot: string;
+  workspaceRoot: string;
+  identities: RuntimeBootstrapIdentity[];
+  activeIdentityId: string;
+  updatedAt: number;
+}
+
 /** Parses the notification destination supplied by the Web system-operation host. */
 function parseBrowserNotificationActivation(activationJson: string): BrowserNotificationActivation {
   const activation = JSON.parse(activationJson) as { type?: unknown; chatId?: unknown };
@@ -187,6 +219,22 @@ function showBrowserNotification(
       window.location.assign(target);
     }
   };
+}
+
+/** Creates a RFC 4122 version 4 identifier with the Web Crypto random byte API. */
+function createRandomUuid(): string {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0"));
+  return [
+    hex.slice(0, 4).join(""),
+    hex.slice(4, 6).join(""),
+    hex.slice(6, 8).join(""),
+    hex.slice(8, 10).join(""),
+    hex.slice(10, 16).join(""),
+  ].join("-");
 }
 
 interface WebTtsBundle {
@@ -521,6 +569,7 @@ interface RuntimeWorkerStorageBridge {
   read(prefix: string, path: string): Uint8Array;
   readRange(prefix: string, path: string, offset: number, length: number): Uint8Array;
   write(prefix: string, path: string, content: Uint8Array): void;
+  append(prefix: string, path: string, content: Uint8Array): void;
   hasFile(prefix: string, path: string): boolean;
   exists(prefix: string, path: string): boolean;
   delete(prefix: string, path: string, recursive: boolean): void;
@@ -733,12 +782,17 @@ interface ModelInstallWorkerError {
 
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder();
+  const runtimeStorageConfigKey = "operit2.client.runtime.local_storage";
+  const runtimeIdentityId = resolveRuntimeIdentityId();
+  const runtimeIdentityNamespace = `operit2.identities.${runtimeIdentityId}`;
   const runtimePrefix = "operit2.runtime.";
   const filePrefix = "operit2.files.";
   const sqlitePrefix = "operit2.sqlite.";
-  const secretPrefix = "operit2.secrets.";
-  const storageDatabaseName = "operit2.host.storage";
-  const httpDownloadDatabaseName = "operit2.http.downloads";
+  const secretPrefix = `${runtimeIdentityNamespace}.secrets.`;
+  const storageDatabaseName = `${runtimeIdentityNamespace}.host.storage`;
+  const httpDownloadDatabaseName = `${runtimeIdentityNamespace}.http.downloads`;
+  const runtimeCoordinatorName = `${runtimeIdentityNamespace}.runtime.coordinator`;
+  const runtimeOwnerLockName = `${runtimeIdentityNamespace}.runtime.owner`;
   const storageObjectStoreName = "entries";
   const httpDownloadObjectStoreName = "downloads";
   const storageCache = new Map<string, Uint8Array>();
@@ -786,7 +840,7 @@ interface ModelInstallWorkerError {
   const managedRuntimeCommandTimeoutMs = 180_000;
   let managedRuntimeProcessIndex = 0;
 
-  const webAccessSessionStorageKey = "operit2.webAccess.session";
+  const webAccessSessionStorageKey = `${runtimeIdentityNamespace}.webAccess.session`;
   const pairingServiceVersion = 1;
   let webAccessSessionReloading = false;
   const webAccessUrl = new URL(globalThis.location.href);
@@ -796,6 +850,151 @@ interface ModelInstallWorkerError {
     return;
   }
 
+  /** Resolves the active identity from a worker URL or the browser bootstrap record. */
+  function resolveRuntimeIdentityId(): string {
+    const urlIdentityId = new URL(globalThis.location.href).searchParams.get("identity");
+    if (urlIdentityId !== null) {
+      validateRuntimeIdentityId(urlIdentityId);
+      return urlIdentityId;
+    }
+    if (!isMainRuntimeHost()) {
+      throw new Error("Web runtime worker URL is missing its identity");
+    }
+    const encoded = localStorage.getItem(runtimeStorageConfigKey);
+    if (encoded === null) {
+      return createInitialRuntimeIdentity();
+    }
+    return parseRuntimeBootstrapConfig(encoded).activeIdentityId;
+  }
+
+  /** Creates and persists the first browser identity before the local Runtime starts. */
+  function createInitialRuntimeIdentity(): string {
+    const now = Date.now();
+    const identityId = `identity-${now}-${createRandomUuid()}`;
+    validateRuntimeIdentityId(identityId);
+    localStorage.setItem(runtimeStorageConfigKey, JSON.stringify({
+      confirmed: false,
+      runtimeRoot: "",
+      workspaceRoot: "",
+      identities: [{ id: identityId, name: "", createdAt: now }],
+      activeIdentityId: identityId,
+      updatedAt: now,
+    }));
+    return identityId;
+  }
+
+  /** Validates one identity identifier before it enters browser storage names. */
+  function validateRuntimeIdentityId(identityId: string): void {
+    if (!/^identity-[a-z0-9-]+$/.test(identityId)) {
+      throw new Error(`Web runtime identity is invalid: ${identityId}`);
+    }
+  }
+
+  /** Parses and validates one browser bootstrap record before it changes identity ownership. */
+  function parseRuntimeBootstrapConfig(encoded: string): RuntimeBootstrapRecord {
+    const parsed = JSON.parse(encoded) as Partial<RuntimeBootstrapRecord>;
+    if (typeof parsed.confirmed !== "boolean" ||
+      typeof parsed.runtimeRoot !== "string" ||
+      typeof parsed.workspaceRoot !== "string" ||
+      !Array.isArray(parsed.identities) ||
+      typeof parsed.activeIdentityId !== "string" ||
+      typeof parsed.updatedAt !== "number" ||
+      !Number.isSafeInteger(parsed.updatedAt) || parsed.updatedAt <= 0) {
+      throw new Error("Web runtime bootstrap record is invalid");
+    }
+    if (parsed.confirmed &&
+      (parsed.runtimeRoot.trim().length === 0 || parsed.workspaceRoot.trim().length === 0)) {
+      throw new Error("Web runtime bootstrap storage roots are invalid");
+    }
+    const identityIds = new Set<string>();
+    const identities = parsed.identities.map(value => {
+      if (typeof value !== "object" || value === null) {
+        throw new Error("Web runtime bootstrap identity is invalid");
+      }
+      const identity = value as Partial<RuntimeBootstrapIdentity>;
+      if (typeof identity.id !== "string" || typeof identity.name !== "string" ||
+        typeof identity.createdAt !== "number" || !Number.isSafeInteger(identity.createdAt) ||
+        identity.createdAt <= 0 || identity.name.trim().length > 80) {
+        throw new Error("Web runtime bootstrap identity is invalid");
+      }
+      validateRuntimeIdentityId(identity.id);
+      if (identityIds.has(identity.id)) {
+        throw new Error(`Web runtime bootstrap identity is duplicated: ${identity.id}`);
+      }
+      identityIds.add(identity.id);
+      return identity as RuntimeBootstrapIdentity;
+    });
+    if (identities.length === 0 || !identityIds.has(parsed.activeIdentityId)) {
+      throw new Error("Web runtime active identity does not exist");
+    }
+    return {
+      confirmed: parsed.confirmed,
+      runtimeRoot: parsed.runtimeRoot,
+      workspaceRoot: parsed.workspaceRoot,
+      identities,
+      activeIdentityId: parsed.activeIdentityId,
+      updatedAt: parsed.updatedAt,
+    };
+  }
+
+  /** Reads the browser bootstrap record after validating its complete structure. */
+  function readRuntimeBootstrapConfig(): string {
+    let encoded = localStorage.getItem(runtimeStorageConfigKey);
+    if (encoded === null) {
+      createInitialRuntimeIdentity();
+      encoded = localStorage.getItem(runtimeStorageConfigKey);
+      if (encoded === null) {
+        throw new Error("Web runtime bootstrap record was not persisted");
+      }
+    }
+    parseRuntimeBootstrapConfig(encoded);
+    return encoded;
+  }
+
+  /** Returns the browser Host's default logical Runtime storage roots. */
+  function defaultRuntimeStoragePaths(): RuntimeStoragePaths {
+    return {
+      runtimeRoot: "browser-storage/runtime",
+      workspaceRoot: "browser-storage/workspaces",
+    };
+  }
+
+  /** Validates and returns explicit logical Runtime storage roots. */
+  function normalizeRuntimeStoragePaths(runtimeRoot: string, workspaceRoot: string): RuntimeStoragePaths {
+    const normalizedRuntimeRoot = runtimeRoot.trim();
+    const normalizedWorkspaceRoot = workspaceRoot.trim();
+    if (normalizedRuntimeRoot.length === 0 || normalizedWorkspaceRoot.length === 0) {
+      throw new Error("Runtime and workspace roots must not be empty");
+    }
+    return {
+      runtimeRoot: normalizedRuntimeRoot,
+      workspaceRoot: normalizedWorkspaceRoot,
+    };
+  }
+
+  /** Accepts the identity-isolated logical roots selected before browser Runtime startup. */
+  function installRuntimeStoragePaths(runtimeRoot: string, workspaceRoot: string): void {
+    normalizeRuntimeStoragePaths(runtimeRoot, workspaceRoot);
+  }
+
+  /** Writes one validated browser bootstrap record before application restart. */
+  function writeRuntimeBootstrapConfig(content: string): void {
+    parseRuntimeBootstrapConfig(content);
+    localStorage.setItem(runtimeStorageConfigKey, content);
+  }
+
+  /** Reloads the browser after a bootstrap identity selection changes. */
+  function restartRuntimeApplication(): void {
+    globalThis.location.reload();
+  }
+
+  /** Builds one identity-bearing worker URL for isolated background execution. */
+  function runtimeIdentityWorkerUrl(path: string): URL {
+    const url = new URL(path, import.meta.url);
+    url.searchParams.set("identity", runtimeIdentityId);
+    return url;
+  }
+
   /** Installs the remote runtime used by a token-bearing Web Access URL. */
   function installPairingWebRuntime(baseUrl: string, token: string): void {
     if (token.length === 0) {
@@ -803,6 +1002,30 @@ interface ModelInstallWorkerError {
     }
     const runtimePromise = webAccessSession(baseUrl, token).then(createLinkedWebRuntime);
     runtimeGlobal.__operitRuntime = {
+      /** Returns local storage roots without waiting for the remote Link session. */
+      async runtimeStorageDefaults(): Promise<RuntimeStoragePaths> {
+        return defaultRuntimeStoragePaths();
+      },
+      /** Normalizes local storage roots without waiting for the remote Link session. */
+      async runtimeStoragePaths(runtimeRoot: string, workspaceRoot: string): Promise<RuntimeStoragePaths> {
+        return normalizeRuntimeStoragePaths(runtimeRoot, workspaceRoot);
+      },
+      /** Installs local storage roots without waiting for the remote Link session. */
+      async setRuntimeStorageRoots(runtimeRoot: string, workspaceRoot: string): Promise<void> {
+        installRuntimeStoragePaths(runtimeRoot, workspaceRoot);
+      },
+      /** Reads local bootstrap state without waiting for the remote Link session. */
+      async runtimeBootstrapRead(): Promise<string> {
+        return readRuntimeBootstrapConfig();
+      },
+      /** Writes local bootstrap state without waiting for the remote Link session. */
+      async runtimeBootstrapWrite(content: string): Promise<void> {
+        writeRuntimeBootstrapConfig(content);
+      },
+      /** Reloads the local browser after an identity change. */
+      async restartApplication(): Promise<void> {
+        restartRuntimeApplication();
+      },
       async call(request: Uint8Array): Promise<Uint8Array> {
         return (await runtimePromise).call(request);
       },
@@ -888,8 +1111,8 @@ interface ModelInstallWorkerError {
     const clientPublicKey = bytesToBase64(
       new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey)),
     );
-    const clientDeviceId = `web-client-${crypto.randomUUID()}`;
-    const clientNonce = crypto.randomUUID();
+    const clientDeviceId = `web-client-${createRandomUuid()}`;
+    const clientNonce = createRandomUuid();
     const start = await postJson<PairStartResponse>(`${baseUrl}/link/pair/start`, {
       pairingServiceVersion,
       tokenHash: await linkTokenHash(token),
@@ -1178,7 +1401,7 @@ interface ModelInstallWorkerError {
     }
 
     async function openChannel(): Promise<WatchChannel> {
-      const channelId = `watch-channel-${crypto.randomUUID()}`;
+      const channelId = `watch-channel-${createRandomUuid()}`;
       const controller = new AbortController();
       const channel = {
         channelId,
@@ -1360,7 +1583,7 @@ interface ModelInstallWorkerError {
       return MessagePack.encode([0, linkEventToNativeTuple(MessagePack.decode(bytes))]);
     }
 
-    const sessionNonce = `web-${crypto.randomUUID()}`;
+    const sessionNonce = `web-${createRandomUuid()}`;
     const sessionBytes = await postLink("/link/session", { nonce: sessionNonce });
     const sessionInfo = MessagePack.decode(sessionBytes);
     if (Number(sessionInfo.protocolVersion) !== 3) {
@@ -1368,6 +1591,30 @@ interface ModelInstallWorkerError {
     }
 
     return {
+      /** Returns the local browser Host's default logical storage roots. */
+      async runtimeStorageDefaults(): Promise<RuntimeStoragePaths> {
+        return defaultRuntimeStoragePaths();
+      },
+      /** Normalizes explicit logical storage roots through the local browser Host. */
+      async runtimeStoragePaths(runtimeRoot: string, workspaceRoot: string): Promise<RuntimeStoragePaths> {
+        return normalizeRuntimeStoragePaths(runtimeRoot, workspaceRoot);
+      },
+      /** Installs identity-isolated logical roots on the local browser Host. */
+      async setRuntimeStorageRoots(runtimeRoot: string, workspaceRoot: string): Promise<void> {
+        installRuntimeStoragePaths(runtimeRoot, workspaceRoot);
+      },
+      /** Reads the local browser bootstrap record outside the remote Link session. */
+      async runtimeBootstrapRead(): Promise<string> {
+        return readRuntimeBootstrapConfig();
+      },
+      /** Writes the local browser bootstrap record outside the remote Link session. */
+      async runtimeBootstrapWrite(content: string): Promise<void> {
+        writeRuntimeBootstrapConfig(content);
+      },
+      /** Reloads the browser application after a bootstrap change. */
+      async restartApplication(): Promise<void> {
+        restartRuntimeApplication();
+      },
       /** Forwards one compact native call through authenticated HTTP Link. */
       async call(request: Uint8Array): Promise<Uint8Array> {
         return encodeCallResponseAsNative(await postLink("/link/call", {
@@ -1612,31 +1859,9 @@ interface ModelInstallWorkerError {
           transaction.oncomplete = () => resolve();
           transaction.onerror = () => reject(transaction.error || new Error("indexedDB read failed"));
         });
-        if (!isModelInstallWorker()) {
-          migrateLocalStorageEntries(runtimePrefix);
-          migrateLocalStorageEntries(filePrefix);
-          migrateLocalStorageEntries(sqlitePrefix);
-        }
       })();
     }
     return storageReadyPromise;
-  }
-
-  // Copies existing localStorage-hosted entries into the synchronous storage view.
-  function migrateLocalStorageEntries(prefix: string): void {
-    const migratedKeys: string[] = [];
-    for (let index = 0; index < localStorage.length; index += 1) {
-      const itemKey = localStorage.key(index);
-      if (itemKey && itemKey.startsWith(prefix)) {
-        const bytes = base64ToBytes(localStorage.getItem(itemKey));
-        storageCache.set(itemKey, bytes);
-        void persistStorageEntry(itemKey, bytes);
-        migratedKeys.push(itemKey);
-      }
-    }
-    for (const itemKey of migratedKeys) {
-      localStorage.removeItem(itemKey);
-    }
   }
 
   // Persists one memory-view entry into IndexedDB.
@@ -1915,6 +2140,25 @@ interface ModelInstallWorkerError {
     if (!isModelInstallWorker() && isLocalModelRegistryPath(prefix, path)) {
       scheduleWebLocalInferenceRefresh();
     }
+  }
+
+  /** Appends bytes to one browser runtime storage entry and persists the result. */
+  function storageAppend(prefix: string, path: string, content: Uint8Array | ArrayBuffer): void {
+    if (isRuntimeWorker()) {
+      const storage = runtimeGlobal.__operitRuntimeWorkerStorage;
+      if (storage === undefined) {
+        throw new Error("runtime worker OPFS storage is not installed");
+      }
+      const address = workerStorageAddress(prefix, path);
+      storage.append(address.prefix, address.path, new Uint8Array(content));
+      return;
+    }
+    const itemKey = key(prefix, path);
+    const previous = storageCache.get(itemKey) || new Uint8Array();
+    const appended = new Uint8Array(previous.byteLength + content.byteLength);
+    appended.set(previous);
+    appended.set(new Uint8Array(content), previous.byteLength);
+    storageWrite(prefix, path, appended);
   }
 
   /** Reports whether one exact virtual storage path is a persisted file. */
@@ -2823,7 +3067,7 @@ interface ModelInstallWorkerError {
       bluetoothBleConnect() {
         return browserBluetooth().requestDevice({ acceptAllDevices: true }).then((device) =>
           device.gatt.connect().then((server) => {
-            const sessionId = `web-ble-${crypto.randomUUID()}`;
+            const sessionId = `web-ble-${createRandomUuid()}`;
             bleSessions.set(sessionId, { device, server, characteristics: new Map() });
             notifications.set(sessionId, []);
             return { sessionId, address: device.id, mode: "ble" };
@@ -3299,7 +3543,7 @@ self.onmessage = (event) => {
     speaker: number,
     speed: number,
   ): Uint8Array {
-    const requestId = crypto.randomUUID();
+    const requestId = createRandomUuid();
     const controlBuffer = new SharedArrayBuffer(65_536);
     const control = new Int32Array(controlBuffer, 0, 3);
     bundle.worker.postMessage({
@@ -4443,6 +4687,9 @@ self.onmessage = (event) => {
       writeBytes(path: string, content: Uint8Array): void {
         storageWrite(runtimePrefix, path, content);
       },
+      appendBytes(path: string, content: Uint8Array): void {
+        storageAppend(runtimePrefix, path, content);
+      },
       delete(path: string, recursive: boolean): void {
         storageDelete(runtimePrefix, path, recursive);
       },
@@ -5301,7 +5548,9 @@ self.onmessage = (event) => {
       return Promise.reject(new Error(`local model installation paused: ${taskKey}`));
     }
     return new Promise((resolve, reject) => {
-      const worker = new Worker("./operit_model_install_worker.js", { type: "module" });
+      const worker = new Worker(runtimeIdentityWorkerUrl("./operit_model_install_worker.js"), {
+        type: "module",
+      });
       let settled = false;
       let aborter: () => void;
       /** Terminates the worker and releases its Host control entry. */
@@ -5479,8 +5728,8 @@ self.onmessage = (event) => {
 
   /** Installs an origin-wide coordinator with exactly one lock-owning Dedicated Worker. */
   function installRuntimeWorkerProxy(): void {
-    const clientId = crypto.randomUUID();
-    const coordinator = new BroadcastChannel("operit-runtime-coordinator");
+    const clientId = createRandomUuid();
+    const coordinator = new BroadcastChannel(runtimeCoordinatorName);
     const locks = (navigator as Navigator & { locks?: RuntimeWorkerLockManager }).locks;
     if (locks === undefined) {
       throw new Error("Web Locks API is unavailable for the Web runtime");
@@ -5503,16 +5752,16 @@ self.onmessage = (event) => {
 
     coordinator.addEventListener("message", event => handleCoordinatorMessage(event.data));
     runtimeGlobal.addEventListener("pagehide", disconnectRuntimeWorker);
-    void locks.request("operit-runtime-owner", { mode: "exclusive" }, runRuntimeLeadership).catch(rejectRuntimeRequests);
+    void locks.request(runtimeOwnerLockName, { mode: "exclusive" }, runRuntimeLeadership).catch(rejectRuntimeRequests);
 
     /** Holds the origin-wide lock for this page while its Dedicated Worker owns OPFS handles. */
     async function runRuntimeLeadership(): Promise<void> {
       if (closed) {
         return;
       }
-      const worker = new Worker(new URL("./operit_runtime_worker.js", import.meta.url), {
+      const worker = new Worker(runtimeIdentityWorkerUrl("./operit_runtime_worker.js"), {
         type: "module",
-        name: "operit-runtime-storage",
+        name: `operit-runtime-storage-${runtimeIdentityId}`,
       });
       runtimeWorker = worker;
       worker.addEventListener("message", handleRuntimeWorkerMessage);
@@ -5954,6 +6203,30 @@ self.onmessage = (event) => {
     }
 
     runtimeGlobal.__operitRuntime = {
+      /** Returns the browser Host's default logical storage roots. */
+      async runtimeStorageDefaults(): Promise<RuntimeStoragePaths> {
+        return defaultRuntimeStoragePaths();
+      },
+      /** Normalizes explicit logical storage roots through the browser Host. */
+      async runtimeStoragePaths(runtimeRoot: string, workspaceRoot: string): Promise<RuntimeStoragePaths> {
+        return normalizeRuntimeStoragePaths(runtimeRoot, workspaceRoot);
+      },
+      /** Installs identity-isolated logical roots on the browser Host. */
+      async setRuntimeStorageRoots(runtimeRoot: string, workspaceRoot: string): Promise<void> {
+        installRuntimeStoragePaths(runtimeRoot, workspaceRoot);
+      },
+      /** Reads the local browser bootstrap record. */
+      async runtimeBootstrapRead(): Promise<string> {
+        return readRuntimeBootstrapConfig();
+      },
+      /** Writes the local browser bootstrap record. */
+      async runtimeBootstrapWrite(content: string): Promise<void> {
+        writeRuntimeBootstrapConfig(content);
+      },
+      /** Reloads the browser after a bootstrap identity change. */
+      async restartApplication(): Promise<void> {
+        restartRuntimeApplication();
+      },
       async call(requestBytes: Uint8Array): Promise<Uint8Array> {
         return (await request("call", requestBytes)).response;
       },
@@ -6050,6 +6323,30 @@ self.onmessage = (event) => {
   }
 
   runtimeGlobal.__operitRuntime = {
+    /** Returns the browser Host's default logical storage roots. */
+    async runtimeStorageDefaults(): Promise<RuntimeStoragePaths> {
+      return defaultRuntimeStoragePaths();
+    },
+    /** Normalizes explicit logical storage roots through the browser Host. */
+    async runtimeStoragePaths(runtimeRoot: string, workspaceRoot: string): Promise<RuntimeStoragePaths> {
+      return normalizeRuntimeStoragePaths(runtimeRoot, workspaceRoot);
+    },
+    /** Installs identity-isolated logical roots on the browser Host. */
+    async setRuntimeStorageRoots(runtimeRoot: string, workspaceRoot: string): Promise<void> {
+      installRuntimeStoragePaths(runtimeRoot, workspaceRoot);
+    },
+    /** Reads the local browser bootstrap record. */
+    async runtimeBootstrapRead(): Promise<string> {
+      return readRuntimeBootstrapConfig();
+    },
+    /** Writes the local browser bootstrap record. */
+    async runtimeBootstrapWrite(content: string): Promise<void> {
+      writeRuntimeBootstrapConfig(content);
+    },
+    /** Reloads the browser after a bootstrap identity change. */
+    async restartApplication(): Promise<void> {
+      restartRuntimeApplication();
+    },
     async call(request: Uint8Array): Promise<Uint8Array> {
       if (isMainRuntimeHost() && isLocalModelInstallRequest(request)) {
         return installLocalModelInWorker(request);

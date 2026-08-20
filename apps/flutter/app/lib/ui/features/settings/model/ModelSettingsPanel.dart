@@ -42,8 +42,6 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
     final modelManager = widget.clients.preferencesModelConfigManager;
     final functionManager = widget.clients.preferencesFunctionalConfigManager;
     final apiPreferences = widget.clients.preferencesApiPreferences;
-    await modelManager.initializeIfNeeded();
-    await functionManager.initializeIfNeeded();
     final chatBinding = await functionManager.getModelBindingForFunction(
       functionType: core_proxy.FunctionType.chat,
     );
@@ -56,11 +54,11 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
         modelId: chatBinding.modelId,
       ),
       functionBindings: await functionManager
-          .functionModelBindingFlowSnapshot(),
+          .functionModelBindingFlow().first,
       maxImageHistoryUserTurns: await apiPreferences
-          .maxImageHistoryUserTurnsFlowSnapshot(),
+          .maxImageHistoryUserTurnsFlow().first,
       maxMediaHistoryUserTurns: await apiPreferences
-          .maxMediaHistoryUserTurnsFlowSnapshot(),
+          .maxMediaHistoryUserTurnsFlow().first,
     );
     if (!_providerExpansionInitialized) {
       _providerExpansionInitialized = true;
@@ -216,7 +214,7 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
 
   Future<void> _deleteProvider(core_proxy.ProviderProfile provider) async {
     final bindings = await widget.clients.preferencesFunctionalConfigManager
-        .functionModelBindingFlowSnapshot();
+        .functionModelBindingFlow().first;
     final boundFunctions = _boundFunctionTypesForProvider(
       bindings,
       provider.id,
@@ -310,12 +308,14 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
     }
     try {
       switch (selection) {
-        case _AvailableModelPicked(:final model):
-          await widget.clients.preferencesModelConfigManager
-              .addProviderModelFromAvailable(
-                providerId: provider.id,
-                modelId: model.modelId,
-              );
+        case _AvailableModelsPicked(:final models):
+          for (final model in models) {
+            await widget.clients.preferencesModelConfigManager
+                .addProviderModelFromAvailable(
+                  providerId: provider.id,
+                  modelId: model.modelId,
+                );
+          }
           _reload();
         case _AvailableModelCustom():
           if (!mounted) {
@@ -327,6 +327,7 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
       if (!mounted) {
         return;
       }
+      _reload();
       await _AddProviderModelErrorDialog.show(
         context: context,
         errorDetails: core_proxy.CoreProxyErrorDetails.fromCoreLinkError(error),
@@ -367,7 +368,7 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
     core_proxy.ModelProfile model,
   ) async {
     final bindings = await widget.clients.preferencesFunctionalConfigManager
-        .functionModelBindingFlowSnapshot();
+        .functionModelBindingFlow().first;
     final boundFunctions = _boundFunctionTypesForModel(
       bindings,
       provider.id,
@@ -937,10 +938,10 @@ sealed class _AvailableModelSelection {
   const _AvailableModelSelection();
 }
 
-class _AvailableModelPicked extends _AvailableModelSelection {
-  const _AvailableModelPicked(this.model);
+class _AvailableModelsPicked extends _AvailableModelSelection {
+  const _AvailableModelsPicked(this.models);
 
-  final core_proxy.AvailableProviderModel model;
+  final List<core_proxy.AvailableProviderModel> models;
 }
 
 class _AvailableModelCustom extends _AvailableModelSelection {
@@ -968,6 +969,7 @@ class _AvailableModelDialog extends StatefulWidget {
 
 class _AvailableModelDialogState extends State<_AvailableModelDialog> {
   final _searchController = TextEditingController();
+  final Set<String> _selectedModelIds = <String>{};
 
   @override
   void dispose() {
@@ -975,6 +977,7 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
     super.dispose();
   }
 
+  /// Filters catalog models according to the current search query.
   List<core_proxy.AvailableProviderModel> _filteredModels(
     AppLocalizations l10n,
   ) {
@@ -989,6 +992,24 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
                   .toLowerCase();
           return text.contains(query);
         })
+        .toList(growable: false);
+  }
+
+  /// Toggles the selected state of one catalog model.
+  void _toggleModel(core_proxy.AvailableProviderModel model) {
+    setState(() {
+      if (_selectedModelIds.contains(model.modelId)) {
+        _selectedModelIds.remove(model.modelId);
+      } else {
+        _selectedModelIds.add(model.modelId);
+      }
+    });
+  }
+
+  /// Returns the selected catalog models in their displayed catalog order.
+  List<core_proxy.AvailableProviderModel> _selectedModels() {
+    return widget.models
+        .where((model) => _selectedModelIds.contains(model.modelId))
         .toList(growable: false);
   }
 
@@ -1022,11 +1043,13 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
                         dense: true,
                         visualDensity: VisualDensity.compact,
                         contentPadding: EdgeInsets.zero,
+                        leading: Checkbox(
+                          value: _selectedModelIds.contains(model.modelId),
+                          onChanged: (_) => _toggleModel(model),
+                        ),
                         title: Text(model.modelId),
                         subtitle: Text(_availableModelSubtitle(l10n, model)),
-                        onTap: () => Navigator.of(
-                          context,
-                        ).pop(_AvailableModelPicked(model)),
+                        onTap: () => _toggleModel(model),
                       ),
                     ),
                   Material(
@@ -1053,6 +1076,16 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: _selectedModelIds.isEmpty
+              ? null
+              : () => Navigator.of(
+                  context,
+                ).pop(_AvailableModelsPicked(_selectedModels())),
+          child: Text(
+            '${l10n.settingsModelAddModelShort} (${_selectedModelIds.length})',
+          ),
         ),
       ],
     );
@@ -2682,6 +2715,7 @@ class _DialogTextField extends StatelessWidget {
 const List<core_proxy.FunctionType> _functionTypes = <core_proxy.FunctionType>[
   core_proxy.FunctionType.chat,
   core_proxy.FunctionType.summary,
+  core_proxy.FunctionType.titleGeneration,
   core_proxy.FunctionType.memory,
   core_proxy.FunctionType.uiController,
   core_proxy.FunctionType.translation,
@@ -2728,6 +2762,8 @@ String _functionTypeTitle(
   return switch (functionType) {
     core_proxy.FunctionType.chat => l10n.settingsModelFunctionChat,
     core_proxy.FunctionType.summary => l10n.settingsModelFunctionSummary,
+    core_proxy.FunctionType.titleGeneration =>
+      l10n.settingsModelFunctionTitleGeneration,
     core_proxy.FunctionType.memory => l10n.settingsModelFunctionMemory,
     core_proxy.FunctionType.uiController =>
       l10n.settingsModelFunctionUiController,
@@ -2805,6 +2841,8 @@ String _functionTypeDescription(
     core_proxy.FunctionType.chat => l10n.settingsModelFunctionChatDescription,
     core_proxy.FunctionType.summary =>
       l10n.settingsModelFunctionSummaryDescription,
+    core_proxy.FunctionType.titleGeneration =>
+      l10n.settingsModelFunctionTitleGenerationDescription,
     core_proxy.FunctionType.memory =>
       l10n.settingsModelFunctionMemoryDescription,
     core_proxy.FunctionType.uiController =>

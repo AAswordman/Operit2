@@ -6,11 +6,14 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use operit_host_api::TimeUtils::currentTimeMillis;
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 use crate::RuntimeStorageHost::runtimeStoragePath;
 use crate::RuntimeStorePaths::RuntimeStorePaths;
 use crate::SqliteStore::{toSqliteValue, SqliteRowGet, SqliteStore, SqliteStoreError};
-use crate::SyncOperationStore::{NewSyncOperation, SyncOperationStore, SyncOperationStoreError};
+use crate::SyncOperationStore::{
+    NewSyncOperation, SyncOperationSemantics, SyncOperationStore, SyncOperationStoreError,
+};
 
 /// Sync domain used for persisted ObjectBox-compatible entity operations.
 pub const OBJECTBOX_SYNC_DOMAIN: &str = "objectbox";
@@ -114,7 +117,7 @@ where
     pub fn put(&self, mut entity: T) -> Result<T, ObjectBoxStoreError> {
         let saved = self.sqliteStore.transaction(|transaction| {
             if entity.objectBoxId() == 0 {
-                entity.setObjectBoxId(nextObjectBoxId(transaction, &self.entityType)?);
+                entity.setObjectBoxId(newObjectBoxId(transaction, &self.entityType)?);
             }
             let payload = serde_json::to_string(&entity)
                 .map_err(|error| SqliteStoreError::Message(error.to_string()))?;
@@ -144,7 +147,7 @@ where
             let mut saved = Vec::with_capacity(incoming.len());
             for mut entity in incoming {
                 if entity.objectBoxId() == 0 {
-                    entity.setObjectBoxId(nextObjectBoxId(transaction, &self.entityType)?);
+                    entity.setObjectBoxId(newObjectBoxId(transaction, &self.entityType)?);
                 }
                 let payload = serde_json::to_string(&entity)
                     .map_err(|error| SqliteStoreError::Message(error.to_string()))?;
@@ -340,6 +343,7 @@ where
                 entityType: self.entityType.clone(),
                 entityId: self.syncedEntityId(entity.objectBoxId()),
                 operation: "upsert".to_string(),
+                semantics: SyncOperationSemantics::EntityState,
                 payload: serde_json::json!({
                     "__entityType": self.entityType,
                     "entity": entity,
@@ -359,6 +363,7 @@ where
                 entityType: self.entityType.clone(),
                 entityId: self.syncedEntityId(id),
                 operation: "delete".to_string(),
+                semantics: SyncOperationSemantics::EntityState,
                 payload: serde_json::json!({
                     "__entityType": self.entityType,
                 }),
@@ -475,19 +480,28 @@ fn initializeSchema(sqliteStore: &SqliteStore) -> Result<(), SqliteStoreError> {
     )
 }
 
+/// Generates one globally unique positive entity id and verifies it is unused locally.
 #[allow(non_snake_case)]
-fn nextObjectBoxId(
+fn newObjectBoxId(
     transaction: &mut crate::SqliteStore::SqliteTransaction<'_>,
     entityType: &str,
 ) -> Result<i64, SqliteStoreError> {
-    let row = transaction.queryOne(
-        "SELECT COALESCE(MAX(id), 0) + 1 FROM objectbox_entities WHERE entity_type = ?1",
-        vec![toSqliteValue(entityType)],
-    )?;
-    let row = row.ok_or_else(|| {
-        SqliteStoreError::Message("ObjectBox id query returned no row".to_string())
-    })?;
-    row.get(0)
+    loop {
+        let uuid = Uuid::new_v4();
+        let mut bytes = [0_u8; 8];
+        bytes.copy_from_slice(&uuid.as_bytes()[..8]);
+        let id = i64::from_be_bytes(bytes) & i64::MAX;
+        if id == 0 {
+            continue;
+        }
+        let existing = transaction.queryOne(
+            "SELECT 1 FROM objectbox_entities WHERE entity_type = ?1 AND id = ?2",
+            vec![toSqliteValue(entityType), toSqliteValue(&id)],
+        )?;
+        if existing.is_none() {
+            return Ok(id);
+        }
+    }
 }
 
 #[allow(non_snake_case)]

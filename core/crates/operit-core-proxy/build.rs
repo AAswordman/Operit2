@@ -3,14 +3,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use quote::ToTokens;
+use syn::punctuated::Punctuated;
 use syn::{
-    Expr, Fields, FnArg, ImplItem, ImplItemFn, Item, ItemEnum, ItemImpl, ItemStruct, Lit, Meta,
-    Pat, ReturnType, Type, TypePath, UseTree, Visibility,
+    Attribute, Expr, Fields, FnArg, ImplItem, ImplItemFn, Item, ItemEnum, ItemImpl, ItemStruct,
+    Lit, Meta, MetaNameValue, Pat, ReturnType, Token, Type, TypePath, UseTree, Visibility,
 };
 
 mod build_dart_codegen;
 mod build_model;
 mod build_platform_api_guard;
+mod build_route_codegen;
 mod build_rust_codegen;
 mod build_rust_codegen_utils;
 mod build_rust_dispatch_codegen;
@@ -43,6 +45,7 @@ fn main() {
         "operit_plugin_sdk",
     );
     let store_root = SourceRoot::new(manifest_dir.join("../operit-store/src"), "operit_store");
+    let link_root = SourceRoot::new(manifest_dir.join("../operit-link/src"), "operit_link");
     let link_access_root = SourceRoot::new(
         manifest_dir.join("../operit-link-access/src"),
         "operit_link_access",
@@ -83,6 +86,7 @@ fn main() {
         local_models_root,
         plugin_sdk_root,
         store_root.clone(),
+        link_root,
         link_access_root.clone(),
         util_root,
         tools_root.clone(),

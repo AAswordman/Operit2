@@ -45,6 +45,7 @@ class RemotePairingBridge {
       pairingServiceVersion: result.pairingServiceVersion,
       coreDeviceId: result.coreDeviceId,
       coreDeviceInfo: result.coreDeviceInfo,
+      coreUserName: result.coreUserName,
     );
   }
 
@@ -53,11 +54,20 @@ class RemotePairingBridge {
     required String pairingId,
     required String pairingCode,
     required String name,
-  }) {
-    return _clients.runtimeRemoteLinkService.finishPairedRemote(
+    generated.LinkTransportPreference transport =
+        generated.LinkTransportPreference.http,
+  }) async {
+    final session = await _clients.runtimeRemoteLinkService.finishPairedRemote(
       pairingId: pairingId,
       pairingCode: pairingCode,
       name: name,
+    );
+    if (session.transport == transport) {
+      return session;
+    }
+    return _clients.runtimeRemoteLinkService.setPairedRemoteTransport(
+      name: name,
+      transport: transport,
     );
   }
 }
@@ -79,6 +89,7 @@ class RemotePairStartResult {
     required this.pairingServiceVersion,
     required this.coreDeviceId,
     required this.coreDeviceInfo,
+    required this.coreUserName,
   });
 
   /// Decodes a pairing start result received through a Core Link response.
@@ -90,6 +101,7 @@ class RemotePairStartResult {
       coreDeviceInfo: generated.RemoteDeviceInfo.fromJson(
         json['coreDeviceInfo'] as Map<String, Object?>,
       ),
+      coreUserName: json['coreUserName'] as String,
     );
   }
 
@@ -97,4 +109,5 @@ class RemotePairStartResult {
   final int pairingServiceVersion;
   final String coreDeviceId;
   final generated.RemoteDeviceInfo coreDeviceInfo;
+  final String coreUserName;
 }

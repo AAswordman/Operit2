@@ -9,8 +9,8 @@ import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/link/CoreLinkProtocol.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../l10n/generated/app_localizations.dart';
 import '../../common/CharacterAvatar.dart';
-import '../../features/chat/viewmodel/ChatSwitchRenderCoordinator.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../screens/ScreenRouteRegistry.dart';
 import '../../theme/OperitTheme.dart';
@@ -98,7 +98,8 @@ class _DrawerContentState extends State<DrawerContent> {
     if (pending != null && _sameHistoryOrder(pending, widget.histories)) {
       _pendingOrderedHistories = null;
     }
-    if (oldWidget.errorMessage != widget.errorMessage && _errorMessage != null) {
+    if (oldWidget.errorMessage != widget.errorMessage &&
+        _errorMessage != null) {
       _errorMessage = null;
     }
   }
@@ -232,7 +233,8 @@ class _DrawerContentState extends State<DrawerContent> {
 
   Future<_ChatBindingForCreate> _activePromptBindingForCreate() async {
     final clients = GeneratedCoreProxyClients(widget.bridge);
-    final prompt = await clients.preferencesActivePromptManager.getActivePrompt();
+    final prompt = await clients.preferencesActivePromptManager
+        .getActivePrompt();
     if (prompt.tag == 'CharacterGroup' && prompt.id.trim().isNotEmpty) {
       return _ChatBindingForCreate(
         characterCardName: null,
@@ -242,7 +244,8 @@ class _DrawerContentState extends State<DrawerContent> {
     if (prompt.tag == 'CharacterCard' && prompt.id.trim().isNotEmpty) {
       final id = prompt.id.trim();
       final clients = GeneratedCoreProxyClients(widget.bridge);
-      final card = await clients.preferencesCharacterCardManager.getCharacterCard(id: id);
+      final card = await clients.preferencesCharacterCardManager
+          .getCharacterCard(id: id);
       return _ChatBindingForCreate(
         characterCardName: card.name,
         characterGroupId: null,
@@ -251,20 +254,19 @@ class _DrawerContentState extends State<DrawerContent> {
     throw StateError('Unknown active prompt: $prompt');
   }
 
-  Future<void> _switchConversation(core_proxy.ChatHistoryListItem history) async {
+  Future<void> _switchConversation(
+    core_proxy.ChatHistoryListItem history,
+  ) async {
     setState(() {
       _errorMessage = null;
     });
     try {
-      ChatSwitchRenderCoordinator.prepareForChat(history.id);
       widget.onConversationActivated();
-      await WidgetsBinding.instance.endOfFrame;
       if (!mounted) {
         return;
       }
       await _chatCoreProxy.switchChat(chatId: history.id);
     } catch (error, stackTrace) {
-      ChatSwitchRenderCoordinator.clear();
       debugPrint('Failed to switch chat: $error\n$stackTrace');
       if (!mounted) {
         return;
@@ -353,12 +355,24 @@ class _DrawerContentState extends State<DrawerContent> {
     }
   }
 
-  Future<void> _deleteConversation(core_proxy.ChatHistoryListItem history) async {
+  /// Deletes a conversation and reports a policy refusal in the drawer.
+  Future<void> _deleteConversation(
+    core_proxy.ChatHistoryListItem history,
+  ) async {
     setState(() {
       _errorMessage = null;
     });
     try {
-      await _chatCoreProxy.deleteChatHistory(chatId: history.id);
+      final deleted = await _chatCoreProxy.deleteChatHistory(
+        chatId: history.id,
+      );
+      if (deleted || !mounted) {
+        return;
+      }
+      final l10n = AppLocalizations.of(context)!;
+      setState(() {
+        _errorMessage = l10n.chatLockedCannotDelete;
+      });
     } catch (error, stackTrace) {
       debugPrint('Failed to delete chat history: $error\n$stackTrace');
       if (!mounted) {
@@ -850,7 +864,7 @@ class _DrawerContentState extends State<DrawerContent> {
                       ),
                     ),
                   ),
-                  const SliverToBoxAdapter(child: SizedBox(height: 24)),
+                  const SliverToBoxAdapter(child: SizedBox(height: 18)),
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsetsDirectional.only(

@@ -64,6 +64,7 @@ fn render_dart_models(
 
     let mut output = generated_header();
     output.push_str("import 'dart:async';\nimport 'dart:typed_data';\n\n");
+    output.push_str("import '../../link/CoreLinkCodec.dart';\n");
     output.push_str("import '../../link/CoreLinkProtocol.dart';\n\n");
     output.push_str(&render_core_proxy_error_details());
     for ty in types {
@@ -79,13 +80,16 @@ fn render_dart_models(
             }
             SerializableTypeKind::TaggedEnum {
                 externally_tagged,
+                tag_name,
+                content_name,
                 variants,
-                ..
             } => {
                 output.push_str(&render_dart_tagged_enum(
                     ty,
                     variants,
                     *externally_tagged,
+                    tag_name.as_deref(),
+                    content_name.as_deref(),
                     serializable_types,
                 ));
             }
@@ -166,6 +170,7 @@ fn render_dart_clients(
     let mut output = generated_header();
     output.push_str("import 'dart:async';\nimport 'dart:typed_data';\n\n");
     output.push_str("import '../../bridge/OperitRuntimeBridge.dart';\n");
+    output.push_str("import '../../link/CoreLinkCodec.dart';\n");
     output.push_str("import '../../link/CoreLinkProtocol.dart';\n");
     output.push_str("import 'CoreProxyModels.g.dart';\n\n");
     output.push_str(
@@ -188,10 +193,12 @@ fn render_dart_clients(
             "  {class_name} get {getter_name} => {class_name}(bridge, CoreObjectPath.parse('{}'));\n",
             object.schema_key
         ));
-        if object.access == ObjectAccess::ChatRuntimeMain {
-            output.push_str(&format!(
-                "  {class_name} get chatRuntimeHolderFloating => {class_name}(bridge, CoreObjectPath.parse('chatRuntimeHolder.floating'));\n"
-            ));
+        if let ObjectAccess::ResolvedHolder { proxy_aliases, .. } = &object.access {
+            for (alias, target_path) in proxy_aliases {
+                output.push_str(&format!(
+                    "  {class_name} get {alias} => {class_name}(bridge, CoreObjectPath.parse({target_path:?}));\n"
+                ));
+            }
         }
     }
     output.push_str("}\n\n");
@@ -339,17 +346,13 @@ fn render_dart_call_method(
         .any(|(schema_key, method_name)| {
             *schema_key == object.schema_key && *method_name == method.name
         }) {
-        "callControl"
+        "callControlBytes"
     } else {
-        "call"
+        "callBytes"
     };
-    if return_type == "void" {
-        output.push_str(&format!("    await bridge.{bridge_method}(\n"));
-    } else {
-        output.push_str(&format!(
-            "    final value = await bridge.{bridge_method}(\n"
-        ));
-    }
+    output.push_str(&format!(
+        "    final responseBytes = await bridge.{bridge_method}(\n"
+    ));
     output.push_str("      CoreCallRequest(\n");
     output.push_str("        requestId: _coreProxyRequestId(),\n");
     output.push_str("        targetPath: targetPath,\n");
@@ -357,10 +360,13 @@ fn render_dart_call_method(
     output.push_str(&format!("        args: {args},\n"));
     output.push_str("      ),\n");
     output.push_str("    );\n");
-    if return_type != "void" {
+    if return_type == "void" {
+        output.push_str("    decodeNativeCoreVoidResult(responseBytes);\n");
+    } else {
         output.push_str(&format!(
-            "    return {};\n",
-            dart_decode_expr("value", &return_type, serializable_types)
+            "    return decodeNativeCoreResult<{}>(responseBytes, decode: (reader) => {}, targetPath: targetPath, embeddedStreamFactory: bridge.openEmbeddedCoreStream);\n",
+            return_type,
+            dart_message_pack_decode_expr("reader", &return_type, serializable_types)
         ));
     }
     output.push_str("  }\n\n");
@@ -421,45 +427,43 @@ fn render_dart_watch_method(
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
     let watch = method.watch_protocol().expect("watch protocol");
-    let value_type = watch
-        .snapshot_type
-        .as_ref()
-        .map(|ty| dart_type(ty, serializable_types))
-        .unwrap_or_else(|| "Object?".to_string());
+    // A RenderableTextStream crosses the Link as MarkdownStreamEvent values.
+    // The Rust method returns an opaque text-stream implementation, so there is
+    // no serializable snapshot type to infer from its signature. Its event
+    // representation is nevertheless fixed by core_text_event_stream.
+    let value_type = match &watch.stream {
+        WatchStreamProtocol::TextEvent { .. } => "MarkdownStreamEvent".to_string(),
+        _ => watch
+            .snapshot_type
+            .as_ref()
+            .map(|ty| dart_type(ty, serializable_types))
+            .unwrap_or_else(|| "Object?".to_string()),
+    };
     let params = render_dart_params(&method.args, serializable_types);
     let args = render_dart_args_map(&method.args, serializable_types);
     let mut output = String::new();
     let method_name = dart_identifier(&method.name);
     output.push_str(&render_dart_doc_comments(method, "  "));
     output.push_str(&format!(
-        "  Future<{value_type}> {method_name}Snapshot({params}) async {{\n"
-    ));
-    output.push_str("    final event = await bridge.watchSnapshot(\n");
-    output.push_str("      CoreWatchRequest(\n");
-    output.push_str("        requestId: _coreProxyRequestId(),\n");
-    output.push_str("        targetPath: targetPath,\n");
-    output.push_str(&format!("        propertyName: '{}',\n", method.name));
-    output.push_str(&format!("        args: {args},\n"));
-    output.push_str("      ),\n");
-    output.push_str("    );\n");
-    output.push_str(&format!(
-        "    return {};\n",
-        dart_decode_expr("event.value", &value_type, serializable_types)
-    ));
-    output.push_str("  }\n\n");
-    output.push_str(&render_dart_doc_comments(method, "  "));
-    output.push_str(&format!(
-        "  Stream<{value_type}> {method_name}Changes({params}) {{\n"
+        "  Stream<{value_type}> {method_name}({params}) {{\n"
     ));
     output.push_str("    return bridge\n");
     output.push_str(&format!(
         "        .watchStream(CoreWatchRequest(requestId: _coreProxyRequestId(), targetPath: targetPath, propertyName: '{}', args: {args}))\n",
         method.name
     ));
+    output.push_str("        .where((event) => event.kind != 'Completed')\n");
+    output.push_str("        .map((event) {\n");
+    output.push_str("          final valueBytes = event.valueBytes;\n");
+    output.push_str("          if (valueBytes == null) {\n");
+    output.push_str("            throw StateError('Core watch event has no payload bytes');\n");
+    output.push_str("          }\n");
     output.push_str(&format!(
-        "        .map((event) => {});\n",
-        dart_decode_expr("event.value", &value_type, serializable_types)
+        "          return decodeCoreLink<{}>(valueBytes, decode: (reader) => {}, targetPath: event.targetPath, embeddedStreamFactory: bridge.openEmbeddedCoreStream);\n",
+        value_type,
+        dart_message_pack_decode_expr("reader", &value_type, serializable_types)
     ));
+    output.push_str("        });\n");
     output.push_str("  }\n\n");
     output
 }
@@ -510,6 +514,11 @@ fn render_dart_struct(
         output.push_str("    );\n");
     }
     output.push_str("  }\n\n");
+    output.push_str(&render_dart_message_pack_struct_decoder(
+        &class_name,
+        fields,
+        serializable_types,
+    ));
     output.push_str("  Map<String, Object?> toJson() {\n");
     output.push_str("    return <String, Object?>{\n");
     for field in fields {
@@ -538,6 +547,56 @@ fn render_dart_struct(
         ));
     }
     output.push_str("}\n\n");
+    output
+}
+
+/// Renders direct MessagePack decoding for one generated struct.
+fn render_dart_message_pack_struct_decoder(
+    class_name: &str,
+    fields: &[SerializableField],
+    serializable_types: &HashMap<String, SerializableType>,
+) -> String {
+    let mut output = String::new();
+    output.push_str(&format!(
+        "  factory {class_name}.fromMessagePack(CoreLinkValueReader reader) {{\n"
+    ));
+    output.push_str("    final fieldCount = reader.readMapLength();\n");
+    for field in fields {
+        let field_type = dart_type(&field.ty, serializable_types);
+        let field_name = dart_identifier(&field.name);
+        output.push_str(&format!("    late {field_type} {field_name};\n"));
+        output.push_str(&format!("    var has_{field_name} = false;\n"));
+    }
+    output.push_str("    for (var index = 0; index < fieldCount; index += 1) {\n");
+    output.push_str("      switch (reader.readString()) {\n");
+    for field in fields {
+        let field_type = dart_type(&field.ty, serializable_types);
+        let field_name = dart_identifier(&field.name);
+        output.push_str(&format!(
+            "        case '{}':\n          {field_name} = {};\n          has_{field_name} = true;\n          break;\n",
+            dart_string_literal(&field.json_name),
+            dart_message_pack_decode_expr("reader", &field_type, serializable_types),
+        ));
+    }
+    output.push_str("        default:\n          reader.skipValue();\n      }\n    }\n");
+    for field in fields {
+        let field_name = dart_identifier(&field.name);
+        output.push_str(&format!(
+            "    if (!has_{field_name}) {{\n      throw FormatException('Missing {class_name}.{}');\n    }}\n",
+            dart_string_literal(&field.json_name),
+        ));
+    }
+    if fields.is_empty() {
+        output.push_str(&format!("    return {class_name}();\n"));
+    } else {
+        output.push_str(&format!("    return {class_name}(\n"));
+        for field in fields {
+            let field_name = dart_identifier(&field.name);
+            output.push_str(&format!("      {field_name}: {field_name},\n"));
+        }
+        output.push_str("    );\n");
+    }
+    output.push_str("  }\n\n");
     output
 }
 
@@ -578,7 +637,11 @@ fn render_dart_enum(
     output.push_str(&format!(
         "      _ => throw ArgumentError('Unknown {enum_name}: $value'),\n"
     ));
-    output.push_str("    };\n  }\n\n  String toJson() => value;\n");
+    output.push_str("    };\n  }\n\n");
+    output.push_str(&format!(
+        "  factory {enum_name}.fromMessagePack(CoreLinkValueReader reader) => {enum_name}.fromJson(reader.readString());\n\n"
+    ));
+    output.push_str("  String toJson() => value;\n");
     output.push_str("}\n\n");
     output
 }
@@ -587,6 +650,8 @@ fn render_dart_tagged_enum(
     ty: &SerializableType,
     variants: &[SerializableEnumVariant],
     externally_tagged: bool,
+    tag_name: Option<&str>,
+    content_name: Option<&str>,
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
     let enum_name = dart_class_name(&ty.full_type, serializable_types);
@@ -801,7 +866,252 @@ fn render_dart_tagged_enum(
         output.push_str("    return <String, Object?>{tag: data};\n");
         output.push_str("  }\n");
     }
+    output.push_str(&render_dart_tagged_enum_message_pack_decoder(
+        &enum_name,
+        variants,
+        externally_tagged,
+        tag_name,
+        content_name,
+        serializable_types,
+    ));
     output.push_str("}\n\n");
+    output
+}
+
+/// Renders direct MessagePack decoding for one tagged enum.
+fn render_dart_tagged_enum_message_pack_decoder(
+    enum_name: &str,
+    variants: &[SerializableEnumVariant],
+    externally_tagged: bool,
+    tag_name: Option<&str>,
+    content_name: Option<&str>,
+    serializable_types: &HashMap<String, SerializableType>,
+) -> String {
+    let mut output = format!(
+        "\n  factory {enum_name}.fromMessagePack(CoreLinkValueReader reader) {{\n"
+    );
+    if externally_tagged {
+        output.push_str("    if (reader.isNextString()) {\n");
+        output.push_str("      final tag = reader.readString();\n");
+        output.push_str("      return switch (tag) {\n");
+        for variant in variants.iter().filter(|variant| variant.fields_are_unit) {
+            output.push_str(&format!(
+                "        '{}' => {enum_name}.{}(),\n",
+                dart_string_literal(&variant.json_name),
+                dart_identifier(&variant.name),
+            ));
+        }
+        output.push_str(&format!(
+            "        _ => throw ArgumentError('Unknown {enum_name} tag: $tag'),\n"
+        ));
+        output.push_str("      };\n    }\n");
+        output.push_str("    final entryCount = reader.readMapLength();\n");
+        output.push_str(&format!(
+            "    if (entryCount != 1) {{ throw FormatException('External {enum_name} payload must contain one entry'); }}\n"
+        ));
+        output.push_str("    final tag = reader.readString();\n");
+        output.push_str("    return switch (tag) {\n");
+        for variant in variants.iter().filter(|variant| !variant.fields_are_unit) {
+            output.push_str(&format!(
+                "      '{}' => {},\n",
+                dart_string_literal(&variant.json_name),
+                dart_tagged_enum_variant_payload(
+                    "reader",
+                    enum_name,
+                    variant,
+                    serializable_types,
+                    None,
+                ),
+            ));
+        }
+        output.push_str(&format!(
+            "      _ => throw ArgumentError('Unknown {enum_name} tag: $tag'),\n"
+        ));
+        output.push_str("    };\n  }\n\n");
+        return output;
+    }
+
+    let tag_name = tag_name.expect("tagged enum tag metadata is missing");
+    output.push_str("    final fieldCount = reader.readMapLength();\n");
+    output.push_str(&format!(
+        "    if (fieldCount < 1) {{ throw FormatException('Tagged {enum_name} payload is empty'); }}\n"
+    ));
+    output.push_str("    final tagKey = reader.readString();\n");
+    output.push_str(&format!(
+        "    if (tagKey != '{}') {{ throw FormatException('Tagged {enum_name} tag key is invalid'); }}\n",
+        dart_string_literal(tag_name),
+    ));
+    output.push_str("    final tag = reader.readString();\n");
+    if let Some(content_name) = content_name {
+        output.push_str("    if (fieldCount == 1) {\n");
+        output.push_str("      return switch (tag) {\n");
+        for variant in variants.iter().filter(|variant| variant.fields_are_unit) {
+            output.push_str(&format!(
+                "        '{}' => {enum_name}.{}(),\n",
+                dart_string_literal(&variant.json_name),
+                dart_identifier(&variant.name),
+            ));
+        }
+        output.push_str(&format!(
+            "        _ => throw ArgumentError('Unknown {enum_name} tag: $tag'),\n"
+        ));
+        output.push_str("      };\n    }\n");
+        output.push_str(&format!(
+            "    if (fieldCount != 2) {{ throw FormatException('Adjacent {enum_name} payload must contain tag and content'); }}\n"
+        ));
+        output.push_str("    final contentKey = reader.readString();\n");
+        output.push_str(&format!(
+            "    if (contentKey != '{}') {{ throw FormatException('Adjacent {enum_name} content key is invalid'); }}\n",
+            dart_string_literal(content_name),
+        ));
+        output.push_str("    return switch (tag) {\n");
+        for variant in variants.iter().filter(|variant| !variant.fields_are_unit) {
+            output.push_str(&format!(
+                "      '{}' => {},\n",
+                dart_string_literal(&variant.json_name),
+                dart_tagged_enum_variant_payload(
+                    "reader",
+                    enum_name,
+                    variant,
+                    serializable_types,
+                    None,
+                ),
+            ));
+        }
+        output.push_str(&format!(
+            "      _ => throw ArgumentError('Unknown {enum_name} tag: $tag'),\n"
+        ));
+        output.push_str("    };\n  }\n\n");
+        return output;
+    }
+    output.push_str("    return switch (tag) {\n");
+    for variant in variants {
+        output.push_str(&format!(
+            "      '{}' => {},\n",
+            dart_string_literal(&variant.json_name),
+            dart_tagged_enum_variant_payload(
+                "reader",
+                enum_name,
+                variant,
+                serializable_types,
+                Some("fieldCount - 1"),
+            ),
+        ));
+    }
+    output.push_str(&format!(
+        "      _ => throw ArgumentError('Unknown {enum_name} tag: $tag'),\n"
+    ));
+    output.push_str("    };\n  }\n\n");
+    output
+}
+
+/// Renders direct decoding of one tagged enum variant payload.
+fn dart_tagged_enum_variant_payload(
+    reader: &str,
+    enum_name: &str,
+    variant: &SerializableEnumVariant,
+    serializable_types: &HashMap<String, SerializableType>,
+    known_field_count: Option<&str>,
+) -> String {
+    let variant_name = dart_identifier(&variant.name);
+    if variant.fields_are_unit {
+        if let Some(field_count) = known_field_count {
+            return format!(
+                "(() {{ for (var index = 0; index < {field_count}; index += 1) {{ {reader}.readString(); {reader}.skipValue(); }} return {enum_name}.{variant_name}(); }})()"
+            );
+        }
+        return format!("{enum_name}.{variant_name}()");
+    }
+    if !variant.fields_are_named {
+        if let Some(field_count) = known_field_count {
+            if variant.fields.len() == 1 {
+                let field = &variant.fields[0];
+                if let Some(SerializableType {
+                    kind: SerializableTypeKind::Struct { fields: nested_fields },
+                    ..
+                }) = serializable_types.get(&field.ty)
+                {
+                    let nested_class = dart_class_name(&field.ty, serializable_types);
+                    let mut output = String::from("(() { ");
+                    for nested_field in nested_fields {
+                        let nested_name = dart_identifier(&nested_field.name);
+                        let nested_type = dart_type(&nested_field.ty, serializable_types);
+                        output.push_str(&format!(
+                            "late {nested_type} {nested_name}; var has_{nested_name} = false; "
+                        ));
+                    }
+                    output.push_str(&format!(
+                        "for (var index = 0; index < {field_count}; index += 1) {{"
+                    ));
+                    output.push_str(&format!("switch ({reader}.readString()) {{"));
+                    for nested_field in nested_fields {
+                        let nested_name = dart_identifier(&nested_field.name);
+                        let nested_type = dart_type(&nested_field.ty, serializable_types);
+                        output.push_str(&format!(
+                            "case '{}': {nested_name} = {}; has_{nested_name} = true; break;",
+                            dart_string_literal(&nested_field.json_name),
+                            dart_message_pack_decode_expr(reader, &nested_type, serializable_types),
+                        ));
+                    }
+                    output.push_str(&format!("default: {reader}.skipValue(); }} }}"));
+                    for nested_field in nested_fields {
+                        let nested_name = dart_identifier(&nested_field.name);
+                        output.push_str(&format!(
+                            " if (!has_{nested_name}) {{ throw FormatException('Missing {nested_class}.{}'); }}",
+                            dart_string_literal(&nested_field.json_name),
+                        ));
+                    }
+                    output.push_str(&format!(
+                        " return {enum_name}.{variant_name}(value: {nested_class}("
+                    ));
+                    for nested_field in nested_fields {
+                        let nested_name = dart_identifier(&nested_field.name);
+                        output.push_str(&format!("{nested_name}: {nested_name}, "));
+                    }
+                    output.push_str(")); })()");
+                    return output;
+                }
+            }
+            return format!(
+                "throw StateError('Internally tagged tuple variant {enum_name}.{variant_name} requires a struct payload')"
+            );
+        }
+        let mut output = format!("(() {{ final itemCount = {reader}.readArrayLength(); if (itemCount != {}) {{ throw FormatException('Invalid {enum_name}.{variant_name} item count'); }} return {enum_name}.{variant_name}(", variant.fields.len());
+        for field in &variant.fields {
+            let field_type = dart_type(&field.ty, serializable_types);
+            output.push_str(&format!("{}: {}, ", dart_identifier(&field.name), dart_message_pack_decode_expr(reader, &field_type, serializable_types)));
+        }
+        output.push_str("); })()");
+        return output;
+    }
+    let mut output = String::from("(() { ");
+    for field in &variant.fields {
+        let field_name = dart_identifier(&field.name);
+        let field_type = dart_type(&field.ty, serializable_types);
+        output.push_str(&format!("late {field_type} {field_name}; var has_{field_name} = false; "));
+    }
+    if let Some(field_count) = known_field_count {
+        output.push_str(&format!("for (var index = 0; index < {field_count}; index += 1) {{"));
+    } else {
+        output.push_str(&format!("final fieldCount = {reader}.readMapLength(); for (var index = 0; index < fieldCount; index += 1) {{"));
+    }
+    output.push_str(&format!("switch ({reader}.readString()) {{"));
+    for field in &variant.fields {
+        let field_name = dart_identifier(&field.name);
+        let field_type = dart_type(&field.ty, serializable_types);
+        output.push_str(&format!("case '{}': {field_name} = {}; has_{field_name} = true; break;", dart_string_literal(&field.json_name), dart_message_pack_decode_expr(reader, &field_type, serializable_types)));
+    }
+    output.push_str(&format!("default: {reader}.skipValue(); }} }}"));
+    for field in &variant.fields {
+        let field_name = dart_identifier(&field.name);
+        output.push_str(&format!(" if (!has_{field_name}) {{ throw FormatException('Missing {enum_name}.{variant_name}.{}'); }}", dart_string_literal(&field.json_name)));
+    }
+    output.push_str(&format!(" return {enum_name}.{variant_name}("));
+    for field in &variant.fields {
+        let field_name = dart_identifier(&field.name);
+        output.push_str(&format!("{field_name}: {field_name}, "));
+    }
+    output.push_str("); })()");
     output
 }
 
@@ -907,6 +1217,13 @@ fn reachable_serializable_types(
                     if let Some(snapshot_type) = &watch.snapshot_type {
                         collect_reachable_type(snapshot_type, serializable_types, &mut out);
                     }
+                    if matches!(&watch.stream, WatchStreamProtocol::TextEvent { .. }) {
+                        collect_reachable_type(
+                            "operit_util::MarkdownRenderStream::MarkdownStreamEvent",
+                            serializable_types,
+                            &mut out,
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -946,6 +1263,9 @@ fn collect_reachable_type(
     {
         collect_reachable_type(inner, serializable_types, out);
     }
+    if let Some(inner) = core_stream_inner(ty) {
+        collect_reachable_type(inner, serializable_types, out);
+    }
     if let Some(args) = generic_args(ty, "HashMap")
         .or_else(|| generic_args(ty, "std::collections::HashMap"))
         .or_else(|| generic_args(ty, "BTreeMap"))
@@ -967,6 +1287,9 @@ fn dart_type(ty: &str, serializable_types: &HashMap<String, SerializableType>) -
             return inner_type;
         }
         return format!("{inner_type}?");
+    }
+    if let Some(inner) = core_stream_inner(ty) {
+        return format!("Stream<{}>", dart_type(inner, serializable_types));
     }
     if let Some(inner) = single_generic_arg(ty, "Vec")
         .or_else(|| single_generic_arg(ty, "HashSet"))
@@ -1024,6 +1347,63 @@ fn dart_type(ty: &str, serializable_types: &HashMap<String, SerializableType>) -
     }
 }
 
+/// Renders a direct MessagePack reader expression for one generated Dart type.
+fn dart_message_pack_decode_expr(
+    reader: &str,
+    dart_type: &str,
+    serializable_types: &HashMap<String, SerializableType>,
+) -> String {
+    if dart_type == "Object?" {
+        return format!("{reader}.readValue()");
+    }
+    if let Some(inner) = dart_type.strip_suffix('?') {
+        return format!(
+            "{reader}.readNullable<{}>(() => {})",
+            inner,
+            dart_message_pack_decode_expr(reader, inner, serializable_types)
+        );
+    }
+    match dart_type {
+        "void" => "null".to_string(),
+        "bool" => format!("{reader}.readBool()"),
+        "int" => format!("{reader}.readInt()"),
+        "double" => format!("{reader}.readDouble()"),
+        "String" => format!("{reader}.readString()"),
+        "Uint8List" => format!("{reader}.readBytes()"),
+        _ => {
+            if let Some(inner) = list_inner(dart_type) {
+                return format!(
+                    "(() {{ final length = {reader}.readArrayLength(); return List<{}>.generate(length, (_) => {}, growable: false); }})()",
+                    inner,
+                    dart_message_pack_decode_expr(reader, inner, serializable_types)
+                );
+            }
+            if let Some((key, value_type)) = map_inner(dart_type) {
+                return format!(
+                    "(() {{ final length = {reader}.readMapLength(); final result = <{}, {}>{{}}; for (var index = 0; index < length; index += 1) {{ result[{}] = {}; }} return result; }})()",
+                    key,
+                    value_type,
+                    dart_message_pack_decode_expr(reader, key, serializable_types),
+                    dart_message_pack_decode_expr(reader, value_type, serializable_types),
+                );
+            }
+            if let Some(inner) = stream_inner(dart_type) {
+                return format!(
+                    "{reader}.readEmbeddedStream<{}>((item) => {})",
+                    inner,
+                    dart_message_pack_decode_expr("item", inner, serializable_types),
+                );
+            }
+            if dart_is_unit_enum_type(dart_type, serializable_types)
+                || dart_is_tagged_enum_type(dart_type, serializable_types)
+            {
+                return format!("{dart_type}.fromMessagePack({reader})");
+            }
+            format!("{dart_type}.fromMessagePack({reader})")
+        }
+    }
+}
+
 fn dart_decode_expr(
     value: &str,
     dart_type: &str,
@@ -1049,6 +1429,12 @@ fn dart_decode_expr(
     }
     if dart_type == "Uint8List" {
         return format!("{value} as Uint8List");
+    }
+    if let Some(inner) = stream_inner(dart_type) {
+        return format!(
+            "({value} as Stream).map((item) => {})",
+            dart_decode_expr("item", inner, serializable_types)
+        );
     }
     if let Some(inner) = list_inner(dart_type) {
         return format!(
@@ -1089,6 +1475,11 @@ fn dart_encode_expr(
         {
             return value.to_string();
         }
+        if stream_inner(inner).is_some() {
+            return format!(
+                "{value} == null ? null : (throw UnsupportedError('Embedded Core streams are read-only'))"
+            );
+        }
         if dart_is_unit_enum_type(inner, serializable_types) {
             return format!("{value}?.toJson()");
         }
@@ -1113,6 +1504,9 @@ fn dart_encode_expr(
     ) {
         return value.to_string();
     }
+    if stream_inner(dart_type).is_some() {
+        return format!("throw UnsupportedError('Embedded Core streams are read-only')");
+    }
     if let Some(inner) = list_inner(dart_type) {
         return format!(
             "{value}.map((item) => {}).toList(growable: false)",
@@ -1133,6 +1527,13 @@ fn dart_encode_expr(
         return format!("{value}.toJson()");
     }
     format!("{value}.toJson()")
+}
+
+/// Returns the Dart item type for an embedded Core stream.
+fn stream_inner(dart_type: &str) -> Option<&str> {
+    dart_type
+        .strip_prefix("Stream<")
+        .and_then(|value| value.strip_suffix('>'))
 }
 
 fn dart_is_unit_enum_type(

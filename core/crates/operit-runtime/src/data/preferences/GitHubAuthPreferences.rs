@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use operit_host_api::RuntimeStorageHost;
 use operit_store::PreferencesDataStore::{
-    stringPreferencesKey, Preferences, PreferencesDataStore, PreferencesDataStoreError,
+    stringPreferencesKey, CoreNodeSecretStore, Preferences, PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_util::OperitPaths;
@@ -29,7 +29,7 @@ pub struct GitHubUser {
 }
 
 pub struct GitHubAuthPreferences {
-    dataStore: PreferencesDataStore,
+    dataStore: CoreNodeSecretStore,
 }
 
 impl GitHubAuthPreferences {
@@ -46,7 +46,7 @@ impl GitHubAuthPreferences {
     /// Opens GitHub authentication preferences from the default runtime directory.
     pub fn getInstance() -> Self {
         Self {
-            dataStore: PreferencesDataStore::newEncryptedWithStorage(
+            dataStore: CoreNodeSecretStore::newWithStorage(
                 defaultRuntimeStorageHost(),
                 OperitPaths::GITHUB_AUTH_PREFERENCES_PATH,
             ),
@@ -61,7 +61,7 @@ impl GitHubAuthPreferences {
                     "GitHub authentication preferences path must use the runtime storage prefix",
                 );
         Self {
-            dataStore: PreferencesDataStore::newEncrypted(path),
+            dataStore: CoreNodeSecretStore::new(path),
         }
     }
 

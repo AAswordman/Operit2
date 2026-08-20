@@ -18,6 +18,7 @@ use operit_plugin_sdk::javascript::{
 };
 use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
 use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
+use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, WORKSPACE_DIR_PATH};
 use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -106,7 +107,9 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
             return JsToolCallResult {
                 success: false,
                 data: JsToolCallResultData::Value(Value::Null),
-                error: Some("Error getting location information: location permission denied".to_string()),
+                error: Some(
+                    "Error getting location information: location permission denied".to_string(),
+                ),
             };
         }
         if request.tool_name != "sleep" {
@@ -281,7 +284,10 @@ fn structured_tool_failure_rejects_with_message() {
             None,
         )
         .expect("location tool failure must be handled by JavaScript");
-    assert_eq!(output.as_deref(), Some("\"Error getting location information: location permission denied\""));
+    assert_eq!(
+        output.as_deref(),
+        Some("\"Error getting location information: location permission denied\"")
+    );
     engine.destroy();
 }
 
@@ -615,8 +621,8 @@ impl RuntimeStorageHost for TestRuntimeStorageHost {
 /// Registers process-wide test runtime storage roots.
 pub(super) fn ensure_test_runtime_root() {
     let root = std::env::temp_dir().join("operit-runtime-js-engine-tests");
-    let runtime_root = root.join("runtime");
-    let workspace_root = root.join("workspace");
+    let runtime_root = root.join(RUNTIME_ROOT_DIR_PATH);
+    let workspace_root = root.join(WORKSPACE_DIR_PATH);
     std::fs::create_dir_all(&runtime_root).expect("test runtime root");
     std::fs::create_dir_all(&workspace_root).expect("test workspace root");
     let host = Arc::new(TestRuntimeStorageHost::new(
@@ -1776,7 +1782,11 @@ fn contains_text_in_value(value: &Value, title: &str) -> bool {
     }
     value
         .as_object()
-        .map(|object| object.values().any(|child| contains_text_in_value(child, title)))
+        .map(|object| {
+            object
+                .values()
+                .any(|child| contains_text_in_value(child, title))
+        })
         .unwrap_or(false)
 }
 

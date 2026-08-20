@@ -129,6 +129,7 @@
   "unpin": "Unpin",
   "lock": "Lock",
   "unlock": "Unlock",
+  "chatLockedCannotDelete": "This chat is locked and cannot be deleted",
   "messageLocatorTitle": "Message locator",
   "messageLocatorCurrent": "Current {current} / {total}",
   "@messageLocatorCurrent": {
@@ -552,6 +553,8 @@
   "settingsModelFunctionChatDescription": "Model used for main conversation replies.",
   "settingsModelFunctionSummary": "Summary",
   "settingsModelFunctionSummaryDescription": "Model used for long-context automatic summaries.",
+  "settingsModelFunctionTitleGeneration": "Conversation title",
+  "settingsModelFunctionTitleGenerationDescription": "Model used to summarize the first message and attachments into a conversation title.",
   "settingsModelFunctionMemory": "Memory",
   "settingsModelFunctionMemoryDescription": "Model used to extract, organize, and update memories.",
   "settingsModelFunctionUiController": "UI control",
@@ -902,11 +905,18 @@
     }
   },
   "settingsCharactersToolAccessConfigure": "Configure tool allowlist",
+  "settingsCharactersToolAccessTitle": "Custom Allowed Tools",
+  "settingsCharactersToolAccessTabBuiltin": "Built-ins",
+  "settingsCharactersToolAccessTabPackage": "Packages",
+  "settingsCharactersToolAccessTabSkill": "Skill",
+  "settingsCharactersToolAccessTabMcp": "MCP",
+  "settingsCharactersToolAccessSearchPlaceholder": "Search name, description, or ID",
+  "settingsCharactersToolAccessEmptySearch": "No matching tools found",
   "settingsCharactersToolAccessRequiresUsePackage": "Selecting packages, skills, or MCP also requires allowing the built-in use_package tool.",
-  "settingsCharactersToolAccessEmptyBuiltin": "No built-in tools available.",
-  "settingsCharactersToolAccessEmptyPackages": "No packages available.",
-  "settingsCharactersToolAccessEmptySkills": "No skills available.",
-  "settingsCharactersToolAccessEmptyMcp": "No MCP servers available.",
+  "settingsCharactersToolAccessEmptyBuiltin": "No built-in tools are available for configuration",
+  "settingsCharactersToolAccessEmptyPackages": "No globally available packages right now",
+  "settingsCharactersToolAccessEmptySkills": "No AI-visible skills are available right now",
+  "settingsCharactersToolAccessEmptyMcp": "No enabled MCP servers are available right now",
   "settingsCharactersBuiltinTools": "Allowed built-in tools",
   "settingsCharactersAllowedPackages": "Allowed packages",
   "settingsCharactersAllowedSkills": "Allowed skills",
@@ -1075,43 +1085,128 @@
     }
   },
   "settingsWorkspaceRefresh": "Refresh",
-  "settingsRuntimeConnection": "Current device",
-  "settingsRuntimeConnectionDescription": "Choose whether chats and tools run on this device or another connected device.",
-  "settingsRuntimeUseLocal": "Use this device",
-  "settingsRuntimeLocalTitle": "This device",
-  "settingsRuntimeLocalDescription": "Chats and tools run on this device.",
-  "settingsRuntimeRemoteTitle": "Connected devices",
-  "settingsRuntimeRemoteDescription": "These devices are connected. You can use or remove them.",
-  "settingsRuntimeTesting": "Checking connection…",
-  "settingsRuntimePairRemote": "Connect another device",
-  "settingsRuntimeNoPairedRemote": "No connected devices yet.",
-  "settingsRuntimePairToken": "Connection token",
-  "settingsRuntimePairCode": "Pairing code",
-  "settingsRuntimeStartPairing": "Start connection",
-  "settingsRuntimeFinishPairing": "Finish connection",
-  "settingsRuntimeBaseUrl": "Device address",
-  "settingsRuntimeTestCurrent": "Check connection",
-  "settingsRuntimeSwitchedLocal": "Now using this device.",
-  "settingsRuntimeSwitchedRemote": "Now using a connected device.",
-  "settingsRuntimeTestResult": "Device available: {version}",
-  "@settingsRuntimeTestResult": {
+  "runtimeIdentity": "Current identity",
+  "runtimeIdentityManage": "Switch or manage identities",
+  "runtimeIdentitySheetTitle": "Identities",
+  "runtimeIdentityCreate": "New identity",
+  "runtimeIdentityCreateTitle": "New identity",
+  "runtimeIdentityRename": "Rename identity",
+  "runtimeIdentityRenameTitle": "Rename identity",
+  "runtimeIdentityName": "Name (optional)",
+  "runtimeIdentitySwitchTitle": "Switch to {identityName}?",
+  "@runtimeIdentitySwitchTitle": {
     "placeholders": {
-      "version": {
+      "identityName": {
         "type": "String"
       }
     }
   },
-  "settingsRuntimeTestFailed": "Connection check failed: {error}",
-  "@settingsRuntimeTestFailed": {
+  "runtimeIdentitySwitchDescription": "Each identity has separate chats, settings, device space, paired devices, and workspaces. Switching ends the current runtime; the selected identity is used the next time the app starts.",
+  "runtimeIdentitySwitchConfirm": "Switch identity",
+  "runtimeIdentityCurrent": "Current",
+  "settingsUserProfileTitle": "User profile",
+  "settingsUserProfileSubtitle": "Avatar, name, identities, and GitHub",
+  "settingsUserProfileDescription": "Manage this profile and switch isolated identities.",
+  "settingsUserProfileUnnamed": "Unnamed",
+  "settingsUserProfileNotLoggedIn": "Not logged in",
+  "settingsUserProfileGitHubLoading": "Loading GitHub account...",
+  "settingsUserProfileGitHubAccount": "GitHub: @{account}",
+  "@settingsUserProfileGitHubAccount": {
+    "placeholders": {
+      "account": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsUserProfileGitHubStatusError": "GitHub status error: {error}",
+  "@settingsUserProfileGitHubStatusError": {
     "placeholders": {
       "error": {
         "type": "String"
       }
     }
   },
-  "settingsRuntimeRemoteDisconnected": "Connected device disconnected",
-  "settingsRuntimeRemoteDisconnectedMessage": "Now using this device.\n\n{error}",
-  "@settingsRuntimeRemoteDisconnectedMessage": {
+  "settingsUserProfileOverview": "Profile",
+  "settingsUserProfileAvatar": "Avatar",
+  "settingsUserProfileName": "Name",
+  "settingsUserProfileChooseAvatar": "Choose avatar",
+  "settingsUserProfileClearAvatar": "Clear avatar",
+  "settingsUserProfileEditName": "Edit name",
+  "settingsUserProfileIdentities": "Identities",
+  "settingsUserProfileGitHub": "GitHub account",
+  "settingsUserProfileGitHubDescription": "Not logged in",
+  "settingsUserProfileLogin": "Log in",
+  "settingsUserProfileLogout": "Log out",
+  "settingsAppearanceAvatarCustom": "Custom avatar",
+  "settingsRuntimeConnection": "Current device space",
+  "settingsRuntimeConnectionDescription": "Connection status for this device and its device space.",
+  "settingsRuntimeCurrentSpace": "Current device space",
+  "settingsRuntimeRenameSpace": "Rename device space",
+  "settingsRuntimeLeaveSpace": "Leave device space",
+  "settingsRuntimeLeaveSpaceTitle": "Leave the current device space?",
+  "settingsRuntimeLeaveSpaceDescription": "This device will create a new single-device space. Business data and paired devices are preserved.",
+  "settingsRuntimeLeaveSpaceConfirm": "Leave",
+  "settingsRuntimeSpaceName": "Device space name",
+  "settingsRuntimeSpaceId": "Device space ID: {spaceId}",
+  "@settingsRuntimeSpaceId": {
+    "placeholders": {
+      "spaceId": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeSpaceDeviceCount": "{count} devices",
+  "@settingsRuntimeSpaceDeviceCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeViewSpaceTopology": "View device topology",
+  "settingsRuntimeSpaceTopologyTitle": "{spaceName} device topology",
+  "@settingsRuntimeSpaceTopologyTitle": {
+    "placeholders": {
+      "spaceName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeSpaceTopologySummary": "{deviceCount} devices · {connectionCount} direct connections",
+  "@settingsRuntimeSpaceTopologySummary": {
+    "placeholders": {
+      "deviceCount": {
+        "type": "int"
+      },
+      "connectionCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeDisconnectConnection": "Disconnect",
+  "settingsRuntimeDisconnectConnectionTitle": "Disconnect direct connection",
+  "settingsRuntimeDisconnectConnectionMessage": "Disconnect the direct connection to {deviceName}? Pairing records will be kept.",
+  "@settingsRuntimeDisconnectConnectionMessage": {
+    "placeholders": {
+      "deviceName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeDisconnectConnectionFailed": "Disconnect failed",
+  "settingsRuntimeCurrentDevice": "Current device",
+  "settingsRuntimeRemoteTitle": "Connected devices",
+  "settingsRuntimeRemoteDescription": "Directly paired devices. Pairing establishes a connection; joining a device space enables shared data and routing.",
+  "settingsRuntimePairRemote": "Connect another device",
+  "settingsRuntimeNoPairedRemote": "No connected devices yet.",
+  "settingsRuntimeConnectionInitiatedByOtherDevice": "Connection initiated by the other device",
+  "settingsRuntimePairToken": "Connection token",
+  "settingsRuntimePairCode": "Pairing code",
+  "settingsRuntimeStartPairing": "Start connection",
+  "settingsRuntimeFinishPairing": "Finish connection",
+  "settingsRuntimeBaseUrl": "Device address",
+  "settingsRuntimeConnectionFailed": "Device connection failed: {error}",
+  "@settingsRuntimeConnectionFailed": {
     "placeholders": {
       "error": {
         "type": "String"
@@ -1122,48 +1217,38 @@
   "settingsRuntimePairedChecking": "Checking",
   "settingsRuntimePairedOnline": "Online",
   "settingsRuntimePairedOffline": "Offline",
-  "settingsRuntimeSync": "Sync data",
-  "settingsRuntimeSyncing": "Syncing…",
-  "settingsRuntimeSyncCompleted": "Sync completed: this device {localApplied}, remote {remoteApplied}.",
-  "@settingsRuntimeSyncCompleted": {
+  "settingsRuntimeJoinSpace": "Join device space",
+  "settingsRuntimeJoinSpaceTitle": "Join {deviceName}'s device space?",
+  "@settingsRuntimeJoinSpaceTitle": {
     "placeholders": {
-      "localApplied": {
+      "deviceName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeJoinSpaceDescription": "The current device space will merge with the other one and use its name.",
+  "settingsRuntimePairingComplete": "Device paired",
+  "settingsRuntimeDeviceInCurrentSpace": "In the current device space",
+  "settingsRuntimeDiscoverSpaces": "Discover device spaces",
+  "settingsRuntimeDiscoverSpacesDescription": "Nearby devices are grouped by device space. Expand a device space to connect directly to one of its devices.",
+  "settingsRuntimeDiscoveredSpaceSummary": "{memberCount} devices total · {nearbyCount} nearby",
+  "@settingsRuntimeDiscoveredSpaceSummary": {
+    "placeholders": {
+      "memberCount": {
         "type": "int"
       },
-      "remoteApplied": {
+      "nearbyCount": {
         "type": "int"
       }
     }
   },
-  "settingsRuntimeSyncFailed": "Sync failed: {error}",
-  "@settingsRuntimeSyncFailed": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsRuntimeAutoSyncEnable": "Enable continuous sync",
-  "settingsRuntimeAutoSyncDisable": "Disable continuous sync",
-  "settingsRuntimeAutoSyncEnabled": "Continuous sync is enabled. It will sync automatically when this device is discovered.",
-  "settingsRuntimeAutoSyncDisabled": "Continuous sync is disabled.",
-  "settingsRuntimeAutoSyncFailed": "Continuous sync setting failed: {error}",
-  "@settingsRuntimeAutoSyncFailed": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsRuntimeDiscoverDevices": "Discover devices",
-  "settingsRuntimeDiscoverDevicesDescription": "Scan for nearby devices or enter an address to connect.",
   "settingsRuntimeScan": "Scan",
   "settingsRuntimeScanning": "Scanning…",
   "settingsRuntimeEnterManually": "Enter manually",
   "settingsRuntimeConnect": "Connect",
-  "settingsRuntimeEnableDiscovery": "Allow other devices to discover this device",
-  "settingsRuntimeEnableDiscoveryDescription": "Other devices on the same LAN can find this device automatically.",
-  "settingsRuntimeEnableDiscoveryFailed": "Could not enable device discovery: {error}",
+  "settingsRuntimeEnableDiscovery": "Allow nearby devices to discover this device space",
+  "settingsRuntimeEnableDiscoveryDescription": "Devices on the same network can find this device space and choose this device for a direct connection.",
+  "settingsRuntimeEnableDiscoveryFailed": "Could not enable device space discovery: {error}",
   "@settingsRuntimeEnableDiscoveryFailed": {
     "placeholders": {
       "error": {
@@ -1171,7 +1256,7 @@
       }
     }
   },
-  "settingsRuntimeDisableDiscoveryFailed": "Could not disable device discovery: {error}",
+  "settingsRuntimeDisableDiscoveryFailed": "Could not disable device space discovery: {error}",
   "@settingsRuntimeDisableDiscoveryFailed": {
     "placeholders": {
       "error": {
@@ -1430,6 +1515,7 @@
   "settingsDataDetailedStatsSourceChat": "Chat response",
   "settingsDataDetailedStatsSourceToolResult": "Tool-result response",
   "settingsDataDetailedStatsSourceSummary": "Summary generation",
+  "settingsDataDetailedStatsSourceTitleGeneration": "Title generation",
   "settingsDataDetailedStatsSourceMemory": "Memory analysis",
   "settingsDataDetailedStatsTotalRequests": "Total requests",
   "settingsDataDetailedStatsCachedInput": "Cached input",

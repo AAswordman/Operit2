@@ -1,7 +1,8 @@
 use super::build_rust_codegen_utils::*;
 use super::build_rust_dispatch_codegen::{
-    render_core_proxy_dispatch, render_object_call_dispatch, render_object_sync_call_dispatch,
-    render_object_watch_dispatch, render_object_watch_snapshot_dispatch,
+    render_core_proxy_dispatch, render_object_call_dispatch, render_object_path_matchers,
+    render_object_sync_call_dispatch, render_object_watch_dispatch,
+    render_object_watch_snapshot_dispatch, render_object_watch_transition_dispatch,
 };
 use super::build_rust_proxy_codegen::render_generated_proxy;
 use super::*;
@@ -20,7 +21,10 @@ pub(crate) fn render_generated(
     output.push_str(&schema_json);
     output.push_str("\"#).expect(\"generated core proxy schema must be valid JSON\")).expect(\"generated core proxy schema must convert to CoreValue\")\n");
     output.push_str("}\n\n");
-    output.push_str(&render_local_control_path_matcher(objects));
+    output.push_str(&render_object_path_matchers(objects));
+    output.push_str(&super::build_route_codegen::render_core_route_classifier(
+        objects,
+    ));
     output.push_str(&render_reverse_stream_dispatch(objects));
     output.push_str(&render_generated_error_details(objects, error_types));
     for object in objects {
@@ -41,6 +45,8 @@ pub(crate) fn render_generated(
         output.push_str(&render_object_watch_snapshot_dispatch(object));
         output.push('\n');
         output.push_str(&render_object_watch_dispatch(object));
+        output.push('\n');
+        output.push_str(&render_object_watch_transition_dispatch(object));
         output.push('\n');
     }
     output.push_str(&render_core_proxy_dispatch(objects));
@@ -132,32 +138,6 @@ fn render_reverse_stream_dispatch(objects: &[SourceObject]) -> String {
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::new(\"REVERSE_STREAM_NOT_FOUND\", \"reverse stream method is not declared by this proxy\")),\n    }\n}\n\n");
-    output
-}
-
-/// Renders the generated routing classification for locally handled control objects.
-fn render_local_control_path_matcher(objects: &[SourceObject]) -> String {
-    let paths = objects
-        .iter()
-        .filter(|object| object.route_scope == ObjectRouteScope::LocalControl)
-        .map(|object| format!("{:?}", object.schema_key))
-        .collect::<Vec<_>>()
-        .join(" | ");
-    let mut output = String::new();
-    output.push_str(
-        "/// Returns whether a generated object is handled by the local runtime control plane.\n",
-    );
-    output.push_str(
-        "pub(crate) fn generated_is_local_runtime_control_path(target_path: &operit_link::CoreObjectPath) -> bool {\n",
-    );
-    if paths.is_empty() {
-        output.push_str("    false\n");
-    } else {
-        output.push_str("    matches!(target_path.key().as_str(), ");
-        output.push_str(&paths);
-        output.push_str(")\n");
-    }
-    output.push_str("}\n\n");
     output
 }
 

@@ -59,7 +59,7 @@ class ClassicChatInputSection extends StatefulWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool isLoading;
-  final ChatInputProcessingState inputState;
+  final core_proxy.InputProcessingState inputState;
   final ChatViewModel viewModel;
   final String? currentChatId;
   final VoidCallback onSendMessage;
@@ -93,7 +93,8 @@ class ClassicChatInputSection extends StatefulWidget {
       _ClassicChatInputSectionState();
 }
 
-class _ClassicChatInputSectionState extends State<ClassicChatInputSection> {
+class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
+    with WidgetsBindingObserver {
   final GlobalKey _modelPopupTargetKey = GlobalKey();
   final GlobalKey _inputMenuPopupTargetKey = GlobalKey();
   final GlobalKey _attachmentPopupTargetKey = GlobalKey();
@@ -108,10 +109,11 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection> {
   bool _inputExpanded = false;
   String _modelLabel = '';
 
-  /// Starts text and model label listeners for the classic input.
+  /// Starts input listeners and observes viewport metric changes.
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_handleInputChanged);
     _watchCurrentModelLabel();
   }
@@ -131,6 +133,22 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection> {
     if (mounted) {
       setState(() {});
     }
+  }
+
+  /// Rebuilds open popups before and after the viewport relayout.
+  @override
+  void didChangeMetrics() {
+    _markOpenPopupsForBuild();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _markOpenPopupsForBuild();
+    });
+  }
+
+  /// Invalidates the placement of every open input popup.
+  void _markOpenPopupsForBuild() {
+    _modelPopupEntry?.markNeedsBuild();
+    _inputMenuPopupEntry?.markNeedsBuild();
+    _attachmentPopupEntry?.markNeedsBuild();
   }
 
   /// Toggles the input height while preserving the active draft and focus.
@@ -327,8 +345,6 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection> {
   /// Loads and watches the current chat model label.
   Future<void> _watchCurrentModelLabel() async {
     final clients = widget.viewModel.clients;
-    await clients.preferencesModelConfigManager.initializeIfNeeded();
-    await clients.preferencesFunctionalConfigManager.initializeIfNeeded();
     final binding = await clients.preferencesFunctionalConfigManager
         .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
     await _applyModelBinding(binding);
@@ -336,7 +352,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection> {
       return;
     }
     _modelBindingSubscription = clients.preferencesFunctionalConfigManager
-        .functionModelBindingFlowChanges()
+        .functionModelBindingFlow()
         .listen((bindings) {
           _applyModelBinding(bindings[core_proxy.FunctionType.chat]!);
         });
@@ -420,9 +436,10 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection> {
     _attachmentPopupEntry = null;
   }
 
-  /// Releases listeners and removes open popups.
+  /// Releases listeners, viewport observation, and open popup entries.
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_handleInputChanged);
     _modelBindingSubscription?.cancel();
     _dismissModelSettingsPopup();
@@ -580,7 +597,7 @@ class _ClassicInputBody extends StatelessWidget {
 
   final TextEditingController controller;
   final FocusNode focusNode;
-  final ChatInputProcessingState inputState;
+  final core_proxy.InputProcessingState inputState;
   final GlobalKey settingsKey;
   final GlobalKey attachmentKey;
   final bool processing;
@@ -1824,7 +1841,7 @@ IconData _classicAttachmentIcon(String mimeType) {
 /// Converts a processing state into a visible status message.
 String _classicInputProcessingStatus(
   AppLocalizations l10n,
-  ChatInputProcessingState state,
+  core_proxy.InputProcessingState state,
 ) {
   final message = _classicInputProcessingMessage(l10n, state.message);
   if (message.isNotEmpty) {
@@ -1846,7 +1863,7 @@ String _classicInputProcessingStatus(
 /// Converts tool progress into a visible status message.
 String _classicToolProgressStatus(
   AppLocalizations l10n,
-  ChatInputProcessingState state,
+  core_proxy.InputProcessingState state,
 ) {
   final message = _classicInputProcessingMessage(l10n, state.message);
   if (message.isNotEmpty) {
@@ -1883,7 +1900,7 @@ String _classicInputProcessingMessage(AppLocalizations l10n, String key) {
 }
 
 /// Resolves a progress value for the classic action button ring.
-double _classicProgressFor(ChatInputProcessingState state) {
+double _classicProgressFor(core_proxy.InputProcessingState state) {
   return switch (state.kind) {
     'Processing' => 0.3,
     'Connecting' => 0.6,

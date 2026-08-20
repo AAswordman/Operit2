@@ -10,7 +10,6 @@ import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/notifications/NotificationActivationService.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import '../../features/chat/viewmodel/ChatSwitchRenderCoordinator.dart';
 import '../components/AppContent.dart';
 import '../components/DrawerConversationState.dart';
 import '../layout/NavigationLayoutMetrics.dart';
@@ -220,14 +219,10 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       final characterGroupCoreProxy =
           _clients.preferencesCharacterGroupCardManager;
       final characterCardCoreProxy = _clients.preferencesCharacterCardManager;
-      await Future.wait<void>(<Future<void>>[
-        characterGroupCoreProxy.initializeIfNeeded(),
-        characterCardCoreProxy.initializeIfNeeded(),
-      ]);
       final results = await Future.wait<Object?>(<Future<Object?>>[
-        _clients.chatRuntimeHolderMain.chatHistoryListItemsFlowSnapshot(),
-        _clients.chatRuntimeHolderMain.currentChatIdFlowSnapshot(),
-        characterGroupCoreProxy.allCharacterGroupCardsFlowSnapshot(),
+        _clients.chatRuntimeHolderMain.chatHistoryListItemsFlow().first,
+        _clients.chatRuntimeHolderMain.currentChatIdFlow().first,
+        characterGroupCoreProxy.allCharacterGroupCardsFlow().first,
         characterCardCoreProxy.getAllCharacterCards(),
       ]);
       final histories = results[0] as List<core_proxy.ChatHistoryListItem>;
@@ -269,7 +264,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   void _watchDrawerConversations() {
     _drawerHistoriesSubscription?.cancel();
     _drawerHistoriesSubscription = _clients.chatRuntimeHolderMain
-        .chatHistoryListItemsFlowChanges()
+        .chatHistoryListItemsFlow()
         .listen(
           (histories) {
             if (!mounted) {
@@ -309,7 +304,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
 
     _drawerCurrentChatSubscription?.cancel();
     _drawerCurrentChatSubscription = _clients.chatRuntimeHolderMain
-        .currentChatIdFlowChanges()
+        .currentChatIdFlow()
         .listen(
           (chatId) {
             if (!mounted) {
@@ -351,7 +346,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     _drawerCharacterGroupsSubscription?.cancel();
     _drawerCharacterGroupsSubscription = _clients
         .preferencesCharacterGroupCardManager
-        .allCharacterGroupCardsFlowChanges()
+        .allCharacterGroupCardsFlow()
         .listen(
           (groups) {
             if (!mounted) {
@@ -394,7 +389,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     final characterCardCoreProxy = _clients.preferencesCharacterCardManager;
     _drawerCharacterCardIdsSubscription?.cancel();
     _drawerCharacterCardIdsSubscription = characterCardCoreProxy
-        .characterCardListFlowChanges()
+        .characterCardListFlow()
         .listen(
           (cardIds) {
             unawaited(_syncDrawerCharacterCardSubscriptions(cardIds));
@@ -431,7 +426,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
           continue;
         }
         _drawerCharacterCardSubscriptions[cardId] = characterCardCoreProxy
-            .getCharacterCardFlowChanges(id: cardId)
+            .getCharacterCardFlow(id: cardId)
             .listen(
               _updateDrawerCharacterCardAvatar,
               onError: (Object error, StackTrace stackTrace) {
@@ -442,7 +437,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
 
       final cards = await Future.wait<core_proxy.CharacterCard>(
         desiredCardIds.map(
-          (id) => characterCardCoreProxy.getCharacterCardFlowSnapshot(id: id),
+          (id) => characterCardCoreProxy.getCharacterCardFlow(id: id).first,
         ),
       );
       if (!mounted) {
@@ -634,9 +629,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
 
   /// Opens the target chat selected by a system notification activation.
   Future<void> _activateNotificationChat(String chatId) async {
-    ChatSwitchRenderCoordinator.prepareForChat(chatId);
     _activateConversationRoute();
-    await WidgetsBinding.instance.endOfFrame;
     if (!mounted) {
       return;
     }

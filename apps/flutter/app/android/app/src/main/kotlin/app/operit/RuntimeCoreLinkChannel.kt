@@ -1,7 +1,9 @@
 package app.operit
 
+import android.os.SystemClock
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import app.operit.util.AppLogger
 
 class RuntimeCoreLinkChannel(
     private val activity: MainActivity,
@@ -12,13 +14,16 @@ class RuntimeCoreLinkChannel(
     private var watchPumpRunning = false
     @Volatile
     private var runtimeChannel: MethodChannel? = null
+    private var watchPumpFrameIndex = 0L
 
     fun attach(channel: MethodChannel) {
         runtimeChannel = channel
+        AppLogger.d("RuntimeCoreLink", "runtime channel attached")
     }
 
     fun clear() {
         runtimeChannel = null
+        AppLogger.d("RuntimeCoreLink", "runtime channel cleared")
     }
 
     fun handle(call: MethodCall, result: MethodChannel.Result): Boolean {
@@ -56,10 +61,18 @@ class RuntimeCoreLinkChannel(
             result.error("INVALID_ARGS", "watchStream expects MessagePack bytes", null)
             return
         }
+        AppLogger.d(
+            "RuntimeCoreLink",
+            "watch stream open requested bytes=${request.size}",
+        )
         runtimeHost.runRuntime(result) {
             val response = OperitRuntimeNative.watchStream(
                 runtimeHost.ensureRuntimeHandle(),
                 request,
+            )
+            AppLogger.d(
+                "RuntimeCoreLink",
+                "watch stream native open returned bytes=${response.size}",
             )
             ensureWatchPump()
             response
@@ -72,6 +85,10 @@ class RuntimeCoreLinkChannel(
             result.error("INVALID_ARGS", "closeWatchStream expects a subscription id", null)
             return
         }
+        AppLogger.d(
+            "RuntimeCoreLink",
+            "watch stream close requested subscription=$subscriptionId",
+        )
         runtimeHost.runRuntime(result) {
             OperitRuntimeNative.closeWatchStream(runtimeHost.ensureRuntimeHandle(), subscriptionId)
         }
@@ -92,10 +109,12 @@ class RuntimeCoreLinkChannel(
     private fun ensureWatchPump() {
         synchronized(watchPumpLock) {
             if (watchPumpRunning) {
+                AppLogger.d("RuntimeCoreLink", "watch pump already running")
                 return
             }
             watchPumpRunning = true
         }
+        AppLogger.d("RuntimeCoreLink", "watch pump started")
         runtimeHost.runBackground {
             try {
                 while (watchPumpRunning) {
@@ -103,17 +122,50 @@ class RuntimeCoreLinkChannel(
                         runtimeHost.ensureRuntimeHandle(),
                     )
                     if (frame == null) {
+                        AppLogger.d(
+                            "RuntimeCoreLink",
+                            "watch pump stopped reason=native_channel_closed",
+                        )
                         synchronized(watchPumpLock) { watchPumpRunning = false }
                         return@runBackground
+                    }
+                    val frameIndex = synchronized(watchPumpLock) {
+                        val index = watchPumpFrameIndex
+                        watchPumpFrameIndex += 1L
+                        index
+                    }
+                    val dequeuedAt = SystemClock.elapsedRealtime()
+                    val sampled = frameIndex < 20L || frameIndex % 50L == 0L
+                    if (sampled) {
+                        AppLogger.d(
+                            "RuntimeCoreLink",
+                            "watch frame dequeued index=$frameIndex bytes=${frame.size}",
+                        )
                     }
                     val channel = runtimeChannel
                     if (channel != null) {
                         activity.runOnUiThread {
+                            if (sampled) {
+                                AppLogger.d(
+                                    "RuntimeCoreLink",
+                                    "watch frame delivered index=$frameIndex uiQueueMs=${SystemClock.elapsedRealtime() - dequeuedAt}",
+                                )
+                            }
                             channel.invokeMethod("watchChannelEvent", frame)
                         }
+                    } else if (sampled) {
+                        AppLogger.d(
+                            "RuntimeCoreLink",
+                            "watch frame dropped index=$frameIndex reason=channel_unattached",
+                        )
                     }
                 }
-            } catch (_: Throwable) {
+            } catch (error: Throwable) {
+                AppLogger.e(
+                    "RuntimeCoreLink",
+                    "watch pump failed running=$watchPumpRunning",
+                    error,
+                )
                 synchronized(watchPumpLock) {
                     watchPumpRunning = false
                 }

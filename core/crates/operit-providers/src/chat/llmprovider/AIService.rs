@@ -9,12 +9,13 @@ use operit_util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel, DelegatingRevisableSharedTextStream,
     RevisableTextStreamLike,
 };
-
-/// Shared provider response stream used only inside runtime generation coordination.
-pub type SharedAiResponseStream = DelegatingRevisableSharedTextStream;
 use operit_util::stream::Stream::{Stream, VecStream};
+
 use serde_json::Value;
 use thiserror::Error;
+
+/// Shared provider response stream used by runtime generation coordination.
+pub type SharedAiResponseStream = DelegatingRevisableSharedTextStream;
 
 /// Complete request payload passed to an AI provider service.
 pub struct SendMessageRequest {

@@ -106,12 +106,29 @@ pub fn generate_declaration_tree(
     fs::create_dir_all(output_root)?;
     let generated = render_declaration_tree(source_root)?;
     for declaration in &generated {
-        fs::write(
-            output_root.join(&declaration.file_name),
+        writeDeclarationWhenChanged(
+            &output_root.join(&declaration.file_name),
             &declaration.source,
         )?;
     }
     Ok(generated)
+}
+
+/// Writes one generated declaration only when its complete byte content changed.
+#[allow(non_snake_case)]
+fn writeDeclarationWhenChanged(path: &Path, source: &str) -> Result<(), Box<dyn Error>> {
+    match fs::read(path) {
+        Ok(existing) if existing == source.as_bytes() => Ok(()),
+        Ok(_) => {
+            fs::write(path, source)?;
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::write(path, source)?;
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Checks that committed TypeScript declarations exactly match the Rust SDK source.

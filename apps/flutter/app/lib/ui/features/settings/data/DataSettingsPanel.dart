@@ -12,7 +12,7 @@ import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/host/FileSaveService.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
-import '../../../../core/runtime/RuntimeConnectionManager.dart';
+import '../../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../../core/snapshot/SnapshotImportUploader.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
@@ -67,7 +67,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     _operit1ImportProgressSubscription = widget
         .clients
         .servicesSnapshotImportManager
-        .operit1SnapshotImportProgressFlowChanges()
+        .operit1SnapshotImportProgressFlow()
         .listen(
           (progress) {
             if (!mounted) {
@@ -91,21 +91,18 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     final characterGroupCardManager =
         widget.clients.preferencesCharacterGroupCardManager;
     final modelConfigManager = widget.clients.preferencesModelConfigManager;
-    await characterCardManager.initializeIfNeeded();
-    await characterGroupCardManager.initializeIfNeeded();
-    await modelConfigManager.initializeIfNeeded();
-    final storagePaths = await RuntimeConnectionManager.instance
-        .localRuntimeStoragePaths();
+    final storagePaths = await RuntimeBootstrapManager.instance
+        .localRuntimeStorageBasePaths();
     return _DataSettingsData(
       coreVersion: await widget.clients.application.coreVersion(),
       storagePaths: storagePaths,
       inputTokens: await widget.clients.chatRuntimeHolderMain
-          .inputTokenCountFlowSnapshot(),
+          .inputTokenCountFlow().first,
       outputTokens: await widget.clients.chatRuntimeHolderMain
-          .outputTokenCountFlowSnapshot(),
+          .outputTokenCountFlow().first,
       chatHistoryCount:
           (await widget.clients.chatRuntimeHolderMain
-                  .chatHistoriesFlowSnapshot())
+                  .chatHistoriesFlow().first)
               .length,
       characterCardCount:
           (await characterCardManager.getAllCharacterCards()).length,
@@ -146,8 +143,8 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
   /// Lets the user select and migrate the local storage location.
   Future<void> _changeStorageLocation() async {
     final l10n = AppLocalizations.of(context)!;
-    final currentPaths = await RuntimeConnectionManager.instance
-        .localRuntimeStoragePaths();
+    final currentPaths = await RuntimeBootstrapManager.instance
+        .localRuntimeStorageBasePaths();
     if (!mounted) {
       return;
     }
@@ -158,29 +155,33 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     if (selection == null) {
       return;
     }
-    final paths = await RuntimeConnectionManager.instance
+    final basePaths = await RuntimeBootstrapManager.instance
         .localRuntimeStoragePathsForRoots(
           selection.runtimeRoot,
           selection.workspaceRoot,
+        );
+    final identityPaths = await RuntimeBootstrapManager.instance
+        .localRuntimeStoragePathsForIdentityRoots(
+          basePaths.runtimeRoot,
+          basePaths.workspaceRoot,
         );
     if (!mounted) {
       return;
     }
     final confirmed = await _StorageLocationConfirmDialog.show(
       context: context,
-      paths: paths,
+      paths: identityPaths,
     );
     if (confirmed != true) {
       return;
     }
     setState(() => _busy = true);
     try {
-      await _runStorageMigrate(paths);
-      await RuntimeConnectionManager.instance
-          .persistMigratedLocalRuntimeStorage(
-            paths.runtimeRoot,
-            paths.workspaceRoot,
-          );
+      await _runStorageMigrate(identityPaths);
+      await RuntimeBootstrapManager.instance.persistMigratedLocalRuntimeStorage(
+        basePaths.runtimeRoot,
+        basePaths.workspaceRoot,
+      );
       if (!mounted) {
         return;
       }
@@ -664,6 +665,46 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     }
   }
 
+  /// Restores model configurations from backup JSON entered by the user.
+  Future<void> _importModelConfigsBackup() async {
+    final l10n = AppLocalizations.of(context)!;
+    final jsonText = await _BackupImportDialog.show(context: context);
+    if (jsonText == null) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final result = await widget.clients.preferencesModelConfigManager
+          .importAllProvidersFromBackupContent(jsonContent: jsonText);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            l10n.settingsDataBackupImportResult(
+              result.newValue,
+              result.updated,
+              result.skipped,
+            ),
+          ),
+        ),
+      );
+      _reload();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.settingsDataBackupImportError('$error'))),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
   Future<void> _copyModelConfigsBackup() async {
     final l10n = AppLocalizations.of(context)!;
     setState(() => _busy = true);
@@ -785,7 +826,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
                         description:
                             l10n.settingsDataModelConfigsBackupDescription,
                         onExport: _busy ? null : _copyModelConfigsBackup,
-                        onImport: null,
+                        onImport: _busy ? null : _importModelConfigsBackup,
                       ),
                     ],
                   ),

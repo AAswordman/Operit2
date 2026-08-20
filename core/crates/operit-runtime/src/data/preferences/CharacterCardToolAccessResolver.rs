@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
+use operit_providers::chat::config::SystemToolPrompts::{ManageableToolPrompt, SystemToolPrompts};
 use operit_tools::runtime_support::ResolvedCharacterCardToolAccess;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::skill::SkillManager::SkillManager;
@@ -9,11 +10,19 @@ use operit_tools::tools::skill::SkillManager::SkillManager;
 pub struct CharacterCardToolAccessResolver;
 
 impl CharacterCardToolAccessResolver {
+    /// Creates the stateless character-card tool access resolver.
     #[allow(non_snake_case)]
     pub fn getInstance() -> Self {
         Self
     }
 
+    /// Returns the canonical built-in tool options used by character-card access control.
+    #[allow(non_snake_case)]
+    pub fn getManageableBuiltinToolOptions(&self, useEnglish: bool) -> Vec<ManageableToolPrompt> {
+        SystemToolPrompts::getManageableToolPrompts(useEnglish)
+    }
+
+    /// Resolves effective built-in and external tool access for one character card.
     #[allow(non_snake_case)]
     pub fn resolve(
         &self,
@@ -26,7 +35,12 @@ impl CharacterCardToolAccessResolver {
         let globalPackageNames = packageManager
             .getEnabledPackageNames()
             .into_iter()
-            .filter(|packageName| !packageManager.isToolPkgContainer(packageName))
+            .map(|packageName| packageName.trim().to_string())
+            .filter(|packageName| {
+                !packageName.is_empty()
+                    && packageManager.getPackageTools(packageName).is_some()
+                    && !packageManager.isToolPkgContainer(packageName)
+            })
             .collect::<HashSet<_>>();
         let globalSkillNames = SkillManager::fromDefaultPaths(packageManager.fileSystemHost())
             .getAvailableSkills()
@@ -64,7 +78,10 @@ impl CharacterCardToolAccessResolver {
             };
         }
 
-        let manageableBuiltinNames = manageable_tool_names();
+        let manageableBuiltinNames = SystemToolPrompts::getManageableToolPrompts(false)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<HashSet<_>>();
         let allowedBuiltinTools = normalize_entries(&roleCardConfig.allowedBuiltinTools);
         let effectiveBuiltinToolVisibility = manageableBuiltinNames
             .into_iter()
@@ -140,34 +157,7 @@ impl CharacterCardToolAccessResolver {
     }
 }
 
-fn manageable_tool_names() -> HashSet<String> {
-    [
-        "use_package",
-        "package_proxy",
-        "read_file",
-        "read_file_full",
-        "read_file_part",
-        "write_file",
-        "edit_file",
-        "create_file",
-        "delete_file",
-        "list_files",
-        "find_files",
-        "file_info",
-        "file_exists",
-        "move_file",
-        "copy_file",
-        "make_directory",
-        "grep_code",
-        "search",
-        "proxy",
-        "sleep",
-    ]
-    .into_iter()
-    .map(|value| value.to_string())
-    .collect()
-}
-
+/// Trims and deduplicates persisted tool-access entries.
 fn normalize_entries(values: &[String]) -> HashSet<String> {
     values
         .iter()

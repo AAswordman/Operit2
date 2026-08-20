@@ -11,6 +11,7 @@ use operit_host_api::{
     HttpDownloadProgress, HttpDownloadProgressState, HttpDownloadRequest, HttpHost,
     RuntimeStorageHost,
 };
+use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, RUNTIME_ROOT_PATH_PREFIX};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -671,14 +672,9 @@ fn runtimeLayoutPath(
     storagePath: &str,
 ) -> Result<PathBuf, LocalModelDownloadError> {
     let storagePath = storagePath.trim();
-    let runtimePrefix = "runtime/";
-    if !storagePath.starts_with(runtimePrefix) {
-        return Err(LocalModelDownloadError::InvalidStoragePath(
-            storagePath.to_string(),
-        ));
-    }
     let relative = storagePath
-        .trim_start_matches(runtimePrefix)
+        .strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
+        .ok_or_else(|| LocalModelDownloadError::InvalidStoragePath(storagePath.to_string()))?
         .replace('/', std::path::MAIN_SEPARATOR_STR);
     Ok(runtimeRoot.join(relative))
 }
@@ -693,9 +689,9 @@ fn runtimeStoragePathString(
     })?;
     let relative = relative.to_string_lossy().replace('\\', "/");
     if relative.is_empty() {
-        Ok("runtime".to_string())
+        Ok(RUNTIME_ROOT_DIR_PATH.to_string())
     } else {
-        Ok(format!("runtime/{relative}"))
+        Ok(format!("{RUNTIME_ROOT_PATH_PREFIX}{relative}"))
     }
 }
 

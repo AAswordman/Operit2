@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../core/logging/ClientLogger.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../interactions/MessagePressShield.dart';
@@ -71,6 +72,9 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
   final Set<String> _scheduledVisibleNodeKeys = <String>{};
   bool _streamDone = false;
   int _startGeneration = 0;
+  int _streamEventCount = 0;
+  int _renderFlushCount = 0;
+  int? _lastStreamEventAtMicros;
 
   @override
   void initState() {
@@ -123,6 +127,15 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     _renderTimer?.cancel();
     _renderTimer = null;
     _scheduledVisibleNodeKeys.clear();
+    _streamEventCount = 0;
+    _renderFlushCount = 0;
+    _lastStreamEventAtMicros = null;
+
+    ClientLogger.d(
+      'renderer start generation=$generation renderer=$_rendererId '
+      'hasStream=${widget.contentStream != null} contentLength=${widget.content.length}',
+      tag: 'StreamMarkdown',
+    );
 
     final stream = widget.contentStream;
     if (stream == null &&
@@ -205,10 +218,23 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
   void _subscribe(Stream<Object> stream) {
     _subscription = stream.listen(
       (event) {
+        final eventIndex = _streamEventCount++;
+        final receivedAtMicros = DateTime.now().microsecondsSinceEpoch;
+        _lastStreamEventAtMicros = receivedAtMicros;
+        if (eventIndex == 0 || eventIndex % 50 == 0) {
+          ClientLogger.d(
+            'stream event received index=$eventIndex renderer=$_rendererId type=${event.runtimeType}',
+            tag: 'StreamMarkdown',
+          );
+        }
         _applyMarkdownEvent(event);
         _renderTimer ??= Timer(_streamRenderInterval, _flushRenderNodes);
       },
       onDone: () {
+        ClientLogger.d(
+          'stream done renderer=$_rendererId events=$_streamEventCount',
+          tag: 'StreamMarkdown',
+        );
         _rendererState.eventBuilder.complete();
         _streamDone = true;
         _rendererState.streamParsingCompletedSuccessfully = true;
@@ -226,6 +252,18 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     _renderTimer = null;
     if (!mounted) {
       return;
+    }
+    final flushIndex = _renderFlushCount++;
+    final eventAgeMs = _lastStreamEventAtMicros == null
+        ? null
+        : (DateTime.now().microsecondsSinceEpoch - _lastStreamEventAtMicros!) /
+            1000;
+    if (flushIndex == 0 || _streamDone || flushIndex % 10 == 0) {
+      ClientLogger.d(
+        'render flush index=$flushIndex renderer=$_rendererId '
+        'events=$_streamEventCount streamDone=$_streamDone eventAgeMs=$eventAgeMs',
+        tag: 'StreamMarkdown',
+      );
     }
     setState(() => _synchronizeRenderNodes(isStreaming: !_streamDone));
   }
@@ -267,6 +305,11 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       return;
     }
     switch (normalized.type) {
+      case 'reset':
+        _rendererState.reset();
+        _scheduledVisibleNodeKeys.clear();
+        _streamDone = false;
+        break;
       case 'chunk':
         final value = normalized.value;
         if (value != null) {

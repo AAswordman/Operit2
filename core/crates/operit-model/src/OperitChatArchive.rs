@@ -39,6 +39,7 @@ pub struct OperitArchivedChat {
 
 impl OperitArchivedChat {
     #[allow(non_snake_case)]
+    /// Converts runtime chat state into the portable archive representation.
     pub fn fromChatHistory(
         history: ChatHistory,
         messages: Vec<OperitArchivedMessage>,
@@ -64,6 +65,7 @@ impl OperitArchivedChat {
     }
 
     #[allow(non_snake_case)]
+    /// Converts one archived chat into runtime chat state.
     pub fn toChatHistory(&self) -> Result<ChatHistory, String> {
         Ok(ChatHistory {
             id: self.id.clone(),

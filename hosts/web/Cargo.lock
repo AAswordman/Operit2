@@ -1388,6 +1388,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-core-annotations"
+version = "0.1.0"
+
+[[package]]
 name = "operit-core-proxy"
 version = "0.1.0"
 dependencies = [
@@ -1486,6 +1490,7 @@ dependencies = [
  "operit-link",
  "operit-runtime",
  "operit-store",
+ "operit-util",
  "rand_core 0.6.4",
  "serde",
  "serde_bytes",
@@ -1594,8 +1599,10 @@ dependencies = [
  "js-sys",
  "json5",
  "md-5",
+ "operit-core-annotations",
  "operit-host-api",
  "operit-js-bridge",
+ "operit-link",
  "operit-local-models",
  "operit-model",
  "operit-plugin-sdk",
@@ -1605,6 +1612,7 @@ dependencies = [
  "operit-util",
  "regex",
  "reqwest",
+ "rmp-serde",
  "rquickjs",
  "serde",
  "serde_bytes",
@@ -1632,7 +1640,9 @@ dependencies = [
  "operit-model",
  "operit-util",
  "serde",
+ "serde_bytes",
  "serde_json",
+ "sha2",
  "thiserror 1.0.69",
  "uuid",
 ]

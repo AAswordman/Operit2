@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub enum FunctionType {
     CHAT,
     SUMMARY,
+    TITLE_GENERATION,
     MEMORY,
     UI_CONTROLLER,
     TRANSLATION,

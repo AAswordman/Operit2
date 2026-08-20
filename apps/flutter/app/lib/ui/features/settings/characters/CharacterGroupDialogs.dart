@@ -768,12 +768,6 @@ const String _chatModelFollowGlobal = 'FOLLOW_GLOBAL';
 const String _chatModelFixedConfig = 'FIXED_CONFIG';
 const String _memoryBindingCharacter = 'CHARACTER';
 const String _memoryBindingShared = 'SHARED';
-const Set<String> _hiddenToolNames = <String>{
-  'package_proxy',
-  'proxy',
-  'search',
-};
-
 String _characterOwnerKey(String characterCardId) {
   return 'character:${characterCardId.trim()}';
 }
@@ -953,23 +947,6 @@ String _toolAccessSummary(
     normalized.allowedSkills.length,
     normalized.allowedMcpServers.length,
   );
-}
-
-String _mcpServerSubtitle(core_proxy.ServerConfig config) {
-  final parts = <String>[
-    if ((config.type ?? '').trim().isNotEmpty) config.type!.trim(),
-    if ((config.url ?? '').trim().isNotEmpty) config.url!.trim(),
-    if (config.command.trim().isNotEmpty) config.command.trim(),
-  ];
-  return parts.join(' · ');
-}
-
-void _setSelection(Set<String> values, String key, bool selected) {
-  if (selected) {
-    values.add(key);
-  } else {
-    values.remove(key);
-  }
 }
 
 Map<String, Object?> _jsonObjectFromText(String text) {

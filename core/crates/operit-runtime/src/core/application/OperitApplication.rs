@@ -2,10 +2,7 @@ use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use crate::core::events::RuntimeEvent::RuntimeEvent;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
-use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
-use crate::data::preferences::UserPreferencesManager::UserPreferencesManager;
 use crate::plugins::toolpkg::ToolPkgAppLifecycleHookBridge::ToolPkgAppLifecycleHookBridge;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 use crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge;
@@ -15,7 +12,8 @@ use crate::services::ToolRuntimeSupportService::ToolRuntimeSupportService;
 #[cfg(feature = "javascript")]
 use operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost;
 use operit_host_api::HostManager::{
-    setDefaultHostRuntimeTaskSchedulerHost, setDefaultHttpHost, HostManager,
+    setDefaultHostRuntimeTaskSchedulerHost, setDefaultHttpHost, setDefaultWebSocketHost,
+    HostManager,
 };
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_host_api::{HostRuntimeEventRegistration, HostRuntimeTaskSchedulerHost};
@@ -26,9 +24,13 @@ use operit_providers::chat::llmprovider::ModelConfigConnectionTester::ModelConne
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
+use operit_store::CoreNodeBindingStore::{CoreNodeBindingStore, BINDING_SYNC_DOMAIN};
 use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
-use operit_store::PreferencesDataStore::PreferencesDataStore;
 use operit_store::PreferencesDataStore::StateFlow;
+use operit_store::PreferencesDataStore::{PreferencesDataStore, PreferencesSyncedEntry};
+use operit_store::RuntimeFileSyncStore::{
+    RuntimeFileSyncReference, RuntimeFileSyncStore, RUNTIME_FILE_SYNC_DOMAIN,
+};
 use operit_store::RuntimeStorageHost::{
     defaultRuntimeStorageHost, setDefaultHostSecretStore, setDefaultRuntimeSqliteHost,
     setDefaultRuntimeStorageHost,
@@ -45,7 +47,9 @@ use operit_tools::tools::mcp_runtime::MCPRepository::MCPRepository;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
 use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -112,6 +116,9 @@ impl OperitApplication {
         }
         if let Some(httpHost) = hostManager.httpHost.clone() {
             setDefaultHttpHost(httpHost);
+        }
+        if let Some(webSocketHost) = hostManager.webSocketHost.clone() {
+            setDefaultWebSocketHost(webSocketHost);
         }
         if let Some(taskSchedulerHost) = hostManager.hostRuntimeTaskSchedulerHost.clone() {
             setDefaultHostRuntimeTaskSchedulerHost(taskSchedulerHost);
@@ -226,9 +233,7 @@ impl OperitApplication {
         AIMessageManager::initialize();
         self.initializeJsonSerializer();
         self.initializeAppLanguage();
-        self.initUserPreferencesManager()?;
         self.initAndroidPermissionPreferences();
-        self.initializeFunctionalPromptManager()?;
         self.preloadDatabase();
         let mut toolHandler = self.toolHandler.clone();
         let toolRegistrationStartedAt = currentTimeMillis();
@@ -314,32 +319,9 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn initializeAppLanguage(&self) {}
 
-    /// Prepares model, functional, and user preference stores for runtime access.
-    #[allow(non_snake_case)]
-    pub fn initUserPreferencesManager(&self) -> Result<(), String> {
-        ModelConfigManager::default()
-            .initializeIfNeeded()
-            .map_err(|error| error.to_string())?;
-        FunctionalConfigManager::default()
-            .initializeIfNeeded()
-            .map_err(|error| error.to_string())?;
-        UserPreferencesManager::getInstance()
-            .initializeIfNeeded("Default")
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    }
-
     /// Initializes platform permission preference state used by Android-facing tools.
     #[allow(non_snake_case)]
     pub fn initAndroidPermissionPreferences(&self) {}
-
-    /// Loads character and functional prompt data required by chat sessions.
-    #[allow(non_snake_case)]
-    pub fn initializeFunctionalPromptManager(&self) -> Result<(), String> {
-        CharacterCardManager::getInstance()
-            .initializeIfNeeded()
-            .map_err(|error| error.to_string())
-    }
 
     /// Touches database-backed services early so schema setup happens during startup.
     #[allow(non_snake_case)]
@@ -427,7 +409,7 @@ impl OperitApplication {
     /// Returns the Cargo package version compiled into the runtime crate.
     #[allow(non_snake_case)]
     pub fn coreVersion(&self) -> String {
-        env!("CARGO_PKG_VERSION").to_string()
+        crate::CORE_VERSION.to_string()
     }
 
     /// Returns structured in-memory application log entries.
@@ -504,7 +486,7 @@ impl OperitApplication {
     /// Combines sync clocks from key-value/object stores and SQL chat storage.
     #[allow(non_snake_case)]
     pub fn syncClock(&self) -> Result<serde_json::Value, String> {
-        let store = SyncOperationStore::native(RuntimeStorePaths::default());
+        let store = self.runtimeSyncOperationStore()?;
         let mut clock = store.localClock().map_err(|error| error.to_string())?;
         let sqlStore = SqlChatSyncStore::default().map_err(|error| error.to_string())?;
         mergeSyncClock(
@@ -523,7 +505,7 @@ impl OperitApplication {
         limit: usize,
     ) -> Result<serde_json::Value, String> {
         let clock: SyncClock = serde_json::from_value(clock).map_err(|error| error.to_string())?;
-        let store = SyncOperationStore::native(RuntimeStorePaths::default());
+        let store = self.runtimeSyncOperationStore()?;
         let mut operations = store
             .operationsSince(&clock, &domains, limit)
             .map_err(|error| error.to_string())?;
@@ -550,49 +532,188 @@ impl OperitApplication {
         &self,
         operations: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
+        let forceApply = operations
+            .get("forceApply")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let operationsValue = if forceApply {
+            operations
+                .get("operations")
+                .cloned()
+                .ok_or_else(|| "bootstrap sync request is missing operations".to_string())?
+        } else {
+            operations
+        };
         let mut operations: Vec<SyncOperation> =
-            serde_json::from_value(operations).map_err(|error| error.to_string())?;
-        operations.sort_by(|left, right| {
-            left.originDeviceId
-                .cmp(&right.originDeviceId)
-                .then(left.sequence.cmp(&right.sequence))
-        });
-        let store = SyncOperationStore::native(RuntimeStorePaths::default());
+            serde_json::from_value(operationsValue).map_err(|error| error.to_string())?;
+        let store = self.runtimeSyncOperationStore()?;
         let sqlStore = SqlChatSyncStore::default().map_err(|error| error.to_string())?;
+        if forceApply && operations.is_empty() {
+            store
+                .markLocalOperationsUnexportable()
+                .map_err(|error| error.to_string())?;
+            sqlStore
+                .markLocalOperationsUnexportable()
+                .map_err(|error| error.to_string())?;
+            return Ok(serde_json::json!({ "applied": 0 }));
+        }
+        if forceApply {
+            operations.sort_by(|left, right| {
+                left.createdAt
+                    .cmp(&right.createdAt)
+                    .then(left.originDeviceId.cmp(&right.originDeviceId))
+                    .then(left.sequence.cmp(&right.sequence))
+            });
+        } else {
+            operations.sort_by(|left, right| {
+                left.originDeviceId
+                    .cmp(&right.originDeviceId)
+                    .then(left.sequence.cmp(&right.sequence))
+            });
+        }
+        let bindingStore = self.runtimeBindingStore()?;
         let mut applied = 0usize;
+        let mut syncClock = store.localClock().map_err(|error| error.to_string())?;
+        let mut persistentOperations = Vec::new();
         for operation in operations {
             if operation.domain == CHAT_SYNC_DOMAIN {
-                sqlStore
-                    .applyOperation(&operation)
-                    .map_err(|error| error.to_string())?;
+                if forceApply {
+                    sqlStore
+                        .applyBootstrapOperation(&operation)
+                        .map_err(|error| error.to_string())?;
+                } else {
+                    sqlStore
+                        .applyOperation(&operation)
+                        .map_err(|error| error.to_string())?;
+                }
+            } else if operation.domain == BINDING_SYNC_DOMAIN {
+                if forceApply {
+                    bindingStore.applyBootstrapOperation(&operation)?;
+                } else {
+                    bindingStore.applySyncedOperation(&operation)?;
+                }
             } else {
-                let clock = store.localClock().map_err(|error| error.to_string())?;
-                if operation.sequence <= clock.sequenceFor(&operation.originDeviceId) {
+                if !forceApply && operation.sequence <= syncClock.sequenceFor(&operation.originDeviceId) {
                     continue;
                 }
-                self.applySyncOperation(&operation)?;
-                store
-                    .appendOperation(&operation)
-                    .map_err(|error| error.to_string())?;
+                syncClock.setSequence(operation.originDeviceId.clone(), operation.sequence);
+                persistentOperations.push(operation);
             }
             applied += 1;
         }
+
+        let applyDecisions = if forceApply {
+            vec![true; persistentOperations.len()]
+        } else {
+            store
+                .shouldApplyOperations(&persistentOperations)
+                .map_err(|error| error.to_string())?
+        };
+        let mut appliedPersistentOperations = Vec::new();
+        let mut preferenceEntriesByPath = BTreeMap::<String, Vec<PreferencesSyncedEntry>>::new();
+        let mut nonPreferenceOperations = Vec::new();
+        for (operation, shouldApply) in persistentOperations.iter().zip(applyDecisions) {
+            if !shouldApply {
+                continue;
+            }
+            if operation.domain == "preferences" {
+                let entry = PreferencesSyncedEntry::fromOperation(operation)
+                    .map_err(|error| error.to_string())?;
+                preferenceEntriesByPath
+                    .entry(entry.storagePath().to_string())
+                    .or_default()
+                    .push(entry);
+            } else {
+                nonPreferenceOperations.push(operation);
+            }
+            appliedPersistentOperations.push(operation.clone());
+        }
+        for operation in nonPreferenceOperations {
+            self.applyNonPreferenceSyncOperation(operation)?;
+        }
+        if !preferenceEntriesByPath.is_empty() {
+            let storageHost = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
+                "RuntimeStorageHost is not registered for persistent sync".to_string()
+            })?;
+            for entries in preferenceEntriesByPath.values() {
+                PreferencesDataStore::applySyncedEntriesWithStorage(storageHost.clone(), entries)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        if forceApply {
+            store
+                .recordBootstrapAppliedOperations(&appliedPersistentOperations)
+                .map_err(|error| error.to_string())?;
+        } else {
+            store
+                .recordAppliedOperations(&appliedPersistentOperations)
+                .map_err(|error| error.to_string())?;
+        }
+        store
+            .appendOperations(&persistentOperations)
+            .map_err(|error| error.to_string())?;
         Ok(serde_json::json!({ "applied": applied }))
     }
-
-    /// Applies a single non-chat sync operation to the correct persistent domain.
+    /// Reports whether one complete verified synchronization blob exists locally.
     #[allow(non_snake_case)]
-    fn applySyncOperation(&self, operation: &SyncOperation) -> Result<(), String> {
+    pub fn syncBlobExists(&self, contentHash: String, size: i64) -> Result<bool, String> {
+        self.runtimeFileSyncStore()?
+            .hasBlob(&RuntimeFileSyncReference { contentHash, size })
+    }
+
+    /// Reads one bounded synchronization blob chunk for transfer to another CoreNode.
+    #[allow(non_snake_case)]
+    pub fn syncReadBlobChunk(
+        &self,
+        contentHash: String,
+        offset: i64,
+        length: i64,
+    ) -> Result<Vec<u8>, String> {
+        self.runtimeFileSyncStore()?
+            .readBlobChunk(&contentHash, offset, length)
+    }
+
+    /// Creates the persistent sync operation store owned by this application instance.
+    #[allow(non_snake_case)]
+    fn runtimeSyncOperationStore(&self) -> Result<SyncOperationStore, String> {
+        let storageHost = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
+            "RuntimeStorageHost is not registered for persistent sync".to_string()
+        })?;
+        Ok(SyncOperationStore::new(
+            storageHost,
+            RUNTIME_SYNC_DIR_PATH.to_string(),
+        ))
+    }
+
+    /// Creates the opaque Binding store owned by this application instance.
+    #[allow(non_snake_case)]
+    fn runtimeBindingStore(&self) -> Result<CoreNodeBindingStore, String> {
+        let storageHost = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
+            "RuntimeStorageHost is not registered for persistent Binding storage".to_string()
+        })?;
+        CoreNodeBindingStore::new(storageHost)
+    }
+
+    /// Creates the content-addressed runtime file store owned by this application instance.
+    #[allow(non_snake_case)]
+    fn runtimeFileSyncStore(&self) -> Result<RuntimeFileSyncStore, String> {
+        let storageHost = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
+            "RuntimeStorageHost is not registered for runtime file synchronization".to_string()
+        })?;
+        Ok(RuntimeFileSyncStore::new(
+            storageHost,
+            RUNTIME_SYNC_DIR_PATH.to_string(),
+        ))
+    }
+
+    /// Applies one non-preferences persistent operation to its owning domain.
+    #[allow(non_snake_case)]
+    fn applyNonPreferenceSyncOperation(&self, operation: &SyncOperation) -> Result<(), String> {
         match (
             operation.domain.as_str(),
             operation.entityType.as_str(),
             operation.operation.as_str(),
         ) {
-            ("preferences", _, "upsert") => PreferencesDataStore::applySyncedPreferences(
-                &operation.entityId,
-                operation.payload.clone(),
-            )
-            .map_err(|error| error.to_string()),
             (OBJECTBOX_SYNC_DOMAIN, "Memory", "upsert" | "delete") => {
                 ObjectBox::<Memory>::applySyncedEntity(
                     &operation.entityId,
@@ -608,6 +729,18 @@ impl OperitApplication {
                     operation.payload.clone(),
                 )
                 .map_err(|error| error.to_string())
+            }
+            (RUNTIME_FILE_SYNC_DOMAIN, "file", "upsert" | "delete") => {
+                let storageHost = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
+                    "RuntimeStorageHost is not registered for persistent sync".to_string()
+                })?;
+                RuntimeFileSyncStore::applySyncedOperation(
+                    storageHost,
+                    RUNTIME_SYNC_DIR_PATH.to_string(),
+                    &operation.entityId,
+                    &operation.operation,
+                    operation.payload.clone(),
+                )
             }
             (domain, entityType, operationName) => Err(format!(
                 "unsupported sync operation: {domain}/{entityType}/{operationName}"

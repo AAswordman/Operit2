@@ -7,7 +7,7 @@ use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::services::LocalModelService::{LocalModelCatalogStatus, LocalModelService};
 use operit_util::RuntimeStorageLayout::{
     RUNTIME_LOCAL_ENGINES_DIR_PATH, RUNTIME_LOCAL_MODELS_DIR_PATH,
-    RUNTIME_LOCAL_MODEL_REGISTRY_PATH,
+    RUNTIME_LOCAL_MODEL_REGISTRY_PATH, RUNTIME_ROOT_PATH_PREFIX,
 };
 
 /// Runs local model repository and installation commands.
@@ -278,7 +278,7 @@ fn runtime_root_dir(application: &OperitApplication) -> Result<PathBuf, String> 
 fn runtime_layout_path(runtime_root: &Path, layout_path: &str) -> Result<PathBuf, String> {
     let relative = layout_path
         .trim()
-        .strip_prefix("runtime/")
+        .strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
         .ok_or_else(|| format!("invalid runtime layout path: {layout_path}"))?;
     Ok(runtime_root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR)))
 }

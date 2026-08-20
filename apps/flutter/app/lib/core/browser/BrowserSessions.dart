@@ -3,54 +3,13 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart';
 
-class BrowserSessionEvent {
-  /// Creates one decoded browser event delivered by Core Link.
-  const BrowserSessionEvent({
-    required this.sequence,
-    required this.sessionId,
-    required this.eventType,
-    required this.session,
-    required this.resultJson,
-    required this.frameData,
-    required this.frameCodec,
-    required this.frameWidth,
-    required this.frameHeight,
-    required this.error,
-  });
-
-  /// Decodes one serialized RuntimeBrowser stream event.
-  factory BrowserSessionEvent.fromRuntime(RuntimeBrowserStreamEvent event) {
-    return BrowserSessionEvent(
-      sequence: event.sequence,
-      sessionId: event.sessionId,
-      eventType: event.eventType,
-      session: event.session,
-      resultJson: event.resultJson,
-      frameData: event.frameData,
-      frameCodec: event.frameCodec,
-      frameWidth: event.frameWidth,
-      frameHeight: event.frameHeight,
-      error: event.error,
-    );
-  }
-
-  final int sequence;
-  final String sessionId;
-  final String eventType;
-  final RuntimeBrowserSessionInfo? session;
-  final String resultJson;
-  final Uint8List frameData;
-  final String? frameCodec;
-  final int? frameWidth;
-  final int? frameHeight;
-  final String? error;
-}
+/// Uses the generated Core browser event directly in the Flutter browser UI.
+typedef BrowserSessionEvent = RuntimeBrowserStreamEvent;
 
 class _BrowserSurfaceInteraction {
   /// Creates one browser compositor interaction envelope.
@@ -126,9 +85,7 @@ class BrowserSessions {
 
   /// Watches semantic state and surface events for one browser session.
   Stream<BrowserSessionEvent> watchEvents(String sessionId) {
-    return _browser
-        .browserSessionEventsChanges(sessionId: sessionId)
-        .map(BrowserSessionEvent.fromRuntime);
+    return _browser.browserSessionEvents(sessionId: sessionId);
   }
 
   /// Activates one owner browser session.

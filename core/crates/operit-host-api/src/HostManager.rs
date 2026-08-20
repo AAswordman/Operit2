@@ -4,12 +4,13 @@ use crate::{
     ArchiveStagingHost, AudioPlaybackHost, BluetoothHost, BrowserAutomationHost,
     BrowserSessionHost, ComposeDslWebViewHost, FileSystemHost, HostEnvironmentDescriptor,
     HostJavaScriptRuntimeHost, HostRuntimeEventHost, HostRuntimeEventSchedulerHost,
-    HostRuntimeTaskSchedulerHost, HostSecretStore, HttpHost, LocalInferenceHost,
+    HostRuntimeTaskSchedulerHost, HostSecretStore, HttpHost, LocalInferenceHost, WebSocketHost,
     ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost, RuntimeStorageWriteHost,
     SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost, WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
+static DEFAULT_WEBSOCKET_HOST: OnceLock<Arc<dyn WebSocketHost>> = OnceLock::new();
 static DEFAULT_JAVASCRIPT_RUNTIME_HOST: OnceLock<Arc<dyn HostJavaScriptRuntimeHost>> =
     OnceLock::new();
 static DEFAULT_RUNTIME_TASK_SCHEDULER_HOST: OnceLock<Arc<dyn HostRuntimeTaskSchedulerHost>> =
@@ -30,6 +31,21 @@ pub fn defaultHttpHost() -> Arc<dyn HttpHost> {
     DEFAULT_HTTP_HOST
         .get()
         .expect("HTTP host must be configured before using HTTP-backed runtime services")
+        .clone()
+}
+
+/// Registers the WebSocket host shared by Link transport carriers.
+#[allow(non_snake_case)]
+pub fn setDefaultWebSocketHost(host: Arc<dyn WebSocketHost>) {
+    let _ = DEFAULT_WEBSOCKET_HOST.set(host);
+}
+
+/// Returns the globally registered WebSocket host for Link transport carriers.
+#[allow(non_snake_case)]
+pub fn defaultWebSocketHost() -> Arc<dyn WebSocketHost> {
+    DEFAULT_WEBSOCKET_HOST
+        .get()
+        .expect("WebSocket host must be configured before using WebSocket-backed Link carriers")
         .clone()
 }
 
@@ -72,6 +88,7 @@ pub struct HostManager {
     pub browserSessionHost: Option<Arc<dyn BrowserSessionHost>>,
     pub composeDslWebViewHost: Option<Arc<dyn ComposeDslWebViewHost>>,
     pub httpHost: Option<Arc<dyn HttpHost>>,
+    pub webSocketHost: Option<Arc<dyn WebSocketHost>>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub audioPlaybackHost: Option<Arc<dyn AudioPlaybackHost>>,
     pub bluetoothHost: Option<Arc<dyn BluetoothHost>>,
@@ -103,6 +120,7 @@ impl HostManager {
             browserSessionHost: None,
             composeDslWebViewHost: None,
             httpHost: None,
+            webSocketHost: None,
             systemOperationHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
@@ -136,6 +154,7 @@ impl HostManager {
             browserSessionHost: None,
             composeDslWebViewHost: None,
             httpHost: None,
+            webSocketHost: None,
             systemOperationHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
@@ -172,6 +191,7 @@ impl HostManager {
             browserSessionHost: None,
             composeDslWebViewHost: None,
             httpHost: None,
+            webSocketHost: None,
             systemOperationHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
@@ -209,6 +229,7 @@ impl HostManager {
             browserSessionHost: None,
             composeDslWebViewHost: None,
             httpHost: None,
+            webSocketHost: None,
             systemOperationHost: Some(systemOperationHost),
             audioPlaybackHost: None,
             bluetoothHost: None,
@@ -250,6 +271,7 @@ impl HostManager {
             browserSessionHost: None,
             composeDslWebViewHost: None,
             httpHost: Some(httpHost),
+            webSocketHost: None,
             systemOperationHost: Some(systemOperationHost),
             audioPlaybackHost: None,
             bluetoothHost: None,
@@ -276,6 +298,13 @@ impl HostManager {
     #[allow(non_snake_case)]
     pub fn withCoreCommandExecutor(mut self, executor: CoreCommandExecutor) -> Self {
         self.coreCommandExecutor = Some(executor);
+        self
+    }
+
+    /// Adds a host-owned WebSocket implementation for Link transport carriers.
+    #[allow(non_snake_case)]
+    pub fn withWebSocketHost(mut self, webSocketHost: Arc<dyn WebSocketHost>) -> Self {
+        self.webSocketHost = Some(webSocketHost);
         self
     }
 

@@ -1,10 +1,14 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:ui' as ui;
+
 import 'package:flutter/services.dart';
 
 import '../link/CoreLinkProtocol.dart';
 import '../link/CoreLinkCodec.dart';
+import '../logging/ClientLogger.dart';
 import '../runtime/RuntimeChannelInboundGateway.dart';
 import 'CoreProxy.dart';
 
@@ -15,8 +19,96 @@ class MethodChannelCoreProxy extends CoreProxy {
 
   final MethodChannel _channel;
 
+  /// Reads the native platform's default Runtime storage roots.
   @override
-  Future<Object?> call(CoreCallRequest request) async {
+  Future<Map<Object?, Object?>> runtimeStorageDefaults() async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>(
+      'localRuntimeStorageDefaults',
+    );
+    if (result == null) {
+      throw StateError('local runtime storage defaults response is empty');
+    }
+    return result;
+  }
+
+  /// Normalizes explicit Runtime storage roots through the native Host.
+  @override
+  Future<Map<Object?, Object?>> runtimeStoragePaths(
+    String runtimeRoot,
+    String workspaceRoot,
+  ) async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>(
+      'localRuntimeStoragePaths',
+      <String, Object?>{
+        'runtimeRoot': runtimeRoot,
+        'workspaceRoot': workspaceRoot,
+      },
+    );
+    if (result == null) {
+      throw StateError('local runtime storage paths response is empty');
+    }
+    return result;
+  }
+
+  /// Installs identity-isolated Runtime storage roots on the native Host.
+  @override
+  Future<void> setRuntimeStorageRoots(
+    String runtimeRoot,
+    String workspaceRoot,
+  ) {
+    return _channel.invokeMethod<void>(
+      'setLocalRuntimeStorage',
+      <String, Object?>{
+        'runtimeRoot': runtimeRoot,
+        'workspaceRoot': workspaceRoot,
+      },
+    );
+  }
+
+  /// Reads and validates the Rust bootstrap storage response.
+  @override
+  Future<String?> runtimeBootstrapRead() async {
+    final encoded = await _channel.invokeMethod<String>('runtimeBootstrapRead');
+    if (encoded == null) {
+      throw StateError('runtime bootstrap read response is empty');
+    }
+    final response = jsonDecode(encoded) as Map<String, Object?>;
+    if (response['ok'] != true) {
+      throw StateError(response['error'] as String);
+    }
+    return response['value'] as String?;
+  }
+
+  /// Persists one bootstrap record through the Rust storage Host.
+  @override
+  Future<void> runtimeBootstrapWrite(String content) async {
+    final encoded = await _channel.invokeMethod<String>(
+      'runtimeBootstrapWrite',
+      content,
+    );
+    if (encoded == null) {
+      throw StateError('runtime bootstrap write response is empty');
+    }
+    final response = jsonDecode(encoded) as Map<String, Object?>;
+    if (response['ok'] != true) {
+      throw StateError(response['error'] as String);
+    }
+  }
+
+  /// Requests the required native application exit after an identity change.
+  @override
+  Future<void> restartApplication() async {
+    final response = await ServicesBinding.instance.exitApplication(
+      ui.AppExitType.required,
+    );
+    throw StateError(
+      'required application exit returned without terminating: ${response.name}',
+    );
+  }
+
+  /// Sends one Core call through the native carrier without decoding its payload.
+  @override
+  Future<Uint8List> callBytes(CoreCallRequest request) async {
     final responseBytes = await _channel.invokeMethod<Uint8List>(
       'call',
       encodeNativeCoreCallRequest(request),
@@ -27,7 +119,7 @@ class MethodChannelCoreProxy extends CoreProxy {
         message: 'runtime bridge returned empty response',
       );
     }
-    return decodeNativeCoreResult(responseBytes);
+    return responseBytes;
   }
 
   /// Opens a client-owned stream on the local platform carrier.
@@ -49,6 +141,11 @@ class MethodChannelCoreProxy extends CoreProxy {
 
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
+    ClientLogger.d(
+      'watch snapshot requested property=${request.propertyName} '
+      'target=${request.targetPath.key}',
+      tag: 'MethodChannelWatch',
+    );
     final responseBytes = await _channel.invokeMethod<Uint8List>(
       'watchSnapshot',
       encodeNativeCoreWatchSnapshotRequest(request),
@@ -59,7 +156,13 @@ class MethodChannelCoreProxy extends CoreProxy {
         message: 'runtime bridge returned empty watch response',
       );
     }
-    return decodeNativeCoreWatchSnapshotResult(responseBytes);
+    final event = decodeNativeCoreWatchSnapshotResult(responseBytes);
+    ClientLogger.d(
+      'watch snapshot received property=${event.propertyName} '
+      'kind=${event.kind} bytes=${responseBytes.length}',
+      tag: 'MethodChannelWatch',
+    );
+    return event;
   }
 
   @override
@@ -67,6 +170,11 @@ class MethodChannelCoreProxy extends CoreProxy {
     final watchChannel = _methodChannelWatchChannel(_channel);
     final subscriptionId = watchChannel.nextSubscriptionId();
     final events = watchChannel.attach(subscriptionId);
+    ClientLogger.d(
+      'watch stream opening subscription=$subscriptionId '
+      'property=${request.propertyName} target=${request.targetPath.key}',
+      tag: 'MethodChannelWatch',
+    );
     final Uint8List? subscriptionBytes;
     try {
       subscriptionBytes = await _invokeWatchStream(
@@ -75,9 +183,21 @@ class MethodChannelCoreProxy extends CoreProxy {
         request,
       );
     } catch (error, stackTrace) {
+      ClientLogger.e(
+        'watch stream open failed subscription=$subscriptionId '
+        'property=${request.propertyName}',
+        tag: 'MethodChannelWatch',
+        error: error,
+        stackTrace: stackTrace,
+      );
       await watchChannel.fail(subscriptionId, error, stackTrace);
       rethrow;
     }
+    ClientLogger.d(
+      'watch stream native response subscription=$subscriptionId '
+      'bytes=${subscriptionBytes?.length ?? -1}',
+      tag: 'MethodChannelWatch',
+    );
     if (subscriptionBytes == null) {
       await watchChannel.fail(
         subscriptionId,
@@ -98,6 +218,12 @@ class MethodChannelCoreProxy extends CoreProxy {
         subscriptionBytes,
       );
     } catch (error, stackTrace) {
+      ClientLogger.e(
+        'watch stream response decode failed subscription=$subscriptionId',
+        tag: 'MethodChannelWatch',
+        error: error,
+        stackTrace: stackTrace,
+      );
       await watchChannel.fail(subscriptionId, error, stackTrace);
       rethrow;
     }
@@ -107,9 +233,20 @@ class MethodChannelCoreProxy extends CoreProxy {
         message:
             'runtime watch subscription id mismatch: $openedSubscriptionId',
       );
+      ClientLogger.e(
+        'watch stream subscription mismatch expected=$subscriptionId '
+        'actual=$openedSubscriptionId',
+        tag: 'MethodChannelWatch',
+        error: error,
+        stackTrace: StackTrace.current,
+      );
       await watchChannel.fail(subscriptionId, error, StackTrace.current);
       throw error;
     }
+    ClientLogger.d(
+      'watch stream opened subscription=$subscriptionId',
+      tag: 'MethodChannelWatch',
+    );
     yield* events;
   }
 }
@@ -192,8 +329,10 @@ class _MethodChannelWatchChannel {
   final MethodChannel _channel;
   final Map<String, StreamController<CoreEvent>> _controllers =
       <String, StreamController<CoreEvent>>{};
+  final Map<String, int> _eventCounts = <String, int>{};
   Future<void> _dispatchTail = Future<void>.value();
   int _nextSubscriptionIndex = 0;
+  int _incomingFrameIndex = 0;
 
   String nextSubscriptionId() {
     return 'method-channel-watch-${DateTime.now().microsecondsSinceEpoch}-${_nextSubscriptionIndex++}';
@@ -201,6 +340,10 @@ class _MethodChannelWatchChannel {
 
   Stream<CoreEvent> attach(String subscriptionId) {
     final controller = StreamController<CoreEvent>();
+    ClientLogger.d(
+      'watch controller attached subscription=$subscriptionId',
+      tag: 'MethodChannelWatch',
+    );
     controller.onCancel = () async {
       await _closeSubscription(subscriptionId);
     };
@@ -215,8 +358,18 @@ class _MethodChannelWatchChannel {
   ) async {
     final controller = _controllers.remove(subscriptionId);
     if (controller == null) {
+      ClientLogger.d(
+        'watch failure ignored subscription=$subscriptionId reason=controller_missing',
+        tag: 'MethodChannelWatch',
+      );
       return;
     }
+    ClientLogger.e(
+      'watch controller failed subscription=$subscriptionId',
+      tag: 'MethodChannelWatch',
+      error: error,
+      stackTrace: stackTrace,
+    );
     controller.onCancel = null;
     controller.addError(error, stackTrace);
     await controller.close();
@@ -226,7 +379,21 @@ class _MethodChannelWatchChannel {
     switch (call.method) {
       case 'watchChannelEvent':
         final frameBytes = call.arguments as Uint8List;
-        _dispatchTail = _dispatchTail.then((_) => _dispatch(frameBytes));
+        final incomingFrameIndex = _incomingFrameIndex++;
+        final receivedAtMicros = DateTime.now().microsecondsSinceEpoch;
+        if (incomingFrameIndex < 20 || incomingFrameIndex % 50 == 0) {
+          ClientLogger.d(
+            'watch frame received index=$incomingFrameIndex bytes=${frameBytes.length}',
+            tag: 'MethodChannelWatch',
+          );
+        }
+        _dispatchTail = _dispatchTail.then(
+          (_) => _dispatch(
+            frameBytes,
+            incomingFrameIndex: incomingFrameIndex,
+            receivedAtMicros: receivedAtMicros,
+          ),
+        );
         unawaited(_dispatchTail);
         return null;
       case 'notificationActivation':
@@ -241,30 +408,73 @@ class _MethodChannelWatchChannel {
     }
   }
 
-  Future<void> _dispatch(Uint8List frameBytes) async {
+  Future<void> _dispatch(
+    Uint8List frameBytes, {
+    required int incomingFrameIndex,
+    required int receivedAtMicros,
+  }) async {
     try {
       final frame = _parseMethodChannelWatchFrame(frameBytes);
       final subscriptionId = frame.subscriptionId;
       final controller = _controllers[subscriptionId];
       if (controller == null) {
+        ClientLogger.w(
+          'watch frame dropped index=$incomingFrameIndex '
+          'subscription=$subscriptionId reason=controller_missing',
+          tag: 'MethodChannelWatch',
+        );
         return;
       }
       final event = frame.event;
+      final eventIndex = _eventCounts[subscriptionId] ?? 0;
+      _eventCounts[subscriptionId] = eventIndex + 1;
+      final sampled =
+          eventIndex < 20 || eventIndex % 50 == 0 || event.kind == 'Completed';
+      final dispatchStartedAtMicros = DateTime.now().microsecondsSinceEpoch;
+      if (sampled) {
+        ClientLogger.d(
+          'watch event dispatch index=$eventIndex incomingFrame=$incomingFrameIndex '
+          'subscription=$subscriptionId property=${event.propertyName} kind=${event.kind} '
+          'ingressDelayMs=${(dispatchStartedAtMicros - receivedAtMicros) / 1000}',
+          tag: 'MethodChannelWatch',
+        );
+      }
       controller.add(event);
+      if (sampled) {
+        ClientLogger.d(
+          'watch event added index=$eventIndex subscription=$subscriptionId '
+          'addElapsedMs=${(DateTime.now().microsecondsSinceEpoch - dispatchStartedAtMicros) / 1000}',
+          tag: 'MethodChannelWatch',
+        );
+      }
       if (event.kind == 'Completed') {
         _controllers.remove(subscriptionId);
+        _eventCounts.remove(subscriptionId);
         controller.onCancel = null;
         unawaited(controller.close());
         unawaited(_closeNativeWatchStream(_channel, subscriptionId));
       }
     } catch (error, stackTrace) {
+      ClientLogger.e(
+        'watch frame dispatch failed index=$incomingFrameIndex',
+        tag: 'MethodChannelWatch',
+        error: error,
+        stackTrace: stackTrace,
+      );
       _failAll(error, stackTrace);
     }
   }
 
   void _failAll(Object error, StackTrace stackTrace) {
     final entries = _controllers.entries.toList(growable: false);
+    ClientLogger.e(
+      'all watch controllers failed count=${entries.length}',
+      tag: 'MethodChannelWatch',
+      error: error,
+      stackTrace: stackTrace,
+    );
     _controllers.clear();
+    _eventCounts.clear();
     for (final entry in entries) {
       unawaited(_closeNativeWatchStream(_channel, entry.key));
       final controller = entry.value;
@@ -276,6 +486,11 @@ class _MethodChannelWatchChannel {
 
   Future<void> _closeSubscription(String subscriptionId) async {
     _controllers.remove(subscriptionId);
+    _eventCounts.remove(subscriptionId);
+    ClientLogger.d(
+      'watch controller cancelled subscription=$subscriptionId',
+      tag: 'MethodChannelWatch',
+    );
     await _closeNativeWatchStream(_channel, subscriptionId);
   }
 }
@@ -318,6 +533,10 @@ Future<void> _closeNativeWatchStream(
   MethodChannel channel,
   String subscriptionId,
 ) async {
+  ClientLogger.d(
+    'watch native close requested subscription=$subscriptionId',
+    tag: 'MethodChannelWatch',
+  );
   final responseBytes = await channel.invokeMethod<Uint8List>(
     'closeWatchStream',
     subscriptionId,
@@ -329,4 +548,8 @@ Future<void> _closeNativeWatchStream(
     );
   }
   decodeNativeCoreVoidResult(responseBytes);
+  ClientLogger.d(
+    'watch native close completed subscription=$subscriptionId',
+    tag: 'MethodChannelWatch',
+  );
 }

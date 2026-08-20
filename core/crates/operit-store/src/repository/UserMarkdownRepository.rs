@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::RuntimeFileSyncStore::RuntimeFileSyncStore;
 use crate::RuntimeStorageHost::runtimeStoragePath;
 use operit_host_api::RuntimeStorageHost;
 use operit_util::OperitPaths::userMarkdownPath;
+use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
 
 #[derive(Clone)]
 pub struct UserMarkdownRepository {
@@ -58,9 +60,8 @@ impl UserMarkdownRepository {
     #[allow(non_snake_case)]
     /// Writes normalized content to the user markdown file.
     pub fn writeUserMarkdown(&self, content: String) -> Result<(), String> {
-        self.storageHost
+        RuntimeFileSyncStore::new(self.storageHost.clone(), RUNTIME_SYNC_DIR_PATH.to_string())
             .writeBytes(&self.storagePath()?, normalizeMarkdown(content).as_bytes())
-            .map_err(|error| error.to_string())
     }
 
     #[allow(non_snake_case)]

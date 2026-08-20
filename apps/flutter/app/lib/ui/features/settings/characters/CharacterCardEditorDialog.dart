@@ -899,10 +899,10 @@ class _CharacterAvatarEditorField extends StatelessWidget {
                   shape: BoxShape.circle,
                 ),
                 child: ClipOval(
-                child: CharacterAvatarImage(
-                  avatarUri: path,
-                  fit: BoxFit.cover,
-                ),
+                  child: CharacterAvatarImage(
+                    avatarUri: path,
+                    fit: BoxFit.cover,
+                  ),
                 ),
               ),
             ),
@@ -1452,6 +1452,7 @@ class _CharacterToolAccessDialog extends StatefulWidget {
   final List<ToolAccessOption> skillOptions;
   final List<ToolAccessOption> mcpOptions;
 
+  /// Opens the character-card tool access editor.
   static Future<core_proxy.CharacterCardToolAccessConfig?> show({
     required BuildContext context,
     required core_proxy.CharacterCardToolAccessConfig config,
@@ -1472,18 +1473,23 @@ class _CharacterToolAccessDialog extends StatefulWidget {
     );
   }
 
+  /// Creates the state object that owns the tab selection and local access lists.
   @override
   State<_CharacterToolAccessDialog> createState() =>
       _CharacterToolAccessDialogState();
 }
 
-class _CharacterToolAccessDialogState
-    extends State<_CharacterToolAccessDialog> {
+class _CharacterToolAccessDialogState extends State<_CharacterToolAccessDialog>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+  late final TextEditingController _searchController;
   late Set<String> _builtinTools;
   late Set<String> _packages;
   late Set<String> _skills;
   late Set<String> _mcpServers;
+  int _selectedTabIndex = 0;
 
+  /// Initializes local selections and controllers from the normalized config.
   @override
   void initState() {
     super.initState();
@@ -1492,155 +1498,316 @@ class _CharacterToolAccessDialogState
     _packages = config.allowedPackages.toSet();
     _skills = config.allowedSkills.toSet();
     _mcpServers = config.allowedMcpServers.toSet();
+    _tabController = TabController(length: 4, vsync: this);
+    _searchController = TextEditingController();
   }
 
+  /// Releases the tab and search controllers owned by the dialog.
+  @override
+  void dispose() {
+    _tabController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Returns the options belonging to the active tab.
+  List<ToolAccessOption> _optionsForTab(int tabIndex) {
+    return switch (tabIndex) {
+      0 => widget.builtinOptions,
+      1 => widget.packageOptions,
+      2 => widget.skillOptions,
+      _ => widget.mcpOptions,
+    };
+  }
+
+  /// Returns the mutable selection set belonging to the active tab.
+  Set<String> _selectionForTab(int tabIndex) {
+    return switch (tabIndex) {
+      0 => _builtinTools,
+      1 => _packages,
+      2 => _skills,
+      _ => _mcpServers,
+    };
+  }
+
+  /// Returns the localized empty-state message belonging to one tab.
+  String _emptyTextForTab(AppLocalizations l10n, int tabIndex) {
+    return switch (tabIndex) {
+      0 => l10n.settingsCharactersToolAccessEmptyBuiltin,
+      1 => l10n.settingsCharactersToolAccessEmptyPackages,
+      2 => l10n.settingsCharactersToolAccessEmptySkills,
+      _ => l10n.settingsCharactersToolAccessEmptyMcp,
+    };
+  }
+
+  /// Clears the search query when the user moves to another tab.
+  void _handleTabChanged(int tabIndex) {
+    _selectedTabIndex = tabIndex;
+    _searchController.clear();
+    setState(() {});
+  }
+
+  /// Filters options by their key, title, and description like the reference dialog.
+  List<ToolAccessOption> _filterOptions(List<ToolAccessOption> options) {
+    final searchText = _searchController.text.trim().toLowerCase();
+    if (searchText.isEmpty) {
+      return options;
+    }
+    return options
+        .where((option) {
+          final searchableText =
+              '${option.key}\n${option.title}\n${option.subtitle}'
+                  .toLowerCase();
+          return searchableText.contains(searchText);
+        })
+        .toList(growable: false);
+  }
+
+  /// Toggles one option in the active tab without changing other tabs.
+  void _toggleSelection(String key) {
+    final selection = _selectionForTab(_selectedTabIndex);
+    if (selection.contains(key)) {
+      selection.remove(key);
+    } else {
+      selection.add(key);
+    }
+    setState(() {});
+  }
+
+  /// Saves the normalized access configuration and closes the dialog.
   void _save() {
-    Navigator.of(context).pop(
+    final normalized = _normalizedToolAccessConfig(
       core_proxy.CharacterCardToolAccessConfig(
         enabled: widget.config.enabled,
-        allowedBuiltinTools: _builtinTools.toList(growable: false)..sort(),
-        allowedPackages: _packages.toList(growable: false)..sort(),
-        allowedSkills: _skills.toList(growable: false)..sort(),
-        allowedMcpServers: _mcpServers.toList(growable: false)..sort(),
+        allowedBuiltinTools: _builtinTools.toList()..sort(),
+        allowedPackages: _packages.toList()..sort(),
+        allowedSkills: _skills.toList()..sort(),
+        allowedMcpServers: _mcpServers.toList()..sort(),
+      ),
+    );
+    Navigator.of(context).pop(normalized);
+  }
+
+  /// Builds the compact empty state used by the reference dialog.
+  Widget _buildEmptyState(String text) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: double.infinity,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+        ),
       ),
     );
   }
 
+  /// Builds the searchable option list and its empty states.
+  Widget _buildOptionList(
+    AppLocalizations l10n,
+    List<ToolAccessOption> currentOptions,
+    List<ToolAccessOption> filteredOptions,
+  ) {
+    if (currentOptions.isEmpty) {
+      return _buildEmptyState(_emptyTextForTab(l10n, _selectedTabIndex));
+    }
+    if (filteredOptions.isEmpty) {
+      return _buildEmptyState(l10n.settingsCharactersToolAccessEmptySearch);
+    }
+
+    final colorScheme = Theme.of(context).colorScheme;
+    final selectedKeys = _selectionForTab(_selectedTabIndex);
+    return ListView.separated(
+      shrinkWrap: true,
+      padding: EdgeInsets.zero,
+      itemCount: filteredOptions.length,
+      separatorBuilder: (context, index) => Divider(
+        height: 1,
+        thickness: 0.5,
+        color: colorScheme.outlineVariant.withValues(alpha: 0.4),
+      ),
+      itemBuilder: (context, index) {
+        final option = filteredOptions[index];
+        final selected = selectedKeys.contains(option.key);
+        return Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => _toggleSelection(option.key),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: <Widget>[
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          option.title,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        if (option.subtitle.trim().isNotEmpty)
+                          Text(
+                            option.subtitle,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  IgnorePointer(
+                    child: Checkbox(value: selected, onChanged: (_) {}),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Builds the compact four-tab tool access dialog copied from the Kotlin UI.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return AlertDialog(
-      title: Text(l10n.settingsCharactersToolAccessConfigure),
-      content: SizedBox(
-        width: 620,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              _ToolAccessOptionGroup(
-                title: l10n.settingsCharactersBuiltinTools,
-                emptyText: l10n.settingsCharactersToolAccessEmptyBuiltin,
-                options: widget.builtinOptions,
-                selectedKeys: _builtinTools,
-                onChanged: (key, selected) {
-                  setState(() {
-                    _setSelection(_builtinTools, key, selected);
-                  });
-                },
+    final colorScheme = Theme.of(context).colorScheme;
+    final currentOptions = _optionsForTab(_selectedTabIndex);
+    final filteredOptions = _filterOptions(currentOptions);
+    final tabTitles = <String>[
+      l10n.settingsCharactersToolAccessTabBuiltin,
+      l10n.settingsCharactersToolAccessTabPackage,
+      l10n.settingsCharactersToolAccessTabSkill,
+      l10n.settingsCharactersToolAccessTabMcp,
+    ];
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: FractionallySizedBox(
+        widthFactor: 0.94,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 560,
+            maxHeight: MediaQuery.sizeOf(context).height * 0.86,
+          ),
+          child: Material(
+            color: colorScheme.surface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: colorScheme.outlineVariant),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      l10n.settingsCharactersToolAccessTitle,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TabBar(
+                    controller: _tabController,
+                    isScrollable: true,
+                    tabAlignment: TabAlignment.start,
+                    labelPadding: const EdgeInsets.symmetric(horizontal: 10),
+                    indicatorSize: TabBarIndicatorSize.label,
+                    dividerHeight: 1,
+                    labelStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    unselectedLabelStyle: const TextStyle(fontSize: 12),
+                    onTap: _handleTabChanged,
+                    tabs: <Widget>[
+                      for (final title in tabTitles) Tab(text: title),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  if (currentOptions.isNotEmpty) ...<Widget>[
+                    TextField(
+                      controller: _searchController,
+                      onChanged: (value) => setState(() {}),
+                      textInputAction: TextInputAction.search,
+                      style: const TextStyle(fontSize: 14),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        suffixIcon: _searchController.text.isNotEmpty
+                            ? IconButton(
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() {});
+                                },
+                                icon: const Icon(Icons.close, size: 18),
+                                tooltip: l10n.clear,
+                              )
+                            : null,
+                        hintText:
+                            l10n.settingsCharactersToolAccessSearchPlaceholder,
+                        hintStyle: const TextStyle(fontSize: 14),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  SizedBox(
+                    width: double.infinity,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 320),
+                      child: _buildOptionList(
+                        l10n,
+                        currentOptions,
+                        filteredOptions,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: Text(l10n.cancel),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: _save,
+                          child: Text(l10n.save),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              _ToolAccessOptionGroup(
-                title: l10n.settingsCharactersAllowedPackages,
-                emptyText: l10n.settingsCharactersToolAccessEmptyPackages,
-                options: widget.packageOptions,
-                selectedKeys: _packages,
-                onChanged: (key, selected) {
-                  setState(() {
-                    _setSelection(_packages, key, selected);
-                  });
-                },
-              ),
-              _ToolAccessOptionGroup(
-                title: l10n.settingsCharactersAllowedSkills,
-                emptyText: l10n.settingsCharactersToolAccessEmptySkills,
-                options: widget.skillOptions,
-                selectedKeys: _skills,
-                onChanged: (key, selected) {
-                  setState(() {
-                    _setSelection(_skills, key, selected);
-                  });
-                },
-              ),
-              _ToolAccessOptionGroup(
-                title: l10n.settingsCharactersAllowedMcpServers,
-                emptyText: l10n.settingsCharactersToolAccessEmptyMcp,
-                options: widget.mcpOptions,
-                selectedKeys: _mcpServers,
-                onChanged: (key, selected) {
-                  setState(() {
-                    _setSelection(_mcpServers, key, selected);
-                  });
-                },
-              ),
-            ],
+            ),
           ),
         ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.cancel),
-        ),
-        FilledButton(onPressed: _save, child: Text(l10n.save)),
-      ],
-    );
-  }
-}
-
-class _ToolAccessOptionGroup extends StatelessWidget {
-  const _ToolAccessOptionGroup({
-    required this.title,
-    required this.emptyText,
-    required this.options,
-    required this.selectedKeys,
-    required this.onChanged,
-  });
-
-  final String title;
-  final String emptyText;
-  final List<ToolAccessOption> options;
-  final Set<String> selectedKeys;
-  final void Function(String key, bool selected) onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    return Theme(
-      data: Theme.of(context).copyWith(
-        listTileTheme: const ListTileThemeData(
-          dense: true,
-          minVerticalPadding: 0,
-          horizontalTitleGap: 8,
-        ),
-      ),
-      child: ExpansionTile(
-        title: Text(
-          title,
-          style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
-        ),
-        tilePadding: const EdgeInsets.symmetric(horizontal: 6),
-        childrenPadding: const EdgeInsets.only(bottom: 6),
-        visualDensity: VisualDensity.compact,
-        minTileHeight: 42,
-        children: <Widget>[
-          if (options.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(emptyText, style: textTheme.bodyMedium),
-            )
-          else
-            for (final option in options)
-              CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                visualDensity: VisualDensity.compact,
-                title: Text(
-                  option.title,
-                  style: textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                subtitle: option.subtitle.isEmpty
-                    ? null
-                    : Text(option.subtitle, style: textTheme.bodySmall),
-                value: selectedKeys.contains(option.key),
-                onChanged: (selected) {
-                  if (selected == null) {
-                    return;
-                  }
-                  onChanged(option.key, selected);
-                },
-              ),
-        ],
       ),
     );
   }

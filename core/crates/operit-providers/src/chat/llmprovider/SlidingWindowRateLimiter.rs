@@ -1,7 +1,7 @@
-use std::collections::VecDeque;
-use std::sync::Mutex;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
+use std::collections::VecDeque;
+use std::sync::Mutex;
 
 pub struct SlidingWindowRateLimiter {
     pub maxRequestsPerMinute: i32,

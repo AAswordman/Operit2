@@ -1,11 +1,14 @@
 use super::*;
 use crate::{create_cli_link_access_store, create_local_core};
 
+use operit_core_proxy::{
+    CoreNodeRouter::CoreNodeRouter, RuntimeRemoteLinkService::RuntimeRemoteLinkService,
+};
 use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest};
 use operit_link_access::{
     link_token_hash, AcceptedRemoteSessionRecord, LinkAccessStore, PairedRemoteSession,
-    PairedRemoteSessionRecord, RemoteDeviceInfo, RemoteLinkClient, RemoteLinkServer,
-    RemoteLinkServerConfig,
+    PairedRemoteSessionRecord, LinkTransportPreference, RemoteDeviceInfo, RemoteLinkClient,
+    RemoteLinkServer, RemoteLinkServerConfig,
 };
 use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
@@ -20,7 +23,6 @@ use operit_tools::ToolExecutionManager::AITool;
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use uuid::Uuid;
 
 const LINK_SESSION_DISCOVERY_TIMEOUT_MS: u64 = 2000;
 
@@ -29,8 +31,10 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
         Some("serve") => run_link_serve_command(&args[1..]).await,
         Some("discover") => run_link_discover_command(&args[1..]).await,
         Some("connect") => run_link_connect_command(&args[1..]).await,
+        Some("space") => run_link_space_command(&args[1..]).await,
         Some("hello") => run_link_hello_command(&args[1..]).await,
         Some("sessions") => run_link_sessions_command().await,
+        Some("transport") => run_link_transport_command(&args[1..]).await,
         Some("session-delete") => run_link_session_delete_command(&args[1..]).await,
         Some("accepted-sessions") => run_link_accepted_sessions_command().await,
         Some("accepted-session-delete") => {
@@ -38,8 +42,6 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
         }
         Some("ping") => run_link_ping_command(&args[1..]).await,
         Some("refresh") => run_link_refresh_command(&args[1..]).await,
-        Some("sync") => run_link_sync_command(&args[1..]).await,
-        Some("sync-status") => run_link_sync_status_command(&args[1..]).await,
         Some("call") => run_link_call_command(&args[1..]).await,
         Some("watch") => run_link_watch_command(&args[1..]).await,
         Some("tui") => crate::tui::run_link_tui_command(&args[1..]).await,
@@ -111,8 +113,9 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
     let device_info = RemoteDeviceInfo::nativeCli("server")?;
     let access_store = LinkAccessStore::new(core.runtimeStorageHost());
     let identity = access_store.initializeIdentity(device_info.clone())?;
+    RuntimeRemoteLinkService::new(core.clone()).startSpaceSync()?;
     RemoteLinkServer::serve(
-        core,
+        CoreNodeRouter::new(Arc::new(core)),
         RemoteLinkServerConfig {
             bindAddress: bind_address,
             token,
@@ -125,25 +128,6 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
         },
     )
     .await
-}
-
-pub(crate) fn load_link_host_device_id() -> Result<String, String> {
-    let path = crate::client_paths::link_host_device_id_path();
-    if path.exists() {
-        let content = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-        let device_id = content.trim().to_string();
-        if device_id.is_empty() {
-            return Err(format!("empty link host device id: {}", path.display()));
-        }
-        return Ok(device_id);
-    }
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("invalid link host device id path: {}", path.display()))?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let device_id = format!("core-{}", Uuid::new_v4());
-    fs::write(&path, device_id.as_bytes()).map_err(|error| error.to_string())?;
-    Ok(device_id)
 }
 
 pub(crate) fn install_link_permission_requester(core: &mut operit_core_proxy::LocalCoreProxy) {
@@ -198,6 +182,7 @@ async fn run_link_hello_command(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Discovers nearby Spaces and prints their directly connectable CoreNodes.
 async fn run_link_discover_command(args: &[String]) -> Result<(), String> {
     let mut timeout_ms = 2000_u64;
     let mut index = 0;
@@ -219,32 +204,39 @@ async fn run_link_discover_command(args: &[String]) -> Result<(), String> {
         }
         index += 1;
     }
-    let devices = crate::mdns::discover_devices(timeout_ms)?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&devices).map_err(|error| error.to_string())?
-    );
+    let spaces = RuntimeRemoteLinkService::new(create_local_core())
+        .discoverSpaces(timeout_ms)
+        .await?;
+    for space in spaces {
+        println!(
+            "device space={} id={} devices={}",
+            space.spaceName, space.spaceId, space.memberCount
+        );
+        for device in space.devices {
+            println!(
+                "  device={} id={} address={}",
+                device.displayName, device.deviceId, device.baseUrl
+            );
+        }
+    }
     Ok(())
 }
 
 async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
-    let (url, token, save_name) = parse_remote_url_token_save(
-        args,
-        "usage: operit2 cli link connect <url> --token <token> [--save <name>]",
-    )?;
-    let client = RemoteLinkClient::new(url);
+    const USAGE: &str = "usage: operit2 cli link connect <url> --token <token> --save <name> [--transport <http|ws>]";
+    let (url, token, save_name, transport) = parse_remote_url_token_save(args, USAGE)?;
+    let name = save_name.ok_or_else(|| USAGE.to_string())?;
     let token_hash = link_token_hash(&token);
-    let hello = client.hello(&token_hash).await?;
-    println!(
-        "remote device={} core={} transports={}",
-        hello.coreDeviceInfo.displayName(),
-        hello.coreDeviceId,
-        hello.transports.join(",")
-    );
-    let pair_state = client
-        .pairStart(&token_hash, RemoteDeviceInfo::nativeCli("client")?)
+    let service = RuntimeRemoteLinkService::new(create_local_core());
+    let pairing = service
+        .startPairedRemote(url, token_hash, RemoteDeviceInfo::nativeCli("client")?)
         .await?;
-    println!("pairing started: {}", pair_state.pairingId);
+    println!(
+        "device={} id={}",
+        pairing.coreDeviceInfo.displayName(),
+        pairing.coreDeviceId
+    );
+    println!("pairing started: {}", pairing.pairingId);
     println!("check the server terminal for pairing code");
     print!("pairing code> ");
     io::stdout().flush().map_err(|error| error.to_string())?;
@@ -252,21 +244,63 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
     io::stdin()
         .read_line(&mut code)
         .map_err(|error| error.to_string())?;
-    let session = client.pairFinish(&pair_state, &code).await?;
-    println!("paired session={}", session.sessionId);
-    let info = session.sessionInfo().await?;
-    println!(
-        "session active remote={} core={} client={} transports={}",
-        info.coreDeviceInfo.displayName(),
-        info.coreDeviceId,
-        info.clientDeviceId,
-        info.transports.join(",")
-    );
-    if let Some(name) = save_name {
-        save_link_session(&name, session.exportRecord())?;
-        println!("session saved: {name}");
+    let mut session = service
+        .finishPairedRemote(pairing.pairingId, code.trim().to_string(), name.clone())
+        .await?;
+    if let Some(transport) = transport {
+        session.transport = transport;
+        create_cli_link_access_store().saveOutboundSession(name.clone(), session.clone())?;
     }
+    println!(
+        "paired device={} deviceId={} localDeviceId={}",
+        session.remoteDeviceInfo.displayName(),
+        session.coreDeviceId,
+        session.deviceId
+    );
+    println!("device paired: {name}");
+    println!("join its device space with: operit2 cli link space join {name}");
     Ok(())
+}
+
+/// Runs user-facing device-space inspection and membership commands.
+async fn run_link_space_command(args: &[String]) -> Result<(), String> {
+    let core = create_local_core();
+    LinkAccessStore::new(core.runtimeStorageHost())
+        .initializeIdentity(RemoteDeviceInfo::nativeCli("client")?)?;
+    let service = RuntimeRemoteLinkService::new(core);
+    match args.first().map(String::as_str) {
+        None | Some("show") if args.len() <= 1 => {
+            let space = service.deviceSpace()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&space).map_err(|error| error.to_string())?
+            );
+            Ok(())
+        }
+        Some("rename") if args.len() == 2 => {
+            let space = service.renameDeviceSpace(args[1].clone())?;
+            println!("device space renamed: {}", space.spaceName);
+            Ok(())
+        }
+        Some("join") if args.len() == 2 => {
+            let space = service.joinPairedDeviceSpace(args[1].clone()).await?;
+            println!(
+                "joined device space: {} ({} devices)",
+                space.spaceName,
+                space.members.len()
+            );
+            Ok(())
+        }
+        Some("leave") if args.len() == 1 => {
+            let space = service.leaveDeviceSpace()?;
+            println!("left device space; current space: {}", space.spaceName);
+            Ok(())
+        }
+        _ => Err(
+            "usage: operit2 cli link space <show|rename <name>|join <paired-session>|leave>"
+                .to_string(),
+        ),
+    }
 }
 
 async fn run_link_sessions_command() -> Result<(), String> {
@@ -279,7 +313,21 @@ async fn run_link_sessions_command() -> Result<(), String> {
             session.baseUrl,
             session.coreDeviceId
         );
+        println!("  transport={}", link_transport_name(&session.transport));
     }
+    Ok(())
+}
+
+/// Changes the concrete carrier used by one saved paired session.
+async fn run_link_transport_command(args: &[String]) -> Result<(), String> {
+    if args.len() != 2 {
+        return Err("usage: operit2 cli link transport <session> <http|ws>".to_string());
+    }
+    let name = &args[0];
+    let mut record = load_link_session_record(name)?;
+    record.transport = parse_link_transport(&args[1])?;
+    create_cli_link_access_store().saveOutboundSession(name.clone(), record.clone())?;
+    println!("session transport updated: {}", link_transport_name(&record.transport));
     Ok(())
 }
 
@@ -287,7 +335,7 @@ async fn run_link_session_delete_command(args: &[String]) -> Result<(), String> 
     let name = args
         .get(0)
         .ok_or_else(|| "usage: operit2 cli link session-delete <name>".to_string())?;
-    remove_link_session(name)?;
+    create_cli_link_access_store().removeOutboundSession(name)?;
     println!("session deleted: {name}");
     Ok(())
 }
@@ -370,138 +418,6 @@ async fn run_link_refresh_command(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-async fn run_link_sync_command(args: &[String]) -> Result<(), String> {
-    let (session_name, limit) = parse_link_sync_args(args)?;
-    let mut local = create_local_core();
-    let mut remote = load_link_session_resolved(&session_name).await?;
-    assert_sync_core_versions_match(&mut local, &mut remote).await?;
-    let mut rounds = 0usize;
-    let mut localApplied = 0usize;
-    let mut remoteApplied = 0usize;
-    loop {
-        rounds += 1;
-        let localClock = call_application(&mut local, "syncClock", serde_json::json!({})).await?;
-        let remoteClock = call_application(&mut remote, "syncClock", serde_json::json!({})).await?;
-        let localOperations = call_application(
-            &mut local,
-            "syncOperationsSince",
-            serde_json::json!({
-                "clock": remoteClock,
-                "domains": ["preferences", "chat", "objectbox"],
-                "limit": limit,
-            }),
-        )
-        .await?;
-        let remoteOperations = call_application(
-            &mut remote,
-            "syncOperationsSince",
-            serde_json::json!({
-                "clock": localClock,
-                "domains": ["preferences", "chat", "objectbox"],
-                "limit": limit,
-            }),
-        )
-        .await?;
-        let mergedOperations = merge_sync_operations(localOperations, remoteOperations)?;
-        let count = sync_operation_count(&mergedOperations)?;
-        if count == 0 {
-            break;
-        }
-        let remoteResult = call_application(
-            &mut remote,
-            "syncApplyOperations",
-            serde_json::json!({
-                "operations": mergedOperations.clone(),
-            }),
-        )
-        .await?;
-        let localResult = call_application(
-            &mut local,
-            "syncApplyOperations",
-            serde_json::json!({
-                "operations": mergedOperations,
-            }),
-        )
-        .await?;
-        remoteApplied += applied_count(&remoteResult)?;
-        localApplied += applied_count(&localResult)?;
-        if count < limit {
-            break;
-        }
-    }
-    println!(
-        "sync completed: rounds={rounds}, local_applied={localApplied}, remote_applied={remoteApplied}"
-    );
-    Ok(())
-}
-
-async fn run_link_sync_status_command(args: &[String]) -> Result<(), String> {
-    let (session_name, limit) = parse_link_sync_status_args(args)?;
-    let mut local = create_local_core();
-    let mut remote = load_link_session_resolved(&session_name).await?;
-    let local_version = call_application_core_version(&mut local).await?;
-    let remote_version = call_application_core_version(&mut remote).await?;
-    println!("localVersion={local_version}");
-    println!("remoteVersion={remote_version}");
-    println!("versionsMatch={}", local_version == remote_version);
-
-    let localClock = call_application(&mut local, "syncClock", serde_json::json!({})).await?;
-    let remoteClock = call_application(&mut remote, "syncClock", serde_json::json!({})).await?;
-    let localOperations = call_application(
-        &mut local,
-        "syncOperationsSince",
-        serde_json::json!({
-            "clock": remoteClock,
-            "domains": ["preferences", "chat", "objectbox"],
-            "limit": limit,
-        }),
-    )
-    .await?;
-    let remoteOperations = call_application(
-        &mut remote,
-        "syncOperationsSince",
-        serde_json::json!({
-            "clock": localClock,
-            "domains": ["preferences", "chat", "objectbox"],
-            "limit": limit,
-        }),
-    )
-    .await?;
-    println!("localPending={}", sync_operation_count(&localOperations)?);
-    println!("remotePending={}", sync_operation_count(&remoteOperations)?);
-    println!(
-        "mergedPending={}",
-        sync_operation_count(&merge_sync_operations(localOperations, remoteOperations)?)?
-    );
-    Ok(())
-}
-
-async fn assert_sync_core_versions_match<L, R>(local: &mut L, remote: &mut R) -> Result<(), String>
-where
-    L: CoreLinkClient + Send,
-    R: CoreLinkClient + Send,
-{
-    let local_version = call_application_core_version(local).await?;
-    let remote_version = call_application_core_version(remote).await?;
-    if local_version != remote_version {
-        return Err(format!(
-            "core version mismatch: local={local_version}, remote={remote_version}. sync blocked"
-        ));
-    }
-    Ok(())
-}
-
-async fn call_application_core_version<C>(client: &mut C) -> Result<String, String>
-where
-    C: CoreLinkClient + Send,
-{
-    let value = call_application(client, "coreVersion", serde_json::json!({})).await?;
-    value
-        .as_str()
-        .map(ToString::to_string)
-        .ok_or_else(|| "coreVersion response must be a string".to_string())
-}
-
 async fn run_link_call_command(args: &[String]) -> Result<(), String> {
     let name = args.get(0).ok_or_else(|| {
         "usage: operit2 cli link call <session> <target-path> <method-name> [args-json]".to_string()
@@ -562,54 +478,6 @@ async fn run_link_watch_command(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_link_sync_args(args: &[String]) -> Result<(String, usize), String> {
-    let session = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 cli link sync <session> [--limit <n>]".to_string())?
-        .clone();
-    let mut limit = 512usize;
-    let mut index = 1;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--limit" => {
-                index += 1;
-                let value = args.get(index).ok_or_else(|| {
-                    "usage: operit2 cli link sync <session> [--limit <n>]".to_string()
-                })?;
-                limit = value.parse::<usize>().map_err(|error| error.to_string())?;
-            }
-            _ => return Err("usage: operit2 cli link sync <session> [--limit <n>]".to_string()),
-        }
-        index += 1;
-    }
-    if limit == 0 {
-        return Err("sync limit must be greater than 0".to_string());
-    }
-    Ok((session, limit))
-}
-
-fn parse_link_sync_status_args(args: &[String]) -> Result<(String, usize), String> {
-    let usage = "usage: operit2 cli link sync-status <session> [--limit <n>]";
-    let session = args.get(0).ok_or_else(|| usage.to_string())?.clone();
-    let mut limit = 512usize;
-    let mut index = 1;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--limit" => {
-                index += 1;
-                let value = args.get(index).ok_or_else(|| usage.to_string())?;
-                limit = value.parse::<usize>().map_err(|error| error.to_string())?;
-            }
-            _ => return Err(usage.to_string()),
-        }
-        index += 1;
-    }
-    if limit == 0 {
-        return Err("sync status limit must be greater than 0".to_string());
-    }
-    Ok((session, limit))
-}
-
 /// Parses the optional session name and discovery timeout for link refresh.
 fn parse_link_refresh_args(args: &[String]) -> Result<(Option<String>, u64), String> {
     let usage = "usage: operit2 cli link refresh [session] [--timeout-ms <ms>]";
@@ -657,88 +525,19 @@ where
         .and_then(|value| operit_link::fromCoreValue(value).map_err(|error| error.to_string()))
 }
 
-fn merge_sync_operations(
-    left: serde_json::Value,
-    right: serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    let mut byId = BTreeMap::<String, serde_json::Value>::new();
-    for value in sync_operation_array(left)?
-        .into_iter()
-        .chain(sync_operation_array(right)?)
-    {
-        let opId = value
-            .get("opId")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| "sync operation missing opId".to_string())?
-            .to_string();
-        byId.insert(opId, value);
-    }
-    let mut operations = byId
-        .into_values()
-        .map(|value| sync_sort_key(&value).map(|key| (key, value)))
-        .collect::<Result<Vec<_>, _>>()?;
-    operations.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(serde_json::Value::Array(
-        operations.into_iter().map(|(_, value)| value).collect(),
-    ))
-}
-
-fn sync_operation_array(value: serde_json::Value) -> Result<Vec<serde_json::Value>, String> {
-    match value {
-        serde_json::Value::Array(values) => Ok(values),
-        _ => Err("sync operations response must be an array".to_string()),
-    }
-}
-
-fn sync_sort_key(value: &serde_json::Value) -> Result<(i64, String, i64, String), String> {
-    let createdAt = value
-        .get("createdAt")
-        .and_then(|value| value.as_i64())
-        .ok_or_else(|| "sync operation missing createdAt".to_string())?;
-    let originDeviceId = value
-        .get("originDeviceId")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| "sync operation missing originDeviceId".to_string())?
-        .to_string();
-    let sequence = value
-        .get("sequence")
-        .and_then(|value| value.as_i64())
-        .ok_or_else(|| "sync operation missing sequence".to_string())?;
-    let opId = value
-        .get("opId")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| "sync operation missing opId".to_string())?
-        .to_string();
-    Ok((createdAt, originDeviceId, sequence, opId))
-}
-
-fn sync_operation_count(value: &serde_json::Value) -> Result<usize, String> {
-    value
-        .as_array()
-        .map(Vec::len)
-        .ok_or_else(|| "sync operations must be an array".to_string())
-}
-
-fn applied_count(value: &serde_json::Value) -> Result<usize, String> {
-    value
-        .get("applied")
-        .and_then(|value| value.as_u64())
-        .map(|value| value as usize)
-        .ok_or_else(|| "sync apply response missing applied".to_string())
-}
-
 fn parse_remote_url_token(args: &[String], usage: &str) -> Result<(String, String), String> {
-    let (url, token, _) = parse_remote_url_token_save(args, usage)?;
+    let (url, token, _, _) = parse_remote_url_token_save(args, usage)?;
     Ok((url, token))
 }
 
 fn parse_remote_url_token_save(
     args: &[String],
     usage: &str,
-) -> Result<(String, String, Option<String>), String> {
+) -> Result<(String, String, Option<String>, Option<LinkTransportPreference>), String> {
     let url = args.get(0).ok_or_else(|| usage.to_string())?.clone();
     let mut token = None::<String>;
     let mut save_name = None::<String>;
+    let mut transport = None::<LinkTransportPreference>;
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -750,11 +549,39 @@ fn parse_remote_url_token_save(
                 index += 1;
                 save_name = Some(args.get(index).ok_or_else(|| usage.to_string())?.clone());
             }
+            "--transport" => {
+                index += 1;
+                transport = Some(parse_link_transport(
+                    args.get(index).ok_or_else(|| usage.to_string())?,
+                )?);
+            }
             _ => return Err(usage.to_string()),
         }
         index += 1;
     }
-    Ok((url, token.ok_or_else(|| usage.to_string())?, save_name))
+    Ok((
+        url,
+        token.ok_or_else(|| usage.to_string())?,
+        save_name,
+        transport,
+    ))
+}
+
+/// Parses the explicit Link carrier selection accepted by the CLI.
+fn parse_link_transport(value: &str) -> Result<LinkTransportPreference, String> {
+    match value {
+        "http" => Ok(LinkTransportPreference::Http),
+        "ws" => Ok(LinkTransportPreference::WebSocket),
+        _ => Err("Link transport must be http or ws".to_string()),
+    }
+}
+
+/// Returns the stable CLI spelling for one Link carrier selection.
+fn link_transport_name(value: &LinkTransportPreference) -> &'static str {
+    match value {
+        LinkTransportPreference::Http => "http",
+        LinkTransportPreference::WebSocket => "ws",
+    }
 }
 
 /// Loads all saved paired session records.
@@ -860,13 +687,6 @@ fn write_link_sessions(
     Ok(())
 }
 
-fn remove_link_session(name: &str) -> Result<(), String> {
-    if !load_link_sessions()?.contains_key(name) {
-        return Err(format!("link session not found: {name}"));
-    }
-    create_cli_link_access_store().removeOutboundSession(name)
-}
-
 fn load_link_server_sessions() -> Result<BTreeMap<String, AcceptedRemoteSessionRecord>, String> {
     create_cli_link_access_store().inboundSessions()
 }
@@ -889,15 +709,15 @@ fn print_link_usage() {
     println!("operit2 cli link serve [--bind <addr:port>] [--token <token>]");
     println!("operit2 cli link discover [--timeout-ms <ms>]");
     println!("operit2 cli link hello <url> --token <token>");
-    println!("operit2 cli link connect <url> --token <token> [--save <name>]");
+    println!("operit2 cli link connect <url> --token <token> --save <name> [--transport <http|ws>]");
+    println!("operit2 cli link space <show|rename <name>|join <paired-session>|leave>");
     println!("operit2 cli link sessions");
+    println!("operit2 cli link transport <session> <http|ws>");
     println!("operit2 cli link session-delete <name>");
     println!("operit2 cli link accepted-sessions");
     println!("operit2 cli link accepted-session-delete <session-id>");
     println!("operit2 cli link ping <name>");
     println!("operit2 cli link refresh [session] [--timeout-ms <ms>]");
-    println!("operit2 cli link sync <session> [--limit <n>]");
-    println!("operit2 cli link sync-status <session> [--limit <n>]");
     println!("operit2 cli link call <session> <target-path> <method-name> [args-json]");
     println!("operit2 cli link watch <session> <target-path> <property-name> [args-json]");
     println!("operit2 cli link tui <session> [--chat <chat-id>]");

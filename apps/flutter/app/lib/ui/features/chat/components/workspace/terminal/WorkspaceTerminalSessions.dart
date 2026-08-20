@@ -5,83 +5,19 @@ import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 
-class WorkspaceTerminalSessionInfo {
-  const WorkspaceTerminalSessionInfo({
-    required this.sessionId,
-    required this.sessionName,
-    required this.platform,
-    required this.terminal,
-    required this.terminalType,
-    required this.sessionKind,
-    required this.workingDir,
-    required this.commandRunning,
-  });
+/// Uses the generated Core terminal session state directly in Flutter.
+typedef WorkspaceTerminalSessionInfo =
+    core_proxy.RuntimeTerminalSessionInfo;
 
-  factory WorkspaceTerminalSessionInfo.fromCore(
-    core_proxy.RuntimeTerminalSessionInfo info,
-  ) {
-    return WorkspaceTerminalSessionInfo(
-      sessionId: info.sessionId,
-      sessionName: info.sessionName,
-      platform: info.platform,
-      terminal: info.terminal,
-      terminalType: info.terminalType,
-      sessionKind: info.sessionKind,
-      workingDir: info.workingDir,
-      commandRunning: info.commandRunning,
-    );
-  }
-
-  final String sessionId;
-  final String sessionName;
-  final String platform;
-  final String terminal;
-  final String terminalType;
-  final String sessionKind;
-  final String workingDir;
-  final bool commandRunning;
-
-  String get title {
-    return sessionName.trim();
-  }
+/// Adds the terminal title used only by the Flutter presentation layer.
+extension WorkspaceTerminalSessionInfoPresentation
+    on core_proxy.RuntimeTerminalSessionInfo {
+  /// Returns the trimmed title displayed for this terminal session.
+  String get title => sessionName.trim();
 }
 
-class WorkspaceTerminalScreen {
-  const WorkspaceTerminalScreen({
-    required this.sessionId,
-    required this.platform,
-    required this.terminal,
-    required this.terminalType,
-    required this.rows,
-    required this.cols,
-    required this.content,
-    required this.commandRunning,
-  });
-
-  factory WorkspaceTerminalScreen.fromCore(
-    core_proxy.RuntimeTerminalScreen screen,
-  ) {
-    return WorkspaceTerminalScreen(
-      sessionId: screen.sessionId,
-      platform: screen.platform,
-      terminal: screen.terminal,
-      terminalType: screen.terminalType,
-      rows: screen.rows,
-      cols: screen.cols,
-      content: screen.content,
-      commandRunning: screen.commandRunning,
-    );
-  }
-
-  final String sessionId;
-  final String platform;
-  final String terminal;
-  final String terminalType;
-  final int rows;
-  final int cols;
-  final String content;
-  final bool commandRunning;
-}
+/// Uses the generated Core terminal screen directly in Flutter.
+typedef WorkspaceTerminalScreen = core_proxy.RuntimeTerminalScreen;
 
 class WorkspaceTerminalSessions {
   const WorkspaceTerminalSessions({
@@ -96,18 +32,11 @@ class WorkspaceTerminalSessions {
       _clients.servicesRuntimeTerminalService;
 
   Future<List<WorkspaceTerminalSessionInfo>> listSessions() async {
-    final sessions = await _terminal.terminalSessionsFlowSnapshot();
-    return sessions
-        .map(WorkspaceTerminalSessionInfo.fromCore)
-        .toList(growable: false);
+    return _terminal.terminalSessionsFlow().first;
   }
 
   Stream<List<WorkspaceTerminalSessionInfo>> watchSessions() {
-    return _terminal.terminalSessionsFlowChanges().map(
-      (sessions) => sessions
-          .map(WorkspaceTerminalSessionInfo.fromCore)
-          .toList(growable: false),
-    );
+    return _terminal.terminalSessionsFlow();
   }
 
   /// Returns the host-declared terminal type for manual PTY creation.
@@ -140,10 +69,9 @@ class WorkspaceTerminalSessions {
   }
 
   Future<WorkspaceTerminalScreen> getSessionScreen(String sessionId) async {
-    final screen = await _terminal.getTerminalSessionScreen(
+    return _terminal.getTerminalSessionScreen(
       sessionId: sessionId,
     );
-    return WorkspaceTerminalScreen.fromCore(screen);
   }
 
   Future<void> inputSession({

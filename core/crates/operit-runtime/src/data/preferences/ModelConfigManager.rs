@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use std::collections::HashSet;
+
 use thiserror::Error;
 
 use crate::data::preferences::ApiPreferences::ApiPreferences;
@@ -57,6 +59,16 @@ pub enum ModelConfigError {
     BuiltInProvider(String),
 }
 
+/// Reports the result of importing model configuration backup data.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[allow(non_snake_case)]
+pub struct ModelConfigImportResult {
+    pub new: i32,
+    pub updated: i32,
+    pub skipped: i32,
+    pub total: i32,
+}
+
 /// Stores provider profiles, model profiles, and resolved model configuration.
 #[derive(Clone)]
 pub struct ModelConfigManager {
@@ -65,6 +77,7 @@ pub struct ModelConfigManager {
 }
 
 impl ModelConfigManager {
+    const PREFERENCES_VERSION: u32 = 1;
     pub const DEFAULT_PROVIDER_ID: &'static str = ModelConfigDefaults::DEFAULT_PROVIDER_ID;
     pub const DEFAULT_MODEL_ID: &'static str = ModelConfigDefaults::DEFAULT_MODEL_ID;
 
@@ -79,7 +92,9 @@ impl ModelConfigManager {
             &root_dir,
             operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH,
         );
-        let modelConfigDataStore = PreferencesDataStore::newEncryptedSynced(path);
+        let modelConfigDataStore = PreferencesDataStore::newEncrypted(path)
+            .withStructuredJsonSync()
+            .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences);
         Self {
             runtimeRoot: root_dir,
             modelConfigDataStore,
@@ -89,25 +104,6 @@ impl ModelConfigManager {
     /// Creates a manager using the default API data directory.
     pub fn default() -> Self {
         Self::new(ApiPreferences::data_dir())
-    }
-
-    /// Ensures the default API provider and fixed local provider exist.
-    pub fn initializeIfNeeded(&self) -> Result<(), ModelConfigError> {
-        self.modelConfigDataStore.try_edit_result(|preferences| {
-            let mut providerIds = Self::readProviderList(preferences)?;
-            if providerIds.is_empty() {
-                let provider = default_deepseek_provider();
-                Self::writeProvider(preferences, &provider)?;
-                providerIds.push(provider.id);
-            }
-            let localProvider = local_model_provider();
-            if !providerIds.iter().any(|id| id == &localProvider.id) {
-                Self::writeProvider(preferences, &localProvider)?;
-                providerIds.push(localProvider.id);
-            }
-            Self::writeProviderList(preferences, &providerIds)?;
-            Ok::<(), ModelConfigError>(())
-        })
     }
 
     /// Observes the ordered provider id list.
@@ -502,6 +498,103 @@ impl ModelConfigManager {
         .map_err(|error| error.to_string())
     }
 
+    /// Imports provider profiles from the JSON format emitted by exportAllProviders.
+    pub fn importAllProvidersFromBackupContent(
+        &self,
+        jsonContent: &str,
+    ) -> Result<ModelConfigImportResult, String> {
+        if jsonContent.trim().is_empty() {
+            return Err("模型配置备份内容不能为空".to_string());
+        }
+        let providers = serde_json::from_str::<Vec<ProviderProfile>>(jsonContent)
+            .map_err(|error| format!("模型配置备份 JSON 格式错误：{error}"))?;
+        if providers.is_empty() {
+            return Err("模型配置备份不包含任何配置".to_string());
+        }
+
+        let mut importedProviderIds = HashSet::new();
+        let mut importedProviderNames = HashSet::new();
+        for provider in &providers {
+            let providerId = provider.id.trim();
+            if providerId.is_empty() {
+                return Err("模型配置备份包含缺少 ID 的配置".to_string());
+            }
+            if !importedProviderIds.insert(providerId) {
+                return Err(format!("模型配置备份包含重复 ID：{providerId}"));
+            }
+
+            let providerName = provider.name.trim();
+            if providerName.is_empty() {
+                return Err(format!("模型配置备份中的配置「{providerId}」缺少名称"));
+            }
+            if !importedProviderNames.insert(providerName) {
+                return Err(format!("模型配置备份包含重复名称：{providerName}"));
+            }
+
+            if provider.providerTypeId != provider.providerType.name() {
+                return Err(format!(
+                    "模型配置备份中的配置「{providerName}」类型不一致：{} 与 {}",
+                    provider.providerTypeId,
+                    provider.providerType.name(),
+                ));
+            }
+
+            let mut modelIds = HashSet::new();
+            for model in &provider.models {
+                let modelId = model.id.trim();
+                if modelId.is_empty() {
+                    return Err(format!(
+                        "模型配置备份中的配置「{providerName}」包含缺少 ID 的模型"
+                    ));
+                }
+                if !modelIds.insert(modelId) {
+                    return Err(format!(
+                        "模型配置备份中的配置「{providerName}」包含重复模型 ID：{modelId}"
+                    ));
+                }
+            }
+        }
+
+        self.modelConfigDataStore
+            .try_edit_result(|preferences| {
+                let mut providerIds = Self::readProviderList(preferences)?;
+                let currentProviderIds = providerIds.iter().cloned().collect::<HashSet<_>>();
+                for currentProviderId in &providerIds {
+                    if importedProviderIds.contains(currentProviderId.as_str()) {
+                        continue;
+                    }
+                    let currentProvider =
+                        self.readProviderFromPreferences(preferences, currentProviderId)?;
+                    if importedProviderNames.contains(currentProvider.name.trim()) {
+                        return Err(ModelConfigError::ProviderNameAlreadyExists(
+                            currentProvider.name.trim().to_string(),
+                        ));
+                    }
+                }
+
+                let mut newCount = 0;
+                let mut updatedCount = 0;
+                for provider in &providers {
+                    if currentProviderIds.contains(&provider.id) {
+                        updatedCount += 1;
+                    } else {
+                        providerIds.push(provider.id.clone());
+                        newCount += 1;
+                    }
+                    Self::writeProvider(preferences, provider)?;
+                }
+                Self::writeProviderList(preferences, &providerIds)?;
+
+                Ok(ModelConfigImportResult {
+                    new: newCount,
+                    updated: updatedCount,
+                    skipped: 0,
+                    total: newCount + updatedCount,
+                })
+            })
+            .map_err(|error: ModelConfigError| format!("模型配置备份恢复失败：{error}"))
+    }
+
     /// Resolves a model profile against its owning provider profile.
     fn resolveFromProfiles(
         &self,
@@ -560,6 +653,30 @@ impl ModelConfigManager {
                 Ok(serde_json::from_str(providerList)?)
             }
             _ => Ok(Vec::new()),
+        }
+    }
+
+    /// Migrates model preferences one schema version at a time.
+    fn migratePreferences(
+        version: u32,
+        preferences: &mut Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        match version {
+            0 => {
+                let mut providerIds = Self::readProviderList(preferences)?;
+                if providerIds.is_empty() {
+                    let provider = default_deepseek_provider();
+                    Self::writeProvider(preferences, &provider)?;
+                    providerIds.push(provider.id);
+                }
+                let localProvider = local_model_provider();
+                if !providerIds.iter().any(|id| id == &localProvider.id) {
+                    Self::writeProvider(preferences, &localProvider)?;
+                    providerIds.push(localProvider.id);
+                }
+                Self::writeProviderList(preferences, &providerIds)
+            }
+            from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
         }
     }
 
@@ -662,7 +779,7 @@ impl ModelConfigManager {
     fn writeProvider(
         preferences: &mut Preferences,
         provider: &ProviderProfile,
-    ) -> Result<(), ModelConfigError> {
+    ) -> Result<(), PreferencesDataStoreError> {
         let providerKey = stringPreferencesKey(&format!("provider_{}", provider.id));
         let encodedProvider = serde_json::to_string(provider)?;
         preferences.set(&providerKey, encodedProvider);
@@ -696,7 +813,7 @@ impl ModelConfigManager {
     fn writeProviderList(
         preferences: &mut Preferences,
         providerIds: &[String],
-    ) -> Result<(), ModelConfigError> {
+    ) -> Result<(), PreferencesDataStoreError> {
         let encoded = serde_json::to_string(providerIds)?;
         preferences.set(&Self::PROVIDER_LIST_KEY(), encoded);
         Ok(())
@@ -862,6 +979,7 @@ mod tests {
     use operit_host_api::{HostError, HostResult, RuntimeStorageEntry, RuntimeStorageHost};
     use operit_model::ModelConfigData::ModelConfigDefaults;
     use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
+    use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
     use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
     use std::fs;
     use std::path::{Component, Path, PathBuf};
@@ -886,9 +1004,6 @@ mod tests {
             .expect("build Tokio runtime");
         runtime.block_on(async {
             let manager = ModelConfigManager::new(root.clone());
-            manager
-                .initializeIfNeeded()
-                .expect("initialize model config");
             let providers = manager.getProviderProfiles().expect("provider profiles");
             assert!(providers
                 .iter()
@@ -902,9 +1017,6 @@ mod tests {
         let root = unique_test_root("provider_internal_update_keeps_latest_api_key");
         setup_test_runtime(root.clone());
         let manager = ModelConfigManager::new(root.clone());
-        manager
-            .initializeIfNeeded()
-            .expect("initialize model config");
 
         let mut provider = manager
             .getProviderProfile(ModelConfigManager::DEFAULT_PROVIDER_ID)
@@ -929,14 +1041,44 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    /// Verifies exported provider JSON restores a new provider with its API key.
+    #[test]
+    fn import_all_providers_from_backup_content_restores_provider() {
+        let root = unique_test_root("import_all_providers_from_backup_content_restores_provider");
+        setup_test_runtime(root.clone());
+        let manager = ModelConfigManager::new(root.clone());
+        let mut provider = manager
+            .getProviderProfile(ModelConfigManager::DEFAULT_PROVIDER_ID)
+            .expect("default provider");
+        provider.id = "restored_provider".to_string();
+        provider.name = "Restored provider".to_string();
+        provider.apiKey = "sk-restored".to_string();
+        let backup = serde_json::to_string(&vec![provider]).expect("serialize backup");
+
+        let result = manager
+            .importAllProvidersFromBackupContent(&backup)
+            .expect("import model configuration backup");
+
+        assert_eq!(result.new, 1);
+        assert_eq!(result.updated, 0);
+        assert_eq!(result.skipped, 0);
+        assert_eq!(result.total, 1);
+        assert_eq!(
+            manager
+                .getProviderProfile("restored_provider")
+                .expect("restored provider")
+                .apiKey,
+            "sk-restored"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn create_provider_model_rejects_existing_model_id() {
         let root = unique_test_root("create_provider_model_rejects_existing_model_id");
         setup_test_runtime(root.clone());
         let manager = ModelConfigManager::new(root.clone());
-        manager
-            .initializeIfNeeded()
-            .expect("initialize model config");
 
         let error = manager
             .createProviderModel(
@@ -964,9 +1106,6 @@ mod tests {
         let root = unique_test_root("add_provider_model_from_available_rejects_existing_model_id");
         setup_test_runtime(root.clone());
         let manager = ModelConfigManager::new(root.clone());
-        manager
-            .initializeIfNeeded()
-            .expect("initialize model config");
 
         let error = manager
             .addProviderModelFromAvailable(
@@ -1000,7 +1139,7 @@ mod tests {
     fn setup_test_runtime(root: PathBuf) {
         setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
             root.clone(),
-            root.join("workspaces"),
+            root.join(WORKSPACE_DIR_PATH),
         ));
         setDefaultRuntimeStorageHost(Arc::new(TestRuntimeStorageHost { root }));
     }
@@ -1043,7 +1182,7 @@ mod tests {
 
         /// Returns the temporary workspace collection root.
         fn workspaceRootDir(&self) -> Option<PathBuf> {
-            Some(self.root.join("workspaces"))
+            Some(self.root.join(WORKSPACE_DIR_PATH))
         }
 
         fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {

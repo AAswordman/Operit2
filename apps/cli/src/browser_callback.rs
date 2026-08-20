@@ -52,19 +52,14 @@ impl PreparedOAuthCallback {
         if currentMillis() >= expiresAtMillis {
             return Err("browser callback has expired".to_string());
         }
-        waitForLoopbackCompletion(
-            &self.listener,
-            &self.completionRedirectUri,
-            expiresAtMillis,
-        )
+        waitForLoopbackCompletion(&self.listener, &self.completionRedirectUri, expiresAtMillis)
     }
 }
 
 /// Parses the callback path that an upstream transaction will redirect to.
 fn parseRequestedCompletionRedirect(raw: &str) -> CallbackResult<Url> {
-    let url = Url::parse(raw).map_err(|error| {
-        format!("browser callback completion destination is invalid: {error}")
-    })?;
+    let url = Url::parse(raw)
+        .map_err(|error| format!("browser callback completion destination is invalid: {error}"))?;
     if url.scheme() != "https"
         || url.host_str().is_none()
         || url.path().is_empty()
@@ -80,9 +75,8 @@ fn parseRequestedCompletionRedirect(raw: &str) -> CallbackResult<Url> {
 
 /// Creates the loopback destination preserving the requested callback path.
 fn loopbackCompletionRedirect(requestedRedirect: &Url, port: u16) -> CallbackResult<Url> {
-    let mut loopback = Url::parse("http://127.0.0.1").map_err(|error| {
-        format!("browser callback loopback URL could not initialize: {error}")
-    })?;
+    let mut loopback = Url::parse("http://127.0.0.1")
+        .map_err(|error| format!("browser callback loopback URL could not initialize: {error}"))?;
     loopback
         .set_port(Some(port))
         .map_err(|()| "browser callback loopback port is invalid".to_string())?;
@@ -130,12 +124,11 @@ fn readLoopbackCompletion(
             format!("browser callback loopback request could not configure: {error}")
         })?;
     let mut buffer = [0_u8; 8192];
-    let byteCount = stream.read(&mut buffer).map_err(|error| {
-        format!("browser callback loopback request could not be read: {error}")
-    })?;
-    let request = std::str::from_utf8(&buffer[..byteCount]).map_err(|error| {
-        format!("browser callback loopback request is not UTF-8: {error}")
-    })?;
+    let byteCount = stream
+        .read(&mut buffer)
+        .map_err(|error| format!("browser callback loopback request could not be read: {error}"))?;
+    let request = std::str::from_utf8(&buffer[..byteCount])
+        .map_err(|error| format!("browser callback loopback request is not UTF-8: {error}"))?;
     let requestTarget = request
         .lines()
         .next()
@@ -177,7 +170,11 @@ fn sameCallbackDestination(received: &Url, registered: &Url) -> bool {
 }
 
 /// Writes the small browser-visible response returned by a loopback callback endpoint.
-fn writeLoopbackResponse(stream: &mut TcpStream, status: &str, message: &str) -> CallbackResult<()> {
+fn writeLoopbackResponse(
+    stream: &mut TcpStream,
+    status: &str,
+    message: &str,
+) -> CallbackResult<()> {
     let response = format!(
         "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n<!doctype html><html><body>{message}</body></html>"
     );

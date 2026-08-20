@@ -258,6 +258,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get unlock => 'Unlock';
 
   @override
+  String get chatLockedCannotDelete =>
+      'This chat is locked and cannot be deleted';
+
+  @override
   String get messageLocatorTitle => 'Message locator';
 
   @override
@@ -1075,6 +1079,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Model used for long-context automatic summaries.';
 
   @override
+  String get settingsModelFunctionTitleGeneration => 'Conversation title';
+
+  @override
+  String get settingsModelFunctionTitleGenerationDescription =>
+      'Model used to summarize the first message and attachments into a conversation title.';
+
+  @override
   String get settingsModelFunctionMemory => 'Memory';
 
   @override
@@ -1852,23 +1863,47 @@ class AppLocalizationsEn extends AppLocalizations {
       'Configure tool allowlist';
 
   @override
+  String get settingsCharactersToolAccessTitle => 'Custom Allowed Tools';
+
+  @override
+  String get settingsCharactersToolAccessTabBuiltin => 'Built-ins';
+
+  @override
+  String get settingsCharactersToolAccessTabPackage => 'Packages';
+
+  @override
+  String get settingsCharactersToolAccessTabSkill => 'Skill';
+
+  @override
+  String get settingsCharactersToolAccessTabMcp => 'MCP';
+
+  @override
+  String get settingsCharactersToolAccessSearchPlaceholder =>
+      'Search name, description, or ID';
+
+  @override
+  String get settingsCharactersToolAccessEmptySearch =>
+      'No matching tools found';
+
+  @override
   String get settingsCharactersToolAccessRequiresUsePackage =>
       'Selecting packages, skills, or MCP also requires allowing the built-in use_package tool.';
 
   @override
   String get settingsCharactersToolAccessEmptyBuiltin =>
-      'No built-in tools available.';
+      'No built-in tools are available for configuration';
 
   @override
   String get settingsCharactersToolAccessEmptyPackages =>
-      'No packages available.';
+      'No globally available packages right now';
 
   @override
-  String get settingsCharactersToolAccessEmptySkills => 'No skills available.';
+  String get settingsCharactersToolAccessEmptySkills =>
+      'No AI-visible skills are available right now';
 
   @override
   String get settingsCharactersToolAccessEmptyMcp =>
-      'No MCP servers available.';
+      'No enabled MCP servers are available right now';
 
   @override
   String get settingsCharactersBuiltinTools => 'Allowed built-in tools';
@@ -2143,37 +2178,200 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsWorkspaceRefresh => 'Refresh';
 
   @override
-  String get settingsRuntimeConnection => 'Current device';
+  String get runtimeIdentity => 'Current identity';
+
+  @override
+  String get runtimeIdentityManage => 'Switch or manage identities';
+
+  @override
+  String get runtimeIdentitySheetTitle => 'Identities';
+
+  @override
+  String get runtimeIdentityCreate => 'New identity';
+
+  @override
+  String get runtimeIdentityCreateTitle => 'New identity';
+
+  @override
+  String get runtimeIdentityRename => 'Rename identity';
+
+  @override
+  String get runtimeIdentityRenameTitle => 'Rename identity';
+
+  @override
+  String get runtimeIdentityName => 'Name (optional)';
+
+  @override
+  String runtimeIdentitySwitchTitle(String identityName) {
+    return 'Switch to $identityName?';
+  }
+
+  @override
+  String get runtimeIdentitySwitchDescription =>
+      'Each identity has separate chats, settings, device space, paired devices, and workspaces. Switching ends the current runtime; the selected identity is used the next time the app starts.';
+
+  @override
+  String get runtimeIdentitySwitchConfirm => 'Switch identity';
+
+  @override
+  String get runtimeIdentityCurrent => 'Current';
+
+  @override
+  String get settingsUserProfileTitle => 'User profile';
+
+  @override
+  String get settingsUserProfileSubtitle =>
+      'Avatar, name, identities, and GitHub';
+
+  @override
+  String get settingsUserProfileDescription =>
+      'Manage this profile and switch isolated identities.';
+
+  @override
+  String get settingsUserProfileUnnamed => 'Unnamed';
+
+  @override
+  String get settingsUserProfileNotLoggedIn => 'Not logged in';
+
+  @override
+  String get settingsUserProfileGitHubLoading => 'Loading GitHub account...';
+
+  @override
+  String settingsUserProfileGitHubAccount(String account) {
+    return 'GitHub: @$account';
+  }
+
+  @override
+  String settingsUserProfileGitHubStatusError(String error) {
+    return 'GitHub status error: $error';
+  }
+
+  @override
+  String get settingsUserProfileOverview => 'Profile';
+
+  @override
+  String get settingsUserProfileAvatar => 'Avatar';
+
+  @override
+  String get settingsUserProfileName => 'Name';
+
+  @override
+  String get settingsUserProfileChooseAvatar => 'Choose avatar';
+
+  @override
+  String get settingsUserProfileClearAvatar => 'Clear avatar';
+
+  @override
+  String get settingsUserProfileEditName => 'Edit name';
+
+  @override
+  String get settingsUserProfileIdentities => 'Identities';
+
+  @override
+  String get settingsUserProfileGitHub => 'GitHub account';
+
+  @override
+  String get settingsUserProfileGitHubDescription => 'Not logged in';
+
+  @override
+  String get settingsUserProfileLogin => 'Log in';
+
+  @override
+  String get settingsUserProfileLogout => 'Log out';
+
+  @override
+  String get settingsAppearanceAvatarCustom => 'Custom avatar';
+
+  @override
+  String get settingsRuntimeConnection => 'Current device space';
 
   @override
   String get settingsRuntimeConnectionDescription =>
-      'Choose whether chats and tools run on this device or another connected device.';
+      'Connection status for this device and its device space.';
 
   @override
-  String get settingsRuntimeUseLocal => 'Use this device';
+  String get settingsRuntimeCurrentSpace => 'Current device space';
 
   @override
-  String get settingsRuntimeLocalTitle => 'This device';
+  String get settingsRuntimeRenameSpace => 'Rename device space';
 
   @override
-  String get settingsRuntimeLocalDescription =>
-      'Chats and tools run on this device.';
+  String get settingsRuntimeLeaveSpace => 'Leave device space';
+
+  @override
+  String get settingsRuntimeLeaveSpaceTitle =>
+      'Leave the current device space?';
+
+  @override
+  String get settingsRuntimeLeaveSpaceDescription =>
+      'This device will create a new single-device space. Business data and paired devices are preserved.';
+
+  @override
+  String get settingsRuntimeLeaveSpaceConfirm => 'Leave';
+
+  @override
+  String get settingsRuntimeSpaceName => 'Device space name';
+
+  @override
+  String settingsRuntimeSpaceId(String spaceId) {
+    return 'Device space ID: $spaceId';
+  }
+
+  @override
+  String settingsRuntimeSpaceDeviceCount(int count) {
+    return '$count devices';
+  }
+
+  @override
+  String get settingsRuntimeViewSpaceTopology => 'View device topology';
+
+  @override
+  String settingsRuntimeSpaceTopologyTitle(String spaceName) {
+    return '$spaceName device topology';
+  }
+
+  @override
+  String settingsRuntimeSpaceTopologySummary(
+    int deviceCount,
+    int connectionCount,
+  ) {
+    return '$deviceCount devices · $connectionCount direct connections';
+  }
+
+  @override
+  String get settingsRuntimeDisconnectConnection => 'Disconnect';
+
+  @override
+  String get settingsRuntimeDisconnectConnectionTitle =>
+      'Disconnect direct connection';
+
+  @override
+  String settingsRuntimeDisconnectConnectionMessage(String deviceName) {
+    return 'Disconnect the direct connection to $deviceName? Pairing records will be kept.';
+  }
+
+  @override
+  String get settingsRuntimeDisconnectConnectionFailed => 'Disconnect failed';
+
+  @override
+  String get settingsRuntimeCurrentDevice => 'Current device';
 
   @override
   String get settingsRuntimeRemoteTitle => 'Connected devices';
 
   @override
   String get settingsRuntimeRemoteDescription =>
-      'These devices are connected. You can use or remove them.';
-
-  @override
-  String get settingsRuntimeTesting => 'Checking connection…';
+      'Directly paired devices. Pairing establishes a connection; joining a device space enables shared data and routing.';
 
   @override
   String get settingsRuntimePairRemote => 'Connect another device';
 
   @override
   String get settingsRuntimeNoPairedRemote => 'No connected devices yet.';
+
+  @override
+  String get settingsRuntimeConnectionInitiatedByOtherDevice =>
+      'Connection initiated by the other device';
 
   @override
   String get settingsRuntimePairToken => 'Connection token';
@@ -2191,31 +2389,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsRuntimeBaseUrl => 'Device address';
 
   @override
-  String get settingsRuntimeTestCurrent => 'Check connection';
-
-  @override
-  String get settingsRuntimeSwitchedLocal => 'Now using this device.';
-
-  @override
-  String get settingsRuntimeSwitchedRemote => 'Now using a connected device.';
-
-  @override
-  String settingsRuntimeTestResult(String version) {
-    return 'Device available: $version';
-  }
-
-  @override
-  String settingsRuntimeTestFailed(String error) {
-    return 'Connection check failed: $error';
-  }
-
-  @override
-  String get settingsRuntimeRemoteDisconnected =>
-      'Connected device disconnected';
-
-  @override
-  String settingsRuntimeRemoteDisconnectedMessage(String error) {
-    return 'Now using this device.\n\n$error';
+  String settingsRuntimeConnectionFailed(String error) {
+    return 'Device connection failed: $error';
   }
 
   @override
@@ -2232,45 +2407,38 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsRuntimePairedOffline => 'Offline';
 
   @override
-  String get settingsRuntimeSync => 'Sync data';
+  String get settingsRuntimeJoinSpace => 'Join device space';
 
   @override
-  String get settingsRuntimeSyncing => 'Syncing…';
-
-  @override
-  String settingsRuntimeSyncCompleted(int localApplied, int remoteApplied) {
-    return 'Sync completed: this device $localApplied, remote $remoteApplied.';
+  String settingsRuntimeJoinSpaceTitle(String deviceName) {
+    return 'Join $deviceName\'s device space?';
   }
 
   @override
-  String settingsRuntimeSyncFailed(String error) {
-    return 'Sync failed: $error';
+  String get settingsRuntimeJoinSpaceDescription =>
+      'The current device space will merge with the other one and use its name.';
+
+  @override
+  String get settingsRuntimePairingComplete => 'Device paired';
+
+  @override
+  String get settingsRuntimeDeviceInCurrentSpace =>
+      'In the current device space';
+
+  @override
+  String get settingsRuntimeDiscoverSpaces => 'Discover device spaces';
+
+  @override
+  String get settingsRuntimeDiscoverSpacesDescription =>
+      'Nearby devices are grouped by device space. Expand a device space to connect directly to one of its devices.';
+
+  @override
+  String settingsRuntimeDiscoveredSpaceSummary(
+    int memberCount,
+    int nearbyCount,
+  ) {
+    return '$memberCount devices total · $nearbyCount nearby';
   }
-
-  @override
-  String get settingsRuntimeAutoSyncEnable => 'Enable continuous sync';
-
-  @override
-  String get settingsRuntimeAutoSyncDisable => 'Disable continuous sync';
-
-  @override
-  String get settingsRuntimeAutoSyncEnabled =>
-      'Continuous sync is enabled. It will sync automatically when this device is discovered.';
-
-  @override
-  String get settingsRuntimeAutoSyncDisabled => 'Continuous sync is disabled.';
-
-  @override
-  String settingsRuntimeAutoSyncFailed(String error) {
-    return 'Continuous sync setting failed: $error';
-  }
-
-  @override
-  String get settingsRuntimeDiscoverDevices => 'Discover devices';
-
-  @override
-  String get settingsRuntimeDiscoverDevicesDescription =>
-      'Scan for nearby devices or enter an address to connect.';
 
   @override
   String get settingsRuntimeScan => 'Scan';
@@ -2286,20 +2454,20 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsRuntimeEnableDiscovery =>
-      'Allow other devices to discover this device';
+      'Allow nearby devices to discover this device space';
 
   @override
   String get settingsRuntimeEnableDiscoveryDescription =>
-      'Other devices on the same LAN can find this device automatically.';
+      'Devices on the same network can find this device space and choose this device for a direct connection.';
 
   @override
   String settingsRuntimeEnableDiscoveryFailed(String error) {
-    return 'Could not enable device discovery: $error';
+    return 'Could not enable device space discovery: $error';
   }
 
   @override
   String settingsRuntimeDisableDiscoveryFailed(String error) {
-    return 'Could not disable device discovery: $error';
+    return 'Could not disable device space discovery: $error';
   }
 
   @override
@@ -2918,6 +3086,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsDataDetailedStatsSourceSummary => 'Summary generation';
+
+  @override
+  String get settingsDataDetailedStatsSourceTitleGeneration =>
+      'Title generation';
 
   @override
   String get settingsDataDetailedStatsSourceMemory => 'Memory analysis';

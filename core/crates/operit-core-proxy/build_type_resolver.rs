@@ -342,6 +342,7 @@ fn serializable_struct_type(
             .named
             .iter()
             .filter(|field| matches!(field.vis, Visibility::Public(_)))
+            .filter(|field| !serde_skips_field(&field.attrs))
             .filter_map(|field| {
                 let field_name = field.ident.as_ref()?.to_string();
                 Some(SerializableField {
@@ -373,11 +374,12 @@ fn serializable_enum_type(
         .iter()
         .map(|variant| {
             let name = variant.ident.to_string();
-            let (fields_are_unit, fields) = match &variant.fields {
+            let (fields_are_unit, fields_are_named, fields) = match &variant.fields {
                 Fields::Named(fields) => {
                     let fields = fields
                         .named
                         .iter()
+                        .filter(|field| !serde_skips_field(&field.attrs))
                         .filter_map(|field| {
                             let field_name = field.ident.as_ref()?.to_string();
                             Some(SerializableField {
@@ -389,13 +391,14 @@ fn serializable_enum_type(
                             })
                         })
                         .collect::<Vec<_>>();
-                    (false, fields)
+                    (false, true, fields)
                 }
                 Fields::Unnamed(fields) => {
                     let fields = fields
                         .unnamed
                         .iter()
                         .enumerate()
+                        .filter(|(_, field)| !serde_skips_field(&field.attrs))
                         .map(|(index, field)| {
                             let field_name = if fields.unnamed.len() == 1 {
                                 "value".to_string()
@@ -409,9 +412,9 @@ fn serializable_enum_type(
                             }
                         })
                         .collect::<Vec<_>>();
-                    (false, fields)
+                    (false, false, fields)
                 }
-                Fields::Unit => (true, Vec::new()),
+                Fields::Unit => (true, false, Vec::new()),
             };
             SerializableEnumVariant {
                 json_name: serde_rename(&variant.attrs)
@@ -422,6 +425,7 @@ fn serializable_enum_type(
                     })
                     .unwrap_or_else(|| name.clone()),
                 fields_are_unit,
+                fields_are_named,
                 fields,
                 name,
             }
@@ -439,13 +443,19 @@ fn serializable_enum_type(
             },
         };
     }
-    let externally_tagged = serde_tag_content(&item_enum.attrs).is_none();
+    let tag_content = serde_tag_content(&item_enum.attrs);
+    let externally_tagged = tag_content.is_none();
+    let (tag_name, content_name) = tag_content
+        .map(|(tag, content)| (Some(tag), content))
+        .unwrap_or((None, None));
     SerializableType {
         full_type,
         supports_serialize: derives_serialize(&item_enum.attrs),
         supports_deserialize: derives_deserialize(&item_enum.attrs),
         kind: SerializableTypeKind::TaggedEnum {
             externally_tagged,
+            tag_name,
+            content_name,
             variants: mapped,
         },
     }
@@ -511,6 +521,22 @@ fn serde_rename(attrs: &[syn::Attribute]) -> Option<String> {
         }
     }
     None
+}
+
+/// Returns whether serde excludes one field from both serialization and deserialization.
+fn serde_skips_field(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        if !attr.path().is_ident("serde") {
+            return false;
+        }
+        let Meta::List(list) = &attr.meta else {
+            return false;
+        };
+        list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+            .expect("serde field attribute metadata must parse")
+            .iter()
+            .any(|item| matches!(item, Meta::Path(path) if path.is_ident("skip")))
+    })
 }
 
 /// Reads a serde enum-wide variant naming rule from an attribute list.
@@ -1002,6 +1028,11 @@ pub(crate) fn state_flow_inner(ty: &str) -> Option<&str> {
 
 pub(crate) fn flow_inner(ty: &str) -> Option<&str> {
     single_generic_arg(ty, "Flow")
+}
+
+/// Returns the item type carried by a bridge-owned embedded stream field.
+pub(crate) fn core_stream_inner(ty: &str) -> Option<&str> {
+    single_generic_arg(ty, "CoreStream")
 }
 
 fn serde_tag_content(attrs: &[syn::Attribute]) -> Option<(String, Option<String>)> {

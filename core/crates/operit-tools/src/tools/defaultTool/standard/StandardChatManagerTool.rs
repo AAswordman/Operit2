@@ -103,7 +103,7 @@ impl StandardChatManagerTool {
         };
 
         let previousChatIds = match ChatHistoryManager::default() {
-            Ok(manager) => match manager.chatHistoriesFlow() {
+            Ok(manager) => match manager.loadChatHistories() {
                 Ok(histories) => histories
                     .into_iter()
                     .map(|chat| chat.id)
@@ -120,7 +120,7 @@ impl StandardChatManagerTool {
             return toolError(tool, error);
         }
 
-        match ChatHistoryManager::default().and_then(|manager| manager.chatHistoriesFlow()) {
+        match ChatHistoryManager::default().and_then(|manager| manager.loadChatHistories()) {
             Ok(histories) => {
                 let created = histories
                     .into_iter()
@@ -186,7 +186,7 @@ impl StandardChatManagerTool {
             Ok(manager) => manager,
             Err(error) => return toolError(tool, format!("Error opening chat history: {error}")),
         };
-        let histories = match manager.chatHistoriesFlow() {
+        let histories = match manager.loadChatHistories() {
             Ok(value) => value,
             Err(error) => return toolError(tool, format!("Error loading chats: {error}")),
         };
@@ -692,7 +692,7 @@ fn buildFilteredChatList(tool: &AITool) -> Result<(usize, Option<String>, Vec<Ch
     let manager = ChatHistoryManager::default()
         .map_err(|error| format!("Error opening chat history: {error}"))?;
     let histories = manager
-        .chatHistoriesFlow()
+        .loadChatHistories()
         .map_err(|error| format!("Error loading chats: {error}"))?;
     let currentChatId = manager
         .currentChatIdFlow()

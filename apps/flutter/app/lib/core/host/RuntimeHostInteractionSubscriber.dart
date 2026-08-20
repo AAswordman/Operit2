@@ -89,7 +89,7 @@ class RuntimeHostInteractionSubscriber {
       return;
     }
     _subscription = _clients.servicesRuntimeHostInteractionService
-        .ownerHostInteractionEventsChanges(kinds: _ownerKinds)
+        .ownerHostInteractionEvents(kinds: _ownerKinds)
         .listen(
           (event) => unawaited(_handleEvent(event)),
           onError: (Object error, StackTrace stackTrace) {

@@ -12,6 +12,7 @@ documentation = "https://docs.rs/operit-model"
 [dependencies]
 chrono.workspace = true
 operit-host-api = { version = "0.1.0", path = "../operit-host-api" }
+operit-link = { path = "../operit-link" }
 operit-util = { version = "2.0.0-preview.5", path = "../operit-util" }
 serde.workspace = true
 serde_json.workspace = true

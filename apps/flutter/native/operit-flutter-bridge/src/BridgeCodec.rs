@@ -188,6 +188,7 @@ fn native_event_kind_name(kind: CoreEventKind) -> &'static str {
     match kind {
         CoreEventKind::Snapshot => "Snapshot",
         CoreEventKind::Changed => "Changed",
+        CoreEventKind::Delta => "Delta",
         CoreEventKind::Completed => "Completed",
     }
 }

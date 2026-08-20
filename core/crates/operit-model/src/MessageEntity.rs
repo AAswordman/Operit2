@@ -22,6 +22,7 @@ pub struct MessageEntity {
     pub outputDurationMs: i64,
     pub waitDurationMs: i64,
     pub completedAt: i64,
+    pub completedExecutionGeneration: i64,
     pub displayMode: String,
     pub isFavorite: bool,
 }
@@ -45,6 +46,7 @@ impl MessageEntity {
             outputDurationMs: self.outputDurationMs,
             waitDurationMs: self.waitDurationMs,
             completedAt: self.completedAt,
+            completedExecutionGeneration: self.completedExecutionGeneration,
             displayMode: match self.displayMode.as_str() {
                 "NORMAL" => ChatMessageDisplayMode::NORMAL,
                 "HIDDEN_PLACEHOLDER" => ChatMessageDisplayMode::HIDDEN_PLACEHOLDER,
@@ -52,6 +54,7 @@ impl MessageEntity {
             },
             isFavorite: self.isFavorite,
             isVariantPreview: false,
+            contentStream: None,
         }
     }
 
@@ -78,6 +81,7 @@ impl MessageEntity {
             outputDurationMs: message.outputDurationMs,
             waitDurationMs: message.waitDurationMs,
             completedAt: message.completedAt,
+            completedExecutionGeneration: message.completedExecutionGeneration,
             displayMode: format!("{:?}", message.displayMode),
             isFavorite: message.isFavorite,
         }

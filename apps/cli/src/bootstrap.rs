@@ -48,6 +48,7 @@ use operit_host_windows_native::{
 use operit_link_access::LinkAccessStore;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 compile_error!("operit2 CLI host is implemented for Windows, Linux, and macOS.");
@@ -55,17 +56,17 @@ compile_error!("operit2 CLI host is implemented for Windows, Linux, and macOS.")
 /// Creates the CLI application with the configured runtime and workspace roots.
 pub(crate) fn create_cli_application() -> OperitApplication {
     let storageConfig = CliStorageConfig::read();
+    let (runtimeRoot, workspaceRoot) = storageConfig.activeRoots();
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
-        storageConfig.runtimeRoot.clone(),
+        runtimeRoot.clone(),
     ));
     let runtimeStorageHost = Arc::new(NativeRuntimeStorageHost::new(
-        storageConfig.runtimeRoot.clone(),
-        storageConfig.workspaceRoot.clone(),
+        runtimeRoot.clone(),
+        workspaceRoot.clone(),
     ));
-    let runtimeStorageWriteHost = Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
-        storageConfig.runtimeRoot,
-        storageConfig.workspaceRoot,
-    ));
+    let runtimeStorageWriteHost = Arc::new(
+        operit_host_native_common::NativeRuntimeStorageHost::new(runtimeRoot, workspaceRoot),
+    );
     let runtimeSqliteHost = runtimeStorageHost.clone();
     let hostSecretStore = runtimeStorageHost.clone();
     let mut context = HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
@@ -78,6 +79,7 @@ pub(crate) fn create_cli_application() -> OperitApplication {
         runtimeSqliteHost,
     )
     .withHostSecretStore(hostSecretStore)
+    .withWebSocketHost(Arc::new(NativeHttpHost::new()))
     .withArchiveStagingHost(archiveStagingHost)
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost);
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
@@ -116,17 +118,27 @@ pub(crate) fn create_local_core() -> LocalCoreProxy {
 /// Creates the runtime-owned Link Access repository for CLI commands.
 pub(crate) fn create_cli_link_access_store() -> LinkAccessStore {
     let storageConfig = CliStorageConfig::read();
+    let (runtimeRoot, workspaceRoot) = storageConfig.activeRoots();
     LinkAccessStore::new(Arc::new(NativeRuntimeStorageHost::new(
-        storageConfig.runtimeRoot,
-        storageConfig.workspaceRoot,
+        runtimeRoot,
+        workspaceRoot,
     )))
+}
+
+/// Describes one isolated CLI identity stored outside the active runtime root.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct CliIdentity {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) createdAt: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct CliStorageConfig {
-    dataRoot: PathBuf,
     runtimeRoot: PathBuf,
     workspaceRoot: PathBuf,
+    activeIdentityId: String,
+    identities: Vec<CliIdentity>,
 }
 
 impl CliStorageConfig {
@@ -135,7 +147,16 @@ impl CliStorageConfig {
         let path = cli_storage_config_path();
         let content = match fs::read_to_string(&path) {
             Ok(content) => content,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Self::current(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let config = Self::current();
+                write_cli_storage_config(&config).unwrap_or_else(|writeError| {
+                    panic!(
+                        "write initial CLI storage config failed at {}: {writeError}",
+                        path.display()
+                    )
+                });
+                return config;
+            }
             Err(error) => {
                 panic!(
                     "read CLI storage config failed at {}: {error}",
@@ -164,12 +185,111 @@ impl CliStorageConfig {
             Some(dataRoot.as_path()),
             "default runtime and workspace roots must share one data root"
         );
+        let identity =
+            newCliIdentity("Operit".to_string()).expect("initial CLI identity name must be valid");
         Self {
             runtimeRoot,
             workspaceRoot,
-            dataRoot,
+            activeIdentityId: identity.id.clone(),
+            identities: vec![identity],
         }
     }
+
+    /// Returns the active identity after validating the persisted selection.
+    #[allow(non_snake_case)]
+    fn activeIdentity(&self) -> &CliIdentity {
+        self.identities
+            .iter()
+            .find(|identity| identity.id == self.activeIdentityId)
+            .expect("active CLI identity must exist")
+    }
+
+    /// Resolves runtime and workspace roots owned by the active identity.
+    #[allow(non_snake_case)]
+    fn activeRoots(&self) -> (PathBuf, PathBuf) {
+        let identityId = &self.activeIdentity().id;
+        (
+            identityRoot(&self.runtimeRoot, identityId),
+            identityRoot(&self.workspaceRoot, identityId),
+        )
+    }
+}
+
+/// Returns every configured CLI identity and the active identity id.
+pub(crate) fn cli_identities() -> (Vec<CliIdentity>, String) {
+    let config = CliStorageConfig::read();
+    (config.identities, config.activeIdentityId)
+}
+
+/// Creates one isolated CLI identity without changing the active process identity.
+pub(crate) fn create_cli_identity(name: String) -> Result<CliIdentity, String> {
+    let identity = newCliIdentity(name)?;
+    let mut config = CliStorageConfig::read();
+    config.identities.push(identity.clone());
+    write_cli_storage_config(&config)?;
+    Ok(identity)
+}
+
+/// Renames one CLI identity while preserving its storage directory id.
+pub(crate) fn rename_cli_identity(identityId: &str, name: String) -> Result<(), String> {
+    validateIdentityName(&name)?;
+    let mut config = CliStorageConfig::read();
+    let identity = config
+        .identities
+        .iter_mut()
+        .find(|identity| identity.id == identityId)
+        .ok_or_else(|| format!("CLI identity does not exist: {identityId}"))?;
+    identity.name = name.trim().to_string();
+    write_cli_storage_config(&config)
+}
+
+/// Selects the CLI identity used by subsequent commands.
+pub(crate) fn select_cli_identity(identityId: &str) -> Result<(), String> {
+    let mut config = CliStorageConfig::read();
+    if !config
+        .identities
+        .iter()
+        .any(|identity| identity.id == identityId)
+    {
+        return Err(format!("CLI identity does not exist: {identityId}"));
+    }
+    config.activeIdentityId = identityId.to_string();
+    write_cli_storage_config(&config)
+}
+
+/// Returns the physical runtime root owned by the active CLI identity.
+pub(crate) fn active_cli_runtime_root() -> PathBuf {
+    CliStorageConfig::read().activeRoots().0
+}
+
+/// Rewrites local storage migration targets into the active identity directories.
+pub(crate) fn scope_cli_storage_command_args(args: &[String]) -> Result<Vec<String>, String> {
+    if args.first().map(String::as_str) != Some("storage")
+        || args.get(1).map(String::as_str) != Some("migrate")
+    {
+        return Ok(args.to_vec());
+    }
+    let identityId = CliStorageConfig::read().activeIdentity().id.clone();
+    let mut scoped = args.to_vec();
+    let mut index = 2usize;
+    while index < scoped.len() {
+        match scoped[index].as_str() {
+            "--runtime" | "--workspace" => {
+                index += 1;
+                let root = scoped
+                    .get_mut(index)
+                    .ok_or_else(|| "storage migrate root is missing".to_string())?;
+                *root = identityRoot(&PathBuf::from(root.as_str()), &identityId)
+                    .to_string_lossy()
+                    .into_owned();
+            }
+            argument => {
+                return Err(format!("unknown storage migrate argument: {argument}"));
+            }
+        }
+        index += 1;
+    }
+    Ok(scoped)
 }
 
 /// Persists storage roots emitted by the core storage migrate command.
@@ -182,7 +302,6 @@ pub(crate) fn persist_cli_storage_config(stdout: &str) -> Result<(), String> {
 
 /// Parses storage command output into a startup storage configuration.
 fn parse_storage_migration_output(stdout: &str) -> Result<Option<CliStorageConfig>, String> {
-    let mut dataRoot = None;
     let mut runtimeRoot = None;
     let mut workspaceRoot = None;
     let mut changed = false;
@@ -191,7 +310,6 @@ fn parse_storage_migration_output(stdout: &str) -> Result<Option<CliStorageConfi
             continue;
         };
         match key {
-            "dataRoot" => dataRoot = Some(PathBuf::from(value)),
             "runtimeRoot" => runtimeRoot = Some(PathBuf::from(value)),
             "workspaceRoot" => workspaceRoot = Some(PathBuf::from(value)),
             "storageConfig" if value == "updated" => changed = true,
@@ -201,13 +319,79 @@ fn parse_storage_migration_output(stdout: &str) -> Result<Option<CliStorageConfi
     if !changed {
         return Ok(None);
     }
+    let current = CliStorageConfig::read();
+    let identityId = current.activeIdentity().id.clone();
+    let runtimeRoot = identityBaseRoot(
+        runtimeRoot.ok_or_else(|| "storage migrate output missed runtimeRoot".to_string())?,
+        &identityId,
+    )?;
+    let workspaceRoot = identityBaseRoot(
+        workspaceRoot.ok_or_else(|| "storage migrate output missed workspaceRoot".to_string())?,
+        &identityId,
+    )?;
     Ok(Some(CliStorageConfig {
-        dataRoot: dataRoot.ok_or_else(|| "storage migrate output missed dataRoot".to_string())?,
-        runtimeRoot: runtimeRoot
-            .ok_or_else(|| "storage migrate output missed runtimeRoot".to_string())?,
-        workspaceRoot: workspaceRoot
-            .ok_or_else(|| "storage migrate output missed workspaceRoot".to_string())?,
+        runtimeRoot,
+        workspaceRoot,
+        activeIdentityId: current.activeIdentityId,
+        identities: current.identities,
     }))
+}
+
+/// Creates one validated CLI identity record.
+#[allow(non_snake_case)]
+fn newCliIdentity(name: String) -> Result<CliIdentity, String> {
+    validateIdentityName(&name)?;
+    Ok(CliIdentity {
+        id: format!("identity-{}", Uuid::new_v4().simple()),
+        name: name.trim().to_string(),
+        createdAt: operit_host_api::TimeUtils::currentTimeMillis(),
+    })
+}
+
+/// Validates one user-visible CLI identity name.
+#[allow(non_snake_case)]
+fn validateIdentityName(name: &str) -> Result<(), String> {
+    let normalized = name.trim();
+    if normalized.is_empty() {
+        return Err("CLI identity name must not be empty".to_string());
+    }
+    if normalized.chars().count() > 80 {
+        return Err("CLI identity name must not exceed 80 characters".to_string());
+    }
+    if normalized.chars().any(char::is_control) {
+        return Err("CLI identity name must not contain control characters".to_string());
+    }
+    Ok(())
+}
+
+/// Appends the canonical identity directory segments to one base root.
+#[allow(non_snake_case)]
+fn identityRoot(baseRoot: &std::path::Path, identityId: &str) -> PathBuf {
+    baseRoot.join("identities").join(identityId)
+}
+
+/// Extracts the configured base root from one active identity root.
+#[allow(non_snake_case)]
+fn identityBaseRoot(identityPath: PathBuf, identityId: &str) -> Result<PathBuf, String> {
+    let identityDirectory = identityPath
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or_else(|| "identity storage path has no final directory".to_string())?;
+    if identityDirectory != identityId {
+        return Err(format!(
+            "identity storage path must end with the active identity id: {identityId}"
+        ));
+    }
+    let identitiesDirectory = identityPath
+        .parent()
+        .ok_or_else(|| "identity storage path has no identities directory".to_string())?;
+    if identitiesDirectory.file_name() != Some(std::ffi::OsStr::new("identities")) {
+        return Err("identity storage path must be inside an identities directory".to_string());
+    }
+    identitiesDirectory
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| "identity storage path has no base root".to_string())
 }
 
 /// Writes the CLI storage configuration file.

@@ -267,7 +267,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     Object? latestActionResult;
     try {
       await for (final event
-          in _packageManager.dispatchToolPkgComposeDslActionEventsChanges(
+          in _packageManager.dispatchToolPkgComposeDslActionEvents(
             contextKey: executionContextKey,
             containerPackageName: widget.plugin.packageName,
             actionId: actionId,

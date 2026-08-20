@@ -82,16 +82,7 @@ pub fn run_character_command(
     }
 
     match args[0].as_str() {
-        "init" => {
-            core.preferences_character_card_manager()
-                .initializeIfNeeded()
-                .map_err(|error| error.to_string())?;
-            println!("initialized");
-        }
         "list" => {
-            core.preferences_character_card_manager()
-                .initializeIfNeeded()
-                .map_err(|error| error.to_string())?;
             for card in core
                 .preferences_character_card_manager()
                 .getAllCharacterCards()
@@ -249,16 +240,7 @@ pub fn run_group_command(
     }
 
     match args[0].as_str() {
-        "init" => {
-            core.preferences_character_group_card_manager()
-                .initializeIfNeeded()
-                .map_err(|error| error.to_string())?;
-            println!("initialized");
-        }
         "list" => {
-            core.preferences_character_group_card_manager()
-                .initializeIfNeeded()
-                .map_err(|error| error.to_string())?;
             for group in core
                 .preferences_character_group_card_manager()
                 .getAllCharacterGroupCards()
@@ -523,7 +505,6 @@ fn currentTimeMillis() -> i64 {
 }
 
 fn print_character_usage() {
-    println!("operit2 character init");
     println!("operit2 character list");
     println!("operit2 character show <id>");
     println!("operit2 character create <name> [character-setting]");
@@ -535,7 +516,6 @@ fn print_character_usage() {
 }
 
 fn print_group_usage() {
-    println!("operit2 group init");
     println!("operit2 group list");
     println!("operit2 group show <id>");
     println!("operit2 group create <name> [description]");

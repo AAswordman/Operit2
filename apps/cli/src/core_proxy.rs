@@ -1,6 +1,10 @@
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 
-use operit_core_proxy::{GeneratedCoreProxy, LocalCoreProxy};
+use operit_core_proxy::{
+    CoreNodeRouter::CoreNodeRouter, GeneratedCoreProxy, LocalCoreProxy,
+    RuntimeRemoteLinkService::RuntimeRemoteLinkService,
+};
 use operit_host_api::HostManager::HostManager;
 use operit_link::CoreLinkClient;
 use operit_link_access::PairedRemoteSession;
@@ -22,6 +26,7 @@ pub(crate) fn cli_core(client: PairedRemoteSession) -> CliCore {
     }
 }
 
+/// Creates the local CLI CoreNode and routes every generated request through it.
 pub(crate) fn local_cli_core() -> Result<CliCore, String> {
     let mut core = create_local_core();
     core.localApplicationMut().onCreate()?;
@@ -38,8 +43,10 @@ pub(crate) fn local_cli_core() -> Result<CliCore, String> {
             .map_err(|_| "Chat runtime holder is busy".to_string())?;
         holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService = Some(enhanced_ai_service);
     }
+    RuntimeRemoteLinkService::new(core.clone()).startSpaceSync()?;
+    let router = CoreNodeRouter::new(Arc::new(core));
     Ok(CliCore {
-        proxy: GeneratedCoreProxy::new(Box::new(core.clone())),
+        proxy: GeneratedCoreProxy::new(Box::new(router)),
         localHostManager: Some(localHostManager),
     })
 }
@@ -51,7 +58,6 @@ impl CliCore {
             .as_ref()
             .ok_or_else(|| "this CLI command requires an in-process runtime".to_string())
     }
-
 }
 
 impl Deref for CliCore {

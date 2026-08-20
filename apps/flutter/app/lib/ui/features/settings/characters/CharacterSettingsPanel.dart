@@ -15,6 +15,7 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/CharacterAvatar.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../common/components/OperitDialog.dart';
+import '../../packages/utils/PackageDisplayUtils.dart';
 import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
@@ -52,10 +53,22 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     );
   }
 
+  /// Reports whether the current interface language is English.
+  bool _isEnglishLocale() {
+    return Localizations.localeOf(context).languageCode.toLowerCase() == 'en';
+  }
+
+  /// Initializes the state before inherited settings dependencies are available.
   @override
   void initState() {
     super.initState();
-    _future = load();
+  }
+
+  /// Starts the initial settings load after inherited localization is available.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _future ??= load();
   }
 
   /// Loads the complete character settings snapshot from the runtime.
@@ -70,54 +83,59 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         widget.clients.preferencesSharedMemoryStoreManager;
     final apiPreferences = widget.clients.preferencesApiPreferences;
     final modelManager = widget.clients.preferencesModelConfigManager;
-    final toolHandler = widget.clients.application.aiToolHandler();
+    final toolAccessResolver =
+        widget.clients.preferencesCharacterCardToolAccessResolver;
     final packageManager = widget.clients.application.packageManager();
     final skillRepository = widget.clients.application.skillRepository();
-    final permissionsMcpRuntimeMcpLocalServer =
-        widget.clients.permissionsMcpRuntimeMcpLocalServer;
     final promptTagManager = widget.clients.preferencesPromptTagManager;
+    final useEnglish = _isEnglishLocale();
     try {
-      await _timeLoadStep(
-        'cardManager.initializeIfNeeded',
-        cardManager.initializeIfNeeded,
+      final rawBuiltinTools = await _timeLoadStep(
+        'characterCardToolAccessResolver.getManageableBuiltinToolOptions',
+        () => toolAccessResolver.getManageableBuiltinToolOptions(
+          useEnglish: useEnglish,
+        ),
       );
-      await _timeLoadStep(
-        'groupManager.initializeIfNeeded',
-        groupManager.initializeIfNeeded,
-      );
-      await _timeLoadStep(
-        'modelManager.initializeIfNeeded',
-        modelManager.initializeIfNeeded,
-      );
-      await _timeLoadStep(
-        'toolHandler.registerDefaultTools',
-        toolHandler.registerDefaultTools,
-      );
-      final rawToolNames = await _timeLoadStep(
-        'toolHandler.getAllToolNames',
-        toolHandler.getAllToolNames,
-      );
-      final toolNames =
-          rawToolNames
-              .where((toolName) => !_hiddenToolNames.contains(toolName))
+      final builtinOptions =
+          rawBuiltinTools
+              .map(
+                (tool) => ToolAccessOption(
+                  key: tool.name,
+                  title: tool.name,
+                  subtitle: <String>[
+                    tool.categoryName,
+                    tool.description,
+                  ].where((value) => value.trim().isNotEmpty).join(' · '),
+                ),
+              )
               .toList(growable: false)
-            ..sort(
-              (left, right) =>
-                  left.toLowerCase().compareTo(right.toLowerCase()),
-            );
+            ..sort(_compareToolAccessOption);
       final enabledPackageNames = await _timeLoadStep(
         'packageManager.getEnabledPackageNames',
         packageManager.getEnabledPackageNames,
       );
       final packageOptions = <ToolAccessOption>[];
-      for (final packageName in enabledPackageNames) {
+      final packageNames = enabledPackageNames
+          .map((packageName) => packageName.trim())
+          .where((packageName) => packageName.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+      for (final packageName in packageNames) {
+        final packageTools = await _timeLoadStep(
+          'packageManager.getPackageTools name=$packageName',
+          () => packageManager.getPackageTools(packageName: packageName),
+        );
         final isContainer = await _timeLoadStep(
           'packageManager.isToolPkgContainer name=$packageName',
           () => packageManager.isToolPkgContainer(packageName: packageName),
         );
-        if (!isContainer) {
+        if (packageTools != null && !isContainer) {
           packageOptions.add(
-            ToolAccessOption(key: packageName, title: packageName),
+            ToolAccessOption(
+              key: packageName,
+              title: packageName,
+              subtitle: localizedText(packageTools.description),
+            ),
           );
         }
       }
@@ -138,8 +156,8 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
               .toList(growable: false)
             ..sort(_compareToolAccessOption);
       final rawMcpServers = await _timeLoadStep(
-        'mcpLocalServer.getAllMcpServers',
-        permissionsMcpRuntimeMcpLocalServer.getAllMcpServers,
+        'packageManager.getAvailableServerPackages',
+        packageManager.getAvailableServerPackages,
       );
       final mcpOptions =
           rawMcpServers.entries
@@ -147,7 +165,7 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
                 (entry) => ToolAccessOption(
                   key: entry.key,
                   title: entry.key,
-                  subtitle: _mcpServerSubtitle(entry.value),
+                  subtitle: entry.value.description,
                 ),
               )
               .toList(growable: false)
@@ -183,12 +201,12 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         _loadTtsConfigs,
       );
       final enableMemoryAutoUpdate = await _timeLoadStep(
-        'apiPreferences.enableMemoryAutoUpdateFlowSnapshot',
-        apiPreferences.enableMemoryAutoUpdateFlowSnapshot,
+        'apiPreferences.enableMemoryAutoUpdateFlow',
+        () => apiPreferences.enableMemoryAutoUpdateFlow().first,
       );
       final disableUserPreferenceDescription = await _timeLoadStep(
-        'apiPreferences.disableUserPreferenceDescriptionFlowSnapshot',
-        apiPreferences.disableUserPreferenceDescriptionFlowSnapshot,
+        'apiPreferences.disableUserPreferenceDescriptionFlow',
+        () => apiPreferences.disableUserPreferenceDescriptionFlow().first,
       );
       final data = CharacterSettingsData(
         cards: cards,
@@ -197,9 +215,7 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         tags: tags,
         modelSummaries: modelSummaries,
         ttsConfigs: ttsConfigs,
-        builtinToolOptions: toolNames
-            .map((toolName) => ToolAccessOption(key: toolName, title: toolName))
-            .toList(growable: false),
+        builtinToolOptions: builtinOptions,
         packageToolOptions: packageOptions,
         skillToolOptions: skillOptions,
         mcpToolOptions: mcpOptions,

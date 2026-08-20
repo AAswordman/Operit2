@@ -81,6 +81,7 @@ pub fn validatedStorageSegment(
 mod tests {
     use super::*;
     use crate::LocalModelManifest::{LocalEngineKind, LocalModelKind};
+    use operit_util::RuntimeStorageLayout::RUNTIME_LOCAL_MODELS_DIR_PATH;
 
     /// Verifies the stable storage path for one local model.
     #[test]
@@ -93,7 +94,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(path, "runtime/models/local/stt/sherpa_ncnn/model-a/v1.0");
+        assert_eq!(
+            path,
+            format!("{RUNTIME_LOCAL_MODELS_DIR_PATH}/stt/sherpa_ncnn/model-a/v1.0")
+        );
     }
 
     /// Verifies storage segment validation for directory traversal markers.

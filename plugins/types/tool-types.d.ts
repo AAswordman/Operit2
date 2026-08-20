@@ -94,6 +94,8 @@ export interface ToolResultMap {
   write_environment_variable: EnvironmentVariableWriteResultData;
   execute_cli_command: unknown;
   use_package: string;
+  list_core_nodes: string;
+  switch_core: string;
   package_proxy: ToolResultData;
   get_terminal_info: TerminalInfoResultData;
   execute_in_terminal_session: TerminalCommandResultData;

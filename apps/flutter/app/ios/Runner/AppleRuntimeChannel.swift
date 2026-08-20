@@ -114,6 +114,10 @@ final class AppleRuntimeChannel: NSObject {
       startWebAccessServer(call: call, result: result)
     case "localRuntimeStorageDefaults":
       localRuntimeStorageDefaults(result: result)
+    case "runtimeBootstrapRead":
+      runtimeBootstrapRead(result: result)
+    case "runtimeBootstrapWrite":
+      runtimeBootstrapWrite(call: call, result: result)
     case "localRuntimeStoragePaths":
       localRuntimeStoragePaths(call: call, result: result)
     case "setLocalRuntimeStorage":
@@ -412,6 +416,32 @@ final class AppleRuntimeChannel: NSObject {
       "runtimeRoot": roots.runtime.path,
       "workspaceRoot": roots.workspace.path,
     ])
+  }
+
+  /// Reads the client bootstrap record through the Rust startup Host.
+  private func runtimeBootstrapRead(result: @escaping FlutterResult) {
+    let defaultRuntimeRoot = defaultStorageRoots().runtime.path
+    workQueue.async {
+      let response = self.takeString(
+        operit_flutter_bridge_runtime_bootstrap_read(defaultRuntimeRoot)
+      )
+      DispatchQueue.main.async { result(response) }
+    }
+  }
+
+  /// Writes the client bootstrap record through the Rust startup Host.
+  private func runtimeBootstrapWrite(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard let content = call.arguments as? String else {
+      result(FlutterError(code: "INVALID_ARGS", message: "runtimeBootstrapWrite expects JSON text", details: nil))
+      return
+    }
+    let defaultRuntimeRoot = defaultStorageRoots().runtime.path
+    workQueue.async {
+      let response = self.takeString(
+        operit_flutter_bridge_runtime_bootstrap_write(defaultRuntimeRoot, content)
+      )
+      DispatchQueue.main.async { result(response) }
+    }
   }
 
   /// Returns normalized local runtime storage paths for requested roots.

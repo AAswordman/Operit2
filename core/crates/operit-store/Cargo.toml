@@ -18,7 +18,9 @@ operit-host-api = { version = "0.1.0", path = "../operit-host-api" }
 operit-model = { version = "2.0.0-preview.5", path = "../operit-model" }
 operit-util = { version = "2.0.0-preview.5", path = "../operit-util" }
 serde.workspace = true
+serde_bytes = "0.11"
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 

@@ -49,6 +49,22 @@ struct MarkdownGroupSession {
 }
 
 impl MarkdownStreamEvent {
+    /// Creates the boundary event that starts one self-contained Markdown snapshot.
+    pub fn reset(chatId: String, parentBlockId: Option<u64>) -> Self {
+        Self {
+            chatId,
+            eventType: "reset".to_string(),
+            value: None,
+            id: None,
+            blockId: None,
+            inlineId: None,
+            parentBlockId,
+            nodeType: None,
+            headerLevel: None,
+        }
+    }
+
+    /// Creates one named renderer savepoint event.
     pub fn savepoint(chatId: String, id: String) -> Self {
         Self {
             chatId,
@@ -63,6 +79,7 @@ impl MarkdownStreamEvent {
         }
     }
 
+    /// Creates one named renderer rollback event.
     pub fn rollback(chatId: String, id: String) -> Self {
         Self {
             chatId,
@@ -108,8 +125,27 @@ impl MarkdownRenderEventStream {
         events
     }
 
+    /// Starts a self-contained snapshot and retains its parser state for later chunks.
+    pub fn beginSnapshot(&mut self, content: &str) -> Vec<MarkdownStreamEvent> {
+        self.resetParser();
+        let mut events = vec![MarkdownStreamEvent::reset(
+            self.chatId.clone(),
+            self.parentBlockId,
+        )];
+        if !content.is_empty() {
+            events.extend(self.pushChunk(content));
+        }
+        events
+    }
+
     /// Restores the parser state for the exact content retained after a rollback.
     pub fn restoreContent(&mut self, content: &str) {
+        self.resetParser();
+        let _ = self.pushChunk(content);
+    }
+
+    /// Resets parser sessions while preserving this stream's identity and nesting.
+    fn resetParser(&mut self) {
         let chatId = self.chatId.clone();
         let parentBlockId = self.parentBlockId;
         let parseXmlChildren = self.parseXmlChildren;
@@ -118,7 +154,6 @@ impl MarkdownRenderEventStream {
             None => Self::new(chatId),
         };
         self.parseXmlChildren = parseXmlChildren;
-        let _ = self.pushChunk(content);
     }
 
     pub fn pushChunk(&mut self, chunk: &str) -> Vec<MarkdownStreamEvent> {
@@ -657,5 +692,36 @@ mod tests {
             .position(|event| event.eventType == "markdownInlineChunk")
             .expect("replacement inline must emit content after the rollback");
         assert!(inline_start_index < inline_chunk_index);
+    }
+
+    #[test]
+    fn snapshot_rebuilds_dependencies_before_continuing_incrementally() {
+        let mut stream = MarkdownRenderEventStream::new("chat".to_string());
+
+        let snapshot = stream.beginSnapshot("plain ");
+        let block_start_index = snapshot
+            .iter()
+            .position(|event| event.eventType == "markdownBlockStart")
+            .expect("snapshot must start its Markdown block");
+        let inline_start_index = snapshot
+            .iter()
+            .position(|event| event.eventType == "markdownInlineStart")
+            .expect("snapshot must start its Markdown inline");
+        let inline_chunk_index = snapshot
+            .iter()
+            .position(|event| event.eventType == "markdownInlineChunk")
+            .expect("snapshot must emit its Markdown inline content");
+
+        assert_eq!(snapshot[0].eventType, "reset");
+        assert!(block_start_index < inline_start_index);
+        assert!(inline_start_index < inline_chunk_index);
+
+        let continuation = stream.pushChunk("continued");
+        assert!(
+            continuation
+                .iter()
+                .all(|event| event.eventType != "markdownBlockStart"),
+            "continuation must reuse the block restored by the snapshot"
+        );
     }
 }

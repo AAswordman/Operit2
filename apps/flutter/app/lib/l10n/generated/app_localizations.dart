@@ -560,6 +560,12 @@ abstract class AppLocalizations {
   /// **'Unlock'**
   String get unlock;
 
+  /// No description provided for @chatLockedCannotDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'This chat is locked and cannot be deleted'**
+  String get chatLockedCannotDelete;
+
   /// No description provided for @messageLocatorTitle.
   ///
   /// In en, this message translates to:
@@ -2006,6 +2012,18 @@ abstract class AppLocalizations {
   /// **'Model used for long-context automatic summaries.'**
   String get settingsModelFunctionSummaryDescription;
 
+  /// No description provided for @settingsModelFunctionTitleGeneration.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation title'**
+  String get settingsModelFunctionTitleGeneration;
+
+  /// No description provided for @settingsModelFunctionTitleGenerationDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Model used to summarize the first message and attachments into a conversation title.'**
+  String get settingsModelFunctionTitleGenerationDescription;
+
   /// No description provided for @settingsModelFunctionMemory.
   ///
   /// In en, this message translates to:
@@ -3391,6 +3409,48 @@ abstract class AppLocalizations {
   /// **'Configure tool allowlist'**
   String get settingsCharactersToolAccessConfigure;
 
+  /// No description provided for @settingsCharactersToolAccessTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom Allowed Tools'**
+  String get settingsCharactersToolAccessTitle;
+
+  /// No description provided for @settingsCharactersToolAccessTabBuiltin.
+  ///
+  /// In en, this message translates to:
+  /// **'Built-ins'**
+  String get settingsCharactersToolAccessTabBuiltin;
+
+  /// No description provided for @settingsCharactersToolAccessTabPackage.
+  ///
+  /// In en, this message translates to:
+  /// **'Packages'**
+  String get settingsCharactersToolAccessTabPackage;
+
+  /// No description provided for @settingsCharactersToolAccessTabSkill.
+  ///
+  /// In en, this message translates to:
+  /// **'Skill'**
+  String get settingsCharactersToolAccessTabSkill;
+
+  /// No description provided for @settingsCharactersToolAccessTabMcp.
+  ///
+  /// In en, this message translates to:
+  /// **'MCP'**
+  String get settingsCharactersToolAccessTabMcp;
+
+  /// No description provided for @settingsCharactersToolAccessSearchPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Search name, description, or ID'**
+  String get settingsCharactersToolAccessSearchPlaceholder;
+
+  /// No description provided for @settingsCharactersToolAccessEmptySearch.
+  ///
+  /// In en, this message translates to:
+  /// **'No matching tools found'**
+  String get settingsCharactersToolAccessEmptySearch;
+
   /// No description provided for @settingsCharactersToolAccessRequiresUsePackage.
   ///
   /// In en, this message translates to:
@@ -3400,25 +3460,25 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCharactersToolAccessEmptyBuiltin.
   ///
   /// In en, this message translates to:
-  /// **'No built-in tools available.'**
+  /// **'No built-in tools are available for configuration'**
   String get settingsCharactersToolAccessEmptyBuiltin;
 
   /// No description provided for @settingsCharactersToolAccessEmptyPackages.
   ///
   /// In en, this message translates to:
-  /// **'No packages available.'**
+  /// **'No globally available packages right now'**
   String get settingsCharactersToolAccessEmptyPackages;
 
   /// No description provided for @settingsCharactersToolAccessEmptySkills.
   ///
   /// In en, this message translates to:
-  /// **'No skills available.'**
+  /// **'No AI-visible skills are available right now'**
   String get settingsCharactersToolAccessEmptySkills;
 
   /// No description provided for @settingsCharactersToolAccessEmptyMcp.
   ///
   /// In en, this message translates to:
-  /// **'No MCP servers available.'**
+  /// **'No enabled MCP servers are available right now'**
   String get settingsCharactersToolAccessEmptyMcp;
 
   /// No description provided for @settingsCharactersBuiltinTools.
@@ -3889,35 +3949,314 @@ abstract class AppLocalizations {
   /// **'Refresh'**
   String get settingsWorkspaceRefresh;
 
+  /// No description provided for @runtimeIdentity.
+  ///
+  /// In en, this message translates to:
+  /// **'Current identity'**
+  String get runtimeIdentity;
+
+  /// No description provided for @runtimeIdentityManage.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch or manage identities'**
+  String get runtimeIdentityManage;
+
+  /// No description provided for @runtimeIdentitySheetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Identities'**
+  String get runtimeIdentitySheetTitle;
+
+  /// No description provided for @runtimeIdentityCreate.
+  ///
+  /// In en, this message translates to:
+  /// **'New identity'**
+  String get runtimeIdentityCreate;
+
+  /// No description provided for @runtimeIdentityCreateTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'New identity'**
+  String get runtimeIdentityCreateTitle;
+
+  /// No description provided for @runtimeIdentityRename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename identity'**
+  String get runtimeIdentityRename;
+
+  /// No description provided for @runtimeIdentityRenameTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename identity'**
+  String get runtimeIdentityRenameTitle;
+
+  /// No description provided for @runtimeIdentityName.
+  ///
+  /// In en, this message translates to:
+  /// **'Name (optional)'**
+  String get runtimeIdentityName;
+
+  /// No description provided for @runtimeIdentitySwitchTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch to {identityName}?'**
+  String runtimeIdentitySwitchTitle(String identityName);
+
+  /// No description provided for @runtimeIdentitySwitchDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Each identity has separate chats, settings, device space, paired devices, and workspaces. Switching ends the current runtime; the selected identity is used the next time the app starts.'**
+  String get runtimeIdentitySwitchDescription;
+
+  /// No description provided for @runtimeIdentitySwitchConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch identity'**
+  String get runtimeIdentitySwitchConfirm;
+
+  /// No description provided for @runtimeIdentityCurrent.
+  ///
+  /// In en, this message translates to:
+  /// **'Current'**
+  String get runtimeIdentityCurrent;
+
+  /// No description provided for @settingsUserProfileTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'User profile'**
+  String get settingsUserProfileTitle;
+
+  /// No description provided for @settingsUserProfileSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Avatar, name, identities, and GitHub'**
+  String get settingsUserProfileSubtitle;
+
+  /// No description provided for @settingsUserProfileDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage this profile and switch isolated identities.'**
+  String get settingsUserProfileDescription;
+
+  /// No description provided for @settingsUserProfileUnnamed.
+  ///
+  /// In en, this message translates to:
+  /// **'Unnamed'**
+  String get settingsUserProfileUnnamed;
+
+  /// No description provided for @settingsUserProfileNotLoggedIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Not logged in'**
+  String get settingsUserProfileNotLoggedIn;
+
+  /// No description provided for @settingsUserProfileGitHubLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading GitHub account...'**
+  String get settingsUserProfileGitHubLoading;
+
+  /// No description provided for @settingsUserProfileGitHubAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'GitHub: @{account}'**
+  String settingsUserProfileGitHubAccount(String account);
+
+  /// No description provided for @settingsUserProfileGitHubStatusError.
+  ///
+  /// In en, this message translates to:
+  /// **'GitHub status error: {error}'**
+  String settingsUserProfileGitHubStatusError(String error);
+
+  /// No description provided for @settingsUserProfileOverview.
+  ///
+  /// In en, this message translates to:
+  /// **'Profile'**
+  String get settingsUserProfileOverview;
+
+  /// No description provided for @settingsUserProfileAvatar.
+  ///
+  /// In en, this message translates to:
+  /// **'Avatar'**
+  String get settingsUserProfileAvatar;
+
+  /// No description provided for @settingsUserProfileName.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get settingsUserProfileName;
+
+  /// No description provided for @settingsUserProfileChooseAvatar.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose avatar'**
+  String get settingsUserProfileChooseAvatar;
+
+  /// No description provided for @settingsUserProfileClearAvatar.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear avatar'**
+  String get settingsUserProfileClearAvatar;
+
+  /// No description provided for @settingsUserProfileEditName.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit name'**
+  String get settingsUserProfileEditName;
+
+  /// No description provided for @settingsUserProfileIdentities.
+  ///
+  /// In en, this message translates to:
+  /// **'Identities'**
+  String get settingsUserProfileIdentities;
+
+  /// No description provided for @settingsUserProfileGitHub.
+  ///
+  /// In en, this message translates to:
+  /// **'GitHub account'**
+  String get settingsUserProfileGitHub;
+
+  /// No description provided for @settingsUserProfileGitHubDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Not logged in'**
+  String get settingsUserProfileGitHubDescription;
+
+  /// No description provided for @settingsUserProfileLogin.
+  ///
+  /// In en, this message translates to:
+  /// **'Log in'**
+  String get settingsUserProfileLogin;
+
+  /// No description provided for @settingsUserProfileLogout.
+  ///
+  /// In en, this message translates to:
+  /// **'Log out'**
+  String get settingsUserProfileLogout;
+
+  /// No description provided for @settingsAppearanceAvatarCustom.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom avatar'**
+  String get settingsAppearanceAvatarCustom;
+
   /// No description provided for @settingsRuntimeConnection.
   ///
   /// In en, this message translates to:
-  /// **'Current device'**
+  /// **'Current device space'**
   String get settingsRuntimeConnection;
 
   /// No description provided for @settingsRuntimeConnectionDescription.
   ///
   /// In en, this message translates to:
-  /// **'Choose whether chats and tools run on this device or another connected device.'**
+  /// **'Connection status for this device and its device space.'**
   String get settingsRuntimeConnectionDescription;
 
-  /// No description provided for @settingsRuntimeUseLocal.
+  /// No description provided for @settingsRuntimeCurrentSpace.
   ///
   /// In en, this message translates to:
-  /// **'Use this device'**
-  String get settingsRuntimeUseLocal;
+  /// **'Current device space'**
+  String get settingsRuntimeCurrentSpace;
 
-  /// No description provided for @settingsRuntimeLocalTitle.
+  /// No description provided for @settingsRuntimeRenameSpace.
   ///
   /// In en, this message translates to:
-  /// **'This device'**
-  String get settingsRuntimeLocalTitle;
+  /// **'Rename device space'**
+  String get settingsRuntimeRenameSpace;
 
-  /// No description provided for @settingsRuntimeLocalDescription.
+  /// No description provided for @settingsRuntimeLeaveSpace.
   ///
   /// In en, this message translates to:
-  /// **'Chats and tools run on this device.'**
-  String get settingsRuntimeLocalDescription;
+  /// **'Leave device space'**
+  String get settingsRuntimeLeaveSpace;
+
+  /// No description provided for @settingsRuntimeLeaveSpaceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave the current device space?'**
+  String get settingsRuntimeLeaveSpaceTitle;
+
+  /// No description provided for @settingsRuntimeLeaveSpaceDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'This device will create a new single-device space. Business data and paired devices are preserved.'**
+  String get settingsRuntimeLeaveSpaceDescription;
+
+  /// No description provided for @settingsRuntimeLeaveSpaceConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave'**
+  String get settingsRuntimeLeaveSpaceConfirm;
+
+  /// No description provided for @settingsRuntimeSpaceName.
+  ///
+  /// In en, this message translates to:
+  /// **'Device space name'**
+  String get settingsRuntimeSpaceName;
+
+  /// No description provided for @settingsRuntimeSpaceId.
+  ///
+  /// In en, this message translates to:
+  /// **'Device space ID: {spaceId}'**
+  String settingsRuntimeSpaceId(String spaceId);
+
+  /// No description provided for @settingsRuntimeSpaceDeviceCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} devices'**
+  String settingsRuntimeSpaceDeviceCount(int count);
+
+  /// No description provided for @settingsRuntimeViewSpaceTopology.
+  ///
+  /// In en, this message translates to:
+  /// **'View device topology'**
+  String get settingsRuntimeViewSpaceTopology;
+
+  /// No description provided for @settingsRuntimeSpaceTopologyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{spaceName} device topology'**
+  String settingsRuntimeSpaceTopologyTitle(String spaceName);
+
+  /// No description provided for @settingsRuntimeSpaceTopologySummary.
+  ///
+  /// In en, this message translates to:
+  /// **'{deviceCount} devices · {connectionCount} direct connections'**
+  String settingsRuntimeSpaceTopologySummary(
+    int deviceCount,
+    int connectionCount,
+  );
+
+  /// No description provided for @settingsRuntimeDisconnectConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnect'**
+  String get settingsRuntimeDisconnectConnection;
+
+  /// No description provided for @settingsRuntimeDisconnectConnectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnect direct connection'**
+  String get settingsRuntimeDisconnectConnectionTitle;
+
+  /// No description provided for @settingsRuntimeDisconnectConnectionMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnect the direct connection to {deviceName}? Pairing records will be kept.'**
+  String settingsRuntimeDisconnectConnectionMessage(String deviceName);
+
+  /// No description provided for @settingsRuntimeDisconnectConnectionFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnect failed'**
+  String get settingsRuntimeDisconnectConnectionFailed;
+
+  /// No description provided for @settingsRuntimeCurrentDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Current device'**
+  String get settingsRuntimeCurrentDevice;
 
   /// No description provided for @settingsRuntimeRemoteTitle.
   ///
@@ -3928,14 +4267,8 @@ abstract class AppLocalizations {
   /// No description provided for @settingsRuntimeRemoteDescription.
   ///
   /// In en, this message translates to:
-  /// **'These devices are connected. You can use or remove them.'**
+  /// **'Directly paired devices. Pairing establishes a connection; joining a device space enables shared data and routing.'**
   String get settingsRuntimeRemoteDescription;
-
-  /// No description provided for @settingsRuntimeTesting.
-  ///
-  /// In en, this message translates to:
-  /// **'Checking connection…'**
-  String get settingsRuntimeTesting;
 
   /// No description provided for @settingsRuntimePairRemote.
   ///
@@ -3948,6 +4281,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No connected devices yet.'**
   String get settingsRuntimeNoPairedRemote;
+
+  /// No description provided for @settingsRuntimeConnectionInitiatedByOtherDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection initiated by the other device'**
+  String get settingsRuntimeConnectionInitiatedByOtherDevice;
 
   /// No description provided for @settingsRuntimePairToken.
   ///
@@ -3979,47 +4318,11 @@ abstract class AppLocalizations {
   /// **'Device address'**
   String get settingsRuntimeBaseUrl;
 
-  /// No description provided for @settingsRuntimeTestCurrent.
+  /// No description provided for @settingsRuntimeConnectionFailed.
   ///
   /// In en, this message translates to:
-  /// **'Check connection'**
-  String get settingsRuntimeTestCurrent;
-
-  /// No description provided for @settingsRuntimeSwitchedLocal.
-  ///
-  /// In en, this message translates to:
-  /// **'Now using this device.'**
-  String get settingsRuntimeSwitchedLocal;
-
-  /// No description provided for @settingsRuntimeSwitchedRemote.
-  ///
-  /// In en, this message translates to:
-  /// **'Now using a connected device.'**
-  String get settingsRuntimeSwitchedRemote;
-
-  /// No description provided for @settingsRuntimeTestResult.
-  ///
-  /// In en, this message translates to:
-  /// **'Device available: {version}'**
-  String settingsRuntimeTestResult(String version);
-
-  /// No description provided for @settingsRuntimeTestFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'Connection check failed: {error}'**
-  String settingsRuntimeTestFailed(String error);
-
-  /// No description provided for @settingsRuntimeRemoteDisconnected.
-  ///
-  /// In en, this message translates to:
-  /// **'Connected device disconnected'**
-  String get settingsRuntimeRemoteDisconnected;
-
-  /// No description provided for @settingsRuntimeRemoteDisconnectedMessage.
-  ///
-  /// In en, this message translates to:
-  /// **'Now using this device.\n\n{error}'**
-  String settingsRuntimeRemoteDisconnectedMessage(String error);
+  /// **'Device connection failed: {error}'**
+  String settingsRuntimeConnectionFailed(String error);
 
   /// No description provided for @settingsRuntimePairingRejected.
   ///
@@ -4045,71 +4348,56 @@ abstract class AppLocalizations {
   /// **'Offline'**
   String get settingsRuntimePairedOffline;
 
-  /// No description provided for @settingsRuntimeSync.
+  /// No description provided for @settingsRuntimeJoinSpace.
   ///
   /// In en, this message translates to:
-  /// **'Sync data'**
-  String get settingsRuntimeSync;
+  /// **'Join device space'**
+  String get settingsRuntimeJoinSpace;
 
-  /// No description provided for @settingsRuntimeSyncing.
+  /// No description provided for @settingsRuntimeJoinSpaceTitle.
   ///
   /// In en, this message translates to:
-  /// **'Syncing…'**
-  String get settingsRuntimeSyncing;
+  /// **'Join {deviceName}\'s device space?'**
+  String settingsRuntimeJoinSpaceTitle(String deviceName);
 
-  /// No description provided for @settingsRuntimeSyncCompleted.
+  /// No description provided for @settingsRuntimeJoinSpaceDescription.
   ///
   /// In en, this message translates to:
-  /// **'Sync completed: this device {localApplied}, remote {remoteApplied}.'**
-  String settingsRuntimeSyncCompleted(int localApplied, int remoteApplied);
+  /// **'The current device space will merge with the other one and use its name.'**
+  String get settingsRuntimeJoinSpaceDescription;
 
-  /// No description provided for @settingsRuntimeSyncFailed.
+  /// No description provided for @settingsRuntimePairingComplete.
   ///
   /// In en, this message translates to:
-  /// **'Sync failed: {error}'**
-  String settingsRuntimeSyncFailed(String error);
+  /// **'Device paired'**
+  String get settingsRuntimePairingComplete;
 
-  /// No description provided for @settingsRuntimeAutoSyncEnable.
+  /// No description provided for @settingsRuntimeDeviceInCurrentSpace.
   ///
   /// In en, this message translates to:
-  /// **'Enable continuous sync'**
-  String get settingsRuntimeAutoSyncEnable;
+  /// **'In the current device space'**
+  String get settingsRuntimeDeviceInCurrentSpace;
 
-  /// No description provided for @settingsRuntimeAutoSyncDisable.
+  /// No description provided for @settingsRuntimeDiscoverSpaces.
   ///
   /// In en, this message translates to:
-  /// **'Disable continuous sync'**
-  String get settingsRuntimeAutoSyncDisable;
+  /// **'Discover device spaces'**
+  String get settingsRuntimeDiscoverSpaces;
 
-  /// No description provided for @settingsRuntimeAutoSyncEnabled.
+  /// No description provided for @settingsRuntimeDiscoverSpacesDescription.
   ///
   /// In en, this message translates to:
-  /// **'Continuous sync is enabled. It will sync automatically when this device is discovered.'**
-  String get settingsRuntimeAutoSyncEnabled;
+  /// **'Nearby devices are grouped by device space. Expand a device space to connect directly to one of its devices.'**
+  String get settingsRuntimeDiscoverSpacesDescription;
 
-  /// No description provided for @settingsRuntimeAutoSyncDisabled.
+  /// No description provided for @settingsRuntimeDiscoveredSpaceSummary.
   ///
   /// In en, this message translates to:
-  /// **'Continuous sync is disabled.'**
-  String get settingsRuntimeAutoSyncDisabled;
-
-  /// No description provided for @settingsRuntimeAutoSyncFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'Continuous sync setting failed: {error}'**
-  String settingsRuntimeAutoSyncFailed(String error);
-
-  /// No description provided for @settingsRuntimeDiscoverDevices.
-  ///
-  /// In en, this message translates to:
-  /// **'Discover devices'**
-  String get settingsRuntimeDiscoverDevices;
-
-  /// No description provided for @settingsRuntimeDiscoverDevicesDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Scan for nearby devices or enter an address to connect.'**
-  String get settingsRuntimeDiscoverDevicesDescription;
+  /// **'{memberCount} devices total · {nearbyCount} nearby'**
+  String settingsRuntimeDiscoveredSpaceSummary(
+    int memberCount,
+    int nearbyCount,
+  );
 
   /// No description provided for @settingsRuntimeScan.
   ///
@@ -4138,25 +4426,25 @@ abstract class AppLocalizations {
   /// No description provided for @settingsRuntimeEnableDiscovery.
   ///
   /// In en, this message translates to:
-  /// **'Allow other devices to discover this device'**
+  /// **'Allow nearby devices to discover this device space'**
   String get settingsRuntimeEnableDiscovery;
 
   /// No description provided for @settingsRuntimeEnableDiscoveryDescription.
   ///
   /// In en, this message translates to:
-  /// **'Other devices on the same LAN can find this device automatically.'**
+  /// **'Devices on the same network can find this device space and choose this device for a direct connection.'**
   String get settingsRuntimeEnableDiscoveryDescription;
 
   /// No description provided for @settingsRuntimeEnableDiscoveryFailed.
   ///
   /// In en, this message translates to:
-  /// **'Could not enable device discovery: {error}'**
+  /// **'Could not enable device space discovery: {error}'**
   String settingsRuntimeEnableDiscoveryFailed(String error);
 
   /// No description provided for @settingsRuntimeDisableDiscoveryFailed.
   ///
   /// In en, this message translates to:
-  /// **'Could not disable device discovery: {error}'**
+  /// **'Could not disable device space discovery: {error}'**
   String settingsRuntimeDisableDiscoveryFailed(String error);
 
   /// No description provided for @settingsRuntimeUsingLocal.
@@ -5316,6 +5604,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Summary generation'**
   String get settingsDataDetailedStatsSourceSummary;
+
+  /// No description provided for @settingsDataDetailedStatsSourceTitleGeneration.
+  ///
+  /// In en, this message translates to:
+  /// **'Title generation'**
+  String get settingsDataDetailedStatsSourceTitleGeneration;
 
   /// No description provided for @settingsDataDetailedStatsSourceMemory.
   ///

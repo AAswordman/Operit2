@@ -40,7 +40,10 @@ impl LinuxBrowserAutomationHost {
     pub fn new() -> Self {
         Self(ChromiumBrowserAutomationHost::new(
             browser_candidates(),
-            vec!["--no-sandbox".to_string(), "--disable-dev-shm-usage".to_string()],
+            vec![
+                "--no-sandbox".to_string(),
+                "--disable-dev-shm-usage".to_string(),
+            ],
         ))
     }
 }

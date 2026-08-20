@@ -80,6 +80,7 @@ pub fn createRuntimeHostManager(
         runtimeSqliteHost,
     )
     .withHostSecretStore(hostSecretStore)
+    .withWebSocketHost(Arc::new(AndroidHttpHost::new()))
     .withArchiveStagingHost(archiveStagingHost)
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withLocalInferenceHost(Arc::new(AndroidLocalInferenceHost::new()))

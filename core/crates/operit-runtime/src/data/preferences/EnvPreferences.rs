@@ -1,5 +1,5 @@
 use operit_store::PreferencesDataStore::{
-    stringPreferencesKey, PreferencesDataStore, PreferencesDataStoreError,
+    stringPreferencesKey, CoreNodeStateStore, PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_util::OperitPaths;
@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 #[derive(Clone)]
 pub struct EnvPreferences {
-    dataStore: PreferencesDataStore,
+    dataStore: CoreNodeStateStore,
 }
 
 impl EnvPreferences {
@@ -17,7 +17,7 @@ impl EnvPreferences {
     /// Opens the persistent environment preference store.
     pub fn getInstance() -> Self {
         Self {
-            dataStore: PreferencesDataStore::newWithStorage(
+            dataStore: CoreNodeStateStore::newWithStorage(
                 defaultRuntimeStorageHost(),
                 OperitPaths::ENV_PREFERENCES_PATH,
             ),

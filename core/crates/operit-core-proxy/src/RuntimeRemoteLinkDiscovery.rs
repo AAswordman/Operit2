@@ -4,22 +4,31 @@ use std::time::{Duration, Instant};
 
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 
-use crate::RuntimeRemoteLinkService::RuntimeRemoteDiscoveredDevice;
-
 const OPERIT_SERVICE_TYPE: &str = "_operit._tcp.local.";
 type MdnsIpv4Rank = (u8, [u8; 4]);
+
+/// Describes one transport endpoint resolved from an Operit mDNS service record.
+#[derive(Clone, Debug)]
+pub(crate) struct RuntimeRemoteDiscoveryEndpoint {
+    pub deviceId: String,
+    pub baseUrl: String,
+    pub hostname: String,
+    pub port: u16,
+    pub tokenHash: String,
+    pub version: String,
+}
 
 /// Discovers Link-enabled runtimes visible through the native mDNS transport.
 #[allow(non_snake_case)]
 pub(crate) fn discoverRemoteDevices(
     timeoutMs: u64,
-) -> Result<Vec<RuntimeRemoteDiscoveredDevice>, String> {
+) -> Result<Vec<RuntimeRemoteDiscoveryEndpoint>, String> {
     let daemon = ServiceDaemon::new().map_err(|error| error.to_string())?;
     let receiver = daemon
         .browse(OPERIT_SERVICE_TYPE)
         .map_err(|error| error.to_string())?;
     let deadline = Instant::now() + Duration::from_millis(timeoutMs);
-    let mut devices = BTreeMap::<String, (MdnsIpv4Rank, RuntimeRemoteDiscoveredDevice)>::new();
+    let mut devices = BTreeMap::<String, (MdnsIpv4Rank, RuntimeRemoteDiscoveryEndpoint)>::new();
 
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -44,11 +53,8 @@ pub(crate) fn discoverRemoteDevices(
                 let selectedAddress = addresses[0];
                 let selectedRank = mdnsIpv4Rank(&selectedAddress);
                 let properties = info.get_properties();
-                let device = RuntimeRemoteDiscoveredDevice {
+                let device = RuntimeRemoteDiscoveryEndpoint {
                     deviceId: requiredMdnsProperty(properties, "deviceId", &fullName)?,
-                    displayName: requiredMdnsProperty(properties, "displayName", &fullName)?,
-                    platform: requiredMdnsProperty(properties, "platform", &fullName)?,
-                    model: requiredMdnsProperty(properties, "model", &fullName)?,
                     baseUrl: format!("http://{}:{}", selectedAddress, info.get_port()),
                     hostname: info.get_hostname().to_string(),
                     port: info.get_port(),

@@ -14,7 +14,16 @@ use operit_store::PreferencesDataStore::{
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_util::AppLogger::AppLogger;
-use operit_util::RuntimeStorageLayout::DATA_MEMORY_SHARED_DIR_PATH;
+use operit_util::RuntimeStorageLayout::{
+    ANDROID_PERMISSION_PREFERENCES_PATH, API_PREFERENCES_PATH,
+    CUSTOM_EMOJI_SETTINGS_PREFERENCES_PATH, DATABASE_BACKUP_SETTINGS_PREFERENCES_PATH,
+    DATA_MEMORY_SHARED_DIR_PATH, DISPLAY_PREFERENCES_PATH, GITHUB_AUTH_PREFERENCES_PATH,
+    OPERIT1_SNAPSHOT_OBJECTBOX_IMPORT_PATH, OPERIT1_SNAPSHOT_SQLITE_INSPECTION_PATH,
+    OPERIT1_SNAPSHOT_SQLITE_INSPECTION_SHM_PATH, OPERIT1_SNAPSHOT_SQLITE_INSPECTION_WAL_PATH,
+    PERSONA_CARD_CHAT_HISTORY_PREFERENCES_PATH, RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR_PATH,
+    RUNTIME_IMPORTED_OPERIT1_FILES_DIR_PATH, UI_PREFERENCES_PATH, USER_PREFERENCES_PATH,
+    WAIFU_SETTINGS_PREFERENCES_PATH, WAKE_WORD_PREFERENCES_PATH, WORKSPACE_DIR_PATH,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -88,20 +97,10 @@ const ENTRY_WORKSPACE_FILES_PREFIX: &str = "payload/files/workspace/";
 const ENTRY_EXTERNAL_FILES_PREFIX: &str = "payload/external_files/";
 const KEY_CONFIG_LIST: &str = "config_list";
 const KEY_FUNCTION_CONFIG_MAPPING: &str = "function_config_mapping";
-const SQLITE_INSPECTION_STORAGE_PATH: &str =
-    "runtime/temp/clean_on_exit/operit1_snapshot_import.sqlite";
-const SQLITE_INSPECTION_WAL_STORAGE_PATH: &str =
-    "runtime/temp/clean_on_exit/operit1_snapshot_import.sqlite-wal";
-const SQLITE_INSPECTION_SHM_STORAGE_PATH: &str =
-    "runtime/temp/clean_on_exit/operit1_snapshot_import.sqlite-shm";
-const OBJECTBOX_IMPORT_STORAGE_PATH: &str =
-    "runtime/temp/clean_on_exit/operit1_snapshot_objectbox.mdb";
 const OPERIT1_DEFAULT_PROFILE_ID: &str = "default";
 const OPERIT1_SHARED_MEMORY_STORE_ID_PREFIX: &str = "operit1-profile-";
 const ARCHIVE_ENTRY_COPY_BUFFER_BYTES: usize = 256 * 1024;
 const OPERIT1_PROGRESS_REPORT_INTERVAL_MS: i64 = 250;
-const RUNTIME_IMPORTED_OPERIT1_FILES_DIR: &str = "runtime/imported/operit1/files";
-const RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR: &str = "runtime/imported/operit1/external_files";
 const OPERIT1_INTERNAL_FILES_PREFIX: &str = "/data/user/0/com.ai.assistance.operit/files/";
 const OPERIT1_DATA_DATA_FILES_PREFIX: &str = "/data/data/com.ai.assistance.operit/files/";
 const OPERIT1_EXTERNAL_DOWNLOAD_PREFIX: &str = "/storage/emulated/0/Download/Operit/";
@@ -883,11 +882,11 @@ impl Operit1SnapshotImportManager {
                 let exportData = self.withStagedArchiveEntry(
                     parsed,
                     &entry,
-                    OBJECTBOX_IMPORT_STORAGE_PATH,
+                    OPERIT1_SNAPSHOT_OBJECTBOX_IMPORT_PATH,
                     || {
                         buildMemoryExportDataFromOperit1ObjectBox(
                             self.storageHost.as_ref(),
-                            OBJECTBOX_IMPORT_STORAGE_PATH,
+                            OPERIT1_SNAPSHOT_OBJECTBOX_IMPORT_PATH,
                             entryLength,
                         )
                     },
@@ -969,21 +968,21 @@ impl Operit1SnapshotImportManager {
         self.withStagedArchiveEntry(
             parsed,
             ENTRY_DATABASE,
-            SQLITE_INSPECTION_STORAGE_PATH,
+            OPERIT1_SNAPSHOT_SQLITE_INSPECTION_PATH,
             || {
                 self.withStagedArchiveEntry(
                     parsed,
                     ENTRY_DATABASE_WAL,
-                    SQLITE_INSPECTION_WAL_STORAGE_PATH,
+                    OPERIT1_SNAPSHOT_SQLITE_INSPECTION_WAL_PATH,
                     || {
                         self.withStagedArchiveEntry(
                             parsed,
                             ENTRY_DATABASE_SHM,
-                            SQLITE_INSPECTION_SHM_STORAGE_PATH,
+                            OPERIT1_SNAPSHOT_SQLITE_INSPECTION_SHM_PATH,
                             || {
                                 let mut connection = self
                                     .sqliteHost
-                                    .openSqliteDatabase(SQLITE_INSPECTION_STORAGE_PATH)
+                                    .openSqliteDatabase(OPERIT1_SNAPSHOT_SQLITE_INSPECTION_PATH)
                                     .map_err(|error| error.to_string())?;
                                 let archiveBridge = prepareOperit1RoomImport(connection.as_mut())?;
                                 operation(connection.as_mut(), archiveBridge)
@@ -1574,8 +1573,8 @@ impl SnapshotFileImportPlan {
     /// Creates a file import plan using stable virtual file-system destinations.
     fn new() -> Self {
         Self {
-            importedFilesRoot: RUNTIME_IMPORTED_OPERIT1_FILES_DIR.to_string(),
-            importedExternalFilesRoot: RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR.to_string(),
+            importedFilesRoot: RUNTIME_IMPORTED_OPERIT1_FILES_DIR_PATH.to_string(),
+            importedExternalFilesRoot: RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR_PATH.to_string(),
         }
     }
 
@@ -1778,59 +1777,47 @@ fn datastorePreferenceMappings(paths: &RuntimeStorePaths) -> BTreeMap<String, Pa
     );
     mappings.insert(
         "payload/files/datastore/user_preferences.preferences_pb".to_string(),
-        paths.runtime_storage_path("runtime/config/preferences/user_preferences.preferences.json"),
+        paths.runtime_storage_path(USER_PREFERENCES_PATH),
     );
     mappings.insert(
         "payload/files/datastore/api_settings.preferences_pb".to_string(),
-        paths.runtime_storage_path("runtime/config/preferences/api_settings.json"),
+        paths.runtime_storage_path(API_PREFERENCES_PATH),
     );
     mappings.insert(
         "payload/files/datastore/display_preferences.preferences_pb".to_string(),
-        paths.runtime_storage_path(
-            "runtime/config/preferences/display_preferences.preferences.json",
-        ),
+        paths.runtime_storage_path(DISPLAY_PREFERENCES_PATH),
     );
     mappings.insert(
         "payload/files/datastore/ui_preferences.preferences_pb".to_string(),
-        paths.runtime_storage_path("runtime/config/preferences/ui_preferences.preferences.json"),
+        paths.runtime_storage_path(UI_PREFERENCES_PATH),
     );
     mappings.insert(
         "payload/files/datastore/waifu_settings.preferences_pb".to_string(),
-        paths.runtime_storage_path("runtime/config/preferences/waifu_settings.preferences.json"),
+        paths.runtime_storage_path(WAIFU_SETTINGS_PREFERENCES_PATH),
     );
     mappings.insert(
         "payload/files/datastore/wake_word_preferences.preferences_pb".to_string(),
-        paths.runtime_storage_path(
-            "runtime/config/preferences/wake_word_preferences.preferences.json",
-        ),
+        paths.runtime_storage_path(WAKE_WORD_PREFERENCES_PATH),
     );
     mappings.insert(
         "payload/files/datastore/custom_emoji_settings.preferences_pb".to_string(),
-        paths.runtime_storage_path(
-            "runtime/config/preferences/custom_emoji_settings.preferences.json",
-        ),
+        paths.runtime_storage_path(CUSTOM_EMOJI_SETTINGS_PREFERENCES_PATH),
     );
     mappings.insert(
         "payload/files/datastore/android_permission_preferences.preferences_pb".to_string(),
-        paths.runtime_storage_path(
-            "runtime/config/preferences/android_permission_preferences.preferences.json",
-        ),
+        paths.runtime_storage_path(ANDROID_PERMISSION_PREFERENCES_PATH),
     );
     mappings.insert(
         "payload/files/datastore/database_backup_settings.preferences_pb".to_string(),
-        paths.runtime_storage_path(
-            "runtime/config/preferences/database_backup_settings.preferences.json",
-        ),
+        paths.runtime_storage_path(DATABASE_BACKUP_SETTINGS_PREFERENCES_PATH),
     );
     mappings.insert(
         "payload/files/datastore/github_auth_preferences.preferences_pb".to_string(),
-        paths.runtime_storage_path("runtime/config/preferences/github_auth_preferences.json"),
+        paths.runtime_storage_path(GITHUB_AUTH_PREFERENCES_PATH),
     );
     mappings.insert(
         "payload/files/datastore/persona_card_chat_history.preferences_pb".to_string(),
-        paths.runtime_storage_path(
-            "runtime/config/preferences/persona_card_chat_history.preferences.json",
-        ),
+        paths.runtime_storage_path(PERSONA_CARD_CHAT_HISTORY_PREFERENCES_PATH),
     );
     mappings
 }
@@ -2068,7 +2055,7 @@ mod tests {
         assert_eq!(
             avatarUris.get(cardId),
             Some(&format!(
-                "runtime/imported/operit1/files/avatar_{cardId}_{currentResourceId}.png"
+                "{RUNTIME_IMPORTED_OPERIT1_FILES_DIR_PATH}/avatar_{cardId}_{currentResourceId}.png"
             )),
         );
     }
@@ -2097,8 +2084,9 @@ mod tests {
             &SnapshotFileImportPlan::new(),
         )
         .expect("shared Operit1 avatar URIs should be imported for every bound card");
-        let expectedUri =
-            format!("runtime/imported/operit1/files/avatar_{sourceCardId}_{resourceId}.png");
+        let expectedUri = format!(
+            "{RUNTIME_IMPORTED_OPERIT1_FILES_DIR_PATH}/avatar_{sourceCardId}_{resourceId}.png"
+        );
 
         assert_eq!(avatarUris.get(sourceCardId), Some(&expectedUri));
         assert_eq!(avatarUris.get(copyCardId), Some(&expectedUri));
@@ -2912,9 +2900,11 @@ where
                 outputDurationMs: 0,
                 waitDurationMs: 0,
                 completedAt: 0,
+                completedExecutionGeneration: 0,
                 displayMode: ChatMessageDisplayMode::NORMAL,
                 isFavorite: false,
                 isVariantPreview: false,
+                contentStream: None,
             },
             variants: Vec::new(),
         });
@@ -3030,7 +3020,7 @@ fn buildSnapshotFileCopyPlan(
         if !rest.is_empty() {
             plan.items.push(SnapshotFileCopyItem {
                 sourceEntry: entry.clone(),
-                targetPath: format!("workspaces/{workspaceId}/{rest}"),
+                targetPath: format!("{WORKSPACE_DIR_PATH}/{workspaceId}/{rest}"),
             });
             plan.importedWorkspaceFiles += 1;
         }
@@ -3047,7 +3037,7 @@ fn buildSnapshotFileCopyPlan(
             sourceEntry: entry.clone(),
             targetPath: format!(
                 "{}/{relative}",
-                RUNTIME_IMPORTED_OPERIT1_FILES_DIR.trim_end_matches('/')
+                RUNTIME_IMPORTED_OPERIT1_FILES_DIR_PATH.trim_end_matches('/')
             ),
         });
         plan.importedFiles += 1;
@@ -3064,7 +3054,7 @@ fn buildSnapshotFileCopyPlan(
             sourceEntry: entry.clone(),
             targetPath: format!(
                 "{}/{relative}",
-                RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR.trim_end_matches('/')
+                RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR_PATH.trim_end_matches('/')
             ),
         });
         plan.importedExternalFiles += 1;

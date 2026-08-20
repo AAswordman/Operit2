@@ -30,20 +30,25 @@ pub(crate) struct ObjectSpec {
     pub(crate) full_type: String,
     pub(crate) source_path: PathBuf,
     pub(crate) access: ObjectAccess,
-    pub(crate) route_scope: ObjectRouteScope,
+    pub(crate) path_match: ObjectPathMatch,
 }
 
-/// Defines whether requests for one generated object remain on the local runtime.
+/// Describes how concrete proxy paths map to one generated object.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ObjectRouteScope {
-    LocalControl,
-    RuntimeSelected,
+pub(crate) enum ObjectPathMatch {
+    Exact,
+    TrailingSegments(usize),
+    Predicate(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ObjectAccess {
     Application,
-    ChatRuntimeMain,
+    ResolvedHolder {
+        holder_field: String,
+        resolver_method: String,
+        proxy_aliases: Vec<(String, String)>,
+    },
     DefaultConstruct,
     GetInstanceConstruct,
     ResultGetInstanceConstruct,
@@ -144,7 +149,7 @@ pub(crate) struct SourceObject {
     pub(crate) dispatch_name: String,
     pub(crate) full_type: String,
     pub(crate) access: ObjectAccess,
-    pub(crate) route_scope: ObjectRouteScope,
+    pub(crate) path_match: ObjectPathMatch,
     pub(crate) methods: Vec<SourceMethod>,
 }
 
@@ -208,7 +213,19 @@ pub(crate) struct SourceMethod {
     pub(crate) is_async: bool,
     pub(crate) cfg_attrs: Vec<String>,
     pub(crate) doc_lines: Vec<String>,
+    pub(crate) route: MethodRoute,
     pub(crate) protocol: MethodProtocol,
+}
+
+/// Defines the Binding route declared by one proxy method.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum MethodRoute {
+    Local,
+    Binding {
+        binding_argument: String,
+        current_resolver: Option<String>,
+        supports_source_transition: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -232,6 +249,8 @@ pub(crate) enum SerializableTypeKind {
     },
     TaggedEnum {
         externally_tagged: bool,
+        tag_name: Option<String>,
+        content_name: Option<String>,
         variants: Vec<SerializableEnumVariant>,
     },
     Enum {
@@ -252,6 +271,7 @@ pub(crate) struct SerializableEnumVariant {
     pub(crate) name: String,
     pub(crate) json_name: String,
     pub(crate) fields_are_unit: bool,
+    pub(crate) fields_are_named: bool,
     pub(crate) fields: Vec<SerializableField>,
 }
 

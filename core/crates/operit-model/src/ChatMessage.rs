@@ -4,6 +4,8 @@ use crate::ChatMessageDisplayMode::ChatMessageDisplayMode;
 use crate::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
 use crate::MessagePart::MessagePart;
 use crate::MessagePartCodec::MessagePartCodec;
+use operit_link::CoreStream;
+use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -22,10 +24,13 @@ pub struct ChatMessage {
     pub outputDurationMs: i64,
     pub waitDurationMs: i64,
     pub completedAt: i64,
+    #[serde(skip)]
+    pub completedExecutionGeneration: i64,
     pub displayMode: ChatMessageDisplayMode,
     pub isFavorite: bool,
     #[serde(skip)]
     pub isVariantPreview: bool,
+    pub contentStream: Option<CoreStream<MarkdownStreamEvent>>,
 }
 
 impl PartialEq for ChatMessage {
@@ -45,9 +50,11 @@ impl PartialEq for ChatMessage {
             && self.outputDurationMs == other.outputDurationMs
             && self.waitDurationMs == other.waitDurationMs
             && self.completedAt == other.completedAt
+            && self.completedExecutionGeneration == other.completedExecutionGeneration
             && self.displayMode == other.displayMode
             && self.isFavorite == other.isFavorite
             && self.isVariantPreview == other.isVariantPreview
+            && self.contentStream == other.contentStream
     }
 }
 
@@ -120,9 +127,11 @@ impl ChatMessage {
             outputDurationMs: 0,
             waitDurationMs: 0,
             completedAt: 0,
+            completedExecutionGeneration: 0,
             displayMode: ChatMessageDisplayMode::NORMAL,
             isFavorite: false,
             isVariantPreview: false,
+            contentStream: None,
         }
     }
 }

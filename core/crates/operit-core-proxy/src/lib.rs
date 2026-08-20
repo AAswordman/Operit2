@@ -10,37 +10,58 @@ use operit_host_api::{FileSystemHost, RuntimeStorageHost};
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
     CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CoreObjectPath, CoreRequestId,
-    CoreValue, CoreWatchRequest,
+    CoreValue, CoreWatchRequest, CoreWatchSourceResume,
 };
-use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
-use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
+use operit_tools::runtime_support::{CoreNodeToolRuntime, ToolRuntimeSupport};
 use operit_util::stream::ReverseStream::ReverseStreamSender;
 use operit_util::stream::RevisableTextStream::{
-    ResponseStreamItem, RevisableTextStream, TextStreamEventType,
+    RenderableTextStream, ResponseStreamItem, RevisableTextStream, TextStreamEventType,
 };
 use operit_util::stream::Stream::Stream;
+use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionState;
 use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 
-pub mod RuntimeCoreRouter;
+pub mod CoreNodeRouter;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod RuntimeRemoteLinkDiscovery;
 pub mod RuntimeRemoteLinkService;
+pub mod SpacePersistenceSyncService;
 
 include!(concat!(env!("OUT_DIR"), "/generated_core_dispatch.rs"));
+
+pub(crate) const CORE_ROUTE_CURSOR_ARGUMENT: &str = "__operit_route_cursor";
+pub(crate) const CORE_ROUTE_CURSOR_PROPERTY: &str = "__operit_route_cursor";
+pub(crate) const CORE_ROUTE_SOURCE_TRANSITION_PROPERTY: &str = "__operit_route_source_transition";
+
+/// Stores the adapter-owned state needed to continue one text watch.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct TextWatchCursor {
+    streamKey: String,
+    revisions: TextStreamRevisionState,
+}
+
+/// Carries one opaque physical-source request from a text stream to its router.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) struct CoreRouteSourceTransition {
+    pub(crate) targetNodeId: String,
+    pub(crate) payload: Vec<u8>,
+}
 
 #[derive(Clone)]
 pub struct LocalCoreProxy {
     application: Arc<Mutex<OperitApplication>>,
     hostManager: HostManager,
     chatRuntimeHolder: Arc<Mutex<ChatRuntimeHolder>>,
+    toolRuntimeSupport: Arc<dyn ToolRuntimeSupport>,
 }
 
 /// Owns the runtime-side endpoints for one generated reverse stream invocation.
@@ -148,9 +169,11 @@ impl LocalCoreProxy {
     }
     /// Creates a local link client backed by an in-process application.
     pub fn new(application: OperitApplication) -> Self {
+        let toolRuntimeSupport = application.toolHandler.runtimeSupport();
         Self {
             hostManager: application.hostManager.clone(),
             chatRuntimeHolder: application.chatRuntimeHolder.clone(),
+            toolRuntimeSupport,
             application: Arc::new(Mutex::new(application)),
         }
     }
@@ -179,6 +202,70 @@ impl LocalCoreProxy {
             .fileSystemHost
             .clone()
             .expect("LocalCoreProxy requires a FileSystemHost")
+    }
+}
+
+#[async_trait(?Send)]
+impl CoreNodeRouter::CoreRouteLocalRuntime for LocalCoreProxy {
+    /// Installs the live Core routing capability exposed to built-in tools.
+    #[allow(non_snake_case)]
+    fn bindCoreNodeToolRuntime(
+        &self,
+        runtime: Arc<dyn CoreNodeToolRuntime>,
+    ) -> Result<(), CoreLinkError> {
+        self.toolRuntimeSupport
+            .bindCoreNodeToolRuntime(runtime)
+            .map_err(CoreLinkError::internal)
+    }
+
+    /// Returns the runtime storage capability owned by this local proxy.
+    #[allow(non_snake_case)]
+    fn runtimeStorageHost(&self) -> Arc<dyn RuntimeStorageHost> {
+        LocalCoreProxy::runtimeStorageHost(self)
+    }
+
+    /// Executes one local Core call through the generated dispatch surface.
+    async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
+        CoreLinkSharedClient::call(self, request).await
+    }
+
+    /// Reads one local Core watch snapshot through the generated dispatch surface.
+    #[allow(non_snake_case)]
+    async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+        CoreLinkSharedClient::watchSnapshot(self, request).await
+    }
+
+    /// Opens one local Core watch and lets the selected inner source consume its opaque resume.
+    async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        CoreLinkSharedClient::watch(self, request).await
+    }
+
+    /// Activates one generated watch source before its Binding is published.
+    #[allow(non_snake_case)]
+    async fn activateWatchSource(
+        &self,
+        request: CoreWatchRequest,
+        generation: i64,
+        payload: Vec<u8>,
+    ) -> Result<(), CoreLinkError> {
+        generated_dispatch_core_proxy_watch_transition_async(
+            self,
+            &request,
+            CoreWatchSourceResume {
+                generation,
+                payload,
+            },
+        )
+        .await
+    }
+
+    /// Opens one generated local Core push stream.
+    #[allow(non_snake_case)]
+    fn openPush(
+        &self,
+        request: operit_link::CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        Ok(Box::new(self.openReverseStream(request)?))
     }
 }
 
@@ -258,32 +345,6 @@ impl LocalCoreProxy {
     }
 }
 
-fn chat_runtime_slot(path: &CoreObjectPath) -> Option<ChatRuntimeSlot> {
-    let segments = path.segments.as_slice();
-    match segments {
-        [root, slot] if root == "chatRuntimeHolder" => chat_runtime_slot_from_segments(slot, None),
-        [root, holder, slot] if root == "application" && holder == "chatRuntimeHolder" => {
-            chat_runtime_slot_from_segments(slot, None)
-        }
-        [root, slot, id] if root == "chatRuntimeHolder" => {
-            chat_runtime_slot_from_segments(slot, Some(id))
-        }
-        [root, holder, slot, id] if root == "application" && holder == "chatRuntimeHolder" => {
-            chat_runtime_slot_from_segments(slot, Some(id))
-        }
-        _ => None,
-    }
-}
-
-fn chat_runtime_slot_from_segments(slot: &str, id: Option<&String>) -> Option<ChatRuntimeSlot> {
-    match (slot, id) {
-        ("MAIN" | "main", None) => Some(ChatRuntimeSlot::MAIN),
-        ("FLOATING" | "floating", None) => Some(ChatRuntimeSlot::FLOATING),
-        ("DETACHED" | "detached", Some(id)) => Some(ChatRuntimeSlot::DETACHED(id.clone())),
-        _ => None,
-    }
-}
-
 /// Extracts a string-keyed argument map from a CoreValue request payload.
 fn object_args(args: CoreValue) -> Result<BTreeMap<String, CoreValue>, CoreLinkError> {
     match args {
@@ -329,22 +390,83 @@ fn core_event_stream_channel() -> (
     (sender, CoreEventStream::new(receiver))
 }
 
-/// Converts one revisable provider response into streamed Markdown render events.
-fn core_text_event_stream(
-    stream_chat_id: String,
-    stream: SharedAiResponseStream,
+/// Converts one renderable text response into streamed Markdown events.
+fn core_text_event_stream<S>(
+    stream_key: String,
+    stream: S,
     request: CoreWatchRequest,
-) -> CoreEventStream {
+) -> Result<CoreEventStream, CoreLinkError>
+where
+    S: RenderableTextStream + Send + 'static,
+{
+    let resumeCursor = core_route_cursor(&request.args)?
+        .map(|value| {
+            operit_link::fromCoreValue::<TextWatchCursor>(value)
+                .map_err(|error| CoreLinkError::new("CORE_ROUTE_CURSOR_CODEC", error.to_string()))
+        })
+        .transpose()?;
     let (sender, receiver) = core_event_stream_channel();
     let (cancelSender, mut cancelReceiver) = tokio::sync::oneshot::channel::<()>();
+    let initialContent = stream.initial_render_content();
+    if let Some(cursor) = resumeCursor.as_ref() {
+        if cursor.streamKey != stream_key {
+            return Err(CoreLinkError::new(
+                "CORE_ROUTE_CURSOR_STREAM_MISMATCH",
+                "Route cursor belongs to a different text stream",
+            ));
+        }
+        if !initialContent.starts_with(&cursor.revisions.content) {
+            return Err(CoreLinkError::new(
+                "CORE_ROUTE_CURSOR_PREFIX_MISMATCH",
+                "Reopened text stream does not preserve the routed cursor prefix",
+            ));
+        }
+    }
     let mut orderedStream = stream;
     defaultHostRuntimeTaskSchedulerHost()
         .scheduleHostRuntimeAsyncTask(
             "core-proxy-text-markdown",
             Box::new(move || {
                 Box::pin(async move {
-                    let mut markdownStream = MarkdownRenderEventStream::new(stream_chat_id.clone());
-                    let mut textRevisions = TextStreamRevisionTracker::new("");
+                    let mut markdownStream = MarkdownRenderEventStream::new(stream_key.clone());
+                    let mut textRevisions = match resumeCursor {
+                        Some(cursor) => {
+                            markdownStream.restoreContent(&cursor.revisions.content);
+                            let suffix = &initialContent[cursor.revisions.content.len()..];
+                            let mut revisions =
+                                TextStreamRevisionTracker::from_state(cursor.revisions);
+                            if !suffix.is_empty() {
+                                let _ = revisions.append(suffix);
+                                for event in markdownStream.pushChunk(suffix) {
+                                    send_text_event(
+                                        &sender,
+                                        &request.requestId,
+                                        &request.targetPath,
+                                        &request.propertyName,
+                                        CoreEventKind::Changed,
+                                        to_core_value(event)
+                                            .expect("MarkdownStreamEvent must serialize"),
+                                    );
+                                }
+                            }
+                            revisions
+                        }
+                        None => {
+                            for event in markdownStream.beginSnapshot(&initialContent) {
+                                send_text_event(
+                                    &sender,
+                                    &request.requestId,
+                                    &request.targetPath,
+                                    &request.propertyName,
+                                    CoreEventKind::Changed,
+                                    to_core_value(event)
+                                        .expect("MarkdownStreamEvent must serialize"),
+                                );
+                            }
+                            TextStreamRevisionTracker::new(&initialContent)
+                        }
+                    };
+                    send_text_cursor(&sender, &request, &stream_key, &textRevisions);
                     let mut itemCollector = |item: ResponseStreamItem| match item {
                         ResponseStreamItem::Chunk(chunk) => {
                             let _ = textRevisions.append(&chunk);
@@ -359,19 +481,20 @@ fn core_text_event_stream(
                                         .expect("MarkdownStreamEvent must serialize"),
                                 );
                             }
+                            send_text_cursor(&sender, &request, &stream_key, &textRevisions);
                         }
                         ResponseStreamItem::Revision(event) => {
                             let markdownEvent = match event.event_type {
                                 TextStreamEventType::Savepoint => {
                                     textRevisions.savepoint(&event.id);
-                                    MarkdownStreamEvent::savepoint(stream_chat_id.clone(), event.id)
+                                    MarkdownStreamEvent::savepoint(stream_key.clone(), event.id)
                                 }
                                 TextStreamEventType::Rollback => {
                                     let content = textRevisions.rollback(&event.id).expect(
                                         "markdown rollback must reference an active savepoint",
                                     );
                                     markdownStream.restoreContent(content);
-                                    MarkdownStreamEvent::rollback(stream_chat_id.clone(), event.id)
+                                    MarkdownStreamEvent::rollback(stream_key.clone(), event.id)
                                 }
                             };
                             send_text_event(
@@ -383,12 +506,38 @@ fn core_text_event_stream(
                                 to_core_value(markdownEvent)
                                     .expect("MarkdownStreamEvent must serialize"),
                             );
+                            send_text_cursor(&sender, &request, &stream_key, &textRevisions);
                         }
                     };
                     let streamCollection = orderedStream.collect_ordered(&mut itemCollector);
                     tokio::select! {
                         _ = streamCollection => {},
                         _ = &mut cancelReceiver => {},
+                    }
+                    if orderedStream.terminal_source_target().is_some() {
+                        match orderedStream.wait_terminal_source_transition().await {
+                            Ok(transition) => {
+                                send_text_event(
+                                    &sender,
+                                    &request.requestId,
+                                    &request.targetPath,
+                                    CORE_ROUTE_SOURCE_TRANSITION_PROPERTY,
+                                    CoreEventKind::Changed,
+                                    to_core_value(CoreRouteSourceTransition {
+                                        targetNodeId: transition.target,
+                                        payload: transition.payload,
+                                    })
+                                    .expect("CoreRouteSourceTransition must serialize"),
+                                );
+                            }
+                            Err(error) => {
+                                operit_util::AppLogger::AppLogger::e(
+                                    "CoreStreamRoute",
+                                    &format!("text source transition failed: {error}"),
+                                );
+                            }
+                        }
+                        return;
                     }
                     send_text_event(
                         &sender,
@@ -403,9 +552,42 @@ fn core_text_event_stream(
             }),
         )
         .expect("Core text markdown task must be scheduled");
-    receiver.withOnClose(move || {
+    Ok(receiver.withOnClose(move || {
         let _ = cancelSender.send(());
-    })
+    }))
+}
+
+/// Reads one opaque route cursor from the reserved watch argument.
+fn core_route_cursor(args: &CoreValue) -> Result<Option<CoreValue>, CoreLinkError> {
+    match args {
+        CoreValue::Map(values) => Ok(values.get(CORE_ROUTE_CURSOR_ARGUMENT).cloned()),
+        CoreValue::Null => Ok(None),
+        _ => Err(CoreLinkError::new(
+            "INVALID_ARGS",
+            "core watch args must be a map",
+        )),
+    }
+}
+
+/// Emits one adapter-owned cursor that routers retain without decoding.
+fn send_text_cursor(
+    sender: &tokio::sync::mpsc::UnboundedSender<CoreEvent>,
+    request: &CoreWatchRequest,
+    streamKey: &str,
+    revisions: &TextStreamRevisionTracker,
+) {
+    send_text_event(
+        sender,
+        &request.requestId,
+        &request.targetPath,
+        CORE_ROUTE_CURSOR_PROPERTY,
+        CoreEventKind::Changed,
+        to_core_value(TextWatchCursor {
+            streamKey: streamKey.to_string(),
+            revisions: revisions.state(),
+        })
+        .expect("TextWatchCursor must serialize"),
+    );
 }
 
 fn core_string_event_stream<S>(mut stream: S, request: CoreWatchRequest) -> CoreEventStream

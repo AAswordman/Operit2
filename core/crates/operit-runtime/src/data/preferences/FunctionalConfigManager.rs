@@ -57,6 +57,8 @@ pub struct FunctionalConfigManager {
 }
 
 impl FunctionalConfigManager {
+    const PREFERENCES_VERSION: u32 = 2;
+
     /// Returns the preference key that stores function-to-model bindings.
     pub fn FUNCTION_MODEL_BINDING() -> operit_store::PreferencesDataStore::PreferencesKey {
         stringPreferencesKey("function_model_binding")
@@ -69,7 +71,8 @@ impl FunctionalConfigManager {
             operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH,
         );
         Self {
-            functionalConfigDataStore: PreferencesDataStore::new(path),
+            functionalConfigDataStore: PreferencesDataStore::new(path)
+                .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences),
             modelConfigManager: ModelConfigManager::new(root_dir),
         }
     }
@@ -77,19 +80,6 @@ impl FunctionalConfigManager {
     /// Creates a manager using the runtime data directory from API preferences.
     pub fn default() -> Self {
         Self::new(ApiPreferences::data_dir())
-    }
-
-    /// Ensures model configuration exists and seeds function bindings when empty.
-    pub fn initializeIfNeeded(&self) -> Result<(), FunctionalConfigError> {
-        self.modelConfigManager
-            .initializeIfNeeded()
-            .map_err(|error| FunctionalConfigError::ModelConfigManager(error.to_string()))?;
-
-        let binding = self.functionModelBindingFlow()?.first()?;
-        if binding.is_empty() {
-            self.saveFunctionModelBinding(Self::defaultBinding())?;
-        }
-        Ok(())
     }
 
     /// Observes the full mapping from runtime functions to provider model bindings.
@@ -127,15 +117,48 @@ impl FunctionalConfigManager {
         &self,
         binding: HashMap<FunctionType, FunctionModelBinding>,
     ) -> Result<(), FunctionalConfigError> {
+        self.functionalConfigDataStore
+            .try_edit_result(|preferences| Self::writeFunctionModelBinding(preferences, binding))?;
+        Ok(())
+    }
+
+    /// Writes the complete function binding map into one preferences snapshot.
+    fn writeFunctionModelBinding(
+        preferences: &mut Preferences,
+        binding: HashMap<FunctionType, FunctionModelBinding>,
+    ) -> Result<(), PreferencesDataStoreError> {
         let stringBinding: HashMap<String, FunctionModelBinding> = binding
             .into_iter()
             .map(|(functionType, value)| (Self::functionTypeName(functionType).to_string(), value))
             .collect();
         let encoded = serde_json::to_string(&stringBinding)?;
-        self.functionalConfigDataStore.edit(|preferences| {
-            preferences.set(&Self::FUNCTION_MODEL_BINDING(), encoded);
-        })?;
+        preferences.set(&Self::FUNCTION_MODEL_BINDING(), encoded);
         Ok(())
+    }
+
+    /// Migrates functional preferences one schema version at a time.
+    fn migratePreferences(
+        version: u32,
+        preferences: &mut Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        match version {
+            0 => {
+                let binding = Self::readFunctionModelBinding(preferences)?;
+                if binding.is_empty() {
+                    Self::writeFunctionModelBinding(preferences, Self::defaultBinding())?;
+                }
+                Ok(())
+            }
+            1 => {
+                let mut binding = Self::readFunctionModelBinding(preferences)?;
+                binding.insert(
+                    FunctionType::TITLE_GENERATION,
+                    FunctionModelBinding::default(),
+                );
+                Self::writeFunctionModelBinding(preferences, binding)
+            }
+            from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
+        }
     }
 
     /// Reads the model binding currently assigned to one runtime function.
@@ -184,6 +207,7 @@ impl FunctionalConfigManager {
         self.saveFunctionModelBinding(Self::defaultBinding())
     }
 
+    /// Builds the complete default binding map for every functional model role.
     fn defaultBinding() -> HashMap<FunctionType, FunctionModelBinding> {
         Self::functionTypeValues()
             .into_iter()
@@ -199,10 +223,12 @@ impl FunctionalConfigManager {
             .collect()
     }
 
+    /// Lists every functional model role persisted in the binding map.
     fn functionTypeValues() -> Vec<FunctionType> {
         vec![
             FunctionType::CHAT,
             FunctionType::SUMMARY,
+            FunctionType::TITLE_GENERATION,
             FunctionType::MEMORY,
             FunctionType::UI_CONTROLLER,
             FunctionType::TRANSLATION,
@@ -214,10 +240,12 @@ impl FunctionalConfigManager {
         ]
     }
 
+    /// Serializes a functional model role for preference storage.
     fn functionTypeName(functionType: FunctionType) -> &'static str {
         match functionType {
             FunctionType::CHAT => "CHAT",
             FunctionType::SUMMARY => "SUMMARY",
+            FunctionType::TITLE_GENERATION => "TITLE_GENERATION",
             FunctionType::MEMORY => "MEMORY",
             FunctionType::UI_CONTROLLER => "UI_CONTROLLER",
             FunctionType::TRANSLATION => "TRANSLATION",
@@ -229,10 +257,12 @@ impl FunctionalConfigManager {
         }
     }
 
+    /// Parses a persisted functional model role name.
     fn parseFunctionType(value: &str) -> Result<FunctionType, FunctionalConfigError> {
         match value {
             "CHAT" => Ok(FunctionType::CHAT),
             "SUMMARY" => Ok(FunctionType::SUMMARY),
+            "TITLE_GENERATION" => Ok(FunctionType::TITLE_GENERATION),
             "MEMORY" => Ok(FunctionType::MEMORY),
             "UI_CONTROLLER" => Ok(FunctionType::UI_CONTROLLER),
             "TRANSLATION" => Ok(FunctionType::TRANSLATION),

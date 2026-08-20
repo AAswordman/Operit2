@@ -36,7 +36,7 @@ class AppNotificationService with WidgetsBindingObserver {
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     WidgetsBinding.instance.addObserver(this);
     _subscription = _clients.servicesRuntimeHostInteractionService
-        .ownerHostInteractionEventsChanges(
+        .ownerHostInteractionEvents(
           kinds: <RuntimeHostInteractionKind>[
             RuntimeHostInteractionKind.appNotification,
             RuntimeHostInteractionKind.toolPermission,

@@ -1,7 +1,7 @@
+use async_trait::async_trait;
+
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
-use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
-use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::plugins::toolpkg::ToolPkgChatInputHookBridge::{
     ChatInputHookContext, ChatInputHookResult, ToolPkgChatInputHookBridge,
     CHAT_INPUT_EVENT_INPUT_CHANGED, CHAT_INPUT_EVENT_SUBMITTED, CHAT_INPUT_EVENT_SUBMIT_REQUESTED,
@@ -11,20 +11,21 @@ use crate::plugins::toolpkg::ToolPkgChatInputHookBridge::{
 use crate::plugins::toolpkg::ToolPkgXmlRenderBridge::ToolPkgXmlRenderBridge;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
-use crate::services::core::MessageProcessingDelegate::MessageProcessingDelegate;
+use crate::services::core::MessageProcessingDelegate::{
+    ChatExecutionState, MessageProcessingDelegate,
+};
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
     WorkspaceBackupManager, WorkspaceFileChange,
 };
 use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
-use operit_host_api::FileSystemHost;
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
-use operit_model::ActivePrompt::ActivePrompt;
-use operit_model::AttachmentInfo::AttachmentInfo;
-use operit_model::ChatDisplayWindowState::ChatDisplayWindowState;
+use operit_host_api::{FileSystemHost, HostRuntimeTaskSchedulerHost};
+use operit_link::{CoreLinkError, CoreWatchSourceActivator, CoreWatchSourceResume};
 use operit_model::ChatHistory::ChatHistory;
+use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatHistoryListItem::ChatHistoryListItem;
-use operit_model::ChatMainState::ChatMainState;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
@@ -34,12 +35,9 @@ use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::PendingQueueMessageItem::PendingQueueMessageItem;
 use operit_model::PromptFunctionType::PromptFunctionType;
-use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_store::repository::ChatHistoryManager::ChatImportResult;
-use operit_store::PreferencesDataStore::{
-    combine3, combine4, combine5, MutableStateFlow, StateFlow,
-};
+use operit_store::PreferencesDataStore::{combine2, combine3, MutableStateFlow, StateFlow};
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
@@ -49,6 +47,7 @@ use operit_util::AppLogger::AppLogger;
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};
 use operit_util::OperitPaths;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -57,7 +56,6 @@ use url::Url;
 const PACKAGE_ATTACHMENT_PREFIX: &str = "package_attach:";
 const PASTED_TEXT_ATTACHMENT_PREFIX: &str = "pasted_text:";
 const OCR_INLINE_INSTRUCTION: &str = "Do not read the file, answer the user's question directly based on the attachment content and the user's question.";
-
 pub trait ChatServiceUiBridge {}
 
 pub struct EmptyChatServiceUiBridge;
@@ -80,14 +78,19 @@ fn serializeChatInputHookResult(result: Option<ChatInputHookResult>) -> serde_js
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-struct ChatMainFlowInputs {
-    messages: Vec<ChatMessage>,
-    currentChatId: Option<String>,
-    chatHistories: Vec<ChatHistory>,
-    activeStreamingChatIds: HashSet<String>,
-    inputProcessingStateByChatId: HashMap<String, InputProcessingState>,
-    pendingQueueStateByChatId: HashMap<String, PendingChatQueueState>,
+/// Describes the runtime state of one explicitly routed chat.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ChatState {
+    pub currentChatId: String,
+    pub currentChatTitle: String,
+    pub currentCharacterCardName: Option<String>,
+    pub currentCharacterCardAvatarUri: Option<String>,
+    pub currentWorkspacePath: Option<String>,
+    pub isLoading: bool,
+    pub inputProcessingState: InputProcessingState,
+    pub hasOlderDisplayHistory: bool,
+    pub hasNewerDisplayHistory: bool,
+    pub isLoadingDisplayWindow: bool,
 }
 
 /// Stores the runtime-owned pending message queue for one chat.
@@ -133,96 +136,7 @@ impl PendingChatQueueStore {
     }
 }
 
-fn buildChatMainState(
-    inputs: ChatMainFlowInputs,
-    displayWindowState: ChatDisplayWindowState,
-    activePrompt: ActivePrompt,
-    characterCardManager: &CharacterCardManager,
-    functionalConfigManager: &FunctionalConfigManager,
-    modelConfigManager: &ModelConfigManager,
-) -> ChatMainState {
-    let currentChatMetadata = inputs.currentChatId.as_ref().and_then(|chatId| {
-        inputs
-            .chatHistories
-            .iter()
-            .find(|history| history.id.as_str() == chatId)
-    });
-    let currentChatTitle = currentChatMetadata
-        .map(|history| history.title.clone())
-        .unwrap_or_default();
-    let currentCharacterCardName =
-        currentChatMetadata.and_then(|history| history.characterCardName.clone());
-    let currentWorkspacePath = currentChatMetadata.and_then(|history| history.workspace.clone());
-    let inputProcessingState = match inputs
-        .currentChatId
-        .as_ref()
-        .and_then(|chatId| inputs.inputProcessingStateByChatId.get(chatId))
-    {
-        Some(state) => state.clone(),
-        None => InputProcessingState::Idle,
-    };
-    let isLoading = match inputs.currentChatId.as_ref() {
-        Some(chatId) => inputs.activeStreamingChatIds.contains(chatId),
-        None => false,
-    };
-    let (pendingQueueMessages, isPendingQueueExpanded) = match inputs
-        .currentChatId
-        .as_ref()
-        .and_then(|chatId| inputs.pendingQueueStateByChatId.get(chatId))
-    {
-        Some(queueState) => (queueState.messages.clone(), queueState.isExpanded),
-        None => (Vec::new(), true),
-    };
-
-    ChatMainState {
-        currentChatId: inputs.currentChatId,
-        currentChatTitle,
-        currentModelName: currentChatModelName(functionalConfigManager, modelConfigManager),
-        currentCharacterCardAvatarUri: currentCharacterCardName
-            .as_deref()
-            .and_then(|name| characterCardAvatarUriByName(characterCardManager, name)),
-        currentCharacterCardName,
-        currentWorkspacePath,
-        activeCharacterCardName: activeCharacterCardName(characterCardManager, activePrompt),
-        isLoading,
-        inputProcessingState,
-        messages: inputs.messages,
-        hasOlderDisplayHistory: displayWindowState.hasOlderDisplayHistory,
-        hasNewerDisplayHistory: displayWindowState.hasNewerDisplayHistory,
-        isLoadingDisplayWindow: displayWindowState.isLoadingDisplayWindow,
-        pendingQueueMessages,
-        isPendingQueueExpanded,
-    }
-}
-
-fn currentChatModelName(
-    functionalConfigManager: &FunctionalConfigManager,
-    modelConfigManager: &ModelConfigManager,
-) -> String {
-    let binding = functionalConfigManager
-        .getModelBindingForFunction(FunctionType::CHAT)
-        .expect("CHAT model binding must be available");
-    modelConfigManager
-        .getResolvedModelConfig(&binding.providerId, &binding.modelId)
-        .expect("CHAT resolved model config must be available")
-        .modelId
-}
-
-fn activeCharacterCardName(
-    characterCardManager: &CharacterCardManager,
-    activePrompt: ActivePrompt,
-) -> Option<String> {
-    match activePrompt {
-        ActivePrompt::CharacterCard { id } => Some(
-            characterCardManager
-                .getCharacterCard(&id)
-                .expect("CharacterCardManager.getCharacterCard must succeed")
-                .name,
-        ),
-        ActivePrompt::CharacterGroup { .. } => None,
-    }
-}
-
+/// Resolves a chat-card avatar URI for one chat-state emission.
 fn characterCardAvatarUriByName(
     characterCardManager: &CharacterCardManager,
     name: &str,
@@ -253,6 +167,36 @@ pub struct ChatServiceCore {
     pub uiBridge: EmptyChatServiceUiBridge,
     pub attachments: Vec<AttachmentInfo>,
     pendingQueueStore: Arc<PendingChatQueueStore>,
+}
+
+#[async_trait(?Send)]
+impl CoreWatchSourceActivator for ChatServiceCore {
+    /// Activates the next physical response source without exposing route mechanics to chat logic.
+    async fn activateWatchSource(
+        &mut self,
+        bindingKey: String,
+        resume: CoreWatchSourceResume,
+    ) -> Result<(), CoreLinkError> {
+        let chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
+        let enhancedAiService = self
+            .enhancedAiService
+            .as_mut()
+            .ok_or_else(|| CoreLinkError::new("STREAM_SOURCE_ACTIVATION_FAILED", "response source requires EnhancedAIService"))?;
+        let messageCoordinationDelegate = self
+            .messageCoordinationDelegate
+            .as_mut()
+            .ok_or_else(|| CoreLinkError::new("STREAM_SOURCE_ACTIVATION_FAILED", "response source requires MessageCoordinationDelegate"))?;
+        self.messageProcessingDelegate
+            .activateResponseExecution(
+                enhancedAiService,
+                messageCoordinationDelegate,
+                chatHistoryDelegate,
+                bindingKey,
+                resume.payload,
+            )
+            .await
+            .map_err(|error| CoreLinkError::new("STREAM_SOURCE_ACTIVATION_FAILED", error))
+    }
 }
 
 impl ChatServiceCore {
@@ -305,18 +249,18 @@ impl ChatServiceCore {
 
     /// Reports whether the specified chat is currently unable to accept a new turn.
     fn isChatQueueBlocked(&self, chatId: &str) -> bool {
-        if self
+        let activeStreamingChatIds = self
             .messageProcessingDelegate
-            .activeStreamingChatIds
-            .contains(chatId)
-        {
+            .activeStreamingChatIdsFlow()
+            .value();
+        if activeStreamingChatIds.contains(chatId) {
             return true;
         }
-        match self
+        let inputProcessingStateByChatId = self
             .messageProcessingDelegate
-            .inputProcessingStateByChatId
-            .get(chatId)
-        {
+            .inputProcessingStateByChatIdFlow()
+            .value();
+        match inputProcessingStateByChatId.get(chatId) {
             Some(InputProcessingState::Idle)
             | Some(InputProcessingState::Completed)
             | Some(InputProcessingState::Error { .. })
@@ -353,7 +297,7 @@ impl ChatServiceCore {
 
     #[allow(non_snake_case)]
     fn syncTokenStatisticsForCurrentChat(&mut self) {
-        let chatId = self.chatHistoryDelegate.currentChatId.clone();
+        let chatId = self.chatHistoryDelegate.currentChatIdFlow.value();
         if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
             delegate
                 .tokenStatisticsDelegate
@@ -436,7 +380,7 @@ impl ChatServiceCore {
         attachmentCount: usize,
     ) {
         let hookChatId = chatIdOverride
-            .or_else(|| self.chatHistoryDelegate.currentChatId.clone())
+            .or_else(|| self.chatHistoryDelegate.currentChatIdFlow.value())
             .unwrap_or_default();
         ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(
             self.buildChatInputHookContext(
@@ -461,7 +405,7 @@ impl ChatServiceCore {
         attachmentCount: usize,
     ) -> serde_json::Value {
         let hookChatId = chatIdOverride
-            .or_else(|| self.chatHistoryDelegate.currentChatId.clone())
+            .or_else(|| self.chatHistoryDelegate.currentChatIdFlow.value())
             .unwrap_or_default();
         let decision = ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(
             self.buildChatInputHookContext(
@@ -477,6 +421,10 @@ impl ChatServiceCore {
     }
 
     /// Sends a user-authored message through the active chat runtime.
+    #[operit_core_annotations::operit_core_route(
+        binding = chatIdOverride,
+        current = currentChatIdFlow
+    )]
     pub async fn sendUserMessage(
         &mut self,
         promptFunctionType: PromptFunctionType,
@@ -494,10 +442,19 @@ impl ChatServiceCore {
             Some(chatId) => chatId.clone(),
             None => self
                 .chatHistoryDelegate
-                .currentChatId
-                .clone()
+                .currentChatIdFlow
+                .value()
                 .unwrap_or_default(),
         };
+        AppLogger::i(
+            "ChatServiceCore",
+            &format!(
+                "send accepted chatId={} persisted={} attachments={}",
+                hookChatId,
+                turnOptions.persistTurn,
+                attachments.len()
+            ),
+        );
         let attachmentCount = attachments.len();
         if !turnOptions.chatInputSubmitRequestedHandled {
             let submitDecision = ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(
@@ -563,29 +520,21 @@ impl ChatServiceCore {
             self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
             self.messageProcessingDelegate = delegate.messageProcessingDelegate.clone_for_core();
         }
-    }
-
-    /// Cancels generation for the current chat.
-    pub async fn cancelCurrentMessage(&mut self) {
-        if let Some(chatId) = self.chatHistoryDelegate.currentChatId.clone() {
-            self.messageProcessingDelegate.cancelMessage(chatId).await;
-        }
+        AppLogger::i(
+            "ChatServiceCore",
+            &format!("send scheduled chatId={hookChatId}"),
+        );
     }
 
     /// Cancels message generation for a specific chat id.
+    #[operit_core_annotations::operit_core_route(binding = chatId)]
     pub async fn cancelMessage(&mut self, chatId: String) {
         self.messageProcessingDelegate.cancelMessage(chatId).await;
     }
 
-    /// Returns the live provider response stream for the active turn of a chat.
-    #[allow(non_snake_case)]
-    pub fn getResponseStream(&self, chatId: String) -> Option<SharedAiResponseStream> {
-        self.messageProcessingDelegate
-            .activeResponseStreamForChat(chatId)
-    }
-
     /// Adds one message to the queue owned by a specific chat.
     #[allow(non_snake_case)]
+    #[operit_core_annotations::operit_core_route(binding = chatId)]
     pub fn enqueuePendingQueueMessage(&mut self, chatId: String, messageText: String) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId
@@ -604,6 +553,7 @@ impl ChatServiceCore {
 
     /// Deletes one queued message from a specific chat.
     #[allow(non_snake_case)]
+    #[operit_core_annotations::operit_core_route(binding = chatId)]
     pub fn deletePendingQueueMessage(&mut self, chatId: String, messageId: i64) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let Some(queueState) = queueStateByChatId.get_mut(&chatId) else {
@@ -615,6 +565,7 @@ impl ChatServiceCore {
 
     /// Removes one queued message for editing or explicit user delivery.
     #[allow(non_snake_case)]
+    #[operit_core_annotations::operit_core_route(binding = chatId)]
     pub fn takePendingQueueMessage(
         &mut self,
         chatId: String,
@@ -638,6 +589,7 @@ impl ChatServiceCore {
 
     /// Clears a manual-send suppression after that message is not delivered.
     #[allow(non_snake_case)]
+    #[operit_core_annotations::operit_core_route(binding = chatId)]
     pub fn clearPendingQueueAutoDequeueSuppression(&mut self, chatId: String) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let Some(queueState) = queueStateByChatId.get_mut(&chatId) else {
@@ -652,6 +604,7 @@ impl ChatServiceCore {
 
     /// Atomically removes the next queued message after a chat becomes ready.
     #[allow(non_snake_case)]
+    #[operit_core_annotations::operit_core_route(binding = chatId)]
     pub fn takeNextPendingQueueMessageIfReady(
         &mut self,
         chatId: String,
@@ -681,6 +634,7 @@ impl ChatServiceCore {
 
     /// Inserts a rejected queued message back at the front of its chat queue.
     #[allow(non_snake_case)]
+    #[operit_core_annotations::operit_core_route(binding = chatId)]
     pub fn restorePendingQueueMessage(&mut self, chatId: String, message: PendingQueueMessageItem) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId
@@ -696,6 +650,7 @@ impl ChatServiceCore {
 
     /// Updates whether a chat's pending-message queue is expanded in the UI.
     #[allow(non_snake_case)]
+    #[operit_core_annotations::operit_core_route(binding = chatId)]
     pub fn setPendingQueueExpanded(&mut self, chatId: String, isExpanded: bool) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId
@@ -784,8 +739,10 @@ impl ChatServiceCore {
     pub fn syncCurrentChatIdToGlobal(&mut self) {}
 
     /// Deletes a chat history and updates current chat selection.
-    pub fn deleteChatHistory(&mut self, chatId: String) {
-        self.chatHistoryDelegate.deleteChatHistory(chatId);
+    pub fn deleteChatHistory(&mut self, chatId: String) -> bool {
+        let deleted = self.chatHistoryDelegate.deleteChatHistory(chatId);
+        self.syncTokenStatisticsForCurrentChat();
+        deleted
     }
 
     /// Deletes one message from the current chat by visible message index.
@@ -796,12 +753,13 @@ impl ChatServiceCore {
     /// Deletes multiple messages from the current chat by visible message indices.
     #[allow(non_snake_case)]
     pub fn deleteMessages(&mut self, indices: Vec<usize>) -> bool {
-        let Some(chatId) = self.chatHistoryDelegate.currentChatId.clone() else {
+        let Some(chatId) = self.chatHistoryDelegate.currentChatIdFlow.value() else {
             return false;
         };
         let mut timestamps = Vec::new();
+        let currentMessages = self.chatHistoryDelegate.chatHistory.clone();
         for index in indices {
-            let Some(message) = self.chatHistoryDelegate.chatHistory.get(index) else {
+            let Some(message) = currentMessages.get(index) else {
                 return false;
             };
             timestamps.push(message.timestamp);
@@ -814,7 +772,8 @@ impl ChatServiceCore {
     /// Replaces the content of one message and refreshes the stable context window.
     #[allow(non_snake_case)]
     pub async fn updateMessage(&mut self, index: usize, editedContent: String) -> bool {
-        let Some(message) = self.chatHistoryDelegate.chatHistory.get(index).cloned() else {
+        let currentMessages = self.chatHistoryDelegate.chatHistory.clone();
+        let Some(message) = currentMessages.get(index).cloned() else {
             return false;
         };
         let editedParts = match message.sender.as_str() {
@@ -855,7 +814,7 @@ impl ChatServiceCore {
             delegate
                 .refreshStableContextWindow(
                     service,
-                    self.chatHistoryDelegate.currentChatId.clone(),
+                    self.chatHistoryDelegate.currentChatIdFlow.value(),
                     None,
                     Some(PromptFunctionType::CHAT),
                     false,
@@ -895,7 +854,7 @@ impl ChatServiceCore {
         if message.sender != "user" && message.sender != "ai" {
             return false;
         }
-        let Some(currentChatId) = self.chatHistoryDelegate.currentChatId.clone() else {
+        let Some(currentChatId) = self.chatHistoryDelegate.currentChatIdFlow.value() else {
             return false;
         };
         let Some(enhancedAiService) = self.enhancedAiService.as_mut() else {
@@ -1036,14 +995,6 @@ impl ChatServiceCore {
             .chatHistoryManager
             .importChatHistoriesFromJson(jsonString)
             .map_err(|error| error.to_string())?;
-        self.chatHistoryDelegate.chatHistories = self
-            .chatHistoryDelegate
-            .chatHistoryManager
-            .chatHistoriesFlow
-            .value();
-        self.chatHistoryDelegate
-            .chatHistoriesFlow
-            .set_value(self.chatHistoryDelegate.chatHistories.clone());
         Ok(result)
     }
 
@@ -1139,7 +1090,8 @@ impl ChatServiceCore {
     /// Rolls the current chat back to a prior message index.
     #[allow(non_snake_case)]
     pub fn rollbackToMessage(&mut self, index: usize) -> Option<String> {
-        let Some(targetMessage) = self.chatHistoryDelegate.chatHistory.get(index).cloned() else {
+        let currentMessages = self.chatHistoryDelegate.chatHistory.clone();
+        let Some(targetMessage) = currentMessages.get(index).cloned() else {
             return None;
         };
         if targetMessage.sender != "user" {
@@ -1154,7 +1106,8 @@ impl ChatServiceCore {
     /// Rewinds a user message and sends edited content as a new turn.
     #[allow(non_snake_case)]
     pub async fn rewindAndResendMessage(&mut self, index: usize, editedContent: String) -> bool {
-        let Some(targetMessage) = self.chatHistoryDelegate.chatHistory.get(index).cloned() else {
+        let currentMessages = self.chatHistoryDelegate.chatHistory.clone();
+        let Some(targetMessage) = currentMessages.get(index).cloned() else {
             return false;
         };
         if targetMessage.sender != "user" {
@@ -1199,19 +1152,21 @@ impl ChatServiceCore {
 
     #[allow(non_snake_case)]
     fn resolveWorkspaceRewindTarget(&self, index: usize) -> Option<(String, String, i64)> {
-        let chatId = self.chatHistoryDelegate.currentChatId.clone()?;
-        if index >= self.chatHistoryDelegate.chatHistory.len() {
+        let chatId = self.chatHistoryDelegate.currentChatIdFlow.value()?;
+        let currentMessages = self.chatHistoryDelegate.chatHistory.clone();
+        if index >= currentMessages.len() {
             return None;
         }
         let rewindTimestamp = if index > 0 {
-            self.chatHistoryDelegate.chatHistory[index - 1].timestamp
+            currentMessages[index - 1].timestamp
         } else {
             0
         };
         let currentChat = self
             .chatHistoryDelegate
-            .chatHistories
-            .iter()
+            .chatHistoriesFlow
+            .value()
+            .into_iter()
             .find(|history| history.id == chatId)?;
         let workspacePath = currentChat
             .workspace
@@ -1232,7 +1187,7 @@ impl ChatServiceCore {
 
     /// Recomputes cumulative token statistics for the current chat and service.
     pub fn updateCumulativeStatistics(&mut self) {
-        let chatId = self.chatHistoryDelegate.currentChatId.clone();
+        let chatId = self.chatHistoryDelegate.currentChatIdFlow.value();
         let service = self.enhancedAiService.as_ref();
         if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
             delegate
@@ -1562,35 +1517,18 @@ impl ChatServiceCore {
         self.attachments.clear();
     }
 
-    /// Returns whether any chat turn is currently streaming or processing.
-    pub fn isLoading(&self) -> bool {
-        self.messageProcessingDelegate.isLoading
-    }
-
-    /// Returns the loading state flow shared with chat UI observers.
-    pub fn isLoadingFlow(&self) -> StateFlow<bool> {
-        self.messageProcessingDelegate.isLoadingFlow()
-    }
-
     /// Returns chat ids that currently have active streaming turns.
     pub fn activeStreamingChatIds(&self) -> Vec<String> {
         self.messageProcessingDelegate
-            .activeStreamingChatIds
-            .iter()
-            .cloned()
+            .activeStreamingChatIdsFlow()
+            .value()
+            .into_iter()
             .collect()
     }
 
     /// Returns the state flow of chat ids that currently have active streaming turns.
     pub fn activeStreamingChatIdsFlow(&self) -> StateFlow<std::collections::HashSet<String>> {
         self.messageProcessingDelegate.activeStreamingChatIdsFlow()
-    }
-
-    /// Returns processing states keyed by chat id.
-    pub fn inputProcessingStateByChatId(
-        &self,
-    ) -> &std::collections::HashMap<String, InputProcessingState> {
-        &self.messageProcessingDelegate.inputProcessingStateByChatId
     }
 
     /// Returns the state flow of processing states keyed by chat id.
@@ -1683,26 +1621,15 @@ impl ChatServiceCore {
         &self.chatHistoryDelegate.chatHistory
     }
 
-    /// Returns the state flow of messages for the current chat.
-    #[allow(non_snake_case)]
-    pub fn chatHistoryFlow(&self) -> StateFlow<Vec<ChatMessage>> {
-        self.chatHistoryDelegate.chatHistoryFlow()
-    }
-
-    /// Returns the currently selected chat id.
-    pub fn currentChatId(&self) -> &Option<String> {
-        &self.chatHistoryDelegate.currentChatId
-    }
-
     /// Returns the state flow of the currently selected chat id.
     #[allow(non_snake_case)]
     pub fn currentChatIdFlow(&self) -> StateFlow<Option<String>> {
         self.chatHistoryDelegate.currentChatIdFlow()
     }
 
-    /// Returns all persisted chat histories currently loaded by this runtime.
-    pub fn chatHistories(&self) -> &Vec<operit_model::ChatHistory::ChatHistory> {
-        &self.chatHistoryDelegate.chatHistories
+    /// Returns a current snapshot of all persisted chat histories.
+    pub fn chatHistories(&self) -> Vec<operit_model::ChatHistory::ChatHistory> {
+        self.chatHistoryDelegate.chatHistoriesFlow().value()
     }
 
     /// Returns the state flow of all persisted chat histories.
@@ -1717,67 +1644,69 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.chatHistoryListItemsFlow()
     }
 
-    /// Combines chat messages, selection, loading, display-window, and prompt state for the main chat UI.
+    /// Returns messages from the Core selected by Binding for one explicit chat.
     #[allow(non_snake_case)]
-    pub fn chatMainStateFlow(&self) -> StateFlow<ChatMainState> {
-        let chatHistoryFlow = self.chatHistoryDelegate.chatHistoryFlow();
-        let currentChatIdFlow = self.chatHistoryDelegate.currentChatIdFlow();
-        let chatHistoriesFlow = self.chatHistoryDelegate.chatHistoriesFlow();
-        let activeStreamingChatIdsFlow =
-            self.messageProcessingDelegate.activeStreamingChatIdsFlow();
-        let inputProcessingStateByChatIdFlow = self
-            .messageProcessingDelegate
-            .inputProcessingStateByChatIdFlow();
-        let pendingQueueStateByChatIdFlow = self.pendingQueueStateFlow().asStateFlow();
-        let displayWindowStateFlow = self.chatHistoryDelegate.displayWindowStateFlow();
-        let activePromptFlow = self
+    #[operit_core_annotations::operit_core_route(
+        binding = chatId,
+        current = currentChatIdFlow
+    )]
+    pub fn chatMessagesFlow(&self, chatId: Option<String>) -> StateFlow<Vec<ChatMessage>> {
+        let selectedChatId = chatId.expect("chatMessagesFlow requires a routed chatId");
+        self.chatHistoryDelegate.chatMessageFlowForChat(selectedChatId)
+    }
+
+    /// Returns runtime state from the Core selected by Binding for one explicit chat.
+    #[allow(non_snake_case)]
+    #[operit_core_annotations::operit_core_route(
+        binding = chatId,
+        current = currentChatIdFlow
+    )]
+    pub fn chatStateFlow(&self, chatId: Option<String>) -> StateFlow<ChatState> {
+        let selectedChatId = chatId.expect("chatStateFlow requires a routed chatId");
+        let displayWindowStateFlow = self
             .chatHistoryDelegate
-            .activePromptManager
-            .activePromptFlow();
-        let inputsFlow = combine5(
-            &chatHistoryFlow,
-            &currentChatIdFlow,
-            &chatHistoriesFlow,
-            &activeStreamingChatIdsFlow,
-            &inputProcessingStateByChatIdFlow,
-            |messages,
-             currentChatId,
-             chatHistories,
-             activeStreamingChatIds,
-             inputProcessingStateByChatId| {
-                ChatMainFlowInputs {
-                    messages,
-                    currentChatId,
-                    chatHistories,
-                    activeStreamingChatIds,
-                    inputProcessingStateByChatId,
-                    pendingQueueStateByChatId: HashMap::new(),
-                }
-            },
-        );
-        let characterCardManager = self.chatHistoryDelegate.characterCardManager.clone();
-        let functionalConfigManager = self
+            .displayWindowStateFlowForChat(selectedChatId.clone());
+        let executionStateFlow = self
             .messageProcessingDelegate
-            .functionalConfigManager
-            .clone();
-        let modelConfigManager = self.messageProcessingDelegate.modelConfigManager.clone();
-        combine4(
-            &inputsFlow,
+            .executionStateByChatIdFlow()
+            .map({
+                let selectedChatId = selectedChatId.clone();
+                move |states| {
+                    states
+                        .get(&selectedChatId)
+                        .cloned()
+                        .unwrap_or_else(ChatExecutionState::idle)
+                }
+            });
+        let chatHistoriesFlow = self.chatHistoryDelegate.chatHistoriesFlow();
+        let characterCardManager = self.chatHistoryDelegate.characterCardManager.clone();
+        combine3(
+            &executionStateFlow,
             &displayWindowStateFlow,
-            &activePromptFlow,
-            &pendingQueueStateByChatIdFlow,
-            move |inputs, displayWindowState, activePrompt, pendingQueueStateByChatId| {
-                buildChatMainState(
-                    ChatMainFlowInputs {
-                        pendingQueueStateByChatId,
-                        ..inputs
-                    },
-                    displayWindowState,
-                    activePrompt,
-                    &characterCardManager,
-                    &functionalConfigManager,
-                    &modelConfigManager,
-                )
+            &chatHistoriesFlow,
+            move |executionState, displayWindowState, chatHistories| {
+                let currentChat = chatHistories
+                    .iter()
+                    .find(|chat| chat.id == selectedChatId);
+                let currentCharacterCardName = currentChat
+                    .and_then(|chat| chat.characterCardName.clone());
+                ChatState {
+                    currentChatId: selectedChatId.clone(),
+                    currentChatTitle: currentChat
+                        .map(|chat| chat.title.clone())
+                        .unwrap_or_default(),
+                    currentCharacterCardAvatarUri: currentCharacterCardName
+                        .as_deref()
+                        .and_then(|name| characterCardAvatarUriByName(&characterCardManager, name)),
+                    currentCharacterCardName,
+                    currentWorkspacePath: currentChat
+                        .and_then(|chat| chat.workspace.clone()),
+                    isLoading: executionState.isLoading,
+                    inputProcessingState: executionState.inputProcessingState,
+                    hasOlderDisplayHistory: displayWindowState.hasOlderDisplayHistory,
+                    hasNewerDisplayHistory: displayWindowState.hasNewerDisplayHistory,
+                    isLoadingDisplayWindow: displayWindowState.isLoadingDisplayWindow,
+                }
             },
         )
     }

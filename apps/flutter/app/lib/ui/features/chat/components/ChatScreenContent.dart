@@ -4,8 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../data/preferences/UserPreferencesManager.dart';
-import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitTheme.dart';
 import '../viewmodel/ChatViewModel.dart';
 import '../tts/TtsPlaybackController.dart';
@@ -83,7 +83,6 @@ class ChatScreenContent extends StatelessWidget {
     required this.toastMessageListenable,
     required this.onDismissToast,
     required this.isMultiSelectMode,
-    required this.isPreparingChatSwitch,
     required this.isSpeechRecording,
     required this.isSpeechTranscribing,
     required this.onSpeechInput,
@@ -96,7 +95,7 @@ class ChatScreenContent extends StatelessWidget {
   final TextEditingController messageController;
   final FocusNode inputFocusNode;
   final ScrollController scrollController;
-  final ChatInputProcessingState inputProcessingState;
+  final core_proxy.InputProcessingState inputProcessingState;
   final ChatViewModel viewModel;
   final String? currentChatId;
   final String? currentCharacterCardAvatarUri;
@@ -150,7 +149,6 @@ class ChatScreenContent extends StatelessWidget {
   final ValueListenable<String?> toastMessageListenable;
   final VoidCallback onDismissToast;
   final bool isMultiSelectMode;
-  final bool isPreparingChatSwitch;
   final bool isSpeechRecording;
   final bool isSpeechTranscribing;
   final VoidCallback onSpeechInput;
@@ -166,49 +164,33 @@ class ChatScreenContent extends StatelessWidget {
       children: <Widget>[
         Column(
           children: <Widget>[
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: <Widget>[
-                  IgnorePointer(
-                    ignoring: isPreparingChatSwitch,
-                    child: Opacity(
-                      opacity: isPreparingChatSwitch ? 0 : 1,
-                      child: _buildChatArea(context),
-                    ),
-                  ),
-                  if (isPreparingChatSwitch) const M3LoadingPane(size: 42),
-                ],
-              ),
-            ),
-            if (!isPreparingChatSwitch) ...<Widget>[
-              if (isMultiSelectMode)
-                ChatMultiSelectBar(
-                  selectedCount: selectedMessageIndices.length,
-                  allSelected:
-                      _selectableMessageIndices.isNotEmpty &&
-                      _selectableMessageIndices.length ==
-                          selectedMessageIndices.length,
-                  onClose: onExitMultiSelectMode,
-                  onToggleSelectAll:
-                      _selectableMessageIndices.isNotEmpty &&
-                          _selectableMessageIndices.length ==
-                              selectedMessageIndices.length
-                      ? onClearMessageSelection
-                      : onSelectAllMessages,
-                  onCopy: selectedMessageIndices.isEmpty
-                      ? null
-                      : () => _copySelectedMessages(context),
-                  onShareImage: selectedMessageIndices.isEmpty
-                      ? null
-                      : () => _generateShareImage(context),
-                  onDelete: selectedMessageIndices.isEmpty
-                      ? null
-                      : () => _confirmDeleteSelected(context),
-                )
-              else
-                _buildChatInputSection(inputStyle),
-            ],
+            Expanded(child: _buildChatArea(context)),
+            if (isMultiSelectMode)
+              ChatMultiSelectBar(
+                selectedCount: selectedMessageIndices.length,
+                allSelected:
+                    _selectableMessageIndices.isNotEmpty &&
+                    _selectableMessageIndices.length ==
+                        selectedMessageIndices.length,
+                onClose: onExitMultiSelectMode,
+                onToggleSelectAll:
+                    _selectableMessageIndices.isNotEmpty &&
+                        _selectableMessageIndices.length ==
+                            selectedMessageIndices.length
+                    ? onClearMessageSelection
+                    : onSelectAllMessages,
+                onCopy: selectedMessageIndices.isEmpty
+                    ? null
+                    : () => _copySelectedMessages(context),
+                onShareImage: selectedMessageIndices.isEmpty
+                    ? null
+                    : () => _generateShareImage(context),
+                onDelete: selectedMessageIndices.isEmpty
+                    ? null
+                    : () => _confirmDeleteSelected(context),
+              )
+            else
+              _buildChatInputSection(inputStyle),
           ],
         ),
         SafeArea(
