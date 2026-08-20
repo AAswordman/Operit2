@@ -22,6 +22,7 @@ import '../components/style/input/common/PendingQueueMessageItem.dart';
 import '../components/workspace/WorkspaceLayoutMetrics.dart';
 import '../components/workspace/WorkspaceTopBarButton.dart';
 import '../speech/LocalSpeechRecorder.dart';
+import '../viewmodel/ChatSelectionTransition.dart';
 import '../viewmodel/ChatViewModel.dart';
 
 bool _chatWorkspaceOpen = false;
@@ -155,6 +156,7 @@ class _ChatContentData {
     required this.isMultiSelectMode,
     required this.selectedMessageIndices,
     required this.currentCharacterCardAvatarUri,
+    required this.isPreparingChatSwitch,
     required this.pendingQueueMessages,
     required this.isPendingQueueExpanded,
     required this.attachments,
@@ -173,6 +175,7 @@ class _ChatContentData {
   final bool isMultiSelectMode;
   final Set<int> selectedMessageIndices;
   final String? currentCharacterCardAvatarUri;
+  final bool isPreparingChatSwitch;
   final List<PendingQueueMessageItem> pendingQueueMessages;
   final bool isPendingQueueExpanded;
   final List<AttachmentInfo> attachments;
@@ -223,6 +226,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   bool _hasOlderDisplayHistory = false;
   bool _hasNewerDisplayHistory = false;
   bool _isLoadingDisplayWindow = false;
+  bool _isPreparingChatSwitch = false;
+  String? _pendingChatSwitchTargetId;
   bool _bottomScrollScheduled = false;
   late bool _workspaceOpen;
   bool _isCurrentMainScreen = true;
@@ -248,7 +253,9 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _workspaceOpen = _chatWorkspaceOpen;
     _watchChatFlows();
     _watchToastEvent();
+    ChatSelectionTransition.requests.addListener(_onChatSelectionTransition);
     PendingChatDraftHandler.revision.addListener(_consumePendingChatDraft);
+    _onChatSelectionTransition();
     _messageController.addListener(_onMessageControllerChanged);
     unawaited(_loadLongPastedTextInputSettings());
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -280,6 +287,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   @override
   void dispose() {
     _saveCurrentInputDraft();
+    ChatSelectionTransition.requests.removeListener(_onChatSelectionTransition);
     PendingChatDraftHandler.revision.removeListener(_consumePendingChatDraft);
     _messageController.removeListener(_onMessageControllerChanged);
     _messageController.dispose();
@@ -901,6 +909,36 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _scheduleScrollToBottom();
   }
 
+  /// Applies a locally requested visual transition before routed Core state arrives.
+  void _onChatSelectionTransition() {
+    if (_viewModel.runtimeSurface is! MainChatRuntimeSurface) {
+      return;
+    }
+    final request = ChatSelectionTransition.requests.value;
+    if (request == null) {
+      if (_isPreparingChatSwitch) {
+        _pendingChatSwitchTargetId = null;
+        _mutateChatContentData(() {
+          _isPreparingChatSwitch = false;
+        });
+      }
+      return;
+    }
+    if (request.chatId == _currentChatId && !_isPreparingChatSwitch) {
+      ChatSelectionTransition.complete(request.chatId);
+      return;
+    }
+    _pendingChatSwitchTargetId = request.chatId;
+    _setAutoScrollToBottom(true);
+    _mutateChatContentData(() {
+      _errorMessage = null;
+      _loading = true;
+      _isPreparingChatSwitch = true;
+      _isMultiSelectMode = false;
+      _selectedMessageIndices = const <int>{};
+    });
+  }
+
   /// Applies one routed chat-state change without replacing the message window.
   void _applyChatState(core_proxy.ChatState state) {
     if (!mounted) {
@@ -926,6 +964,11 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _hasOlderDisplayHistory = state.hasOlderDisplayHistory;
     _hasNewerDisplayHistory = state.hasNewerDisplayHistory;
     _isLoadingDisplayWindow = state.isLoadingDisplayWindow;
+    if (_pendingChatSwitchTargetId == state.currentChatId) {
+      _pendingChatSwitchTargetId = null;
+      _isPreparingChatSwitch = false;
+      ChatSelectionTransition.complete(state.currentChatId);
+    }
     _publishChatContentData();
     _updateTopBarTitle();
     if (workspaceChanged && mounted) {
@@ -1541,6 +1584,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           onRefreshRequested: _viewModel.showLatestMessagesForCurrentChat,
           isMultiSelectMode: data.isMultiSelectMode,
           selectedMessageIndices: data.selectedMessageIndices,
+          isPreparingChatSwitch: data.isPreparingChatSwitch,
           isSpeechRecording: data.isSpeechRecording,
           isSpeechTranscribing: data.isSpeechTranscribing,
           onSpeechInput: _toggleSpeechInput,
@@ -1705,6 +1749,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       isMultiSelectMode: _isMultiSelectMode,
       selectedMessageIndices: _selectedMessageIndices,
       currentCharacterCardAvatarUri: _currentCharacterCardAvatarUri,
+      isPreparingChatSwitch: _isPreparingChatSwitch,
       pendingQueueMessages: List<PendingQueueMessageItem>.unmodifiable(
         pendingQueueMessages,
       ),

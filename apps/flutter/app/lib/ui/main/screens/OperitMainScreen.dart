@@ -10,6 +10,7 @@ import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/notifications/NotificationActivationService.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../features/chat/viewmodel/ChatSelectionTransition.dart';
 import '../components/AppContent.dart';
 import '../components/DrawerConversationState.dart';
 import '../layout/NavigationLayoutMetrics.dart';
@@ -629,11 +630,18 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
 
   /// Opens the target chat selected by a system notification activation.
   Future<void> _activateNotificationChat(String chatId) async {
+    ChatSelectionTransition.begin(chatId);
     _activateConversationRoute();
+    await WidgetsBinding.instance.endOfFrame;
     if (!mounted) {
       return;
     }
-    await _clients.chatRuntimeHolderMain.switchChat(chatId: chatId);
+    try {
+      await _clients.chatRuntimeHolderMain.switchChat(chatId: chatId);
+    } catch (_) {
+      ChatSelectionTransition.complete(chatId);
+      rethrow;
+    }
   }
 
   void _goBack() {

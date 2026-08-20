@@ -5,11 +5,11 @@ use std::sync::{mpsc, Arc, Mutex};
 
 #[cfg(target_arch = "wasm32")]
 use js_sys::Function;
+use operit_core_proxy::CoreNodeRouter::CoreNodePushTarget;
 #[cfg(not(target_arch = "wasm32"))]
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 #[cfg(not(target_arch = "wasm32"))]
 use operit_host_api::HostRuntimeTaskSchedulerHost;
-use operit_core_proxy::CoreNodeRouter::CoreNodePushTarget;
 use operit_link::{
     CoreEventKind, CoreLinkClient, CoreLinkError, CoreLinkSharedClient, CorePushItem,
     CorePushRequest, CoreWatchRequest,
@@ -255,12 +255,6 @@ impl OperitFlutterBridge {
                 ));
             }
         }
-        eprintln!(
-            "[FlutterBridgeWatch] open subscription={} property={} target={}",
-            subscriptionId,
-            request.propertyName,
-            request.targetPath.key(),
-        );
         let (cancelSender, mut cancelReceiver) = tokio::sync::oneshot::channel();
         let mut subscriptions = self.watchSubscriptions.lock().map_err(|error| {
             CoreLinkError::internal(format!("watch subscription lock poisoned: {error}"))
@@ -307,11 +301,6 @@ impl OperitFlutterBridge {
                             return;
                         }
                     };
-                    eprintln!(
-                        "[FlutterBridgeWatch] source accepted subscription={}",
-                        taskSubscriptionId
-                    );
-                    let mut eventIndex = 0usize;
                     loop {
                         let event = tokio::select! {
                             _ = &mut cancelReceiver => None,
@@ -321,14 +310,7 @@ impl OperitFlutterBridge {
                             break;
                         };
                         let completed = event.kind == CoreEventKind::Completed;
-                        if eventIndex < 20 || eventIndex % 50 == 0 || completed {
-                            eprintln!(
-                                "[FlutterBridgeWatch] event index={} subscription={} property={} kind={:?}",
-                                eventIndex, taskSubscriptionId, event.propertyName, event.kind
-                            );
-                        }
                         channel.send(native_watch_event_vec(&taskSubscriptionId, event));
-                        eventIndex += 1;
                         if completed {
                             break;
                         }
@@ -336,10 +318,6 @@ impl OperitFlutterBridge {
                     if let Ok(mut subscriptions) = taskSubscriptions.lock() {
                         subscriptions.remove(&taskSubscriptionId);
                     }
-                    eprintln!(
-                        "[FlutterBridgeWatch] receiver ended subscription={} events={}",
-                        taskSubscriptionId, eventIndex
-                    );
                 })
             }),
         );
@@ -349,10 +327,6 @@ impl OperitFlutterBridge {
             }
             return Err(CoreLinkError::internal(error.to_string()));
         }
-        eprintln!(
-            "[FlutterBridgeWatch] open accepted subscription={}",
-            subscriptionId
-        );
         Ok(subscriptionId)
     }
 

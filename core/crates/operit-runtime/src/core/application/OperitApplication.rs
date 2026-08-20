@@ -593,7 +593,9 @@ impl OperitApplication {
                     bindingStore.applySyncedOperation(&operation)?;
                 }
             } else {
-                if !forceApply && operation.sequence <= syncClock.sequenceFor(&operation.originDeviceId) {
+                if !forceApply
+                    && operation.sequence <= syncClock.sequenceFor(&operation.originDeviceId)
+                {
                     continue;
                 }
                 syncClock.setSequence(operation.originDeviceId.clone(), operation.sequence);

@@ -11,6 +11,7 @@ import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../l10n/generated/app_localizations.dart';
 import '../../common/CharacterAvatar.dart';
+import '../../features/chat/viewmodel/ChatSelectionTransition.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../screens/ScreenRouteRegistry.dart';
 import '../../theme/OperitTheme.dart';
@@ -261,12 +262,17 @@ class _DrawerContentState extends State<DrawerContent> {
       _errorMessage = null;
     });
     try {
+      if (history.id != widget.currentChatId) {
+        ChatSelectionTransition.begin(history.id);
+      }
       widget.onConversationActivated();
+      await WidgetsBinding.instance.endOfFrame;
       if (!mounted) {
         return;
       }
       await _chatCoreProxy.switchChat(chatId: history.id);
     } catch (error, stackTrace) {
+      ChatSelectionTransition.complete(history.id);
       debugPrint('Failed to switch chat: $error\n$stackTrace');
       if (!mounted) {
         return;

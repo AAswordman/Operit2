@@ -74,7 +74,8 @@ pub struct ChatHistoryDelegate {
     pub chatMessageFlowsByChatId: Arc<Mutex<HashMap<String, MutableStateFlow<Vec<ChatMessage>>>>>,
     pub currentChatWindow: CurrentChatWindowController,
     pub displayWindowStateFlow: MutableStateFlow<ChatDisplayWindowState>,
-    pub displayWindowStateFlowsByChatId: Arc<Mutex<HashMap<String, MutableStateFlow<ChatDisplayWindowState>>>>,
+    pub displayWindowStateFlowsByChatId:
+        Arc<Mutex<HashMap<String, MutableStateFlow<ChatDisplayWindowState>>>>,
     pub hasOlderDisplayHistory: bool,
     pub hasNewerDisplayHistory: bool,
     pub isLoadingDisplayWindow: bool,
@@ -173,11 +174,8 @@ impl ChatHistoryDelegate {
         {
             return flow.asStateFlow();
         }
-        let messages = self.collectNewestDisplayPages(
-            chatId.clone(),
-            self.displayWindowQueryLimit(),
-            None,
-        );
+        let messages =
+            self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
         let flow = mutableStateFlow(messages);
         let mut flows = self
             .chatMessageFlowsByChatId
@@ -188,7 +186,10 @@ impl ChatHistoryDelegate {
     }
 
     /// Returns the independently addressable display-window flow for one chat id.
-    pub fn displayWindowStateFlowForChat(&self, chatId: String) -> StateFlow<ChatDisplayWindowState> {
+    pub fn displayWindowStateFlowForChat(
+        &self,
+        chatId: String,
+    ) -> StateFlow<ChatDisplayWindowState> {
         if let Some(flow) = self
             .displayWindowStateFlowsByChatId
             .lock()
@@ -198,21 +199,24 @@ impl ChatHistoryDelegate {
         {
             return flow.asStateFlow();
         }
-        let messages = self.collectNewestDisplayPages(
-            chatId.clone(),
-            self.displayWindowQueryLimit(),
-            None,
-        );
-        let hasOlder = messages.first().map(|message| {
-            self.chatHistoryManager
-                .hasMessagesBefore(chatId.clone(), message.timestamp)
-                .expect("ChatHistoryManager.hasMessagesBefore must succeed")
-        }).unwrap_or(false);
-        let hasNewer = messages.last().map(|message| {
-            self.chatHistoryManager
-                .hasMessagesAfter(chatId.clone(), message.timestamp)
-                .expect("ChatHistoryManager.hasMessagesAfter must succeed")
-        }).unwrap_or(false);
+        let messages =
+            self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
+        let hasOlder = messages
+            .first()
+            .map(|message| {
+                self.chatHistoryManager
+                    .hasMessagesBefore(chatId.clone(), message.timestamp)
+                    .expect("ChatHistoryManager.hasMessagesBefore must succeed")
+            })
+            .unwrap_or(false);
+        let hasNewer = messages
+            .last()
+            .map(|message| {
+                self.chatHistoryManager
+                    .hasMessagesAfter(chatId.clone(), message.timestamp)
+                    .expect("ChatHistoryManager.hasMessagesAfter must succeed")
+            })
+            .unwrap_or(false);
         let flow = mutableStateFlow(ChatDisplayWindowState {
             hasOlderDisplayHistory: hasOlder,
             hasNewerDisplayHistory: hasNewer,
@@ -410,8 +414,7 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     fn buildChatViewHookParams(&self, chatId: &str) -> ChatViewHookParams {
         let histories = self.chatHistoriesFlow.value();
-        let (workspacePath, title) = match histories.iter().find(|chat| chat.id == chatId)
-        {
+        let (workspacePath, title) = match histories.iter().find(|chat| chat.id == chatId) {
             Some(chat) => (chat.workspace.clone(), Some(chat.title.clone())),
             None => (None, None),
         };
@@ -517,11 +520,7 @@ impl ChatHistoryDelegate {
                 .expect("ChatHistoryManager.loadChatMessagesDescUpTo must succeed"),
             None => self
                 .chatHistoryManager
-                .loadChatMessagesDesc(
-                    chatId,
-                    DISPLAY_WINDOW_QUERY_BATCH_SIZE as i32,
-                    None,
-                )
+                .loadChatMessagesDesc(chatId, DISPLAY_WINDOW_QUERY_BATCH_SIZE as i32, None)
                 .expect("ChatHistoryManager.loadChatMessagesDesc must succeed"),
         };
         let mut ordered = messages;
@@ -570,11 +569,8 @@ impl ChatHistoryDelegate {
             self.clearCurrentChatHistoryInMemory();
             return Vec::new();
         };
-        let messages = self.collectNewestDisplayPages(
-            chatId.clone(),
-            self.displayWindowQueryLimit(),
-            None,
-        );
+        let messages =
+            self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
         let hasOlder = messages
             .first()
             .map(|message| {
@@ -598,11 +594,8 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     /// Reloads the newest indexed display window for the supplied chat id.
     pub fn reloadCurrentChatDisplayHistory(&mut self, chatId: String) -> Vec<ChatMessage> {
-        let messages = self.collectNewestDisplayPages(
-            chatId.clone(),
-            self.displayWindowQueryLimit(),
-            None,
-        );
+        let messages =
+            self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
         let hasOlder = messages
             .first()
             .map(|message| {
@@ -860,11 +853,8 @@ impl ChatHistoryDelegate {
     /// Loads the newest indexed display window for one active chat.
     pub fn loadChatMessages(&mut self, chatId: String) {
         self.allowAddMessage = false;
-        let messages = self.collectNewestDisplayPages(
-            chatId.clone(),
-            self.displayWindowQueryLimit(),
-            None,
-        );
+        let messages =
+            self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
         let hasOlder = messages
             .first()
             .map(|message| {
@@ -1418,7 +1408,8 @@ impl ChatHistoryDelegate {
         });
         self.removeChatMessage(&chatId, timestamp);
         if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
-            self.chatHistory.retain(|message| message.timestamp != timestamp);
+            self.chatHistory
+                .retain(|message| message.timestamp != timestamp);
             self.emitChatHistoryState();
         }
     }
@@ -1437,7 +1428,8 @@ impl ChatHistoryDelegate {
         });
         self.removeChatMessage(&chatId, timestamp);
         if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
-            self.chatHistory.retain(|message| message.timestamp != timestamp);
+            self.chatHistory
+                .retain(|message| message.timestamp != timestamp);
             self.emitChatHistoryState();
         }
         true
@@ -1524,7 +1516,8 @@ impl ChatHistoryDelegate {
             }
         });
         self.removeChatMessagesFrom(&chatId, timestamp);
-        self.chatHistory.retain(|message| message.timestamp < timestamp);
+        self.chatHistory
+            .retain(|message| message.timestamp < timestamp);
         self.emitChatHistoryState();
         true
     }
@@ -1973,7 +1966,8 @@ impl ChatHistoryDelegate {
                     .deleteMessagesFrom(chatId.clone(), timestamp)
                     .expect("ChatHistoryManager.deleteMessagesFrom must succeed");
                 self.removeChatMessagesFrom(&chatId, timestamp);
-                self.chatHistory.retain(|message| message.timestamp < timestamp);
+                self.chatHistory
+                    .retain(|message| message.timestamp < timestamp);
             }
             None => {
                 self.chatHistoryManager
@@ -2028,11 +2022,7 @@ impl ChatHistoryDelegate {
         characterCardName: Option<String>,
     ) {
         self.chatHistoryManager
-            .updateGroupName(
-                oldName.clone(),
-                newName.clone(),
-                characterCardName.clone(),
-            )
+            .updateGroupName(oldName.clone(), newName.clone(), characterCardName.clone())
             .expect("ChatHistoryManager.updateGroupName must succeed");
         self.chatHistoriesFlow.update(|histories| {
             for chat in histories {
@@ -2057,11 +2047,7 @@ impl ChatHistoryDelegate {
         characterCardName: Option<String>,
     ) {
         self.chatHistoryManager
-            .deleteGroup(
-                groupName.clone(),
-                deleteChats,
-                characterCardName.clone(),
-            )
+            .deleteGroup(groupName.clone(), deleteChats, characterCardName.clone())
             .expect("ChatHistoryManager.deleteGroup must succeed");
         let matchesGroup = |chat: &ChatHistory| {
             chat.group.as_deref() == Some(groupName.as_str())

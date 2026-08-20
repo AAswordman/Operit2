@@ -23,8 +23,8 @@ use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_host_api::{FileSystemHost, HostRuntimeTaskSchedulerHost};
 use operit_link::{CoreLinkError, CoreWatchSourceActivator, CoreWatchSourceResume};
-use operit_model::ChatHistory::ChatHistory;
 use operit_model::AttachmentInfo::AttachmentInfo;
+use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatHistoryListItem::ChatHistoryListItem;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
@@ -178,14 +178,19 @@ impl CoreWatchSourceActivator for ChatServiceCore {
         resume: CoreWatchSourceResume,
     ) -> Result<(), CoreLinkError> {
         let chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
-        let enhancedAiService = self
-            .enhancedAiService
-            .as_mut()
-            .ok_or_else(|| CoreLinkError::new("STREAM_SOURCE_ACTIVATION_FAILED", "response source requires EnhancedAIService"))?;
-        let messageCoordinationDelegate = self
-            .messageCoordinationDelegate
-            .as_mut()
-            .ok_or_else(|| CoreLinkError::new("STREAM_SOURCE_ACTIVATION_FAILED", "response source requires MessageCoordinationDelegate"))?;
+        let enhancedAiService = self.enhancedAiService.as_mut().ok_or_else(|| {
+            CoreLinkError::new(
+                "STREAM_SOURCE_ACTIVATION_FAILED",
+                "response source requires EnhancedAIService",
+            )
+        })?;
+        let messageCoordinationDelegate =
+            self.messageCoordinationDelegate.as_mut().ok_or_else(|| {
+                CoreLinkError::new(
+                    "STREAM_SOURCE_ACTIVATION_FAILED",
+                    "response source requires MessageCoordinationDelegate",
+                )
+            })?;
         self.messageProcessingDelegate
             .activateResponseExecution(
                 enhancedAiService,
@@ -1652,7 +1657,8 @@ impl ChatServiceCore {
     )]
     pub fn chatMessagesFlow(&self, chatId: Option<String>) -> StateFlow<Vec<ChatMessage>> {
         let selectedChatId = chatId.expect("chatMessagesFlow requires a routed chatId");
-        self.chatHistoryDelegate.chatMessageFlowForChat(selectedChatId)
+        self.chatHistoryDelegate
+            .chatMessageFlowForChat(selectedChatId)
     }
 
     /// Returns runtime state from the Core selected by Binding for one explicit chat.
@@ -1685,11 +1691,9 @@ impl ChatServiceCore {
             &displayWindowStateFlow,
             &chatHistoriesFlow,
             move |executionState, displayWindowState, chatHistories| {
-                let currentChat = chatHistories
-                    .iter()
-                    .find(|chat| chat.id == selectedChatId);
-                let currentCharacterCardName = currentChat
-                    .and_then(|chat| chat.characterCardName.clone());
+                let currentChat = chatHistories.iter().find(|chat| chat.id == selectedChatId);
+                let currentCharacterCardName =
+                    currentChat.and_then(|chat| chat.characterCardName.clone());
                 ChatState {
                     currentChatId: selectedChatId.clone(),
                     currentChatTitle: currentChat
@@ -1699,8 +1703,7 @@ impl ChatServiceCore {
                         .as_deref()
                         .and_then(|name| characterCardAvatarUriByName(&characterCardManager, name)),
                     currentCharacterCardName,
-                    currentWorkspacePath: currentChat
-                        .and_then(|chat| chat.workspace.clone()),
+                    currentWorkspacePath: currentChat.and_then(|chat| chat.workspace.clone()),
                     isLoading: executionState.isLoading,
                     inputProcessingState: executionState.inputProcessingState,
                     hasOlderDisplayHistory: displayWindowState.hasOlderDisplayHistory,

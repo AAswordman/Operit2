@@ -554,7 +554,10 @@ impl MessageProcessingDelegate {
             .chatHistoryDelegate
             .chatHistoriesFlow
             .update(|histories| {
-                match histories.iter().position(|chat| chat.id == checkpoint.chat.id) {
+                match histories
+                    .iter()
+                    .position(|chat| chat.id == checkpoint.chat.id)
+                {
                     Some(index) => histories[index] = checkpoint.chat.clone(),
                     None => histories.push(checkpoint.chat.clone()),
                 }
@@ -583,10 +586,7 @@ impl MessageProcessingDelegate {
                 ChatTurnOptions::default(),
             )
             .await;
-        if self
-            .activeResponseStreamForChat(chatId.clone())
-            .is_none()
-        {
+        if self.activeResponseStreamForChat(chatId.clone()).is_none() {
             self.releaseExecutionContinuation(chatId, checkpoint.execution_generation);
             return Err("response continuation did not create a response stream".to_string());
         }
@@ -1398,13 +1398,10 @@ impl MessageProcessingDelegate {
             streamId.clone(),
             "services.runtimeTextStreamRegistry",
             "openTextStream",
-            CoreValue::Map(BTreeMap::from([(
-                "streamId".to_string(),
-                CoreValue::String(streamId.clone()),
-            ), (
-                "routeKey".to_string(),
-                CoreValue::String(chatId.clone()),
-            )])),
+            CoreValue::Map(BTreeMap::from([
+                ("streamId".to_string(), CoreValue::String(streamId.clone())),
+                ("routeKey".to_string(), CoreValue::String(chatId.clone())),
+            ])),
         ));
         AppLogger::i(
             "ResponseExecutionTrace",
@@ -1519,11 +1516,6 @@ impl MessageProcessingDelegate {
                                         return;
                                     }
                                 };
-                                ChainLogger::info(
-                                    RECEIVE_CHAIN,
-                                    "receive.stream.collect.start",
-                                    &[("chatId", chunkChatId.clone())],
-                                );
                                 let mut firstResponseElapsed = chunkFirstResponseElapsed
                                     .lock()
                                     .expect("first response elapsed mutex poisoned");
