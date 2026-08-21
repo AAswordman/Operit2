@@ -200,14 +200,12 @@ class StreamingStructuredMessageRenderer extends StatefulWidget {
 class _StreamingStructuredMessageRendererState
     extends State<StreamingStructuredMessageRenderer> {
   Stream<Object>? _retainedContentStream;
-  late bool _structuredReady;
 
   /// Captures the initial live stream for uninterrupted rendering.
   @override
   void initState() {
     super.initState();
     _retainedContentStream = widget.contentStream;
-    _structuredReady = widget.contentStream == null;
   }
 
   /// Tracks new generation streams while retaining a completed stream for handoff.
@@ -217,74 +215,43 @@ class _StreamingStructuredMessageRendererState
     final nextStream = widget.contentStream;
     if (nextStream != null && !identical(nextStream, _retainedContentStream)) {
       _retainedContentStream = nextStream;
-      _structuredReady = false;
     }
   }
 
-  /// Builds a stable overlay for the live output and prepared structured parts.
+  /// Keeps the completed stream renderer mounted for a stable visual handoff.
   @override
   Widget build(BuildContext context) {
-    final streamIsActive = widget.contentStream != null;
-    final showRetainedStream =
-        streamIsActive || (!_structuredReady && _retainedContentStream != null);
-    final buildStructuredParts = !streamIsActive;
-
-    return Stack(
-      alignment: Alignment.topLeft,
-      clipBehavior: Clip.none,
-      children: <Widget>[
-        if (showRetainedStream)
-          KeyedSubtree(
-            key: const ValueKey<String>('live-markdown'),
-            child: StreamMarkdownRenderer(
-              content: '',
-              contentStream: _retainedContentStream,
-              isStreaming: widget.isStreaming,
-              textColor: widget.textColor,
-              backgroundColor: widget.backgroundColor,
-              nodeGrouper: widget.nodeGrouper,
-              state: widget.streamState,
-              onLinkClick: widget.onLinkClick,
-              rendererId: widget.rendererId,
-              showThinkingProcess: widget.showThinkingProcess,
-              initialThinkingExpanded: widget.initialThinkingExpanded,
-              allowExpandedThinkingFullHeight:
-                  widget.allowExpandedThinkingFullHeight,
-            ),
-          ),
-        if (buildStructuredParts)
-          IgnorePointer(
-            key: const ValueKey<String>('structured-parts'),
-            ignoring: !_structuredReady,
-            child: Opacity(
-              opacity: _structuredReady ? 1 : 0,
-              child: StructuredMessagePartRenderer(
-                parts: widget.parts,
-                textColor: widget.textColor,
-                backgroundColor: widget.backgroundColor,
-                showThinkingProcess: widget.showThinkingProcess,
-                rendererId: widget.rendererId,
-                onLinkClick: widget.onLinkClick,
-                onReady: _markStructuredReady,
-                initialThinkingExpanded: widget.initialThinkingExpanded,
-                allowExpandedThinkingFullHeight:
-                    widget.allowExpandedThinkingFullHeight,
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  /// Completes the handoff after structured parts have painted once.
-  void _markStructuredReady() {
-    if (!mounted || widget.contentStream != null || _structuredReady) {
-      return;
+    final retainedStream = _retainedContentStream;
+    if (retainedStream != null) {
+      return KeyedSubtree(
+        key: const ValueKey<String>('live-markdown'),
+        child: StreamMarkdownRenderer(
+          content: '',
+          contentStream: retainedStream,
+          isStreaming: widget.isStreaming,
+          textColor: widget.textColor,
+          backgroundColor: widget.backgroundColor,
+          nodeGrouper: widget.nodeGrouper,
+          state: widget.streamState,
+          onLinkClick: widget.onLinkClick,
+          rendererId: widget.rendererId,
+          showThinkingProcess: widget.showThinkingProcess,
+          initialThinkingExpanded: widget.initialThinkingExpanded,
+          allowExpandedThinkingFullHeight:
+              widget.allowExpandedThinkingFullHeight,
+        ),
+      );
     }
-    setState(() {
-      _structuredReady = true;
-      _retainedContentStream = null;
-    });
+    return StructuredMessagePartRenderer(
+      parts: widget.parts,
+      textColor: widget.textColor,
+      backgroundColor: widget.backgroundColor,
+      showThinkingProcess: widget.showThinkingProcess,
+      rendererId: widget.rendererId,
+      onLinkClick: widget.onLinkClick,
+      initialThinkingExpanded: widget.initialThinkingExpanded,
+      allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
+    );
   }
 }
 

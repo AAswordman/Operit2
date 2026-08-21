@@ -550,18 +550,6 @@ impl MessageProcessingDelegate {
             return Ok(());
         }
         messageCoordinationDelegate.chatHistoryDelegate = chatHistoryDelegate;
-        messageCoordinationDelegate
-            .chatHistoryDelegate
-            .chatHistoriesFlow
-            .update(|histories| {
-                match histories
-                    .iter()
-                    .position(|chat| chat.id == checkpoint.chat.id)
-                {
-                    Some(index) => histories[index] = checkpoint.chat.clone(),
-                    None => histories.push(checkpoint.chat.clone()),
-                }
-            });
         messageCoordinationDelegate.messageProcessingDelegate = self.clone_for_core();
         messageCoordinationDelegate
             .sendMessageInternal(

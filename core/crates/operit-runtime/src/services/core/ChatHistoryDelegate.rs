@@ -80,7 +80,7 @@ pub struct ChatHistoryDelegate {
     pub hasNewerDisplayHistory: bool,
     pub isLoadingDisplayWindow: bool,
     pub showChatHistorySelector: bool,
-    pub chatHistoriesFlow: MutableStateFlow<Vec<ChatHistory>>,
+    pub chatHistoriesFlow: StateFlow<Vec<ChatHistory>>,
     pub chatHistoryListItemsFlow: StateFlow<Vec<ChatHistoryListItem>>,
     pub currentChatIdFlow: MutableStateFlow<Option<String>>,
     pub isInitialized: bool,
@@ -93,15 +93,17 @@ pub struct ChatHistoryDelegate {
 impl ChatHistoryDelegate {
     /// Creates a chat history delegate for the requested selection mode.
     pub fn new(selectionMode: ChatSelectionMode) -> Self {
-        let chatHistoriesFlow = mutableStateFlow(Vec::<ChatHistory>::new());
-        let chatHistoryListItemsFlow = chatHistoriesFlow.asStateFlow().map(|histories| {
+        let chatHistoryManager = ChatHistoryManager::default()
+            .expect("ChatHistoryManager must initialize for ChatHistoryDelegate");
+        let chatHistoriesFlow = chatHistoryManager
+            .chatHistoriesFlow()
+            .expect("ChatHistoryManager.chatHistoriesFlow must succeed");
+        let chatHistoryListItemsFlow = chatHistoriesFlow.map(|histories| {
             histories
                 .iter()
                 .map(ChatHistoryListItem::fromChatHistory)
                 .collect::<Vec<_>>()
         });
-        let chatHistoryManager = ChatHistoryManager::default()
-            .expect("ChatHistoryManager must initialize for ChatHistoryDelegate");
         let chatMessageFlowsByChatId = Arc::new(Mutex::new(HashMap::new()));
         let displayWindowStateFlow = mutableStateFlow(ChatDisplayWindowState::default());
         let displayWindowStateFlowsByChatId = Arc::new(Mutex::new(HashMap::new()));
@@ -233,7 +235,7 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     /// Returns the flow for persisted chat metadata.
     pub fn chatHistoriesFlow(&self) -> StateFlow<Vec<ChatHistory>> {
-        self.chatHistoriesFlow.asStateFlow()
+        self.chatHistoriesFlow.clone()
     }
 
     #[allow(non_snake_case)]
@@ -386,21 +388,6 @@ impl ChatHistoryDelegate {
         if let Some(flow) = flow {
             flow.set_value(Vec::new());
         }
-    }
-
-    #[allow(non_snake_case)]
-    /// Inserts one newly created chat into Runtime-owned metadata state.
-    fn publishCreatedChatHistory(&self, chat: ChatHistory) {
-        self.chatHistoriesFlow.update(|histories| {
-            histories.retain(|existing| existing.id != chat.id);
-            histories.push(chat.clone());
-            histories.sort_by(|left, right| {
-                right
-                    .pinned
-                    .cmp(&left.pinned)
-                    .then(left.displayOrder.cmp(&right.displayOrder))
-            });
-        });
     }
 
     #[allow(non_snake_case)]
@@ -819,11 +806,6 @@ impl ChatHistoryDelegate {
 
     /// Initializes flows and active-chat state from persisted chat storage.
     pub fn initialize(&mut self) {
-        let histories = self
-            .chatHistoryManager
-            .loadChatHistories()
-            .expect("ChatHistoryManager.loadChatHistories must succeed");
-        self.chatHistoriesFlow.set_value(histories);
         if let Some(chatId) = self
             .chatHistoryManager
             .currentChatIdFlow()
@@ -1070,7 +1052,6 @@ impl ChatHistoryDelegate {
                 normalizedCharacterGroupId.clone(),
             )
             .expect("ChatHistoryManager.createNewChat must succeed");
-        self.publishCreatedChatHistory(newChat.clone());
         if normalizedCharacterGroupId.is_none()
             && explicitCharacterCardName.is_none()
             && resolvedCard
@@ -1090,12 +1071,6 @@ impl ChatHistoryDelegate {
                     &newChat.id,
                     &persistedOpeningMessage,
                 );
-                let refreshedChat = self
-                    .chatHistoryManager
-                    .loadChatHistory(newChat.id.clone())
-                    .expect("ChatHistoryManager.loadChatHistory must succeed")
-                    .expect("Created chat history must exist after opening statement persistence");
-                self.publishCreatedChatHistory(refreshedChat);
             }
         }
         if setAsCurrentChat {
@@ -1166,7 +1141,6 @@ impl ChatHistoryDelegate {
                 .setCurrentChatId(branchChat.id.clone())
                 .expect("ChatHistoryManager.setCurrentChatId must succeed");
         }
-        self.publishCreatedChatHistory(branchChat.clone());
         self.loadChatMessages(branchChat.id);
     }
 
@@ -1182,28 +1156,16 @@ impl ChatHistoryDelegate {
     /// Updates the locked state for a chat and emits metadata changes.
     pub fn updateChatLocked(&mut self, chatId: String, locked: bool) {
         self.chatHistoryManager
-            .updateChatLocked(chatId.clone(), locked)
+            .updateChatLocked(chatId, locked)
             .expect("ChatHistoryManager.updateChatLocked must succeed");
-        self.chatHistoriesFlow.update(|histories| {
-            if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                chat.locked = locked;
-                chat.updatedAt = operit_host_api::TimeUtils::currentTimeMillis().to_string();
-            }
-        });
     }
 
     #[allow(non_snake_case)]
     /// Updates the pinned state for a chat and emits metadata changes.
     pub fn updateChatPinned(&mut self, chatId: String, pinned: bool) {
         self.chatHistoryManager
-            .updateChatPinned(chatId.clone(), pinned)
+            .updateChatPinned(chatId, pinned)
             .expect("ChatHistoryManager.updateChatPinned must succeed");
-        self.chatHistoriesFlow.update(|histories| {
-            if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                chat.pinned = pinned;
-                chat.updatedAt = operit_host_api::TimeUtils::currentTimeMillis().to_string();
-            }
-        });
     }
 
     #[allow(non_snake_case)]
@@ -1369,9 +1331,6 @@ impl ChatHistoryDelegate {
                 .expect("ChatHistoryManager.deleteChatHistory must succeed")
         };
         if deleted {
-            self.chatHistoriesFlow.update(|histories| {
-                histories.retain(|chat| chat.id != chatId);
-            });
             self.clearChatFlow(&chatId);
             self.finishDestructiveHistoryMutation(chatId);
         }
@@ -1400,12 +1359,6 @@ impl ChatHistoryDelegate {
         self.chatHistoryManager
             .deleteMessage(chatId.clone(), timestamp)
             .expect("ChatHistoryManager.deleteMessage must remove failed assistant message");
-        self.chatHistoriesFlow.update(|histories| {
-            if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                chat.messages
-                    .retain(|message| message.timestamp != timestamp);
-            }
-        });
         self.removeChatMessage(&chatId, timestamp);
         if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
             self.chatHistory
@@ -1420,12 +1373,6 @@ impl ChatHistoryDelegate {
         self.chatHistoryManager
             .deleteMessage(chatId.clone(), timestamp)
             .expect("ChatHistoryManager.deleteMessage must remove message");
-        self.chatHistoriesFlow.update(|histories| {
-            if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                chat.messages
-                    .retain(|message| message.timestamp != timestamp);
-            }
-        });
         self.removeChatMessage(&chatId, timestamp);
         if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
             self.chatHistory
@@ -1462,17 +1409,6 @@ impl ChatHistoryDelegate {
         {
             message.isFavorite = isFavorite;
         }
-        self.chatHistoriesFlow.update(|histories| {
-            if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                if let Some(message) = chat
-                    .messages
-                    .iter_mut()
-                    .find(|message| message.timestamp == timestamp)
-                {
-                    message.isFavorite = isFavorite;
-                }
-            }
-        });
         if self.currentChatIdFlow.value().as_deref() == Some(chatId.as_str()) {
             self.emitChatHistoryState();
         }
@@ -1509,12 +1445,6 @@ impl ChatHistoryDelegate {
         self.chatHistoryManager
             .deleteMessagesFrom(chatId.clone(), timestamp)
             .expect("ChatHistoryManager.deleteMessagesFrom must remove messages");
-        self.chatHistoriesFlow.update(|histories| {
-            if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                chat.messages
-                    .retain(|message| message.timestamp < timestamp);
-            }
-        });
         self.removeChatMessagesFrom(&chatId, timestamp);
         self.chatHistory
             .retain(|message| message.timestamp < timestamp);
@@ -1578,11 +1508,9 @@ impl ChatHistoryDelegate {
             return false;
         };
         self.prepareChatForDestructiveMutation(chatId.clone());
-        self.chatHistoriesFlow.update(|histories| {
-            if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                chat.messages.clear();
-            }
-        });
+        self.chatHistoryManager
+            .clearChatMessages(chatId.clone())
+            .expect("ChatHistoryManager.clearChatMessages must succeed");
         self.clearCurrentChatHistoryInMemory();
         self.finishDestructiveHistoryMutation(chatId);
         true
@@ -1604,13 +1532,6 @@ impl ChatHistoryDelegate {
                 || outputTokens != 0
                 || actualContextWindowSize != 0;
             if shouldSave {
-                self.chatHistoriesFlow.update(|histories| {
-                    if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                        chat.inputTokens = inputTokens;
-                        chat.outputTokens = outputTokens;
-                        chat.currentWindowSize = actualContextWindowSize;
-                    }
-                });
                 self.chatHistoryManager
                     .updateChatTokenCounts(
                         chatId.clone(),
@@ -1642,11 +1563,6 @@ impl ChatHistoryDelegate {
         self.chatHistoryManager
             .updateChatWorkspace(chatId.clone(), Some(workspace.clone()))
             .expect("ChatHistoryManager.updateChatWorkspace must succeed");
-        self.chatHistoriesFlow.update(|histories| {
-            if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                chat.workspace = Some(workspace.clone());
-            }
-        });
         if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
             self.dispatchChatViewEvent(ChatViewEvent::ViewUpdated, &chatId);
         }
@@ -1679,13 +1595,6 @@ impl ChatHistoryDelegate {
                 characterGroupId.clone(),
             )
             .expect("ChatHistoryManager.updateChatCharacterBinding must succeed");
-        self.chatHistoriesFlow.update(|histories| {
-            if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                chat.characterCardName = characterCardName.clone();
-                chat.characterGroupId = characterGroupId.clone();
-                chat.updatedAt = operit_host_api::TimeUtils::currentTimeMillis().to_string();
-            }
-        });
         if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
             self.activatePromptForChat(chatId.clone());
             self.dispatchChatViewEvent(ChatViewEvent::ViewUpdated, &chatId);
@@ -1698,11 +1607,6 @@ impl ChatHistoryDelegate {
         self.chatHistoryManager
             .updateChatWorkspace(chatId.clone(), None)
             .expect("ChatHistoryManager.updateChatWorkspace must succeed");
-        self.chatHistoriesFlow.update(|histories| {
-            if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                chat.workspace = None;
-            }
-        });
         if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
             self.dispatchChatViewEvent(ChatViewEvent::ViewUpdated, &chatId);
         }
@@ -1714,11 +1618,6 @@ impl ChatHistoryDelegate {
         self.chatHistoryManager
             .updateChatTitle(chatId.clone(), title.clone())
             .expect("ChatHistoryManager.updateChatTitle must succeed");
-        self.chatHistoriesFlow.update(|histories| {
-            if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                chat.title = title.clone();
-            }
-        });
         if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
             self.dispatchChatViewEvent(ChatViewEvent::ViewUpdated, &chatId);
         }
@@ -1935,16 +1834,6 @@ impl ChatHistoryDelegate {
         if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
             self.upsertCurrentChatMessageInMemory(message.clone());
         }
-        self.chatHistoriesFlow.update(|histories| {
-            if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                chat.updatedAt = message.completedAt.to_string();
-                if let Some((inputTokens, outputTokens, currentWindowSize)) = chatMetrics {
-                    chat.inputTokens = inputTokens;
-                    chat.outputTokens = outputTokens;
-                    chat.currentWindowSize = currentWindowSize;
-                }
-            }
-        });
         Ok(clock)
     }
 
@@ -2007,7 +1896,6 @@ impl ChatHistoryDelegate {
             })
             .collect::<Vec<_>>();
 
-        self.chatHistoriesFlow.set_value(updatedList.clone());
         self.chatHistoryManager
             .updateChatOrderAndGroup(updatedList)
             .expect("ChatHistoryManager.updateChatOrderAndGroup must succeed");
@@ -2024,18 +1912,6 @@ impl ChatHistoryDelegate {
         self.chatHistoryManager
             .updateGroupName(oldName.clone(), newName.clone(), characterCardName.clone())
             .expect("ChatHistoryManager.updateGroupName must succeed");
-        self.chatHistoriesFlow.update(|histories| {
-            for chat in histories {
-                let matchesGroup = chat.group.as_deref() == Some(oldName.as_str());
-                let matchesCharacter = characterCardName
-                    .as_ref()
-                    .map(|name| chat.characterCardName.as_ref() == Some(name))
-                    .unwrap_or(true);
-                if matchesGroup && matchesCharacter {
-                    chat.group = Some(newName.clone());
-                }
-            }
-        });
     }
 
     #[allow(non_snake_case)]
@@ -2046,9 +1922,6 @@ impl ChatHistoryDelegate {
         deleteChats: bool,
         characterCardName: Option<String>,
     ) {
-        self.chatHistoryManager
-            .deleteGroup(groupName.clone(), deleteChats, characterCardName.clone())
-            .expect("ChatHistoryManager.deleteGroup must succeed");
         let matchesGroup = |chat: &ChatHistory| {
             chat.group.as_deref() == Some(groupName.as_str())
                 && characterCardName
@@ -2056,17 +1929,20 @@ impl ChatHistoryDelegate {
                     .map(|name| chat.characterCardName.as_ref() == Some(name))
                     .unwrap_or(true)
         };
+        let deletedChatIds = deleteChats
+            .then(|| {
+                self.chatHistoriesFlow
+                    .value()
+                    .iter()
+                    .filter(|chat| matchesGroup(chat))
+                    .map(|chat| chat.id.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        self.chatHistoryManager
+            .deleteGroup(groupName.clone(), deleteChats, characterCardName.clone())
+            .expect("ChatHistoryManager.deleteGroup must succeed");
         if deleteChats {
-            let deletedChatIds = self
-                .chatHistoriesFlow
-                .value()
-                .iter()
-                .filter(|chat| matchesGroup(chat))
-                .map(|chat| chat.id.clone())
-                .collect::<Vec<_>>();
-            self.chatHistoriesFlow.update(|histories| {
-                histories.retain(|chat| !matchesGroup(chat));
-            });
             for chatId in &deletedChatIds {
                 self.clearChatFlow(chatId);
             }
@@ -2080,14 +1956,6 @@ impl ChatHistoryDelegate {
                 self.currentChatIdFlow.set_value(None);
                 self.clearCurrentChatHistoryInMemory();
             }
-        } else {
-            self.chatHistoriesFlow.update(|histories| {
-                for chat in histories {
-                    if matchesGroup(chat) {
-                        chat.group = None;
-                    }
-                }
-            });
         }
     }
 
@@ -2120,7 +1988,6 @@ impl ChatHistoryDelegate {
                 .setCurrentChatId(newChat.id.clone())
                 .expect("ChatHistoryManager.setCurrentChatId must succeed");
         }
-        self.publishCreatedChatHistory(newChat.clone());
         self.loadChatMessages(newChat.id);
     }
 
@@ -2146,16 +2013,9 @@ impl ChatHistoryDelegate {
                 afterTimestamp,
             )
             .expect("ChatHistoryManager.addSummaryMessageBetweenSliceNeighbors must succeed");
-        let Some(persistedSummaryMessage) = persistedSummaryMessage else {
+        let Some(_) = persistedSummaryMessage else {
             return;
         };
-
-        self.chatHistoriesFlow.update(|histories| {
-            if let Some(chat) = histories.iter_mut().find(|chat| chat.id == chatId) {
-                chat.messages.push(persistedSummaryMessage.clone());
-                chat.messages.sort_by_key(|message| message.timestamp);
-            }
-        });
         if isCurrentChat {
             self.reloadCurrentChatDisplayHistory(chatId);
         }

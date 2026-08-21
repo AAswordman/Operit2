@@ -99,6 +99,7 @@ pub struct ChatHistoryManager {
     messageVariantDao: MessageVariantDao,
     syncStore: SqlChatSyncStore,
     bindingStore: CoreNodeBindingStore,
+    chatHistoriesFlow: StateFlow<Vec<ChatHistory>>,
     currentChatIdDataStore: PreferencesDataStore,
     pub currentChatIdFlow: StateFlow<Option<String>>,
 }
@@ -158,6 +159,12 @@ impl ChatHistoryManager {
         let syncStore = SqlChatSyncStore::new(paths.clone(), &database)?;
         let bindingStore =
             CoreNodeBindingStore::default().map_err(ChatHistoryManagerError::IllegalState)?;
+        let chatHistoriesFlow = chatDao.getAllChats()?.map(|chatEntities| {
+            chatEntities
+                .into_iter()
+                .map(|chatEntity| chatEntity.toChatHistory(Vec::new()))
+                .collect::<Vec<_>>()
+        });
         let currentChatIdFlow = currentChatIdDataStore
             .dataFlow()
             .catch(|exception| match exception {
@@ -182,6 +189,7 @@ impl ChatHistoryManager {
             messageVariantDao,
             syncStore,
             bindingStore,
+            chatHistoriesFlow,
             currentChatIdDataStore,
             currentChatIdFlow,
         })
@@ -384,6 +392,12 @@ impl ChatHistoryManager {
             .into_iter()
             .map(|chatEntity| chatEntity.toChatHistory(Vec::new()))
             .collect())
+    }
+
+    #[allow(non_snake_case)]
+    /// Returns the observable chat metadata list from persistent storage.
+    pub fn chatHistoriesFlow(&self) -> ChatHistoryManagerResult<StateFlow<Vec<ChatHistory>>> {
+        Ok(self.chatHistoriesFlow.clone())
     }
 
     /// Loads one persisted chat history metadata row.
