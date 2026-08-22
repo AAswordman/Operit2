@@ -7,6 +7,7 @@ pub(crate) fn object_specs(
     tools_root: &SourceRoot,
     providers_root: &SourceRoot,
     link_access_root: &SourceRoot,
+    server_root: &SourceRoot,
 ) -> Vec<ObjectSpec> {
     let mut specs = Vec::new();
     specs.extend(discover_core_proxy_objects(core_proxy_root));
@@ -19,30 +20,16 @@ pub(crate) fn object_specs(
         ObjectPathMatch::Exact,
     ));
     specs.push(required_object_spec(
-        link_access_root,
-        "linkAccessStore",
-        "lib.rs",
-        "LinkAccessStore",
-        ObjectAccess::ContextRefGetInstanceConstruct,
-        ObjectPathMatch::Exact,
-    ));
-    specs.push(required_object_spec(
         runtime_root,
-        "chatRuntimeHolder.main",
+        "chatRuntimeHolderMain",
         "services/ChatServiceCore.rs",
         "ChatServiceCore",
         ObjectAccess::ResolvedHolder {
             holder_field: "chatRuntimeHolder".to_string(),
-            resolver_method: "coreForPath".to_string(),
-            proxy_aliases: vec![(
-                "chatRuntimeHolderFloating".to_string(),
-                "chatRuntimeHolder.floating".to_string(),
-            )],
+            resolver_method: "coreForObjectId".to_string(),
+            proxy_aliases: Vec::new(),
         },
-        ObjectPathMatch::Predicate(
-            "operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder::matchesCorePath"
-                .to_string(),
-        ),
+        ObjectPathMatch::Exact,
     ));
     specs.extend(discover_constructible_objects(
         runtime_root,
@@ -83,6 +70,16 @@ pub(crate) fn object_specs(
         providers_root,
         "voice",
         "providers.voice",
+    ));
+    specs.extend(discover_constructible_objects_recursive(
+        server_root,
+        ".",
+        "server",
+    ));
+    specs.extend(discover_constructible_objects_recursive(
+        link_access_root,
+        ".",
+        "linkAccess",
     ));
     specs.sort_by(|left, right| left.schema_key.cmp(&right.schema_key));
     specs
@@ -203,6 +200,7 @@ pub(crate) fn discover_factory_object_specs(
                 continue;
             }
             specs.push(ObjectSpec {
+                object_id: 0,
                 dispatch_name: dispatch_name_from_schema_key(&schema_key),
                 schema_key,
                 type_name: target_type.type_name.clone(),
@@ -217,7 +215,7 @@ pub(crate) fn discover_factory_object_specs(
                     returns_result,
                     returns_arc_mutex,
                 },
-                path_match: ObjectPathMatch::TrailingSegments(method.args.len()),
+                path_match: ObjectPathMatch::Exact,
             });
         }
     }
@@ -274,6 +272,7 @@ fn required_object_spec(
 ) -> ObjectSpec {
     let source_path = source_root.as_path().join(relative_path);
     ObjectSpec {
+        object_id: 0,
         schema_key: schema_key.to_string(),
         dispatch_name: dispatch_name_from_schema_key(schema_key),
         type_name: type_name.to_string(),
@@ -330,6 +329,7 @@ fn discover_core_proxy_objects_inner(
         }
         let schema_key = lower_first(&type_name);
         specs.push(ObjectSpec {
+            object_id: 0,
             dispatch_name: dispatch_name_from_schema_key(&schema_key),
             schema_key,
             full_type: full_type_for_source_with_crate(
@@ -369,6 +369,7 @@ fn discover_constructible_objects(
         let path_match = constructible_object_path_match(&access);
         let schema_key = format!("{schema_prefix}.{}", lower_first(&type_name));
         specs.push(ObjectSpec {
+            object_id: 0,
             schema_key: schema_key.clone(),
             dispatch_name: dispatch_name_from_schema_key(&schema_key),
             full_type: full_type_for_source_with_crate(
@@ -447,6 +448,7 @@ fn discover_constructible_objects_recursive_inner(
             schema_key = format!("{prefix}.{}", lower_first(&type_name));
         }
         specs.push(ObjectSpec {
+            object_id: 0,
             schema_key: schema_key.clone(),
             dispatch_name: dispatch_name_from_schema_key(&schema_key),
             full_type: full_type_for_source_with_crate(
@@ -464,12 +466,8 @@ fn discover_constructible_objects_recursive_inner(
 }
 
 /// Returns the concrete path shape declared by one constructible access strategy.
-fn constructible_object_path_match(access: &ObjectAccess) -> ObjectPathMatch {
-    if access == &ObjectAccess::StringNewConstruct {
-        ObjectPathMatch::TrailingSegments(1)
-    } else {
-        ObjectPathMatch::Exact
-    }
+fn constructible_object_path_match(_access: &ObjectAccess) -> ObjectPathMatch {
+    ObjectPathMatch::Exact
 }
 
 fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess)> {
@@ -501,6 +499,7 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
         let mut has_store_paths_new = false;
         let mut has_result_store_paths_new = false;
         let mut has_core_proxy_new = false;
+        let mut has_core_node_local_runtime_new = false;
         let mut has_public_instance_method = false;
 
         for item in &file.items {
@@ -577,6 +576,8 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
                     }
                     has_core_proxy_new |= name == "new"
                         && function_has_single_named_argument(function, "LocalCoreProxy");
+                    has_core_node_local_runtime_new |= name == "new"
+                        && function_has_single_named_argument(function, "CoreNodeLocalRuntime");
                     has_string_new |= name == "new"
                         && (arg_type.contains("impl Into < String >")
                             || arg_type.contains("impl Into<String>")
@@ -626,6 +627,9 @@ fn discover_constructible_type(file: &syn::File) -> Option<(String, ObjectAccess
         }
         if has_core_proxy_new {
             return Some((type_name, ObjectAccess::CoreProxyConstruct));
+        }
+        if has_core_node_local_runtime_new {
+            return Some((type_name, ObjectAccess::CoreNodeLocalRuntimeConstruct));
         }
         if has_string_new {
             return Some((type_name, ObjectAccess::StringNewConstruct));
@@ -689,7 +693,7 @@ pub(crate) fn scan_object(
     deserializable_types: &HashSet<String>,
     type_registry: &TypeRegistry,
 ) -> SourceObject {
-    let mut methods = scan_methods(
+    let methods = scan_methods(
         &spec.source_path,
         &spec.type_name,
         parent_module_path(&spec.full_type),
@@ -697,74 +701,14 @@ pub(crate) fn scan_object(
         deserializable_types,
         type_registry,
     );
-    validate_method_routes(&methods, &spec.type_name);
     SourceObject {
+        object_id: spec.object_id,
         schema_key: spec.schema_key.clone(),
         dispatch_name: spec.dispatch_name.clone(),
         full_type: spec.full_type.clone(),
         access: spec.access.clone(),
         path_match: spec.path_match.clone(),
         methods,
-    }
-}
-
-/// Validates every method-level Binding declaration on one generated object.
-fn validate_method_routes(methods: &[SourceMethod], type_name: &str) {
-    for method in methods {
-        match &method.route {
-            MethodRoute::Local => {}
-            MethodRoute::Binding {
-                binding_argument,
-                current_resolver,
-                supports_source_transition,
-            } => {
-                if method.call_protocol().is_none()
-                    && method.watch_protocol().is_none()
-                    && method.reverse_stream_protocol().is_none()
-                {
-                    panic!(
-                        "Method {type_name}.{} declares Binding routing without a Link protocol",
-                        method.name
-                    );
-                }
-                if !method
-                    .args
-                    .iter()
-                    .any(|argument| argument.name == *binding_argument)
-                {
-                    panic!("Method {type_name}.{} declares unknown Binding argument {binding_argument}", method.name);
-                }
-                if let Some(resolver) = current_resolver {
-                    validate_binding_resolver(methods, type_name, resolver);
-                }
-                if *supports_source_transition && method.watch_protocol().is_none() {
-                    panic!(
-                        "Method {type_name}.{} declares a source transition without a watch protocol",
-                        method.name
-                    );
-                }
-            }
-        }
-    }
-}
-
-/// Returns one named method declared on the current generated object.
-fn required_route_method<'a>(
-    methods: &'a [SourceMethod],
-    type_name: &str,
-    method_name: &str,
-) -> &'a SourceMethod {
-    methods
-        .iter()
-        .find(|method| method.name == method_name)
-        .unwrap_or_else(|| panic!("Object {type_name} does not declare route method {method_name}"))
-}
-
-/// Verifies that one explicit current-key resolver is a zero-argument watch.
-fn validate_binding_resolver(methods: &[SourceMethod], type_name: &str, resolver: &str) {
-    let method = required_route_method(methods, type_name, resolver);
-    if method.watch_protocol().is_none() || !method.args.is_empty() {
-        panic!("Binding resolver {type_name}.{resolver} must be a zero-argument watch");
     }
 }
 
@@ -836,7 +780,6 @@ fn impl_type_name(item_impl: &ItemImpl) -> Option<String> {
 
 fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
     let name = function.sig.ident.to_string();
-    let route = scan_method_route(function, &name);
     let mut args = Vec::new();
     let mut method_error = None::<String>;
     let is_async = function.sig.asyncness.is_some();
@@ -904,85 +847,8 @@ fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
         is_async,
         cfg_attrs,
         doc_lines,
-        route,
         protocol,
     }
-}
-
-/// Reads one method-level Binding route declaration without assigning business meaning to it.
-fn scan_method_route(function: &ImplItemFn, method_name: &str) -> MethodRoute {
-    let declarations = function
-        .attrs
-        .iter()
-        .filter(|attribute| {
-            attribute
-                .path()
-                .segments
-                .last()
-                .is_some_and(|segment| segment.ident == "operit_core_route")
-        })
-        .collect::<Vec<_>>();
-    if declarations.len() > 1 {
-        panic!("Method {method_name} declares multiple Core route attributes");
-    }
-    let Some(attribute) = declarations.first() else {
-        return MethodRoute::Local;
-    };
-    let Meta::List(meta_list) = &attribute.meta else {
-        panic!("Method {method_name} Core route requires arguments");
-    };
-    let arguments = meta_list
-        .parse_args_with(Punctuated::<MetaNameValue, Token![,]>::parse_terminated)
-        .unwrap_or_else(|error| {
-            panic!("Method {method_name} has invalid Core route arguments: {error}")
-        });
-    let mut values = HashMap::<String, String>::new();
-    for argument in arguments {
-        let argument_name = argument
-            .path
-            .segments
-            .last()
-            .map(|segment| segment.ident.to_string())
-            .unwrap_or_default();
-        let value = route_attribute_identifier(argument.value, method_name, &argument_name);
-        if values.insert(argument_name.clone(), value).is_some() {
-            panic!(
-                "Method {method_name} declares Core route argument {argument_name} more than once"
-            );
-        }
-    }
-    let binding_argument = values.remove("binding");
-    let current_resolver = values.remove("current");
-    let supports_source_transition = values.remove("source").is_some();
-    if !values.is_empty() {
-        let unsupported = values.keys().cloned().collect::<Vec<_>>().join(", ");
-        panic!("Method {method_name} has unsupported Core route arguments: {unsupported}");
-    }
-    let Some(binding_argument) = binding_argument else {
-        panic!("Method {method_name} Core route requires binding");
-    };
-    MethodRoute::Binding {
-        binding_argument,
-        current_resolver,
-        supports_source_transition,
-    }
-}
-
-/// Extracts one identifier-valued route argument from a procedural macro attribute.
-fn route_attribute_identifier(value: Expr, method_name: &str, argument_name: &str) -> String {
-    let Expr::Path(expression) = value else {
-        panic!("Method {method_name} Core route argument {argument_name} must be an identifier");
-    };
-    if expression.qself.is_some() || expression.path.segments.len() != 1 {
-        panic!("Method {method_name} Core route argument {argument_name} must be an identifier");
-    }
-    expression
-        .path
-        .segments
-        .first()
-        .expect("single-segment Core route identifier must exist")
-        .ident
-        .to_string()
 }
 
 fn doc_lines(function: &ImplItemFn) -> Vec<String> {
@@ -1081,16 +947,11 @@ fn classify_return_protocol(ty: &str, resolver: &TypeResolver) -> MethodProtocol
             resolver,
         );
     }
-    if let Some(optional) = text_event_watch_optionality(ty, resolver) {
-        return MethodProtocol::Watch(WatchProtocol {
-            snapshot_type: None,
-            stream: WatchStreamProtocol::TextEvent { optional },
-        });
-    }
     if let Some(stream_item) = plain_stream_item_type(ty, resolver) {
         if stream_item == "String" {
             return MethodProtocol::Watch(WatchProtocol {
                 snapshot_type: None,
+                item_type: stream_item,
                 stream: WatchStreamProtocol::StringStream,
             });
         }
@@ -1116,19 +977,12 @@ fn classify_json_watch(
     if is_supported_return_type(value_type, resolver) {
         MethodProtocol::Watch(WatchProtocol {
             snapshot_type: Some(value_type.to_string()),
+            item_type: value_type.to_string(),
             stream,
         })
     } else {
         MethodProtocol::Unsupported(format!("unsupported watch value type: {value_type}"))
     }
-}
-
-fn text_event_watch_optionality(ty: &str, resolver: &TypeResolver) -> Option<bool> {
-    if is_text_event_stream_type(ty, resolver) {
-        return Some(false);
-    }
-    let inner = single_generic_arg(ty, "Option")?;
-    is_text_event_stream_type(inner, resolver).then_some(true)
 }
 
 fn plain_stream_item_type(ty: &str, resolver: &TypeResolver) -> Option<String> {
@@ -1142,16 +996,4 @@ fn plain_stream_item_type(ty: &str, resolver: &TypeResolver) -> Option<String> {
 /// Returns the item type for the portable caller-owned reverse stream argument.
 fn reverse_stream_item_type(ty: &str) -> Option<String> {
     single_generic_arg(ty, "operit_util::stream::ReverseStream::ReverseStream").map(str::to_string)
-}
-
-fn is_text_event_stream_type(ty: &str, resolver: &TypeResolver) -> bool {
-    let resolved = resolver.type_registry.resolve_alias(ty);
-    resolver
-        .type_registry
-        .stream_item(&resolved)
-        .map(|item| item == "String")
-        .unwrap_or(false)
-        && resolver
-            .type_registry
-            .implements(&resolved, "RenderableTextStream")
 }

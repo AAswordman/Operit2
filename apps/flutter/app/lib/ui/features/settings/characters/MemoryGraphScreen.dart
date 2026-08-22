@@ -70,6 +70,8 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
   bool _busy = false;
   bool _linkMode = false;
   String? _linkSourceNodeId;
+  late final GeneratedCoreProxyClients _clients =
+      GeneratedCoreProxyClients(widget.bridge);
   double _scale = 1;
   Offset _offset = Offset.zero;
   double _startScale = 1;
@@ -77,14 +79,7 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
 
   /// Returns the repository proxy scoped to the current owner key.
   GeneratedRepositoryMemoryRepositoryCoreProxy get _repository =>
-      GeneratedRepositoryMemoryRepositoryCoreProxy(
-        widget.bridge,
-        CoreObjectPath(<String>[
-          'repository',
-          'memoryRepository',
-          widget.ownerKey,
-        ]),
-      );
+      _clients.repositoryMemoryRepositoryForOwner(widget.ownerKey);
 
   /// Initializes the page by loading graph data.
   @override

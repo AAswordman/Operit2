@@ -55,7 +55,8 @@ fn render_dart_models(
     objects: &[SourceObject],
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
-    let reachable = reachable_serializable_types(objects, serializable_types);
+    let mut reachable = reachable_serializable_types(objects, serializable_types);
+    include_source_tree_model_types(&mut reachable, serializable_types);
     let mut types = reachable
         .iter()
         .filter_map(|name| serializable_types.get(name))
@@ -174,11 +175,12 @@ fn render_dart_clients(
     output.push_str("import '../../link/CoreLinkProtocol.dart';\n");
     output.push_str("import 'CoreProxyModels.g.dart';\n\n");
     output.push_str(
-        "String _coreProxyRequestId() => 'flutter-${DateTime.now().microsecondsSinceEpoch}';\n\n",
+        "String _coreProxyRequestId() => 'flutter-${DateTime.now().microsecondsSinceEpoch}';\nMap<String, Object?> _coreProxyArgs(Map<String, Object?> args, Map<String, Object?> objectArgs) => <String, Object?>{...objectArgs, ...args};\n\n",
     );
     output.push_str("class GeneratedCoreProxyClients {\n");
     output.push_str("  const GeneratedCoreProxyClients(this.bridge);\n\n");
     output.push_str("  final OperitRuntimeBridge bridge;\n\n");
+    let namespace_prefixes = dart_namespace_prefixes(objects);
     for object in objects
         .iter()
         .filter(|object| !matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. }))
@@ -190,26 +192,128 @@ fn render_dart_clients(
             object.schema_key
         ));
         output.push_str(&format!(
-            "  {class_name} get {getter_name} => {class_name}(bridge, CoreObjectPath.parse('{}'));\n",
-            object.schema_key
+            "  {class_name} get {getter_name} => {class_name}._(bridge, {});\n",
+            object.object_id
         ));
-        if let ObjectAccess::ResolvedHolder { proxy_aliases, .. } = &object.access {
-            for (alias, target_path) in proxy_aliases {
-                output.push_str(&format!(
-                    "  {class_name} get {alias} => {class_name}(bridge, CoreObjectPath.parse({target_path:?}));\n"
-                ));
-            }
+        if object.schema_key == "repository.memoryRepository" {
+            output.push_str(&format!(
+                "  /// Returns the generated proxy for one memory owner.\n  {class_name} repositoryMemoryRepositoryForOwner(String ownerKey) => {class_name}._(bridge, {}, objectArgs: <String, Object?>{{'__core_instance_id': ownerKey}});\n",
+                object.object_id
+            ));
         }
+    }
+    for namespace in namespace_prefixes
+        .iter()
+        .filter(|path| !path.contains('.') && !objects.iter().any(|object| object.schema_key == **path))
+    {
+        let getter_name = dart_identifier(namespace);
+        let class_name = dart_namespace_class_name(namespace);
+        output.push_str(&format!(
+            "  /// Returns the generated proxy namespace for `{namespace}`.\n  {class_name} get {getter_name} => {class_name}._(bridge);\n"
+        ));
     }
     output.push_str("}\n\n");
 
+    for namespace in &namespace_prefixes {
+        output.push_str(&render_dart_namespace_class(namespace, &namespace_prefixes, objects));
+    }
+
     for object in objects {
-        output.push_str(&render_dart_client_class(object, serializable_types));
+        output.push_str(&render_dart_client_class(objects, object, serializable_types));
     }
     output
 }
 
+/// Returns every dotted schema prefix that should be exposed as a Dart namespace.
+fn dart_namespace_prefixes(objects: &[SourceObject]) -> std::collections::BTreeSet<String> {
+    let mut prefixes = std::collections::BTreeSet::new();
+    for object in objects {
+        let mut parts = object.schema_key.split('.');
+        let Some(first) = parts.next() else {
+            continue;
+        };
+        let mut prefix = first.to_string();
+        for part in parts {
+            prefixes.insert(prefix.clone());
+            prefix.push('.');
+            prefix.push_str(part);
+        }
+    }
+    prefixes
+}
+
+/// Renders one generated namespace that mirrors dotted schema segments.
+fn render_dart_namespace_class(
+    namespace: &str,
+    prefixes: &std::collections::BTreeSet<String>,
+    objects: &[SourceObject],
+) -> String {
+    let class_name = dart_namespace_class_name(namespace);
+    let mut children = std::collections::BTreeSet::new();
+    let prefix = format!("{namespace}.");
+    for path in prefixes {
+        if let Some(rest) = path.strip_prefix(&prefix) {
+            if let Some(child) = rest.split('.').next() {
+                children.insert(child.to_string());
+            }
+        }
+    }
+    for object in objects {
+        if let Some(rest) = object.schema_key.strip_prefix(&prefix) {
+            if let Some(child) = rest.split('.').next() {
+                children.insert(child.to_string());
+            }
+        }
+    }
+
+    let mut output = String::new();
+    output.push_str(&format!("class {class_name} {{\n"));
+    output.push_str(&format!("  const {class_name}._(this.bridge);\n\n"));
+    output.push_str("  final OperitRuntimeBridge bridge;\n\n");
+    for child in children {
+        let child_path = format!("{namespace}.{child}");
+        if prefixes.contains(&child_path)
+            && !objects.iter().any(|object| object.schema_key == child_path)
+        {
+            let child_class = dart_namespace_class_name(&child_path);
+            let child_getter = dart_identifier(&child);
+            output.push_str(&format!(
+                "  /// Returns the generated proxy namespace for `{child_path}`.\n  {child_class} get {child_getter} => {child_class}._(bridge);\n"
+            ));
+            continue;
+        }
+        if let Some(object) = objects.iter().find(|object| object.schema_key == child_path) {
+            if matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. }) {
+                continue;
+            }
+            let getter_name = dart_identifier(&child);
+            let proxy_class = dart_proxy_class_name(&object.schema_key);
+            output.push_str(&format!(
+                "  /// Returns a generated proxy client for `{child_path}`.\n  {proxy_class} get {getter_name} => {proxy_class}._(bridge, {});\n",
+                object.object_id
+            ));
+        }
+    }
+    output.push_str("}\n\n");
+    output
+}
+
+/// Includes serializable models owned by the independent Link and Core server source trees.
+fn include_source_tree_model_types(
+    reachable: &mut HashSet<String>,
+    serializable_types: &HashMap<String, SerializableType>,
+) {
+    for type_name in serializable_types.keys() {
+        let crate_name = type_name.split("::").next().unwrap_or_default();
+        if !matches!(crate_name, "operit_link_access" | "operit_core_server") {
+            continue;
+        }
+        collect_reachable_type(type_name, serializable_types, reachable);
+    }
+}
+
 fn render_dart_client_class(
+    objects: &[SourceObject],
     object: &SourceObject,
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
@@ -217,13 +321,15 @@ fn render_dart_client_class(
     let mut output = String::new();
     output.push_str(&format!("class {class_name} {{\n"));
     output.push_str(&format!(
-        "  const {class_name}(this.bridge, this.targetPath);\n\n"
+        "  const {class_name}._(this.bridge, this.objectId, {{this.objectArgs = const <String, Object?>{{}}}});\n\n"
     ));
     output.push_str("  final OperitRuntimeBridge bridge;\n\n");
-    output.push_str("  final CoreObjectPath targetPath;\n\n");
+    output.push_str("  final int objectId;\n\n");
+    output.push_str("  final Map<String, Object?> objectArgs;\n\n");
     for method in &object.methods {
         if method.factory_protocol().is_some() {
             output.push_str(&render_dart_factory_method(
+                objects,
                 object,
                 method,
                 serializable_types,
@@ -246,6 +352,11 @@ fn render_dart_client_class(
                 serializable_types,
             ));
         }
+    }
+    if object.schema_key == "application" {
+        output.push_str(
+            "  /// Runs one CLI-style Core command through the generated application proxy.\n  Future<Object?> runCoreCommand({required List<String> args}) {\n    return bridge.callApplication('runCoreCommand', args: <String, Object?>{'args': args});\n  }\n\n",
+        );
     }
     output.push_str("}\n\n");
     output
@@ -306,10 +417,10 @@ fn render_dart_reverse_stream_method(
     output.push_str("    final sink = await bridge.push(\n");
     output.push_str("      CorePushRequest(\n");
     output.push_str("        requestId: _coreProxyRequestId(),\n");
-    output.push_str("        targetPath: targetPath,\n");
+    output.push_str("        targetObjectId: objectId,\n");
     output.push_str(&format!("        methodName: '{}',\n", method.name));
     output.push_str(&format!(
-        "        args: <String, Object?>{{{open_args}}},\n"
+        "        args: _coreProxyArgs(<String, Object?>{{{open_args}}}, objectArgs),\n"
     ));
     output.push_str("      ),\n    );\n");
     output.push_str("    try {\n");
@@ -355,16 +466,16 @@ fn render_dart_call_method(
     ));
     output.push_str("      CoreCallRequest(\n");
     output.push_str("        requestId: _coreProxyRequestId(),\n");
-    output.push_str("        targetPath: targetPath,\n");
+    output.push_str("        targetObjectId: objectId,\n");
     output.push_str(&format!("        methodName: '{}',\n", method.name));
-    output.push_str(&format!("        args: {args},\n"));
+    output.push_str(&format!("        args: _coreProxyArgs({args}, objectArgs),\n"));
     output.push_str("      ),\n");
     output.push_str("    );\n");
     if return_type == "void" {
         output.push_str("    decodeNativeCoreVoidResult(responseBytes);\n");
     } else {
         output.push_str(&format!(
-            "    return decodeNativeCoreResult<{}>(responseBytes, decode: (reader) => {}, targetPath: targetPath, embeddedStreamFactory: bridge.openEmbeddedCoreStream);\n",
+            "    return decodeNativeCoreResult<{}>(responseBytes, decode: (reader) => {}, targetObjectId: objectId, embeddedStreamFactory: bridge.openEmbeddedCoreStream);\n",
             return_type,
             dart_message_pack_decode_expr("reader", &return_type, serializable_types)
         ));
@@ -382,7 +493,8 @@ fn control_call_registry() -> &'static [(&'static str, &'static str)] {
 }
 
 fn render_dart_factory_method(
-    _object: &SourceObject,
+    objects: &[SourceObject],
+    object: &SourceObject,
     method: &SourceMethod,
     _serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
@@ -399,24 +511,27 @@ fn render_dart_factory_method(
     } else {
         format!("{{{params}}}")
     };
-    let extra_segments = method
+    let constructor_args = method
         .args
         .iter()
-        .map(|arg| dart_identifier(&arg.name))
+        .enumerate()
+        .map(|(index, arg)| format!("'__core_factory_arg_{index}': {}", dart_identifier(&arg.name)))
         .collect::<Vec<_>>()
         .join(", ");
     let factory_method_name = dart_identifier(&method.name);
-    let segments_expr = if extra_segments.is_empty() {
-        format!("<String>[...targetPath.segments, '{}']", method.name)
+    let object_args_expr = if constructor_args.is_empty() {
+        "const <String, Object?>{}".to_string()
     } else {
-        format!(
-            "<String>[...targetPath.segments, '{}', {extra_segments}]",
-            method.name
-        )
+        format!("<String, Object?>{{{constructor_args}}}")
     };
+    let target_object_id = objects
+        .iter()
+        .find(|candidate| candidate.schema_key == factory.target_schema_key)
+        .expect("factory target object must be generated")
+        .object_id;
     let mut output = render_dart_doc_comments(method, "  ");
     output.push_str(&format!(
-        "  {class_name} {factory_method_name}({params}) {{\n    return {class_name}(bridge, CoreObjectPath({segments_expr}));\n  }}\n\n"
+        "  {class_name} {factory_method_name}({params}) {{\n    return {class_name}._(bridge, {target_object_id}, objectArgs: {object_args_expr});\n  }}\n\n"
     ));
     output
 }
@@ -427,18 +542,7 @@ fn render_dart_watch_method(
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
     let watch = method.watch_protocol().expect("watch protocol");
-    // A RenderableTextStream crosses the Link as MarkdownStreamEvent values.
-    // The Rust method returns an opaque text-stream implementation, so there is
-    // no serializable snapshot type to infer from its signature. Its event
-    // representation is nevertheless fixed by core_text_event_stream.
-    let value_type = match &watch.stream {
-        WatchStreamProtocol::TextEvent { .. } => "MarkdownStreamEvent".to_string(),
-        _ => watch
-            .snapshot_type
-            .as_ref()
-            .map(|ty| dart_type(ty, serializable_types))
-            .unwrap_or_else(|| "Object?".to_string()),
-    };
+    let value_type = dart_type(&watch.item_type, serializable_types);
     let params = render_dart_params(&method.args, serializable_types);
     let args = render_dart_args_map(&method.args, serializable_types);
     let mut output = String::new();
@@ -449,7 +553,7 @@ fn render_dart_watch_method(
     ));
     output.push_str("    return bridge\n");
     output.push_str(&format!(
-        "        .watchStream(CoreWatchRequest(requestId: _coreProxyRequestId(), targetPath: targetPath, propertyName: '{}', args: {args}))\n",
+        "        .watchStream(CoreWatchRequest(requestId: _coreProxyRequestId(), targetObjectId: objectId, propertyName: '{}', args: _coreProxyArgs({args}, objectArgs)))\n",
         method.name
     ));
     output.push_str("        .where((event) => event.kind != 'Completed')\n");
@@ -459,7 +563,7 @@ fn render_dart_watch_method(
     output.push_str("            throw StateError('Core watch event has no payload bytes');\n");
     output.push_str("          }\n");
     output.push_str(&format!(
-        "          return decodeCoreLink<{}>(valueBytes, decode: (reader) => {}, targetPath: event.targetPath, embeddedStreamFactory: bridge.openEmbeddedCoreStream);\n",
+            "          return decodeCoreLink<{}>(valueBytes, decode: (reader) => {}, targetObjectId: event.targetObjectId, embeddedStreamFactory: bridge.openEmbeddedCoreStream);\n",
         value_type,
         dart_message_pack_decode_expr("reader", &value_type, serializable_types)
     ));
@@ -1217,13 +1321,7 @@ fn reachable_serializable_types(
                     if let Some(snapshot_type) = &watch.snapshot_type {
                         collect_reachable_type(snapshot_type, serializable_types, &mut out);
                     }
-                    if matches!(&watch.stream, WatchStreamProtocol::TextEvent { .. }) {
-                        collect_reachable_type(
-                            "operit_util::MarkdownRenderStream::MarkdownStreamEvent",
-                            serializable_types,
-                            &mut out,
-                        );
-                    }
+                    collect_reachable_type(&watch.item_type, serializable_types, &mut out);
                 }
                 _ => {}
             }
@@ -1623,6 +1721,14 @@ fn dart_proxy_class_name(schema_key: &str) -> String {
     out
 }
 
+/// Builds a stable Dart class name for one generated schema namespace.
+fn dart_namespace_class_name(namespace: &str) -> String {
+    let mut out = String::from("Generated");
+    out.push_str(&upper_camel_from_words(&identifier_words(namespace)));
+    out.push_str("CoreProxyNamespace");
+    out
+}
+
 fn dart_parameter_name(name: &str) -> String {
     dart_identifier(name.trim_start_matches('_'))
 }
@@ -1871,3 +1977,7 @@ fn render_dart_doc_comments(method: &SourceMethod, indent: &str) -> String {
         })
         .collect()
 }
+
+
+
+

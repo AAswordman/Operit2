@@ -1,20 +1,14 @@
 use super::*;
-use crate::{create_cli_link_access_store, create_local_core};
-use operit_core_proxy::{
-    CoreNodeRouter::CoreNodeRouter, RuntimeRemoteLinkService::RuntimeRemoteLinkService,
-};
+use crate::create_cli_link_access_store;
 
 use operit_link_access::{
-    link_token_hash, LinkAccessStore, RemoteDeviceInfo, RemoteLinkServer, RemoteLinkServerConfig,
-    RemoteWebAccessConfig,
+    link_token_hash, LinkAccessStore, RemoteDeviceInfo, StaticWebAccessControlConfig,
+    StaticWebAccessServer, StaticWebAccessServerConfig,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::mdns::MdnsRegistration;
-use operit_providers::chat::enhance::ConversationService::ConversationService;
-use operit_providers::chat::EnhancedAIService::EnhancedAIService;
-use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -166,7 +160,7 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     let access_store = create_cli_link_access_store();
     let identity = access_store.initializeIdentity(device_info)?;
     let device_info = identity.deviceInfo.clone();
-    let device_id = identity.deviceId;
+    let device_id = identity.deviceId.clone();
     let web_asset_reader: Arc<dyn Fn(&Path) -> Result<Vec<u8>, String> + Send + Sync> =
         Arc::new(|path| std::fs::read(path).map_err(|error| error.to_string()));
     let state = CliLinkHostState {
@@ -209,40 +203,20 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     );
     println!("webRoot={}", web_root.display());
 
-    let mut core = create_local_core();
-    core.localApplicationMut().onCreate()?;
-    {
-        let application = core.localApplicationMut();
-        let enhanced_ai_service = EnhancedAIService::new(
-            application.toolHandler.clone(),
-            application.providerRuntimeContext.clone(),
-        );
-        let mut holder = application
-            .chatRuntimeHolder
-            .try_lock()
-            .map_err(|_| "Chat runtime holder is busy".to_string())?;
-        holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService = Some(enhanced_ai_service);
-    }
-    super::link::install_link_permission_requester(&mut core);
-    RuntimeRemoteLinkService::new(core.clone()).startSpaceSync()?;
-
     println!("runtimeMode=local");
-    let result = RemoteLinkServer::serveWithListener(
-        CoreNodeRouter::new(Arc::new(core)),
-        RemoteLinkServerConfig {
+    let result = StaticWebAccessServer::serveWithListener(
+        StaticWebAccessServerConfig {
             bindAddress: resolved_bind_address,
-            token: config.token.clone(),
-            localControlToken: Some(shutdown_token.clone()),
-            deviceId: device_id,
-            deviceInfo: device_info,
-            webAccess: Some(RemoteWebAccessConfig {
-                token: config.token,
-                shutdownToken: shutdown_token.clone(),
-                webRoot: web_root,
-                readAsset: web_asset_reader,
+            shutdownToken: shutdown_token.clone(),
+            webRoot: web_root,
+            readAsset: web_asset_reader,
+            linkControl: Some(StaticWebAccessControlConfig {
+                token: config.token.clone(),
+                deviceId: identity.deviceId,
+                deviceInfo: identity.deviceInfo,
+                accessStore: access_store,
             }),
             printStartupInfo: false,
-            accessStore: access_store,
         },
         listener,
         listener_address,

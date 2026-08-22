@@ -1,5 +1,3 @@
-use async_trait::async_trait;
-
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::plugins::toolpkg::ToolPkgChatInputHookBridge::{
@@ -22,7 +20,6 @@ use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_host_api::{FileSystemHost, HostRuntimeTaskSchedulerHost};
-use operit_link::{CoreLinkError, CoreWatchSourceActivator, CoreWatchSourceResume};
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatHistoryListItem::ChatHistoryListItem;
@@ -167,41 +164,6 @@ pub struct ChatServiceCore {
     pub uiBridge: EmptyChatServiceUiBridge,
     pub attachments: Vec<AttachmentInfo>,
     pendingQueueStore: Arc<PendingChatQueueStore>,
-}
-
-#[async_trait(?Send)]
-impl CoreWatchSourceActivator for ChatServiceCore {
-    /// Activates the next physical response source without exposing route mechanics to chat logic.
-    async fn activateWatchSource(
-        &mut self,
-        bindingKey: String,
-        resume: CoreWatchSourceResume,
-    ) -> Result<(), CoreLinkError> {
-        let chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
-        let enhancedAiService = self.enhancedAiService.as_mut().ok_or_else(|| {
-            CoreLinkError::new(
-                "STREAM_SOURCE_ACTIVATION_FAILED",
-                "response source requires EnhancedAIService",
-            )
-        })?;
-        let messageCoordinationDelegate =
-            self.messageCoordinationDelegate.as_mut().ok_or_else(|| {
-                CoreLinkError::new(
-                    "STREAM_SOURCE_ACTIVATION_FAILED",
-                    "response source requires MessageCoordinationDelegate",
-                )
-            })?;
-        self.messageProcessingDelegate
-            .activateResponseExecution(
-                enhancedAiService,
-                messageCoordinationDelegate,
-                chatHistoryDelegate,
-                bindingKey,
-                resume.payload,
-            )
-            .await
-            .map_err(|error| CoreLinkError::new("STREAM_SOURCE_ACTIVATION_FAILED", error))
-    }
 }
 
 impl ChatServiceCore {
@@ -426,10 +388,7 @@ impl ChatServiceCore {
     }
 
     /// Sends a user-authored message through the active chat runtime.
-    #[operit_core_annotations::operit_core_route(
-        binding = chatIdOverride,
-        current = currentChatIdFlow
-    )]
+    #[operit_core_route::operit_core_route(binding = chatIdOverride)]
     pub async fn sendUserMessage(
         &mut self,
         promptFunctionType: PromptFunctionType,
@@ -532,14 +491,14 @@ impl ChatServiceCore {
     }
 
     /// Cancels message generation for a specific chat id.
-    #[operit_core_annotations::operit_core_route(binding = chatId)]
+    #[operit_core_route::operit_core_route(binding = chatId)]
     pub async fn cancelMessage(&mut self, chatId: String) {
         self.messageProcessingDelegate.cancelMessage(chatId).await;
     }
 
     /// Adds one message to the queue owned by a specific chat.
     #[allow(non_snake_case)]
-    #[operit_core_annotations::operit_core_route(binding = chatId)]
+    #[operit_core_route::operit_core_route(binding = chatId)]
     pub fn enqueuePendingQueueMessage(&mut self, chatId: String, messageText: String) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId
@@ -558,7 +517,7 @@ impl ChatServiceCore {
 
     /// Deletes one queued message from a specific chat.
     #[allow(non_snake_case)]
-    #[operit_core_annotations::operit_core_route(binding = chatId)]
+    #[operit_core_route::operit_core_route(binding = chatId)]
     pub fn deletePendingQueueMessage(&mut self, chatId: String, messageId: i64) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let Some(queueState) = queueStateByChatId.get_mut(&chatId) else {
@@ -570,7 +529,7 @@ impl ChatServiceCore {
 
     /// Removes one queued message for editing or explicit user delivery.
     #[allow(non_snake_case)]
-    #[operit_core_annotations::operit_core_route(binding = chatId)]
+    #[operit_core_route::operit_core_route(binding = chatId)]
     pub fn takePendingQueueMessage(
         &mut self,
         chatId: String,
@@ -594,7 +553,7 @@ impl ChatServiceCore {
 
     /// Clears a manual-send suppression after that message is not delivered.
     #[allow(non_snake_case)]
-    #[operit_core_annotations::operit_core_route(binding = chatId)]
+    #[operit_core_route::operit_core_route(binding = chatId)]
     pub fn clearPendingQueueAutoDequeueSuppression(&mut self, chatId: String) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let Some(queueState) = queueStateByChatId.get_mut(&chatId) else {
@@ -609,7 +568,7 @@ impl ChatServiceCore {
 
     /// Atomically removes the next queued message after a chat becomes ready.
     #[allow(non_snake_case)]
-    #[operit_core_annotations::operit_core_route(binding = chatId)]
+    #[operit_core_route::operit_core_route(binding = chatId)]
     pub fn takeNextPendingQueueMessageIfReady(
         &mut self,
         chatId: String,
@@ -639,7 +598,7 @@ impl ChatServiceCore {
 
     /// Inserts a rejected queued message back at the front of its chat queue.
     #[allow(non_snake_case)]
-    #[operit_core_annotations::operit_core_route(binding = chatId)]
+    #[operit_core_route::operit_core_route(binding = chatId)]
     pub fn restorePendingQueueMessage(&mut self, chatId: String, message: PendingQueueMessageItem) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId
@@ -655,7 +614,7 @@ impl ChatServiceCore {
 
     /// Updates whether a chat's pending-message queue is expanded in the UI.
     #[allow(non_snake_case)]
-    #[operit_core_annotations::operit_core_route(binding = chatId)]
+    #[operit_core_route::operit_core_route(binding = chatId)]
     pub fn setPendingQueueExpanded(&mut self, chatId: String, isExpanded: bool) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId
@@ -1651,10 +1610,7 @@ impl ChatServiceCore {
 
     /// Returns messages from the Core selected by Binding for one explicit chat.
     #[allow(non_snake_case)]
-    #[operit_core_annotations::operit_core_route(
-        binding = chatId,
-        current = currentChatIdFlow
-    )]
+    #[operit_core_route::operit_core_route(binding = chatId)]
     pub fn chatMessagesFlow(&self, chatId: Option<String>) -> StateFlow<Vec<ChatMessage>> {
         let selectedChatId = chatId.expect("chatMessagesFlow requires a routed chatId");
         self.chatHistoryDelegate
@@ -1663,10 +1619,7 @@ impl ChatServiceCore {
 
     /// Returns runtime state from the Core selected by Binding for one explicit chat.
     #[allow(non_snake_case)]
-    #[operit_core_annotations::operit_core_route(
-        binding = chatId,
-        current = currentChatIdFlow
-    )]
+    #[operit_core_route::operit_core_route(binding = chatId)]
     pub fn chatStateFlow(&self, chatId: Option<String>) -> StateFlow<ChatState> {
         let selectedChatId = chatId.expect("chatStateFlow requires a routed chatId");
         let displayWindowStateFlow = self

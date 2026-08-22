@@ -56,7 +56,7 @@ impl CoreLinkTransportClient for TestCoreClient {
     ) -> Result<CoreEvent, CoreLinkError> {
         Ok(CoreEvent {
             requestId: Some(request.requestId),
-            targetPath: request.targetPath,
+            targetObjectId: request.targetObjectId,
             propertyName: request.propertyName,
             kind: CoreEventKind::Snapshot,
             value: core_map([("snapshot", CoreValue::Bool(true))]),
@@ -69,7 +69,7 @@ impl CoreLinkTransportClient for TestCoreClient {
         sender
             .send(CoreEvent {
                 requestId: Some(request.requestId),
-                targetPath: request.targetPath,
+                targetObjectId: request.targetObjectId,
                 propertyName: request.propertyName,
                 kind: CoreEventKind::Completed,
                 value: CoreValue::emptyMap(),
@@ -91,7 +91,7 @@ impl CoreLinkTransportClient for TestCoreClient {
 /// Serializes a Link call envelope for dispatcher tests.
 fn call_body() -> Bytes {
     let envelope = LinkCallEnvelope {
-        request: CoreCallRequest::new("test-call", "runtime.chat", "send", CoreValue::emptyMap()),
+        request: CoreCallRequest::new("test-call", 7, "send", CoreValue::emptyMap()),
     };
     Bytes::from(encodeLink(&envelope).unwrap())
 }
@@ -101,7 +101,7 @@ fn watch_body() -> Bytes {
     let envelope = LinkWatchEnvelope {
         request: CoreWatchRequest::new(
             "test-watch",
-            "runtime.chat",
+            7,
             "stream",
             CoreValue::emptyMap(),
         ),
@@ -144,7 +144,7 @@ async fn dispatcher_push_dispatches_ordered_items() {
     let dispatcher = CoreLinkHttpDispatcher::new(TestCoreClient);
     let open = LinkPushOpenEnvelope {
         pushId: "input-1".to_string(),
-        request: CorePushRequest::new("input-1", "runtime.browser", "interact"),
+        request: CorePushRequest::new("input-1", 41, "interact"),
     };
     let open_response = dispatcher
         .pushOpen(Bytes::from(encodeLink(open).unwrap()))

@@ -26,6 +26,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 mdns-sd = "0.12"
 include_dir = { version = "0.7", optional = true }
 operit-core-proxy = { path = "../../core/crates/operit-core-proxy" }
+operit-core-server = { path = "../../core/crates/operit-core-server" }
 operit-command-core = { path = "../../core/crates/operit-command-core" }
 operit-host-api = { path = "../../core/crates/operit-host-api" }
 operit-host-native-common = { path = "../../hosts/common/operit-host-native-common", default-features = false, features = ["storage"] }

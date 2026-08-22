@@ -37,7 +37,7 @@ abstract class OperitRuntimeBridge {
   /// Opens one embedded stream through the generic Core property route.
   Stream<T> openEmbeddedCoreStream<T>(
     String streamId,
-    CoreObjectPath targetPath,
+    int targetObjectId,
     String propertyName,
     Object? args,
     T Function(CoreLinkValueReader reader) decode,
@@ -50,7 +50,7 @@ abstract class OperitRuntimeBridge {
     return call(
       CoreCallRequest(
         requestId: 'flutter-${DateTime.now().microsecondsSinceEpoch}',
-        targetPath: CoreObjectPath.parse('application'),
+        targetObjectId: 0,
         methodName: methodName,
         args: args,
       ),

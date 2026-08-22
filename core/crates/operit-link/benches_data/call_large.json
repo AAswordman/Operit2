@@ -1,9 +1,7 @@
 {
   "request": {
     "requestId": "bench-large-call",
-    "targetPath": {
-      "segments": ["runtime", "chat"]
-    },
+    "targetObjectId": 7,
     "methodName": "send",
     "args": {
       "messageSize": 65536,
@@ -14,3 +12,4 @@
     }
   }
 }
+

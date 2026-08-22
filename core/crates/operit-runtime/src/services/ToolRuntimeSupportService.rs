@@ -389,7 +389,6 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         holder
             .getCore(ChatRuntimeSlot::MAIN)
             .switchChat(chatId.to_string());
-        holder.syncMainChatSelectionToFloating(chatId.to_string());
         holder.observeStats();
         Ok(())
     }

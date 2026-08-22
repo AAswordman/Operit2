@@ -32,7 +32,7 @@ void main() {
     final scriptCall = bridge.calls.singleWhere(
       (request) => request.methodName == 'getToolPkgComposeDslScript',
     );
-    expect(scriptCall.targetPath.key, 'application.packageManager');
+    expect(scriptCall.targetObjectId, 4);
     expect(scriptCall.args, isA<Map<String, Object?>>());
     final args = scriptCall.args as Map<String, Object?>;
     expect(args['containerPackageName'], 'demo_toolpkg');
@@ -41,10 +41,7 @@ void main() {
     final renderCall = bridge.calls.singleWhere(
       (request) => request.methodName == 'executeToolPkgComposeDslScript',
     );
-    expect(renderCall.targetPath.segments, <String>[
-      'application',
-      'packageManager',
-    ]);
+    expect(renderCall.targetObjectId, 4);
     final renderArgs = renderCall.args as Map<String, Object?>;
     expect(
       renderArgs['contextKey'],
@@ -115,10 +112,7 @@ void main() {
     final args = actionCall.args as Map<String, Object?>;
     expect(args['actionId'], 'increment');
     expect(args['payload'], isNull);
-    expect(actionCall.targetPath.segments, <String>[
-      'application',
-      'packageManager',
-    ]);
+    expect(actionCall.targetObjectId, 4);
     expect(
       args['contextKey'],
       startsWith(
@@ -1025,7 +1019,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   @override
   Stream<T> openEmbeddedCoreStream<T>(
     String streamId,
-    CoreObjectPath targetPath,
+    int targetObjectId,
     String propertyName,
     Object? args,
     T Function(CoreLinkValueReader reader) decode,
@@ -1038,7 +1032,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
     return CoreEvent(
       requestId: request.requestId,
-      targetPath: request.targetPath,
+      targetObjectId: request.targetObjectId,
       propertyName: request.propertyName,
       kind: 'Snapshot',
       value: null,
@@ -1054,7 +1048,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
     calls.add(
       CoreCallRequest(
         requestId: request.requestId,
-        targetPath: request.targetPath,
+        targetObjectId: request.targetObjectId,
         methodName: request.propertyName,
         args: request.args,
       ),
@@ -1075,7 +1069,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
     }
     yield CoreEvent(
       requestId: request.requestId,
-      targetPath: request.targetPath,
+      targetObjectId: request.targetObjectId,
       propertyName: request.propertyName,
       kind: 'Changed',
       value: jsonEncode(<String, Object?>{
@@ -1088,14 +1082,14 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
     }
     yield CoreEvent(
       requestId: request.requestId,
-      targetPath: request.targetPath,
+      targetObjectId: request.targetObjectId,
       propertyName: request.propertyName,
       kind: 'Changed',
       value: jsonEncode(<String, Object?>{'phase': 'final', 'result': result}),
     );
     yield CoreEvent(
       requestId: request.requestId,
-      targetPath: request.targetPath,
+      targetObjectId: request.targetObjectId,
       propertyName: request.propertyName,
       kind: 'Completed',
       value: jsonEncode(<String, Object?>{'phase': 'complete'}),

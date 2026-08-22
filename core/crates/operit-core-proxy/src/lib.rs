@@ -9,59 +9,67 @@ use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_host_api::{FileSystemHost, RuntimeStorageHost};
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
-    CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CoreObjectPath, CoreRequestId,
-    CoreValue, CoreWatchRequest, CoreWatchSourceResume,
+    CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CoreRequestId,
+    CoreStreamSource, CoreValue, CoreWatchRequest,
 };
+use operit_tools::runtime_support::{CoreNodeToolRuntime, ToolRuntimeSupport};
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
-use operit_tools::runtime_support::{CoreNodeToolRuntime, ToolRuntimeSupport};
 use operit_util::stream::ReverseStream::ReverseStreamSender;
-use operit_util::stream::RevisableTextStream::{
-    RenderableTextStream, ResponseStreamItem, RevisableTextStream, TextStreamEventType,
-};
 use operit_util::stream::Stream::Stream;
-use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionState;
-use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
-use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 
-pub mod CoreNodeRouter;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod RuntimeRemoteLinkDiscovery;
-pub mod RuntimeRemoteLinkService;
-pub mod SpacePersistenceSyncService;
-
 include!(concat!(env!("OUT_DIR"), "/generated_core_dispatch.rs"));
-
-pub(crate) const CORE_ROUTE_CURSOR_ARGUMENT: &str = "__operit_route_cursor";
-pub(crate) const CORE_ROUTE_CURSOR_PROPERTY: &str = "__operit_route_cursor";
-pub(crate) const CORE_ROUTE_SOURCE_TRANSITION_PROPERTY: &str = "__operit_route_source_transition";
-
-/// Stores the adapter-owned state needed to continue one text watch.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-struct TextWatchCursor {
-    streamKey: String,
-    revisions: TextStreamRevisionState,
-}
-
-/// Carries one opaque physical-source request from a text stream to its router.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct CoreRouteSourceTransition {
-    pub(crate) targetNodeId: String,
-    pub(crate) payload: Vec<u8>,
-}
 
 #[derive(Clone)]
 pub struct LocalCoreProxy {
     application: Arc<Mutex<OperitApplication>>,
     hostManager: HostManager,
     chatRuntimeHolder: Arc<Mutex<ChatRuntimeHolder>>,
-    toolRuntimeSupport: Arc<dyn ToolRuntimeSupport>,
+    coreStreamPool: Arc<CoreStreamPool>,
+}
+
+/// Owns the in-process sources referenced by serialized `CoreStream` handles.
+pub struct CoreStreamPool {
+    sources: StdMutex<HashMap<String, Arc<CoreStreamSource>>>,
+}
+
+impl CoreStreamPool {
+    /// Creates an empty local stream source pool.
+    fn new() -> Self {
+        Self {
+            sources: StdMutex::new(HashMap::new()),
+        }
+    }
+
+    /// Adopts one source captured while a Core value was serialized.
+    fn adopt(&self, attachment: operit_link::CoreStreamAttachment) {
+        let mut sources = self
+            .sources
+            .lock()
+            .expect("core stream pool mutex poisoned");
+        if let Some(existing) = sources.get(&attachment.streamId) {
+            if !Arc::ptr_eq(existing, &attachment.source) {
+                existing.attachNextSegment(attachment.source);
+            }
+        } else {
+            sources.insert(attachment.streamId, attachment.source);
+        }
+    }
+
+    /// Removes one source after its client-facing stream has completed.
+    fn remove(&self, streamId: &str) {
+        self.sources
+            .lock()
+            .expect("core stream pool mutex poisoned")
+            .remove(streamId);
+    }
 }
 
 /// Owns the runtime-side endpoints for one generated reverse stream invocation.
@@ -154,6 +162,43 @@ impl CoreLinkPushSession for CoreReverseStreamSession {
 }
 
 impl LocalCoreProxy {
+    /// Resolves one generated schema key to its process-local numeric object id.
+    #[allow(non_snake_case)]
+    pub fn generatedObjectIdForSchema(schema: &str) -> Option<u32> {
+        generated_object_id_for_schema(schema)
+    }
+
+    /// Returns the generated local object ID for one concrete runtime type.
+    pub fn generatedObjectIdForType(typeName: &str) -> Option<u32> {
+        generated_object_id_for_type(typeName)
+    }
+
+    /// Installs the server-side CoreNode tool capability into this local runtime.
+    #[allow(non_snake_case)]
+    pub fn bindCoreNodeToolRuntime(
+        &self,
+        runtime: Arc<dyn CoreNodeToolRuntime>,
+    ) -> Result<(), CoreLinkError> {
+        let application = self
+            .application
+            .try_lock()
+            .map_err(|_| CoreLinkError::internal("Local Core application is busy"))?;
+        application
+            .toolHandler
+            .runtimeSupport()
+            .bindCoreNodeToolRuntime(runtime)
+            .map_err(CoreLinkError::internal)
+    }
+
+    /// Opens one caller-owned input stream directly on this local Core proxy.
+    #[allow(non_snake_case)]
+    pub fn openPushLocal(
+        &self,
+        request: operit_link::CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        Ok(Box::new(self.openReverseStream(request)?))
+    }
+
     /// Reports whether a push request is a generated reverse-stream method.
     #[allow(non_snake_case)]
     pub fn isReverseStreamRequest(&self, request: &operit_link::CorePushRequest) -> bool {
@@ -169,12 +214,11 @@ impl LocalCoreProxy {
     }
     /// Creates a local link client backed by an in-process application.
     pub fn new(application: OperitApplication) -> Self {
-        let toolRuntimeSupport = application.toolHandler.runtimeSupport();
         Self {
             hostManager: application.hostManager.clone(),
             chatRuntimeHolder: application.chatRuntimeHolder.clone(),
-            toolRuntimeSupport,
             application: Arc::new(Mutex::new(application)),
+            coreStreamPool: Arc::new(CoreStreamPool::new()),
         }
     }
 
@@ -206,70 +250,6 @@ impl LocalCoreProxy {
 }
 
 #[async_trait(?Send)]
-impl CoreNodeRouter::CoreRouteLocalRuntime for LocalCoreProxy {
-    /// Installs the live Core routing capability exposed to built-in tools.
-    #[allow(non_snake_case)]
-    fn bindCoreNodeToolRuntime(
-        &self,
-        runtime: Arc<dyn CoreNodeToolRuntime>,
-    ) -> Result<(), CoreLinkError> {
-        self.toolRuntimeSupport
-            .bindCoreNodeToolRuntime(runtime)
-            .map_err(CoreLinkError::internal)
-    }
-
-    /// Returns the runtime storage capability owned by this local proxy.
-    #[allow(non_snake_case)]
-    fn runtimeStorageHost(&self) -> Arc<dyn RuntimeStorageHost> {
-        LocalCoreProxy::runtimeStorageHost(self)
-    }
-
-    /// Executes one local Core call through the generated dispatch surface.
-    async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
-        CoreLinkSharedClient::call(self, request).await
-    }
-
-    /// Reads one local Core watch snapshot through the generated dispatch surface.
-    #[allow(non_snake_case)]
-    async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
-        CoreLinkSharedClient::watchSnapshot(self, request).await
-    }
-
-    /// Opens one local Core watch and lets the selected inner source consume its opaque resume.
-    async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
-        CoreLinkSharedClient::watch(self, request).await
-    }
-
-    /// Activates one generated watch source before its Binding is published.
-    #[allow(non_snake_case)]
-    async fn activateWatchSource(
-        &self,
-        request: CoreWatchRequest,
-        generation: i64,
-        payload: Vec<u8>,
-    ) -> Result<(), CoreLinkError> {
-        generated_dispatch_core_proxy_watch_transition_async(
-            self,
-            &request,
-            CoreWatchSourceResume {
-                generation,
-                payload,
-            },
-        )
-        .await
-    }
-
-    /// Opens one generated local Core push stream.
-    #[allow(non_snake_case)]
-    fn openPush(
-        &self,
-        request: operit_link::CorePushRequest,
-    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
-        Ok(Box::new(self.openReverseStream(request)?))
-    }
-}
-
-#[async_trait(?Send)]
 impl CoreLinkClient for LocalCoreProxy {
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
         CoreLinkSharedClient::call(self, request).await
@@ -292,7 +272,7 @@ impl CoreLinkClient for LocalCoreProxy {
         &mut self,
         request: operit_link::CorePushRequest,
     ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
-        Ok(Box::new(self.openReverseStream(request)?))
+        self.openPushLocal(request)
     }
 }
 
@@ -308,10 +288,18 @@ impl CoreLinkSharedClient for LocalCoreProxy {
 
     #[allow(non_snake_case)]
     async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
-        generated_dispatch_core_proxy_watch_snapshot_async(self, request).await
+        let (result, attachments) = operit_link::withCoreStreamCapture(
+            generated_dispatch_core_proxy_watch_snapshot_async(self, request),
+        )
+        .await;
+        self.adoptCoreStreamAttachments(attachments);
+        result
     }
 
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        if request.targetObjectId == operit_link::CORE_STREAM_POOL_OBJECT_ID {
+            return self.openCoreStreamWatch(request);
+        }
         generated_dispatch_core_proxy_watch_async(self, request).await
     }
 }
@@ -319,7 +307,12 @@ impl CoreLinkSharedClient for LocalCoreProxy {
 impl LocalCoreProxy {
     #[allow(non_snake_case)]
     async fn dispatchCall(&self, request: CoreCallRequest) -> Result<CoreValue, CoreLinkError> {
-        generated_dispatch_core_proxy_call(self, request).await
+        let (result, attachments) = operit_link::withCoreStreamCapture(
+            generated_dispatch_core_proxy_call(self, request),
+        )
+        .await;
+        self.adoptCoreStreamAttachments(attachments);
+        result
     }
 
     /// Executes a watch snapshot through the generated synchronous dispatcher.
@@ -336,12 +329,47 @@ impl LocalCoreProxy {
 
     #[allow(non_snake_case)]
     fn dispatchWatchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
-        generated_dispatch_core_proxy_watch_snapshot(self, request)
+        let (result, attachments) = operit_link::withCoreStreamCaptureSync(|| {
+            generated_dispatch_core_proxy_watch_snapshot(self, request)
+        });
+        self.adoptCoreStreamAttachments(attachments);
+        result
     }
 
     #[allow(non_snake_case)]
     fn dispatchWatch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        if request.targetObjectId == operit_link::CORE_STREAM_POOL_OBJECT_ID {
+            return self.openCoreStreamWatch(request);
+        }
         generated_dispatch_core_proxy_watch(self, request)
+    }
+
+    /// Transfers serialized stream sources into this proxy's owned pool.
+    fn adoptCoreStreamAttachments(&self, attachments: Vec<operit_link::CoreStreamAttachment>) {
+        for attachment in attachments {
+            self.coreStreamPool.adopt(attachment);
+        }
+    }
+
+    /// Opens one anonymous stream source from the proxy-owned stream pool.
+    fn openCoreStreamWatch(
+        &self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEventStream, CoreLinkError> {
+        if request.propertyName != "openCoreStream" {
+            return Err(CoreLinkError::watchNotFound(&request.registryKey()));
+        }
+        let mut args = object_args(request.args.clone())?;
+        let streamId: String = decode_core_arg(&mut args, "streamId")?;
+        let source = self
+            .coreStreamPool
+            .sources
+            .lock()
+            .expect("core stream pool mutex poisoned")
+            .get(&streamId)
+            .cloned()
+            .ok_or_else(|| CoreLinkError::watchNotFound(&request.registryKey()))?;
+        source.open(request)
     }
 }
 
@@ -390,206 +418,6 @@ fn core_event_stream_channel() -> (
     (sender, CoreEventStream::new(receiver))
 }
 
-/// Converts one renderable text response into streamed Markdown events.
-fn core_text_event_stream<S>(
-    stream_key: String,
-    stream: S,
-    request: CoreWatchRequest,
-) -> Result<CoreEventStream, CoreLinkError>
-where
-    S: RenderableTextStream + Send + 'static,
-{
-    let resumeCursor = core_route_cursor(&request.args)?
-        .map(|value| {
-            operit_link::fromCoreValue::<TextWatchCursor>(value)
-                .map_err(|error| CoreLinkError::new("CORE_ROUTE_CURSOR_CODEC", error.to_string()))
-        })
-        .transpose()?;
-    let (sender, receiver) = core_event_stream_channel();
-    let (cancelSender, mut cancelReceiver) = tokio::sync::oneshot::channel::<()>();
-    let initialContent = stream.initial_render_content();
-    if let Some(cursor) = resumeCursor.as_ref() {
-        if cursor.streamKey != stream_key {
-            return Err(CoreLinkError::new(
-                "CORE_ROUTE_CURSOR_STREAM_MISMATCH",
-                "Route cursor belongs to a different text stream",
-            ));
-        }
-        if !initialContent.starts_with(&cursor.revisions.content) {
-            return Err(CoreLinkError::new(
-                "CORE_ROUTE_CURSOR_PREFIX_MISMATCH",
-                "Reopened text stream does not preserve the routed cursor prefix",
-            ));
-        }
-    }
-    let mut orderedStream = stream;
-    defaultHostRuntimeTaskSchedulerHost()
-        .scheduleHostRuntimeAsyncTask(
-            "core-proxy-text-markdown",
-            Box::new(move || {
-                Box::pin(async move {
-                    let mut markdownStream = MarkdownRenderEventStream::new(stream_key.clone());
-                    let mut textRevisions = match resumeCursor {
-                        Some(cursor) => {
-                            markdownStream.restoreContent(&cursor.revisions.content);
-                            let suffix = &initialContent[cursor.revisions.content.len()..];
-                            let mut revisions =
-                                TextStreamRevisionTracker::from_state(cursor.revisions);
-                            if !suffix.is_empty() {
-                                let _ = revisions.append(suffix);
-                                for event in markdownStream.pushChunk(suffix) {
-                                    send_text_event(
-                                        &sender,
-                                        &request.requestId,
-                                        &request.targetPath,
-                                        &request.propertyName,
-                                        CoreEventKind::Changed,
-                                        to_core_value(event)
-                                            .expect("MarkdownStreamEvent must serialize"),
-                                    );
-                                }
-                            }
-                            revisions
-                        }
-                        None => {
-                            for event in markdownStream.beginSnapshot(&initialContent) {
-                                send_text_event(
-                                    &sender,
-                                    &request.requestId,
-                                    &request.targetPath,
-                                    &request.propertyName,
-                                    CoreEventKind::Changed,
-                                    to_core_value(event)
-                                        .expect("MarkdownStreamEvent must serialize"),
-                                );
-                            }
-                            TextStreamRevisionTracker::new(&initialContent)
-                        }
-                    };
-                    send_text_cursor(&sender, &request, &stream_key, &textRevisions);
-                    let mut itemCollector = |item: ResponseStreamItem| match item {
-                        ResponseStreamItem::Chunk(chunk) => {
-                            let _ = textRevisions.append(&chunk);
-                            for event in markdownStream.pushChunk(&chunk) {
-                                send_text_event(
-                                    &sender,
-                                    &request.requestId,
-                                    &request.targetPath,
-                                    &request.propertyName,
-                                    CoreEventKind::Changed,
-                                    to_core_value(event)
-                                        .expect("MarkdownStreamEvent must serialize"),
-                                );
-                            }
-                            send_text_cursor(&sender, &request, &stream_key, &textRevisions);
-                        }
-                        ResponseStreamItem::Revision(event) => {
-                            let markdownEvent = match event.event_type {
-                                TextStreamEventType::Savepoint => {
-                                    textRevisions.savepoint(&event.id);
-                                    MarkdownStreamEvent::savepoint(stream_key.clone(), event.id)
-                                }
-                                TextStreamEventType::Rollback => {
-                                    let content = textRevisions.rollback(&event.id).expect(
-                                        "markdown rollback must reference an active savepoint",
-                                    );
-                                    markdownStream.restoreContent(content);
-                                    MarkdownStreamEvent::rollback(stream_key.clone(), event.id)
-                                }
-                            };
-                            send_text_event(
-                                &sender,
-                                &request.requestId,
-                                &request.targetPath,
-                                &request.propertyName,
-                                CoreEventKind::Changed,
-                                to_core_value(markdownEvent)
-                                    .expect("MarkdownStreamEvent must serialize"),
-                            );
-                            send_text_cursor(&sender, &request, &stream_key, &textRevisions);
-                        }
-                    };
-                    let streamCollection = orderedStream.collect_ordered(&mut itemCollector);
-                    tokio::select! {
-                        _ = streamCollection => {},
-                        _ = &mut cancelReceiver => {},
-                    }
-                    if orderedStream.terminal_source_target().is_some() {
-                        match orderedStream.wait_terminal_source_transition().await {
-                            Ok(transition) => {
-                                send_text_event(
-                                    &sender,
-                                    &request.requestId,
-                                    &request.targetPath,
-                                    CORE_ROUTE_SOURCE_TRANSITION_PROPERTY,
-                                    CoreEventKind::Changed,
-                                    to_core_value(CoreRouteSourceTransition {
-                                        targetNodeId: transition.target,
-                                        payload: transition.payload,
-                                    })
-                                    .expect("CoreRouteSourceTransition must serialize"),
-                                );
-                            }
-                            Err(error) => {
-                                operit_util::AppLogger::AppLogger::e(
-                                    "CoreStreamRoute",
-                                    &format!("text source transition failed: {error}"),
-                                );
-                            }
-                        }
-                        return;
-                    }
-                    send_text_event(
-                        &sender,
-                        &request.requestId,
-                        &request.targetPath,
-                        &request.propertyName,
-                        CoreEventKind::Completed,
-                        to_core_value(markdownStream.completed())
-                            .expect("MarkdownStreamEvent must serialize"),
-                    );
-                })
-            }),
-        )
-        .expect("Core text markdown task must be scheduled");
-    Ok(receiver.withOnClose(move || {
-        let _ = cancelSender.send(());
-    }))
-}
-
-/// Reads one opaque route cursor from the reserved watch argument.
-fn core_route_cursor(args: &CoreValue) -> Result<Option<CoreValue>, CoreLinkError> {
-    match args {
-        CoreValue::Map(values) => Ok(values.get(CORE_ROUTE_CURSOR_ARGUMENT).cloned()),
-        CoreValue::Null => Ok(None),
-        _ => Err(CoreLinkError::new(
-            "INVALID_ARGS",
-            "core watch args must be a map",
-        )),
-    }
-}
-
-/// Emits one adapter-owned cursor that routers retain without decoding.
-fn send_text_cursor(
-    sender: &tokio::sync::mpsc::UnboundedSender<CoreEvent>,
-    request: &CoreWatchRequest,
-    streamKey: &str,
-    revisions: &TextStreamRevisionTracker,
-) {
-    send_text_event(
-        sender,
-        &request.requestId,
-        &request.targetPath,
-        CORE_ROUTE_CURSOR_PROPERTY,
-        CoreEventKind::Changed,
-        to_core_value(TextWatchCursor {
-            streamKey: streamKey.to_string(),
-            revisions: revisions.state(),
-        })
-        .expect("TextWatchCursor must serialize"),
-    );
-}
-
 fn core_string_event_stream<S>(mut stream: S, request: CoreWatchRequest) -> CoreEventStream
 where
     S: Stream<Item = String> + Send + 'static,
@@ -604,7 +432,7 @@ where
                         .collect(&mut |value| {
                             let _ = sender.send(CoreEvent {
                                 requestId: Some(request.requestId.clone()),
-                                targetPath: request.targetPath.clone(),
+                                targetObjectId: request.targetObjectId,
                                 propertyName: request.propertyName.clone(),
                                 kind: CoreEventKind::Changed,
                                 value: CoreValue::String(value),
@@ -613,7 +441,7 @@ where
                         .await;
                     let _ = sender.send(CoreEvent {
                         requestId: Some(request.requestId),
-                        targetPath: request.targetPath,
+                        targetObjectId: request.targetObjectId,
                         propertyName: request.propertyName,
                         kind: CoreEventKind::Completed,
                         value: CoreValue::Null,
@@ -641,7 +469,7 @@ where
                             let value = to_core_value(item).expect("stream item must serialize");
                             let _ = sender.send(CoreEvent {
                                 requestId: Some(request.requestId.clone()),
-                                targetPath: request.targetPath.clone(),
+                                targetObjectId: request.targetObjectId,
                                 propertyName: request.propertyName.clone(),
                                 kind: CoreEventKind::Changed,
                                 value,
@@ -650,7 +478,7 @@ where
                         .await;
                     let _ = sender.send(CoreEvent {
                         requestId: Some(request.requestId),
-                        targetPath: request.targetPath,
+                        targetObjectId: request.targetObjectId,
                         propertyName: request.propertyName,
                         kind: CoreEventKind::Completed,
                         value: CoreValue::Null,
@@ -660,23 +488,6 @@ where
         )
         .expect("Core JSON event task must be scheduled");
     receiver
-}
-
-fn send_text_event(
-    sender: &tokio::sync::mpsc::UnboundedSender<CoreEvent>,
-    request_id: &CoreRequestId,
-    target_path: &CoreObjectPath,
-    property_name: &str,
-    kind: CoreEventKind,
-    value: CoreValue,
-) {
-    let _ = sender.send(CoreEvent {
-        requestId: Some(request_id.clone()),
-        targetPath: target_path.clone(),
-        propertyName: property_name.to_string(),
-        kind,
-        value,
-    });
 }
 
 fn generated_proxy_request_id() -> String {

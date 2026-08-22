@@ -5,7 +5,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
-import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 
 abstract class WorkspacePtyProcess {
@@ -62,15 +61,7 @@ WorkspacePtyProcess attachWorkspacePty(String sessionId) {
 class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
   /// Creates a process wrapper around a runtime terminal service session.
   _BridgeWorkspacePtyProcess(this._terminal, this._sessionId) {
-    _outputSubscription = _terminal.bridge
-        .watchStream(
-          CoreWatchRequest(
-            requestId: 'terminal-pty-${DateTime.now().microsecondsSinceEpoch}',
-            targetPath: _terminal.targetPath,
-            propertyName: 'terminalPtyOutput',
-            args: <String, Object?>{'sessionId': _sessionId},
-          ),
-        )
+    _outputSubscription = _terminal.terminalPtyOutput(sessionId: _sessionId)
         .listen(
           _handleEvent,
           onError: _handleOutputError,
@@ -82,7 +73,7 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
   final String _sessionId;
   final _output = StreamController<Uint8List>.broadcast();
   final _exitCode = Completer<int>();
-  StreamSubscription<CoreEvent>? _outputSubscription;
+  StreamSubscription<String>? _outputSubscription;
   Timer? _resizeTimer;
   bool _closed = false;
   bool _finishingExit = false;
@@ -161,24 +152,12 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
     }
   }
 
-  /// Handles terminal output stream events from the runtime bridge.
-  void _handleEvent(CoreEvent event) {
+  /// Handles one generated terminal output value.
+  void _handleEvent(String value) {
     if (_closed || _output.isClosed) {
       return;
     }
-    switch (event.kind) {
-      case 'Changed':
-        _handleOutputValue(event.value);
-        return;
-      case 'Completed':
-        unawaited(_finishWithExit());
-        return;
-      default:
-        _handleOutputError(
-          StateError('Unexpected terminal PTY event kind: ${event.kind}'),
-          StackTrace.current,
-        );
-    }
+    _handleOutputValue(value);
   }
 
   /// Decodes a terminal output payload and emits the bytes to listeners.

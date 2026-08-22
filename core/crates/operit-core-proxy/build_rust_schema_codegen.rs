@@ -17,8 +17,9 @@ fn render_schema_objects(objects: &[SourceObject]) -> String {
         .iter()
         .map(|object| {
             format!(
-                "{}:{}",
+                "{}:{{\"objectId\":{},\"methods\":{}}}",
                 json_string(&object.schema_key),
+                object.object_id,
                 render_schema_methods(&object.methods)
             )
         })
@@ -163,15 +164,13 @@ fn render_schema_protocol(protocol: &MethodProtocol) -> String {
                 | WatchStreamProtocol::JsonState { .. }
                 | WatchStreamProtocol::JsonStream => "Json",
                 WatchStreamProtocol::StringStream => "String",
-                WatchStreamProtocol::TextEvent { .. } => "TextStreamEvent",
             };
             let initial = match watch.stream {
                 WatchStreamProtocol::JsonFlow { .. } | WatchStreamProtocol::JsonState { .. } => {
                     "Snapshot"
                 }
                 WatchStreamProtocol::JsonStream
-                | WatchStreamProtocol::StringStream
-                | WatchStreamProtocol::TextEvent { .. } => "None",
+                | WatchStreamProtocol::StringStream => "None",
             };
             format!("{{\"mode\":\"Watch\",\"payload\":\"{payload}\",\"initial\":\"{initial}\"}}")
         }

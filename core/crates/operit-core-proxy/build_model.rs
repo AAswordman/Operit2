@@ -24,6 +24,7 @@ impl SourceRoot {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ObjectSpec {
+    pub(crate) object_id: u32,
     pub(crate) schema_key: String,
     pub(crate) dispatch_name: String,
     pub(crate) type_name: String,
@@ -37,8 +38,6 @@ pub(crate) struct ObjectSpec {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ObjectPathMatch {
     Exact,
-    TrailingSegments(usize),
-    Predicate(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,6 +60,7 @@ pub(crate) enum ObjectAccess {
     ContextGetInstanceArcMutexConstruct,
     ContextRefGetInstanceArcMutexConstruct,
     CoreProxyConstruct,
+    CoreNodeLocalRuntimeConstruct,
     StorePathsConstruct,
     ResultStorePathsConstruct,
     FactoryMethodConstruct {
@@ -90,6 +90,7 @@ impl ObjectAccess {
                 | ObjectAccess::ContextGetInstanceArcMutexConstruct
                 | ObjectAccess::ContextRefGetInstanceArcMutexConstruct
                 | ObjectAccess::CoreProxyConstruct
+                | ObjectAccess::CoreNodeLocalRuntimeConstruct
                 | ObjectAccess::StorePathsConstruct
                 | ObjectAccess::ResultStorePathsConstruct
                 | ObjectAccess::FactoryMethodConstruct { .. }
@@ -129,14 +130,6 @@ impl TypeRegistry {
         current
     }
 
-    pub(crate) fn implements(&self, ty: &str, trait_name: &str) -> bool {
-        let resolved = self.resolve_alias(ty);
-        self.trait_impls
-            .get(&resolved)
-            .map(|traits| traits.contains(trait_name))
-            .unwrap_or(false)
-    }
-
     pub(crate) fn stream_item(&self, ty: &str) -> Option<String> {
         let resolved = self.resolve_alias(ty);
         self.stream_items.get(&resolved).cloned()
@@ -145,6 +138,7 @@ impl TypeRegistry {
 
 #[derive(Clone, Debug)]
 pub(crate) struct SourceObject {
+    pub(crate) object_id: u32,
     pub(crate) schema_key: String,
     pub(crate) dispatch_name: String,
     pub(crate) full_type: String,
@@ -197,6 +191,7 @@ impl SourceObject {
                 method.watch_protocol(),
                 Some(WatchProtocol {
                     snapshot_type: Some(_),
+                    item_type: _,
                     stream: WatchStreamProtocol::JsonFlow { .. }
                         | WatchStreamProtocol::JsonState { .. },
                 })
@@ -213,19 +208,7 @@ pub(crate) struct SourceMethod {
     pub(crate) is_async: bool,
     pub(crate) cfg_attrs: Vec<String>,
     pub(crate) doc_lines: Vec<String>,
-    pub(crate) route: MethodRoute,
     pub(crate) protocol: MethodProtocol,
-}
-
-/// Defines the Binding route declared by one proxy method.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum MethodRoute {
-    Local,
-    Binding {
-        binding_argument: String,
-        current_resolver: Option<String>,
-        supports_source_transition: bool,
-    },
 }
 
 #[derive(Clone, Debug)]
@@ -326,6 +309,7 @@ pub(crate) enum CallProtocol {
 #[derive(Clone, Debug)]
 pub(crate) struct WatchProtocol {
     pub(crate) snapshot_type: Option<String>,
+    pub(crate) item_type: String,
     pub(crate) stream: WatchStreamProtocol,
 }
 
@@ -346,7 +330,6 @@ pub(crate) enum WatchStreamProtocol {
     JsonState { fallible: bool },
     JsonStream,
     StringStream,
-    TextEvent { optional: bool },
 }
 
 impl SourceMethod {

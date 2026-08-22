@@ -19,7 +19,12 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
     output.push_str("    #[cfg(not(target_arch = \"wasm32\"))]\n");
     output.push_str("    pub async fn runCoreCommand(&mut self, args: &[String]) -> Result<operit_command_core::CoreCommandOutput, operit_link::CoreLinkError> {\n");
     output.push_str("        let args = operit_link::toCoreValue(std::collections::BTreeMap::from([(\"args\", args)])).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_ARGS\", error.to_string()))?;\n");
-    output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), operit_link::CoreObjectPath::parse(\"application\"), \"runCoreCommand\", args)).await;\n");
+    let application_id = objects
+        .iter()
+        .find(|object| object.schema_key == "application")
+        .expect("application object must be generated")
+        .object_id;
+    output.push_str(&format!("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), {application_id}, \"runCoreCommand\", args)).await;\n"));
     output.push_str("        let value = response.result?;\n");
     output.push_str("        operit_link::fromCoreValue(value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
     output.push_str("    }\n\n");
@@ -33,19 +38,10 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
                 "    pub fn {}(&mut self, instanceId: &str) -> {}<'_, C> {{\n",
                 object.dispatch_name, proxy_type
             ));
-            let segments = object
-                .schema_key
-                .split('.')
-                .map(|segment| format!("{segment:?}.to_string()"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            output.push_str("        let mut segments = vec![");
-            output.push_str(&segments);
-            output.push_str("];\n");
-            output.push_str("        segments.push(instanceId.to_string());\n");
+            output.push_str("        let object_args = std::collections::BTreeMap::from([(\"__core_instance_id\".to_string(), operit_link::CoreValue::String(instanceId.to_string()))]);\n");
             output.push_str(&format!(
-                "        {}::new(&mut self.client, operit_link::CoreObjectPath {{ segments }})\n",
-                proxy_type
+                "        {}::new(&mut self.client, {}, object_args)\n",
+                proxy_type, object.object_id
             ));
         } else {
             output.push_str(&format!(
@@ -53,8 +49,9 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
                 object.dispatch_name, proxy_type
             ));
             output.push_str(&format!(
-                "        {}::new(&mut self.client, operit_link::CoreObjectPath::parse({:?}))\n",
-                proxy_type, object.schema_key
+                "        {}::new(&mut self.client, {}, std::collections::BTreeMap::new())\n",
+                proxy_type,
+                object.object_id
             ));
         }
         output.push_str("    }\n\n");
@@ -65,16 +62,17 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
         let proxy_type = proxy_object_type_name(object);
         output.push_str(&format!("pub struct {}<'a, C> {{\n", proxy_type));
         output.push_str("    client: &'a mut C,\n");
-        output.push_str("    target_path: operit_link::CoreObjectPath,\n");
+        output.push_str("    target_object_id: u32,\n");
+        output.push_str("    object_args: std::collections::BTreeMap<String, operit_link::CoreValue>,\n");
         output.push_str("}\n\n");
         output.push_str(&format!(
             "impl<'a, C: operit_link::CoreLinkClient> {}<'a, C> {{\n",
             proxy_type
         ));
         output.push_str(
-            "    fn new(client: &'a mut C, target_path: operit_link::CoreObjectPath) -> Self {\n",
+            "    fn new(client: &'a mut C, target_object_id: u32, object_args: std::collections::BTreeMap<String, operit_link::CoreValue>) -> Self {\n",
         );
-        output.push_str("        Self { client, target_path }\n");
+        output.push_str("        Self { client, target_object_id, object_args }\n");
         output.push_str("    }\n\n");
         output.push_str(
             "    /// Returns mutable access to the link client behind this generated proxy.\n",
@@ -82,27 +80,28 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
         output.push_str("    pub fn generatedClientMut(&mut self) -> &mut C {\n");
         output.push_str("        self.client\n");
         output.push_str("    }\n\n");
-        output.push_str("    /// Returns the object path used by this generated proxy.\n");
-        output
-            .push_str("    pub fn generatedTargetPath(&self) -> &operit_link::CoreObjectPath {\n");
-        output.push_str("        &self.target_path\n");
+        output.push_str("    /// Merges constructor-bound object arguments into one generated request payload.\n");
+        output.push_str("    fn generatedArgs(&self, args: operit_link::CoreValue) -> operit_link::CoreValue {\n");
+        output.push_str("        let mut values = match args { operit_link::CoreValue::Map(values) => values, value => return value };\n");
+        output.push_str("        for (key, value) in &self.object_args { values.entry(key.clone()).or_insert_with(|| value.clone()); }\n");
+        output.push_str("        operit_link::CoreValue::Map(values)\n");
         output.push_str("    }\n\n");
         if object.has_proxy_value_call_methods() {
             output.push_str("    async fn callGenerated<T: serde::de::DeserializeOwned>(&mut self, methodName: &str, args: operit_link::CoreValue) -> Result<T, operit_link::CoreLinkError> {\n");
-            output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_path.clone(), methodName, args)).await;\n");
+            output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_object_id, methodName, self.generatedArgs(args))).await;\n");
             output.push_str("        let value = response.result?;\n");
             output.push_str("        operit_link::fromCoreValue(value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
             output.push_str("    }\n\n");
         }
         if object.has_proxy_unit_call_methods() {
             output.push_str("    async fn callGeneratedUnit(&mut self, methodName: &str, args: operit_link::CoreValue) -> Result<(), operit_link::CoreLinkError> {\n");
-            output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_path.clone(), methodName, args)).await;\n");
+            output.push_str("        let response = self.client.call(operit_link::CoreCallRequest::new(generated_proxy_request_id(), self.target_object_id, methodName, self.generatedArgs(args))).await;\n");
             output.push_str("        response.result.map(|_| ())\n");
             output.push_str("    }\n\n");
         }
         if object.has_proxy_snapshot_watch_methods() {
             output.push_str("    async fn watchGenerated<T: serde::de::DeserializeOwned>(&mut self, propertyName: &str, args: operit_link::CoreValue) -> Result<T, operit_link::CoreLinkError> {\n");
-            output.push_str("        let event = self.client.watchSnapshot(operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), propertyName, args)).await?;\n");
+            output.push_str("        let event = self.client.watchSnapshot(operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_object_id, propertyName, self.generatedArgs(args))).await?;\n");
             output.push_str("        operit_link::fromCoreValue(event.value).map_err(|error| operit_link::CoreLinkError::new(\"INVALID_RESPONSE\", error.to_string()))\n");
             output.push_str("    }\n\n");
         }
@@ -111,7 +110,7 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
             .iter()
             .filter(|method| method.factory_protocol().is_some())
         {
-            output.push_str(&render_proxy_factory_method(method));
+            output.push_str(&render_proxy_factory_method(objects, method));
         }
         for method in object
             .methods
@@ -186,7 +185,7 @@ fn render_proxy_reverse_stream_method(method: &SourceMethod) -> String {
         method.name, params
     ));
     output.push_str(&format!(
-        "        let request = operit_link::CorePushRequest::new(generated_proxy_request_id(), self.target_path.clone(), {:?}).withArgs({});\n",
+        "        let request = operit_link::CorePushRequest::new(generated_proxy_request_id(), self.target_object_id, {:?}).withArgs(self.generatedArgs({}));\n",
         method.name, args
     ));
     output.push_str("        let mut sink = self.client.openPush(request).await?;\n");
@@ -219,9 +218,14 @@ fn proxy_object_type_name_from_schema_key(schema_key: &str) -> String {
     out
 }
 
-fn render_proxy_factory_method(method: &SourceMethod) -> String {
+fn render_proxy_factory_method(objects: &[SourceObject], method: &SourceMethod) -> String {
     let factory = method.factory_protocol().expect("factory protocol");
     let proxy_type = proxy_object_type_name_from_schema_key(&factory.target_schema_key);
+    let target_object_id = objects
+        .iter()
+        .find(|object| object.schema_key == factory.target_schema_key)
+        .expect("factory target object must be generated")
+        .object_id;
     let params = render_proxy_params(method);
     let mut output = render_cfg_attrs(method);
     output.push_str(&render_doc_comments(method));
@@ -229,24 +233,21 @@ fn render_proxy_factory_method(method: &SourceMethod) -> String {
         "    pub fn {}(&mut self{}) -> {}<'_, C> {{\n",
         method.name, params, proxy_type
     ));
-    output.push_str("        let mut segments = self.target_path.segments.clone();\n");
-    output.push_str(&format!(
-        "        segments.push({:?}.to_string());\n",
-        method.name
-    ));
-    for arg in &method.args {
+    output.push_str("        let mut object_args = std::collections::BTreeMap::new();\n");
+    for (index, arg) in method.args.iter().enumerate() {
         output.push_str(&format!(
-            "        segments.push({}.to_string());\n",
+            "        object_args.insert(\"__core_factory_arg_{index}\".to_string(), operit_link::CoreValue::String({}.to_string()));\n",
             arg.name
         ));
     }
     output.push_str(&format!(
-        "        {}::new(self.client, operit_link::CoreObjectPath {{ segments }})\n",
-        proxy_type
+        "        {}::new(self.client, {}, object_args)\n",
+        proxy_type, target_object_id
     ));
     output.push_str("    }\n\n");
     output
 }
+
 
 fn render_proxy_call_method(method: &SourceMethod) -> String {
     let params = render_proxy_params(method);
@@ -275,12 +276,11 @@ fn render_proxy_watch_method(object: &SourceObject, method: &SourceMethod) -> St
     };
     match &watch.stream {
         WatchStreamProtocol::JsonStream
-        | WatchStreamProtocol::StringStream
-        | WatchStreamProtocol::TextEvent { .. } => {
+        | WatchStreamProtocol::StringStream => {
             let params = render_proxy_params(method);
             let args_json = render_proxy_args_json(method);
             let method_code = format!(
-                "    pub async fn {}(&mut self{}) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {{\n        self.client.watch(operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), {:?}, {})).await\n    }}\n\n",
+                "    pub async fn {}(&mut self{}) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {{\n        self.client.watch(operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_object_id, {:?}, self.generatedArgs({}))).await\n    }}\n\n",
                 method.name, params, method.name, args_json
             );
             render_cfg_attrs(method) + &render_doc_comments(method) + &method_code
@@ -337,7 +337,7 @@ fn render_proxy_watch_all_method(object: &SourceObject) -> String {
         return "    /// Watches every generated state-flow property on this proxy object.\n    pub async fn watchAllGeneratedStateFlows(&mut self, _sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {\n        Ok(())\n    }\n\n".to_string();
     }
     format!(
-        "    /// Watches every generated state-flow property on this proxy object.\n    pub async fn watchAllGeneratedStateFlows(&mut self, sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {{\n        let mut propertyNames: Vec<&'static str> = Vec::new();\n{}        for propertyName in propertyNames {{\n            let request = operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_path.clone(), propertyName, operit_link::CoreValue::emptyMap());\n            let mut stream = self.client.watch(request).await?;\n            let sender = sender.clone();\n            let scheduler = operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost();\n            operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(\n                scheduler.as_ref(),\n                \"core-proxy-state-flow\",\n                Box::new(move || Box::pin(async move {{\n                    while let Some(event) = stream.recv().await {{\n                        let _ = sender.send(event);\n                    }}\n                }})),\n            )\n            .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n        }}\n        Ok(())\n    }}\n\n",
+        "    /// Watches every generated state-flow property on this proxy object.\n    pub async fn watchAllGeneratedStateFlows(&mut self, sender: tokio::sync::mpsc::UnboundedSender<operit_link::CoreEvent>) -> Result<(), operit_link::CoreLinkError> {{\n        let mut propertyNames: Vec<&'static str> = Vec::new();\n{}        for propertyName in propertyNames {{\n            let request = operit_link::CoreWatchRequest::new(generated_proxy_request_id(), self.target_object_id, propertyName, self.generatedArgs(operit_link::CoreValue::emptyMap()));\n            let mut stream = self.client.watch(request).await?;\n            let sender = sender.clone();\n            let scheduler = operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost();\n            operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(\n                scheduler.as_ref(),\n                \"core-proxy-state-flow\",\n                Box::new(move || Box::pin(async move {{\n                    while let Some(event) = stream.recv().await {{\n                        let _ = sender.send(event);\n                    }}\n                }})),\n            )\n            .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n        }}\n        Ok(())\n    }}\n\n",
         watchable.join("")
     )
 }
@@ -422,3 +422,6 @@ fn doc_comment_suffix(line: &str) -> String {
         format!(" {line}")
     }
 }
+
+
+

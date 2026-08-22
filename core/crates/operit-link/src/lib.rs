@@ -23,9 +23,12 @@ pub use http_protocol::{
 };
 pub use protocol::{
     fromCoreValue, toCoreValue, CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind,
-    CoreEventStream, CoreLinkError, CoreMethodMode, CoreMethodProtocol, CoreObjectPath,
+    CoreEventStream, CoreLinkError, CoreMethodMode, CoreMethodProtocol,
     CorePayloadKind, CorePushItem, CorePushRequest, CoreRequestId, CoreValue, CoreWatchInitial,
-    CoreWatchRequest, CoreWatchSourceActivator, CoreWatchSourceResume,
-    CORE_INCREMENTAL_VALUES_ARGUMENT,
+    CoreWatchRequest,
+    CORE_INCREMENTAL_VALUES_ARGUMENT, CORE_STREAM_POOL_OBJECT_ID,
 };
-pub use core_stream::{CoreStream, CoreStreamDescriptor};
+pub use core_stream::{
+    withCoreStreamCapture, withCoreStreamCaptureSync, CoreStream, CoreStreamAttachment,
+    CoreStreamDescriptor, CoreStreamSource,
+};

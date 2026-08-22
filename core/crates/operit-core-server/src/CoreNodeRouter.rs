@@ -8,8 +8,8 @@ use operit_link::{
 };
 use operit_link_access::CoreNodePeerLink::{
     activePeerNodeIds, peerLink, subscribePeerLinkChanges, CoreNodeBindingApplyRequest,
-    CoreNodeBindingTransitionRequest, CoreNodeBindingTransitionResult, CoreNodeLinkClient,
-    CoreNodeWatchSourceActivationRequest, PeerLinkClient, RoutedCoreRequest,
+    CoreNodeLinkClient, PeerLinkClient, RoutedCoreRequest,
+    RoutedCoreRequestKind,
 };
 use operit_store::CoreNodeBindingStore::{
     CoreNodeBindingChange, CoreNodeBindingChangeObserver, CoreNodeBindingCommit,
@@ -24,13 +24,10 @@ use operit_tools::runtime_support::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::{broadcast, Mutex};
 
-use crate::{
-    CoreRouteSourceTransition, GeneratedCoreRoute,
-    CORE_ROUTE_CURSOR_ARGUMENT, CORE_ROUTE_CURSOR_PROPERTY, CORE_ROUTE_SOURCE_TRANSITION_PROPERTY,
-};
+use crate::{GeneratedCoreRoute, CORE_ROUTE_CURSOR_ARGUMENT, CORE_ROUTE_CURSOR_PROPERTY};
+use crate::SpaceRuntime::SpaceRuntime;
 
 static CORE_NODE_ROUTER_REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -50,54 +47,111 @@ struct CoreNodePushState {
 /// Routes incoming Core Link traffic through CoreNode Binding and Space routing state.
 #[derive(Clone)]
 pub struct CoreNodeRouter {
-    localCore: Arc<dyn CoreRouteLocalRuntime>,
+    localCore: Arc<CoreNodeLocalRuntime>,
     bindingStore: Arc<dyn CoreNodeBindingRuntime>,
     localNodeId: String,
     spaceStore: CoreSpaceStore,
     bindingChanges: broadcast::Sender<String>,
-    bindingTransitionCoordinator: Arc<Mutex<()>>,
     _bindingChangeObserver: Arc<CoreNodeBindingChangeObserver>,
 }
 
-/// Exposes the Link operations and storage capability required by Core routing.
-#[async_trait(?Send)]
-pub trait CoreRouteLocalRuntime: Send + Sync {
-    /// Installs the live device routing capability used by built-in tools.
+/// Carries local Core capabilities into the server-side Space router.
+#[derive(Clone)]
+pub struct CoreNodeLocalRuntime {
+    sharedClient: Arc<dyn CoreLinkSharedClient + Send + Sync>,
+    runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
+    bindCoreNodeToolRuntime:
+        Arc<dyn Fn(Arc<dyn CoreNodeToolRuntime>) -> Result<(), CoreLinkError> + Send + Sync>,
+    openPush: Arc<dyn Fn(CorePushRequest) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> + Send + Sync>,
+    spaceRuntime: Arc<SpaceRuntime>,
+}
+
+impl CoreNodeLocalRuntime {
+    /// Creates the server-side capability container for one local Core.
+    pub fn new(
+        sharedClient: Arc<dyn CoreLinkSharedClient + Send + Sync>,
+        runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
+        bindCoreNodeToolRuntime: Arc<
+            dyn Fn(Arc<dyn CoreNodeToolRuntime>) -> Result<(), CoreLinkError> + Send + Sync,
+        >,
+        openPush: Arc<
+            dyn Fn(CorePushRequest) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError>
+                + Send
+                + Sync,
+        >,
+        spaceRuntime: Arc<SpaceRuntime>,
+    ) -> Self {
+        Self {
+            sharedClient,
+            runtimeStorageHost,
+            bindCoreNodeToolRuntime,
+            openPush,
+            spaceRuntime,
+        }
+    }
+
+    /// Returns the storage host owned by the local Core.
+    #[allow(non_snake_case)]
+    pub fn runtimeStorageHost(&self) -> Arc<dyn RuntimeStorageHost> {
+        self.runtimeStorageHost.clone()
+    }
+
+    /// Installs the routing capability used by built-in tools.
     #[allow(non_snake_case)]
     fn bindCoreNodeToolRuntime(
         &self,
         runtime: Arc<dyn CoreNodeToolRuntime>,
-    ) -> Result<(), CoreLinkError>;
+    ) -> Result<(), CoreLinkError> {
+        (self.bindCoreNodeToolRuntime)(runtime)
+    }
 
-    /// Returns the runtime storage capability owned by this Core.
+    /// Executes one local Core call through the local shared client.
+    pub async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
+        self.sharedClient.call(request).await
+    }
+
+    /// Reads one local Core watch snapshot through the local shared client.
     #[allow(non_snake_case)]
-    fn runtimeStorageHost(&self) -> Arc<dyn RuntimeStorageHost>;
+    async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+        self.sharedClient.watchSnapshot(request).await
+    }
 
-    /// Executes one local Core call.
-    async fn call(&self, request: CoreCallRequest) -> CoreCallResponse;
+    /// Opens one local Core watch through the local shared client.
+    async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        self.sharedClient.watch(request).await
+    }
 
-    /// Reads one local Core watch snapshot.
+    /// Opens one local Core push through the supplied capability.
     #[allow(non_snake_case)]
-    async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError>;
-
-    /// Opens one local Core watch stream.
-    async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError>;
-
-    /// Activates one generated local watch source from opaque route state.
-    #[allow(non_snake_case)]
-    async fn activateWatchSource(
-        &self,
-        request: CoreWatchRequest,
-        generation: i64,
-        payload: Vec<u8>,
-    ) -> Result<(), CoreLinkError>;
-
-    /// Opens one local Core push stream.
-    #[allow(non_snake_case)]
-    fn openPush(
+    pub fn openPush(
         &self,
         request: CorePushRequest,
-    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError>;
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        (self.openPush)(request)
+    }
+
+    /// Executes one Space call in the server-owned Space route namespace.
+    async fn callSpace(&self, request: CoreCallRequest) -> CoreCallResponse {
+        self.spaceRuntime.call(request).await
+    }
+
+    /// Reads one Space watch snapshot in the server-owned Space route namespace.
+    async fn watchSpaceSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+        self.spaceRuntime.watchSnapshot(request).await
+    }
+
+    /// Opens one Space watch in the server-owned Space route namespace.
+    async fn watchSpace(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        self.spaceRuntime.watch(request).await
+    }
+
+    /// Opens one Space push in the server-owned Space route namespace.
+    fn openSpacePush(&self, request: CorePushRequest) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        Err(CoreLinkError::new(
+            "SPACE_PUSH_NOT_REGISTERED",
+            format!("Space push route is not registered: {}", request.methodName),
+        ))
+    }
 }
 
 /// Exposes opaque persistent Binding operations required by CoreNode routing.
@@ -182,18 +236,18 @@ impl CoreNodeBindingRuntime for CoreNodeBindingStore {
 
 impl CoreNodeRouter {
     /// Creates a router over the local Core and its runtime-owned Link Access records.
-    pub fn new(localCore: Arc<dyn CoreRouteLocalRuntime>) -> Self {
+    pub fn new(localCore: CoreNodeLocalRuntime) -> Self {
         let bindingStore = Arc::new(
             CoreNodeBindingStore::new(localCore.runtimeStorageHost())
                 .expect("CoreNodeRouter requires persistent Binding storage"),
         );
-        Self::newWithRuntime(localCore, bindingStore)
+        Self::newWithRuntime(Arc::new(localCore), bindingStore)
     }
 
     /// Creates a router over one concrete local Core runtime implementation.
     #[allow(non_snake_case)]
     fn newWithRuntime(
-        localCore: Arc<dyn CoreRouteLocalRuntime>,
+        localCore: Arc<CoreNodeLocalRuntime>,
         bindingStore: Arc<dyn CoreNodeBindingRuntime>,
     ) -> Self {
         let localNodeId = CoreNodeIdentityStore::new(localCore.runtimeStorageHost())
@@ -227,7 +281,6 @@ impl CoreNodeRouter {
             localNodeId,
             spaceStore,
             bindingChanges,
-            bindingTransitionCoordinator: Arc::new(Mutex::new(())),
             _bindingChangeObserver: bindingChangeObserver,
         }
     }
@@ -303,10 +356,6 @@ impl CoreNodeRouter {
         match route {
             GeneratedCoreRoute::Local => Ok(self.localNodeId.clone()),
             GeneratedCoreRoute::Binding { key, .. } => self.bindingRouteNodeId(&key),
-            GeneratedCoreRoute::CurrentBinding { .. } => Err(CoreLinkError::new(
-                "CORE_BINDING_CURRENT_UNRESOLVED",
-                "Current Binding must be resolved before selecting a CoreNode",
-            )),
         }
     }
 
@@ -330,61 +379,13 @@ impl CoreNodeRouter {
             .map_err(CoreLinkError::internal)
     }
 
-    /// Resolves an object-scoped current Binding through the local Core state.
-    #[allow(non_snake_case)]
-    async fn resolveGeneratedRoute(
-        &self,
-        route: GeneratedCoreRoute,
-        targetPath: operit_link::CoreObjectPath,
-    ) -> Result<(GeneratedCoreRoute, Option<(usize, String)>), CoreLinkError> {
-        let GeneratedCoreRoute::CurrentBinding { scope, resolver } = route else {
-            return Ok((route, None));
-        };
-        let event = self
-            .localCore
-            .watchSnapshot(CoreWatchRequest::new(
-                nextCoreNodeRouterRequestId(resolver),
-                targetPath,
-                resolver,
-                CoreValue::emptyMap(),
-            ))
-            .await?;
-        let CoreValue::String(key) = event.value else {
-            return Err(CoreLinkError::new(
-                "CORE_BINDING_CURRENT_REQUIRED",
-                "Binding resolver did not return a current key",
-            ));
-        };
-        if key.trim().is_empty() {
-            return Err(CoreLinkError::new(
-                "CORE_BINDING_KEY_REQUIRED",
-                "Binding resolver returned an empty key",
-            ));
-        }
-        Ok((
-            GeneratedCoreRoute::Binding {
-                scope,
-                key: key.clone(),
-            },
-            Some((scope, key)),
-        ))
-    }
-
     /// Opens the generic push session selected by generated CoreNode routing metadata.
     #[allow(non_snake_case)]
     async fn openPushSession(
         &self,
         mut request: CorePushRequest,
     ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
-        let (route, currentBinding) = self
-            .resolveGeneratedRoute(
-                crate::generated_core_push_route(&request)?,
-                request.targetPath.clone(),
-            )
-            .await?;
-        if let Some((scope, key)) = currentBinding {
-            crate::generated_inject_current_binding_push(scope, &mut request, key)?;
-        }
+        let route = crate::generated_core_push_route(&request)?;
         let targetNodeId = self.routeNodeId(route).await?;
         if targetNodeId == self.localNodeId {
             return self.localCore.openPush(request);
@@ -419,8 +420,20 @@ impl CoreNodeRouter {
             spaceId: space.spaceId,
             targetNodeId,
             ttl,
+            routeKind: RoutedCoreRequestKind::ObjectId,
             payload,
         })
+    }
+
+    /// Builds the initial envelope for one annotation-addressed Space request.
+    fn initialSpaceRoute<T>(
+        &self,
+        targetNodeId: String,
+        payload: T,
+    ) -> Result<RoutedCoreRequest<T>, CoreLinkError> {
+        let mut route = self.initialRoute(targetNodeId, payload)?;
+        route.routeKind = RoutedCoreRequestKind::SpaceRoute;
+        Ok(route)
     }
 
     /// Resolves one routed hop while excluding peers already proven unable to reach the target.
@@ -569,8 +582,23 @@ impl CoreNodeRouter {
         targetNodeId: String,
         request: CoreCallRequest,
     ) -> CoreCallResponse {
+        self.callNodeWithKind(targetNodeId, request, RoutedCoreRequestKind::ObjectId)
+            .await
+    }
+
+    /// Executes one call on an explicit CoreNode with a selected request namespace.
+    async fn callNodeWithKind(
+        &self,
+        targetNodeId: String,
+        request: CoreCallRequest,
+        routeKind: RoutedCoreRequestKind,
+    ) -> CoreCallResponse {
         let requestId = request.requestId.clone();
-        let route = match self.initialRoute(targetNodeId, request) {
+        let route = match if routeKind == RoutedCoreRequestKind::SpaceRoute {
+            self.initialSpaceRoute(targetNodeId, request)
+        } else {
+            self.initialRoute(targetNodeId, request)
+        } {
             Ok(value) => value,
             Err(error) => return CoreCallResponse::err(requestId, error),
         };
@@ -595,6 +623,36 @@ impl CoreNodeRouter {
             }
             return response;
         }
+    }
+
+    /// Executes one annotation-addressed Space call through Binding-selected routing.
+    pub async fn callSpace(&self, request: CoreCallRequest) -> CoreCallResponse {
+        let requestId = request.requestId.clone();
+        let route = match crate::generated_space_call_route(&request) {
+            Some(route) => route,
+            None => {
+                return CoreCallResponse::err(
+                    requestId,
+                    CoreLinkError::new("SPACE_ROUTE_NOT_FOUND", "Space call route is not registered"),
+                )
+            }
+        };
+        let bindingKey = match route.bindingKey(&request.args) {
+            Ok(value) => value,
+            Err(error) => return CoreCallResponse::err(requestId, error),
+        };
+        let targetNodeId = match self
+            .routeNodeId(GeneratedCoreRoute::Binding { scope: 0, key: bindingKey })
+            .await
+        {
+            Ok(value) => value,
+            Err(error) => return CoreCallResponse::err(requestId, error),
+        };
+        if targetNodeId == self.localNodeId {
+            return self.localCore.callSpace(request).await;
+        }
+        self.callNodeWithKind(targetNodeId, request, RoutedCoreRequestKind::SpaceRoute)
+            .await
     }
 
     /// Reads one watch snapshot on an explicit target CoreNode.
@@ -641,6 +699,40 @@ impl CoreNodeRouter {
         }
     }
 
+    /// Reads one annotation-addressed Space watch snapshot through Binding routing.
+    pub async fn watchSpaceSnapshot(
+        &self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
+        let route = crate::generated_space_watch_route(&request)
+            .ok_or_else(|| CoreLinkError::new("SPACE_ROUTE_NOT_FOUND", "Space watch route is not registered"))?;
+        let bindingKey = route.bindingKey(&request.args)?;
+        let targetNodeId = self
+            .routeNodeId(GeneratedCoreRoute::Binding { scope: 0, key: bindingKey })
+            .await?;
+        if targetNodeId == self.localNodeId {
+            return self.localCore.watchSpaceSnapshot(request).await;
+        }
+        self.watchNodeSnapshotSpace(targetNodeId, request).await
+    }
+
+    /// Opens one annotation-addressed Space watch through Binding routing.
+    pub async fn watchSpace(
+        &self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEventStream, CoreLinkError> {
+        let route = crate::generated_space_watch_route(&request)
+            .ok_or_else(|| CoreLinkError::new("SPACE_ROUTE_NOT_FOUND", "Space watch route is not registered"))?;
+        let bindingKey = route.bindingKey(&request.args)?;
+        let targetNodeId = self
+            .routeNodeId(GeneratedCoreRoute::Binding { scope: 0, key: bindingKey })
+            .await?;
+        if targetNodeId == self.localNodeId {
+            return self.localCore.watchSpace(request).await;
+        }
+        self.watchNodeSpace(targetNodeId, request).await
+    }
+
     /// Opens one push on an explicit target CoreNode.
     #[allow(non_snake_case)]
     pub async fn openPushNode(
@@ -663,6 +755,77 @@ impl CoreNodeRouter {
         }
     }
 
+    /// Reads one Space watch snapshot on an explicit CoreNode.
+    async fn watchNodeSnapshotSpace(
+        &self,
+        targetNodeId: String,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
+        let route = self.initialSpaceRoute(targetNodeId, request)?;
+        let mut excludedPeerNodeIds = BTreeSet::new();
+        loop {
+            let (peer, forwardedRoute) = self.forwardRouteAvoiding(None, &excludedPeerNodeIds, route.clone())?;
+            let peerNodeId = peer.peerNodeId();
+            match peer.routedWatchSnapshot(forwardedRoute).await {
+                Err(error) if isRouteUnavailableError(&error) => { excludedPeerNodeIds.insert(peerNodeId); }
+                result => return result,
+            }
+        }
+    }
+
+    /// Opens one Space watch on an explicit CoreNode.
+    async fn watchNodeSpace(
+        &self,
+        targetNodeId: String,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEventStream, CoreLinkError> {
+        let route = self.initialSpaceRoute(targetNodeId, request)?;
+        let mut excludedPeerNodeIds = BTreeSet::new();
+        loop {
+            let (peer, forwardedRoute) = self.forwardRouteAvoiding(None, &excludedPeerNodeIds, route.clone())?;
+            let peerNodeId = peer.peerNodeId();
+            match peer.routedWatch(forwardedRoute).await {
+                Err(error) if isRouteUnavailableError(&error) => { excludedPeerNodeIds.insert(peerNodeId); }
+                result => return result,
+            }
+        }
+    }
+
+    /// Opens one Space push on an explicit CoreNode.
+    async fn openPushNodeSpace(
+        &self,
+        targetNodeId: String,
+        request: CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        let route = self.initialSpaceRoute(targetNodeId, request)?;
+        let mut excludedPeerNodeIds = BTreeSet::new();
+        loop {
+            let (peer, forwardedRoute) = self.forwardRouteAvoiding(None, &excludedPeerNodeIds, route.clone())?;
+            let peerNodeId = peer.peerNodeId();
+            match peer.routedOpenPush(forwardedRoute).await {
+                Err(error) if isRouteUnavailableError(&error) => { excludedPeerNodeIds.insert(peerNodeId); }
+                result => return result,
+            }
+        }
+    }
+
+    /// Opens one annotation-addressed Space push through Binding routing.
+    pub async fn openSpacePush(
+        &self,
+        request: CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        let route = crate::generated_space_push_route(&request)
+            .ok_or_else(|| CoreLinkError::new("SPACE_ROUTE_NOT_FOUND", "Space push route is not registered"))?;
+        let bindingKey = route.bindingKey(&request.args)?;
+        let targetNodeId = self
+            .routeNodeId(GeneratedCoreRoute::Binding { scope: 0, key: bindingKey })
+            .await?;
+        if targetNodeId == self.localNodeId {
+            return self.localCore.openSpacePush(request);
+        }
+        self.openPushNodeSpace(targetNodeId, request).await
+    }
+
     /// Executes one generated call directly on this CoreNode after Binding validation.
     #[allow(non_snake_case)]
     async fn executeLocalCall(&self, request: CoreCallRequest) -> CoreCallResponse {
@@ -679,12 +842,6 @@ impl CoreNodeRouter {
         let bindingKey = match crate::generated_core_call_route(request)? {
             GeneratedCoreRoute::Binding { key, .. } => Some(key),
             GeneratedCoreRoute::Local => None,
-            GeneratedCoreRoute::CurrentBinding { .. } => {
-                return Err(CoreLinkError::new(
-                    "CORE_BINDING_CURRENT_UNRESOLVED",
-                    "Current Binding call reached local execution before resolution",
-                ))
-            }
         };
         let Some(key) = bindingKey else {
             return Ok(());
@@ -797,331 +954,6 @@ impl CoreNodeRouter {
         Ok(CoreEventStream::new(receiver).withOnClose(move || {
             let _ = cancelSender.send(());
         }))
-    }
-
-    /// Opens one stable outer watch whose Binding key follows a local resolver flow.
-    #[allow(non_snake_case)]
-    async fn openCurrentBindingWatch(
-        &self,
-        scope: usize,
-        resolver: &'static str,
-        request: CoreWatchRequest,
-    ) -> Result<CoreEventStream, CoreLinkError> {
-        let resolverRequest = CoreWatchRequest::new(
-            nextCoreNodeRouterRequestId(resolver),
-            request.targetPath.clone(),
-            resolver,
-            CoreValue::emptyMap(),
-        );
-        let initialEvent = self.localCore.watchSnapshot(resolverRequest.clone()).await?;
-        let initialKey = currentBindingKeyFromEvent(initialEvent, resolver)?;
-        let mut initialRequest = request.clone();
-        crate::generated_inject_current_binding_watch(scope, &mut initialRequest, initialKey.clone())?;
-        let source = self
-            .openRecoveringBindingWatch(initialKey.clone(), initialRequest)
-            .await?;
-        let resolverStream = self.localCore.watch(resolverRequest).await?;
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (cancelSender, cancelReceiver) = tokio::sync::oneshot::channel();
-        let router = self.clone();
-        HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(
-            defaultHostRuntimeTaskSchedulerHost().as_ref(),
-            "core-node-current-binding-watch",
-            Box::new(move || {
-                Box::pin(async move {
-                    runCurrentBindingWatch(
-                        router,
-                        scope,
-                        resolver,
-                        request,
-                        initialKey,
-                        source,
-                        resolverStream,
-                        sender,
-                        cancelReceiver,
-                    )
-                    .await;
-                })
-            }),
-        )
-        .map_err(|error| CoreLinkError::internal(error.to_string()))?;
-        Ok(CoreEventStream::new(receiver).withOnClose(move || {
-            let _ = cancelSender.send(());
-        }))
-    }
-
-    /// Commits one source transition and synchronizes its Binding operation to the target.
-    #[allow(non_snake_case)]
-    async fn transitionBindingSource(
-        &self,
-        bindingKey: String,
-        sourceNodeId: String,
-        sourceGeneration: i64,
-        targetNodeId: String,
-        watchRequest: CoreWatchRequest,
-        payload: Vec<u8>,
-    ) -> Result<CoreNodeBindingRecord, CoreLinkError> {
-        let transition = self
-            .requestBindingTransition(
-                bindingKey.clone(),
-                sourceNodeId,
-                sourceGeneration,
-                targetNodeId.clone(),
-                watchRequest,
-                payload,
-            )
-            .await?;
-        self.applyBindingCommitAtNode(
-            targetNodeId,
-            CoreNodeBindingApplyRequest {
-                bindingKey: bindingKey.clone(),
-                nodeId: transition.nodeId.clone(),
-                generation: transition.generation,
-                operation: transition.operation.clone(),
-            },
-        )
-        .await?;
-        let observedBinding = self
-            .bindingStore
-            .applyImmediateBindingOperation(&transition.operation)?;
-        if observedBinding.key != bindingKey
-            || observedBinding.nodeId != transition.nodeId
-            || observedBinding.generation != transition.generation
-        {
-            return Err(CoreLinkError::new(
-                "CORE_BINDING_OBSERVATION_MISMATCH",
-                format!(
-                    "Binding observation expected key={} node={} generation={}, applied key={} node={} generation={}",
-                    bindingKey,
-                    transition.nodeId,
-                    transition.generation,
-                    observedBinding.key,
-                    observedBinding.nodeId,
-                    observedBinding.generation
-                ),
-            ));
-        }
-        Ok(CoreNodeBindingRecord {
-            key: bindingKey,
-            nodeId: transition.nodeId,
-            generation: transition.generation,
-        })
-    }
-
-    /// Routes one Binding generation transition to the Router that owns its source.
-    #[allow(non_snake_case)]
-    async fn requestBindingTransition(
-        &self,
-        bindingKey: String,
-        sourceNodeId: String,
-        sourceGeneration: i64,
-        targetNodeId: String,
-        watchRequest: CoreWatchRequest,
-        payload: Vec<u8>,
-    ) -> Result<CoreNodeBindingTransitionResult, CoreLinkError> {
-        let request = CoreNodeBindingTransitionRequest {
-            bindingKey,
-            sourceGeneration,
-            targetNodeId,
-            watchRequest,
-            payload,
-        };
-        if sourceNodeId == self.localNodeId {
-            return self.executeBindingTransition(request).await;
-        }
-        let route = self.initialRoute(sourceNodeId, request)?;
-        let mut excludedPeerNodeIds = BTreeSet::new();
-        loop {
-            let (peer, forwardedRoute) =
-                self.forwardRouteAvoiding(None, &excludedPeerNodeIds, route.clone())?;
-            let peerNodeId = peer.peerNodeId();
-            match peer.routedBindingTransition(forwardedRoute).await {
-                Err(error) if isRouteUnavailableError(&error) => {
-                    excludedPeerNodeIds.insert(peerNodeId);
-                }
-                result => return result,
-            }
-        }
-    }
-
-    /// Commits one exact Binding transition on its source Router.
-    #[allow(non_snake_case)]
-    async fn executeBindingTransition(
-        &self,
-        request: CoreNodeBindingTransitionRequest,
-    ) -> Result<CoreNodeBindingTransitionResult, CoreLinkError> {
-        let _coordinator = self.bindingTransitionCoordinator.lock().await;
-        validateCoreNodeSwitchTarget(&self.localNodeId, &self.spaceStore, &request.targetNodeId)
-            .map_err(CoreLinkError::internal)?;
-        match crate::generated_core_watch_route(&request.watchRequest)? {
-            GeneratedCoreRoute::Binding { key, .. } if key == request.bindingKey => {}
-            GeneratedCoreRoute::Binding { key, .. } => {
-                return Err(CoreLinkError::new(
-                    "STREAM_SOURCE_BINDING_MISMATCH",
-                    format!(
-                        "Watch Binding key {} does not match transition Binding {}",
-                        key, request.bindingKey
-                    ),
-                ))
-            }
-            _ => {
-                return Err(CoreLinkError::new(
-                    "STREAM_SOURCE_BINDING_REQUIRED",
-                    "Generated watch source activation requires Binding routing",
-                ))
-            }
-        }
-        let targetGeneration = request.sourceGeneration.checked_add(1).ok_or_else(|| {
-            CoreLinkError::new(
-                "CORE_BINDING_GENERATION_OVERFLOW",
-                format!("Binding generation overflow for {}", request.bindingKey),
-            )
-        })?;
-        let currentBinding = self.bindingStore.binding(&request.bindingKey)?;
-        if currentBinding.nodeId == self.localNodeId
-            && currentBinding.generation == request.sourceGeneration
-        {
-            let activationStartedAt = Instant::now();
-            operit_util::AppLogger::AppLogger::i(
-                "CoreNodeRouteTrace",
-                &format!(
-                    "binding_transition_activation_start key={} source={} sourceGeneration={} target={} targetGeneration={} requestId={}",
-                    request.bindingKey,
-                    self.localNodeId,
-                    request.sourceGeneration,
-                    request.targetNodeId,
-                    targetGeneration,
-                    request.watchRequest.requestId.0
-                ),
-            );
-            self.activateWatchSourceAtNode(
-                request.targetNodeId.clone(),
-                CoreNodeWatchSourceActivationRequest {
-                    bindingKey: request.bindingKey.clone(),
-                    sourceNodeId: self.localNodeId.clone(),
-                    sourceGeneration: request.sourceGeneration,
-                    request: request.watchRequest,
-                    generation: targetGeneration,
-                    payload: request.payload,
-                },
-            )
-            .await?;
-            operit_util::AppLogger::AppLogger::i(
-                "CoreNodeRouteTrace",
-                &format!(
-                    "binding_transition_activation_ready key={} source={} sourceGeneration={} target={} targetGeneration={} elapsedMs={}",
-                    request.bindingKey,
-                    self.localNodeId,
-                    request.sourceGeneration,
-                    request.targetNodeId,
-                    targetGeneration,
-                    activationStartedAt.elapsed().as_millis()
-                ),
-            );
-        } else if currentBinding.nodeId != request.targetNodeId
-            || currentBinding.generation != targetGeneration
-        {
-            return Err(CoreLinkError::new(
-                "CORE_BINDING_TRANSITION_FAILED",
-                format!(
-                    "Binding transition conflict for {}: expected {}@{} or {}@{}, actual {}@{}",
-                    request.bindingKey,
-                    self.localNodeId,
-                    request.sourceGeneration,
-                    request.targetNodeId,
-                    targetGeneration,
-                    currentBinding.nodeId,
-                    currentBinding.generation
-                ),
-            ));
-        } else {
-            operit_util::AppLogger::AppLogger::i(
-                "CoreNodeRouteTrace",
-                &format!(
-                    "binding_transition_join key={} source={} sourceGeneration={} target={} targetGeneration={}",
-                    request.bindingKey,
-                    self.localNodeId,
-                    request.sourceGeneration,
-                    request.targetNodeId,
-                    targetGeneration
-                ),
-            );
-        }
-        let commit = self
-            .compareAndSetBinding(
-                request.bindingKey,
-                self.localNodeId.clone(),
-                request.sourceGeneration,
-                request.targetNodeId,
-            )
-            .await?;
-        operit_util::AppLogger::AppLogger::i(
-            "CoreNodeRouteTrace",
-            &format!(
-                "binding_transition_committed key={} source={} sourceGeneration={} target={} targetGeneration={}",
-                commit.binding.key,
-                self.localNodeId,
-                request.sourceGeneration,
-                commit.binding.nodeId,
-                commit.binding.generation
-            ),
-        );
-        Ok(CoreNodeBindingTransitionResult {
-            nodeId: commit.binding.nodeId,
-            generation: commit.binding.generation,
-            operation: commit.operation,
-        })
-    }
-
-    /// Routes one opaque generated watch-source activation to its selected CoreNode.
-    #[allow(non_snake_case)]
-    async fn activateWatchSourceAtNode(
-        &self,
-        targetNodeId: String,
-        request: CoreNodeWatchSourceActivationRequest,
-    ) -> Result<(), CoreLinkError> {
-        if targetNodeId == self.localNodeId {
-            return self.executeWatchSourceActivation(request).await;
-        }
-        let route = self.initialRoute(targetNodeId, request)?;
-        let mut excludedPeerNodeIds = BTreeSet::new();
-        loop {
-            let (peer, forwardedRoute) =
-                self.forwardRouteAvoiding(None, &excludedPeerNodeIds, route.clone())?;
-            let peerNodeId = peer.peerNodeId();
-            match peer.routedWatchSourceActivate(forwardedRoute).await {
-                Err(error) if isRouteUnavailableError(&error) => {
-                    excludedPeerNodeIds.insert(peerNodeId);
-                }
-                result => return result,
-            }
-        }
-    }
-
-    /// Validates source ownership and activates one opaque generated watch source locally.
-    #[allow(non_snake_case)]
-    async fn executeWatchSourceActivation(
-        &self,
-        request: CoreNodeWatchSourceActivationRequest,
-    ) -> Result<(), CoreLinkError> {
-        let binding = self.bindingStore.binding(&request.bindingKey)?;
-        if binding.nodeId != request.sourceNodeId || binding.generation != request.sourceGeneration
-        {
-            return Err(CoreLinkError::new(
-                "STREAM_SOURCE_BINDING_CONFLICT",
-                format!(
-                    "Watch source activation for {} expected {}@{}, actual {}@{}",
-                    request.bindingKey,
-                    request.sourceNodeId,
-                    request.sourceGeneration,
-                    binding.nodeId,
-                    binding.generation
-                ),
-            ));
-        }
-        self.localCore
-            .activateWatchSource(request.request, request.generation, request.payload)
-            .await
     }
 
     /// Applies one committed Binding operation on its exact selected CoreNode.
@@ -1295,175 +1127,6 @@ fn coreNodeIsReachableThroughPeers(
         .map(|nextHop| nextHop.is_some())
 }
 
-/// Extracts the required Binding key from one local resolver event.
-#[allow(non_snake_case)]
-fn currentBindingKeyFromEvent(
-    event: CoreEvent,
-    resolver: &str,
-) -> Result<String, CoreLinkError> {
-    let CoreValue::String(key) = event.value else {
-        return Err(CoreLinkError::new(
-            "CORE_BINDING_CURRENT_REQUIRED",
-            format!("Binding resolver {resolver} did not return a key"),
-        ));
-    };
-    if key.trim().is_empty() {
-        return Err(CoreLinkError::new(
-            "CORE_BINDING_KEY_REQUIRED",
-            format!("Binding resolver {resolver} returned an empty key"),
-        ));
-    }
-    Ok(key)
-}
-
-/// Emits the locally observable snapshot for one current Binding watch key.
-#[allow(non_snake_case)]
-async fn emitCurrentBindingLocalSnapshot(
-    router: &CoreNodeRouter,
-    request: &CoreWatchRequest,
-    sender: &tokio::sync::mpsc::UnboundedSender<CoreEvent>,
-) -> Result<(), CoreLinkError> {
-    let event = router.localCore.watchSnapshot(request.clone()).await?;
-    sender
-        .send(event)
-        .map_err(|_| CoreLinkError::new("WATCH_CLOSED", "current Binding watch is closed"))?;
-    Ok(())
-}
-
-/// Pumps one stable outer watch while its Binding key follows a local resolver stream.
-#[allow(non_snake_case)]
-async fn runCurrentBindingWatch(
-    router: CoreNodeRouter,
-    scope: usize,
-    resolver: &'static str,
-    request: CoreWatchRequest,
-    mut bindingKey: String,
-    mut source: CoreEventStream,
-    mut resolverStream: CoreEventStream,
-    sender: tokio::sync::mpsc::UnboundedSender<CoreEvent>,
-    mut cancelReceiver: tokio::sync::oneshot::Receiver<()>,
-) {
-    let mut currentRequest = request.clone();
-    if let Err(error) =
-        crate::generated_inject_current_binding_watch(scope, &mut currentRequest, bindingKey.clone())
-    {
-        operit_util::AppLogger::AppLogger::e(
-            "CoreNodeRouteTrace",
-            &format!(
-                "current_binding_watch_initial_injection_failed requestId={} resolver={} key={} code={} error={}",
-                request.requestId.0, resolver, bindingKey, error.code, error
-            ),
-        );
-        return;
-    }
-    if let Err(error) = emitCurrentBindingLocalSnapshot(&router, &currentRequest, &sender).await {
-        operit_util::AppLogger::AppLogger::e(
-            "CoreNodeRouteTrace",
-            &format!(
-                "current_binding_watch_initial_snapshot_failed requestId={} resolver={} key={} code={} error={}",
-                request.requestId.0, resolver, bindingKey, error.code, error
-            ),
-        );
-        return;
-    }
-    loop {
-        tokio::select! {
-            biased;
-            _ = &mut cancelReceiver => return,
-            resolverEvent = resolverStream.recv() => {
-                let Some(resolverEvent) = resolverEvent else {
-                    return;
-                };
-                if resolverEvent.kind == CoreEventKind::Completed {
-                    return;
-                }
-                let nextKey = match currentBindingKeyFromEvent(resolverEvent, resolver) {
-                    Ok(key) => key,
-                    Err(error) => {
-                        operit_util::AppLogger::AppLogger::e(
-                            "CoreNodeRouteTrace",
-                            &format!(
-                                "current_binding_watch_resolver_failed requestId={} resolver={} code={} error={}",
-                                request.requestId.0, resolver, error.code, error
-                            ),
-                        );
-                        return;
-                    }
-                };
-                if nextKey == bindingKey {
-                    continue;
-                }
-                let mut nextRequest = request.clone();
-                if let Err(error) = crate::generated_inject_current_binding_watch(
-                    scope,
-                    &mut nextRequest,
-                    nextKey.clone(),
-                ) {
-                    operit_util::AppLogger::AppLogger::e(
-                        "CoreNodeRouteTrace",
-                        &format!(
-                            "current_binding_watch_injection_failed requestId={} resolver={} key={} code={} error={}",
-                            request.requestId.0, resolver, nextKey, error.code, error
-                        ),
-                    );
-                    return;
-                }
-                match router.openRecoveringBindingWatch(nextKey.clone(), nextRequest).await {
-                    Ok(nextSource) => {
-                        bindingKey = nextKey;
-                        source = nextSource;
-                        currentRequest = request.clone();
-                        if let Err(error) = crate::generated_inject_current_binding_watch(
-                            scope,
-                            &mut currentRequest,
-                            bindingKey.clone(),
-                        ) {
-                            operit_util::AppLogger::AppLogger::e(
-                                "CoreNodeRouteTrace",
-                                &format!(
-                                    "current_binding_watch_snapshot_injection_failed requestId={} resolver={} key={} code={} error={}",
-                                    request.requestId.0, resolver, bindingKey, error.code, error
-                                ),
-                            );
-                            return;
-                        }
-                        if let Err(error) =
-                            emitCurrentBindingLocalSnapshot(&router, &currentRequest, &sender).await
-                        {
-                            operit_util::AppLogger::AppLogger::e(
-                                "CoreNodeRouteTrace",
-                                &format!(
-                                    "current_binding_watch_snapshot_failed requestId={} resolver={} key={} code={} error={}",
-                                    request.requestId.0, resolver, bindingKey, error.code, error
-                                ),
-                            );
-                            return;
-                        }
-                    }
-                    Err(error) => {
-                        operit_util::AppLogger::AppLogger::e(
-                            "CoreNodeRouteTrace",
-                            &format!(
-                                "current_binding_watch_switch_failed requestId={} resolver={} key={} code={} error={}",
-                                request.requestId.0, resolver, nextKey, error.code, error
-                            ),
-                        );
-                        return;
-                    }
-                }
-            }
-            event = source.recv() => {
-                let Some(event) = event else {
-                    return;
-                };
-                if sender.send(event).is_err() {
-                    return;
-                }
-            }
-        }
-    }
-}
-
 /// Opens the current Binding source while waiting for a temporary route outage to clear.
 #[allow(non_snake_case)]
 async fn openBindingWatchSourceUntilReachable(
@@ -1572,121 +1235,42 @@ async fn runRecoveringBindingWatch(
                     routeCursor = Some(event.value);
                     continue;
                 }
-                if event.propertyName == CORE_ROUTE_SOURCE_TRANSITION_PROPERTY {
-                    let transition: CoreRouteSourceTransition = match operit_link::fromCoreValue(event.value) {
-                        Ok(transition) => transition,
-                        Err(error) => {
-                            operit_util::AppLogger::AppLogger::e(
-                                "CoreNodeRouteTrace",
-                                &format!(
-                                    "binding_watch_source_transition_decode_failed requestId={} key={} source={} generation={} error={}",
-                                    request.requestId.0,
-                                    key,
-                                    sourceNodeId,
-                                    sourceGeneration,
-                                    error
-                                ),
-                            );
-                            return;
-                        }
-                    };
-                    let transitionTargetNodeId = transition.targetNodeId.clone();
-                    let transitionResult = router
-                        .transitionBindingSource(
-                            key.clone(),
-                            sourceNodeId.clone(),
-                            sourceGeneration,
-                            transitionTargetNodeId.clone(),
-                            request.clone(),
-                            transition.payload,
-                        )
-                        .await;
-                    if let Err(error) = transitionResult {
-                        let currentBinding = router.bindingStore.binding(&key);
-                        if let Ok(currentBinding) = currentBinding {
-                            if currentBinding.nodeId != sourceNodeId
-                                || currentBinding.generation != sourceGeneration
+                if event.kind == CoreEventKind::Completed {
+                    if let Ok(binding) = router.bindingStore.binding(&key) {
+                        if binding.nodeId != sourceNodeId
+                            || binding.generation != sourceGeneration
+                        {
+                            match openBindingWatchSourceUntilReachable(
+                                &router,
+                                &key,
+                                &request,
+                                routeCursor.clone(),
+                                &mut bindingChanges,
+                                &mut peerChanges,
+                                &mut cancelReceiver,
+                            )
+                            .await
                             {
-                                match openBindingWatchSourceUntilReachable(
-                                    &router,
-                                    &key,
-                                    &request,
-                                    routeCursor.clone(),
-                                    &mut bindingChanges,
-                                    &mut peerChanges,
-                                    &mut cancelReceiver,
-                                )
-                                .await
-                                {
-                                    Ok(Some((nextBinding, nextStream))) => {
-                                        sourceNodeId = nextBinding.nodeId;
-                                        sourceGeneration = nextBinding.generation;
-                                        stream = nextStream;
-                                        continue;
-                                    }
-                                    Ok(None) => return,
-                                    Err(reopenError) => {
-                                        operit_util::AppLogger::AppLogger::e(
-                                            "CoreNodeRouteTrace",
-                                            &format!(
-                                                "binding_watch_source_transition_reopen_failed requestId={} key={} code={} error={}",
-                                                request.requestId.0,
-                                                key,
-                                                reopenError.code,
-                                                reopenError
-                                            ),
-                                        );
-                                        return;
-                                    }
+                                Ok(Some((nextBinding, nextStream))) => {
+                                    sourceNodeId = nextBinding.nodeId;
+                                    sourceGeneration = nextBinding.generation;
+                                    stream = nextStream;
+                                    continue;
+                                }
+                                Ok(None) => return,
+                                Err(error) => {
+                                    operit_util::AppLogger::AppLogger::e(
+                                        "CoreNodeRouteTrace",
+                                        &format!(
+                                            "binding_watch_completion_reopen_failed requestId={} key={} code={} error={}",
+                                            request.requestId.0, key, error.code, error
+                                        ),
+                                    );
+                                    return;
                                 }
                             }
                         }
-                        operit_util::AppLogger::AppLogger::e(
-                            "CoreNodeRouteTrace",
-                            &format!(
-                                "binding_watch_source_transition_failed requestId={} key={} source={} generation={} target={} code={} error={}",
-                                request.requestId.0,
-                                key,
-                                sourceNodeId,
-                                sourceGeneration,
-                                transitionTargetNodeId,
-                                error.code,
-                                error
-                            ),
-                        );
-                        return;
                     }
-                    match openBindingWatchSourceUntilReachable(
-                        &router,
-                        &key,
-                        &request,
-                        routeCursor.clone(),
-                        &mut bindingChanges,
-                        &mut peerChanges,
-                        &mut cancelReceiver,
-                    )
-                    .await
-                    {
-                        Ok(Some((nextBinding, nextStream))) => {
-                            sourceNodeId = nextBinding.nodeId;
-                            sourceGeneration = nextBinding.generation;
-                            stream = nextStream;
-                        }
-                        Ok(None) => return,
-                        Err(error) => {
-                            operit_util::AppLogger::AppLogger::e(
-                                "CoreNodeRouteTrace",
-                                &format!(
-                                    "binding_watch_next_source_failed requestId={} key={} code={} error={}",
-                                    request.requestId.0, key, error.code, error
-                                ),
-                            );
-                            return;
-                        }
-                    }
-                    continue;
-                }
-                if event.kind == CoreEventKind::Completed {
                     let _ = sender.send(event);
                     return;
                 }
@@ -1845,6 +1429,7 @@ impl CoreLinkClient for CoreNodeRouter {
     ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
         self.openPushSession(request).await
     }
+
 }
 
 #[async_trait(?Send)]
@@ -1864,7 +1449,13 @@ impl CoreNodeLinkClient for CoreNodeRouter {
     ) -> CoreCallResponse {
         let requestId = request.payload.requestId.clone();
         match self.validateIncomingRoute(&previousNodeId, &request) {
-            Ok(true) => self.executeLocalCall(request.payload).await,
+            Ok(true) => {
+                if request.routeKind == RoutedCoreRequestKind::SpaceRoute {
+                    self.localCore.callSpace(request.payload).await
+                } else {
+                    self.executeLocalCall(request.payload).await
+                }
+            }
             Ok(false) => {
                 let mut excludedPeerNodeIds = BTreeSet::new();
                 loop {
@@ -1903,7 +1494,11 @@ impl CoreNodeLinkClient for CoreNodeRouter {
         request: RoutedCoreRequest<CoreWatchRequest>,
     ) -> Result<CoreEvent, CoreLinkError> {
         if self.validateIncomingRoute(&previousNodeId, &request)? {
-            return self.localCore.watchSnapshot(request.payload).await;
+            return if request.routeKind == RoutedCoreRequestKind::SpaceRoute {
+                self.localCore.watchSpaceSnapshot(request.payload).await
+            } else {
+                self.localCore.watchSnapshot(request.payload).await
+            };
         }
         let mut excludedPeerNodeIds = BTreeSet::new();
         loop {
@@ -1930,7 +1525,11 @@ impl CoreNodeLinkClient for CoreNodeRouter {
         request: RoutedCoreRequest<CoreWatchRequest>,
     ) -> Result<CoreEventStream, CoreLinkError> {
         if self.validateIncomingRoute(&previousNodeId, &request)? {
-            return self.localCore.watch(request.payload).await;
+            return if request.routeKind == RoutedCoreRequestKind::SpaceRoute {
+                self.localCore.watchSpace(request.payload).await
+            } else {
+                self.localCore.watch(request.payload).await
+            };
         }
         let mut excludedPeerNodeIds = BTreeSet::new();
         loop {
@@ -1976,60 +1575,6 @@ impl CoreNodeLinkClient for CoreNodeRouter {
         }
     }
 
-    /// Commits or forwards one source-owned Binding generation transition.
-    #[allow(non_snake_case)]
-    async fn routedBindingTransition(
-        &mut self,
-        previousNodeId: String,
-        request: RoutedCoreRequest<CoreNodeBindingTransitionRequest>,
-    ) -> Result<CoreNodeBindingTransitionResult, CoreLinkError> {
-        if self.validateIncomingRoute(&previousNodeId, &request)? {
-            return self.executeBindingTransition(request.payload).await;
-        }
-        let mut excludedPeerNodeIds = BTreeSet::new();
-        loop {
-            let (peer, forwardedRequest) = self.forwardRouteAvoiding(
-                Some(&previousNodeId),
-                &excludedPeerNodeIds,
-                request.clone(),
-            )?;
-            let peerNodeId = peer.peerNodeId();
-            match peer.routedBindingTransition(forwardedRequest).await {
-                Err(error) if isRouteUnavailableError(&error) => {
-                    excludedPeerNodeIds.insert(peerNodeId);
-                }
-                result => return result,
-            }
-        }
-    }
-
-    /// Activates or forwards one generated watch source before Binding publication.
-    #[allow(non_snake_case)]
-    async fn routedWatchSourceActivate(
-        &mut self,
-        previousNodeId: String,
-        request: RoutedCoreRequest<CoreNodeWatchSourceActivationRequest>,
-    ) -> Result<(), CoreLinkError> {
-        if self.validateIncomingRoute(&previousNodeId, &request)? {
-            return self.executeWatchSourceActivation(request.payload).await;
-        }
-        let mut excludedPeerNodeIds = BTreeSet::new();
-        loop {
-            let (peer, forwardedRequest) = self.forwardRouteAvoiding(
-                Some(&previousNodeId),
-                &excludedPeerNodeIds,
-                request.clone(),
-            )?;
-            let peerNodeId = peer.peerNodeId();
-            match peer.routedWatchSourceActivate(forwardedRequest).await {
-                Err(error) if isRouteUnavailableError(&error) => {
-                    excludedPeerNodeIds.insert(peerNodeId);
-                }
-                result => return result,
-            }
-        }
-    }
-
     /// Executes or forwards one routed push open.
     #[allow(non_snake_case)]
     async fn routedOpenPush(
@@ -2038,7 +1583,11 @@ impl CoreNodeLinkClient for CoreNodeRouter {
         request: RoutedCoreRequest<CorePushRequest>,
     ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
         if self.validateIncomingRoute(&previousNodeId, &request)? {
-            return self.localCore.openPush(request.payload);
+            return if request.routeKind == RoutedCoreRequestKind::SpaceRoute {
+                self.localCore.openSpacePush(request.payload)
+            } else {
+                self.localCore.openPush(request.payload)
+            };
         }
         let mut excludedPeerNodeIds = BTreeSet::new();
         loop {
@@ -2067,27 +1616,14 @@ impl CoreLinkSharedClient for CoreNodeRouter {
             Ok(route) => route,
             Err(error) => return CoreCallResponse::err(requestId, error),
         };
-        let (route, currentBinding) = match self
-            .resolveGeneratedRoute(generatedRoute, request.targetPath.clone())
-            .await
-        {
-            Ok(route) => route,
-            Err(error) => return CoreCallResponse::err(requestId, error),
-        };
-        if let Some((scope, key)) = currentBinding {
-            if let Err(error) =
-                crate::generated_inject_current_binding_call(scope, &mut request, key)
-            {
-                return CoreCallResponse::err(requestId, error);
-            }
-        }
+        let route = generatedRoute;
         if let GeneratedCoreRoute::Binding { key, .. } = &route {
             operit_util::AppLogger::AppLogger::i(
                 "CoreNodeRouteTrace",
                 &format!(
                     "binding_call_resolve requestId={} path={} method={} key={} local={}",
                     request.requestId.0,
-                    request.targetPath.key(),
+                    request.targetObjectId.to_string(),
                     request.methodName,
                     key,
                     self.localNodeId
@@ -2104,7 +1640,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
                 &format!(
                     "binding call route requestId={} path={} method={} key={} source={} target={}",
                     request.requestId.0,
-                    request.targetPath.key(),
+                    request.targetObjectId.to_string(),
                     request.methodName,
                     key,
                     self.localNodeId,
@@ -2137,22 +1673,14 @@ impl CoreLinkSharedClient for CoreNodeRouter {
         &self,
         mut request: CoreWatchRequest,
     ) -> Result<CoreEvent, CoreLinkError> {
-        let (route, currentBinding) = self
-            .resolveGeneratedRoute(
-                crate::generated_core_watch_route(&request)?,
-                request.targetPath.clone(),
-            )
-            .await?;
-        if let Some((scope, key)) = currentBinding {
-            crate::generated_inject_current_binding_watch(scope, &mut request, key)?;
-        }
+        let route = crate::generated_core_watch_route(&request)?;
         if let GeneratedCoreRoute::Binding { key, .. } = &route {
             operit_util::AppLogger::AppLogger::i(
                 "CoreNodeRouteTrace",
                 &format!(
                     "binding_snapshot_resolve requestId={} path={} property={} key={} local={}",
                     request.requestId.0,
-                    request.targetPath.key(),
+                    request.targetObjectId.to_string(),
                     request.propertyName,
                     key,
                     self.localNodeId
@@ -2168,25 +1696,14 @@ impl CoreLinkSharedClient for CoreNodeRouter {
 
     /// Opens a watch stream on the CoreNode selected by generated metadata.
     async fn watch(&self, mut request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
-        let generatedRoute = crate::generated_core_watch_route(&request)?;
-        if let GeneratedCoreRoute::CurrentBinding { scope, resolver } = &generatedRoute {
-            return self
-                .openCurrentBindingWatch(*scope, *resolver, request)
-                .await;
-        }
-        let (route, currentBinding) = self
-            .resolveGeneratedRoute(generatedRoute, request.targetPath.clone())
-            .await?;
-        if let Some((scope, key)) = currentBinding {
-            crate::generated_inject_current_binding_watch(scope, &mut request, key)?;
-        }
+        let route = crate::generated_core_watch_route(&request)?;
         if let GeneratedCoreRoute::Binding { key, .. } = &route {
             operit_util::AppLogger::AppLogger::i(
                 "CoreNodeRouteTrace",
                 &format!(
                     "binding_watch_resolve requestId={} path={} property={} key={} local={}",
                     request.requestId.0,
-                    request.targetPath.key(),
+                    request.targetObjectId.to_string(),
                     request.propertyName,
                     key,
                     self.localNodeId
@@ -2199,7 +1716,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
                 &format!(
                     "binding watch open requestId={} path={} property={} key={} source={}",
                     request.requestId.0,
-                    request.targetPath.key(),
+                    request.targetObjectId.to_string(),
                     request.propertyName,
                     key,
                     self.localNodeId

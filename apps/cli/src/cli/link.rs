@@ -1,10 +1,12 @@
 use super::*;
 use crate::{create_cli_link_access_store, create_local_core};
 
-use operit_core_proxy::{
-    CoreNodeRouter::CoreNodeRouter, RuntimeRemoteLinkService::RuntimeRemoteLinkService,
+use operit_core_server::{
+    CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter},
+    RuntimeRemoteLinkService::RuntimeRemoteLinkService,
+    SpaceRuntime::SpaceRuntime,
 };
-use operit_link::{CoreCallRequest, CoreLinkClient, CoreObjectPath, CoreWatchRequest};
+use operit_link::{CoreLinkError, CoreLinkSharedClient};
 use operit_link_access::{
     link_token_hash, AcceptedRemoteSessionRecord, LinkAccessStore, PairedRemoteSession,
     PairedRemoteSessionRecord, LinkTransportPreference, RemoteDeviceInfo, RemoteLinkClient,
@@ -42,22 +44,11 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
         }
         Some("ping") => run_link_ping_command(&args[1..]).await,
         Some("refresh") => run_link_refresh_command(&args[1..]).await,
-        Some("call") => run_link_call_command(&args[1..]).await,
-        Some("watch") => run_link_watch_command(&args[1..]).await,
-        Some("tui") => crate::tui::run_link_tui_command(&args[1..]).await,
-        Some("run") => run_link_run_command(&args[1..]).await,
         _ => {
             print_link_usage();
             Ok(())
         }
     }
-}
-
-async fn run_link_run_command(args: &[String]) -> Result<(), String> {
-    let session_name = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 cli link run <session> <command>".to_string())?;
-    super::run_cli_link_root(session_name, &args[1..]).await
 }
 
 async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
@@ -113,9 +104,11 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
     let device_info = RemoteDeviceInfo::nativeCli("server")?;
     let access_store = LinkAccessStore::new(core.runtimeStorageHost());
     let identity = access_store.initializeIdentity(device_info.clone())?;
-    RuntimeRemoteLinkService::new(core.clone()).startSpaceSync()?;
+    let chatRuntimeHolder = core.localApplicationMut().chatRuntimeHolder.clone();
+    let localRuntime = local_core_runtime(Arc::new(core), chatRuntimeHolder);
+    RuntimeRemoteLinkService::new(localRuntime.clone()).startSpaceSync()?;
     RemoteLinkServer::serve(
-        CoreNodeRouter::new(Arc::new(core)),
+        CoreNodeRouter::new(localRuntime),
         RemoteLinkServerConfig {
             bindAddress: bind_address,
             token,
@@ -204,7 +197,7 @@ async fn run_link_discover_command(args: &[String]) -> Result<(), String> {
         }
         index += 1;
     }
-    let spaces = RuntimeRemoteLinkService::new(create_local_core())
+    let spaces = RuntimeRemoteLinkService::new(create_local_runtime())
         .discoverSpaces(timeout_ms)
         .await?;
     for space in spaces {
@@ -227,7 +220,7 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
     let (url, token, save_name, transport) = parse_remote_url_token_save(args, USAGE)?;
     let name = save_name.ok_or_else(|| USAGE.to_string())?;
     let token_hash = link_token_hash(&token);
-    let service = RuntimeRemoteLinkService::new(create_local_core());
+    let service = RuntimeRemoteLinkService::new(create_local_runtime());
     let pairing = service
         .startPairedRemote(url, token_hash, RemoteDeviceInfo::nativeCli("client")?)
         .await?;
@@ -264,10 +257,10 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
 
 /// Runs user-facing device-space inspection and membership commands.
 async fn run_link_space_command(args: &[String]) -> Result<(), String> {
-    let core = create_local_core();
-    LinkAccessStore::new(core.runtimeStorageHost())
+    let localRuntime = create_local_runtime();
+    LinkAccessStore::new(localRuntime.runtimeStorageHost())
         .initializeIdentity(RemoteDeviceInfo::nativeCli("client")?)?;
-    let service = RuntimeRemoteLinkService::new(core);
+    let service = RuntimeRemoteLinkService::new(localRuntime);
     match args.first().map(String::as_str) {
         None | Some("show") if args.len() <= 1 => {
             let space = service.deviceSpace()?;
@@ -418,66 +411,6 @@ async fn run_link_refresh_command(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-async fn run_link_call_command(args: &[String]) -> Result<(), String> {
-    let name = args.get(0).ok_or_else(|| {
-        "usage: operit2 cli link call <session> <target-path> <method-name> [args-json]".to_string()
-    })?;
-    let target_path = args.get(1).ok_or_else(|| {
-        "usage: operit2 cli link call <session> <target-path> <method-name> [args-json]".to_string()
-    })?;
-    let method_name = args.get(2).ok_or_else(|| {
-        "usage: operit2 cli link call <session> <target-path> <method-name> [args-json]".to_string()
-    })?;
-    let args_json = parse_link_args_json(args.get(3))?;
-    let session = load_link_session_resolved(name).await?;
-    let response = session
-        .call(CoreCallRequest::new(
-            link_request_id(),
-            CoreObjectPath::parse(target_path),
-            method_name.clone(),
-            operit_link::toCoreValue(args_json).map_err(|error| error.to_string())?,
-        ))
-        .await?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&response).map_err(|error| error.to_string())?
-    );
-    Ok(())
-}
-
-async fn run_link_watch_command(args: &[String]) -> Result<(), String> {
-    let name = args.get(0).ok_or_else(|| {
-        "usage: operit2 cli link watch <session> <target-path> <property-name> [args-json]"
-            .to_string()
-    })?;
-    let target_path = args.get(1).ok_or_else(|| {
-        "usage: operit2 cli link watch <session> <target-path> <property-name> [args-json]"
-            .to_string()
-    })?;
-    let property_name = args.get(2).ok_or_else(|| {
-        "usage: operit2 cli link watch <session> <target-path> <property-name> [args-json]"
-            .to_string()
-    })?;
-    let args_json = parse_link_args_json(args.get(3))?;
-    let mut session = load_link_session_resolved(name).await?;
-    let event = operit_link::CoreLinkClient::watchSnapshot(
-        &mut session,
-        CoreWatchRequest::new(
-            link_request_id(),
-            CoreObjectPath::parse(target_path),
-            property_name.clone(),
-            operit_link::toCoreValue(args_json).map_err(|error| error.to_string())?,
-        ),
-    )
-    .await
-    .map_err(|error| serde_json::to_string(&error).expect("CoreLinkError must serialize"))?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&event).map_err(|error| error.to_string())?
-    );
-    Ok(())
-}
-
 /// Parses the optional session name and discovery timeout for link refresh.
 fn parse_link_refresh_args(args: &[String]) -> Result<(Option<String>, u64), String> {
     let usage = "usage: operit2 cli link refresh [session] [--timeout-ms <ms>]";
@@ -501,28 +434,6 @@ fn parse_link_refresh_args(args: &[String]) -> Result<(Option<String>, u64), Str
         index += 1;
     }
     Ok((session_name, timeout_ms))
-}
-
-pub(crate) async fn call_application<C>(
-    client: &mut C,
-    method_name: &str,
-    args: serde_json::Value,
-) -> Result<serde_json::Value, String>
-where
-    C: CoreLinkClient + Send,
-{
-    let response = client
-        .call(CoreCallRequest::new(
-            link_request_id(),
-            CoreObjectPath::parse("application"),
-            method_name.to_string(),
-            operit_link::toCoreValue(args).map_err(|error| error.to_string())?,
-        ))
-        .await;
-    response
-        .result
-        .map_err(|error| error.to_string())
-        .and_then(|value| operit_link::fromCoreValue(value).map_err(|error| error.to_string()))
 }
 
 fn parse_remote_url_token(args: &[String], usage: &str) -> Result<(String, String), String> {
@@ -654,20 +565,6 @@ async fn verify_link_session_record(record: &PairedRemoteSessionRecord) -> Resul
     Ok(())
 }
 
-pub(crate) fn parse_link_args_json(value: Option<&String>) -> Result<serde_json::Value, String> {
-    match value {
-        Some(value) => serde_json::from_str(value).map_err(|error| error.to_string()),
-        None => Ok(serde_json::json!({})),
-    }
-}
-
-pub(crate) fn link_request_id() -> String {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time must be after UNIX_EPOCH")
-        .as_millis();
-    format!("cli-{millis}")
-}
 
 /// Saves one paired session record by name.
 fn save_link_session(name: &str, record: PairedRemoteSessionRecord) -> Result<(), String> {
@@ -718,8 +615,34 @@ fn print_link_usage() {
     println!("operit2 cli link accepted-session-delete <session-id>");
     println!("operit2 cli link ping <name>");
     println!("operit2 cli link refresh [session] [--timeout-ms <ms>]");
-    println!("operit2 cli link call <session> <target-path> <method-name> [args-json]");
-    println!("operit2 cli link watch <session> <target-path> <property-name> [args-json]");
-    println!("operit2 cli link tui <session> [--chat <chat-id>]");
-    println!("operit2 cli link run <session> <version|chat|local-models|stt>");
+}
+
+/// Adapts the in-process CLI Core to the server-owned routing capability boundary.
+fn local_core_runtime(
+    core: Arc<operit_core_proxy::LocalCoreProxy>,
+    chatRuntimeHolder: Arc<tokio::sync::Mutex<operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder>>,
+) -> CoreNodeLocalRuntime {
+    let sharedClient: Arc<dyn CoreLinkSharedClient + Send + Sync> = core.clone();
+    let bindCoreNodeToolRuntime = {
+        let core = core.clone();
+        Arc::new(move |runtime| core.bindCoreNodeToolRuntime(runtime))
+    };
+    let openPush = {
+        let core = core.clone();
+        Arc::new(move |request| core.openPushLocal(request))
+    };
+    CoreNodeLocalRuntime::new(
+        sharedClient,
+        core.runtimeStorageHost(),
+        bindCoreNodeToolRuntime,
+        openPush,
+        Arc::new(SpaceRuntime::new(chatRuntimeHolder)),
+    )
+}
+
+/// Creates the server-side routing capability over a fresh CLI Core.
+fn create_local_runtime() -> CoreNodeLocalRuntime {
+    let mut core = create_local_core();
+    let chatRuntimeHolder = core.localApplicationMut().chatRuntimeHolder.clone();
+    local_core_runtime(Arc::new(core), chatRuntimeHolder)
 }

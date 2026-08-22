@@ -134,7 +134,7 @@ interface WatchChannel {
 
 interface LinkPushOpenRequest {
   requestId: DynamicValue;
-  targetPath: { segments: DynamicValue };
+  targetObjectId: DynamicValue;
   methodName: DynamicValue;
   args: DynamicValue;
 }
@@ -1495,7 +1495,7 @@ interface ModelInstallWorkerError {
     function nativeCallTupleToLinkRequest(tuple: DynamicValue): object {
       return {
         requestId: tuple[0],
-        targetPath: { segments: tuple[1] },
+        targetObjectId: tuple[1],
         methodName: tuple[2],
         args: tuple[3],
       };
@@ -1505,7 +1505,7 @@ interface ModelInstallWorkerError {
     function nativePushOpenTupleToLinkRequest(tuple: DynamicValue): LinkPushOpenRequest {
       return {
         requestId: tuple[0],
-        targetPath: { segments: tuple[1] },
+        targetObjectId: tuple[1],
         methodName: tuple[2],
         args: tuple[3],
       };
@@ -1524,7 +1524,7 @@ interface ModelInstallWorkerError {
     function nativeWatchTupleToLinkRequest(tuple: DynamicValue): object {
       return {
         requestId: tuple[0],
-        targetPath: { segments: tuple[1] },
+        targetObjectId: tuple[1],
         propertyName: tuple[2],
         args: tuple[3],
       };
@@ -1539,7 +1539,7 @@ interface ModelInstallWorkerError {
         subscriptionId: tuple[0],
         request: {
           requestId: tuple[1],
-          targetPath: { segments: tuple[2] },
+          targetObjectId: tuple[2],
           propertyName: tuple[3],
           args: tuple[4],
         },
@@ -1550,7 +1550,7 @@ interface ModelInstallWorkerError {
     function linkEventToNativeTuple(event: DynamicValue): DynamicValue[] {
       return [
         event.requestId ?? null,
-        event.targetPath.segments,
+        event.targetObjectId,
         event.propertyName,
         event.kind,
         event.value,
@@ -6399,3 +6399,4 @@ self.onmessage = (event) => {
       collectModelInstallWorkerSecretChanges;
   }
 })();
+

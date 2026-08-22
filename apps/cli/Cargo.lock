@@ -2158,6 +2158,7 @@ dependencies = [
  "mdns-sd",
  "operit-command-core",
  "operit-core-proxy",
+ "operit-core-server",
  "operit-host-api",
  "operit-host-linux-native",
  "operit-host-macos-native",
@@ -2207,16 +2208,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "operit-core-annotations"
-version = "0.1.0"
-
-[[package]]
 name = "operit-core-proxy"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "mdns-sd",
  "operit-command-core",
+ "operit-core-server",
  "operit-host-api",
  "operit-link",
  "operit-link-access",
@@ -2234,6 +2231,37 @@ dependencies = [
  "syn",
  "tokio",
  "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "operit-core-route"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "operit-core-server"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "mdns-sd",
+ "operit-core-route",
+ "operit-host-api",
+ "operit-link",
+ "operit-link-access",
+ "operit-providers",
+ "operit-runtime",
+ "operit-store",
+ "operit-tools",
+ "operit-util",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn",
+ "tokio",
 ]
 
 [[package]]
@@ -2534,7 +2562,7 @@ dependencies = [
  "js-sys",
  "json5",
  "md-5",
- "operit-core-annotations",
+ "operit-core-route",
  "operit-host-api",
  "operit-js-bridge",
  "operit-link",

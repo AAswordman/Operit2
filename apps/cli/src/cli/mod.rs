@@ -66,9 +66,9 @@ use crate::bootstrap::{
 };
 use crate::browser_callback::CliOAuthCallback;
 use crate::chat_runtime::{run_chat_shell_command_with_core, run_shell_command};
-use crate::core_proxy::{cli_core, local_cli_core};
+use crate::core_proxy::local_cli_core;
 use host_ops::{schedule_cli_uninstall, schedule_cli_update};
-use link::{load_link_session_resolved, run_link_command};
+use link::run_link_command;
 use transfer::{run_backup_command, run_export_command, run_import_command};
 use web_access::run_web_access_command;
 
@@ -78,13 +78,6 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
         print_cli_usage();
         return Ok(());
-    }
-
-    if args[0].as_str() == "--link" {
-        let session_name = args
-            .get(1)
-            .ok_or_else(|| "usage: operit2 cli --link <session> <command>".to_string())?;
-        return run_cli_link_root(session_name, &args[2..]).await;
     }
 
     if args[0].as_str() == "link" {
@@ -194,56 +187,6 @@ fn run_identity_command(args: &[String]) -> Result<(), String> {
             Ok(())
         }
     }
-}
-
-pub(crate) async fn run_cli_link_root(session_name: &str, args: &[String]) -> Result<(), String> {
-    if args.is_empty() {
-        print_cli_link_usage();
-        return Ok(());
-    }
-    let session = load_link_session_resolved(session_name).await?;
-    let mut core = cli_core(session);
-    let result = match args[0].as_str() {
-        "model" => run_core_command_and_print(&mut core, &args).await,
-        "version" => run_version_core_command(&mut core).await,
-        "prefs" => run_core_command_and_print(&mut core, &args).await,
-        "host" => run_core_command_and_print(&mut core, &args).await,
-        "log" => run_core_command_and_print(&mut core, &args).await,
-        "local-models" => run_core_command_and_print(&mut core, &args).await,
-        "stt" => run_core_command_and_print(&mut core, &args).await,
-        "memory" => run_core_command_and_print(&mut core, &args).await,
-        "export" => run_export_command(&mut core, &args[1..]).await,
-        "import" => run_import_command(&mut core, &args[1..]).await,
-        "backup" => run_backup_command(&mut core, &args[1..]).await,
-        "chat" if args.get(1).map(String::as_str) == Some("shell") => {
-            run_chat_shell_command_with_core(&mut core, &args[2..]).await
-        }
-        "chat" => run_core_command_and_print(&mut core, &args).await,
-        "workspace" => run_core_command_and_print(&mut core, &args).await,
-        "storage" => run_core_command_and_print(&mut core, &args).await,
-        "shell" => {
-            let mut shell_args = vec!["shell".to_string()];
-            shell_args.extend_from_slice(&args[1..]);
-            run_chat_shell_command_with_core(&mut core, &shell_args[1..]).await
-        }
-        "tag" => run_core_command_and_print(&mut core, &args).await,
-        "character" => run_core_command_and_print(&mut core, &args).await,
-        "group" => run_core_command_and_print(&mut core, &args).await,
-        "active-prompt" => run_core_command_and_print(&mut core, &args).await,
-        "approval" => run_core_command_and_print(&mut core, &args).await,
-        "tool" => run_core_command_and_print(&mut core, &args).await,
-        "market" => run_market_cli_command(&mut core, &args).await,
-        "update" => run_core_command_and_print(&mut core, &args).await,
-        "skill" => run_core_command_and_print(&mut core, &args).await,
-        "package" => run_core_command_and_print(&mut core, &args).await,
-        "plugin" => run_core_command_and_print(&mut core, &args).await,
-        "mcp" => run_core_command_and_print(&mut core, &args).await,
-        _ => {
-            print_cli_link_usage();
-            Ok(())
-        }
-    };
-    result.map_err(rewrite_cli_usage_message)
 }
 
 /// Runs local CLI text-to-speech configuration and synthesis commands.

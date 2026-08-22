@@ -12,7 +12,6 @@ use syn::{
 mod build_dart_codegen;
 mod build_model;
 mod build_platform_api_guard;
-mod build_route_codegen;
 mod build_rust_codegen;
 mod build_rust_codegen_utils;
 mod build_rust_dispatch_codegen;
@@ -50,6 +49,10 @@ fn main() {
         manifest_dir.join("../operit-link-access/src"),
         "operit_link_access",
     );
+    let server_root = SourceRoot::new(
+        manifest_dir.join("../operit-core-server/src"),
+        "operit_core_server",
+    );
     let util_root = SourceRoot::new(manifest_dir.join("../operit-util/src"), "operit_util");
     let tools_root = SourceRoot::new(manifest_dir.join("../operit-tools/src"), "operit_tools");
     let provider_root = SourceRoot::new(
@@ -70,7 +73,6 @@ fn main() {
         local_models_root.clone(),
         plugin_sdk_root.clone(),
         store_root.clone(),
-        link_access_root.clone(),
         util_root.clone(),
         tools_root.clone(),
         provider_root.clone(),
@@ -93,6 +95,7 @@ fn main() {
         provider_root.clone(),
         javascript_bridge_root,
         host_api_root,
+        server_root.clone(),
     ];
     for source_root in &source_roots {
         emit_source_tree_rerun_if_changed(source_root.as_path());
@@ -123,6 +126,7 @@ fn main() {
         &tools_root,
         &provider_root,
         &link_access_root,
+        &server_root,
     );
     let public_object_types = collect_public_object_types(&source_roots);
     for spec in &object_specs {
@@ -168,6 +172,10 @@ fn main() {
             &type_registry,
         )
     }));
+    objects.sort_by(|left, right| left.schema_key.cmp(&right.schema_key));
+    for (object_id, object) in objects.iter_mut().enumerate() {
+        object.object_id = object_id as u32;
+    }
     let schema_json = build_rust_codegen::render_schema(&objects, &serializable_type_definitions);
     let generated =
         build_rust_codegen::render_generated(&objects, &schema_json, &error_type_definitions);
@@ -181,6 +189,7 @@ fn main() {
         &serializable_type_definitions,
     );
 }
+
 
 /// Registers every source directory and file so newly added proxy objects regenerate clients.
 fn emit_source_tree_rerun_if_changed(path: &Path) {

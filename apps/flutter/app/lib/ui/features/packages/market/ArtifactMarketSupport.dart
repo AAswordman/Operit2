@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
-import '../../../../core/link/CoreLinkProtocol.dart';
+import 'dart:typed_data';
+
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 
@@ -90,9 +91,10 @@ void ensureMarketEntryVersionSupported({
   final normalizedVersionId = versionId?.trim();
   final version = switch (normalizedVersionId) {
     null || '' => entry.latestVersion,
-    final selectedVersionId => entry.versions
-        .where((candidate) => candidate.id == selectedVersionId)
-        .firstOrNull,
+    final selectedVersionId =>
+      entry.versions
+          .where((candidate) => candidate.id == selectedVersionId)
+          .firstOrNull,
   };
   if (version == null) {
     throw StateError('市场条目缺少要安装的版本信息。');
@@ -113,8 +115,9 @@ class _MarketAppVersion implements Comparable<_MarketAppVersion> {
   });
 
   factory _MarketAppVersion.parse(String value) {
-    final match = RegExp(r'^(\d+)\.(\d+)\.(\d+)(?:\+(\d+))?$')
-        .firstMatch(value.trim());
+    final match = RegExp(
+      r'^(\d+)\.(\d+)\.(\d+)(?:\+(\d+))?$',
+    ).firstMatch(value.trim());
     if (match == null) {
       throw FormatException('版本号必须使用 x.y.z 或 x.y.z+n 格式：$value');
     }
@@ -143,7 +146,8 @@ class _MarketAppVersion implements Comparable<_MarketAppVersion> {
   }
 
   @override
-  String toString() => build == 0 ? '$major.$minor.$patch' : '$major.$minor.$patch+$build';
+  String toString() =>
+      build == 0 ? '$major.$minor.$patch' : '$major.$minor.$patch+$build';
 }
 
 String firstNonBlank(Iterable<String> values) {
@@ -175,31 +179,47 @@ Future<String> runCoreMarketInstall({
   if (normalizedType.isEmpty) {
     throw StateError('Artifact type is empty');
   }
-  final value = await clients.bridge.call(
-    CoreCallRequest(
-      requestId: 'flutter-market-${DateTime.now().microsecondsSinceEpoch}',
-      targetPath: CoreObjectPath.parse('application'),
-      methodName: 'runCoreCommand',
-      args: <String, Object?>{
-        'args': <String>[
-          'market',
-          'install',
-          entryId,
-          currentAppVersion,
-          if (versionId?.trim().isNotEmpty == true) versionId!.trim(),
-        ],
-      },
-    ),
+  final entry = await clients.providersMarketStatsApiService.getEntryById(
+    entryId: entryId,
   );
-  if (value is! Map<Object?, Object?>) {
-    throw StateError('Invalid core command output');
+  if (entry.type != normalizedType) {
+    throw StateError('Marketplace entry type changed during installation');
   }
-  final stderr = value['stderr']?.toString().trim() ?? '';
-  if (stderr.isNotEmpty) {
-    throw StateError(stderr);
+  final selectedVersionId = versionId?.trim();
+  final targetVersionId = selectedVersionId == null || selectedVersionId.isEmpty
+      ? entry.latestVersion?.id.trim()
+      : selectedVersionId;
+  if (targetVersionId == null || targetVersionId.isEmpty) {
+    throw StateError('Marketplace entry has no installable version');
   }
-  final stdout = value['stdout']?.toString().trim() ?? '';
-  return stdout.isEmpty ? '安装完成' : stdout;
+  final asset = entry.assets
+      .where(
+        (candidate) =>
+            candidate.versionId == targetVersionId &&
+            candidate.id.trim().isNotEmpty,
+      )
+      .firstOrNull;
+  if (asset == null) {
+    throw StateError('Marketplace entry has no downloadable asset for version');
+  }
+  final fileName = asset.assetName?.trim();
+  if (fileName == null || fileName.isEmpty) {
+    throw StateError('Marketplace asset has no file name');
+  }
+  final bytes = await clients.providersMarketStatsApiService.downloadAsset(
+    assetId: asset.id,
+  );
+  final result = await clients.application
+      .packageManager()
+      .addMarketArtifactBytes(
+        bytes: Uint8List.fromList(bytes),
+        fileName: fileName,
+        expectedSha256: asset.sha256,
+      );
+  if (!result.toLowerCase().startsWith('successfully imported')) {
+    throw StateError(result);
+  }
+  return result;
 }
 
 /// Starts a broker transaction for Flutter's visible market browser.

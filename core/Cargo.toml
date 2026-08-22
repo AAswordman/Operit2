@@ -2,7 +2,8 @@
 members = [
     "crates/operit-host-api",
     "crates/operit-command-core",
-    "crates/operit-core-annotations",
+    "crates/operit-core-route",
+    "crates/operit-core-server",
     "crates/operit-core-proxy",
     "crates/operit-link",
     "crates/operit-link-access",

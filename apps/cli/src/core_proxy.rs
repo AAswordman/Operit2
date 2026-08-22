@@ -1,36 +1,32 @@
 use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
-
 use operit_core_proxy::{
-    CoreNodeRouter::CoreNodeRouter, GeneratedCoreProxy, LocalCoreProxy,
-    RuntimeRemoteLinkService::RuntimeRemoteLinkService,
+    GeneratedCoreProxy, LocalCoreProxy,
 };
 use operit_host_api::HostManager::HostManager;
-use operit_link::CoreLinkClient;
-use operit_link_access::PairedRemoteSession;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 
 use crate::create_local_core;
 
 pub(crate) struct CliCore {
-    proxy: GeneratedCoreProxy<Box<dyn CoreLinkClient + Send>>,
+    proxy: GeneratedCoreProxy<LocalCoreProxy>,
     localHostManager: Option<HostManager>,
 }
 
-/// Creates a CLI proxy over one explicitly paired remote runtime session.
-pub(crate) fn cli_core(client: PairedRemoteSession) -> CliCore {
-    CliCore {
-        proxy: GeneratedCoreProxy::new(Box::new(client.clone())),
-        localHostManager: None,
-    }
+/// Creates the local CLI Core and sends generated requests directly to its runtime proxy.
+pub(crate) fn local_cli_core() -> Result<CliCore, String> {
+    let mut core = initialized_cli_runtime()?;
+    let localHostManager = core.localApplicationMut().hostManager.clone();
+    Ok(CliCore {
+        proxy: GeneratedCoreProxy::new(core),
+        localHostManager: Some(localHostManager),
+    })
 }
 
-/// Creates the local CLI CoreNode and routes every generated request through it.
-pub(crate) fn local_cli_core() -> Result<CliCore, String> {
+/// Creates and initializes one CLI-owned local runtime before proxy construction.
+fn initialized_cli_runtime() -> Result<LocalCoreProxy, String> {
     let mut core = create_local_core();
     core.localApplicationMut().onCreate()?;
-    let localHostManager = core.localApplicationMut().hostManager.clone();
     {
         let application = core.localApplicationMut();
         let enhanced_ai_service = EnhancedAIService::new(
@@ -43,12 +39,7 @@ pub(crate) fn local_cli_core() -> Result<CliCore, String> {
             .map_err(|_| "Chat runtime holder is busy".to_string())?;
         holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService = Some(enhanced_ai_service);
     }
-    RuntimeRemoteLinkService::new(core.clone()).startSpaceSync()?;
-    let router = CoreNodeRouter::new(Arc::new(core));
-    Ok(CliCore {
-        proxy: GeneratedCoreProxy::new(Box::new(router)),
-        localHostManager: Some(localHostManager),
-    })
+    Ok(core)
 }
 
 impl CliCore {
@@ -61,7 +52,7 @@ impl CliCore {
 }
 
 impl Deref for CliCore {
-    type Target = GeneratedCoreProxy<Box<dyn CoreLinkClient + Send>>;
+    type Target = GeneratedCoreProxy<LocalCoreProxy>;
 
     fn deref(&self) -> &Self::Target {
         &self.proxy

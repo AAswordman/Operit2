@@ -33,7 +33,6 @@ use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
-use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
@@ -41,7 +40,6 @@ use operit_tools::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, ToolExposureMode as ResolvedToolExposureMode,
 };
 use operit_tools::tools::AIToolHandler::AIToolHandler;
-use operit_tools::tools::ToolResultDataClasses::ToolResultData;
 use operit_tools::ConversationMarkupManager::{
     ConversationMarkupManager, ToolResult, ENHANCED_PURE_THINKING_ONLY_WARNING,
 };
@@ -2486,61 +2484,6 @@ impl EnhancedAIService {
         }
 
         if batchControl == ToolBatchControl::StopExecution {
-            if isSubTask {
-                return Err(AiServiceError::RequestFailed(
-                    "stream source transition is not available inside a subtask".to_string(),
-                ));
-            }
-            if chatId.as_ref().is_none_or(|value| value.trim().is_empty()) {
-                return Err(AiServiceError::RequestFailed(
-                    "stream source transition requires a persisted execution key".to_string(),
-                ));
-            }
-            let toolResultMessage =
-                ConversationMarkupManager::buildBoundedToolResultMessage(&allToolResults);
-            if toolResultMessage.trim().is_empty() {
-                return Err(AiServiceError::RequestFailed(
-                    "stream source transition produced an empty tool result message".to_string(),
-                ));
-            }
-            let toolNames = allToolResults
-                .iter()
-                .map(|result| result.toolName.clone())
-                .collect::<Vec<_>>()
-                .join(", ");
-            context.conversationHistory.push(PromptTurn {
-                kind: PromptTurnKind::TOOL_RESULT,
-                content: toolResultMessage,
-                tool_name: Some(toolNames),
-                metadata: HashMap::new(),
-            });
-            let normalizedChatHistory = self
-                .conversation_service
-                .normalize_conversation_history_for_model(&context.conversationHistory);
-            context.conversationHistory.clear();
-            context.conversationHistory.extend(normalizedChatHistory);
-            let targetNodeId = allToolResults
-                .iter()
-                .find(|result| {
-                    result.success && result.toolName == BuiltinToolName::SwitchCore.as_str()
-                })
-                .and_then(|result| match &result.result {
-                    ToolResultData::StringResultData(data) => Some(data.value.clone()),
-                    _ => None,
-                })
-                .ok_or_else(|| {
-                    AiServiceError::RequestFailed(
-                        "switch_core did not return a typed target CoreNode".to_string(),
-                    )
-                })?;
-            collector.request_terminal_source_transition(targetNodeId);
-            AppLogger::i(
-                TAG,
-                &format!(
-                    "chat.stream.source_transition_requested executionId={} round={}",
-                    context.executionId, context.roundManager.roundIndex
-                ),
-            );
             return Ok(());
         }
 

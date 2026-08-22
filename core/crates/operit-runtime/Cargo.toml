@@ -20,7 +20,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 json5.workspace = true
 md-5 = "0.10"
 operit-host-api = { path = "../operit-host-api" }
-operit-core-annotations = { path = "../operit-core-annotations" }
+operit-core-route = { path = "../operit-core-route" }
 operit-link = { path = "../operit-link" }
 operit-js-bridge = { path = "../operit-js-bridge", optional = true }
 operit-local-models = { path = "../operit-local-models" }

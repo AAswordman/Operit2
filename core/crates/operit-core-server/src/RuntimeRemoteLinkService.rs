@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 
 use crate::{
-    CoreNodeRouter::CoreNodeRouter, LocalCoreProxy,
+    CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter},
     SpacePersistenceSyncService::SpacePersistenceSyncService,
 };
 
@@ -115,7 +115,7 @@ pub struct RuntimeDeviceSpaceTopology {
 /// Provides runtime-owned remote session operations to generated local Core clients.
 #[derive(Clone)]
 pub struct RuntimeRemoteLinkService {
-    localCore: LocalCoreProxy,
+    localRuntime: Arc<CoreNodeLocalRuntime>,
     nodeRouter: CoreNodeRouter,
     linkAccessStore: LinkAccessStore,
     spaceStore: CoreSpaceStore,
@@ -123,12 +123,13 @@ pub struct RuntimeRemoteLinkService {
 
 impl RuntimeRemoteLinkService {
     /// Creates the service over the active local Core and its runtime-owned Link records.
-    pub fn new(localCore: LocalCoreProxy) -> Self {
-        let linkAccessStore = LinkAccessStore::new(localCore.runtimeStorageHost());
-        let spaceStore = CoreSpaceStore::new(localCore.runtimeStorageHost());
-        let nodeRouter = CoreNodeRouter::new(Arc::new(localCore.clone()));
+    pub fn new(localRuntime: CoreNodeLocalRuntime) -> Self {
+        let localRuntime = Arc::new(localRuntime);
+        let linkAccessStore = LinkAccessStore::new(localRuntime.runtimeStorageHost());
+        let spaceStore = CoreSpaceStore::new(localRuntime.runtimeStorageHost());
+        let nodeRouter = CoreNodeRouter::new((*localRuntime).clone());
         Self {
-            localCore,
+            localRuntime,
             nodeRouter,
             linkAccessStore,
             spaceStore,
@@ -251,7 +252,7 @@ impl RuntimeRemoteLinkService {
     pub fn leaveDeviceSpace(&self) -> Result<CoreSpace, String> {
         let deviceSpace = self.spaceStore.leave()?;
         let memberNodeIds = deviceSpace.members.iter().cloned().collect::<BTreeSet<_>>();
-        CoreNodeBindingStore::new(self.localCore.runtimeStorageHost())?
+        CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?
             .rebindOutsideNodesToLocal(&memberNodeIds)?;
         Ok(deviceSpace)
     }
@@ -299,7 +300,7 @@ impl RuntimeRemoteLinkService {
 
     /// Reads paired devices with inbound and outbound records merged by device id.
     #[allow(non_snake_case)]
-    fn pairedDevicesSnapshot(&self) -> Result<BTreeMap<String, RuntimePairedDevice>, String> {
+    pub fn pairedDevicesSnapshot(&self) -> Result<BTreeMap<String, RuntimePairedDevice>, String> {
         mergePairedDevices(
             self.linkAccessStore.outboundSessions()?,
             self.linkAccessStore.inboundSessions()?,
@@ -645,7 +646,7 @@ impl RuntimeRemoteLinkService {
     #[allow(non_snake_case)]
     fn persistenceSyncService(&self) -> SpacePersistenceSyncService {
         SpacePersistenceSyncService::new(
-            self.localCore.clone(),
+            self.localRuntime.clone(),
             self.nodeRouter.clone(),
             self.linkAccessStore.clone(),
             self.spaceStore.clone(),
@@ -787,9 +788,11 @@ fn serviceCallRequest(
     methodName: &str,
     args: Value,
 ) -> Result<CoreCallRequest, String> {
+    let targetObjectId = crate::spaceObjectIdForSchema(targetPath)
+        .ok_or_else(|| format!("unknown Core schema key: {targetPath}"))?;
     Ok(CoreCallRequest::new(
         format!("runtime-remote-{methodName}-{}", currentTimeMillis()),
-        targetPath,
+        targetObjectId,
         methodName,
         toCoreValue(args).map_err(|error| error.to_string())?,
     ))

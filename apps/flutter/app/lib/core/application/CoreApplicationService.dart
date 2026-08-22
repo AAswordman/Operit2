@@ -188,14 +188,14 @@ class CoreApplicationService with WidgetsBindingObserver {
         return;
       }
       final deviceInfo = await RuntimeDeviceInfoProvider.current();
-      await _coreClients.linkAccessStore.initializeIdentity(
+      await _coreClients.linkAccess.linkAccessStore.initializeIdentity(
         deviceInfo: deviceInfo,
       );
-      await _coreClients.runtimeRemoteLinkService.updateCurrentDeviceUserName(
+      await _coreClients.server.runtimeRemoteLinkService.updateCurrentDeviceUserName(
         userName: _runtimeManager.activeIdentity.name,
       );
       await _ensureLinkHostStarted();
-      await _coreClients.runtimeRemoteLinkService.startSpaceSync();
+      await _coreClients.server.runtimeRemoteLinkService.startSpaceSync();
       ClientLogger.i(
         'runtime services start done elapsedMs=${stopwatch.elapsedMilliseconds}',
         tag: _logTag,

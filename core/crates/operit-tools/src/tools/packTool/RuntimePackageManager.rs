@@ -2809,6 +2809,45 @@ impl RuntimePackageManager {
         )
     }
 
+    /// Imports one marketplace artifact from bytes after validating its declared digest.
+    #[allow(non_snake_case)]
+    pub fn addMarketArtifactBytes(
+        &mut self,
+        bytes: Vec<u8>,
+        fileName: String,
+        expectedSha256: String,
+    ) -> String {
+        let normalizedSha256 = expectedSha256.trim().to_ascii_lowercase();
+        if !isSha256Hex(&normalizedSha256) {
+            return "Market artifact SHA-256 is invalid".to_string();
+        }
+        if sha256Hex(&bytes) != normalizedSha256 {
+            return "Market artifact SHA-256 mismatch".to_string();
+        }
+        let fileName = fileName.trim();
+        if fileName.is_empty() || Path::new(fileName).file_name().and_then(|name| name.to_str()) != Some(fileName) {
+            return "Market artifact file name is invalid".to_string();
+        }
+        if let Err(error) = self.storePaths.ensure_packages_dir() {
+            return format!("Error importing market artifact: {error}");
+        }
+        let temporaryFile = self.storePaths.packages_dir().join(format!(
+            ".market-download-{}-{fileName}",
+            currentTimeMillis()
+        ));
+        if let Err(error) = self
+            .fileSystemHost
+            .writeFileBytes(&hostPath(&temporaryFile), &bytes)
+        {
+            return format!("Error importing market artifact: {error}");
+        }
+        let result = self.addPackageFileFromExternalStorage(&temporaryFile.to_string_lossy());
+        let _ = self
+            .fileSystemHost
+            .deleteFile(&hostPath(&temporaryFile), false);
+        result
+    }
+
     #[allow(non_snake_case)]
     /// Installs one signed marketplace ToolPkg as a locally authenticated package archive.
     pub fn addMarketToolPkgFileFromExternalStorage(

@@ -58,7 +58,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
 
   /// Subscribes to pairing changes produced by both connection directions.
   void _watchPairedDevices() {
-    _pairedDevicesSubscription = _clients.runtimeRemoteLinkService
+    _pairedDevicesSubscription = _clients.server.runtimeRemoteLinkService
         .pairedDevicesFlow()
         .listen(
           (devices) => unawaited(_applyPairedDevices(devices)),
@@ -77,7 +77,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   /// Reads the synchronized device space projection from the current device.
   Future<void> _refreshCurrentDeviceSpace() async {
     try {
-      final deviceSpace = await _clients.runtimeRemoteLinkService.deviceSpace();
+      final deviceSpace = await _clients.server.runtimeRemoteLinkService.deviceSpace();
       if (mounted) {
         setState(() => _currentDeviceSpace = deviceSpace);
       }
@@ -99,7 +99,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
     setState(() => _busy = true);
     try {
-      final topology = await _clients.runtimeRemoteLinkService
+      final topology = await _clients.server.runtimeRemoteLinkService
           .deviceSpaceTopology();
       if (!mounted) {
         return;
@@ -128,10 +128,10 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   Future<generated.RuntimeDeviceSpaceTopology> _disconnectDeviceSpaceConnection(
     String deviceId,
   ) async {
-    await _clients.runtimeRemoteLinkService.disconnectDeviceSpaceConnection(
+    await _clients.server.runtimeRemoteLinkService.disconnectDeviceSpaceConnection(
       deviceId: deviceId,
     );
-    return _clients.runtimeRemoteLinkService.deviceSpaceTopology();
+    return _clients.server.runtimeRemoteLinkService.deviceSpaceTopology();
   }
 
   /// Applies one paired-device snapshot and refreshes direct connection states.
@@ -168,7 +168,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   /// Reads the active direct-connection state for one paired device.
   Future<_PairedRemoteProbeState> _probePairedDevice(String deviceId) async {
     try {
-      final online = await _clients.runtimeRemoteLinkService.pairedDeviceOnline(
+    final online = await _clients.server.runtimeRemoteLinkService.pairedDeviceOnline(
         deviceId: deviceId,
       );
       return online
@@ -183,7 +183,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   Future<void> _deletePairedDevice(String deviceId) async {
     setState(() => _busy = true);
     try {
-      await _clients.runtimeRemoteLinkService.removePairedDevice(
+      await _clients.server.runtimeRemoteLinkService.removePairedDevice(
         deviceId: deviceId,
       );
     } finally {
@@ -204,7 +204,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
     setState(() => _busy = true);
     try {
-      await _clients.runtimeRemoteLinkService.setPairedRemoteTransport(
+      await _clients.server.runtimeRemoteLinkService.setPairedRemoteTransport(
         name: name,
         transport: transport,
       );
@@ -237,7 +237,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
     setState(() => _busy = true);
     try {
-      final renamed = await _clients.runtimeRemoteLinkService.renameDeviceSpace(
+      final renamed = await _clients.server.runtimeRemoteLinkService.renameDeviceSpace(
         spaceName: spaceName,
       );
       if (mounted) {
@@ -282,7 +282,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
     setState(() => _busy = true);
     try {
-      final deviceSpace = await _clients.runtimeRemoteLinkService
+      final deviceSpace = await _clients.server.runtimeRemoteLinkService
           .leaveDeviceSpace();
       if (mounted) {
         setState(() {

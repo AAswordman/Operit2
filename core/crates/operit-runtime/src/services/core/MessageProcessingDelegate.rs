@@ -1,8 +1,7 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use std::sync::{Arc, Mutex};
 
-use serde::{Deserialize, Serialize};
 
 use crate::core::chat::AIMessageManager::{
     logMessageTiming, messageTimingNow, AIMessageManager, BuildUserMessageContentRequest,
@@ -17,11 +16,13 @@ use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDeleg
 use crate::services::RuntimeHostInteractionService::{
     publishOwnerAppNotification, RuntimeHostInteractionAppNotificationPayload,
 };
-use crate::services::RuntimeTextStreamRegistry::{registerTextStream, removeTextStream};
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
-use operit_link::{CoreStream, CoreValue};
+use operit_link::{
+    CoreEvent, CoreEventKind, CoreEventStream, CoreLinkError, CoreRequestId, CoreStream,
+    CoreStreamSource, CoreValue, CoreWatchRequest,
+};
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatMessage::ChatMessage;
@@ -40,9 +41,12 @@ use operit_providers::chat::EnhancedAIService::{
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 use operit_tools::tools::ToolProgressBus::ToolProgressBus;
 use operit_util::stream::HotStream::SharedStream;
-use operit_util::stream::RevisableTextStream::{ResponseStreamItem, RevisableTextStream};
+use operit_util::stream::RevisableTextStream::{
+    RenderableTextStream, ResponseStreamItem, RevisableTextStream,
+};
 use operit_util::stream::Stream::Stream;
 use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
+use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
 
@@ -51,6 +55,118 @@ pub const STREAM_PERSIST_INTERVAL_MS: i64 = 1000;
 
 /// Maximum text length used when preparing automatic speech previews.
 pub const AUTO_READ_PREVIEW_MAX: usize = 48;
+
+/// Creates a stable Core stream source for one physical AI response segment.
+pub fn coreResponseStreamSource(
+    stream: SharedAiResponseStream,
+    streamKey: String,
+) -> Arc<CoreStreamSource> {
+    Arc::new(CoreStreamSource::new(move |request| {
+        openCoreResponseStream(stream.clone(), streamKey.clone(), request)
+    }))
+}
+
+/// Opens one physical AI response segment as Markdown Core events.
+fn openCoreResponseStream(
+    stream: SharedAiResponseStream,
+    streamKey: String,
+    request: CoreWatchRequest,
+) -> Result<CoreEventStream, CoreLinkError> {
+    let (sender, receiver) = CoreEventStream::channel();
+    let initialContent = stream.initial_render_content();
+    let mut orderedStream = stream;
+    defaultHostRuntimeTaskSchedulerHost()
+        .scheduleHostRuntimeAsyncTask(
+            "core-runtime-text-markdown",
+            Box::new(move || {
+                Box::pin(async move {
+                    let mut markdownStream = MarkdownRenderEventStream::new(streamKey.clone());
+                    for event in markdownStream.beginSnapshot(&initialContent) {
+                        sendCoreTextEvent(
+                            &sender,
+                            &request.requestId,
+                            request.targetObjectId,
+                            &request.propertyName,
+                            CoreEventKind::Changed,
+                            operit_link::toCoreValue(event)
+                                .expect("MarkdownStreamEvent must serialize"),
+                        );
+                    }
+                    let mut textRevisions = TextStreamRevisionTracker::new(&initialContent);
+                    let mut itemCollector = |item: ResponseStreamItem| match item {
+                        ResponseStreamItem::Chunk(chunk) => {
+                            let _ = textRevisions.append(&chunk);
+                            for event in markdownStream.pushChunk(&chunk) {
+                                sendCoreTextEvent(
+                                    &sender,
+                                    &request.requestId,
+                                    request.targetObjectId,
+                                    &request.propertyName,
+                                    CoreEventKind::Changed,
+                                    operit_link::toCoreValue(event)
+                                        .expect("MarkdownStreamEvent must serialize"),
+                                );
+                            }
+                        }
+                        ResponseStreamItem::Revision(event) => {
+                            let markdownEvent = match event.event_type {
+                                operit_util::stream::RevisableTextStream::TextStreamEventType::Savepoint => {
+                                    textRevisions.savepoint(&event.id);
+                                    MarkdownStreamEvent::savepoint(streamKey.clone(), event.id)
+                                }
+                                operit_util::stream::RevisableTextStream::TextStreamEventType::Rollback => {
+                                    let content = textRevisions.rollback(&event.id).expect(
+                                        "markdown rollback must reference an active savepoint",
+                                    );
+                                    markdownStream.restoreContent(content);
+                                    MarkdownStreamEvent::rollback(streamKey.clone(), event.id)
+                                }
+                            };
+                            sendCoreTextEvent(
+                                &sender,
+                                &request.requestId,
+                                request.targetObjectId,
+                                &request.propertyName,
+                                CoreEventKind::Changed,
+                                operit_link::toCoreValue(markdownEvent)
+                                    .expect("MarkdownStreamEvent must serialize"),
+                            );
+                        }
+                    };
+                    orderedStream.collect_ordered(&mut itemCollector).await;
+                    sendCoreTextEvent(
+                        &sender,
+                        &request.requestId,
+                        request.targetObjectId,
+                        &request.propertyName,
+                        CoreEventKind::Completed,
+                        operit_link::toCoreValue(markdownStream.completed())
+                            .expect("MarkdownStreamEvent must serialize"),
+                    );
+                })
+            }),
+        )
+        .map_err(|error| CoreLinkError::internal(error.to_string()))?;
+    Ok(receiver)
+}
+
+/// Sends one typed Markdown event through a Core stream channel.
+fn sendCoreTextEvent(
+    sender: &tokio::sync::mpsc::UnboundedSender<CoreEvent>,
+    requestId: &CoreRequestId,
+    targetObjectId: u32,
+    propertyName: &str,
+    kind: CoreEventKind,
+    value: CoreValue,
+) {
+    let _ = sender.send(CoreEvent {
+        requestId: Some(requestId.clone()),
+        targetObjectId,
+        propertyName: propertyName.to_string(),
+        kind,
+        value,
+    });
+}
 
 /// Builds the localized host notice for a timed-out ToolPkg pre-send hook.
 fn buildToolPkgHookTimeoutNotice(pluginIdentifier: String) -> String {
@@ -137,15 +253,6 @@ pub struct BuildUserMessageContentForGroupOrchestrationRequest {
     pub roleCardId: String,
 }
 
-/// Stores opaque execution state required to activate one continued response source.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ResponseContinuationCheckpoint {
-    pub assistant_message_timestamp: i64,
-    pub execution_generation: i64,
-    pub chat: ChatHistory,
-    pub chat_history: Vec<ChatMessage>,
-}
-
 /// End-to-end request for sending a user message through enhanced AI processing.
 pub struct SendUserMessageProcessingRequest<'a> {
     pub enhancedAiService: &'a mut EnhancedAIService,
@@ -175,25 +282,6 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub assistantMessageTimestamp: Option<i64>,
     pub executionGeneration: Option<i64>,
     pub turnOptions: ChatTurnOptions,
-}
-
-/// Removes one in-process continuation claim whenever its response worker exits.
-struct ExecutionContinuationGuard {
-    continuation: Option<(String, i64)>,
-    activeContinuations: Arc<Mutex<HashSet<(String, i64)>>>,
-}
-
-impl Drop for ExecutionContinuationGuard {
-    /// Releases the claimed continuation during normal return or unwinding.
-    fn drop(&mut self) {
-        let Some(continuation) = self.continuation.as_ref() else {
-            return;
-        };
-        self.activeContinuations
-            .lock()
-            .expect("active execution continuations mutex poisoned")
-            .remove(continuation);
-    }
 }
 
 /// Result returned after a user message send finishes and history is updated.
@@ -242,7 +330,6 @@ pub struct MessageProcessingDelegate {
     pub lastScrollEmitMsByChatKey: Arc<Mutex<HashMap<String, i64>>>,
     pub suppressIdleCompletedStateByChatId: Arc<Mutex<HashMap<String, bool>>>,
     pub pendingAsyncSummaryUiByChatId: Arc<Mutex<HashMap<String, bool>>>,
-    pub activeExecutionContinuations: Arc<Mutex<HashSet<(String, i64)>>>,
     pub speakMessageHandler: Option<fn(String, bool)>,
 }
 
@@ -281,7 +368,6 @@ impl MessageProcessingDelegate {
             lastScrollEmitMsByChatKey: Arc::new(Mutex::new(HashMap::new())),
             suppressIdleCompletedStateByChatId: Arc::new(Mutex::new(HashMap::new())),
             pendingAsyncSummaryUiByChatId: Arc::new(Mutex::new(HashMap::new())),
-            activeExecutionContinuations: Arc::new(Mutex::new(HashSet::new())),
             speakMessageHandler: None,
         }
     }
@@ -310,7 +396,6 @@ impl MessageProcessingDelegate {
             lastScrollEmitMsByChatKey: self.lastScrollEmitMsByChatKey.clone(),
             suppressIdleCompletedStateByChatId: self.suppressIdleCompletedStateByChatId.clone(),
             pendingAsyncSummaryUiByChatId: self.pendingAsyncSummaryUiByChatId.clone(),
-            activeExecutionContinuations: self.activeExecutionContinuations.clone(),
             speakMessageHandler: self.speakMessageHandler,
         }
     }
@@ -484,101 +569,6 @@ impl MessageProcessingDelegate {
     ) -> Option<SharedAiResponseStream> {
         self.withExistingRuntime(Some(chatId), |runtime| runtime.responseStream.clone())
             .flatten()
-    }
-
-    /// Claims one response execution continuation while it is actively running.
-    #[allow(non_snake_case)]
-    pub(crate) fn claimExecutionContinuation(
-        &self,
-        chatId: String,
-        executionGeneration: i64,
-    ) -> bool {
-        self.activeExecutionContinuations
-            .lock()
-            .expect("active execution continuations mutex poisoned")
-            .insert((chatId, executionGeneration))
-    }
-
-    /// Releases one response execution continuation after its worker stops.
-    #[allow(non_snake_case)]
-    pub(crate) fn releaseExecutionContinuation(&self, chatId: String, executionGeneration: i64) {
-        self.activeExecutionContinuations
-            .lock()
-            .expect("active execution continuations mutex poisoned")
-            .remove(&(chatId, executionGeneration));
-    }
-
-    /// Starts a continued response from opaque source state after a generic stream source switch.
-    #[allow(non_snake_case)]
-    pub(crate) async fn activateResponseExecution(
-        &mut self,
-        enhancedAiService: &mut EnhancedAIService,
-        messageCoordinationDelegate: &mut MessageCoordinationDelegate,
-        chatHistoryDelegate: ChatHistoryDelegate,
-        chatId: String,
-        sourceState: Vec<u8>,
-    ) -> Result<(), String> {
-        let checkpoint: ResponseContinuationCheckpoint =
-            rmp_serde::from_slice(&sourceState).map_err(|error| error.to_string())?;
-        if checkpoint.execution_generation <= 0 {
-            return Err(format!(
-                "response execution generation must be positive for {chatId}: {}",
-                checkpoint.execution_generation
-            ));
-        }
-        let assistantMessage = checkpoint
-            .chat_history
-            .iter()
-            .find(|message| message.timestamp == checkpoint.assistant_message_timestamp)
-            .cloned()
-            .ok_or_else(|| {
-                format!(
-                    "response continuation assistant message does not exist in source state for {chatId}: {}",
-                    checkpoint.assistant_message_timestamp
-                )
-            })?;
-        if assistantMessage.sender != "ai" {
-            return Err(format!(
-                "response continuation source state is not an assistant message for {chatId}: {}",
-                checkpoint.assistant_message_timestamp
-            ));
-        }
-        if assistantMessage.completedExecutionGeneration >= checkpoint.execution_generation {
-            return Ok(());
-        }
-        if !self.claimExecutionContinuation(chatId.clone(), checkpoint.execution_generation) {
-            return Ok(());
-        }
-        messageCoordinationDelegate.chatHistoryDelegate = chatHistoryDelegate;
-        messageCoordinationDelegate.messageProcessingDelegate = self.clone_for_core();
-        messageCoordinationDelegate
-            .sendMessageInternal(
-                enhancedAiService,
-                PromptFunctionType::CHAT,
-                true,
-                false,
-                None,
-                Some(chatId.clone()),
-                String::new(),
-                None,
-                None,
-                None,
-                Vec::new(),
-                None,
-                false,
-                None,
-                true,
-                Some(checkpoint.assistant_message_timestamp),
-                Some(checkpoint.execution_generation),
-                Some(checkpoint.chat_history),
-                ChatTurnOptions::default(),
-            )
-            .await;
-        if self.activeResponseStreamForChat(chatId.clone()).is_none() {
-            self.releaseExecutionContinuation(chatId, checkpoint.execution_generation);
-            return Err("response continuation did not create a response stream".to_string());
-        }
-        Ok(())
     }
 
     /// Updates one chat's observable logical execution state in a single publication.
@@ -1380,16 +1370,11 @@ impl MessageProcessingDelegate {
                 ..ChatMessage::new("ai".to_string())
             },
         };
-        let streamId = format!("chat-message-stream:{}", aiMessage.timestamp);
-        registerTextStream(streamId.clone(), sharedResponseStream.clone());
-        aiMessage.contentStream = Some(CoreStream::new_at(
-            streamId.clone(),
-            "services.runtimeTextStreamRegistry",
-            "openTextStream",
-            CoreValue::Map(BTreeMap::from([
-                ("streamId".to_string(), CoreValue::String(streamId.clone())),
-                ("routeKey".to_string(), CoreValue::String(chatId.clone())),
-            ])),
+        let streamKey = format!("chat-message-stream:{}", aiMessage.timestamp);
+        let segmentSource = coreResponseStreamSource(sharedResponseStream.clone(), streamKey);
+        aiMessage.contentStream = Some(CoreStream::fromSourceWithId(
+            format!("chat-message-stream:{}", aiMessage.timestamp),
+            segmentSource,
         ));
         AppLogger::i(
             "ResponseExecutionTrace",
@@ -1468,21 +1453,13 @@ impl MessageProcessingDelegate {
         let completionWorkspaceToolHookHandler = workerWorkspaceToolHookHandler.clone();
         let completionFirstResponseElapsed = workerFirstResponseElapsed.clone();
         let completionResponseStream = workerResponseStream.clone();
-        let completionStreamId = streamId.clone();
         let completionExecutionGeneration = request.executionGeneration;
-        let completionActiveExecutionContinuations = self.activeExecutionContinuations.clone();
         let mut responseItems = workerResponseStream.clone();
         defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeAsyncTask(
                 "message-response-collection",
                 Box::new(move || {
                     Box::pin(async move {
-                        let _executionContinuationGuard =
-                            ExecutionContinuationGuard {
-                                continuation: completionExecutionGeneration
-                                    .map(|generation| (completionChatId.clone(), generation)),
-                                activeContinuations: completionActiveExecutionContinuations,
-                            };
                         responseItems
                             .collect_ordered(&mut move |item| {
                                 let chunk = match item {
@@ -1635,8 +1612,6 @@ impl MessageProcessingDelegate {
                             },
                         );
                         let completedElapsed = messageTimingNow().startedAtMs as i64;
-                        let terminalSourceTarget =
-                            completionResponseStream.terminal_source_target();
                         let finalMessage = {
                             let parts = {
                                 let mut partStream = completionPartStream
@@ -1689,102 +1664,6 @@ impl MessageProcessingDelegate {
                                     ),
                                 ],
                             );
-                        }
-                        if terminalSourceTarget.is_some() {
-                            if !workerTurnOptions.persistTurn {
-                                let error =
-                                    "response source transition requires a persisted assistant turn"
-                                        .to_string();
-                                completionResponseStream
-                                    .fail_terminal_source_transition(error.clone());
-                                let mut delegate = completionMessageProcessingDelegate
-                                    .lock()
-                                    .expect("worker message processing delegate mutex poisoned");
-                                delegate.cleanupRuntimeAfterSend(
-                                    completionChatId.clone(),
-                                    completionTurnOptions.clone(),
-                                );
-                                delegate.finishChatExecution(
-                                    completionChatId.clone(),
-                                    InputProcessingState::Error { message: error },
-                                );
-                                return;
-                            }
-                            let segmentMessage = ChatMessage {
-                                completedAt: 0,
-                                ..finalMessage.clone()
-                            };
-                            let _requiredClock = completionChatHistoryDelegate
-                                .lock()
-                                .expect("worker chat history mutex poisoned")
-                                .commitAssistantMessageSegment(
-                                    completionChatId.clone(),
-                                    segmentMessage,
-                                    None,
-                                );
-                            if let Err(error) = _requiredClock {
-                                let message = format!(
-                                    "failed to commit response source segment: {error}"
-                                );
-                                completionResponseStream
-                                    .fail_terminal_source_transition(message.clone());
-                                let mut delegate = completionMessageProcessingDelegate
-                                    .lock()
-                                    .expect("worker message processing delegate mutex poisoned");
-                                delegate.cleanupRuntimeAfterSend(
-                                    completionChatId.clone(),
-                                    completionTurnOptions.clone(),
-                                );
-                                delegate.finishChatExecution(
-                                    completionChatId.clone(),
-                                    InputProcessingState::Error { message },
-                                );
-                                return;
-                            }
-                            let executionGeneration = finalMessage.timestamp;
-                            let (chatHistory, mut chat) = {
-                                let delegate = completionChatHistoryDelegate
-                                    .lock()
-                                    .expect("worker chat history mutex poisoned");
-                                let chat = delegate
-                                    .chatHistoriesFlow
-                                    .value()
-                                    .iter()
-                                    .find(|chat| chat.id == completionChatId)
-                                    .cloned()
-                                    .expect("response source transition chat metadata must be loaded");
-                                (delegate.getRuntimeChatHistory(completionChatId.clone()), chat)
-                            };
-                            chat.messages.clear();
-                            AppLogger::i(
-                                "ResponseExecutionTrace",
-                                &format!(
-                                    "response_source_transition_ready chatId={} timestamp={} executionGeneration={} contentChars={}",
-                                    completionChatId,
-                                    finalMessage.timestamp,
-                                    executionGeneration,
-                                    finalContent.chars().count()
-                                ),
-                            );
-                            let checkpoint = match rmp_serde::to_vec_named(
-                                &ResponseContinuationCheckpoint {
-                                    assistant_message_timestamp: finalMessage.timestamp,
-                                    execution_generation: executionGeneration,
-                                    chat,
-                                    chat_history: chatHistory,
-                                },
-                            ) {
-                                Ok(checkpoint) => checkpoint,
-                                Err(error) => {
-                                    completionResponseStream.fail_terminal_source_transition(
-                                        format!("failed to encode response transition: {error}"),
-                                    );
-                                    return;
-                                }
-                            };
-                            completionResponseStream
-                                .complete_terminal_source_transition(checkpoint);
-                            return;
                         }
                         let mut completionChatHistory = {
                             let workerChatHistoryDelegate = completionChatHistoryDelegate
@@ -1889,7 +1768,6 @@ impl MessageProcessingDelegate {
                             }
                         }
                         drop(workerChatHistoryDelegate);
-                        removeTextStream(&completionStreamId);
                         completionMessageProcessingDelegate
                             .lock()
                             .expect("worker message processing delegate mutex poisoned")

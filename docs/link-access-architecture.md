@@ -218,7 +218,7 @@ Generated TTS audio playback
 ```text
 CorePushRequest {
   requestId: "browser-input-0",
-  targetPath: CoreObjectPath { segments: ["services", "runtimeBrowserService"] },
+  targetObjectId: 41,
   methodName: "submitBrowserInteractions",
   args: CoreValue::Map(...)
 }
@@ -328,7 +328,7 @@ LinkWatchChannelOpenEnvelope {
   subscriptionId: "watch-0",
   request: CoreWatchRequest {
     requestId: "flutter-0",
-    targetPath: CoreObjectPath { segments: ["chatRuntimeHolder", "main"] },
+    targetObjectId: 7,
     propertyName: "chatHistoryFlow",
     args: CoreValue::Map(...)
   }

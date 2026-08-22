@@ -2,10 +2,7 @@ use crate::stream::HotStream::{
     mutable_shared_stream, share, MutableSharedStreamImpl, SharedStream, StreamStart,
 };
 use crate::stream::Stream::{CollectFuture, Stream};
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use tokio::sync::Notify;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TextStreamEvent {
@@ -30,24 +27,6 @@ pub enum ResponseStreamItem {
 enum ResponseItemStream {
     Chunks,
     Ordered(MutableSharedStreamImpl<ResponseStreamItem>),
-}
-
-/// Describes the next physical source requested by a logical text stream.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TextStreamSourceTransition {
-    pub target: String,
-    pub payload: Vec<u8>,
-}
-
-/// Future returned while a requested source transition is being finalized.
-pub type TextStreamSourceTransitionFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<TextStreamSourceTransition, String>> + Send + 'a>>;
-
-/// Stores one optional terminal source transition published by a stream producer.
-#[derive(Clone, Debug, Default)]
-struct TerminalSourceTransitionState {
-    target: Option<String>,
-    result: Option<Result<Vec<u8>, String>>,
 }
 
 pub trait TextStreamEventCarrier {
@@ -75,12 +54,6 @@ pub trait RevisableTextStream: Stream<Item = String> + TextStreamEventCarrier {
 pub trait RenderableTextStream: RevisableTextStream {
     /// Returns the content that precedes the next streamed text segment.
     fn initial_render_content(&self) -> String;
-
-    /// Returns the requested next source without consuming its opaque payload.
-    fn terminal_source_target(&self) -> Option<String>;
-
-    /// Waits for the opaque payload required to open the requested next source.
-    fn wait_terminal_source_transition(&self) -> TextStreamSourceTransitionFuture<'_>;
 }
 
 impl<T> RevisableTextStream for Box<T>
@@ -188,8 +161,6 @@ pub struct DelegatingRevisableSharedTextStream {
     item_stream: ResponseItemStream,
     terminalFailure: Arc<Mutex<Option<String>>>,
     initialContent: Arc<Mutex<String>>,
-    terminalSourceTransition: Arc<Mutex<TerminalSourceTransitionState>>,
-    terminalSourceTransitionReady: Arc<Notify>,
 }
 
 impl DelegatingRevisableSharedTextStream {
@@ -225,10 +196,6 @@ impl DelegatingRevisableSharedTextStream {
             item_stream,
             terminalFailure: Arc::new(Mutex::new(None)),
             initialContent: Arc::new(Mutex::new(String::new())),
-            terminalSourceTransition: Arc::new(
-                Mutex::new(TerminalSourceTransitionState::default()),
-            ),
-            terminalSourceTransitionReady: Arc::new(Notify::new()),
         }
     }
 
@@ -295,78 +262,6 @@ impl DelegatingRevisableSharedTextStream {
             .clone()
     }
 
-    /// Records the exact physical source requested after this segment closes.
-    pub fn request_terminal_source_transition(&self, target: String) {
-        assert!(
-            !target.trim().is_empty(),
-            "stream transition target must not be empty"
-        );
-        let mut state = self
-            .terminalSourceTransition
-            .lock()
-            .expect("shared text stream terminal source transition mutex poisoned");
-        assert!(
-            state.target.is_none(),
-            "stream transition target is already set"
-        );
-        state.target = Some(target);
-    }
-
-    /// Returns the exact physical source requested after this segment closes.
-    pub fn terminal_source_target(&self) -> Option<String> {
-        self.terminalSourceTransition
-            .lock()
-            .expect("shared text stream terminal source transition mutex poisoned")
-            .target
-            .clone()
-    }
-
-    /// Publishes the opaque payload required to open the requested next source.
-    pub fn complete_terminal_source_transition(&self, payload: Vec<u8>) {
-        let mut state = self
-            .terminalSourceTransition
-            .lock()
-            .expect("shared text stream terminal source transition mutex poisoned");
-        assert!(
-            state.target.is_some(),
-            "terminal source transition requires a prior target"
-        );
-        state.result = Some(Ok(payload));
-        drop(state);
-        self.terminalSourceTransitionReady.notify_waiters();
-    }
-
-    /// Publishes the failure that prevented a requested source transition.
-    pub fn fail_terminal_source_transition(&self, error: String) {
-        self.terminalSourceTransition
-            .lock()
-            .expect("shared text stream terminal source transition mutex poisoned")
-            .result = Some(Err(error));
-        self.terminalSourceTransitionReady.notify_waiters();
-    }
-
-    /// Waits until the producer publishes the complete terminal source transition.
-    pub async fn wait_terminal_source_transition(
-        &self,
-    ) -> Result<TextStreamSourceTransition, String> {
-        loop {
-            let notified = self.terminalSourceTransitionReady.notified();
-            let state = self
-                .terminalSourceTransition
-                .lock()
-                .expect("shared text stream terminal source transition mutex poisoned")
-                .clone();
-            if let Some(result) = state.result {
-                return result.map(|payload| TextStreamSourceTransition {
-                    target: state
-                        .target
-                        .expect("completed source transition must retain its target"),
-                    payload,
-                });
-            }
-            notified.await;
-        }
-    }
 }
 
 impl Stream for DelegatingRevisableSharedTextStream {
@@ -438,16 +333,6 @@ impl RenderableTextStream for DelegatingRevisableSharedTextStream {
     /// Returns the retained prefix required to render this response segment.
     fn initial_render_content(&self) -> String {
         self.initial_content()
-    }
-
-    /// Returns the requested next source without consuming its opaque payload.
-    fn terminal_source_target(&self) -> Option<String> {
-        DelegatingRevisableSharedTextStream::terminal_source_target(self)
-    }
-
-    /// Waits for the opaque payload required to open the requested next source.
-    fn wait_terminal_source_transition(&self) -> TextStreamSourceTransitionFuture<'_> {
-        Box::pin(DelegatingRevisableSharedTextStream::wait_terminal_source_transition(self))
     }
 }
 
@@ -587,47 +472,4 @@ mod tests {
         assert_eq!(clone.initial_render_content(), "persisted prefix");
     }
 
-    /// Verifies one requested source transition wakes a waiter on another clone.
-    #[tokio::test]
-    async fn terminal_source_transition_wakes_shared_waiter() {
-        let stream = DelegatingRevisableSharedTextStream::new_ordered(
-            mutable_shared_stream(usize::MAX),
-            mutable_shared_stream(usize::MAX),
-        );
-        stream.request_terminal_source_transition("node-b".to_string());
-        let waiter = stream.clone();
-        let publisher = stream.clone();
-
-        let (result, ()) = tokio::join!(
-            async move { waiter.wait_terminal_source_transition().await },
-            async move {
-                tokio::task::yield_now().await;
-                publisher.complete_terminal_source_transition(vec![1, 2, 3]);
-            }
-        );
-
-        assert_eq!(
-            result,
-            Ok(TextStreamSourceTransition {
-                target: "node-b".to_string(),
-                payload: vec![1, 2, 3],
-            })
-        );
-    }
-
-    /// Verifies source transition failures preserve their exact error.
-    #[tokio::test]
-    async fn terminal_source_transition_preserves_failure() {
-        let stream = DelegatingRevisableSharedTextStream::new_ordered(
-            mutable_shared_stream(usize::MAX),
-            mutable_shared_stream(usize::MAX),
-        );
-        stream.request_terminal_source_transition("node-b".to_string());
-        stream.fail_terminal_source_transition("persistence failed".to_string());
-
-        assert_eq!(
-            stream.wait_terminal_source_transition().await,
-            Err("persistence failed".to_string())
-        );
-    }
 }

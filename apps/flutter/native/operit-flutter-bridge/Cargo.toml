@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 operit-core-proxy = { path = "../../../../core/crates/operit-core-proxy" }
+operit-core-server = { path = "../../../../core/crates/operit-core-server" }
 operit-host-api = { path = "../../../../core/crates/operit-host-api" }
 operit-link = { path = "../../../../core/crates/operit-link" }
 operit-runtime = { path = "../../../../core/crates/operit-runtime", default-features = false, features = ["javascript"] }

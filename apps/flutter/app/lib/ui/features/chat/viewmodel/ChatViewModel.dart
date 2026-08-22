@@ -7,7 +7,6 @@ import 'package:flutter/foundation.dart';
 
 import '../../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
-import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import 'WorkspaceFileModels.dart';
@@ -48,61 +47,22 @@ class ChatInputSubmitDecision {
   final bool timedOut;
 }
 
-sealed class ChatRuntimeSurface {
-  const ChatRuntimeSurface();
-
-  static const ChatRuntimeSurface main = MainChatRuntimeSurface();
-  static const ChatRuntimeSurface floating = FloatingChatRuntimeSurface();
-}
-
-class MainChatRuntimeSurface extends ChatRuntimeSurface {
-  const MainChatRuntimeSurface();
-}
-
-class FloatingChatRuntimeSurface extends ChatRuntimeSurface {
-  const FloatingChatRuntimeSurface();
-}
-
-class DetachedChatRuntimeSurface extends ChatRuntimeSurface {
-  const DetachedChatRuntimeSurface(this.slotId);
-
-  final String slotId;
-}
-
 class ChatViewModel {
   ChatViewModel({
     this.bridge = const ProxyCoreRuntimeBridge(),
-    this.runtimeSurface = ChatRuntimeSurface.main,
   }) : clients = GeneratedCoreProxyClients(bridge),
-       _chat = _chatProxyFor(bridge, runtimeSurface);
+       _chat = GeneratedCoreProxyClients(bridge).chatRuntimeHolderMain;
 
   final OperitRuntimeBridge bridge;
-  final ChatRuntimeSurface runtimeSurface;
   final GeneratedCoreProxyClients clients;
   final GeneratedChatRuntimeHolderMainCoreProxy _chat;
 
-  static GeneratedChatRuntimeHolderMainCoreProxy _chatProxyFor(
-    OperitRuntimeBridge bridge,
-    ChatRuntimeSurface runtimeSurface,
-  ) {
-    final clients = GeneratedCoreProxyClients(bridge);
-    return switch (runtimeSurface) {
-      MainChatRuntimeSurface() => clients.chatRuntimeHolderMain,
-      FloatingChatRuntimeSurface() => clients.chatRuntimeHolderFloating,
-      DetachedChatRuntimeSurface(:final slotId) =>
-        GeneratedChatRuntimeHolderMainCoreProxy(
-          bridge,
-          CoreObjectPath.parse('chatRuntimeHolder.detached.$slotId'),
-        ),
-    };
-  }
-
-  /// Watches messages for the chat selected by this runtime surface.
+  /// Watches messages for the main local chat runtime.
   Stream<List<ChatUiMessage>> watchMessages() {
     return _chat.chatMessagesFlow(chatId: null);
   }
 
-  /// Watches non-message state for the chat selected by this runtime surface.
+  /// Watches non-message state for the main local chat runtime.
   Stream<core_proxy.ChatState> watchChatState() {
     return _chat.chatStateFlow(chatId: null);
   }

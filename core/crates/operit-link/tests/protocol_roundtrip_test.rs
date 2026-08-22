@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use operit_link::{
     decodeLink, encodeLink, fromCoreValue, toCoreValue, CoreCallRequest, CoreCallResponse,
-    CoreEvent, CoreEventKind, CoreObjectPath, CorePushItem, CorePushRequest, CoreRequestId,
+    CoreEvent, CoreEventKind, CorePushItem, CorePushRequest, CoreRequestId,
     CoreValue,
 };
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,7 @@ fn core_map(entries: impl IntoIterator<Item = (&'static str, CoreValue)>) -> Cor
 fn call_request_roundtrip_preserves_registry_key() {
     let request = CoreCallRequest::new(
         "roundtrip-call",
-        "runtime.chat",
+        7,
         "send",
         core_map([("message", CoreValue::String("hello".to_string()))]),
     );
@@ -30,7 +30,7 @@ fn call_request_roundtrip_preserves_registry_key() {
     let bytes = encodeLink(&request).unwrap();
     let decoded = decodeLink::<CoreCallRequest>(&bytes).unwrap();
 
-    assert_eq!(decoded.registryKey(), "runtime.chat::send");
+    assert_eq!(decoded.registryKey(), "7::send");
     assert_eq!(decoded, request);
 }
 
@@ -53,7 +53,7 @@ fn call_response_roundtrip_preserves_result() {
 fn watch_event_roundtrip_preserves_stream_identity() {
     let event = CoreEvent {
         requestId: Some(CoreRequestId::new("roundtrip-watch")),
-        targetPath: CoreObjectPath::from("runtime.chat"),
+        targetObjectId: 7,
         propertyName: "stream".to_string(),
         kind: CoreEventKind::Changed,
         value: core_map([("delta", CoreValue::String("hello".to_string()))]),
@@ -152,3 +152,4 @@ fn integer_vectors_remain_message_pack_arrays() {
 
     assert_eq!(bytes, vec![0x92, 1, 2]);
 }
+

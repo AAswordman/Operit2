@@ -1,0 +1,26 @@
+[package]
+name = "operit-core-server"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+operit-host-api = { path = "../operit-host-api" }
+operit-link = { path = "../operit-link" }
+operit-link-access = { path = "../operit-link-access" }
+operit-runtime = { path = "../operit-runtime", default-features = false, features = ["javascript"] }
+operit-providers = { path = "../operit-providers" }
+operit-store = { path = "../operit-store" }
+operit-tools = { path = "../operit-tools", default-features = false }
+operit-util = { path = "../operit-util" }
+operit-core-route = { path = "../operit-core-route" }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "sync"] }
+mdns-sd = "0.12"
+
+[build-dependencies]
+quote = "1"
+syn = { version = "2", features = ["full"] }

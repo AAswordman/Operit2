@@ -277,7 +277,7 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
       final renamingActiveIdentity = identity.id == manager.activeIdentity.id;
       await manager.renameIdentity(identity.id, name);
       if (renamingActiveIdentity) {
-        await _clients.runtimeRemoteLinkService.updateCurrentDeviceUserName(
+        await _clients.server.runtimeRemoteLinkService.updateCurrentDeviceUserName(
           userName: name,
         );
       }

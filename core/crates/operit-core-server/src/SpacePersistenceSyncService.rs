@@ -1,10 +1,7 @@
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
-use operit_link::{
-    fromCoreValue, toCoreValue, CoreCallRequest, CoreLinkClient, CoreLinkSharedClient,
-    CorePushRequest, CoreValue,
-};
+use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CorePushItem, CorePushRequest, CoreValue};
 use operit_link_access::{
     coreNodeTransportClient,
     CoreNodePeerLink::{isPeerLinkActive, openOutboundPeerLink},
@@ -22,7 +19,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::{CoreNodeRouter::CoreNodeRouter, LocalCoreProxy};
+use crate::CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter};
 
 const SYNC_DOMAINS: [&str; 5] = [
     "preferences",
@@ -39,7 +36,7 @@ static SPACE_SYNC_SERVICES: OnceLock<Mutex<BTreeMap<String, Arc<SpacePersistence
 
 /// Stores the runtime state owned by one CoreNode persistence worker.
 struct SpacePersistenceSyncState {
-    localCore: LocalCoreProxy,
+    localRuntime: Arc<CoreNodeLocalRuntime>,
     nodeRouter: CoreNodeRouter,
     linkAccessStore: LinkAccessStore,
     spaceStore: CoreSpaceStore,
@@ -64,14 +61,14 @@ struct SyncOperationOrder {
 impl SpacePersistenceSyncService {
     /// Creates one persistence service over a concrete local CoreNode.
     pub fn new(
-        localCore: LocalCoreProxy,
+        localRuntime: Arc<CoreNodeLocalRuntime>,
         nodeRouter: CoreNodeRouter,
         linkAccessStore: LinkAccessStore,
         spaceStore: CoreSpaceStore,
     ) -> Self {
         Self {
             state: Arc::new(SpacePersistenceSyncState {
-                localCore,
+                localRuntime,
                 nodeRouter,
                 linkAccessStore,
                 spaceStore,
@@ -375,10 +372,10 @@ impl SpacePersistenceSyncService {
         session: &PairedRemoteSession,
         reference: &RuntimeFileSyncReference,
     ) -> Result<(), String> {
-        let mut destination = session.clone();
-        let mut push = CoreLinkClient::openPush(&mut destination, blobPushRequest(reference)?)
-            .await
-            .map_err(|error| error.to_string())?;
+        let pushId = session
+            .pushOpen(blobPushRequest(reference)?)
+            .await?;
+        let mut sequence = 0u64;
         let mut offset = 0i64;
         while offset < reference.size {
             let chunk: Vec<u8> = self
@@ -391,9 +388,18 @@ impl SpacePersistenceSyncService {
                     }),
                 )
                 .await?;
-            offset = sendBlobChunk(&mut push, reference, offset, chunk).await?;
+            let nextOffset = sendBlobChunkValue(reference, offset, chunk)?;
+            session
+                .pushItem(CorePushItem {
+                    pushId: pushId.clone(),
+                    sequence,
+                    args: nextOffset.1,
+                })
+                .await?;
+            sequence += 1;
+            offset = nextOffset.0;
         }
-        push.close().await.map_err(|error| error.to_string())?;
+        session.pushClose(pushId).await?;
         if !remoteHasBlob(session, reference).await? {
             return Err(format!(
                 "remote CoreNode did not persist synchronization blob {}",
@@ -409,9 +415,10 @@ impl SpacePersistenceSyncService {
         session: &PairedRemoteSession,
         reference: &RuntimeFileSyncReference,
     ) -> Result<(), String> {
-        let mut destination = self.state.localCore.clone();
-        let mut push = CoreLinkClient::openPush(&mut destination, blobPushRequest(reference)?)
-            .await
+        let mut push = self
+            .state
+            .localRuntime
+            .openPush(blobPushRequest(reference)?)
             .map_err(|error| error.to_string())?;
         let mut offset = 0i64;
         while offset < reference.size {
@@ -542,11 +549,11 @@ impl SpacePersistenceSyncService {
     where
         T: DeserializeOwned,
     {
-        let response = CoreLinkSharedClient::call(
-            &self.state.localCore,
-            applicationCallRequest(methodName, args)?,
-        )
-        .await;
+        let response = self
+            .state
+            .localRuntime
+            .call(applicationCallRequest(methodName, args)?)
+            .await;
         decodeCoreResponse(response.result.map_err(|error| error.to_string())?)
     }
 }
@@ -570,9 +577,11 @@ async fn remoteHasBlob(
 /// Builds one service reverse-stream request for a complete synchronization blob.
 #[allow(non_snake_case)]
 fn blobPushRequest(reference: &RuntimeFileSyncReference) -> Result<CorePushRequest, String> {
+    let targetObjectId = crate::spaceObjectIdForSchema("services.syncBlobTransferManager")
+    .ok_or_else(|| "unknown Core schema key: services.syncBlobTransferManager".to_string())?;
     Ok(CorePushRequest::new(
         format!("space-persistence-blob-{}", currentTimeMillis()),
-        "services.syncBlobTransferManager",
+        targetObjectId,
         "syncReceiveBlob",
     )
     .withArgs(
@@ -613,6 +622,35 @@ async fn sendBlobChunk(
         .await
         .map_err(|error| error.to_string())?;
     Ok(nextOffset)
+}
+
+/// Validates one synchronization chunk and converts it to one Link value.
+fn sendBlobChunkValue(
+    reference: &RuntimeFileSyncReference,
+    offset: i64,
+    chunk: Vec<u8>,
+) -> Result<(i64, CoreValue), String> {
+    if chunk.is_empty() {
+        return Err(format!(
+            "synchronization blob {} ended before its declared size",
+            reference.contentHash
+        ));
+    }
+    let chunkLength = i64::try_from(chunk.len())
+        .map_err(|_| "synchronization blob chunk length does not fit i64".to_string())?;
+    let nextOffset = offset
+        .checked_add(chunkLength)
+        .ok_or_else(|| "synchronization blob offset overflow".to_string())?;
+    if nextOffset > reference.size {
+        return Err(format!(
+            "synchronization blob {} exceeded its declared size",
+            reference.contentHash
+        ));
+    }
+    Ok((
+        nextOffset,
+        toCoreValue(chunk).map_err(|error| error.to_string())?,
+    ))
 }
 
 /// Returns the process registry of active per-CoreNode persistence workers.
@@ -656,7 +694,8 @@ where
 fn applicationCallRequest(methodName: &str, args: Value) -> Result<CoreCallRequest, String> {
     Ok(CoreCallRequest::new(
         format!("space-persistence-{methodName}-{}", currentTimeMillis()),
-        "application",
+        crate::spaceObjectIdForSchema("application")
+            .ok_or_else(|| "unknown Core schema key: application".to_string())?,
         methodName,
         toCoreValue(args).map_err(|error| error.to_string())?,
     ))
@@ -669,9 +708,11 @@ fn serviceCallRequest(
     methodName: &str,
     args: Value,
 ) -> Result<CoreCallRequest, String> {
+    let targetObjectId = crate::spaceObjectIdForSchema(targetPath)
+        .ok_or_else(|| format!("unknown Core schema key: {targetPath}"))?;
     Ok(CoreCallRequest::new(
         format!("space-persistence-{methodName}-{}", currentTimeMillis()),
-        targetPath,
+        targetObjectId,
         methodName,
         toCoreValue(args).map_err(|error| error.to_string())?,
     ))

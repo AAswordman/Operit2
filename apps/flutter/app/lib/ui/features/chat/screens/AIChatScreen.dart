@@ -80,18 +80,15 @@ class AIChatScreen extends StatelessWidget {
   const AIChatScreen({
     super.key,
     this.viewModel,
-    this.runtimeSurface = ChatRuntimeSurface.main,
   });
 
   final ChatViewModel? viewModel;
-  final ChatRuntimeSurface runtimeSurface;
 
   /// Builds the full chat surface owned by the main application host.
   @override
   Widget build(BuildContext context) {
     return _AIChatSurface(
       viewModel: viewModel,
-      runtimeSurface: runtimeSurface,
       embedded: false,
     );
   }
@@ -109,7 +106,6 @@ class AIChatEmbed extends StatelessWidget {
   Widget build(BuildContext context) {
     return _AIChatSurface(
       viewModel: viewModel,
-      runtimeSurface: ChatRuntimeSurface.main,
       embedded: true,
     );
   }
@@ -119,12 +115,10 @@ class _AIChatSurface extends StatefulWidget {
   /// Creates the shared implementation for a full chat screen or embedded chat.
   const _AIChatSurface({
     required this.viewModel,
-    required this.runtimeSurface,
     required this.embedded,
   });
 
   final ChatViewModel? viewModel;
-  final ChatRuntimeSurface runtimeSurface;
   final bool embedded;
 
   /// Creates the state shared by the full and embedded chat surfaces.
@@ -134,14 +128,6 @@ class _AIChatSurface extends StatefulWidget {
 
 final Map<String, Map<String?, TextEditingValue>> _chatInputDraftStores =
     <String, Map<String?, TextEditingValue>>{};
-
-String _chatInputDraftStoreKey(ChatRuntimeSurface surface) {
-  return switch (surface) {
-    MainChatRuntimeSurface() => 'main',
-    FloatingChatRuntimeSurface() => 'floating',
-    DetachedChatRuntimeSurface(:final slotId) => 'detached:$slotId',
-  };
-}
 
 class _ChatContentData {
   const _ChatContentData({
@@ -185,7 +171,7 @@ class _ChatContentData {
 
 class _AIChatSurfaceState extends State<_AIChatSurface> {
   late final ChatViewModel _viewModel =
-      widget.viewModel ?? ChatViewModel(runtimeSurface: widget.runtimeSurface);
+      widget.viewModel ?? ChatViewModel();
   final TextEditingController _messageController = TextEditingController();
   TextEditingValue _previousMessageInputValue = TextEditingValue.empty;
   final FocusNode _inputFocusNode = FocusNode();
@@ -242,7 +228,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   void initState() {
     super.initState();
     _inputDraftsByChatId = _chatInputDraftStores.putIfAbsent(
-      _chatInputDraftStoreKey(_viewModel.runtimeSurface),
+      'main',
       () => <String?, TextEditingValue>{},
     );
     _chatContentDataNotifier = ValueNotifier<_ChatContentData>(
@@ -485,9 +471,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
 
   /// Requests a Rust-owned automatic dequeue after the active chat becomes ready.
   void _syncPendingQueueAfterSnapshot() {
-    if (_viewModel.runtimeSurface is! MainChatRuntimeSurface) {
-      return;
-    }
     final contentData = _chatContentDataNotifier.value;
     if (!_isQueueBlocked && contentData.pendingQueueMessages.isNotEmpty) {
       _schedulePendingQueueAutoDequeue();
@@ -911,9 +894,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
 
   /// Applies a locally requested visual transition before routed Core state arrives.
   void _onChatSelectionTransition() {
-    if (_viewModel.runtimeSurface is! MainChatRuntimeSurface) {
-      return;
-    }
     final request = ChatSelectionTransition.requests.value;
     if (request == null) {
       if (_isPreparingChatSwitch) {

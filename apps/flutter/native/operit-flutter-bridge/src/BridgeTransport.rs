@@ -5,15 +5,17 @@ use std::sync::{mpsc, Arc, Mutex};
 
 #[cfg(target_arch = "wasm32")]
 use js_sys::Function;
-use operit_core_proxy::CoreNodeRouter::CoreNodePushTarget;
 #[cfg(not(target_arch = "wasm32"))]
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 #[cfg(not(target_arch = "wasm32"))]
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_link::{
-    CoreEventKind, CoreLinkClient, CoreLinkError, CoreLinkSharedClient, CorePushItem,
-    CorePushRequest, CoreWatchRequest,
+    CoreEventKind, CoreLinkClient, CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient,
+    CorePushItem, CorePushRequest, CoreWatchRequest,
 };
+use operit_link_access::{LinkAccessHostConfig, LinkAccessStore, RemoteDeviceInfo, LinkTransportPreference};
+use operit_core_server::RuntimeRemoteLinkService::RuntimeRemoteLinkService;
+use serde::de::DeserializeOwned;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsValue;
 
@@ -22,8 +24,8 @@ use crate::{native_watch_event_vec, OperitFlutterBridge};
 /// Stores the route and sequence state selected when a client opens one push stream.
 #[derive(Clone)]
 pub(crate) enum NativePushState {
-    Routed {
-        target: CoreNodePushTarget,
+    Local {
+        session: Arc<tokio::sync::Mutex<Option<Box<dyn CoreLinkPushSession>>>>,
         nextSequence: u64,
     },
 }
@@ -101,12 +103,49 @@ impl Drop for OperitFlutterBridge {
 }
 
 impl OperitFlutterBridge {
-    /// Opens one native client-owned input stream through the runtime-selected Link route.
+    /// Executes one Space control call without entering the local Core proxy dispatcher.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn controlCall(
+        &self,
+        request: operit_link::CoreCallRequest,
+    ) -> operit_link::CoreCallResponse {
+        self.runtime.block_on(self.controlCallAsync(request))
+    }
+
+    /// Executes one Space control call on the wasm runtime scheduler.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) async fn controlCall(
+        &self,
+        request: operit_link::CoreCallRequest,
+    ) -> operit_link::CoreCallResponse {
+        self.controlCallAsync(request).await
+    }
+
+    /// Dispatches one Space control request to the server-owned service facade.
+    async fn controlCallAsync(
+        &self,
+        request: operit_link::CoreCallRequest,
+    ) -> operit_link::CoreCallResponse {
+        let requestId = request.requestId.clone();
+        let result = dispatchSpaceControlCall(
+            self.spaceService.clone(),
+            self.runtimeStorageHost.clone(),
+            request,
+        )
+        .await;
+        match result {
+            Ok(value) => operit_link::CoreCallResponse::ok(requestId, value),
+            Err(error) => operit_link::CoreCallResponse::err(requestId, error),
+        }
+    }
+
+    /// Opens one native client-owned input stream directly on the local Core proxy.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn pushOpen(&self, request: CorePushRequest) -> Result<String, CoreLinkError> {
         let pushId = request.requestId.0.clone();
-        let state = NativePushState::Routed {
-            target: self.runtime.block_on(self.proxyCore.openPush(request))?,
+        let session = self.localCore.openPushLocal(request)?;
+        let state = NativePushState::Local {
+            session: Arc::new(tokio::sync::Mutex::new(Some(session))),
             nextSequence: 0,
         };
         let mut pushes = self.pushStreams.lock().map_err(|error| {
@@ -121,12 +160,13 @@ impl OperitFlutterBridge {
         Ok(pushId)
     }
 
-    /// Opens one wasm client-owned input stream through the runtime-selected Link route.
+    /// Opens one wasm client-owned input stream directly on the local Core proxy.
     #[cfg(target_arch = "wasm32")]
     pub(crate) async fn pushOpen(&self, request: CorePushRequest) -> Result<String, CoreLinkError> {
         let pushId = request.requestId.0.clone();
-        let state = NativePushState::Routed {
-            target: self.proxyCore.openPush(request).await?,
+        let session = self.localCore.openPushLocal(request)?;
+        let state = NativePushState::Local {
+            session: Arc::new(tokio::sync::Mutex::new(Some(session))),
             nextSequence: 0,
         };
         let mut pushes = self.pushStreams.lock().map_err(|error| {
@@ -145,19 +185,28 @@ impl OperitFlutterBridge {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn pushItem(&self, item: CorePushItem) -> Result<(), CoreLinkError> {
         let state = self.takePushItemState(&item)?;
-        match state {
-            NativePushState::Routed { target, .. } => self
-                .runtime
-                .block_on(self.proxyCore.pushItem(&target, item)),
-        }
+        let NativePushState::Local { session, .. } = state;
+        self.runtime.block_on(async move {
+            let mut session = session.lock().await;
+            session
+                .as_mut()
+                .ok_or_else(|| CoreLinkError::new("PUSH_CLOSED", "Link push stream is closed"))?
+                .send(item.args)
+                .await
+        })
     }
 
     /// Dispatches one wasm push item in stream order.
     #[cfg(target_arch = "wasm32")]
     pub(crate) async fn pushItem(&self, item: CorePushItem) -> Result<(), CoreLinkError> {
         let state = self.takePushItemState(&item)?;
-        let NativePushState::Routed { target, .. } = state;
-        self.proxyCore.pushItem(&target, item).await
+        let NativePushState::Local { session, .. } = state;
+        let mut session = session.lock().await;
+        session
+            .as_mut()
+            .ok_or_else(|| CoreLinkError::new("PUSH_CLOSED", "Link push stream is closed"))?
+            .send(item.args)
+            .await
     }
 
     /// Closes one native client-owned input stream.
@@ -172,8 +221,15 @@ impl OperitFlutterBridge {
             .remove(pushId);
         let state = removed
             .ok_or_else(|| CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found"))?;
-        let NativePushState::Routed { target, .. } = state;
-        self.runtime.block_on(self.proxyCore.closePush(target))
+        let NativePushState::Local { session, .. } = state;
+        self.runtime.block_on(async move {
+            let session = session
+                .lock()
+                .await
+                .take()
+                .ok_or_else(|| CoreLinkError::new("PUSH_CLOSED", "Link push stream is closed"))?;
+            session.close().await
+        })
     }
 
     /// Closes one wasm client-owned input stream.
@@ -188,8 +244,13 @@ impl OperitFlutterBridge {
             .remove(pushId);
         let state = removed
             .ok_or_else(|| CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found"))?;
-        let NativePushState::Routed { target, .. } = state;
-        self.proxyCore.closePush(target).await
+        let NativePushState::Local { session, .. } = state;
+        let session = session
+            .lock()
+            .await
+            .take()
+            .ok_or_else(|| CoreLinkError::new("PUSH_CLOSED", "Link push stream is closed"))?;
+        session.close().await
     }
 
     /// Validates one item sequence and returns its registered transport state.
@@ -200,7 +261,7 @@ impl OperitFlutterBridge {
         let state = pushes
             .get_mut(&item.pushId)
             .ok_or_else(|| CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found"))?;
-        let NativePushState::Routed { nextSequence, .. } = state;
+        let NativePushState::Local { nextSequence, .. } = state;
         if item.sequence != *nextSequence {
             return Err(CoreLinkError::new(
                 "PUSH_SEQUENCE_MISMATCH",
@@ -221,10 +282,8 @@ impl OperitFlutterBridge {
         &self,
         request: CoreWatchRequest,
     ) -> Result<operit_link::CoreEvent, CoreLinkError> {
-        self.runtime.block_on(CoreLinkSharedClient::watchSnapshot(
-            self.proxyCore.as_ref(),
-            request,
-        ))
+        self.runtime
+            .block_on(CoreLinkSharedClient::watchSnapshot(self.localCore.as_ref(), request))
     }
 
     /// Reads one wasm watch snapshot through the runtime-selected route.
@@ -234,7 +293,7 @@ impl OperitFlutterBridge {
         &self,
         request: CoreWatchRequest,
     ) -> Result<operit_link::CoreEvent, CoreLinkError> {
-        CoreLinkSharedClient::watchSnapshot(self.proxyCore.as_ref(), request).await
+        CoreLinkSharedClient::watchSnapshot(self.localCore.as_ref(), request).await
     }
 
     /// Registers one native watch stream and opens its routed source on the host scheduler.
@@ -275,7 +334,7 @@ impl OperitFlutterBridge {
         let channel = self.watchChannel.clone();
         let taskSubscriptionId = subscriptionId.clone();
         let taskSubscriptions = self.watchSubscriptions.clone();
-        let proxyCore = self.proxyCore.clone();
+        let localCore = self.localCore.clone();
         let scheduleResult = HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(
             defaultHostRuntimeTaskSchedulerHost().as_ref(),
             "operit-flutter-watch",
@@ -283,7 +342,7 @@ impl OperitFlutterBridge {
                 Box::pin(async move {
                     let openedReceiver = tokio::select! {
                         _ = &mut cancelReceiver => None,
-                        opened = CoreLinkSharedClient::watch(proxyCore.as_ref(), request) => Some(opened),
+                        opened = CoreLinkSharedClient::watch(localCore.as_ref(), request) => Some(opened),
                     };
                     let Some(openedReceiver) = openedReceiver else {
                         return;
@@ -347,7 +406,7 @@ impl OperitFlutterBridge {
                 entry.insert(cancelSender);
                 drop(subscriptions);
                 let receiver =
-                    match CoreLinkSharedClient::watch(self.proxyCore.as_ref(), request).await {
+                    match CoreLinkSharedClient::watch(self.localCore.as_ref(), request).await {
                         Ok(receiver) => receiver,
                         Err(error) => {
                             if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {
@@ -410,4 +469,79 @@ impl OperitFlutterBridge {
     pub(crate) fn nextWatchChannelEvent(&self) -> Result<Vec<u8>, CoreLinkError> {
         self.watchChannel.nextEvent()
     }
+}
+
+/// Decodes a JSON-shaped argument from the standard CoreValue map.
+fn decodeSpaceArgument<T: DeserializeOwned>(
+    args: &operit_link::CoreValue,
+    name: &str,
+) -> Result<T, operit_link::CoreLinkError> {
+    let value = operit_link::fromCoreValue::<serde_json::Value>(args.clone())
+        .map_err(|error| operit_link::CoreLinkError::new("SPACE_INVALID_ARGS", error.to_string()))?;
+    let object = value.as_object().ok_or_else(|| {
+        operit_link::CoreLinkError::new("SPACE_INVALID_ARGS", "Space control arguments must be an object")
+    })?;
+    let argument = object.get(name).cloned().unwrap_or(serde_json::Value::Null);
+    serde_json::from_value(argument)
+        .map_err(|error| operit_link::CoreLinkError::new("SPACE_INVALID_ARGS", format!("{name}: {error}")))
+}
+
+/// Converts one service result into the shared Link value representation.
+fn encodeSpaceResult<T: serde::Serialize>(value: T) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {
+    operit_link::toCoreValue(value)
+        .map_err(|error| operit_link::CoreLinkError::new("SPACE_ENCODE_ERROR", error.to_string()))
+}
+
+/// Dispatches the independent Space control object IDs and method names.
+async fn dispatchSpaceControlCall(
+    service: Arc<RuntimeRemoteLinkService>,
+    storage: Arc<dyn operit_host_api::RuntimeStorageHost>,
+    request: operit_link::CoreCallRequest,
+) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {
+    const RUNTIME_OBJECT_ID: u32 = 0;
+    const LINK_ACCESS_OBJECT_ID: u32 = 1;
+    let method = request.methodName.as_str();
+    if request.targetObjectId == RUNTIME_OBJECT_ID {
+        let result = match method {
+            "deviceSpace" => encodeSpaceResult(service.deviceSpace()),
+            "deviceSpaceTopology" => encodeSpaceResult(service.deviceSpaceTopology()),
+            "updateCurrentDeviceUserName" => encodeSpaceResult(service.updateCurrentDeviceUserName(decodeSpaceArgument(&request.args, "userName")?)),
+            "renameDeviceSpace" => encodeSpaceResult(service.renameDeviceSpace(decodeSpaceArgument(&request.args, "spaceName")?)),
+            "leaveDeviceSpace" => encodeSpaceResult(service.leaveDeviceSpace()),
+            "pairedDevicesSnapshot" => encodeSpaceResult(service.pairedDevicesSnapshot()),
+            "pairedDeviceOnline" => encodeSpaceResult(service.pairedDeviceOnline(decodeSpaceArgument(&request.args, "deviceId")?)),
+            "disconnectDeviceSpaceConnection" => encodeSpaceResult(service.disconnectDeviceSpaceConnection(decodeSpaceArgument(&request.args, "deviceId")?)),
+            "removePairedDevice" => encodeSpaceResult(service.removePairedDevice(decodeSpaceArgument(&request.args, "deviceId")?)),
+            "startSpaceSync" => encodeSpaceResult(service.startSpaceSync()),
+            "joinPairedDeviceSpace" => encodeSpaceResult(service.joinPairedDeviceSpace(decodeSpaceArgument(&request.args, "name")?).await),
+            "startPairedRemote" => encodeSpaceResult(service.startPairedRemote(
+                decodeSpaceArgument(&request.args, "baseUrl")?,
+                decodeSpaceArgument(&request.args, "tokenHash")?,
+                decodeSpaceArgument(&request.args, "clientDeviceInfo")?,
+            ).await),
+            "finishPairedRemote" => encodeSpaceResult(service.finishPairedRemote(
+                decodeSpaceArgument(&request.args, "pairingId")?,
+                decodeSpaceArgument(&request.args, "pairingCode")?,
+                decodeSpaceArgument(&request.args, "name")?,
+            ).await),
+            "setPairedRemoteTransport" => encodeSpaceResult(service.setPairedRemoteTransport(
+                decodeSpaceArgument(&request.args, "name")?,
+                decodeSpaceArgument::<LinkTransportPreference>(&request.args, "transport")?,
+            )),
+            #[cfg(not(target_arch = "wasm32"))]
+            "discoverSpaces" => encodeSpaceResult(service.discoverSpaces(decodeSpaceArgument(&request.args, "timeoutMs")?).await),
+            _ => Err(operit_link::CoreLinkError::new("SPACE_METHOD_NOT_FOUND", format!("Unknown Space method: {method}"))),
+        }?;
+        return Ok(result);
+    }
+    if request.targetObjectId == LINK_ACCESS_OBJECT_ID {
+        let store = LinkAccessStore::new(storage);
+        return match method {
+            "initializeIdentity" => encodeSpaceResult(store.initializeIdentity(decodeSpaceArgument::<RemoteDeviceInfo>(&request.args, "deviceInfo")?)),
+            "initializeHostConfig" => encodeSpaceResult(store.initializeHostConfig()),
+            "saveHostConfig" => encodeSpaceResult(store.saveHostConfig(decodeSpaceArgument::<LinkAccessHostConfig>(&request.args, "config")?)),
+            _ => Err(operit_link::CoreLinkError::new("SPACE_METHOD_NOT_FOUND", format!("Unknown Link Access method: {method}"))),
+        };
+    }
+    Err(operit_link::CoreLinkError::new("SPACE_OBJECT_NOT_FOUND", format!("Unknown Space object id: {}", request.targetObjectId)))
 }

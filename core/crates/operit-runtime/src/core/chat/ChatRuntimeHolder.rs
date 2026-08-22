@@ -79,17 +79,10 @@ pub struct ChatRuntimeHolder {
 }
 
 impl ChatRuntimeHolder {
-    /// Returns whether proxy path segments identify a chat runtime owned by this holder.
+    /// Resolves one generated proxy object id to the main chat service core.
     #[allow(non_snake_case)]
-    pub fn matchesCorePath(pathSegments: &[String]) -> bool {
-        chatRuntimeSlotFromPath(pathSegments).is_some()
-    }
-
-    /// Resolves proxy path segments to the chat service core owned by this holder.
-    #[allow(non_snake_case)]
-    pub fn coreForPath(&mut self, pathSegments: &[String]) -> Option<&mut ChatServiceCore> {
-        let slot = chatRuntimeSlotFromPath(pathSegments)?;
-        Some(self.getCore(slot))
+    pub fn coreForObjectId(&mut self, _objectId: u32) -> Option<&mut ChatServiceCore> {
+        Some(self.getCore(ChatRuntimeSlot::MAIN))
     }
 
     /// Creates a holder using bootstrap cores without host-backed enhanced AI services.
@@ -123,7 +116,6 @@ impl ChatRuntimeHolder {
         for slot in [ChatRuntimeSlot::MAIN, ChatRuntimeSlot::FLOATING] {
             holder.getCore(slot);
         }
-        holder.setupCrossSessionSync();
         holder.observeStats();
         holder
     }
@@ -167,76 +159,4 @@ impl ChatRuntimeHolder {
         self.currentSessionToolCount = currentSessionToolCount;
     }
 
-    /// Registers synchronization hooks between the default main and floating sessions.
-    #[allow(non_snake_case)]
-    pub fn setupCrossSessionSync(&mut self) {
-        self.registerChatSelectionSync(ChatRuntimeSlot::MAIN, ChatRuntimeSlot::FLOATING);
-        self.registerTurnSync(ChatRuntimeSlot::MAIN, ChatRuntimeSlot::FLOATING);
-        self.registerTurnSync(ChatRuntimeSlot::FLOATING, ChatRuntimeSlot::MAIN);
-    }
-
-    /// Registers streaming-turn synchronization from one runtime slot to another.
-    #[allow(non_snake_case)]
-    pub fn registerTurnSync(&mut self, _sourceSlot: ChatRuntimeSlot, _targetSlot: ChatRuntimeSlot) {
-    }
-
-    /// Mirrors the selected main chat into the floating runtime.
-    #[allow(non_snake_case)]
-    pub fn syncMainChatSelectionToFloating(&mut self, chatId: String) {
-        if chatId.trim().is_empty() {
-            return;
-        }
-        self.syncChatSelection(ChatRuntimeSlot::MAIN, ChatRuntimeSlot::FLOATING, chatId);
-    }
-
-    /// Registers chat-selection synchronization from one slot to another.
-    #[allow(non_snake_case)]
-    pub fn registerChatSelectionSync(
-        &mut self,
-        _sourceSlot: ChatRuntimeSlot,
-        _targetSlot: ChatRuntimeSlot,
-    ) {
-    }
-
-    /// Applies a chat selection change to the target runtime slot.
-    #[allow(non_snake_case)]
-    pub fn syncChatSelection(
-        &mut self,
-        _sourceSlot: ChatRuntimeSlot,
-        targetSlot: ChatRuntimeSlot,
-        chatId: String,
-    ) {
-        let targetCore = self.getCore(targetSlot);
-        if targetCore.currentChatIdFlow().value().as_ref() == Some(&chatId) {
-            return;
-        }
-        targetCore.switchChatLocal(chatId);
-    }
-}
-
-/// Parses one holder-owned proxy path into its runtime slot.
-#[allow(non_snake_case)]
-fn chatRuntimeSlotFromPath(pathSegments: &[String]) -> Option<ChatRuntimeSlot> {
-    match pathSegments {
-        [root, slot] if root == "chatRuntimeHolder" => chatRuntimeSlot(slot, None),
-        [root, holder, slot] if root == "application" && holder == "chatRuntimeHolder" => {
-            chatRuntimeSlot(slot, None)
-        }
-        [root, slot, id] if root == "chatRuntimeHolder" => chatRuntimeSlot(slot, Some(id)),
-        [root, holder, slot, id] if root == "application" && holder == "chatRuntimeHolder" => {
-            chatRuntimeSlot(slot, Some(id))
-        }
-        _ => None,
-    }
-}
-
-/// Parses one slot segment and optional instance identifier.
-#[allow(non_snake_case)]
-fn chatRuntimeSlot(slot: &str, id: Option<&String>) -> Option<ChatRuntimeSlot> {
-    match (slot, id) {
-        ("MAIN" | "main", None) => Some(ChatRuntimeSlot::MAIN),
-        ("FLOATING" | "floating", None) => Some(ChatRuntimeSlot::FLOATING),
-        ("DETACHED" | "detached", Some(id)) => Some(ChatRuntimeSlot::DETACHED(id.clone())),
-        _ => None,
-    }
 }

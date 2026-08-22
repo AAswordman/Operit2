@@ -456,6 +456,15 @@ pub struct CoreEventStream {
 }
 
 impl CoreEventStream {
+    /// Creates a stream together with its sender for an in-process Link source.
+    pub fn channel() -> (
+        mpsc::UnboundedSender<CoreEvent>,
+        Self,
+    ) {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        (sender, Self::new(receiver))
+    }
+
     /// Wraps an event receiver as a link event stream.
     pub fn new(receiver: mpsc::UnboundedReceiver<CoreEvent>) -> Self {
         Self {
@@ -467,7 +476,13 @@ impl CoreEventStream {
     /// Registers a callback that runs when the stream is dropped.
     #[allow(non_snake_case)]
     pub fn withOnClose(mut self, onClose: impl FnOnce() + Send + 'static) -> Self {
-        self.onClose = Some(Box::new(onClose));
+        let previous = self.onClose.take();
+        self.onClose = Some(Box::new(move || {
+            if let Some(previous) = previous {
+                previous();
+            }
+            onClose();
+        }));
         self
     }
 
@@ -500,48 +515,8 @@ impl CoreRequestId {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct CoreObjectPath {
-    pub segments: Vec<String>,
-}
-
-impl CoreObjectPath {
-    /// Returns the root object path.
-    pub fn root() -> Self {
-        Self {
-            segments: Vec::new(),
-        }
-    }
-
-    /// Parses a dot-delimited object path into path segments.
-    pub fn parse(path: &str) -> Self {
-        Self {
-            segments: path
-                .split('.')
-                .map(str::trim)
-                .filter(|segment| !segment.is_empty())
-                .map(ToString::to_string)
-                .collect(),
-        }
-    }
-
-    /// Joins path segments into the canonical registry key.
-    pub fn key(&self) -> String {
-        self.segments.join(".")
-    }
-}
-
-impl From<&str> for CoreObjectPath {
-    fn from(value: &str) -> Self {
-        Self::parse(value)
-    }
-}
-
-impl From<String> for CoreObjectPath {
-    fn from(value: String) -> Self {
-        Self::parse(&value)
-    }
-}
+/// Fixed protocol address of the process-local embedded stream pool.
+pub const CORE_STREAM_POOL_OBJECT_ID: u32 = u32::MAX;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CoreMethodMode {
@@ -553,7 +528,6 @@ pub enum CoreMethodMode {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CorePayloadKind {
     Value,
-    TextStreamEvent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -588,15 +562,6 @@ impl CoreMethodProtocol {
         }
     }
 
-    /// Describes a watch stream that emits rendered text stream events.
-    pub fn watchTextStreamEvent() -> Self {
-        Self {
-            mode: CoreMethodMode::Watch,
-            payload: CorePayloadKind::TextStreamEvent,
-            initial: CoreWatchInitial::None,
-        }
-    }
-
     /// Describes a client-owned structured value input stream.
     pub fn pushValue() -> Self {
         Self {
@@ -610,7 +575,7 @@ impl CoreMethodProtocol {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CoreCallRequest {
     pub requestId: CoreRequestId,
-    pub targetPath: CoreObjectPath,
+    pub targetObjectId: u32,
     pub methodName: String,
     pub args: CoreValue,
 }
@@ -619,13 +584,13 @@ impl CoreCallRequest {
     /// Creates a serialized core call request.
     pub fn new(
         requestId: impl Into<String>,
-        targetPath: impl Into<CoreObjectPath>,
+        targetObjectId: u32,
         methodName: impl Into<String>,
         args: CoreValue,
     ) -> Self {
         Self {
             requestId: CoreRequestId::new(requestId),
-            targetPath: targetPath.into(),
+            targetObjectId,
             methodName: methodName.into(),
             args,
         }
@@ -633,7 +598,7 @@ impl CoreCallRequest {
 
     /// Returns the generated dispatch registry key for this call.
     pub fn registryKey(&self) -> String {
-        format!("{}::{}", self.targetPath.key(), self.methodName)
+        format!("{}::{}", self.targetObjectId, self.methodName)
     }
 }
 
@@ -666,33 +631,15 @@ pub const CORE_INCREMENTAL_VALUES_ARGUMENT: &str = "$coreIncremental";
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CoreWatchRequest {
     pub requestId: CoreRequestId,
-    pub targetPath: CoreObjectPath,
+    pub targetObjectId: u32,
     pub propertyName: String,
     pub args: CoreValue,
-}
-
-/// Carries opaque state required to activate the next physical source of one logical watch.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CoreWatchSourceResume {
-    pub generation: i64,
-    pub payload: Vec<u8>,
-}
-
-/// Exposes generic source activation without coupling routing to a business implementation.
-#[async_trait::async_trait(?Send)]
-pub trait CoreWatchSourceActivator {
-    /// Activates the next source for the bound logical stream.
-    async fn activateWatchSource(
-        &mut self,
-        bindingKey: String,
-        resume: CoreWatchSourceResume,
-    ) -> Result<(), CoreLinkError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CorePushRequest {
     pub requestId: CoreRequestId,
-    pub targetPath: CoreObjectPath,
+    pub targetObjectId: u32,
     pub methodName: String,
     #[serde(default = "CoreValue::emptyMap")]
     pub args: CoreValue,
@@ -702,12 +649,12 @@ impl CorePushRequest {
     /// Creates a client-owned input stream targeting one core method.
     pub fn new(
         requestId: impl Into<String>,
-        targetPath: impl Into<CoreObjectPath>,
+        targetObjectId: u32,
         methodName: impl Into<String>,
     ) -> Self {
         Self {
             requestId: CoreRequestId::new(requestId),
-            targetPath: targetPath.into(),
+            targetObjectId,
             methodName: methodName.into(),
             args: CoreValue::emptyMap(),
         }
@@ -732,13 +679,13 @@ impl CoreWatchRequest {
     /// Creates a serialized watch request.
     pub fn new(
         requestId: impl Into<String>,
-        targetPath: impl Into<CoreObjectPath>,
+        targetObjectId: u32,
         propertyName: impl Into<String>,
         args: CoreValue,
     ) -> Self {
         Self {
             requestId: CoreRequestId::new(requestId),
-            targetPath: targetPath.into(),
+            targetObjectId,
             propertyName: propertyName.into(),
             args,
         }
@@ -746,7 +693,7 @@ impl CoreWatchRequest {
 
     /// Returns the generated dispatch registry key for this watch.
     pub fn registryKey(&self) -> String {
-        format!("{}::{}", self.targetPath.key(), self.propertyName)
+        format!("{}::{}", self.targetObjectId, self.propertyName)
     }
 
     /// Reports whether this subscriber accepts generic incremental values.
@@ -762,7 +709,7 @@ impl CoreWatchRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CoreEvent {
     pub requestId: Option<CoreRequestId>,
-    pub targetPath: CoreObjectPath,
+    pub targetObjectId: u32,
     pub propertyName: String,
     pub kind: CoreEventKind,
     pub value: CoreValue,

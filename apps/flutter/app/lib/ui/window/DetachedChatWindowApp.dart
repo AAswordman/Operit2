@@ -3,10 +3,8 @@
 import 'package:flutter/material.dart';
 
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
-import '../../core/link/CoreLinkProtocol.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../features/chat/screens/AIChatScreen.dart';
-import '../features/chat/viewmodel/ChatViewModel.dart';
 import '../main/MainLayoutController.dart';
 import '../main/TopBarController.dart';
 import '../theme/OperitTheme.dart';
@@ -22,16 +20,9 @@ class DetachedChatWindowApp extends StatefulWidget {
 }
 
 class _DetachedChatWindowAppState extends State<DetachedChatWindowApp> {
-  late final ChatRuntimeSurface _surface = DetachedChatRuntimeSurface(
-    widget.arguments.slotId,
-  );
   late final GeneratedChatRuntimeHolderMainCoreProxy _chatCore =
-      GeneratedChatRuntimeHolderMainCoreProxy(
-        const ProxyCoreRuntimeBridge(),
-        CoreObjectPath.parse(
-          'chatRuntimeHolder.detached.${widget.arguments.slotId}',
-        ),
-      );
+      const GeneratedCoreProxyClients(ProxyCoreRuntimeBridge())
+          .chatRuntimeHolderMain;
   late final TopBarController _topBarController = TopBarController();
   late final MainLayoutController _mainLayoutController =
       MainLayoutController();
@@ -109,6 +100,6 @@ class _DetachedChatWindowAppState extends State<DetachedChatWindowApp> {
     if (!_ready) {
       return const Center(child: CircularProgressIndicator());
     }
-    return AIChatScreen(runtimeSurface: _surface);
+    return const AIChatScreen();
   }
 }

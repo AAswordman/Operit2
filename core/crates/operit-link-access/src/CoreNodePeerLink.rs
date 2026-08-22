@@ -27,11 +27,23 @@ const PEER_HEARTBEAT_INTERVAL_MS: u64 = 1_000;
 const PEER_HEARTBEAT_TIMEOUT_MS: i64 = 4_000;
 
 /// Wraps one existing Core request with the Space route required to reach a CoreNode.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RoutedCoreRequestKind {
+    /// Addresses the destination through the local Core object namespace.
+    #[default]
+    ObjectId,
+    /// Addresses the destination through the annotation-generated Space route namespace.
+    SpaceRoute,
+}
+
+/// Wraps one existing Core request with the Space route required to reach a CoreNode.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RoutedCoreRequest<T> {
     pub spaceId: String,
     pub targetNodeId: String,
     pub ttl: u32,
+    #[serde(default)]
+    pub routeKind: RoutedCoreRequestKind,
     pub payload: T,
 }
 
@@ -42,35 +54,6 @@ pub struct CoreNodeBindingApplyRequest {
     pub nodeId: String,
     pub generation: i64,
     pub operation: SyncOperation,
-}
-
-/// Requests one source-owned Binding generation transition.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CoreNodeBindingTransitionRequest {
-    pub bindingKey: String,
-    pub sourceGeneration: i64,
-    pub targetNodeId: String,
-    pub watchRequest: CoreWatchRequest,
-    pub payload: Vec<u8>,
-}
-
-/// Returns the single Binding operation committed by its source CoreNode.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CoreNodeBindingTransitionResult {
-    pub nodeId: String,
-    pub generation: i64,
-    pub operation: SyncOperation,
-}
-
-/// Activates one generated watch source before its Binding becomes observable.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CoreNodeWatchSourceActivationRequest {
-    pub bindingKey: String,
-    pub sourceNodeId: String,
-    pub sourceGeneration: i64,
-    pub request: CoreWatchRequest,
-    pub generation: i64,
-    pub payload: Vec<u8>,
 }
 
 /// Exposes local and routed Core operations to Link Access without fixing a transport direction.
@@ -110,22 +93,6 @@ pub trait CoreNodeLinkClient: operit_link::CoreLinkClient {
         &mut self,
         previousNodeId: String,
         request: RoutedCoreRequest<CoreNodeBindingApplyRequest>,
-    ) -> Result<(), CoreLinkError>;
-
-    /// Commits or forwards one source-owned Binding generation transition.
-    #[allow(non_snake_case)]
-    async fn routedBindingTransition(
-        &mut self,
-        previousNodeId: String,
-        request: RoutedCoreRequest<CoreNodeBindingTransitionRequest>,
-    ) -> Result<CoreNodeBindingTransitionResult, CoreLinkError>;
-
-    /// Activates or forwards one generated watch source on its selected CoreNode.
-    #[allow(non_snake_case)]
-    async fn routedWatchSourceActivate(
-        &mut self,
-        previousNodeId: String,
-        request: RoutedCoreRequest<CoreNodeWatchSourceActivationRequest>,
     ) -> Result<(), CoreLinkError>;
 
     /// Opens a routed push stream received from one directly paired CoreNode.
@@ -189,22 +156,6 @@ pub trait CoreNodeTransportClient: Send + Sync {
         request: RoutedCoreRequest<CoreNodeBindingApplyRequest>,
     ) -> Result<(), CoreLinkError>;
 
-    /// Commits one routed source-owned Binding generation transition.
-    #[allow(non_snake_case)]
-    async fn routedBindingTransition(
-        &self,
-        previousNodeId: String,
-        request: RoutedCoreRequest<CoreNodeBindingTransitionRequest>,
-    ) -> Result<CoreNodeBindingTransitionResult, CoreLinkError>;
-
-    /// Activates one routed generated watch source.
-    #[allow(non_snake_case)]
-    async fn routedWatchSourceActivate(
-        &self,
-        previousNodeId: String,
-        request: RoutedCoreRequest<CoreNodeWatchSourceActivationRequest>,
-    ) -> Result<(), CoreLinkError>;
-
     /// Opens a routed push stream from one adjacent CoreNode.
     #[allow(non_snake_case)]
     async fn routedOpenPush(
@@ -250,8 +201,6 @@ pub enum PeerFramePayload {
 pub enum PeerRequest {
     Call(RoutedCoreRequest<CoreCallRequest>),
     BindingApply(RoutedCoreRequest<CoreNodeBindingApplyRequest>),
-    BindingTransition(RoutedCoreRequest<CoreNodeBindingTransitionRequest>),
-    WatchSourceActivate(RoutedCoreRequest<CoreNodeWatchSourceActivationRequest>),
     WatchSnapshot(RoutedCoreRequest<CoreWatchRequest>),
     WatchOpen(PeerWatchOpenRequest),
     WatchClose(PeerWatchCloseRequest),
@@ -265,7 +214,6 @@ pub enum PeerRequest {
 #[serde(tag = "type", content = "body")]
 pub enum PeerResponse {
     Call(CoreCallResponse),
-    BindingTransition(Result<CoreNodeBindingTransitionResult, CoreLinkError>),
     WatchSnapshot(Result<CoreEvent, CoreLinkError>),
     Operation(Result<(), CoreLinkError>),
 }
@@ -529,44 +477,6 @@ impl PeerLinkClient {
         match self
             .connection
             .request(PeerRequest::BindingApply(request))
-            .await?
-        {
-            PeerResponse::Operation(result) => result,
-            _ => Err(CoreLinkError::new(
-                "PEER_PROTOCOL_ERROR",
-                "Peer Link returned the wrong response",
-            )),
-        }
-    }
-
-    /// Commits one source-owned Binding transition through the adjacent CoreNode.
-    #[allow(non_snake_case)]
-    pub async fn routedBindingTransition(
-        &self,
-        request: RoutedCoreRequest<CoreNodeBindingTransitionRequest>,
-    ) -> Result<CoreNodeBindingTransitionResult, CoreLinkError> {
-        match self
-            .connection
-            .request(PeerRequest::BindingTransition(request))
-            .await?
-        {
-            PeerResponse::BindingTransition(result) => result,
-            _ => Err(CoreLinkError::new(
-                "PEER_PROTOCOL_ERROR",
-                "Peer Link returned the wrong response",
-            )),
-        }
-    }
-
-    /// Activates one generated watch source through the adjacent CoreNode.
-    #[allow(non_snake_case)]
-    pub async fn routedWatchSourceActivate(
-        &self,
-        request: RoutedCoreRequest<CoreNodeWatchSourceActivationRequest>,
-    ) -> Result<(), CoreLinkError> {
-        match self
-            .connection
-            .request(PeerRequest::WatchSourceActivate(request))
             .await?
         {
             PeerResponse::Operation(result) => result,
@@ -860,16 +770,6 @@ impl PeerConnection {
             PeerRequest::BindingApply(request) => PeerResponse::Operation(
                 self.core
                     .routedBindingApply(self.peerNodeId.clone(), request)
-                    .await,
-            ),
-            PeerRequest::BindingTransition(request) => PeerResponse::BindingTransition(
-                self.core
-                    .routedBindingTransition(self.peerNodeId.clone(), request)
-                    .await,
-            ),
-            PeerRequest::WatchSourceActivate(request) => PeerResponse::Operation(
-                self.core
-                    .routedWatchSourceActivate(self.peerNodeId.clone(), request)
                     .await,
             ),
             PeerRequest::WatchSnapshot(request) => PeerResponse::WatchSnapshot(

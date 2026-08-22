@@ -349,7 +349,7 @@ src/lib.rs
 职责：
 
 ```text
-CoreObjectPath
+targetObjectId
 CoreCallRequest
 CoreCallResponse
 CoreWatchRequest

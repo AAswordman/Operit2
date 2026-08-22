@@ -18,8 +18,6 @@ pub mod RuntimeHostInfoService;
 pub mod RuntimeHostInteractionService;
 #[path = "RuntimeTerminalService.rs"]
 pub mod RuntimeTerminalService;
-#[path = "RuntimeTextStreamRegistry.rs"]
-pub mod RuntimeTextStreamRegistry;
 #[path = "SnapshotImportManager.rs"]
 pub mod SnapshotImportManager;
 #[path = "SttRecognitionService.rs"]
@@ -44,7 +42,6 @@ pub use RuntimeEventIngressService::*;
 pub use RuntimeHostInfoService::*;
 pub use RuntimeHostInteractionService::*;
 pub use RuntimeTerminalService::*;
-pub use RuntimeTextStreamRegistry::*;
 pub use SnapshotImportManager::*;
 pub use SttRecognitionService::*;
 pub use ToolRuntimeSupportService::*;

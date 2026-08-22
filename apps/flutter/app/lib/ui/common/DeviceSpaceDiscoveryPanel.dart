@@ -238,9 +238,9 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
       _discoveredDeviceSpaces = <generated.RuntimeRemoteDiscoveredSpace>[];
     });
     try {
-      final pairedDevices = await widget.clients.runtimeRemoteLinkService
+      final pairedDevices = await widget.clients.server.runtimeRemoteLinkService
           .pairedDevicesFlow().first;
-      final spaces = await widget.clients.runtimeRemoteLinkService
+      final spaces = await widget.clients.server.runtimeRemoteLinkService
           .discoverSpaces(timeoutMs: 2000);
       final visibleDeviceSpaces = await _visibleDiscoveredDeviceSpaces(
         spaces,
@@ -280,7 +280,7 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
           visibleDevices.add(device);
           continue;
         }
-        final online = await widget.clients.runtimeRemoteLinkService
+        final online = await widget.clients.server.runtimeRemoteLinkService
             .pairedDeviceOnline(deviceId: device.deviceId);
         if (!online) {
           visibleDevices.add(device);
@@ -427,7 +427,7 @@ Future<generated.CoreSpace?> confirmAndJoinPairedDeviceSpace({
   if (confirmed != true) {
     return null;
   }
-  return clients.runtimeRemoteLinkService.joinPairedDeviceSpace(
+  return clients.server.runtimeRemoteLinkService.joinPairedDeviceSpace(
     name: sessionName,
   );
 }
