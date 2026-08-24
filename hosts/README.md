@@ -55,7 +55,7 @@ Those boundaries are defined in:
 ```text
 docs/link-access-architecture.md
 core/CRATE_BOUNDARIES.md
-core/crates/operit-host-api/README.md
+core/crates/foundation/host-api/README.md
 ```
 
 ## Workspace Browser

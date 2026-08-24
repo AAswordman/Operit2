@@ -57,14 +57,19 @@ class ChatViewModel {
   final GeneratedCoreProxyClients clients;
   final GeneratedChatRuntimeHolderMainCoreProxy _chat;
 
-  /// Watches messages for the main local chat runtime.
-  Stream<List<ChatUiMessage>> watchMessages() {
-    return _chat.chatMessagesFlow(chatId: null);
+  /// Watches the selected chat id used to bind per-chat Core flows.
+  Stream<String?> watchCurrentChatId() {
+    return _chat.currentChatIdFlow();
   }
 
-  /// Watches non-message state for the main local chat runtime.
-  Stream<core_proxy.ChatState> watchChatState() {
-    return _chat.chatStateFlow(chatId: null);
+  /// Watches messages for one explicit main-runtime chat id.
+  Stream<List<ChatUiMessage>> watchMessages(String chatId) {
+    return _chat.chatMessagesFlow(chatId: chatId);
+  }
+
+  /// Watches runtime state for one explicit main-runtime chat id.
+  Stream<core_proxy.ChatState> watchChatState(String chatId) {
+    return _chat.chatStateFlow(chatId: chatId);
   }
 
   Future<void> sendUserMessage(

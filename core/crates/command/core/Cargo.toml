@@ -1,0 +1,21 @@
+[package]
+name = "operit-command-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+operit-runtime = { path = "../../runtime/application" }
+operit-providers = { path = "../../provider/services" }
+operit-store = { path = "../../persistence/store" }
+operit-host-api = { path = "../../foundation/host-api" }
+operit-local-models = { path = "../../provider/local-model" }
+operit-model = { path = "../../foundation/model" }
+operit-tools = { path = "../../tool/services" }
+operit-util = { path = "../../foundation/util" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true, features = ["blocking"] }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time"] }

@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use operit_core_proxy::LocalCoreProxy;
+use operit_proxy_local::LocalCoreProxy;
 use operit_host_api::HostManager::HostManager;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 

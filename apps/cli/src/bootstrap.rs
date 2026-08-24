@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use operit_core_proxy::LocalCoreProxy;
+use operit_proxy_local::LocalCoreProxy;
 use operit_host_api::HostManager::HostManager;
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
@@ -45,7 +45,7 @@ use operit_host_windows_native::{
     WindowsSystemOperationHost as NativeSystemOperationHost,
     WindowsTerminalHost as NativeTerminalHost, WindowsWebVisitHost as NativeWebVisitHost,
 };
-use operit_link_access::LinkAccessStore;
+use operit_access_runtime::LinkAccessStore;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use operit_core_proxy::{GeneratedCoreProxy, LocalCoreProxy};
+use operit_proxy_local::{GeneratedCoreProxy, LocalCoreProxy};
 use operit_link::{CoreEvent, CoreLinkClient, CoreLinkError, CoreRequestId, CoreValue, CoreWatchRequest};
 
 pub(super) struct TuiCore {

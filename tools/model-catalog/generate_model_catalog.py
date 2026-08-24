@@ -14,7 +14,7 @@ import certifi
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
-TARGET = REPO_ROOT / "core" / "crates" / "operit-model" / "collects" / "ModelCatalog.rs"
+TARGET = REPO_ROOT / "core" / "crates" / "foundation" / "model" / "collects" / "ModelCatalog.rs"
 
 USER_AGENT = "operit-model-catalog-generator/1.0"
 MODELS_DEV_URL = "https://models.dev/api.json"

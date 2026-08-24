@@ -188,6 +188,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   core_proxy.InputProcessingState _inputProcessingState =
       core_proxy.InputProcessingState.idle();
   String? _errorMessage;
+  StreamSubscription<String?>? _currentChatIdSubscription;
   StreamSubscription<List<ChatUiMessage>>? _messagesSubscription;
   StreamSubscription<core_proxy.ChatState>? _chatStateSubscription;
   StreamSubscription<String?>? _toastEventSubscription;
@@ -282,6 +283,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _chatContentDataNotifier.dispose();
     _autoScrollToBottomNotifier.dispose();
     _toastMessageNotifier.dispose();
+    _currentChatIdSubscription?.cancel();
     _messagesSubscription?.cancel();
     _chatStateSubscription?.cancel();
     _toastEventSubscription?.cancel();
@@ -856,15 +858,29 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     });
   }
 
-  /// Opens the independent routed message and chat-state streams for this surface.
+  /// Opens the independent chat-scoped message and state streams for this surface.
   void _watchChatFlows() {
+    _currentChatIdSubscription?.cancel();
+    _currentChatIdSubscription = _viewModel.watchCurrentChatId().listen(
+      _bindChatFlows,
+      onError: _handleChatFlowError,
+    );
+  }
+
+  /// Rebinds the two per-chat Core watches after the selected chat changes.
+  void _bindChatFlows(String? chatId) {
     _messagesSubscription?.cancel();
     _chatStateSubscription?.cancel();
-    _messagesSubscription = _viewModel.watchMessages().listen(
+    _messagesSubscription = null;
+    _chatStateSubscription = null;
+    if (chatId == null || chatId.isEmpty) {
+      return;
+    }
+    _messagesSubscription = _viewModel.watchMessages(chatId).listen(
       _applyMessages,
       onError: _handleChatFlowError,
     );
-    _chatStateSubscription = _viewModel.watchChatState().listen(
+    _chatStateSubscription = _viewModel.watchChatState(chatId).listen(
       _applyChatState,
       onError: _handleChatFlowError,
     );

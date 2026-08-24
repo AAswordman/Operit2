@@ -4348,6 +4348,60 @@ abstract class AppLocalizations {
   /// **'Offline'**
   String get settingsRuntimePairedOffline;
 
+  /// No description provided for @settingsRuntimePairedInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing invalid'**
+  String get settingsRuntimePairedInvalid;
+
+  /// No description provided for @settingsRuntimePairedError.
+  ///
+  /// In en, this message translates to:
+  /// **'Status unavailable'**
+  String get settingsRuntimePairedError;
+
+  /// No description provided for @settingsRuntimePairingRevokedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing revoked by the other device'**
+  String get settingsRuntimePairingRevokedTitle;
+
+  /// No description provided for @settingsRuntimePairingRevokedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The other device cancelled its pairing with this device. The local pairing record is no longer valid.'**
+  String get settingsRuntimePairingRevokedMessage;
+
+  /// No description provided for @settingsRuntimePairingRevokedConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Got it'**
+  String get settingsRuntimePairingRevokedConfirm;
+
+  /// No description provided for @settingsRuntimePairedRemovedFromSpace.
+  ///
+  /// In en, this message translates to:
+  /// **'Removed from device space'**
+  String get settingsRuntimePairedRemovedFromSpace;
+
+  /// No description provided for @settingsRuntimeRemovedFromSpaceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Removed from device space'**
+  String get settingsRuntimeRemovedFromSpaceTitle;
+
+  /// No description provided for @settingsRuntimeRemovedFromSpaceMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The remote device removed this device from the space. Leave the current space and create a standalone device space now.'**
+  String get settingsRuntimeRemovedFromSpaceMessage;
+
+  /// No description provided for @settingsRuntimeRemovedFromSpaceConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave and create standalone space'**
+  String get settingsRuntimeRemovedFromSpaceConfirm;
+
   /// No description provided for @settingsRuntimeJoinSpace.
   ///
   /// In en, this message translates to:

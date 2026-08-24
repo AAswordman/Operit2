@@ -318,7 +318,7 @@ host bridge boundary
 
 2. tool invocation approval
    位置：
-     core/crates/operit-runtime/src/api/chat/enhance/ToolExecutionManager.rs
+     core/crates/runtime/application/src/api/chat/enhance/ToolExecutionManager.rs
    已落地：
      executeInvocations 负责解析后的 invocation 流转、CLI 公开工具、角色卡工具暴露检查。
      User Tool Approval 不再由 ToolExecutionManager 承载，执行前能力判定在 AIToolHandler。
@@ -329,7 +329,7 @@ host bridge boundary
 
 3. direct host bridge execution
    位置：
-     core/crates/operit-runtime/src/core/tools/AIToolHandler.rs
+     core/crates/runtime/application/src/core/tools/AIToolHandler.rs
    已落地：
      executeToolSafelyWithResolvedExecutor 会移出 executor，validateParameters，然后 executor.invokeAndStream。
      JS toolCall、PackageToolExecutor、MCPToolExecutor 最终都会走 AIToolHandler 的执行链路。
@@ -341,8 +341,8 @@ host bridge boundary
 
 4. file operation boundary
    位置：
-     core/crates/operit-runtime/src/core/tools/defaultTool/standard/StandardFileSystemTools.rs
-     core/crates/operit-runtime/src/core/files/VisualFileSystem.rs
+     core/crates/runtime/application/src/core/tools/defaultTool/standard/StandardFileSystemTools.rs
+     core/crates/runtime/application/src/core/files/VisualFileSystem.rs
    已落地：
      StandardFileSystemTools 从 AITool 参数取 path。
      VisualFileSystem.resolvePath 使用 PathMapper 解析 VFS path。
@@ -910,58 +910,58 @@ apps/flutter/app/lib/ui/features/chat/components/style/input/agent/AgentInputMen
   改成只读 / 工作区读写 / 完整权限三档显示。
   三档显示直接写入 AiPermissionMode。
 
-core/crates/operit-runtime/src/core/tools/ToolPermissionSystem.rs
+core/crates/runtime/application/src/core/tools/ToolPermissionSystem.rs
   删除旧单工具授权与 per-tool override 模型。
   新模型应围绕 AiPermissionMode 和 User Tool Approval。
 
-core/crates/operit-runtime/src/api/chat/enhance/ToolExecutionManager.rs
+core/crates/runtime/application/src/api/chat/enhance/ToolExecutionManager.rs
   只保留解析、CLI 公开工具、角色卡工具暴露检查。
   不再承载逐工具授权或长期批准模型。
 
-core/crates/operit-runtime/src/core/tools/AIToolHandler.rs
+core/crates/runtime/application/src/core/tools/AIToolHandler.rs
   作为工具执行前的能力判定点。
   调用 executor.accessSpec(tool)，用 ToolEffect 检查 AiPermissionMode。
   对 packageName:toolName 触发用户批准；“本次会话中始终允许”只进入内存会话批准集合。
 
-core/crates/operit-runtime/src/core/tools/javascript/JsTools.rs
+core/crates/runtime/application/src/core/tools/javascript/JsTools.rs
   当前 Tools.Files.write 只是 toolCall("write_file", params)。
   新模型不在这里塞逐调用审批。
   这里应继续表现为包运行环境里的文件 API。
 
-core/crates/operit-runtime/src/core/tools/javascript/JsNativeInterfaceDelegates.rs
+core/crates/runtime/application/src/core/tools/javascript/JsNativeInterfaceDelegates.rs
   当前 callToolSync 把 JS toolCall 转成 AITool 后直接 executeTool。
   这条直接执行链路可以保留。
   它代表 PackageTool 脚本内部 toolCall 触达具体工具执行链路，不代表沙盒，也不作为 ToolPkg 容器拦截点。
 
-core/crates/operit-runtime/src/core/files/VisualFileSystem.rs
+core/crates/runtime/application/src/core/files/VisualFileSystem.rs
   当前只做 PathMapper.resolve 后调用 Host FileSystemHost。
   文件读写边界由 AIToolHandler 在调用工具前完成。
   VisualFileSystem 只保留 VFS 到 Host FileSystemHost 的路径解析与执行职责。
   应用内沙盒需要真实运行环境边界；不能把 VFS 路径检查描述成沙盒。
 
-core/crates/operit-runtime/src/core/tools/defaultTool/standard/StandardTerminalTools.rs
+core/crates/runtime/application/src/core/tools/defaultTool/standard/StandardTerminalTools.rs
   当前终端工具直接调用 TerminalHost。
   execute_in_terminal_session、execute_hidden_terminal_command、input_in_terminal_session 都会绕开 VFS。
   终端 executor 必须实现 accessSpec(tool)，按本次调用返回 ToolEffect.READ / ToolEffect.WRITE。
   命令字符串不用于判断 workspace 文件边界；应用内沙盒限制只能来自真实执行边界。
 
-core/crates/operit-runtime/src/services/RuntimeTerminalService.rs
+core/crates/runtime/application/src/services/RuntimeTerminalService.rs
   startTerminalPty 只把 /app 路径映射成物理 workingDir。
   命令执行本身仍由 Host shell 负责，不受 VFS 文件 API 约束。
 
-core/crates/operit-host-api/src/lib.rs
+core/crates/foundation/host-api/src/lib.rs
   扩展 HostEnvironmentDescriptor。
   Host 注册 platform、privilege、isolation、capabilities、workspace roots。
 
-core/crates/operit-runtime/src/core/application/OperitApplicationContext.rs
+core/crates/runtime/application/src/core/application/OperitApplicationContext.rs
   持有 hostEnvironment 与 host 能力入口。
   runtime 从这里读取 host authorization，不从 UI 推断。
 
-core/crates/operit-runtime/src/core/tools/packTool/PackageManager.rs
+core/crates/runtime/application/src/core/tools/packTool/PackageManager.rs
   作为插件、Skill、ToolPkg 安装、删除、更新、启停的执行点。
   由本机 owner 直接管理；企业部署交给外层 Operit Server Manager。
 
-core/crates/operit-runtime/src/core/tools/mcp/MCPManager.rs
+core/crates/runtime/application/src/core/tools/mcp/MCPManager.rs
   作为 MCP 服务启停、配置和连接管理的执行点。
   由本机 owner 直接管理；企业部署交给外层 Operit Server Manager。
 
@@ -970,7 +970,7 @@ apps/flutter/app/lib/core/link_host/LinkHostConfig.dart
   不扩展内部多用户权限字段。
 
 apps/flutter/native/operit-flutter-bridge/src/access.rs
-  /link/session、/link/call、/link/watch/channel/* 验证 session。
+  /link/session、/link/space/adopt、/link/peer/channel/* 验证 session。
   不构造内部用户权限系统。
 
 apps/flutter/app/android/app/src/main/kotlin/app/operit/AndroidPlatformChannel.kt

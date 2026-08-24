@@ -158,7 +158,7 @@ def _platform_command(executable: str) -> str:
 
 def _generate_plugin_sdk_types(repo_root: Path, *, dry_run: bool) -> None:
     core_root = repo_root / "core"
-    sdk_source_root = core_root / "crates" / "operit-plugin-sdk" / "src"
+    sdk_source_root = core_root / "crates" / "plugin" / "sdk" / "src"
     declaration_root = repo_root / "plugins" / "types"
     _run_checked_command(
         [
@@ -450,11 +450,11 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--buildin-output",
-        default=str(repo_root / "core" / "crates" / "operit-runtime" / "assets" / "plugins" / "buildin"),
+        default=str(repo_root / "core" / "crates" / "runtime" / "application" / "assets" / "plugins" / "buildin"),
     )
     parser.add_argument(
         "--external-output",
-        default=str(repo_root / "core" / "crates" / "operit-runtime" / "assets" / "plugins" / "external"),
+        default=str(repo_root / "core" / "crates" / "runtime" / "application" / "assets" / "plugins" / "external"),
     )
     parser.add_argument(
         "--examples-output",

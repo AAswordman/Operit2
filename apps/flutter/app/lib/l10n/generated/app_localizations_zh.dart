@@ -2311,6 +2311,35 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimePairedOffline => '离线';
 
   @override
+  String get settingsRuntimePairedInvalid => '配对已失效';
+
+  @override
+  String get settingsRuntimePairedError => '状态获取失败';
+
+  @override
+  String get settingsRuntimePairingRevokedTitle => '对方已解除配对';
+
+  @override
+  String get settingsRuntimePairingRevokedMessage =>
+      '对方已取消与本设备的配对。当前本地配对记录已失效。';
+
+  @override
+  String get settingsRuntimePairingRevokedConfirm => '知道了';
+
+  @override
+  String get settingsRuntimePairedRemovedFromSpace => '已被移出设备空间';
+
+  @override
+  String get settingsRuntimeRemovedFromSpaceTitle => '已被移出设备空间';
+
+  @override
+  String get settingsRuntimeRemovedFromSpaceMessage =>
+      '对方已将本设备移出设备空间。请立即退出当前设备空间并创建一个独立的设备空间。';
+
+  @override
+  String get settingsRuntimeRemovedFromSpaceConfirm => '退出并创建独立空间';
+
+  @override
   String get settingsRuntimeJoinSpace => '加入设备空间';
 
   @override

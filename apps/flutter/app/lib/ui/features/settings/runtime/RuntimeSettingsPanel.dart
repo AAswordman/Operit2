@@ -32,6 +32,8 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       <String, _PairedRemoteProbeState>{};
   Map<String, generated.RuntimePairedDevice> _pairedDevices =
       <String, generated.RuntimePairedDevice>{};
+  final Set<String> _removedSpacePrompted = <String>{};
+  final Set<String> _invalidPairingPrompted = <String>{};
   int _pairedRemoteProbeGeneration = 0;
   StreamSubscription<Map<String, generated.RuntimePairedDevice>>?
   _pairedDevicesSubscription;
@@ -77,7 +79,8 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   /// Reads the synchronized device space projection from the current device.
   Future<void> _refreshCurrentDeviceSpace() async {
     try {
-      final deviceSpace = await _clients.server.runtimeRemoteLinkService.deviceSpace();
+      final deviceSpace = await _clients.server.runtimeRemoteLinkService
+          .deviceSpace();
       if (mounted) {
         setState(() => _currentDeviceSpace = deviceSpace);
       }
@@ -128,9 +131,13 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   Future<generated.RuntimeDeviceSpaceTopology> _disconnectDeviceSpaceConnection(
     String deviceId,
   ) async {
-    await _clients.server.runtimeRemoteLinkService.disconnectDeviceSpaceConnection(
-      deviceId: deviceId,
-    );
+    await _clients.server.runtimeRemoteLinkService
+        .disconnectDeviceSpaceConnection(deviceId: deviceId);
+    final refreshedDeviceSpace = await _clients.server.runtimeRemoteLinkService
+        .deviceSpace();
+    if (mounted) {
+      setState(() => _currentDeviceSpace = refreshedDeviceSpace);
+    }
     return _clients.server.runtimeRemoteLinkService.deviceSpaceTopology();
   }
 
@@ -163,20 +170,85 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
         results,
       );
     });
+    final removedDeviceIds = results
+        .where(
+          (entry) => entry.value == _PairedRemoteProbeState.removedFromSpace,
+        )
+        .map((entry) => entry.key)
+        .toSet();
+    _removedSpacePrompted.removeWhere(
+      (deviceId) => !removedDeviceIds.contains(deviceId),
+    );
+    final newlyRemovedDeviceId = removedDeviceIds
+        .where((deviceId) => !_removedSpacePrompted.contains(deviceId))
+        .firstOrNull;
+    if (newlyRemovedDeviceId != null) {
+      _removedSpacePrompted.add(newlyRemovedDeviceId);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          unawaited(_handleRemovedFromSpace());
+        }
+      });
+    }
+    final invalidDeviceIds = results
+        .where((entry) => entry.value == _PairedRemoteProbeState.invalid)
+        .map((entry) => entry.key)
+        .toSet();
+    _invalidPairingPrompted.removeWhere(
+      (deviceId) => !invalidDeviceIds.contains(deviceId),
+    );
+    final newlyInvalidDeviceId = invalidDeviceIds
+        .where((deviceId) => !_invalidPairingPrompted.contains(deviceId))
+        .firstOrNull;
+    if (newlyInvalidDeviceId != null) {
+      _invalidPairingPrompted.add(newlyInvalidDeviceId);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          unawaited(_handleInvalidPairing(newlyInvalidDeviceId));
+        }
+      });
+    }
   }
 
   /// Reads the active direct-connection state for one paired device.
   Future<_PairedRemoteProbeState> _probePairedDevice(String deviceId) async {
     try {
-    final online = await _clients.server.runtimeRemoteLinkService.pairedDeviceOnline(
-        deviceId: deviceId,
-      );
-      return online
-          ? _PairedRemoteProbeState.online
-          : _PairedRemoteProbeState.offline;
+      final status = await _clients.server.runtimeRemoteLinkService
+          .pairedDeviceStatus(deviceId: deviceId);
+      return switch (status) {
+        generated.RuntimePairedDeviceStatus.online =>
+          _PairedRemoteProbeState.online,
+        generated.RuntimePairedDeviceStatus.offline =>
+          _PairedRemoteProbeState.offline,
+        generated.RuntimePairedDeviceStatus.invalid =>
+          _PairedRemoteProbeState.invalid,
+        generated.RuntimePairedDeviceStatus.removedFromSpace =>
+          _PairedRemoteProbeState.removedFromSpace,
+      };
     } catch (_) {
-      return _PairedRemoteProbeState.offline;
+      return _PairedRemoteProbeState.error;
     }
+  }
+
+  /// Informs the user that the remote device has revoked this pairing.
+  Future<void> _handleInvalidPairing(String deviceId) async {
+    if (!mounted || !_pairedDevices.containsKey(deviceId)) {
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.settingsRuntimePairingRevokedTitle),
+        content: Text(l10n.settingsRuntimePairingRevokedMessage),
+        actions: <Widget>[
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(l10n.settingsRuntimePairingRevokedConfirm),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Removes every local pairing record associated with one device.
@@ -186,6 +258,62 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       await _clients.server.runtimeRemoteLinkService.removePairedDevice(
         deviceId: deviceId,
       );
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  /// Confirms leaving the removed Space and creates a standalone local Space.
+  Future<void> _handleRemovedFromSpace() async {
+    if (!mounted) {
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.settingsRuntimeRemovedFromSpaceTitle),
+        content: Text(l10n.settingsRuntimeRemovedFromSpaceMessage),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(l10n.settingsRuntimeRemovedFromSpaceConfirm),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    await _leaveCurrentDeviceSpaceNow();
+  }
+
+  /// Leaves the current device space without asking for a second confirmation.
+  Future<void> _leaveCurrentDeviceSpaceNow() async {
+    setState(() => _busy = true);
+    try {
+      final deviceSpace = await _clients.server.runtimeRemoteLinkService
+          .leaveDeviceSpace();
+      if (mounted) {
+        setState(() {
+          _currentDeviceSpace = deviceSpace;
+          _connectionMessage = null;
+          _connectionFailed = false;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _connectionMessage = error.toString();
+          _connectionFailed = true;
+        });
+      }
     } finally {
       if (mounted) {
         setState(() => _busy = false);
@@ -237,9 +365,8 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
     setState(() => _busy = true);
     try {
-      final renamed = await _clients.server.runtimeRemoteLinkService.renameDeviceSpace(
-        spaceName: spaceName,
-      );
+      final renamed = await _clients.server.runtimeRemoteLinkService
+          .renameDeviceSpace(spaceName: spaceName);
       if (mounted) {
         setState(() => _currentDeviceSpace = renamed);
       }
@@ -404,6 +531,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
             onJoin: _offerJoiningExistingPairedDeviceSpace,
             onDelete: _deletePairedDevice,
             onTransportChanged: _setPairedDeviceTransport,
+            onRemovedFromSpace: _handleRemovedFromSpace,
           ),
         ],
       ),
@@ -432,7 +560,14 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   }
 }
 
-enum _PairedRemoteProbeState { checking, online, offline }
+enum _PairedRemoteProbeState {
+  checking,
+  online,
+  offline,
+  invalid,
+  error,
+  removedFromSpace,
+}
 
 class _SectionCard extends StatelessWidget {
   const _SectionCard({required this.title, required this.children});
@@ -814,10 +949,7 @@ class _DeviceSpaceTopologyGraphState extends State<_DeviceSpaceTopologyGraph> {
         : connection.secondDeviceId == currentDeviceId
         ? first
         : null;
-    final canDisconnect =
-        target != null &&
-        connection.status !=
-            generated.RuntimeDeviceSpaceConnectionStatus.offline;
+    final canDisconnect = target != null;
     await showDialog<void>(
       context: context,
       builder: (context) {
@@ -1379,6 +1511,7 @@ class _PairedDeviceList extends StatelessWidget {
     required this.onJoin,
     required this.onDelete,
     required this.onTransportChanged,
+    required this.onRemovedFromSpace,
   });
 
   final Map<String, generated.RuntimePairedDevice> devices;
@@ -1392,6 +1525,7 @@ class _PairedDeviceList extends StatelessWidget {
     generated.LinkTransportPreference,
   )
   onTransportChanged;
+  final VoidCallback onRemovedFromSpace;
 
   @override
   Widget build(BuildContext context) {
@@ -1419,6 +1553,7 @@ class _PairedDeviceList extends StatelessWidget {
             onDelete: () => onDelete(entries[index].key),
             onTransportChanged: (transport) =>
                 onTransportChanged(entries[index].value, transport),
+            onRemovedFromSpace: onRemovedFromSpace,
           ),
           if (index < entries.length - 1) const SizedBox(height: 10),
         ],
@@ -1436,6 +1571,7 @@ class _PairedDeviceTile extends StatelessWidget {
     required this.onJoin,
     required this.onDelete,
     required this.onTransportChanged,
+    required this.onRemovedFromSpace,
   });
 
   final generated.RuntimePairedDevice device;
@@ -1445,6 +1581,7 @@ class _PairedDeviceTile extends StatelessWidget {
   final VoidCallback? onJoin;
   final VoidCallback onDelete;
   final ValueChanged<generated.LinkTransportPreference> onTransportChanged;
+  final VoidCallback onRemovedFromSpace;
 
   @override
   Widget build(BuildContext context) {
@@ -1457,7 +1594,15 @@ class _PairedDeviceTile extends StatelessWidget {
       _PairedRemoteProbeState.checking => colorScheme.onSurfaceVariant,
       _PairedRemoteProbeState.online => colorScheme.primary,
       _PairedRemoteProbeState.offline => colorScheme.error,
+      _PairedRemoteProbeState.invalid => colorScheme.error,
+      _PairedRemoteProbeState.error => colorScheme.error,
+      _PairedRemoteProbeState.removedFromSpace => colorScheme.error,
     };
+    final canJoin =
+        !inCurrentSpace &&
+        onJoin != null &&
+        probeState != _PairedRemoteProbeState.invalid &&
+        probeState != _PairedRemoteProbeState.removedFromSpace;
     return Container(
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.22),
@@ -1549,7 +1694,7 @@ class _PairedDeviceTile extends StatelessWidget {
                 ],
               ),
             ),
-            if (!inCurrentSpace && onJoin != null)
+            if (canJoin)
               IconButton(
                 tooltip: l10n.settingsRuntimeJoinSpace,
                 visualDensity: VisualDensity.compact,
@@ -1567,6 +1712,15 @@ class _PairedDeviceTile extends StatelessWidget {
           ],
         ),
         children: <Widget>[
+          if (probeState == _PairedRemoteProbeState.removedFromSpace)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.tonalIcon(
+                onPressed: busy ? null : onRemovedFromSpace,
+                icon: const Icon(Icons.person_remove_outlined, size: 18),
+                label: Text(l10n.settingsRuntimeRemovedFromSpaceConfirm),
+              ),
+            ),
           if (device.outboundTransport != null)
             Row(
               children: <Widget>[
@@ -1670,6 +1824,18 @@ class _RemoteProbeIcon extends StatelessWidget {
         Icons.cloud_off_outlined,
         color: colorScheme.error,
       ),
+      _PairedRemoteProbeState.invalid => Icon(
+        Icons.link_off_outlined,
+        color: colorScheme.error,
+      ),
+      _PairedRemoteProbeState.error => Icon(
+        Icons.error_outline,
+        color: colorScheme.error,
+      ),
+      _PairedRemoteProbeState.removedFromSpace => Icon(
+        Icons.person_remove_outlined,
+        color: colorScheme.error,
+      ),
     };
   }
 }
@@ -1687,11 +1853,18 @@ class _RemoteProbeText extends StatelessWidget {
       _PairedRemoteProbeState.checking => l10n.settingsRuntimePairedChecking,
       _PairedRemoteProbeState.online => l10n.settingsRuntimePairedOnline,
       _PairedRemoteProbeState.offline => l10n.settingsRuntimePairedOffline,
+      _PairedRemoteProbeState.invalid => l10n.settingsRuntimePairedInvalid,
+      _PairedRemoteProbeState.error => l10n.settingsRuntimePairedError,
+      _PairedRemoteProbeState.removedFromSpace =>
+        l10n.settingsRuntimePairedRemovedFromSpace,
     };
     final color = switch (state) {
       _PairedRemoteProbeState.checking => colorScheme.onSurfaceVariant,
       _PairedRemoteProbeState.online => colorScheme.primary,
       _PairedRemoteProbeState.offline => colorScheme.error,
+      _PairedRemoteProbeState.invalid => colorScheme.error,
+      _PairedRemoteProbeState.error => colorScheme.error,
+      _PairedRemoteProbeState.removedFromSpace => colorScheme.error,
     };
     return Text(
       label,

@@ -79,7 +79,7 @@ async fn show_chat_with_core(core: &mut CliCore, args: &[String]) -> Result<(), 
     print_chat_history_header(&chat);
     for message in core
         .chat_runtime_holder_main()
-        .chatMessagesFlowSnapshot(Some(chatId.clone()))
+        .chatMessagesFlowSnapshot(chatId.clone())
         .await
         .map_err(|error| error.to_string())?
     {
@@ -963,7 +963,7 @@ async fn send_chat_message_with_core_result(
         .ok_or_else(|| "core has no active chat before send".to_string())?;
     let beforeMessages = core
         .chat_runtime_holder_main()
-        .chatMessagesFlowSnapshot(Some(chatId.clone()))
+        .chatMessagesFlowSnapshot(chatId.clone())
         .await
         .map_err(|error| error.to_string())?;
     let beforeLastAiTimestamp = beforeMessages
@@ -1034,7 +1034,7 @@ async fn wait_for_committed_ai_message_with_core(
         }
         let messages = core
             .chat_runtime_holder_main()
-            .chatMessagesFlowSnapshot(Some(chatId.to_string()))
+            .chatMessagesFlowSnapshot(chatId.to_string())
             .await
             .map_err(|error| error.to_string())?;
         if let Some(message) = messages.into_iter().rev().find(|message| {

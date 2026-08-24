@@ -239,7 +239,8 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
     });
     try {
       final pairedDevices = await widget.clients.server.runtimeRemoteLinkService
-          .pairedDevicesFlow().first;
+          .pairedDevicesFlow()
+          .first;
       final spaces = await widget.clients.server.runtimeRemoteLinkService
           .discoverSpaces(timeoutMs: 2000);
       final visibleDeviceSpaces = await _visibleDiscoveredDeviceSpaces(
@@ -280,9 +281,14 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
           visibleDevices.add(device);
           continue;
         }
-        final online = await widget.clients.server.runtimeRemoteLinkService
-            .pairedDeviceOnline(deviceId: device.deviceId);
-        if (!online) {
+        try {
+          final status = await widget.clients.server.runtimeRemoteLinkService
+              .pairedDeviceStatus(deviceId: device.deviceId);
+          if (status != generated.RuntimePairedDeviceStatus.online) {
+            visibleDevices.add(device);
+          }
+        } catch (_) {
+          // Keep the device visible so one stale pairing cannot abort discovery.
           visibleDevices.add(device);
         }
       }

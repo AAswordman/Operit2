@@ -144,7 +144,7 @@ async fn build_startup_update_prompt(
 }
 
 fn install_local_permission_requester(
-    core: &mut operit_core_proxy::LocalCoreProxy,
+    core: &mut operit_proxy_local::LocalCoreProxy,
     approval_bridge: TuiApprovalBridge,
 ) {
     let handler = core.localApplicationMut().toolHandler.clone();

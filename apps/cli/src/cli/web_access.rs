@@ -1,7 +1,7 @@
 use super::*;
 use crate::create_cli_link_access_store;
 
-use operit_link_access::{
+use operit_access_runtime::{
     link_token_hash, LinkAccessStore, RemoteDeviceInfo, StaticWebAccessControlConfig,
     StaticWebAccessServer, StaticWebAccessServerConfig,
 };

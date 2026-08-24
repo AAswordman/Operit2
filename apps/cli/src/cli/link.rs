@@ -1,13 +1,12 @@
 use super::*;
 use crate::{create_cli_link_access_store, create_local_core};
 
-use operit_core_server::{
+use operit_node_runtime::{
     CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter},
     RuntimeRemoteLinkService::RuntimeRemoteLinkService,
-    SpaceRuntime::SpaceRuntime,
 };
-use operit_link::{CoreLinkError, CoreLinkSharedClient};
-use operit_link_access::{
+use operit_link::CoreLinkError;
+use operit_access_runtime::{
     link_token_hash, AcceptedRemoteSessionRecord, LinkAccessStore, PairedRemoteSession,
     PairedRemoteSessionRecord, LinkTransportPreference, RemoteDeviceInfo, RemoteLinkClient,
     RemoteLinkServer, RemoteLinkServerConfig,
@@ -104,15 +103,13 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
     let device_info = RemoteDeviceInfo::nativeCli("server")?;
     let access_store = LinkAccessStore::new(core.runtimeStorageHost());
     let identity = access_store.initializeIdentity(device_info.clone())?;
-    let chatRuntimeHolder = core.localApplicationMut().chatRuntimeHolder.clone();
-    let localRuntime = local_core_runtime(Arc::new(core), chatRuntimeHolder);
+    let localRuntime = local_core_runtime(Arc::new(core));
     RuntimeRemoteLinkService::new(localRuntime.clone()).startSpaceSync()?;
     RemoteLinkServer::serve(
         CoreNodeRouter::new(localRuntime),
         RemoteLinkServerConfig {
             bindAddress: bind_address,
             token,
-            localControlToken: None,
             deviceId: identity.deviceId,
             deviceInfo: identity.deviceInfo,
             webAccess: None,
@@ -123,7 +120,7 @@ async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
     .await
 }
 
-pub(crate) fn install_link_permission_requester(core: &mut operit_core_proxy::LocalCoreProxy) {
+pub(crate) fn install_link_permission_requester(core: &mut operit_proxy_local::LocalCoreProxy) {
     let handler = core.localApplicationMut().toolHandler.clone();
     handler
         .getToolPermissionSystem()
@@ -165,6 +162,7 @@ fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermis
 async fn run_link_hello_command(args: &[String]) -> Result<(), String> {
     let (url, token) =
         parse_remote_url_token(args, "usage: operit2 cli link hello <url> --token <token>")?;
+    let _localCore = create_local_core();
     let client = RemoteLinkClient::new(url);
     let token_hash = link_token_hash(&token);
     let hello = client.hello(&token_hash).await?;
@@ -275,6 +273,21 @@ async fn run_link_space_command(args: &[String]) -> Result<(), String> {
             println!("device space renamed: {}", space.spaceName);
             Ok(())
         }
+        Some("status") if args.len() == 2 => {
+            let status = service.pairedDeviceStatus(args[1].clone()).await?;
+            println!("status={status:?}");
+            Ok(())
+        }
+        Some("disconnect") if args.len() == 2 => {
+            service.disconnectDeviceSpaceConnection(args[1].clone())?;
+            println!("device space connection disconnected: {}", args[1]);
+            Ok(())
+        }
+        Some("remove") if args.len() == 2 => {
+            service.removePairedDevice(args[1].clone())?;
+            println!("paired device removed: {}", args[1]);
+            Ok(())
+        }
         Some("join") if args.len() == 2 => {
             let space = service.joinPairedDeviceSpace(args[1].clone()).await?;
             println!(
@@ -289,10 +302,7 @@ async fn run_link_space_command(args: &[String]) -> Result<(), String> {
             println!("left device space; current space: {}", space.spaceName);
             Ok(())
         }
-        _ => Err(
-            "usage: operit2 cli link space <show|rename <name>|join <paired-session>|leave>"
-                .to_string(),
-        ),
+        _ => Err("usage: operit2 cli link space <show|status <device-id>|rename <name>|join <paired-session>|disconnect <device-id>|remove <device-id>|leave>".to_string()),
     }
 }
 
@@ -359,6 +369,9 @@ async fn run_link_ping_command(args: &[String]) -> Result<(), String> {
     let name = args
         .get(0)
         .ok_or_else(|| "usage: operit2 cli link ping <name>".to_string())?;
+    // Initialize the CLI host registry before the paired-session HTTP carrier is used.
+    let mut localCore = create_local_core();
+    localCore.localApplicationMut().onCreate()?;
     let session = load_link_session_resolved(name).await?;
     let info = session.sessionInfo().await?;
     println!(
@@ -607,7 +620,7 @@ fn print_link_usage() {
     println!("operit2 cli link discover [--timeout-ms <ms>]");
     println!("operit2 cli link hello <url> --token <token>");
     println!("operit2 cli link connect <url> --token <token> --save <name> [--transport <http|ws>]");
-    println!("operit2 cli link space <show|rename <name>|join <paired-session>|leave>");
+    println!("operit2 cli link space <show|status <device-id>|rename <name>|join <paired-session>|disconnect <device-id>|remove <device-id>|leave>");
     println!("operit2 cli link sessions");
     println!("operit2 cli link transport <session> <http|ws>");
     println!("operit2 cli link session-delete <name>");
@@ -618,31 +631,17 @@ fn print_link_usage() {
 }
 
 /// Adapts the in-process CLI Core to the server-owned routing capability boundary.
-fn local_core_runtime(
-    core: Arc<operit_core_proxy::LocalCoreProxy>,
-    chatRuntimeHolder: Arc<tokio::sync::Mutex<operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder>>,
+pub(crate) fn local_core_runtime(
+    core: Arc<operit_proxy_local::LocalCoreProxy>,
 ) -> CoreNodeLocalRuntime {
-    let sharedClient: Arc<dyn CoreLinkSharedClient + Send + Sync> = core.clone();
-    let bindCoreNodeToolRuntime = {
-        let core = core.clone();
-        Arc::new(move |runtime| core.bindCoreNodeToolRuntime(runtime))
-    };
-    let openPush = {
-        let core = core.clone();
-        Arc::new(move |request| core.openPushLocal(request))
-    };
-    CoreNodeLocalRuntime::new(
-        sharedClient,
-        core.runtimeStorageHost(),
-        bindCoreNodeToolRuntime,
-        openPush,
-        Arc::new(SpaceRuntime::new(chatRuntimeHolder)),
-    )
+    core.coreNodeLocalRuntime()
 }
 
 /// Creates the server-side routing capability over a fresh CLI Core.
 fn create_local_runtime() -> CoreNodeLocalRuntime {
     let mut core = create_local_core();
-    let chatRuntimeHolder = core.localApplicationMut().chatRuntimeHolder.clone();
-    local_core_runtime(Arc::new(core), chatRuntimeHolder)
+    core.localApplicationMut()
+        .onCreate()
+        .expect("CLI Link runtime initialization must succeed");
+    local_core_runtime(Arc::new(core))
 }
