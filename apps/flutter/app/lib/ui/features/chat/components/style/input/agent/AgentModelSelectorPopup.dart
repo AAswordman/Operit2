@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
 import 'package:operit2/ui/main/screens/OperitScreens.dart';
 import 'package:operit2/ui/main/screens/ScreenRouteRegistry.dart';
@@ -74,10 +75,9 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
     core_proxy.ModelProfile model,
   ) async {
     if (model.id.toLowerCase().contains('autoglm')) {
+      final l10n = AppLocalizations.of(context)!;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('禁止使用autoglm作为对话主模型。对话模型和ui控制模型是分离的，请选择任意一个别的聪明的大模型。'),
-        ),
+        SnackBar(content: Text(l10n.settingsModelChatAutoGlmWarning)),
       );
       return;
     }
@@ -133,6 +133,7 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final popupContainerColor = colorScheme.surfaceContainer;
@@ -177,14 +178,17 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
                           data: data,
                           onToggleThinkingMode: () => _toggleThinking(data),
                           onThinkingQualityChanged: _updateThinkingQuality,
-                          onInfoClick: () => _showInfo('思考设置', '管理思考模式'),
+                          onInfoClick: () => _showInfo(
+                            l10n.agentModelSelectorThinkingSettings,
+                            l10n.agentModelSelectorThinkingSettingsDescription,
+                          ),
                           onThinkingModeInfoClick: () => _showInfo(
-                            '思考模式',
-                            '目前支持Gemini、Qwen3、Claude、豆包、NVIDIA、硅基流动和MNN本地模型，能够启用内置的思考。',
+                            l10n.settingsChatThinkingMode,
+                            l10n.settingsChatThinkingModeDescription,
                           ),
                           onThinkingQualityInfoClick: () => _showInfo(
-                            '思考质量',
-                            '仅在思考模式下生效，共 4 挡，数值越高思考越深，1 为自动。',
+                            l10n.agentModelSelectorThinkingQuality,
+                            l10n.agentModelSelectorThinkingQualityDescription,
                           ),
                         ),
                         _MaxContextSettingItem(
@@ -192,8 +196,16 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
                               data.currentConfig.context.enableMaxContextMode,
                           onToggle: () => _toggleMaxContext(data),
                           onInfoClick: () => _showInfo(
-                            'Max模式',
-                            'Max Mode（超大上下文模式）开启后将使用 ${_formatContextLength(data.currentConfig.context.maxContextLength)}k 上下文窗口，关闭则使用 ${_formatContextLength(data.currentConfig.context.maxContextLength * 0.4)}k。',
+                            l10n.settingsModelMaxContextMode,
+                            l10n.agentModelSelectorMaxModeDescription(
+                              _formatContextLength(
+                                data.currentConfig.context.maxContextLength,
+                              ),
+                              _formatContextLength(
+                                data.currentConfig.context.maxContextLength *
+                                    0.4,
+                              ),
+                            ),
                           ),
                         ),
                         _ModelSelectorItem(
@@ -209,8 +221,8 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
                           onSelectModel: _selectModel,
                           onManageClick: _openModelSettings,
                           onInfoClick: () => _showInfo(
-                            '模型配置',
-                            '在这里选择一个已经配置好的模型，或者点击下方的管理配置去新建或修改模型',
+                            l10n.agentModelSelectorModelConfiguration,
+                            l10n.agentModelSelectorModelConfigurationDescription,
                           ),
                         ),
                       ],
@@ -299,14 +311,17 @@ class _ThinkingSettingsItemState extends State<_ThinkingSettingsItem> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final thinkingTypeText = widget.data.enableThinkingMode ? 'mode' : 'off';
+    final thinkingTypeText = widget.data.enableThinkingMode
+        ? l10n.agentModelSelectorOn
+        : l10n.agentModelSelectorOff;
     return Column(
       children: <Widget>[
         _SettingsHeaderRow(
           icon: Icons.psychology,
-          title: '思考设置:',
+          title: '${l10n.agentModelSelectorThinkingSettings}:',
           value: thinkingTypeText,
           expanded: _expanded,
           onTap: () => setState(() => _expanded = !_expanded),
@@ -323,7 +338,7 @@ class _ThinkingSettingsItemState extends State<_ThinkingSettingsItem> {
                     icon: widget.data.enableThinkingMode
                         ? Icons.psychology
                         : Icons.psychology_outlined,
-                    title: '思考模式',
+                    title: l10n.settingsChatThinkingMode,
                     checked: widget.data.enableThinkingMode,
                     onToggle: widget.onToggleThinkingMode,
                     onInfoClick: widget.onThinkingModeInfoClick,
@@ -345,7 +360,7 @@ class _ThinkingSettingsItemState extends State<_ThinkingSettingsItem> {
                               _InfoIconButton(
                                 onPressed: widget.onThinkingQualityInfoClick,
                               ),
-                              const Text('思考质量'),
+                              Text(l10n.agentModelSelectorThinkingQuality),
                               const Spacer(),
                               Text(
                                 _sliderValue.round().toString(),
@@ -395,9 +410,10 @@ class _MaxContextSettingItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return _SwitchSettingRow(
       icon: Icons.whatshot,
-      title: 'Max模式',
+      title: l10n.settingsModelMaxContextMode,
       checked: enabled,
       onToggle: onToggle,
       onInfoClick: onInfoClick,
@@ -432,13 +448,14 @@ class _ModelSelectorItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     return Column(
       children: <Widget>[
         _SettingsHeaderRow(
           icon: Icons.data_object_outlined,
-          title: '模型:',
+          title: '${l10n.agentModelSelectorModel}:',
           value: currentBinding.modelId,
           expanded: true,
           onTap: () {},
@@ -458,7 +475,7 @@ class _ModelSelectorItem extends StatelessWidget {
                       vertical: 4,
                     ),
                     child: Text(
-                      '没有可用的模型',
+                      l10n.agentModelSelectorNoModels,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
@@ -496,7 +513,7 @@ class _ModelSelectorItem extends StatelessWidget {
                         vertical: 4,
                       ),
                       child: Text(
-                        '管理配置',
+                        l10n.agentModelSelectorManageConfiguration,
                         style: textTheme.bodySmall?.copyWith(
                           color: colorScheme.primary,
                           fontWeight: FontWeight.w600,
@@ -539,6 +556,7 @@ class _ModelProviderRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final models = provider.models;
@@ -584,7 +602,7 @@ class _ModelProviderRow extends StatelessWidget {
                 const SizedBox(width: 4),
                 if (hasMultipleModels) ...[
                   Text(
-                    '${models.length}个模型',
+                    l10n.agentModelSelectorModelCount(models.length),
                     style: textTheme.labelSmall!.copyWith(
                       color: colorScheme.onSurfaceVariant,
                     ),

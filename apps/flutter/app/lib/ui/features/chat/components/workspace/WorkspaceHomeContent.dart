@@ -93,7 +93,7 @@ class _WorkspaceStatusSummary extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
-            '工作区总览',
+            '作業フォルダーの概要',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.labelLarge?.copyWith(
@@ -126,7 +126,7 @@ class _WorkspaceStatusSummary extends StatelessWidget {
                 valueListenable: terminalSessionCountListenable,
                 builder: (context, terminalSessionCount, child) {
                   return Text(
-                    '当前 $terminalSessionCount 个终端会话',
+                    'ターミナルセッション：$terminalSessionCount件',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(
@@ -147,7 +147,7 @@ class _WorkspaceStatusSummary extends StatelessWidget {
                 valueListenable: browserSessionCountListenable,
                 builder: (context, browserSessionCount, child) {
                   return Text(
-                    '当前 $browserSessionCount 个浏览器会话',
+                    'ブラウザーセッション：$browserSessionCount件',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(

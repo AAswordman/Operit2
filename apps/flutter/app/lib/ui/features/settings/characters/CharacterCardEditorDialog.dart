@@ -211,7 +211,7 @@ class _CharacterCardEditorDialogState
         (_sharedMemoryId == null || _sharedMemoryId!.trim().isEmpty)) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('请选择共享记忆库')));
+      ).showSnackBar(const SnackBar(content: Text('共有メモリーを選択してください')));
       return;
     }
     if (_memoryBindingMode == _memoryBindingShared &&
@@ -220,7 +220,7 @@ class _CharacterCardEditorDialogState
         )) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('共享记忆库不存在，请重新选择')));
+      ).showSnackBar(const SnackBar(content: Text('共有メモリーが見つかりません。選び直してください')));
       return;
     }
     if (_ttsBindingEnabled &&
@@ -228,7 +228,7 @@ class _CharacterCardEditorDialogState
             !widget.ttsConfigs.any((config) => config.id == _ttsConfigId))) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('请选择 TTS 配置')));
+      ).showSnackBar(const SnackBar(content: Text('TTS設定を選択してください')));
       return;
     }
     final card = widget.card;
@@ -598,9 +598,9 @@ class _CharacterCardEditorDialogState
             children: <Widget>[
               const TabBar(
                 tabs: <Widget>[
-                  Tab(text: '基础'),
+                  Tab(text: '基本'),
                   Tab(text: '内容'),
-                  Tab(text: '绑定'),
+                  Tab(text: '連携'),
                 ],
               ),
               Expanded(
@@ -673,7 +673,7 @@ class _CharacterCardEditorDialogState
                     _CharacterCardEditorTabBody(
                       children: <Widget>[
                         _BindingSwitchSection(
-                          title: '聊天模型',
+                          title: 'チャットモデル',
                           subtitleOff:
                               l10n.settingsCharactersChatModelFollowGlobal,
                           subtitleOn:
@@ -701,9 +701,9 @@ class _CharacterCardEditorDialogState
                           ],
                         ),
                         _BindingSwitchSection(
-                          title: 'TTS 配置',
-                          subtitleOff: '跟随全局 TTS 配置',
-                          subtitleOn: '使用角色卡 TTS 配置',
+                          title: 'TTS設定',
+                          subtitleOff: '共通のTTS設定を使用',
+                          subtitleOn: 'キャラクター専用のTTS設定を使用',
                           value: _ttsBindingEnabled,
                           onChanged: widget.ttsConfigs.isEmpty
                               ? null
@@ -719,11 +719,11 @@ class _CharacterCardEditorDialogState
                             if (widget.ttsConfigs.isEmpty)
                               const Padding(
                                 padding: EdgeInsets.only(bottom: 6),
-                                child: Text('还没有 TTS 配置'),
+                                child: Text('TTS設定がまだありません'),
                               )
                             else
                               _DialogToolAccessConfigureField(
-                                label: 'TTS 配置',
+                                label: 'TTS設定',
                                 valueText: _ttsConfigBindingText(
                                   selectedTtsConfig,
                                   _ttsConfigId,
@@ -733,9 +733,9 @@ class _CharacterCardEditorDialogState
                           ],
                         ),
                         _BindingSwitchSection(
-                          title: '记忆绑定',
-                          subtitleOff: '使用角色记忆',
-                          subtitleOn: '使用共享记忆',
+                          title: 'メモリー連携',
+                          subtitleOff: 'キャラクターメモリーを使用',
+                          subtitleOn: '共有メモリーを使用',
                           value: _memoryBindingMode == _memoryBindingShared,
                           onChanged: widget.sharedMemoryStores.isEmpty
                               ? null
@@ -753,7 +753,7 @@ class _CharacterCardEditorDialogState
                             if (widget.sharedMemoryStores.isEmpty)
                               const Padding(
                                 padding: EdgeInsets.only(bottom: 12),
-                                child: Text('还没有共享记忆库'),
+                                child: Text('共有メモリーがまだありません'),
                               )
                             else
                               DropdownButtonFormField<String>(
@@ -776,7 +776,7 @@ class _CharacterCardEditorDialogState
                                   });
                                 },
                                 decoration: const InputDecoration(
-                                  labelText: '共享记忆库',
+                                  labelText: '共有メモリー',
                                 ),
                               ),
                           ],
@@ -786,14 +786,14 @@ class _CharacterCardEditorDialogState
                               runSpacing: 6,
                               children: <Widget>[
                                 _BindingTogglePill(
-                                  label: '读取记忆',
+                                  label: 'メモリーを読み取る',
                                   selected: !_disableUserPreferenceDescription,
                                   onTap: () => _setPreferenceDescription(
                                     _disableUserPreferenceDescription,
                                   ),
                                 ),
                                 _BindingTogglePill(
-                                  label: '写入记忆',
+                                  label: 'メモリーへ書き込む',
                                   selected: _enableMemoryAutoUpdate,
                                   onTap: () => _setMemoryAutoUpdate(
                                     !_enableMemoryAutoUpdate,
@@ -887,7 +887,7 @@ class _CharacterAvatarEditorField extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: InputDecorator(
-        decoration: const InputDecoration(labelText: '角色头像'),
+        decoration: const InputDecoration(labelText: 'キャラクター画像'),
         child: Row(
           children: <Widget>[
             SizedBox(
@@ -909,16 +909,16 @@ class _CharacterAvatarEditorField extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                path ?? '未设置',
+                path ?? '未設定',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
             const SizedBox(width: 8),
-            TextButton(onPressed: onChoose, child: const Text('选择')),
+            TextButton(onPressed: onChoose, child: const Text('選択')),
             if (path != null)
-              TextButton(onPressed: onClear, child: const Text('清除')),
+              TextButton(onPressed: onClear, child: const Text('消去')),
           ],
         ),
       ),
@@ -1354,7 +1354,7 @@ class _CharacterTtsConfigSelectorDialogState
     final l10n = AppLocalizations.of(context)!;
     if (widget.configs.isEmpty) {
       return AlertDialog(
-        title: const Text('选择 TTS 配置'),
+        title: const Text('TTS設定を選択'),
         content: SizedBox(width: 420, child: Text(l10n.noData)),
         actions: <Widget>[
           TextButton(
@@ -1365,7 +1365,7 @@ class _CharacterTtsConfigSelectorDialogState
       );
     }
     return AlertDialog(
-      title: const Text('选择 TTS 配置'),
+      title: const Text('TTS設定を選択'),
       content: SizedBox(width: 560, height: 480, child: _configList(l10n)),
       actions: <Widget>[
         TextButton(

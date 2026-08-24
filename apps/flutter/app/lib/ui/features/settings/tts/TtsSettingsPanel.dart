@@ -19,7 +19,7 @@ part 'TtsSettingsModels.dart';
 part 'SttProviderWidgets.dart';
 part 'SttProviderDialogs.dart';
 
-const String _ttsTestText = '你好，我是 Operit 的语音试听。';
+const String _ttsTestText = 'こんにちは。Operitの音声テストです。';
 
 class TtsSettingsPanel extends StatefulWidget {
   const TtsSettingsPanel({super.key, GeneratedCoreProxyClients? clients})
@@ -158,23 +158,23 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
     if (config.id == currentConfigId) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('当前正在使用的 STT 配置不能删除')));
+      ).showSnackBar(const SnackBar(content: Text('現在使用中のSTT設定は削除できません')));
       return;
     }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('删除 STT 供应商'),
-        content: Text('删除“${config.name}”及其识别配置？'),
+        title: const Text('STT接続先を削除'),
+        content: Text('「${config.name}」と音声認識設定を削除しますか？'),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
+            child: const Text('キャンセル'),
           ),
           FilledButton.tonalIcon(
             onPressed: () => Navigator.of(context).pop(true),
             icon: const Icon(Icons.delete_outline),
-            label: const Text('删除'),
+            label: const Text('削除'),
           ),
         ],
       ),
@@ -200,7 +200,7 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('STT 操作失败：$error')));
+      ).showSnackBar(SnackBar(content: Text('STT操作に失敗しました：$error')));
     }
   }
 
@@ -209,7 +209,7 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
     if (configId.isEmpty) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('TTS 配置 ID 为空，不能试听')));
+      ).showSnackBar(const SnackBar(content: Text('TTS設定IDが空のため試聴できません')));
       return;
     }
     setState(() {
@@ -220,7 +220,7 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
         bridge: widget.clients.bridge,
         ttsConfigId: configId,
         text: _ttsTestText,
-        title: '试听 · ${_ttsConfigModelVoiceText(config)}',
+        title: '試聴 · ${_ttsConfigModelVoiceText(config)}',
         interrupt: true,
       );
       if (!mounted) {
@@ -228,14 +228,14 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('已开始播放 TTS 试听')));
+      ).showSnackBar(const SnackBar(content: Text('TTSの試聴を開始しました')));
     } catch (error) {
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('TTS 试听失败：$error')));
+      ).showSnackBar(SnackBar(content: Text('TTSの試聴に失敗しました：$error')));
     } finally {
       if (mounted && _testingTtsConfigId == configId) {
         setState(() {
@@ -287,7 +287,7 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('删除 TTS 配置失败：$error')));
+      ).showSnackBar(SnackBar(content: Text('TTS設定の削除に失敗しました：$error')));
     }
   }
 
@@ -576,7 +576,7 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
           return const Center(child: M3LoadingIndicator());
         }
         if (snapshot.hasError) {
-          return Center(child: Text('语音配置加载失败：${snapshot.error}'));
+          return Center(child: Text('音声設定の読み込みに失敗しました：${snapshot.error}'));
         }
         final data = snapshot.data!;
         final groups = _ttsProviderGroups(data.configs);
@@ -585,13 +585,13 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           children: <Widget>[
             _SectionCard(
-              title: 'TTS 供应商',
+              title: '読み上げ接続先',
               action: FilledButton.icon(
                 onPressed: () =>
                     _createProviderConfig(data.providerCatalogEntries),
                 style: SettingsControlStyles.sectionFilledButton(),
                 icon: const Icon(Icons.add, size: 18),
-                label: const Text('创建'),
+                label: const Text('作成'),
               ),
               children: <Widget>[
                 _TtsProviderManager(
@@ -618,13 +618,13 @@ class _TtsSettingsPanelState extends State<TtsSettingsPanel> {
               ],
             ),
             _SectionCard(
-              title: 'STT 供应商',
+              title: '音声認識接続先',
               action: FilledButton.icon(
                 onPressed: () =>
                     _createSttProviderConfig(data.sttProviderCatalogEntries),
                 style: SettingsControlStyles.sectionFilledButton(),
                 icon: const Icon(Icons.add, size: 18),
-                label: const Text('创建'),
+                label: const Text('作成'),
               ),
               children: <Widget>[
                 _SttProviderManager(

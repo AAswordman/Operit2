@@ -796,9 +796,9 @@ String _ttsConfigBindingText(core_proxy.TtsConfig? config, String? id) {
     return _ttsConfigDisplayText(config);
   }
   if (id != null) {
-    return 'TTS 配置不存在：$id';
+    return 'TTS設定が見つかりません：$id';
   }
-  return '请选择 TTS 配置';
+  return 'TTS設定を選択してください';
 }
 
 String _ttsConfigDisplayText(core_proxy.TtsConfig config) {
@@ -817,7 +817,7 @@ String _ttsConfigModelVoiceText(core_proxy.TtsConfig config) {
   final model = config.model.trim();
   final voice = config.voice.trim();
   if (model.isEmpty && voice.isEmpty) {
-    return '系统默认音色';
+    return 'システム標準の音声';
   }
   if (model.isEmpty) {
     return voice;
@@ -883,16 +883,16 @@ String _characterModelBindingText(
     return '${summary.providerName} · ${summary.modelId}';
   }
   if (modelId != null) {
-    return '模型不存在：$modelId';
+    return 'モデルが見つかりません：$modelId';
   }
-  return '请选择模型配置';
+  return 'モデル設定を選択してください';
 }
 
 String _memoryBindingSummary(core_proxy.CharacterCard card) {
   if (card.memoryBindingMode == _memoryBindingShared) {
-    return '共享记忆';
+    return '共有メモリー';
   }
-  return '角色记忆';
+  return 'キャラクターメモリー';
 }
 
 core_proxy.CharacterCardToolAccessConfig _normalizedToolAccessConfig(

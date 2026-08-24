@@ -24,7 +24,7 @@ class _SttProviderManager extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
         child: Text(
-          '尚未配置语音识别供应商',
+          '音声認識の接続先がまだありません',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
@@ -101,7 +101,7 @@ class _SttProviderTile extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (current) const SettingsActivePill(label: '全局当前'),
+                  if (current) const SettingsActivePill(label: '共通設定で使用中'),
                 ],
               ),
               const SizedBox(height: 5),
@@ -149,18 +149,18 @@ class _SttProviderTile extends StatelessWidget {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: <Widget>[
                     SettingsEntityIconButton(
-                      tooltip: '编辑 STT 供应商',
+                      tooltip: 'STT接続先を編集',
                       icon: Icons.edit_outlined,
                       onPressed: onEdit,
                     ),
                     SettingsEntityIconButton(
-                      tooltip: current ? '当前配置不能删除' : '删除 STT 供应商',
+                      tooltip: current ? '使用中の設定は削除できません' : 'STT接続先を削除',
                       icon: Icons.delete_outline,
                       onPressed: current ? null : onDelete,
                     ),
                     if (!current)
                       SettingsSetActiveButton(
-                        label: '设为全局',
+                        label: '共通設定にする',
                         onPressed: onSetCurrent,
                       ),
                   ],

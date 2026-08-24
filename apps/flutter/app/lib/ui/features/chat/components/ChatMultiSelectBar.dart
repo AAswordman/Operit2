@@ -45,12 +45,12 @@ class ChatMultiSelectBar extends StatelessWidget {
                   IconButton(
                     onPressed: onClose,
                     icon: const Icon(Icons.close),
-                    tooltip: '退出多选',
+                    tooltip: '複数選択を終了',
                     visualDensity: VisualDensity.compact,
                   ),
                   Expanded(
                     child: Text(
-                      selectedCount == 0 ? '多选' : '已选 $selectedCount 条',
+                      selectedCount == 0 ? '複数選択' : '$selectedCount件を選択中',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
@@ -59,25 +59,25 @@ class ChatMultiSelectBar extends StatelessWidget {
                   IconButton(
                     onPressed: onToggleSelectAll,
                     icon: Icon(allSelected ? Icons.deselect : Icons.select_all),
-                    tooltip: allSelected ? '清空选择' : '全选',
+                    tooltip: allSelected ? '選択を解除' : 'すべて選択',
                     visualDensity: VisualDensity.compact,
                   ),
                   IconButton(
                     onPressed: onCopy,
                     icon: const Icon(Icons.content_copy),
-                    tooltip: '复制所选',
+                    tooltip: '選択項目をコピー',
                     visualDensity: VisualDensity.compact,
                   ),
                   IconButton.filledTonal(
                     onPressed: onShareImage,
                     icon: const Icon(Icons.ios_share),
-                    tooltip: '生成长图',
+                    tooltip: '共有画像を作成',
                     visualDensity: VisualDensity.compact,
                   ),
                   IconButton.filledTonal(
                     onPressed: onDelete,
                     icon: const Icon(Icons.delete_outline),
-                    tooltip: '删除所选',
+                    tooltip: '選択項目を削除',
                     color: colorScheme.onErrorContainer,
                     style: IconButton.styleFrom(
                       backgroundColor: colorScheme.errorContainer,

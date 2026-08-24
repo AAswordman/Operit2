@@ -188,7 +188,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                     ...widget.leadingChildren,
                     _MenuSection(
                       icon: Icons.data_object_outlined,
-                      title: '记忆',
+                      title: 'メモリー',
                       value: data.memorySummary,
                       expanded: _memoryExpanded,
                       onTap: () {
@@ -199,10 +199,10 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                       children: <Widget>[
                         _SwitchRow(
                           icon: Icons.assignment_ind_outlined,
-                          title: '提供用户资料',
+                          title: 'ユーザー情報を渡す',
                           value: data.disableUserPreferenceDescription
-                              ? '关'
-                              : '开',
+                              ? 'オフ'
+                              : 'オン',
                           checked: !data.disableUserPreferenceDescription,
                           onTap: () => _setUserMarkdownEnabled(
                             data,
@@ -213,8 +213,8 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                           icon: data.enableMemoryAutoUpdate
                               ? Icons.save
                               : Icons.save_outlined,
-                          title: '自动更新记忆库',
-                          value: data.enableMemoryAutoUpdate ? '开' : '关',
+                          title: 'メモリーを自動更新',
+                          value: data.enableMemoryAutoUpdate ? 'オン' : 'オフ',
                           checked: data.enableMemoryAutoUpdate,
                           onTap: () => _toggleMemoryAutoUpdate(data),
                         ),
@@ -222,7 +222,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                     ),
                     _MenuSection(
                       icon: Icons.security_outlined,
-                      title: '工具',
+                      title: 'ツール',
                       value: data.toolPermissionMode.label,
                       expanded: _toolsExpanded,
                       onTap: () {
@@ -242,8 +242,8 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                     ),
                     _MenuSection(
                       icon: Icons.bolt_outlined,
-                      title: '行为',
-                      value: data.disableStreamOutput ? '非流式' : '流式',
+                      title: '応答方法',
+                      value: data.disableStreamOutput ? 'まとめて表示' : '順次表示',
                       expanded: _behaviorExpanded,
                       onTap: () {
                         setState(() {
@@ -253,8 +253,8 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                       children: <Widget>[
                         _SwitchRow(
                           icon: Icons.speed_outlined,
-                          title: '流式输出',
-                          value: data.disableStreamOutput ? '关' : '开',
+                          title: '回答を順次表示',
+                          value: data.disableStreamOutput ? 'オフ' : 'オン',
                           checked: !data.disableStreamOutput,
                           onTap: () => _toggleDisableStreamOutput(data),
                         ),
@@ -263,7 +263,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                     if (data.pluginToggles.isNotEmpty)
                       _MenuSection(
                         icon: Icons.extension_outlined,
-                        title: '插件',
+                        title: 'プラグイン',
                         value: data.pluginSummary,
                         expanded: _pluginsExpanded,
                         onTap: () {
@@ -277,7 +277,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                               icon: Icons.hub,
                               materialIconName: toggle.icon,
                               title: toggle.title ?? toggle.id,
-                              value: toggle.isChecked ? '开' : '关',
+                              value: toggle.isChecked ? 'オン' : 'オフ',
                               checked: toggle.isChecked,
                               enabled: toggle.isEnabled,
                               onTap: () => _togglePlugin(toggle),
@@ -312,10 +312,10 @@ class _AgentInputMenuData {
 
   String get memorySummary {
     return switch ((disableUserPreferenceDescription, enableMemoryAutoUpdate)) {
-      (true, false) => '关',
-      (false, false) => '用户资料',
-      (true, true) => '记忆库更新',
-      (false, true) => '用户资料 · 记忆库更新',
+      (true, false) => 'オフ',
+      (false, false) => 'ユーザー情報',
+      (true, true) => 'メモリー更新',
+      (false, true) => 'ユーザー情報・メモリー更新',
     };
   }
 
@@ -337,9 +337,9 @@ class _AgentInputMenuData {
 }
 
 enum _ToolPermissionMode {
-  readOnly('只读', core_proxy.AiPermissionMode.readOnly),
-  workspaceWrite('读写', core_proxy.AiPermissionMode.workspaceWrite),
-  full('完整', core_proxy.AiPermissionMode.full);
+  readOnly('読み取り専用', core_proxy.AiPermissionMode.readOnly),
+  workspaceWrite('読み書き', core_proxy.AiPermissionMode.workspaceWrite),
+  full('すべて許可', core_proxy.AiPermissionMode.full);
 
   const _ToolPermissionMode(this.label, this.permissionMode);
 

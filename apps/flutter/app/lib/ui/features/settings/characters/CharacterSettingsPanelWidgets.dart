@@ -189,10 +189,7 @@ class _CharacterCardTile extends StatelessWidget {
     final tagNames = _tagNamesFor(tags, card.attachedTagIds);
     return _SettingsEntityTile(
       leading: _SettingsListAvatar(
-        avatar: CharacterAvatarImage(
-          avatarUri: avatarUri,
-          fit: BoxFit.cover,
-        ),
+        avatar: CharacterAvatarImage(avatarUri: avatarUri, fit: BoxFit.cover),
         active: active,
       ),
       title: Text(card.name),
@@ -279,10 +276,7 @@ class _CharacterGroupTile extends StatelessWidget {
 }
 
 class _SettingsListAvatar extends StatelessWidget {
-  const _SettingsListAvatar({
-    required this.avatar,
-    required this.active,
-  });
+  const _SettingsListAvatar({required this.avatar, required this.active});
 
   final Widget avatar;
   final bool active;
@@ -709,7 +703,7 @@ class _SharedMemoryStoreEditorDialogState
               children: <Widget>[
                 _DialogTextField(
                   controller: _nameController,
-                  label: '名称',
+                  label: '名前',
                   requiredField: true,
                 ),
               ],

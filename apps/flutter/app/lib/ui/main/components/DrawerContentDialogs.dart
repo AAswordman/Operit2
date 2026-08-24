@@ -177,7 +177,7 @@ class ConversationActionDialog extends StatelessWidget {
           if (canOpenInWindow)
             _ConversationActionTile(
               icon: Icons.open_in_new,
-              label: '在新窗口打开',
+              label: '新しいウィンドウで開く',
               onTap: () =>
                   Navigator.of(context).pop(ConversationAction.openInWindow),
             ),

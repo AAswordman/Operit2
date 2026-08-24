@@ -48,7 +48,7 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
     final colorScheme = Theme.of(context).colorScheme;
     return AlertDialog(
       icon: const Icon(Icons.build_outlined),
-      title: const Text('添加技能'),
+      title: const Text('Skill を追加'),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
         child: SingleChildScrollView(
@@ -73,7 +73,7 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
                     ButtonSegment<_SkillImportMode>(
                       value: _SkillImportMode.direct,
                       icon: Icon(Icons.edit_note),
-                      label: Text('手写'),
+                      label: Text('手入力'),
                     ),
                   ],
                   selected: <_SkillImportMode>{_mode},
@@ -96,7 +96,7 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
                       controller: _repoUrlController,
                       enabled: !_busy,
                       decoration: const InputDecoration(
-                        labelText: '仓库链接',
+                        labelText: 'リポジトリ URL',
                         hintText: 'https://github.com/username/repo',
                         prefixIcon: Icon(Icons.link),
                       ),
@@ -120,7 +120,7 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
                           controller: _skillIdController,
                           enabled: !_busy,
                           decoration: const InputDecoration(
-                            labelText: '技能 ID',
+                            labelText: 'Skill ID',
                             hintText: 'my-skill',
                             prefixIcon: Icon(Icons.tag),
                           ),
@@ -131,7 +131,7 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
                           controller: _descriptionController,
                           enabled: !_busy,
                           decoration: const InputDecoration(
-                            labelText: '描述',
+                            labelText: '説明',
                             prefixIcon: Icon(Icons.notes),
                           ),
                         ),
@@ -143,7 +143,7 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
                           maxLines: 12,
                           decoration: const InputDecoration(
                             labelText: '内容',
-                            hintText: '写下这个技能的使用说明',
+                            hintText: 'この Skill の使用方法を記述',
                             alignLabelWithHint: true,
                           ),
                           validator: _required,
@@ -153,7 +153,7 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
                           children: <Widget>[
                             Expanded(
                               child: Text(
-                                '附件 ${_attachments.length}',
+                                '添付 ${_attachments.length} 件',
                                 style: Theme.of(context).textTheme.bodySmall
                                     ?.copyWith(
                                       color: colorScheme.onSurfaceVariant,
@@ -163,7 +163,7 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
                             TextButton.icon(
                               onPressed: _busy ? null : _pickAttachments,
                               icon: const Icon(Icons.attach_file, size: 18),
-                              label: const Text('添加附件'),
+                              label: const Text('添付を追加'),
                             ),
                           ],
                         ),
@@ -219,11 +219,11 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: _busy ? null : () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: const Text('キャンセル'),
         ),
         FilledButton(
           onPressed: _busy ? null : _import,
-          child: const Text('导入'),
+          child: const Text('インポート'),
         ),
       ],
     );
@@ -257,7 +257,7 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
     if (_mode == _SkillImportMode.zip && _zipFile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('请选择 ZIP 文件'),
+          content: Text('ZIP ファイルを選択してください'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -312,7 +312,7 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
   }
 
   String? _required(String? value) {
-    return value == null || value.trim().isEmpty ? '必填' : null;
+    return value == null || value.trim().isEmpty ? '必須です' : null;
   }
 }
 
@@ -337,7 +337,7 @@ class _ZipPickerRow extends StatelessWidget {
       label: Align(
         alignment: Alignment.centerLeft,
         child: Text(
-          file?.name ?? '选择 ZIP 文件',
+          file?.name ?? 'ZIP ファイルを選択',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(

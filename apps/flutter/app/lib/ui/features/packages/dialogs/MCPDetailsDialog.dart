@@ -82,7 +82,7 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
                   if (metadata.version.trim().isNotEmpty)
                     _Badge(text: metadata.version),
                   _Badge(
-                    text: widget.server?.disabled == true ? '已停用' : '已启用',
+                    text: widget.server?.disabled == true ? '無効' : '有効',
                     color: widget.server?.disabled == true
                         ? colorScheme.errorContainer
                         : colorScheme.primaryContainer,
@@ -99,13 +99,13 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
               const SizedBox(height: 16),
               Row(
                 children: <Widget>[
-                  const Expanded(child: _SectionTitle(text: '配置')),
+                  const Expanded(child: _SectionTitle(text: '設定')),
                   TextButton.icon(
                     onPressed: widget.server == null || _busy
                         ? null
                         : () => _showConfigEditDialog(context),
                     icon: const Icon(Icons.edit_outlined),
-                    label: const Text('编辑'),
+                    label: const Text('編集'),
                   ),
                 ],
               ),
@@ -123,7 +123,7 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
               const SizedBox(height: 16),
               Row(
                 children: <Widget>[
-                  Expanded(child: _SectionTitle(text: '工具')),
+                  Expanded(child: _SectionTitle(text: 'ツール')),
                   Text(
                     '${widget.status?.cachedTools?.length ?? 0}',
                     style: theme.textTheme.labelMedium?.copyWith(
@@ -141,7 +141,7 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
                     onRun: () => _showRunDialog(context, tool),
                   )
               else
-                _EmptyCard(message: '当前没有缓存的工具。'),
+                _EmptyCard(message: 'キャッシュ済みのツールはありません。'),
             ],
           ),
         ),
@@ -153,7 +153,7 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
               ? null
               : _startServer,
           icon: const Icon(Icons.play_arrow),
-          label: const Text('启动'),
+          label: const Text('起動'),
         ),
         TextButton.icon(
           onPressed: widget.server == null || _busy ? null : _killServer,
@@ -163,12 +163,12 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
         TextButton.icon(
           onPressed: _busy ? null : _confirmDelete,
           icon: const Icon(Icons.delete_outline),
-          label: const Text('删除'),
+          label: const Text('削除'),
           style: TextButton.styleFrom(foregroundColor: colorScheme.error),
         ),
         TextButton(
           onPressed: _busy ? null : () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+          child: const Text('閉じる'),
         ),
       ],
     );
@@ -310,17 +310,17 @@ class _MCPDetailsDialogState extends State<MCPDetailsDialog> {
       builder: (context) {
         return AlertDialog(
           icon: const Icon(Icons.delete_outline),
-          title: Text('删除 ${widget.serverId}'),
-          content: const Text('删除后会移除此 MCP 的配置、简介、状态和本地插件文件。'),
+          title: Text('${widget.serverId} を削除'),
+          content: const Text('削除すると、この MCP の設定、説明、状態、ローカルプラグインファイルが削除されます。'),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
+              child: const Text('キャンセル'),
             ),
             FilledButton.tonalIcon(
               onPressed: () => Navigator.of(context).pop(true),
               icon: const Icon(Icons.delete_outline),
-              label: const Text('删除'),
+              label: const Text('削除'),
             ),
           ],
         );
@@ -384,14 +384,14 @@ class _Description extends StatelessWidget {
           children: <Widget>[
             Row(
               children: <Widget>[
-                const Expanded(child: _SectionTitle(text: '简介')),
+                const Expanded(child: _SectionTitle(text: '説明')),
                 IconButton(
-                  tooltip: '编辑简介',
+                  tooltip: '説明を編集',
                   onPressed: onEdit,
                   icon: const Icon(Icons.edit_note_outlined),
                 ),
                 IconButton(
-                  tooltip: '重新生成简介',
+                  tooltip: '説明を再生成',
                   onPressed: onRegenerate,
                   icon: regenerating
                       ? const SizedBox(
@@ -405,7 +405,7 @@ class _Description extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              description.trim().isNotEmpty ? description : '暂无简介。',
+              description.trim().isNotEmpty ? description : '説明はまだありません。',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
@@ -415,7 +415,7 @@ class _Description extends StatelessWidget {
               spacing: 12,
               runSpacing: 6,
               children: <Widget>[
-                _MetaText(label: '作者', value: metadata.author),
+                _MetaText(label: '作成者', value: metadata.author),
               ],
             ),
           ],
@@ -476,7 +476,7 @@ class _MCPMetadataEditDialogState extends State<_MCPMetadataEditDialog> {
     final colorScheme = theme.colorScheme;
     return AlertDialog(
       icon: const Icon(Icons.edit_note_outlined),
-      title: Text('编辑 ${widget.serverId}'),
+      title: Text('${widget.serverId} を編集'),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520),
         child: SingleChildScrollView(
@@ -486,7 +486,7 @@ class _MCPMetadataEditDialogState extends State<_MCPMetadataEditDialog> {
               TextField(
                 controller: _nameController,
                 decoration: const InputDecoration(
-                  labelText: '名称',
+                  labelText: '名前',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -496,7 +496,7 @@ class _MCPMetadataEditDialogState extends State<_MCPMetadataEditDialog> {
                 minLines: 3,
                 maxLines: 6,
                 decoration: const InputDecoration(
-                  labelText: '简介',
+                  labelText: '説明',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -507,7 +507,7 @@ class _MCPMetadataEditDialogState extends State<_MCPMetadataEditDialog> {
                     child: TextField(
                       controller: _authorController,
                       decoration: const InputDecoration(
-                        labelText: '作者',
+                        labelText: '作成者',
                         border: OutlineInputBorder(),
                       ),
                     ),
@@ -518,7 +518,7 @@ class _MCPMetadataEditDialogState extends State<_MCPMetadataEditDialog> {
                     child: TextField(
                       controller: _versionController,
                       decoration: const InputDecoration(
-                        labelText: '版本',
+                        labelText: 'バージョン',
                         border: OutlineInputBorder(),
                       ),
                     ),
@@ -544,7 +544,7 @@ class _MCPMetadataEditDialogState extends State<_MCPMetadataEditDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: _saving ? null : () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: const Text('キャンセル'),
         ),
         FilledButton.icon(
           onPressed: _saving ? null : _save,
@@ -665,7 +665,7 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
     final colorScheme = theme.colorScheme;
     return AlertDialog(
       icon: const Icon(Icons.tune_outlined),
-      title: Text('编辑 ${widget.serverId}'),
+      title: Text('${widget.serverId} を編集'),
       content: SizedBox(
         width: 560,
         child: ConstrainedBox(
@@ -681,12 +681,12 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
                     segments: const <ButtonSegment<bool>>[
                       ButtonSegment<bool>(
                         value: false,
-                        label: Text('本地'),
+                        label: Text('ローカル'),
                         icon: Icon(Icons.terminal_outlined),
                       ),
                       ButtonSegment<bool>(
                         value: true,
-                        label: Text('远程'),
+                        label: Text('リモート'),
                         icon: Icon(Icons.public_outlined),
                       ),
                     ],
@@ -712,7 +712,7 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
                     initialValue: _type,
                     style: OperitFormStyles.dropdownTextStyle(context),
                     decoration: const InputDecoration(
-                      labelText: '传输',
+                      labelText: 'トランスポート',
                       border: OutlineInputBorder(),
                     ),
                     items: const <DropdownMenuItem<String>>[
@@ -741,7 +741,7 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
                     maxLines: 6,
                     decoration: const InputDecoration(
                       labelText: 'Headers',
-                      helperText: '每行一个，格式：Name: Value',
+                      helperText: '1 行に 1 件、形式: Name: Value',
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -749,7 +749,7 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
                   TextField(
                     controller: _commandController,
                     decoration: const InputDecoration(
-                      labelText: '命令',
+                      labelText: 'コマンド',
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -759,8 +759,8 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
                     minLines: 3,
                     maxLines: 6,
                     decoration: const InputDecoration(
-                      labelText: '参数',
-                      helperText: '每行一个参数',
+                      labelText: 'パラメータ',
+                      helperText: '1 行に 1 パラメータ',
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -770,8 +770,8 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
                     minLines: 3,
                     maxLines: 6,
                     decoration: const InputDecoration(
-                      labelText: '环境变量',
-                      helperText: '每行一个，格式：Name: Value',
+                      labelText: '環境変数',
+                      helperText: '1 行に 1 件、形式: Name: Value',
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -782,8 +782,8 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
                   minLines: 2,
                   maxLines: 5,
                   decoration: const InputDecoration(
-                    labelText: '自动批准工具',
-                    helperText: '每行一个工具名',
+                    labelText: '自動承認ツール',
+                    helperText: '1 行に 1 ツール名',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -804,7 +804,7 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: _saving ? null : () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: const Text('キャンセル'),
         ),
         FilledButton.icon(
           onPressed: _saving ? null : _save,
@@ -828,7 +828,7 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
     });
     try {
       final headers = _parseMapLines(_headersController.text, 'Headers');
-      final env = _parseMapLines(_envController.text, '环境变量');
+      final env = _parseMapLines(_envController.text, '環境変数');
       final server = core_proxy.ServerConfig(
         command: _remote ? '' : _commandController.text.trim(),
         args: _remote ? <String>[] : _lineList(_argsController.text),
@@ -852,7 +852,7 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
       if (!saved) {
         setState(() {
           _saving = false;
-          _error = '配置未保存，请检查必填字段。';
+          _error = '設定は保存されていません。必須項目を確認してください。';
         });
         return;
       }
@@ -897,12 +897,12 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
       }
       final separatorIndex = line.indexOf(':');
       if (separatorIndex <= 0) {
-        throw '$label 格式错误：$line';
+        throw '$label の形式が正しくありません: $line';
       }
       final key = line.substring(0, separatorIndex).trim();
       final value = line.substring(separatorIndex + 1).trim();
       if (key.isEmpty) {
-        throw '$label 名称不能为空：$line';
+        throw '$label の名前は空にできません: $line';
       }
       map[key] = value;
     }
@@ -927,15 +927,15 @@ class _ConfigSummary extends StatelessWidget {
       if (server?.url?.trim().isNotEmpty == true)
         _ConfigRow('URL', server!.url!),
       if (server?.type?.trim().isNotEmpty == true)
-        _ConfigRow('传输', server!.type!),
+        _ConfigRow('トランスポート', server!.type!),
       if (server != null && server!.command.trim().isNotEmpty)
-        _ConfigRow('命令', _commandLine(server!)),
+        _ConfigRow('コマンド', _commandLine(server!)),
       if (server?.args.isNotEmpty == true)
-        _ConfigRow('参数', server!.args.join(' ')),
+        _ConfigRow('パラメータ', server!.args.join(' ')),
       if (server?.autoApprove.isNotEmpty == true)
-        _ConfigRow('自动批准', server!.autoApprove.join(', ')),
+        _ConfigRow('自動承認', server!.autoApprove.join(', ')),
       if (server?.env.isNotEmpty == true)
-        _ConfigRow('环境变量', server!.env.keys.join(', ')),
+        _ConfigRow('環境変数', server!.env.keys.join(', ')),
       if (server?.headers.isNotEmpty == true)
         _ConfigRow('Headers', server!.headers.keys.join(', ')),
     ];
@@ -949,7 +949,7 @@ class _ConfigSummary extends StatelessWidget {
               _ConfigLine(row: rows[index]),
               if (index != rows.length - 1) const Divider(height: 16),
             ],
-            if (rows.isEmpty) const _EmptyLine(text: '没有可显示的配置摘要。'),
+            if (rows.isEmpty) const _EmptyLine(text: '表示できる設定の概要はありません。'),
           ],
         ),
       ),
@@ -1038,7 +1038,7 @@ class _ToolTile extends StatelessWidget {
             FilledButton.tonalIcon(
               onPressed: onRun,
               icon: const Icon(Icons.play_arrow),
-              label: const Text('运行'),
+              label: const Text('実行'),
             ),
           ],
         ),

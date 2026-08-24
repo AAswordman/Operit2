@@ -27,11 +27,11 @@ class MarketAppVersionCompatibility {
   /// Returns a user-facing explanation for the rejected compatibility bound.
   String get message => switch (kind) {
     MarketAppVersionCompatibilityKind.belowMinimum =>
-      '客户端版本过低：当前版本 $currentAppVersion，'
-          '该资源要求至少为 $requiredAppVersion。请更新客户端后再下载。',
+      'クライアントのバージョンが古すぎます。現在のバージョン: $currentAppVersion。'
+          'このリソースには $requiredAppVersion 以上が必要です。更新後にもう一度ダウンロードしてください。',
     MarketAppVersionCompatibilityKind.aboveMaximum =>
-      '客户端版本过高：当前版本 $currentAppVersion，'
-          '该资源最高支持到 $requiredAppVersion。请使用受支持的客户端版本。',
+      'クライアントのバージョンが新しすぎます。現在のバージョン: $currentAppVersion。'
+          'このリソースは $requiredAppVersion まで対応しています。対応するバージョンを使用してください。',
   };
 }
 
@@ -90,12 +90,13 @@ void ensureMarketEntryVersionSupported({
   final normalizedVersionId = versionId?.trim();
   final version = switch (normalizedVersionId) {
     null || '' => entry.latestVersion,
-    final selectedVersionId => entry.versions
-        .where((candidate) => candidate.id == selectedVersionId)
-        .firstOrNull,
+    final selectedVersionId =>
+      entry.versions
+          .where((candidate) => candidate.id == selectedVersionId)
+          .firstOrNull,
   };
   if (version == null) {
-    throw StateError('市场条目缺少要安装的版本信息。');
+    throw StateError('マーケット項目にインストールするバージョン情報がありません。');
   }
   ensureMarketAppVersionSupported(
     minAppVersion: version.minAppVer,
@@ -113,10 +114,11 @@ class _MarketAppVersion implements Comparable<_MarketAppVersion> {
   });
 
   factory _MarketAppVersion.parse(String value) {
-    final match = RegExp(r'^(\d+)\.(\d+)\.(\d+)(?:\+(\d+))?$')
-        .firstMatch(value.trim());
+    final match = RegExp(
+      r'^(\d+)\.(\d+)\.(\d+)(?:\+(\d+))?$',
+    ).firstMatch(value.trim());
     if (match == null) {
-      throw FormatException('版本号必须使用 x.y.z 或 x.y.z+n 格式：$value');
+      throw FormatException('バージョン番号は x.y.z または x.y.z+n 形式にしてください: $value');
     }
     return _MarketAppVersion(
       major: int.parse(match.group(1)!),
@@ -143,7 +145,8 @@ class _MarketAppVersion implements Comparable<_MarketAppVersion> {
   }
 
   @override
-  String toString() => build == 0 ? '$major.$minor.$patch' : '$major.$minor.$patch+$build';
+  String toString() =>
+      build == 0 ? '$major.$minor.$patch' : '$major.$minor.$patch+$build';
 }
 
 String firstNonBlank(Iterable<String> values) {
@@ -199,7 +202,7 @@ Future<String> runCoreMarketInstall({
     throw StateError(stderr);
   }
   final stdout = value['stdout']?.toString().trim() ?? '';
-  return stdout.isEmpty ? '安装完成' : stdout;
+  return stdout.isEmpty ? 'インストールが完了しました' : stdout;
 }
 
 /// Starts a broker transaction for Flutter's visible market browser.

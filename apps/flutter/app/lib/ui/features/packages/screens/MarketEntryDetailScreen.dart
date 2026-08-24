@@ -159,7 +159,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
             final canPost =
                 _commentController.text.trim().isNotEmpty && !posting;
             return AlertDialog(
-              title: const Text('发表评论'),
+              title: const Text('コメントする'),
               content: TextField(
                 controller: _commentController,
                 enabled: !posting,
@@ -168,7 +168,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
                 autofocus: true,
                 onChanged: (_) => setDialogState(() {}),
                 decoration: const InputDecoration(
-                  hintText: '写下你的评论',
+                  hintText: 'コメントを入力',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -177,7 +177,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
                   onPressed: posting
                       ? null
                       : () => Navigator.of(dialogContext).pop(),
-                  child: const Text('取消'),
+                  child: const Text('キャンセル'),
                 ),
                 TextButton(
                   onPressed: canPost
@@ -194,7 +194,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
                           dimension: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('发布'),
+                      : const Text('公開'),
                 ),
               ],
             );
@@ -214,7 +214,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
           builder: (context, setDialogState) {
             final canSave = editController.text.trim().isNotEmpty && !saving;
             return AlertDialog(
-              title: const Text('编辑评论'),
+              title: const Text('コメントを編集'),
               content: TextField(
                 controller: editController,
                 enabled: !saving,
@@ -223,7 +223,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
                 autofocus: true,
                 onChanged: (_) => setDialogState(() {}),
                 decoration: const InputDecoration(
-                  hintText: '修改你的评论内容',
+                  hintText: 'コメント内容を編集',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -232,7 +232,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
                   onPressed: saving
                       ? null
                       : () => Navigator.of(dialogContext).pop(),
-                  child: const Text('取消'),
+                  child: const Text('キャンセル'),
                 ),
                 TextButton(
                   onPressed: canSave
@@ -290,14 +290,14 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('删除评论'),
-              content: const Text('确定删除这条评论吗？删除后评论会从公开列表移除。'),
+              title: const Text('コメントを削除'),
+              content: const Text('このコメントを削除しますか？削除すると公開リストから消えます。'),
               actions: <Widget>[
                 TextButton(
                   onPressed: deleting
                       ? null
                       : () => Navigator.of(dialogContext).pop(),
-                  child: const Text('取消'),
+                  child: const Text('キャンセル'),
                 ),
                 TextButton(
                   onPressed: deleting
@@ -336,7 +336,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
                           dimension: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('删除'),
+                      : const Text('削除'),
                 ),
               ],
             );
@@ -396,7 +396,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       ensureMarketEntryVersionSupported(entry: entry);
       if (entry.type == 'skill') {
         final repoUrl = entry.source?.url.trim() ?? '';
-        if (repoUrl.isEmpty) throw StateError('技能缺少仓库地址');
+        if (repoUrl.isEmpty) throw StateError('Skill にリポジトリ URL がありません');
         final result = await widget.clients.application
             .skillRepository()
             .importSkillFromGitHubRepo(repoUrl: repoUrl);
@@ -407,7 +407,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
         }
       } else if (entry.type == 'mcp') {
         final repoUrl = entry.source?.url.trim() ?? '';
-        if (repoUrl.isEmpty) throw StateError('MCP 缺少仓库地址');
+        if (repoUrl.isEmpty) throw StateError('MCP にリポジトリ URL がありません');
         final result = await widget.clients.application
             .mcpRepository()
             .installMcpServerWithObjectForFlutter(
@@ -426,7 +426,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
           ).showSnackBar(SnackBar(content: Text(result)));
         }
       } else {
-        throw StateError('请在脚本/包详情页安装资产');
+        throw StateError('アセットはスクリプト/パッケージの詳細画面からインストールしてください');
       }
     } catch (error, stackTrace) {
       debugPrint('Failed to install market entry: $error\n$stackTrace');
@@ -621,13 +621,13 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
         fallbackAvatarText: marketDetailInitial(entry.title),
         participants: <UnifiedMarketDetailParticipant>[
           UnifiedMarketDetailParticipant(
-            roleLabel: '作者',
+            roleLabel: '作成者',
             name: entry.author?.login ?? '',
             avatarUrl: _cleanAvatarUrl(entry.author?.avatar),
             fallbackAvatarText: marketDetailInitial(entry.author?.login ?? ''),
           ),
           UnifiedMarketDetailParticipant(
-            roleLabel: '发布者',
+            roleLabel: '公開者',
             name: entry.publisher?.login ?? '',
             avatarUrl: _cleanAvatarUrl(entry.publisher?.avatar),
             fallbackAvatarText: marketDetailInitial(
@@ -636,7 +636,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
           ),
           for (final contributor in entry.contributors)
             UnifiedMarketDetailParticipant(
-              roleLabel: '贡献者',
+              roleLabel: '共同作成者',
               name: contributor.login,
               avatarUrl: _cleanAvatarUrl(contributor.avatar),
               fallbackAvatarText: marketDetailInitial(contributor.login),
@@ -651,11 +651,11 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
         metrics: <UnifiedMarketDetailMetric>[
           UnifiedMarketDetailMetric(
             value: '${_reactionCount('+1')}',
-            label: '喜欢',
+            label: '高評価',
           ),
           UnifiedMarketDetailMetric(
             value: '${_entryDownloads(entry)}',
-            label: '下载',
+            label: 'ダウンロード',
           ),
           UnifiedMarketDetailMetric(
             value: formatMarketDate(entry.updatedAt),
@@ -666,22 +666,22 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       overviewChildren: <Widget>[
         if (entry.description.trim().isNotEmpty) ...<Widget>[
           ArtifactDetailSectionCard(
-            title: '简介',
+            title: '概要',
             child: Text(entry.description),
           ),
           const SizedBox(height: 14),
         ],
         if (entry.detail.trim().isNotEmpty) ...<Widget>[
-          ArtifactDetailSectionCard(title: '详情', child: Text(entry.detail)),
+          ArtifactDetailSectionCard(title: '詳細', child: Text(entry.detail)),
           const SizedBox(height: 14),
         ],
         ArtifactDetailSectionCard(
-          title: '元数据',
+          title: 'メタデータ',
           child: ArtifactInfoTable(rows: _metadataRows(entry)),
         ),
       ],
       comments: UnifiedMarketDetailCommentsState(
-        title: '用户评论',
+        title: 'ユーザーコメント',
         commentCount: _comments.length,
         isLoading: _communityLoading,
         errorMessage: _communityError,
@@ -690,7 +690,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
           FilterChip(
             selected: false,
             avatar: const Icon(Icons.thumb_up_outlined, size: 18),
-            label: Text('喜欢 ${_reactionCount('+1')}'),
+            label: Text('高評価 ${_reactionCount('+1')}'),
             onSelected: _reacting ? null : (_) => _react(),
           ),
         ],
@@ -705,7 +705,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
         onRequestDeleteComment: _confirmDeleteComment,
       ),
       primaryAction: UnifiedMarketDetailAction(
-        label: _installing ? '安装中' : '安装',
+        label: _installing ? 'インストール中' : 'インストール',
         onPressed: _install,
         enabled: !_installing,
         isLoading: _installing,
@@ -713,7 +713,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       ),
       secondaryAction: _canPublishVersion(entry)
           ? UnifiedMarketDetailAction(
-              label: _openingPublish ? '打开中' : '发布新版本',
+              label: _openingPublish ? '開いています' : '新バージョンを公開',
               onPressed: _publishVersion,
               enabled: !_openingPublish,
               isLoading: _openingPublish,
@@ -753,25 +753,28 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
 
   List<ArtifactInfoRow> _metadataRows(core_proxy.MarketEntrySummary entry) {
     return <ArtifactInfoRow>[
-      ArtifactInfoRow(label: '类型', value: entry.type),
+      ArtifactInfoRow(label: '種類', value: entry.type),
       ArtifactInfoRow(label: 'Entry ID', value: entry.id),
-      ArtifactInfoRow(label: '分类', value: entry.categoryId ?? ''),
-      ArtifactInfoRow(label: '状态', value: entry.stateCode),
-      ArtifactInfoRow(label: '作者', value: entry.author?.login ?? ''),
-      ArtifactInfoRow(label: '发布者', value: entry.publisher?.login ?? ''),
-      ArtifactInfoRow(label: '来源', value: entry.source?.url ?? ''),
-      ArtifactInfoRow(label: '版本', value: entry.latestVersion?.version ?? ''),
-      ArtifactInfoRow(label: '格式', value: entry.latestVersion?.formatVer ?? ''),
+      ArtifactInfoRow(label: 'カテゴリ', value: entry.categoryId ?? ''),
+      ArtifactInfoRow(label: '状態', value: entry.stateCode),
+      ArtifactInfoRow(label: '作成者', value: entry.author?.login ?? ''),
+      ArtifactInfoRow(label: '公開者', value: entry.publisher?.login ?? ''),
+      ArtifactInfoRow(label: 'ソース', value: entry.source?.url ?? ''),
       ArtifactInfoRow(
-        label: '最低版本',
+        label: 'バージョン',
+        value: entry.latestVersion?.version ?? '',
+      ),
+      ArtifactInfoRow(label: '形式', value: entry.latestVersion?.formatVer ?? ''),
+      ArtifactInfoRow(
+        label: '最低バージョン',
         value: entry.latestVersion?.minAppVer ?? '',
       ),
       ArtifactInfoRow(
-        label: '最高版本',
+        label: '最高バージョン',
         value: entry.latestVersion?.maxAppVer ?? '',
       ),
       ArtifactInfoRow(
-        label: '发布',
+        label: '公開',
         value: formatMarketDate(entry.publishedAt ?? entry.createdAt),
       ),
       ArtifactInfoRow(label: '更新', value: formatMarketDate(entry.updatedAt)),

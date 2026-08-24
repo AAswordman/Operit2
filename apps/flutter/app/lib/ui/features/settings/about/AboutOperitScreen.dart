@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/OperitLogoMark.dart';
 import '../../../theme/OperitGlassSurface.dart';
 
@@ -19,6 +20,7 @@ class AboutOperitScreen extends StatelessWidget {
   /// Builds the Operit2 project information screen.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return LayoutBuilder(
       builder: (context, constraints) {
         return SingleChildScrollView(
@@ -29,23 +31,21 @@ class AboutOperitScreen extends StatelessWidget {
                 maxWidth: 720,
                 minHeight: constraints.maxHeight - 40,
               ),
-              child: const Column(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  _AboutHeader(),
-                  SizedBox(height: 24),
+                  const _AboutHeader(),
+                  const SizedBox(height: 24),
                   _AboutSection(
                     title: 'Operit2',
-                    child: Text(
-                      '面向终端与桌面的 AI 工作台，提供聊天会话、工作区、工具、插件、MCP、远程连接和 Web 访问。',
-                    ),
+                    child: Text(l10n.aboutDescription),
                   ),
-                  SizedBox(height: 12),
-                  _ProjectLinksSection(),
-                  SizedBox(height: 12),
-                  _SupportSection(),
-                  SizedBox(height: 24),
-                  _CopyrightNotice(),
+                  const SizedBox(height: 12),
+                  const _ProjectLinksSection(),
+                  const SizedBox(height: 12),
+                  const _SupportSection(),
+                  const SizedBox(height: 24),
+                  const _CopyrightNotice(),
                 ],
               ),
             ),
@@ -63,6 +63,7 @@ class _AboutHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       children: <Widget>[
         DecoratedBox(
@@ -84,7 +85,7 @@ class _AboutHeader extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          '版本 $_appVersion',
+          l10n.aboutVersion(_appVersion),
           style: Theme.of(
             context,
           ).textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
@@ -100,28 +101,29 @@ class _ProjectLinksSection extends StatelessWidget {
   /// Builds the project and license actions.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return _AboutSection(
-      title: '项目',
+      title: l10n.aboutProjectSection,
       child: Column(
         children: <Widget>[
           _AboutActionRow(
             icon: Icons.code_outlined,
-            title: '项目源码',
+            title: l10n.aboutSourceTitle,
             subtitle: 'github.com/AAswordman/Operit2',
             onTap: () => _launchExternalUri(_projectUri),
           ),
           const Divider(height: 1),
           _AboutActionRow(
             icon: Icons.menu_book_outlined,
-            title: '使用文档',
-            subtitle: 'README 与命令行说明',
+            title: l10n.aboutDocumentationTitle,
+            subtitle: l10n.aboutDocumentationSubtitle,
             onTap: () => _launchExternalUri(_documentationUri),
           ),
           const Divider(height: 1),
           _AboutActionRow(
             icon: Icons.description_outlined,
-            title: '开源许可证',
-            subtitle: 'Operit2 使用 AGPL-3.0',
+            title: l10n.aboutOpenSourceLicenses,
+            subtitle: l10n.aboutOpenSourceLicensesSubtitle,
             onTap: () => _showOpenSourceLicenses(context),
           ),
         ],
@@ -136,11 +138,12 @@ class _SupportSection extends StatelessWidget {
   /// Builds the maintainer contact action.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return _AboutSection(
-      title: '联系',
+      title: l10n.aboutContactSection,
       child: _AboutActionRow(
         icon: Icons.alternate_email_outlined,
-        title: '开发者 AAswordman',
+        title: l10n.aboutMaintainer,
         subtitle: 'aaswordsman@foxmail.com',
         onTap: () => _launchExternalUri(_contactUri),
       ),
@@ -154,8 +157,9 @@ class _CopyrightNotice extends StatelessWidget {
   /// Builds the project copyright notice.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Text(
-      '© 2025 - 2026 Operit. 保留所有权利。',
+      l10n.aboutCopyright,
       textAlign: TextAlign.center,
       style: Theme.of(context).textTheme.bodySmall?.copyWith(
         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -284,11 +288,12 @@ Future<void> _launchExternalUri(Uri uri) async {
 
 /// Opens the bundled component license list.
 Future<void> _showOpenSourceLicenses(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
   return showDialog<void>(
     context: context,
     builder: (dialogContext) {
       return AlertDialog(
-        title: const Text('开源许可证'),
+        title: Text(l10n.aboutOpenSourceLicenses),
         content: SizedBox(
           width: 520,
           child: ListView.separated(
@@ -315,7 +320,7 @@ Future<void> _showOpenSourceLicenses(BuildContext context) {
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('关闭'),
+            child: Text(l10n.close),
           ),
         ],
       );

@@ -62,7 +62,7 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
     final colorScheme = Theme.of(context).colorScheme;
     return AlertDialog(
       icon: const Icon(Icons.cloud_outlined),
-      title: const Text('添加 MCP'),
+      title: const Text('MCP を追加'),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520),
         child: SingleChildScrollView(
@@ -85,12 +85,12 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
                   ButtonSegment<_MCPImportMode>(
                     value: _MCPImportMode.config,
                     icon: Icon(Icons.data_object),
-                    label: Text('配置'),
+                    label: Text('設定'),
                   ),
                   ButtonSegment<_MCPImportMode>(
                     value: _MCPImportMode.form,
                     icon: Icon(Icons.tune_outlined),
-                    label: Text('表单'),
+                    label: Text('フォーム'),
                   ),
                 ],
                 selected: <_MCPImportMode>{_mode},
@@ -136,7 +136,7 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
                                 controller: _repoUrlController,
                                 enabled: !_busy,
                                 decoration: const InputDecoration(
-                                  labelText: 'GitHub 仓库 URL',
+                                  labelText: 'GitHub リポジトリ URL',
                                   prefixIcon: Icon(Icons.link),
                                 ),
                                 validator: _required,
@@ -156,14 +156,14 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
                               controller: _nameController,
                               enabled: !_busy,
                               decoration: const InputDecoration(
-                                labelText: '名称',
+                                labelText: '名前',
                                 prefixIcon: Icon(Icons.title),
                               ),
                               validator: _required,
                             ),
                             const SizedBox(height: 12),
                             Text(
-                              '简介会在启动并获取工具后生成。',
+                              '説明は起動してツールを取得した後に生成されます。',
                               style: Theme.of(context).textTheme.bodySmall
                                   ?.copyWith(
                                     color: Theme.of(
@@ -189,12 +189,12 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: _busy ? null : () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+          child: const Text('閉じる'),
         ),
         if (_mode == _MCPImportMode.zip || _mode == _MCPImportMode.github)
           FilledButton(
             onPressed: _busy ? null : _installPlugin,
-            child: const Text('安装'),
+            child: const Text('インストール'),
           )
         else
           FilledButton(
@@ -203,7 +203,7 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
                 : _mode == _MCPImportMode.config
                 ? _mergeConfig
                 : _mergeFormConfigFromPane,
-            child: const Text('合并'),
+            child: const Text('統合'),
           ),
       ],
     );
@@ -228,7 +228,7 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
     if (jsonConfig.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('请粘贴 MCP 配置'),
+          content: Text('MCP 設定を貼り付けてください'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -239,7 +239,7 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
       final count = await widget.clients.permissionsMcpRuntimeMcpLocalServer
           .mergeConfigFromJson(jsonConfig: jsonConfig);
       await _applyImportedServerLifecycles(lifecycles);
-      return '已导入 $count 个 MCP 服务';
+      return '$count 個の MCP サービスをインポートしました';
     });
   }
 
@@ -249,7 +249,7 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
       final count = await widget.clients.permissionsMcpRuntimeMcpLocalServer
           .mergeConfigFromJson(jsonConfig: jsonConfig);
       await _applyImportedServerLifecycles(lifecycles);
-      return '已导入 $count 个 MCP 服务';
+      return '$count 個の MCP サービスをインポートしました';
     });
   }
 
@@ -264,7 +264,7 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
     if (_mode == _MCPImportMode.zip && _zipFile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('请选择 ZIP 文件'),
+          content: Text('ZIP ファイルを選択してください'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -301,7 +301,7 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
             await startMcpServer(clients: widget.clients, serverId: pluginId);
             return path;
           });
-    }, successMessage: '已安装并启动 MCP');
+    }, successMessage: 'MCP をインストールして起動しました');
   }
 
   List<_ImportedMcpServerLifecycle> _serverLifecyclesFromConfig(
@@ -309,25 +309,25 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
   ) {
     final decoded = jsonDecode(jsonConfig);
     if (decoded is! Map<Object?, Object?>) {
-      throw const FormatException('MCP 配置必须是 JSON object');
+      throw const FormatException('MCP 設定は JSON オブジェクトである必要があります');
     }
     final rawServers = decoded['mcpServers'];
     if (rawServers is! Map<Object?, Object?>) {
-      throw const FormatException('MCP 配置缺少 mcpServers');
+      throw const FormatException('MCP 設定に mcpServers がありません');
     }
     final lifecycles = <_ImportedMcpServerLifecycle>[];
     for (final entry in rawServers.entries) {
       final rawServerId = entry.key;
       if (rawServerId is! String || rawServerId.trim().isEmpty) {
-        throw const FormatException('mcpServers 的 key 必须是非空字符串');
+        throw const FormatException('mcpServers のキーは空でない文字列である必要があります');
       }
       final rawConfig = entry.value;
       if (rawConfig is! Map<Object?, Object?>) {
-        throw FormatException('$rawServerId 配置必须是 JSON object');
+        throw FormatException('$rawServerId の設定は JSON オブジェクトである必要があります');
       }
       final rawDisabled = rawConfig['disabled'];
       if (rawDisabled != null && rawDisabled is! bool) {
-        throw FormatException('$rawServerId disabled 必须是 bool');
+        throw FormatException('$rawServerId の disabled は bool である必要があります');
       }
       lifecycles.add(
         _ImportedMcpServerLifecycle(
@@ -384,7 +384,7 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
   }
 
   String? _required(String? value) {
-    return value == null || value.trim().isEmpty ? '必填' : null;
+    return value == null || value.trim().isEmpty ? '必須です' : null;
   }
 }
 
@@ -408,7 +408,7 @@ class _ZipPickerRow extends StatelessWidget {
       label: Align(
         alignment: Alignment.centerLeft,
         child: Text(
-          file?.name ?? '选择 ZIP 文件',
+          file?.name ?? 'ZIP ファイルを選択',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -571,7 +571,7 @@ class _JsonMergePane extends StatelessWidget {
           minLines: 8,
           maxLines: 14,
           decoration: const InputDecoration(
-            labelText: 'MCP 配置',
+            labelText: 'MCP 設定',
             hintText: '{\n  "mcpServers": {\n    ...\n  }\n}',
             alignLabelWithHint: true,
           ),
@@ -618,12 +618,12 @@ class _FormConfigPane extends StatelessWidget {
             ButtonSegment<bool>(
               value: false,
               icon: Icon(Icons.terminal_outlined),
-              label: Text('本地'),
+              label: Text('ローカル'),
             ),
             ButtonSegment<bool>(
               value: true,
               icon: Icon(Icons.public_outlined),
-              label: Text('远程'),
+              label: Text('リモート'),
             ),
           ],
           selected: <bool>{remote},
@@ -636,7 +636,7 @@ class _FormConfigPane extends StatelessWidget {
           controller: serverIdController,
           enabled: enabled,
           decoration: const InputDecoration(
-            labelText: '服务 ID',
+            labelText: 'サービス ID',
             prefixIcon: Icon(Icons.tag),
           ),
           validator: _required,
@@ -656,7 +656,7 @@ class _FormConfigPane extends StatelessWidget {
           DropdownButtonFormField<String>(
             initialValue: type,
             style: OperitFormStyles.dropdownTextStyle(context),
-            decoration: const InputDecoration(labelText: '传输'),
+            decoration: const InputDecoration(labelText: 'トランスポート'),
             items: const <DropdownMenuItem<String>>[
               DropdownMenuItem<String>(
                 value: 'streamable-http',
@@ -680,7 +680,7 @@ class _FormConfigPane extends StatelessWidget {
             maxLines: 4,
             decoration: const InputDecoration(
               labelText: 'Headers',
-              helperText: '每行一个，格式：Name: Value',
+              helperText: '1 行に 1 件、形式: Name: Value',
               alignLabelWithHint: true,
             ),
           ),
@@ -689,7 +689,7 @@ class _FormConfigPane extends StatelessWidget {
             controller: commandController,
             enabled: enabled,
             decoration: const InputDecoration(
-              labelText: '命令',
+              labelText: 'コマンド',
               prefixIcon: Icon(Icons.terminal_outlined),
             ),
             validator: _required,
@@ -701,8 +701,8 @@ class _FormConfigPane extends StatelessWidget {
             minLines: 2,
             maxLines: 4,
             decoration: const InputDecoration(
-              labelText: '参数',
-              helperText: '每行一个参数',
+              labelText: 'パラメータ',
+              helperText: '1 行に 1 パラメータ',
               alignLabelWithHint: true,
             ),
           ),
@@ -713,8 +713,8 @@ class _FormConfigPane extends StatelessWidget {
             minLines: 2,
             maxLines: 4,
             decoration: const InputDecoration(
-              labelText: '环境变量',
-              helperText: '每行一个，格式：Name: Value',
+              labelText: '環境変数',
+              helperText: '1 行に 1 件、形式: Name: Value',
               alignLabelWithHint: true,
             ),
           ),
@@ -724,6 +724,6 @@ class _FormConfigPane extends StatelessWidget {
   }
 
   String? _required(String? value) {
-    return value == null || value.trim().isEmpty ? '必填' : null;
+    return value == null || value.trim().isEmpty ? '必須です' : null;
   }
 }

@@ -1,8 +1,10 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import 'package:operit2/ui/features/chat/components/MessageCopyPreview.dart';
+import 'package:operit2/ui/theme/OperitTheme.dart';
 
 void main() {
   /// Creates a runtime event with only the fields used by the Markdown builder.
@@ -32,6 +34,34 @@ void main() {
   ) async {
     return events;
   }
+
+  testWidgets('copy preview uses Japanese labels', (tester) async {
+    tester.binding.platformDispatcher.localesTestValue = const <Locale>[
+      Locale('ja'),
+    ];
+    addTearDown(tester.binding.platformDispatcher.clearLocalesTestValue);
+
+    await tester.pumpWidget(
+      OperitTheme(
+        unconfiguredChildEnabled: true,
+        hostInteractionHostsEnabled: false,
+        child: Scaffold(
+          body: MessageCopyPreviewSheet(
+            markdownText: 'message',
+            splitMarkdownContent: (_) => split(<core_proxy.MarkdownStreamEvent>[
+              event(type: 'completed'),
+            ]),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('メッセージをコピー'), findsOneWidget);
+    expect(find.text('通常のテキスト'), findsOneWidget);
+    expect(find.text('复制消息'), findsNothing);
+    expect(find.text('纯文本'), findsNothing);
+  });
 
   test('converts Markdown AST nodes into readable copy text', () async {
     final events = <core_proxy.MarkdownStreamEvent>[

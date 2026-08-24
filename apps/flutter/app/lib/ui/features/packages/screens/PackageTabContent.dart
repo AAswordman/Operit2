@@ -63,8 +63,10 @@ class PackageTabContent extends StatelessWidget {
             if (packages.isEmpty)
               EmptyState(
                 icon: Icons.inventory_2_outlined,
-                title: '没有包',
-                message: isSearchActive ? '没有匹配的包。' : '当前没有可显示的工具包。',
+                title: 'パッケージがありません',
+                message: isSearchActive
+                    ? '一致するパッケージがありません。'
+                    : '表示できるツールパッケージがありません。',
                 scrollable: false,
               ),
             if (packages.isNotEmpty)
@@ -79,8 +81,8 @@ class PackageTabContent extends StatelessWidget {
                     metadata: <String>[
                       package.name,
                       package.category,
-                      '${package.tools.length} 工具',
-                      package.isBuiltIn ? '内置' : '外部',
+                      '${package.tools.length} ツール',
+                      package.isBuiltIn ? '組み込み' : '外部',
                     ],
                     enabled: enabledPackageNames.contains(package.name),
                     onTap: () => onPackageTap(package),
@@ -127,14 +129,14 @@ class _QuickPluginCreatorEntry extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      '快速创作你的插件',
+                      'プラグインをすばやく作成',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                         color: colorScheme.onPrimaryContainer,
                       ),
                     ),
                     Text(
-                      '内置和市场都找不到想要的插件？创作你自己想要的！',
+                      '組み込みにもマーケットにも目的のプラグインがありませんか？自分で作成しましょう。',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: colorScheme.onPrimaryContainer.withValues(
                           alpha: 0.74,

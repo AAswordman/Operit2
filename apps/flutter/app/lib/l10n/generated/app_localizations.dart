@@ -6,6 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart' as intl;
 
 import 'app_localizations_en.dart';
+import 'app_localizations_ja.dart';
 import 'app_localizations_zh.dart';
 
 // ignore_for_file: type=lint
@@ -95,6 +96,7 @@ abstract class AppLocalizations {
   /// A list of this localizations delegate's supported locales.
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
+    Locale('ja'),
     Locale('zh'),
   ];
 
@@ -1874,6 +1876,87 @@ abstract class AppLocalizations {
   /// **'Show generated replies progressively.'**
   String get settingsChatStreamOutputDescription;
 
+  /// No description provided for @agentModelSelectorThinkingSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Thinking settings'**
+  String get agentModelSelectorThinkingSettings;
+
+  /// No description provided for @agentModelSelectorThinkingSettingsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Configure reasoning behavior for the current chat model.'**
+  String get agentModelSelectorThinkingSettingsDescription;
+
+  /// No description provided for @agentModelSelectorThinkingQuality.
+  ///
+  /// In en, this message translates to:
+  /// **'Reasoning depth'**
+  String get agentModelSelectorThinkingQuality;
+
+  /// No description provided for @agentModelSelectorThinkingQualityDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Available only in thinking mode. Higher levels reason more deeply; level 1 is automatic.'**
+  String get agentModelSelectorThinkingQualityDescription;
+
+  /// No description provided for @agentModelSelectorMaxModeDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Max context mode uses a {enabledLength}k context window when enabled and {disabledLength}k when disabled.'**
+  String agentModelSelectorMaxModeDescription(
+    String enabledLength,
+    String disabledLength,
+  );
+
+  /// No description provided for @agentModelSelectorModelConfiguration.
+  ///
+  /// In en, this message translates to:
+  /// **'Model configuration'**
+  String get agentModelSelectorModelConfiguration;
+
+  /// No description provided for @agentModelSelectorModelConfigurationDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a configured model here, or use Manage configuration below to add or edit one.'**
+  String get agentModelSelectorModelConfigurationDescription;
+
+  /// No description provided for @agentModelSelectorModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Model'**
+  String get agentModelSelectorModel;
+
+  /// No description provided for @agentModelSelectorNoModels.
+  ///
+  /// In en, this message translates to:
+  /// **'No models available'**
+  String get agentModelSelectorNoModels;
+
+  /// No description provided for @agentModelSelectorManageConfiguration.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage configuration'**
+  String get agentModelSelectorManageConfiguration;
+
+  /// No description provided for @agentModelSelectorModelCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} models'**
+  String agentModelSelectorModelCount(int count);
+
+  /// No description provided for @agentModelSelectorOn.
+  ///
+  /// In en, this message translates to:
+  /// **'On'**
+  String get agentModelSelectorOn;
+
+  /// No description provided for @agentModelSelectorOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get agentModelSelectorOff;
+
   /// No description provided for @settingsModelProfilesSection.
   ///
   /// In en, this message translates to:
@@ -2173,6 +2256,96 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'API key'**
   String get settingsModelApiKey;
+
+  /// No description provided for @settingsModelProviderTypeOpenaiCodex.
+  ///
+  /// In en, this message translates to:
+  /// **'ChatGPT Codex'**
+  String get settingsModelProviderTypeOpenaiCodex;
+
+  /// No description provided for @settingsModelCodexTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'ChatGPT / Codex sign-in'**
+  String get settingsModelCodexTitle;
+
+  /// No description provided for @settingsModelCodexDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Use Codex included with your ChatGPT plan. No API key or relay server is required.'**
+  String get settingsModelCodexDescription;
+
+  /// No description provided for @settingsModelCodexSignIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with ChatGPT'**
+  String get settingsModelCodexSignIn;
+
+  /// No description provided for @settingsModelCodexConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Signed in'**
+  String get settingsModelCodexConnected;
+
+  /// No description provided for @settingsModelCodexSignedOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Signed out'**
+  String get settingsModelCodexSignedOut;
+
+  /// No description provided for @settingsModelCodexWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for approval'**
+  String get settingsModelCodexWaiting;
+
+  /// No description provided for @settingsModelCodexExpired.
+  ///
+  /// In en, this message translates to:
+  /// **'Code expired'**
+  String get settingsModelCodexExpired;
+
+  /// No description provided for @settingsModelCodexChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking'**
+  String get settingsModelCodexChecking;
+
+  /// No description provided for @settingsModelCodexCodeHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter this one-time code on the ChatGPT page. It expires in 15 minutes.'**
+  String get settingsModelCodexCodeHelp;
+
+  /// No description provided for @settingsModelCodexOpenBrowser.
+  ///
+  /// In en, this message translates to:
+  /// **'Open ChatGPT page'**
+  String get settingsModelCodexOpenBrowser;
+
+  /// No description provided for @settingsModelCodexOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not open the ChatGPT page. Try the button again.'**
+  String get settingsModelCodexOpenFailed;
+
+  /// No description provided for @settingsModelCodexLogout.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out'**
+  String get settingsModelCodexLogout;
+
+  /// No description provided for @settingsModelCodexRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with ChatGPT before saving this connection.'**
+  String get settingsModelCodexRequired;
+
+  /// No description provided for @settingsModelCodexPlan.
+  ///
+  /// In en, this message translates to:
+  /// **'Plan'**
+  String get settingsModelCodexPlan;
 
   /// No description provided for @settingsModelApiKeyPool.
   ///
@@ -5998,6 +6171,1432 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Single-item JSON export and restore'**
   String get settingsDataAdvancedBackupOptionsDescription;
+
+  /// No description provided for @onboardingIntroTagline.
+  ///
+  /// In en, this message translates to:
+  /// **'Make everyday tasks simpler from here'**
+  String get onboardingIntroTagline;
+
+  /// No description provided for @onboardingStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Start'**
+  String get onboardingStart;
+
+  /// No description provided for @onboardingPleaseWait.
+  ///
+  /// In en, this message translates to:
+  /// **'Please wait'**
+  String get onboardingPleaseWait;
+
+  /// No description provided for @onboardingAgree.
+  ///
+  /// In en, this message translates to:
+  /// **'Agree'**
+  String get onboardingAgree;
+
+  /// No description provided for @onboardingAgreementProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'User agreement'**
+  String get onboardingAgreementProgress;
+
+  /// No description provided for @onboardingSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip'**
+  String get onboardingSkip;
+
+  /// No description provided for @onboardingPrevious.
+  ///
+  /// In en, this message translates to:
+  /// **'Previous page'**
+  String get onboardingPrevious;
+
+  /// No description provided for @onboardingAgreementTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'User agreement and privacy policy'**
+  String get onboardingAgreementTitle;
+
+  /// No description provided for @onboardingAgreementDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Please read this agreement. You can continue device setup after agreeing.'**
+  String get onboardingAgreementDescription;
+
+  /// No description provided for @onboardingAgreementVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Version: {version}'**
+  String onboardingAgreementVersion(String version);
+
+  /// No description provided for @onboardingAgreementWait.
+  ///
+  /// In en, this message translates to:
+  /// **'You can confirm after {seconds} seconds.'**
+  String onboardingAgreementWait(int seconds);
+
+  /// No description provided for @onboardingAgreementPlainTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Plain-language summary (not the legal version)'**
+  String get onboardingAgreementPlainTitle;
+
+  /// No description provided for @onboardingAgreementPlainIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'Operit is an open-source client that runs on your device. We do not operate model inference services, host chat histories, or provide shared API keys. When you configure cloud models, voice, search, image generation, MCP, or other network features, data is sent directly to the relevant provider and is governed by that provider\'s terms and privacy policy. Local models run on your device.'**
+  String get onboardingAgreementPlainIntro;
+
+  /// No description provided for @onboardingAgreementPlainCapabilities.
+  ///
+  /// In en, this message translates to:
+  /// **'The app may use files, terminals, automation, system permissions, Root, ADB, and extensions. Check the operation, back up important data, and grant permissions carefully. Responsibility for device, data, account, or other loss caused by your actions, configuration, third-party services, or extensions is handled by the actual operator under applicable law.'**
+  String get onboardingAgreementPlainCapabilities;
+
+  /// No description provided for @onboardingAgreementPlainThirdParty.
+  ///
+  /// In en, this message translates to:
+  /// **'Copyright and responsibility for marketplace plugins, scripts, Skills, tool packages, and other third-party content belong to their authors or rights holders. Displaying or installing them does not mean Operit guarantees, endorses, or acquires rights to them.'**
+  String get onboardingAgreementPlainThirdParty;
+
+  /// No description provided for @onboardingAgreementLegalTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Formal legal agreement'**
+  String get onboardingAgreementLegalTitle;
+
+  /// No description provided for @onboardingAgreementLegalSection1.
+  ///
+  /// In en, this message translates to:
+  /// **'1. Scope and agreement version\nThis agreement applies to officially released Operit clients and optional online features. By using this app, you confirm that you have read and agreed to the current version. The app records the version you accepted and will ask for confirmation again after a material change. Open-source licensing is governed by LGPLv3 in the repository-root LICENSE. This agreement does not exclude or reduce rights granted by applicable law or open-source licenses.'**
+  String get onboardingAgreementLegalSection1;
+
+  /// No description provided for @onboardingAgreementLegalSection2.
+  ///
+  /// In en, this message translates to:
+  /// **'2. Product role and third-party services\nOperit does not provide large language model inference, shared API keys, chat-request relays, or cloud hosting of chat histories. You select, configure, and enable third-party services yourself and are responsible for judging the security, legality, and suitability of providers, models, endpoints, and extensions, and for protecting credentials.'**
+  String get onboardingAgreementLegalSection2;
+
+  /// No description provided for @onboardingAgreementLegalSection3.
+  ///
+  /// In en, this message translates to:
+  /// **'3. Data handling and privacy\nChat histories, character cards, memories, model settings, and API keys are generally stored in app data on your device. When you export, back up, upload files, use a third-party network feature, or submit a request to an external HTTP service, related data is copied, transmitted, or disclosed according to your action. Features such as the marketplace, notices, update checks, GitHub login, and publishing access Operit, GitHub, or related third-party resources.'**
+  String get onboardingAgreementLegalSection3;
+
+  /// No description provided for @onboardingAgreementLegalSection4.
+  ///
+  /// In en, this message translates to:
+  /// **'4. External deployment and operator responsibility\nExternal HTTP services, bots, automatic replies, and similar capabilities are enabled at your choice. If you make them available to other people or the public, you are the actual deployer or operator and are responsible for access control, user authorization, content safety, data protection, protection of minors, required notices, and other applicable obligations.'**
+  String get onboardingAgreementLegalSection4;
+
+  /// No description provided for @onboardingAgreementLegalSection5.
+  ///
+  /// In en, this message translates to:
+  /// **'5. Lawful use and content responsibility\nYou must follow applicable laws, third-party service rules, and platform rules. Do not use this app, extensions, or configurations for illegal activity, infringement of rights, unauthorized access to systems or data, or distribution of illegal or harmful content. AI output may contain errors, omissions, or bias and is not medical, legal, financial, or other professional advice.'**
+  String get onboardingAgreementLegalSection5;
+
+  /// No description provided for @onboardingAgreementLegalSection6.
+  ///
+  /// In en, this message translates to:
+  /// **'6. Software provided as is\nTo the extent permitted by applicable law, this software is provided as is and as available. Contributors make no express or implied warranty regarding continued availability, accuracy, security, merchantability, fitness for a particular purpose, or non-infringement of the software or third-party services.'**
+  String get onboardingAgreementLegalSection6;
+
+  /// No description provided for @onboardingAgreementLegalSection7.
+  ///
+  /// In en, this message translates to:
+  /// **'7. Agreement updates and contact\nWe may update this agreement for functional, legal, or security requirements and provide the current version in the app. Updates that materially affect user rights take effect by increasing the agreement version and requesting confirmation again. Questions and feedback can be submitted through the project repository, in-app feedback entry, or published contact channels.'**
+  String get onboardingAgreementLegalSection7;
+
+  /// No description provided for @onboardingAgreementPrecedenceNote.
+  ///
+  /// In en, this message translates to:
+  /// **'The plain-language summary is provided only to aid understanding. If it differs from the formal Chinese agreement, the formal Chinese agreement takes precedence.'**
+  String get onboardingAgreementPrecedenceNote;
+
+  /// No description provided for @onboardingStorageRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime and workspace folders are both required.'**
+  String get onboardingStorageRequired;
+
+  /// No description provided for @onboardingModelLoadFirst.
+  ///
+  /// In en, this message translates to:
+  /// **'Load the available models first.'**
+  String get onboardingModelLoadFirst;
+
+  /// No description provided for @onboardingModelSelectDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'Select the default model.'**
+  String get onboardingModelSelectDefault;
+
+  /// No description provided for @onboardingImportSelectSnapshotError.
+  ///
+  /// In en, this message translates to:
+  /// **'Select an Operit 1 snapshot file.'**
+  String get onboardingImportSelectSnapshotError;
+
+  /// No description provided for @onboardingRemoteCredentialsRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote address and access token are both required.'**
+  String get onboardingRemoteCredentialsRequired;
+
+  /// No description provided for @onboardingRemoteCodeRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the one-time pairing code.'**
+  String get onboardingRemoteCodeRequired;
+
+  /// No description provided for @onboardingActionSaving.
+  ///
+  /// In en, this message translates to:
+  /// **'Saving'**
+  String get onboardingActionSaving;
+
+  /// No description provided for @onboardingActionConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm'**
+  String get onboardingActionConfirm;
+
+  /// No description provided for @onboardingActionPreparing.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing'**
+  String get onboardingActionPreparing;
+
+  /// No description provided for @onboardingActionContinue.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue'**
+  String get onboardingActionContinue;
+
+  /// No description provided for @onboardingActionLoadingModels.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading'**
+  String get onboardingActionLoadingModels;
+
+  /// No description provided for @onboardingActionReading.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading'**
+  String get onboardingActionReading;
+
+  /// No description provided for @onboardingActionImporting.
+  ///
+  /// In en, this message translates to:
+  /// **'Importing'**
+  String get onboardingActionImporting;
+
+  /// No description provided for @onboardingActionConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting'**
+  String get onboardingActionConnecting;
+
+  /// No description provided for @onboardingActionPairing.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing'**
+  String get onboardingActionPairing;
+
+  /// No description provided for @onboardingActionStartPairing.
+  ///
+  /// In en, this message translates to:
+  /// **'Start pairing'**
+  String get onboardingActionStartPairing;
+
+  /// No description provided for @onboardingActionFinishConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Finish connection'**
+  String get onboardingActionFinishConnection;
+
+  /// No description provided for @onboardingActionProcessing.
+  ///
+  /// In en, this message translates to:
+  /// **'Processing'**
+  String get onboardingActionProcessing;
+
+  /// No description provided for @onboardingActionComplete.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get onboardingActionComplete;
+
+  /// No description provided for @onboardingProgressStorage.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage'**
+  String get onboardingProgressStorage;
+
+  /// No description provided for @onboardingProgressStartMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Setup method'**
+  String get onboardingProgressStartMode;
+
+  /// No description provided for @onboardingProgressModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Model setup'**
+  String get onboardingProgressModel;
+
+  /// No description provided for @onboardingProgressImport.
+  ///
+  /// In en, this message translates to:
+  /// **'Import'**
+  String get onboardingProgressImport;
+
+  /// No description provided for @onboardingProgressRemote.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote connection'**
+  String get onboardingProgressRemote;
+
+  /// No description provided for @onboardingProgressDeviceSpace.
+  ///
+  /// In en, this message translates to:
+  /// **'Device space'**
+  String get onboardingProgressDeviceSpace;
+
+  /// No description provided for @onboardingProgressPermissions.
+  ///
+  /// In en, this message translates to:
+  /// **'Permissions'**
+  String get onboardingProgressPermissions;
+
+  /// No description provided for @onboardingProgressWelcome.
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome'**
+  String get onboardingProgressWelcome;
+
+  /// No description provided for @onboardingPreparingLocalRuntime.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing the local Runtime'**
+  String get onboardingPreparingLocalRuntime;
+
+  /// No description provided for @onboardingModeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose how to begin'**
+  String get onboardingModeTitle;
+
+  /// No description provided for @onboardingModeDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Use quick setup for a new installation, import existing Operit 1 data, or connect directly to a remote Runtime.'**
+  String get onboardingModeDescription;
+
+  /// No description provided for @onboardingModeQuickTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Quick setup'**
+  String get onboardingModeQuickTitle;
+
+  /// No description provided for @onboardingModeQuickSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Configure a model provider and finish the basic setup'**
+  String get onboardingModeQuickSubtitle;
+
+  /// No description provided for @onboardingModeImportTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Import from Operit 1'**
+  String get onboardingModeImportTitle;
+
+  /// No description provided for @onboardingModeImportSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Bring over settings and data from Operit 1'**
+  String get onboardingModeImportSubtitle;
+
+  /// No description provided for @onboardingModeRemoteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect to another Runtime'**
+  String get onboardingModeRemoteTitle;
+
+  /// No description provided for @onboardingModeRemoteSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the remote address, access token, and one-time pairing code'**
+  String get onboardingModeRemoteSubtitle;
+
+  /// No description provided for @onboardingModeDeviceSpaceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Join an existing device space'**
+  String get onboardingModeDeviceSpaceTitle;
+
+  /// No description provided for @onboardingModeDeviceSpaceSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Find a nearby device space and sync models and data after joining'**
+  String get onboardingModeDeviceSpaceSubtitle;
+
+  /// No description provided for @onboardingDeviceSpaceDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Find a nearby device space and choose a device. After pairing, your models, settings, and data are synchronized before onboarding finishes.'**
+  String get onboardingDeviceSpaceDescription;
+
+  /// No description provided for @onboardingRemoteDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Use this app as an independent client. After pairing, it switches to the remote Runtime.'**
+  String get onboardingRemoteDescription;
+
+  /// No description provided for @onboardingRemoteAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote address'**
+  String get onboardingRemoteAddress;
+
+  /// No description provided for @onboardingRemoteToken.
+  ///
+  /// In en, this message translates to:
+  /// **'Access token'**
+  String get onboardingRemoteToken;
+
+  /// No description provided for @onboardingRemotePairingStarted.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing started'**
+  String get onboardingRemotePairingStarted;
+
+  /// No description provided for @onboardingRemotePairingSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote: {platform} / {model}\nDevice: {deviceId}\nEnter the one-time code shown by the remote app.'**
+  String onboardingRemotePairingSummary(
+    String platform,
+    String model,
+    String deviceId,
+  );
+
+  /// No description provided for @onboardingRemotePairingCode.
+  ///
+  /// In en, this message translates to:
+  /// **'One-time pairing code'**
+  String get onboardingRemotePairingCode;
+
+  /// No description provided for @onboardingRemoteBeforePairing.
+  ///
+  /// In en, this message translates to:
+  /// **'Start a pairing session with the remote address and access token.'**
+  String get onboardingRemoteBeforePairing;
+
+  /// No description provided for @onboardingRemoteAfterPairing.
+  ///
+  /// In en, this message translates to:
+  /// **'The code is used only for this confirmation. The remote Runtime will be saved as a connection option.'**
+  String get onboardingRemoteAfterPairing;
+
+  /// No description provided for @onboardingStorageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm storage on this device'**
+  String get onboardingStorageTitle;
+
+  /// No description provided for @onboardingStorageDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime data and workspace data are stored separately. Enter paths or choose each folder.'**
+  String get onboardingStorageDescription;
+
+  /// No description provided for @onboardingStorageRuntimeFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime data folder'**
+  String get onboardingStorageRuntimeFolder;
+
+  /// No description provided for @onboardingStorageWorkspaceFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Workspace folder'**
+  String get onboardingStorageWorkspaceFolder;
+
+  /// No description provided for @onboardingStorageReading.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading storage paths'**
+  String get onboardingStorageReading;
+
+  /// No description provided for @onboardingStorageDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'These folders store Runtime state and your workspace separately. The local Host mounts them after confirmation.'**
+  String get onboardingStorageDetail;
+
+  /// No description provided for @onboardingStorageChooseFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose {label}'**
+  String onboardingStorageChooseFolder(String label);
+
+  /// No description provided for @onboardingImportTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Import from Operit 1'**
+  String get onboardingImportTitle;
+
+  /// No description provided for @onboardingImportDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose an Operit 1 snapshot to migrate settings, chats, character cards, and resources to Operit 2.'**
+  String get onboardingImportDescription;
+
+  /// No description provided for @onboardingImportReadingSnapshot.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading snapshot'**
+  String get onboardingImportReadingSnapshot;
+
+  /// No description provided for @onboardingImportSelectSnapshot.
+  ///
+  /// In en, this message translates to:
+  /// **'Select snapshot file'**
+  String get onboardingImportSelectSnapshot;
+
+  /// No description provided for @onboardingImportDetected.
+  ///
+  /// In en, this message translates to:
+  /// **'Content ready to migrate'**
+  String get onboardingImportDetected;
+
+  /// No description provided for @onboardingImportModelSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Model settings'**
+  String get onboardingImportModelSettings;
+
+  /// No description provided for @onboardingImportChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Chats'**
+  String get onboardingImportChats;
+
+  /// No description provided for @onboardingImportMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages'**
+  String get onboardingImportMessages;
+
+  /// No description provided for @onboardingImportPreferences.
+  ///
+  /// In en, this message translates to:
+  /// **'Preference files'**
+  String get onboardingImportPreferences;
+
+  /// No description provided for @onboardingImportResources.
+  ///
+  /// In en, this message translates to:
+  /// **'Resource files'**
+  String get onboardingImportResources;
+
+  /// No description provided for @onboardingImportExternalResources.
+  ///
+  /// In en, this message translates to:
+  /// **'External resources'**
+  String get onboardingImportExternalResources;
+
+  /// No description provided for @onboardingImportDefaultModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Default chat model: {modelId}'**
+  String onboardingImportDefaultModel(String modelId);
+
+  /// No description provided for @onboardingImportInProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'Importing the snapshot. Please wait.'**
+  String get onboardingImportInProgress;
+
+  /// No description provided for @onboardingImportReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue to migrate the complete snapshot.'**
+  String get onboardingImportReady;
+
+  /// No description provided for @onboardingModelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Finish model setup'**
+  String get onboardingModelTitle;
+
+  /// No description provided for @onboardingModelDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a model provider, enter the API key, load models, and select the default model.'**
+  String get onboardingModelDescription;
+
+  /// No description provided for @onboardingModelProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Model provider'**
+  String get onboardingModelProvider;
+
+  /// No description provided for @onboardingModelProviderRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a model provider.'**
+  String get onboardingModelProviderRequired;
+
+  /// No description provided for @onboardingModelContinueSetup.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue setup'**
+  String get onboardingModelContinueSetup;
+
+  /// No description provided for @onboardingModelEndpoint.
+  ///
+  /// In en, this message translates to:
+  /// **'Service address'**
+  String get onboardingModelEndpoint;
+
+  /// No description provided for @onboardingModelLoadingAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading models'**
+  String get onboardingModelLoadingAvailable;
+
+  /// No description provided for @onboardingModelLoadAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Load available models'**
+  String get onboardingModelLoadAvailable;
+
+  /// No description provided for @onboardingModelDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'Default model'**
+  String get onboardingModelDefault;
+
+  /// No description provided for @onboardingPermissionsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Grant only the permissions you need'**
+  String get onboardingPermissionsTitle;
+
+  /// No description provided for @onboardingPermissionsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose permissions for the features you use. You may continue without granting any; features without permission will remain unavailable.'**
+  String get onboardingPermissionsDescription;
+
+  /// No description provided for @onboardingPermissionsEmptyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'No permissions need attention on this device'**
+  String get onboardingPermissionsEmptyTitle;
+
+  /// No description provided for @onboardingPermissionsEmptySubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'This environment has no system permissions to handle during setup.'**
+  String get onboardingPermissionsEmptySubtitle;
+
+  /// No description provided for @onboardingPermissionsRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh permission status'**
+  String get onboardingPermissionsRefresh;
+
+  /// No description provided for @onboardingPermissionOptional.
+  ///
+  /// In en, this message translates to:
+  /// **'Optional'**
+  String get onboardingPermissionOptional;
+
+  /// No description provided for @onboardingFieldRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Required'**
+  String get onboardingFieldRequired;
+
+  /// No description provided for @onboardingPermissionGranted.
+  ///
+  /// In en, this message translates to:
+  /// **'Granted'**
+  String get onboardingPermissionGranted;
+
+  /// No description provided for @onboardingPermissionGrant.
+  ///
+  /// In en, this message translates to:
+  /// **'Grant'**
+  String get onboardingPermissionGrant;
+
+  /// No description provided for @onboardingPermissionNoAction.
+  ///
+  /// In en, this message translates to:
+  /// **'No action needed'**
+  String get onboardingPermissionNoAction;
+
+  /// No description provided for @networkErrorBadRequestTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Check the request settings'**
+  String get networkErrorBadRequestTitle;
+
+  /// No description provided for @networkErrorBadRequestMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The service rejected the model-list request. Check that the service address matches the provider.'**
+  String get networkErrorBadRequestMessage;
+
+  /// No description provided for @networkErrorUnauthorizedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'API key could not be verified'**
+  String get networkErrorUnauthorizedTitle;
+
+  /// No description provided for @networkErrorUnauthorizedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The provider rejected the API key. Enter the complete key and try loading the models again.'**
+  String get networkErrorUnauthorizedMessage;
+
+  /// No description provided for @networkErrorForbiddenTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Access is not permitted'**
+  String get networkErrorForbiddenTitle;
+
+  /// No description provided for @networkErrorForbiddenMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This key cannot access the provider API. Check the account permissions and model-service access.'**
+  String get networkErrorForbiddenMessage;
+
+  /// No description provided for @networkErrorNotFoundTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Service address is unavailable'**
+  String get networkErrorNotFoundTitle;
+
+  /// No description provided for @networkErrorNotFoundMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'No model-list endpoint was found at this address. Check the address and path.'**
+  String get networkErrorNotFoundMessage;
+
+  /// No description provided for @networkErrorRateLimitedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many requests'**
+  String get networkErrorRateLimitedTitle;
+
+  /// No description provided for @networkErrorRateLimitedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The provider is limiting requests. Wait a moment and try loading the models again.'**
+  String get networkErrorRateLimitedMessage;
+
+  /// No description provided for @networkErrorServerTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider service error'**
+  String get networkErrorServerTitle;
+
+  /// No description provided for @networkErrorServerMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The provider cannot process the model-list request right now. Try again later.'**
+  String get networkErrorServerMessage;
+
+  /// No description provided for @networkErrorModelListTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load the model list'**
+  String get networkErrorModelListTitle;
+
+  /// No description provided for @networkErrorModelListMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'No model list was returned. Check the service address, API key, and network connection.'**
+  String get networkErrorModelListMessage;
+
+  /// No description provided for @networkErrorConnectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Network connection failed'**
+  String get networkErrorConnectionTitle;
+
+  /// No description provided for @networkErrorConnectionMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not connect to the model provider. Check the network connection and service address.'**
+  String get networkErrorConnectionMessage;
+
+  /// No description provided for @networkErrorDuplicateModelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Model already added'**
+  String get networkErrorDuplicateModelTitle;
+
+  /// No description provided for @networkErrorDuplicateModelMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Model “{modelId}” is already added to provider “{providerName}”.'**
+  String networkErrorDuplicateModelMessage(String modelId, String providerName);
+
+  /// No description provided for @networkErrorDefaultTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Model setup failed'**
+  String get networkErrorDefaultTitle;
+
+  /// No description provided for @networkErrorDefaultMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'An error occurred while loading models. Check the provider, service address, and API key.'**
+  String get networkErrorDefaultMessage;
+
+  /// No description provided for @onboardingRequirementWindowsAdminTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Administrator access'**
+  String get onboardingRequirementWindowsAdminTitle;
+
+  /// No description provided for @onboardingRequirementWindowsAdminDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Shows whether the Host is running as administrator. Elevation must be handled when the Host is launched.'**
+  String get onboardingRequirementWindowsAdminDescription;
+
+  /// No description provided for @onboardingRequirementAndroidFileManagementTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'File access'**
+  String get onboardingRequirementAndroidFileManagementTitle;
+
+  /// No description provided for @onboardingRequirementAndroidFileManagementDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Allows the Host to read and write the Android shared-storage folders you choose.'**
+  String get onboardingRequirementAndroidFileManagementDescription;
+
+  /// No description provided for @onboardingRequirementAndroidNotificationsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get onboardingRequirementAndroidNotificationsTitle;
+
+  /// No description provided for @onboardingRequirementAndroidNotificationsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Allows the Host to show foreground-service status, task progress, and tool results.'**
+  String get onboardingRequirementAndroidNotificationsDescription;
+
+  /// No description provided for @onboardingRequirementAndroidAppListTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Installed apps'**
+  String get onboardingRequirementAndroidAppListTitle;
+
+  /// No description provided for @onboardingRequirementAndroidAppListDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Allows the Host to list, launch, and stop Android apps.'**
+  String get onboardingRequirementAndroidAppListDescription;
+
+  /// No description provided for @onboardingRequirementAndroidUsageStatsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'App usage access'**
+  String get onboardingRequirementAndroidUsageStatsTitle;
+
+  /// No description provided for @onboardingRequirementAndroidUsageStatsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Allows the Host to read how long apps have been used in the foreground.'**
+  String get onboardingRequirementAndroidUsageStatsDescription;
+
+  /// No description provided for @onboardingRequirementAndroidWriteSettingsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Change system settings'**
+  String get onboardingRequirementAndroidWriteSettingsTitle;
+
+  /// No description provided for @onboardingRequirementAndroidWriteSettingsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Allows the Host to change supported Android system settings.'**
+  String get onboardingRequirementAndroidWriteSettingsDescription;
+
+  /// No description provided for @onboardingRequirementAndroidLocationTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Nearby-device location'**
+  String get onboardingRequirementAndroidLocationTitle;
+
+  /// No description provided for @onboardingRequirementAndroidLocationDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Allows location access required by some nearby-device discovery features.'**
+  String get onboardingRequirementAndroidLocationDescription;
+
+  /// No description provided for @onboardingRequirementAndroidBluetoothTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Bluetooth'**
+  String get onboardingRequirementAndroidBluetoothTitle;
+
+  /// No description provided for @onboardingRequirementAndroidBluetoothDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Allows Bluetooth scanning and connections to discover and use devices.'**
+  String get onboardingRequirementAndroidBluetoothDescription;
+
+  /// No description provided for @onboardingRequirementAndroidOverlayTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Display over other apps'**
+  String get onboardingRequirementAndroidOverlayTitle;
+
+  /// No description provided for @onboardingRequirementAndroidOverlayDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Allows Operit to show an entry point over other apps.'**
+  String get onboardingRequirementAndroidOverlayDescription;
+
+  /// No description provided for @onboardingRequirementAndroidBatteryOptimizationTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep long tasks running'**
+  String get onboardingRequirementAndroidBatteryOptimizationTitle;
+
+  /// No description provided for @onboardingRequirementAndroidBatteryOptimizationDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Excludes Operit from battery optimization so sync, collaboration, and long tasks can continue.'**
+  String get onboardingRequirementAndroidBatteryOptimizationDescription;
+
+  /// No description provided for @onboardingRequirementAndroidShizukuTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Shizuku'**
+  String get onboardingRequirementAndroidShizukuTitle;
+
+  /// No description provided for @onboardingRequirementAndroidShizukuDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Optional. Start Shizuku or Sui first, then grant access to use supported Android system features.'**
+  String get onboardingRequirementAndroidShizukuDescription;
+
+  /// No description provided for @onboardingRequirementAndroidRootTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Root'**
+  String get onboardingRequirementAndroidRootTitle;
+
+  /// No description provided for @onboardingRequirementAndroidRootDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Optional. Grants access to Android system features that require Root.'**
+  String get onboardingRequirementAndroidRootDescription;
+
+  /// No description provided for @onboardingRequirementOhosLocationTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Location access'**
+  String get onboardingRequirementOhosLocationTitle;
+
+  /// No description provided for @onboardingRequirementOhosLocationDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Allows the Host to read device location and support nearby-device discovery that requires location access.'**
+  String get onboardingRequirementOhosLocationDescription;
+
+  /// No description provided for @onboardingRequirementOhosBluetoothTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Bluetooth access'**
+  String get onboardingRequirementOhosBluetoothTitle;
+
+  /// No description provided for @onboardingRequirementOhosBluetoothDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Allows scanning, connecting, reading, and writing with classic Bluetooth and BLE devices.'**
+  String get onboardingRequirementOhosBluetoothDescription;
+
+  /// No description provided for @runtimeBootstrapPreparingAssets.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing local Runtime files'**
+  String get runtimeBootstrapPreparingAssets;
+
+  /// No description provided for @runtimeBootstrapInitializingCore.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting local core services'**
+  String get runtimeBootstrapInitializingCore;
+
+  /// No description provided for @runtimeBootstrapFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not start the local Runtime'**
+  String get runtimeBootstrapFailed;
+
+  /// No description provided for @runtimeBootstrapReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Local Runtime is ready'**
+  String get runtimeBootstrapReady;
+
+  /// No description provided for @runtimeBootstrapUnconfigured.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose the Runtime data and workspace folders in the main window first'**
+  String get runtimeBootstrapUnconfigured;
+
+  /// No description provided for @mainExitConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Press back again to exit'**
+  String get mainExitConfirm;
+
+  /// No description provided for @messageMenuCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy message'**
+  String get messageMenuCopy;
+
+  /// No description provided for @messageMenuEditAndResend.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit and resend'**
+  String get messageMenuEditAndResend;
+
+  /// No description provided for @messageMenuRollback.
+  ///
+  /// In en, this message translates to:
+  /// **'Roll back to here'**
+  String get messageMenuRollback;
+
+  /// No description provided for @messageMenuRegenerate.
+  ///
+  /// In en, this message translates to:
+  /// **'Regenerate'**
+  String get messageMenuRegenerate;
+
+  /// No description provided for @messageMenuModifyMemory.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit memory'**
+  String get messageMenuModifyMemory;
+
+  /// No description provided for @messageMenuPlayVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Generate / play voice'**
+  String get messageMenuPlayVoice;
+
+  /// No description provided for @messageMenuDeleteVariant.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete current variant'**
+  String get messageMenuDeleteVariant;
+
+  /// No description provided for @messageMenuReply.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply'**
+  String get messageMenuReply;
+
+  /// No description provided for @messageMenuInsertSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Insert summary'**
+  String get messageMenuInsertSummary;
+
+  /// No description provided for @messageMenuCreateBranch.
+  ///
+  /// In en, this message translates to:
+  /// **'Create branch'**
+  String get messageMenuCreateBranch;
+
+  /// No description provided for @messageMenuInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'Info'**
+  String get messageMenuInfo;
+
+  /// No description provided for @messageMenuMultiSelect.
+  ///
+  /// In en, this message translates to:
+  /// **'Select multiple'**
+  String get messageMenuMultiSelect;
+
+  /// No description provided for @messageMenuDeleteConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete message?'**
+  String get messageMenuDeleteConfirmTitle;
+
+  /// No description provided for @messageMenuDeleteConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this message?'**
+  String get messageMenuDeleteConfirmMessage;
+
+  /// No description provided for @messageMenuInfoTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Message info'**
+  String get messageMenuInfoTitle;
+
+  /// No description provided for @messageMenuSender.
+  ///
+  /// In en, this message translates to:
+  /// **'Sender: {value}'**
+  String messageMenuSender(String value);
+
+  /// No description provided for @messageMenuTimestamp.
+  ///
+  /// In en, this message translates to:
+  /// **'Timestamp: {value}'**
+  String messageMenuTimestamp(String value);
+
+  /// No description provided for @messageMenuRole.
+  ///
+  /// In en, this message translates to:
+  /// **'Role: {value}'**
+  String messageMenuRole(String value);
+
+  /// No description provided for @messageMenuModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Model: {value}'**
+  String messageMenuModel(String value);
+
+  /// No description provided for @messageMenuProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider: {value}'**
+  String messageMenuProvider(String value);
+
+  /// No description provided for @messageMenuInputTokens.
+  ///
+  /// In en, this message translates to:
+  /// **'Input tokens: {value}'**
+  String messageMenuInputTokens(String value);
+
+  /// No description provided for @messageMenuCachedInputTokens.
+  ///
+  /// In en, this message translates to:
+  /// **'Cached input tokens: {value}'**
+  String messageMenuCachedInputTokens(String value);
+
+  /// No description provided for @messageMenuOutputTokens.
+  ///
+  /// In en, this message translates to:
+  /// **'Output tokens: {value}'**
+  String messageMenuOutputTokens(String value);
+
+  /// No description provided for @messageMenuWaitDuration.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait time: {value} ms'**
+  String messageMenuWaitDuration(String value);
+
+  /// No description provided for @messageMenuOutputDuration.
+  ///
+  /// In en, this message translates to:
+  /// **'Output time: {value} ms'**
+  String messageMenuOutputDuration(String value);
+
+  /// No description provided for @messageMenuConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'OK'**
+  String get messageMenuConfirm;
+
+  /// No description provided for @messageCopyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy message'**
+  String get messageCopyTitle;
+
+  /// No description provided for @messageCopyPlainText.
+  ///
+  /// In en, this message translates to:
+  /// **'Plain text'**
+  String get messageCopyPlainText;
+
+  /// No description provided for @messageCopyMarkdownSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Markdown source'**
+  String get messageCopyMarkdownSource;
+
+  /// No description provided for @messageCopyPlainTextConversionFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not convert to plain text: {error}'**
+  String messageCopyPlainTextConversionFailed(String error);
+
+  /// No description provided for @messageCopyCopyPlainText.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy plain text'**
+  String get messageCopyCopyPlainText;
+
+  /// No description provided for @messageCopyCopyMarkdownSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy Markdown source'**
+  String get messageCopyCopyMarkdownSource;
+
+  /// No description provided for @messageCopyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy failed: {error}'**
+  String messageCopyFailed(String error);
+
+  /// No description provided for @messageCopyCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Message copied to the clipboard'**
+  String get messageCopyCompleted;
+
+  /// No description provided for @messageEditorTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit message'**
+  String get messageEditorTitle;
+
+  /// No description provided for @messageEditorMemoryTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit memory'**
+  String get messageEditorMemoryTitle;
+
+  /// No description provided for @messageEditorVisualMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Visual'**
+  String get messageEditorVisualMode;
+
+  /// No description provided for @messageEditorPlainTextMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Plain text'**
+  String get messageEditorPlainTextMode;
+
+  /// No description provided for @messageEditorSaveAndResend.
+  ///
+  /// In en, this message translates to:
+  /// **'Save and resend'**
+  String get messageEditorSaveAndResend;
+
+  /// No description provided for @messageEditorUpdateMemory.
+  ///
+  /// In en, this message translates to:
+  /// **'Update memory'**
+  String get messageEditorUpdateMemory;
+
+  /// No description provided for @messageEditorPlainTextContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Plain-text content'**
+  String get messageEditorPlainTextContent;
+
+  /// No description provided for @messageEditorContentParts.
+  ///
+  /// In en, this message translates to:
+  /// **'Content parts'**
+  String get messageEditorContentParts;
+
+  /// No description provided for @messageEditorAddText.
+  ///
+  /// In en, this message translates to:
+  /// **'Add text'**
+  String get messageEditorAddText;
+
+  /// No description provided for @messageEditorAddTag.
+  ///
+  /// In en, this message translates to:
+  /// **'Add tag'**
+  String get messageEditorAddTag;
+
+  /// No description provided for @messageEditorTextLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Text'**
+  String get messageEditorTextLabel;
+
+  /// No description provided for @messageEditorTextHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter text content'**
+  String get messageEditorTextHint;
+
+  /// No description provided for @messageEditorTagTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit tag'**
+  String get messageEditorTagTitle;
+
+  /// No description provided for @messageEditorTagName.
+  ///
+  /// In en, this message translates to:
+  /// **'Tag name'**
+  String get messageEditorTagName;
+
+  /// No description provided for @messageEditorTagNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'For example, memory'**
+  String get messageEditorTagNameHint;
+
+  /// No description provided for @messageEditorAttributes.
+  ///
+  /// In en, this message translates to:
+  /// **'Attributes (optional)'**
+  String get messageEditorAttributes;
+
+  /// No description provided for @messageEditorAttributesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'For example, type=\"note\"'**
+  String get messageEditorAttributesHint;
+
+  /// No description provided for @messageEditorContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Content'**
+  String get messageEditorContent;
+
+  /// No description provided for @aboutDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'An AI workspace for mobile and desktop with chats, workspaces, tools, plugins, MCP, remote connections, and web access.'**
+  String get aboutDescription;
+
+  /// No description provided for @aboutVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version}'**
+  String aboutVersion(String version);
+
+  /// No description provided for @aboutProjectSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Project'**
+  String get aboutProjectSection;
+
+  /// No description provided for @aboutSourceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Source code'**
+  String get aboutSourceTitle;
+
+  /// No description provided for @aboutDocumentationTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Documentation'**
+  String get aboutDocumentationTitle;
+
+  /// No description provided for @aboutDocumentationSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'README and command-line guide'**
+  String get aboutDocumentationSubtitle;
+
+  /// No description provided for @aboutOpenSourceLicenses.
+  ///
+  /// In en, this message translates to:
+  /// **'Open-source licenses'**
+  String get aboutOpenSourceLicenses;
+
+  /// No description provided for @aboutOpenSourceLicensesSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Operit2 uses AGPL-3.0'**
+  String get aboutOpenSourceLicensesSubtitle;
+
+  /// No description provided for @aboutContactSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact'**
+  String get aboutContactSection;
+
+  /// No description provided for @aboutMaintainer.
+  ///
+  /// In en, this message translates to:
+  /// **'Developer AAswordman'**
+  String get aboutMaintainer;
+
+  /// No description provided for @aboutCopyright.
+  ///
+  /// In en, this message translates to:
+  /// **'© 2025 - 2026 Operit. All rights reserved.'**
+  String get aboutCopyright;
+
+  /// No description provided for @chatTtsNoMatchingCharacter.
+  ///
+  /// In en, this message translates to:
+  /// **'No matching character is available for this message.'**
+  String get chatTtsNoMatchingCharacter;
+
+  /// No description provided for @chatTtsMatchingCharacterCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Expected one matching character card for {name}.'**
+  String chatTtsMatchingCharacterCount(String name);
+
+  /// No description provided for @chatTtsEmptyMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This message has no content to turn into speech.'**
+  String get chatTtsEmptyMessage;
+
+  /// No description provided for @chatTtsPlaybackFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not generate or play speech: {error}'**
+  String chatTtsPlaybackFailed(String error);
+
+  /// No description provided for @chatCopyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy failed: {error}'**
+  String chatCopyFailed(String error);
+
+  /// No description provided for @chatConfirmDeleteSelectedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete selected messages?'**
+  String get chatConfirmDeleteSelectedTitle;
+
+  /// No description provided for @chatConfirmDeleteSelectedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {count} selected messages?'**
+  String chatConfirmDeleteSelectedMessage(int count);
+
+  /// No description provided for @chatGeneratingShareImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Creating share image...'**
+  String get chatGeneratingShareImage;
+
+  /// No description provided for @chatGenerateShareImageFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not create share image: {error}'**
+  String chatGenerateShareImageFailed(String error);
 }
 
 class _AppLocalizationsDelegate
@@ -6011,7 +7610,7 @@ class _AppLocalizationsDelegate
 
   @override
   bool isSupported(Locale locale) =>
-      <String>['en', 'zh'].contains(locale.languageCode);
+      <String>['en', 'ja', 'zh'].contains(locale.languageCode);
 
   @override
   bool shouldReload(_AppLocalizationsDelegate old) => false;
@@ -6022,6 +7621,8 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
   switch (locale.languageCode) {
     case 'en':
       return AppLocalizationsEn();
+    case 'ja':
+      return AppLocalizationsJa();
     case 'zh':
       return AppLocalizationsZh();
   }

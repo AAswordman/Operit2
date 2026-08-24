@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../data/preferences/UserPreferencesManager.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitTheme.dart';
 import '../viewmodel/ChatViewModel.dart';
@@ -342,10 +343,11 @@ class ChatScreenContent extends StatelessWidget {
 
   /// Plays the selected message through the configured TTS voice.
   Future<void> _playVoice(BuildContext context, ChatUiMessage message) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       final targetCharacterName = _voiceCharacterName(message);
       if (targetCharacterName == null) {
-        _showTtsSnack(context, '当前消息没有可匹配的角色');
+        _showTtsSnack(context, l10n.chatTtsNoMatchingCharacter);
         return;
       }
       final cards = await viewModel.clients.preferencesCharacterCardManager
@@ -359,12 +361,15 @@ class ChatScreenContent extends StatelessWidget {
           })
           .toList(growable: false);
       if (matchingCards.length != 1) {
-        _showTtsSnack(context, '角色卡匹配数量不是 1：$targetCharacterName');
+        _showTtsSnack(
+          context,
+          l10n.chatTtsMatchingCharacterCount(targetCharacterName),
+        );
         return;
       }
       final text = cleanMessageContent(message.displayText);
       if (text.isEmpty) {
-        _showTtsSnack(context, '消息内容为空，无法生成语音');
+        _showTtsSnack(context, l10n.chatTtsEmptyMessage);
         return;
       }
       await TtsPlaybackController.instance.speakForCharacter(
@@ -377,7 +382,7 @@ class ChatScreenContent extends StatelessWidget {
       if (!context.mounted) {
         return;
       }
-      _showTtsSnack(context, '生成/播放语音失败：$error');
+      _showTtsSnack(context, l10n.chatTtsPlaybackFailed(error.toString()));
     }
   }
 
@@ -421,7 +426,13 @@ class ChatScreenContent extends StatelessWidget {
         return;
       }
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(content: Text('复制失败：${error.message ?? error.code}')),
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(
+              context,
+            )!.chatCopyFailed(error.message ?? error.code),
+          ),
+        ),
       );
     }
   }
@@ -432,16 +443,22 @@ class ChatScreenContent extends StatelessWidget {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('确认删除'),
-          content: Text('确定删除已选的 ${selectedMessageIndices.length} 条消息？'),
+          title: Text(
+            AppLocalizations.of(context)!.chatConfirmDeleteSelectedTitle,
+          ),
+          content: Text(
+            AppLocalizations.of(
+              context,
+            )!.chatConfirmDeleteSelectedMessage(selectedMessageIndices.length),
+          ),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
+              child: Text(AppLocalizations.of(context)!.cancel),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('删除'),
+              child: Text(AppLocalizations.of(context)!.delete),
             ),
           ],
         );
@@ -458,7 +475,7 @@ class ChatScreenContent extends StatelessWidget {
       context: context,
       barrierDismissible: false,
       builder: (context) {
-        return const AlertDialog(
+        return AlertDialog(
           content: Row(
             children: <Widget>[
               SizedBox(
@@ -467,7 +484,7 @@ class ChatScreenContent extends StatelessWidget {
                 child: CircularProgressIndicator(strokeWidth: 2.5),
               ),
               SizedBox(width: 14),
-              Text('正在生成长图...'),
+              Text(AppLocalizations.of(context)!.chatGeneratingShareImage),
             ],
           ),
         );
@@ -499,9 +516,15 @@ class ChatScreenContent extends StatelessWidget {
         return;
       }
       Navigator.of(context).pop();
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('生成长图失败：$error')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(
+              context,
+            )!.chatGenerateShareImageFailed(error.toString()),
+          ),
+        ),
+      );
     }
   }
 }

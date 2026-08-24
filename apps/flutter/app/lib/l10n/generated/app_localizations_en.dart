@@ -984,6 +984,55 @@ class AppLocalizationsEn extends AppLocalizations {
       'Show generated replies progressively.';
 
   @override
+  String get agentModelSelectorThinkingSettings => 'Thinking settings';
+
+  @override
+  String get agentModelSelectorThinkingSettingsDescription =>
+      'Configure reasoning behavior for the current chat model.';
+
+  @override
+  String get agentModelSelectorThinkingQuality => 'Reasoning depth';
+
+  @override
+  String get agentModelSelectorThinkingQualityDescription =>
+      'Available only in thinking mode. Higher levels reason more deeply; level 1 is automatic.';
+
+  @override
+  String agentModelSelectorMaxModeDescription(
+    String enabledLength,
+    String disabledLength,
+  ) {
+    return 'Max context mode uses a ${enabledLength}k context window when enabled and ${disabledLength}k when disabled.';
+  }
+
+  @override
+  String get agentModelSelectorModelConfiguration => 'Model configuration';
+
+  @override
+  String get agentModelSelectorModelConfigurationDescription =>
+      'Choose a configured model here, or use Manage configuration below to add or edit one.';
+
+  @override
+  String get agentModelSelectorModel => 'Model';
+
+  @override
+  String get agentModelSelectorNoModels => 'No models available';
+
+  @override
+  String get agentModelSelectorManageConfiguration => 'Manage configuration';
+
+  @override
+  String agentModelSelectorModelCount(int count) {
+    return '$count models';
+  }
+
+  @override
+  String get agentModelSelectorOn => 'On';
+
+  @override
+  String get agentModelSelectorOff => 'Off';
+
+  @override
   String get settingsModelProfilesSection => 'Model profiles';
 
   @override
@@ -1170,6 +1219,55 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsModelApiKey => 'API key';
+
+  @override
+  String get settingsModelProviderTypeOpenaiCodex => 'ChatGPT Codex';
+
+  @override
+  String get settingsModelCodexTitle => 'ChatGPT / Codex sign-in';
+
+  @override
+  String get settingsModelCodexDescription =>
+      'Use Codex included with your ChatGPT plan. No API key or relay server is required.';
+
+  @override
+  String get settingsModelCodexSignIn => 'Sign in with ChatGPT';
+
+  @override
+  String get settingsModelCodexConnected => 'Signed in';
+
+  @override
+  String get settingsModelCodexSignedOut => 'Signed out';
+
+  @override
+  String get settingsModelCodexWaiting => 'Waiting for approval';
+
+  @override
+  String get settingsModelCodexExpired => 'Code expired';
+
+  @override
+  String get settingsModelCodexChecking => 'Checking';
+
+  @override
+  String get settingsModelCodexCodeHelp =>
+      'Enter this one-time code on the ChatGPT page. It expires in 15 minutes.';
+
+  @override
+  String get settingsModelCodexOpenBrowser => 'Open ChatGPT page';
+
+  @override
+  String get settingsModelCodexOpenFailed =>
+      'Could not open the ChatGPT page. Try the button again.';
+
+  @override
+  String get settingsModelCodexLogout => 'Sign out';
+
+  @override
+  String get settingsModelCodexRequired =>
+      'Sign in with ChatGPT before saving this connection.';
+
+  @override
+  String get settingsModelCodexPlan => 'Plan';
 
   @override
   String get settingsModelApiKeyPool => 'API key pool';
@@ -3338,4 +3436,836 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsDataAdvancedBackupOptionsDescription =>
       'Single-item JSON export and restore';
+
+  @override
+  String get onboardingIntroTagline => 'Make everyday tasks simpler from here';
+
+  @override
+  String get onboardingStart => 'Start';
+
+  @override
+  String get onboardingPleaseWait => 'Please wait';
+
+  @override
+  String get onboardingAgree => 'Agree';
+
+  @override
+  String get onboardingAgreementProgress => 'User agreement';
+
+  @override
+  String get onboardingSkip => 'Skip';
+
+  @override
+  String get onboardingPrevious => 'Previous page';
+
+  @override
+  String get onboardingAgreementTitle => 'User agreement and privacy policy';
+
+  @override
+  String get onboardingAgreementDescription =>
+      'Please read this agreement. You can continue device setup after agreeing.';
+
+  @override
+  String onboardingAgreementVersion(String version) {
+    return 'Version: $version';
+  }
+
+  @override
+  String onboardingAgreementWait(int seconds) {
+    return 'You can confirm after $seconds seconds.';
+  }
+
+  @override
+  String get onboardingAgreementPlainTitle =>
+      'Plain-language summary (not the legal version)';
+
+  @override
+  String get onboardingAgreementPlainIntro =>
+      'Operit is an open-source client that runs on your device. We do not operate model inference services, host chat histories, or provide shared API keys. When you configure cloud models, voice, search, image generation, MCP, or other network features, data is sent directly to the relevant provider and is governed by that provider\'s terms and privacy policy. Local models run on your device.';
+
+  @override
+  String get onboardingAgreementPlainCapabilities =>
+      'The app may use files, terminals, automation, system permissions, Root, ADB, and extensions. Check the operation, back up important data, and grant permissions carefully. Responsibility for device, data, account, or other loss caused by your actions, configuration, third-party services, or extensions is handled by the actual operator under applicable law.';
+
+  @override
+  String get onboardingAgreementPlainThirdParty =>
+      'Copyright and responsibility for marketplace plugins, scripts, Skills, tool packages, and other third-party content belong to their authors or rights holders. Displaying or installing them does not mean Operit guarantees, endorses, or acquires rights to them.';
+
+  @override
+  String get onboardingAgreementLegalTitle => 'Formal legal agreement';
+
+  @override
+  String get onboardingAgreementLegalSection1 =>
+      '1. Scope and agreement version\nThis agreement applies to officially released Operit clients and optional online features. By using this app, you confirm that you have read and agreed to the current version. The app records the version you accepted and will ask for confirmation again after a material change. Open-source licensing is governed by LGPLv3 in the repository-root LICENSE. This agreement does not exclude or reduce rights granted by applicable law or open-source licenses.';
+
+  @override
+  String get onboardingAgreementLegalSection2 =>
+      '2. Product role and third-party services\nOperit does not provide large language model inference, shared API keys, chat-request relays, or cloud hosting of chat histories. You select, configure, and enable third-party services yourself and are responsible for judging the security, legality, and suitability of providers, models, endpoints, and extensions, and for protecting credentials.';
+
+  @override
+  String get onboardingAgreementLegalSection3 =>
+      '3. Data handling and privacy\nChat histories, character cards, memories, model settings, and API keys are generally stored in app data on your device. When you export, back up, upload files, use a third-party network feature, or submit a request to an external HTTP service, related data is copied, transmitted, or disclosed according to your action. Features such as the marketplace, notices, update checks, GitHub login, and publishing access Operit, GitHub, or related third-party resources.';
+
+  @override
+  String get onboardingAgreementLegalSection4 =>
+      '4. External deployment and operator responsibility\nExternal HTTP services, bots, automatic replies, and similar capabilities are enabled at your choice. If you make them available to other people or the public, you are the actual deployer or operator and are responsible for access control, user authorization, content safety, data protection, protection of minors, required notices, and other applicable obligations.';
+
+  @override
+  String get onboardingAgreementLegalSection5 =>
+      '5. Lawful use and content responsibility\nYou must follow applicable laws, third-party service rules, and platform rules. Do not use this app, extensions, or configurations for illegal activity, infringement of rights, unauthorized access to systems or data, or distribution of illegal or harmful content. AI output may contain errors, omissions, or bias and is not medical, legal, financial, or other professional advice.';
+
+  @override
+  String get onboardingAgreementLegalSection6 =>
+      '6. Software provided as is\nTo the extent permitted by applicable law, this software is provided as is and as available. Contributors make no express or implied warranty regarding continued availability, accuracy, security, merchantability, fitness for a particular purpose, or non-infringement of the software or third-party services.';
+
+  @override
+  String get onboardingAgreementLegalSection7 =>
+      '7. Agreement updates and contact\nWe may update this agreement for functional, legal, or security requirements and provide the current version in the app. Updates that materially affect user rights take effect by increasing the agreement version and requesting confirmation again. Questions and feedback can be submitted through the project repository, in-app feedback entry, or published contact channels.';
+
+  @override
+  String get onboardingAgreementPrecedenceNote =>
+      'The plain-language summary is provided only to aid understanding. If it differs from the formal Chinese agreement, the formal Chinese agreement takes precedence.';
+
+  @override
+  String get onboardingStorageRequired =>
+      'Runtime and workspace folders are both required.';
+
+  @override
+  String get onboardingModelLoadFirst => 'Load the available models first.';
+
+  @override
+  String get onboardingModelSelectDefault => 'Select the default model.';
+
+  @override
+  String get onboardingImportSelectSnapshotError =>
+      'Select an Operit 1 snapshot file.';
+
+  @override
+  String get onboardingRemoteCredentialsRequired =>
+      'Remote address and access token are both required.';
+
+  @override
+  String get onboardingRemoteCodeRequired => 'Enter the one-time pairing code.';
+
+  @override
+  String get onboardingActionSaving => 'Saving';
+
+  @override
+  String get onboardingActionConfirm => 'Confirm';
+
+  @override
+  String get onboardingActionPreparing => 'Preparing';
+
+  @override
+  String get onboardingActionContinue => 'Continue';
+
+  @override
+  String get onboardingActionLoadingModels => 'Loading';
+
+  @override
+  String get onboardingActionReading => 'Reading';
+
+  @override
+  String get onboardingActionImporting => 'Importing';
+
+  @override
+  String get onboardingActionConnecting => 'Connecting';
+
+  @override
+  String get onboardingActionPairing => 'Pairing';
+
+  @override
+  String get onboardingActionStartPairing => 'Start pairing';
+
+  @override
+  String get onboardingActionFinishConnection => 'Finish connection';
+
+  @override
+  String get onboardingActionProcessing => 'Processing';
+
+  @override
+  String get onboardingActionComplete => 'Done';
+
+  @override
+  String get onboardingProgressStorage => 'Storage';
+
+  @override
+  String get onboardingProgressStartMode => 'Setup method';
+
+  @override
+  String get onboardingProgressModel => 'Model setup';
+
+  @override
+  String get onboardingProgressImport => 'Import';
+
+  @override
+  String get onboardingProgressRemote => 'Remote connection';
+
+  @override
+  String get onboardingProgressDeviceSpace => 'Device space';
+
+  @override
+  String get onboardingProgressPermissions => 'Permissions';
+
+  @override
+  String get onboardingProgressWelcome => 'Welcome';
+
+  @override
+  String get onboardingPreparingLocalRuntime => 'Preparing the local Runtime';
+
+  @override
+  String get onboardingModeTitle => 'Choose how to begin';
+
+  @override
+  String get onboardingModeDescription =>
+      'Use quick setup for a new installation, import existing Operit 1 data, or connect directly to a remote Runtime.';
+
+  @override
+  String get onboardingModeQuickTitle => 'Quick setup';
+
+  @override
+  String get onboardingModeQuickSubtitle =>
+      'Configure a model provider and finish the basic setup';
+
+  @override
+  String get onboardingModeImportTitle => 'Import from Operit 1';
+
+  @override
+  String get onboardingModeImportSubtitle =>
+      'Bring over settings and data from Operit 1';
+
+  @override
+  String get onboardingModeRemoteTitle => 'Connect to another Runtime';
+
+  @override
+  String get onboardingModeRemoteSubtitle =>
+      'Enter the remote address, access token, and one-time pairing code';
+
+  @override
+  String get onboardingModeDeviceSpaceTitle => 'Join an existing device space';
+
+  @override
+  String get onboardingModeDeviceSpaceSubtitle =>
+      'Find a nearby device space and sync models and data after joining';
+
+  @override
+  String get onboardingDeviceSpaceDescription =>
+      'Find a nearby device space and choose a device. After pairing, your models, settings, and data are synchronized before onboarding finishes.';
+
+  @override
+  String get onboardingRemoteDescription =>
+      'Use this app as an independent client. After pairing, it switches to the remote Runtime.';
+
+  @override
+  String get onboardingRemoteAddress => 'Remote address';
+
+  @override
+  String get onboardingRemoteToken => 'Access token';
+
+  @override
+  String get onboardingRemotePairingStarted => 'Pairing started';
+
+  @override
+  String onboardingRemotePairingSummary(
+    String platform,
+    String model,
+    String deviceId,
+  ) {
+    return 'Remote: $platform / $model\nDevice: $deviceId\nEnter the one-time code shown by the remote app.';
+  }
+
+  @override
+  String get onboardingRemotePairingCode => 'One-time pairing code';
+
+  @override
+  String get onboardingRemoteBeforePairing =>
+      'Start a pairing session with the remote address and access token.';
+
+  @override
+  String get onboardingRemoteAfterPairing =>
+      'The code is used only for this confirmation. The remote Runtime will be saved as a connection option.';
+
+  @override
+  String get onboardingStorageTitle => 'Confirm storage on this device';
+
+  @override
+  String get onboardingStorageDescription =>
+      'Runtime data and workspace data are stored separately. Enter paths or choose each folder.';
+
+  @override
+  String get onboardingStorageRuntimeFolder => 'Runtime data folder';
+
+  @override
+  String get onboardingStorageWorkspaceFolder => 'Workspace folder';
+
+  @override
+  String get onboardingStorageReading => 'Reading storage paths';
+
+  @override
+  String get onboardingStorageDetail =>
+      'These folders store Runtime state and your workspace separately. The local Host mounts them after confirmation.';
+
+  @override
+  String onboardingStorageChooseFolder(String label) {
+    return 'Choose $label';
+  }
+
+  @override
+  String get onboardingImportTitle => 'Import from Operit 1';
+
+  @override
+  String get onboardingImportDescription =>
+      'Choose an Operit 1 snapshot to migrate settings, chats, character cards, and resources to Operit 2.';
+
+  @override
+  String get onboardingImportReadingSnapshot => 'Reading snapshot';
+
+  @override
+  String get onboardingImportSelectSnapshot => 'Select snapshot file';
+
+  @override
+  String get onboardingImportDetected => 'Content ready to migrate';
+
+  @override
+  String get onboardingImportModelSettings => 'Model settings';
+
+  @override
+  String get onboardingImportChats => 'Chats';
+
+  @override
+  String get onboardingImportMessages => 'Messages';
+
+  @override
+  String get onboardingImportPreferences => 'Preference files';
+
+  @override
+  String get onboardingImportResources => 'Resource files';
+
+  @override
+  String get onboardingImportExternalResources => 'External resources';
+
+  @override
+  String onboardingImportDefaultModel(String modelId) {
+    return 'Default chat model: $modelId';
+  }
+
+  @override
+  String get onboardingImportInProgress =>
+      'Importing the snapshot. Please wait.';
+
+  @override
+  String get onboardingImportReady =>
+      'Continue to migrate the complete snapshot.';
+
+  @override
+  String get onboardingModelTitle => 'Finish model setup';
+
+  @override
+  String get onboardingModelDescription =>
+      'Choose a model provider, enter the API key, load models, and select the default model.';
+
+  @override
+  String get onboardingModelProvider => 'Model provider';
+
+  @override
+  String get onboardingModelProviderRequired => 'Select a model provider.';
+
+  @override
+  String get onboardingModelContinueSetup => 'Continue setup';
+
+  @override
+  String get onboardingModelEndpoint => 'Service address';
+
+  @override
+  String get onboardingModelLoadingAvailable => 'Loading models';
+
+  @override
+  String get onboardingModelLoadAvailable => 'Load available models';
+
+  @override
+  String get onboardingModelDefault => 'Default model';
+
+  @override
+  String get onboardingPermissionsTitle =>
+      'Grant only the permissions you need';
+
+  @override
+  String get onboardingPermissionsDescription =>
+      'Choose permissions for the features you use. You may continue without granting any; features without permission will remain unavailable.';
+
+  @override
+  String get onboardingPermissionsEmptyTitle =>
+      'No permissions need attention on this device';
+
+  @override
+  String get onboardingPermissionsEmptySubtitle =>
+      'This environment has no system permissions to handle during setup.';
+
+  @override
+  String get onboardingPermissionsRefresh => 'Refresh permission status';
+
+  @override
+  String get onboardingPermissionOptional => 'Optional';
+
+  @override
+  String get onboardingFieldRequired => 'Required';
+
+  @override
+  String get onboardingPermissionGranted => 'Granted';
+
+  @override
+  String get onboardingPermissionGrant => 'Grant';
+
+  @override
+  String get onboardingPermissionNoAction => 'No action needed';
+
+  @override
+  String get networkErrorBadRequestTitle => 'Check the request settings';
+
+  @override
+  String get networkErrorBadRequestMessage =>
+      'The service rejected the model-list request. Check that the service address matches the provider.';
+
+  @override
+  String get networkErrorUnauthorizedTitle => 'API key could not be verified';
+
+  @override
+  String get networkErrorUnauthorizedMessage =>
+      'The provider rejected the API key. Enter the complete key and try loading the models again.';
+
+  @override
+  String get networkErrorForbiddenTitle => 'Access is not permitted';
+
+  @override
+  String get networkErrorForbiddenMessage =>
+      'This key cannot access the provider API. Check the account permissions and model-service access.';
+
+  @override
+  String get networkErrorNotFoundTitle => 'Service address is unavailable';
+
+  @override
+  String get networkErrorNotFoundMessage =>
+      'No model-list endpoint was found at this address. Check the address and path.';
+
+  @override
+  String get networkErrorRateLimitedTitle => 'Too many requests';
+
+  @override
+  String get networkErrorRateLimitedMessage =>
+      'The provider is limiting requests. Wait a moment and try loading the models again.';
+
+  @override
+  String get networkErrorServerTitle => 'Provider service error';
+
+  @override
+  String get networkErrorServerMessage =>
+      'The provider cannot process the model-list request right now. Try again later.';
+
+  @override
+  String get networkErrorModelListTitle => 'Could not load the model list';
+
+  @override
+  String get networkErrorModelListMessage =>
+      'No model list was returned. Check the service address, API key, and network connection.';
+
+  @override
+  String get networkErrorConnectionTitle => 'Network connection failed';
+
+  @override
+  String get networkErrorConnectionMessage =>
+      'Could not connect to the model provider. Check the network connection and service address.';
+
+  @override
+  String get networkErrorDuplicateModelTitle => 'Model already added';
+
+  @override
+  String networkErrorDuplicateModelMessage(
+    String modelId,
+    String providerName,
+  ) {
+    return 'Model “$modelId” is already added to provider “$providerName”.';
+  }
+
+  @override
+  String get networkErrorDefaultTitle => 'Model setup failed';
+
+  @override
+  String get networkErrorDefaultMessage =>
+      'An error occurred while loading models. Check the provider, service address, and API key.';
+
+  @override
+  String get onboardingRequirementWindowsAdminTitle => 'Administrator access';
+
+  @override
+  String get onboardingRequirementWindowsAdminDescription =>
+      'Shows whether the Host is running as administrator. Elevation must be handled when the Host is launched.';
+
+  @override
+  String get onboardingRequirementAndroidFileManagementTitle => 'File access';
+
+  @override
+  String get onboardingRequirementAndroidFileManagementDescription =>
+      'Allows the Host to read and write the Android shared-storage folders you choose.';
+
+  @override
+  String get onboardingRequirementAndroidNotificationsTitle => 'Notifications';
+
+  @override
+  String get onboardingRequirementAndroidNotificationsDescription =>
+      'Allows the Host to show foreground-service status, task progress, and tool results.';
+
+  @override
+  String get onboardingRequirementAndroidAppListTitle => 'Installed apps';
+
+  @override
+  String get onboardingRequirementAndroidAppListDescription =>
+      'Allows the Host to list, launch, and stop Android apps.';
+
+  @override
+  String get onboardingRequirementAndroidUsageStatsTitle => 'App usage access';
+
+  @override
+  String get onboardingRequirementAndroidUsageStatsDescription =>
+      'Allows the Host to read how long apps have been used in the foreground.';
+
+  @override
+  String get onboardingRequirementAndroidWriteSettingsTitle =>
+      'Change system settings';
+
+  @override
+  String get onboardingRequirementAndroidWriteSettingsDescription =>
+      'Allows the Host to change supported Android system settings.';
+
+  @override
+  String get onboardingRequirementAndroidLocationTitle =>
+      'Nearby-device location';
+
+  @override
+  String get onboardingRequirementAndroidLocationDescription =>
+      'Allows location access required by some nearby-device discovery features.';
+
+  @override
+  String get onboardingRequirementAndroidBluetoothTitle => 'Bluetooth';
+
+  @override
+  String get onboardingRequirementAndroidBluetoothDescription =>
+      'Allows Bluetooth scanning and connections to discover and use devices.';
+
+  @override
+  String get onboardingRequirementAndroidOverlayTitle =>
+      'Display over other apps';
+
+  @override
+  String get onboardingRequirementAndroidOverlayDescription =>
+      'Allows Operit to show an entry point over other apps.';
+
+  @override
+  String get onboardingRequirementAndroidBatteryOptimizationTitle =>
+      'Keep long tasks running';
+
+  @override
+  String get onboardingRequirementAndroidBatteryOptimizationDescription =>
+      'Excludes Operit from battery optimization so sync, collaboration, and long tasks can continue.';
+
+  @override
+  String get onboardingRequirementAndroidShizukuTitle => 'Shizuku';
+
+  @override
+  String get onboardingRequirementAndroidShizukuDescription =>
+      'Optional. Start Shizuku or Sui first, then grant access to use supported Android system features.';
+
+  @override
+  String get onboardingRequirementAndroidRootTitle => 'Root';
+
+  @override
+  String get onboardingRequirementAndroidRootDescription =>
+      'Optional. Grants access to Android system features that require Root.';
+
+  @override
+  String get onboardingRequirementOhosLocationTitle => 'Location access';
+
+  @override
+  String get onboardingRequirementOhosLocationDescription =>
+      'Allows the Host to read device location and support nearby-device discovery that requires location access.';
+
+  @override
+  String get onboardingRequirementOhosBluetoothTitle => 'Bluetooth access';
+
+  @override
+  String get onboardingRequirementOhosBluetoothDescription =>
+      'Allows scanning, connecting, reading, and writing with classic Bluetooth and BLE devices.';
+
+  @override
+  String get runtimeBootstrapPreparingAssets => 'Preparing local Runtime files';
+
+  @override
+  String get runtimeBootstrapInitializingCore => 'Starting local core services';
+
+  @override
+  String get runtimeBootstrapFailed => 'Could not start the local Runtime';
+
+  @override
+  String get runtimeBootstrapReady => 'Local Runtime is ready';
+
+  @override
+  String get runtimeBootstrapUnconfigured =>
+      'Choose the Runtime data and workspace folders in the main window first';
+
+  @override
+  String get mainExitConfirm => 'Press back again to exit';
+
+  @override
+  String get messageMenuCopy => 'Copy message';
+
+  @override
+  String get messageMenuEditAndResend => 'Edit and resend';
+
+  @override
+  String get messageMenuRollback => 'Roll back to here';
+
+  @override
+  String get messageMenuRegenerate => 'Regenerate';
+
+  @override
+  String get messageMenuModifyMemory => 'Edit memory';
+
+  @override
+  String get messageMenuPlayVoice => 'Generate / play voice';
+
+  @override
+  String get messageMenuDeleteVariant => 'Delete current variant';
+
+  @override
+  String get messageMenuReply => 'Reply';
+
+  @override
+  String get messageMenuInsertSummary => 'Insert summary';
+
+  @override
+  String get messageMenuCreateBranch => 'Create branch';
+
+  @override
+  String get messageMenuInfo => 'Info';
+
+  @override
+  String get messageMenuMultiSelect => 'Select multiple';
+
+  @override
+  String get messageMenuDeleteConfirmTitle => 'Delete message?';
+
+  @override
+  String get messageMenuDeleteConfirmMessage => 'Delete this message?';
+
+  @override
+  String get messageMenuInfoTitle => 'Message info';
+
+  @override
+  String messageMenuSender(String value) {
+    return 'Sender: $value';
+  }
+
+  @override
+  String messageMenuTimestamp(String value) {
+    return 'Timestamp: $value';
+  }
+
+  @override
+  String messageMenuRole(String value) {
+    return 'Role: $value';
+  }
+
+  @override
+  String messageMenuModel(String value) {
+    return 'Model: $value';
+  }
+
+  @override
+  String messageMenuProvider(String value) {
+    return 'Provider: $value';
+  }
+
+  @override
+  String messageMenuInputTokens(String value) {
+    return 'Input tokens: $value';
+  }
+
+  @override
+  String messageMenuCachedInputTokens(String value) {
+    return 'Cached input tokens: $value';
+  }
+
+  @override
+  String messageMenuOutputTokens(String value) {
+    return 'Output tokens: $value';
+  }
+
+  @override
+  String messageMenuWaitDuration(String value) {
+    return 'Wait time: $value ms';
+  }
+
+  @override
+  String messageMenuOutputDuration(String value) {
+    return 'Output time: $value ms';
+  }
+
+  @override
+  String get messageMenuConfirm => 'OK';
+
+  @override
+  String get messageCopyTitle => 'Copy message';
+
+  @override
+  String get messageCopyPlainText => 'Plain text';
+
+  @override
+  String get messageCopyMarkdownSource => 'Markdown source';
+
+  @override
+  String messageCopyPlainTextConversionFailed(String error) {
+    return 'Could not convert to plain text: $error';
+  }
+
+  @override
+  String get messageCopyCopyPlainText => 'Copy plain text';
+
+  @override
+  String get messageCopyCopyMarkdownSource => 'Copy Markdown source';
+
+  @override
+  String messageCopyFailed(String error) {
+    return 'Copy failed: $error';
+  }
+
+  @override
+  String get messageCopyCompleted => 'Message copied to the clipboard';
+
+  @override
+  String get messageEditorTitle => 'Edit message';
+
+  @override
+  String get messageEditorMemoryTitle => 'Edit memory';
+
+  @override
+  String get messageEditorVisualMode => 'Visual';
+
+  @override
+  String get messageEditorPlainTextMode => 'Plain text';
+
+  @override
+  String get messageEditorSaveAndResend => 'Save and resend';
+
+  @override
+  String get messageEditorUpdateMemory => 'Update memory';
+
+  @override
+  String get messageEditorPlainTextContent => 'Plain-text content';
+
+  @override
+  String get messageEditorContentParts => 'Content parts';
+
+  @override
+  String get messageEditorAddText => 'Add text';
+
+  @override
+  String get messageEditorAddTag => 'Add tag';
+
+  @override
+  String get messageEditorTextLabel => 'Text';
+
+  @override
+  String get messageEditorTextHint => 'Enter text content';
+
+  @override
+  String get messageEditorTagTitle => 'Edit tag';
+
+  @override
+  String get messageEditorTagName => 'Tag name';
+
+  @override
+  String get messageEditorTagNameHint => 'For example, memory';
+
+  @override
+  String get messageEditorAttributes => 'Attributes (optional)';
+
+  @override
+  String get messageEditorAttributesHint => 'For example, type=\"note\"';
+
+  @override
+  String get messageEditorContent => 'Content';
+
+  @override
+  String get aboutDescription =>
+      'An AI workspace for mobile and desktop with chats, workspaces, tools, plugins, MCP, remote connections, and web access.';
+
+  @override
+  String aboutVersion(String version) {
+    return 'Version $version';
+  }
+
+  @override
+  String get aboutProjectSection => 'Project';
+
+  @override
+  String get aboutSourceTitle => 'Source code';
+
+  @override
+  String get aboutDocumentationTitle => 'Documentation';
+
+  @override
+  String get aboutDocumentationSubtitle => 'README and command-line guide';
+
+  @override
+  String get aboutOpenSourceLicenses => 'Open-source licenses';
+
+  @override
+  String get aboutOpenSourceLicensesSubtitle => 'Operit2 uses AGPL-3.0';
+
+  @override
+  String get aboutContactSection => 'Contact';
+
+  @override
+  String get aboutMaintainer => 'Developer AAswordman';
+
+  @override
+  String get aboutCopyright => '© 2025 - 2026 Operit. All rights reserved.';
+
+  @override
+  String get chatTtsNoMatchingCharacter =>
+      'No matching character is available for this message.';
+
+  @override
+  String chatTtsMatchingCharacterCount(String name) {
+    return 'Expected one matching character card for $name.';
+  }
+
+  @override
+  String get chatTtsEmptyMessage =>
+      'This message has no content to turn into speech.';
+
+  @override
+  String chatTtsPlaybackFailed(String error) {
+    return 'Could not generate or play speech: $error';
+  }
+
+  @override
+  String chatCopyFailed(String error) {
+    return 'Copy failed: $error';
+  }
+
+  @override
+  String get chatConfirmDeleteSelectedTitle => 'Delete selected messages?';
+
+  @override
+  String chatConfirmDeleteSelectedMessage(int count) {
+    return 'Delete $count selected messages?';
+  }
+
+  @override
+  String get chatGeneratingShareImage => 'Creating share image...';
+
+  @override
+  String chatGenerateShareImageFailed(String error) {
+    return 'Could not create share image: $error';
+  }
 }

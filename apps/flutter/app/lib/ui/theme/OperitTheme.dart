@@ -63,7 +63,7 @@ class _OperitThemeState extends State<OperitTheme> {
   bool _preserveUnconfiguredChild = false;
   int _runtimeGeneration = 0;
   Timer? _runtimeStartupStatusTimer;
-  String _runtimeStartupMessage = '正在准备本地运行时';
+  String _runtimeStartupState = 'preparing';
 
   static const MethodChannel _runtimeChannel = MethodChannel('operit/runtime');
 
@@ -99,7 +99,7 @@ class _OperitThemeState extends State<OperitTheme> {
         _runtimeStartupError = null;
         _runtimeStartFuture = null;
         _preserveUnconfiguredChild = widget.unconfiguredChildEnabled;
-        _runtimeStartupMessage = '正在准备本地运行时';
+        _runtimeStartupState = 'preparing';
       });
       return;
     }
@@ -175,15 +175,15 @@ class _OperitThemeState extends State<OperitTheme> {
     final status = await _runtimeChannel.invokeMapMethod<String, String>(
       'localRuntimeStartupStatus',
     );
-    final message = status?['message'];
-    if (!mounted || generation != _runtimeGeneration || message == null) {
+    final state = status?['state'];
+    if (!mounted || generation != _runtimeGeneration || state == null) {
       return;
     }
-    if (_runtimeStartupMessage == message) {
+    if (_runtimeStartupState == state) {
       return;
     }
     setState(() {
-      _runtimeStartupMessage = message;
+      _runtimeStartupState = state;
     });
   }
 
@@ -204,7 +204,7 @@ class _OperitThemeState extends State<OperitTheme> {
           widget.child,
           if (runtimeConfigured && !runtimeReady)
             RuntimeBootstrapScreen(
-              message: _runtimeStartupMessage,
+              state: _runtimeStartupState,
               errorText: _runtimeStartupError?.toString(),
             ),
         ],
@@ -212,10 +212,10 @@ class _OperitThemeState extends State<OperitTheme> {
     } else if (!runtimeConfigured) {
       appChild = widget.unconfiguredChildEnabled
           ? widget.child
-          : const RuntimeBootstrapScreen(message: '请先在主窗口配置运行时目录和工作区目录');
+          : const RuntimeBootstrapScreen(state: 'unconfigured');
     } else if (!runtimeReady) {
       appChild = RuntimeBootstrapScreen(
-        message: _runtimeStartupMessage,
+        state: _runtimeStartupState,
         errorText: _runtimeStartupError?.toString(),
       );
     } else {
