@@ -92,13 +92,16 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
         );
     return _AgentInputMenuData(
       enableMemoryAutoUpdate: await _clients.preferencesApiPreferences
-          .enableMemoryAutoUpdateFlow().first,
+          .enableMemoryAutoUpdateFlow()
+          .first,
       permissionMode: await _clients.permissionsToolPermissionSystem
           .getAiPermissionMode(),
       disableStreamOutput: await _clients.preferencesApiPreferences
-          .disableStreamOutputFlow().first,
+          .disableStreamOutputFlow()
+          .first,
       disableUserPreferenceDescription: await _clients.preferencesApiPreferences
-          .disableUserPreferenceDescriptionFlow().first,
+          .disableUserPreferenceDescriptionFlow()
+          .first,
       pluginToggles: pluginToggles,
     );
   }

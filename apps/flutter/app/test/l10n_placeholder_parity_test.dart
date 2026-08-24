@@ -13,12 +13,12 @@ List<String> _placeholders(Object? value) {
 
 void main() {
   test('Japanese ARB preserves every English message placeholder', () {
-    final english = jsonDecode(
-      File('lib/l10n/app_en.arb').readAsStringSync(),
-    ) as Map<String, dynamic>;
-    final japanese = jsonDecode(
-      File('lib/l10n/app_ja.arb').readAsStringSync(),
-    ) as Map<String, dynamic>;
+    final english =
+        jsonDecode(File('lib/l10n/app_en.arb').readAsStringSync())
+            as Map<String, dynamic>;
+    final japanese =
+        jsonDecode(File('lib/l10n/app_ja.arb').readAsStringSync())
+            as Map<String, dynamic>;
 
     final messageKeys = english.keys.where((key) => !key.startsWith('@'));
     for (final key in messageKeys) {

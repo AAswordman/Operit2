@@ -58,9 +58,11 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
       currentBinding: binding,
       currentConfig: config,
       enableThinkingMode: await _clients.preferencesApiPreferences
-          .enableThinkingModeFlow().first,
+          .enableThinkingModeFlow()
+          .first,
       thinkingQualityLevel: await _clients.preferencesApiPreferences
-          .thinkingQualityLevelFlow().first,
+          .thinkingQualityLevelFlow()
+          .first,
     );
   }
 
